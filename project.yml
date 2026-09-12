@@ -1,0 +1,79 @@
+name: PocketDesktop
+options:
+  bundleIdPrefix: com.roshan
+  deploymentTarget:
+    iOS: '27.0'
+settings:
+  base:
+    SWIFT_VERSION: '5.0'
+    TARGETED_DEVICE_FAMILY: '1,2'
+    CODE_SIGNING_ALLOWED: NO
+targets:
+  PocketDesktop:
+    type: application
+    platform: iOS
+    sources: [PocketDesktop, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesktop
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Pocket Desktop
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to the Mac you pair with to view and control its shared screen.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+    scheme:
+      gatherCoverageData: false
+      testTargets:
+        - PocketDesktopTests
+        - PocketDesktopUITests
+  PocketDesktopTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [PocketDesktopTests]
+    dependencies:
+      - target: PocketDesktop
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  PocketDesktopUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [PocketDesktopUITests]
+    dependencies:
+      - target: PocketDesktop
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
+  PocketDesktopHost:
+    type: application
+    platform: macOS
+    deploymentTarget: '15.2'
+    sources: [PocketDesktopHost, Shared]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesktopHost
+        PRODUCT_NAME: PocketDesktopHost
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Pocket Desktop Host
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Share a selected screen with your paired Pocket Desktop device.
+        INFOPLIST_KEY_NSScreenCaptureUsageDescription: Stream the content you choose to your paired device.
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.productivity
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: '-'
+        ENABLE_HARDENED_RUNTIME: YES
+    scheme: {}
+
+  StreamTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: '15.2'
+    sources: [StreamTests, Shared, PocketDesktopHost/HostStream.swift]
+    settings:
+      base:
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: "-"
+        GENERATE_INFOPLIST_FILE: YES
+    scheme:
+      testTargets: [StreamTests]
