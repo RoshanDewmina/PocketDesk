@@ -280,8 +280,10 @@ test('ticket admits one browser and relays only that session', async () => {
   const app = setup(), host = await connectHost(app);
   installTicket(host);
   const browser = await connectBrowser(app);
+  expect(await host.next()).toEqual({ type: 'ice', session, servers: [], policy: 'all' });
   expect(await host.next()).toEqual({ type: 'joined', session });
   expect(await browser.next()).toEqual({ type: 'registered', session });
+  expect(await browser.next()).toEqual({ type: 'ice', servers: [], policy: 'all' });
   installTicket(host, '1'.repeat(64), '2'.repeat(64));
   expect(await host.next()).toEqual({ type: 'error', code: 'busy' });
 
@@ -325,6 +327,7 @@ test('simultaneous redemption has one winner and ticket replay loses', async () 
   const [a, b] = await Promise.all([first.next(), second.next()]);
   expect([a.type, b.type].sort()).toEqual(['error', 'registered']);
   expect([a, b].find(value => value.type === 'error')?.code).toBe('unauthorized');
+  expect(await host.next()).toEqual({ type: 'ice', session, servers: [], policy: 'all' });
   expect(await host.next()).toEqual({ type: 'joined', session });
 });
 
@@ -352,8 +355,10 @@ test('host Stop invalidates tickets and active sessions without touching native 
 
   installTicket(host, '1'.repeat(64), '2'.repeat(64));
   const browser = await connectBrowser(app, '1'.repeat(64), '2'.repeat(64));
+  expect(await host.next()).toEqual({ type: 'ice', session: '2'.repeat(64), servers: [], policy: 'all' });
   expect(await host.next()).toEqual({ type: 'joined', session: '2'.repeat(64) });
   expect(await browser.next()).toEqual({ type: 'registered', session: '2'.repeat(64) });
+  expect(await browser.next()).toEqual({ type: 'ice', servers: [], policy: 'all' });
   const closed = new Promise<CloseEvent>(resolve => { browser.ws.onclose = resolve; });
   host.send({ type: 'stop' });
   expect((await closed).code).toBe(1000);
@@ -373,7 +378,7 @@ test('host disconnect cancels RPC, invalidates authority, and closes its browser
   const replacement = await connectHost(app);
   installTicket(replacement);
   const browser = await connectBrowser(app);
-  await replacement.next(); await browser.next();
+  await replacement.next(); await replacement.next(); await browser.next(); await browser.next();
   const closed = new Promise<CloseEvent>(resolve => { browser.ws.onclose = resolve; });
   replacement.ws.close();
   expect((await closed).code).toBe(1000);
@@ -383,7 +388,7 @@ test('service stop clears all sockets and is idempotent', async () => {
   const app = setup(), host = await connectHost(app);
   installTicket(host);
   const browser = await connectBrowser(app);
-  await host.next(); await browser.next();
+  await host.next(); await host.next(); await browser.next(); await browser.next();
   const hostClosed = new Promise<CloseEvent>(resolve => { host.ws.onclose = resolve; });
   const browserClosed = new Promise<CloseEvent>(resolve => { browser.ws.onclose = resolve; });
   await app.stop();

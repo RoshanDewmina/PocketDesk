@@ -1,0 +1,14 @@
+# A named tunnel requires an existing Cloudflare account, a Cloudflare-managed
+# DNS zone, and a credentials file created outside this repository.
+tunnel: replace-with-tunnel-uuid
+credentials-file: /absolute/private/path/replace-with-tunnel-uuid.json
+
+# Contract §8 public route allowlist only: viewer static assets, /browser-host,
+# /browser-signal, /browser-api/:hostID/{enroll,challenge,proof}. /probe/*, /fixtures/*
+# and /api/diagnostics are already 404 at the service (devRoutes: false); nothing below
+# routes to them. /mcp and the OAuth metadata/authorize/token routes are not yet
+# implemented and are intentionally omitted until that work lands.
+ingress:
+  - hostname: browser.example.com
+    service: http://127.0.0.1:28790
+  - service: http_status:404

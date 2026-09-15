@@ -1,0 +1,36 @@
+{
+	admin off
+	auto_https off
+}
+
+# Contract §8 public route allowlist only. /probe/*, /fixtures/* and /api/diagnostics are
+# already 404 at the service (devRoutes: false) but are also never proxied here, so a
+# misconfigured service build still cannot expose them publicly.
+# /mcp plus the OAuth metadata/authorize/token routes are not yet implemented by the service
+# and are intentionally omitted below until that work lands.
+http://127.0.0.1:28790 {
+	handle / {
+		reverse_proxy 127.0.0.1:8788
+	}
+	handle /app.js {
+		reverse_proxy 127.0.0.1:8788
+	}
+	handle /style.css {
+		reverse_proxy 127.0.0.1:8788
+	}
+	handle /src/* {
+		reverse_proxy 127.0.0.1:8788
+	}
+	handle /browser-host {
+		reverse_proxy 127.0.0.1:8788
+	}
+	handle /browser-signal {
+		reverse_proxy 127.0.0.1:8788
+	}
+	handle /browser-api/* {
+		reverse_proxy 127.0.0.1:8788
+	}
+	handle {
+		respond 404
+	}
+}

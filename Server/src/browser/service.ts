@@ -3,6 +3,8 @@ import { mkdir } from 'node:fs/promises';
 import { realpathSync, statSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import type { ServerWebSocket } from 'bun';
+import type { IceServer, TurnCredentialProvider } from '../turn';
+import { createBrowserRelay } from './relay';
 
 const MAX_RECORD_BYTES = 256 * 1024;
 const MAX_HTTP_BODY_BYTES = 64 * 1024;
@@ -18,11 +20,14 @@ type RouteKind = 'host' | 'browser';
 type PeerData = {
   route: RouteKind;
   authenticated: boolean;
+  registrationPending?: boolean;
   hostID?: string;
   session?: string;
   timer?: Timer;
   messages: number;
   messageWindow: number;
+  iceServers?: IceServer[];
+  iceRevoked?: boolean;
 };
 
 type Peer = ServerWebSocket<PeerData>;
@@ -66,6 +71,12 @@ export type BrowserServiceConfig = {
   maxPendingRequests?: number;
   messagesPerSecond?: number;
   diagnosticsDir?: string;
+  devRoutes?: boolean;
+  turnProvider?: TurnCredentialProvider;
+  stunURLs?: string[];
+  relayTimeoutMs?: number;
+  relayIssuesPerMinute?: number;
+  testForceRelay?: boolean;
 };
 
 const digest = (value: string) => createHash('sha256').update(value).digest('hex');
@@ -209,12 +220,21 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
   const messagesPerSecond = integerOption('messagesPerSecond', config.messagesPerSecond ?? 100, 1, 1_000);
   const staticRoot = resolve(config.staticRoot ?? resolve(import.meta.dir, '../../..'));
   const diagnosticsDir = config.diagnosticsDir ? resolve(config.diagnosticsDir) : undefined;
+  const devRoutes = config.devRoutes ?? true;
+  const relay = createBrowserRelay({
+    provider: config.turnProvider,
+    stunURLs: config.stunURLs,
+    timeoutMs: config.relayTimeoutMs,
+    issuesPerMinute: config.relayIssuesPerMinute,
+    testForceRelay: config.testForceRelay,
+  });
 
   const hosts = new Map<string, Peer>();
   const peers = new Set<Peer>();
   const tickets = new Map<string, Ticket>();
   const sessions = new Map<string, BrowserSession>();
   const requests = new Map<string, PendingRequest>();
+  const pendingRegistrations = new Set<Promise<void>>();
   let stopped = false;
 
   const expectedHost = (port: number) => configuredOrigin ? new URL(configuredOrigin).host :
@@ -283,9 +303,17 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
     for (const [key, ticket] of tickets) if (ticket.host === host) removeTicket(key);
   };
 
+  const revokePeer = (peer: Peer) => {
+    if (peer.data.iceRevoked || !peer.data.iceServers) return;
+    peer.data.iceRevoked = true;
+    relay.revoke(peer.data.iceServers);
+  };
+
   const endSession = (record: BrowserSession, initiator?: Peer, reason = 'session_ended') => {
     if (sessions.get(record.session) !== record) return;
     sessions.delete(record.session);
+    revokePeer(record.host);
+    revokePeer(record.browser);
     if (initiator !== record.host) send(record.host, { type: 'end', session: record.session });
     if (initiator !== record.browser) send(record.browser, { type: 'end', session: record.session });
     if (record.browser.readyState === WebSocket.OPEN) record.browser.close(1000, reason);
@@ -301,6 +329,17 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
     cancelHostRequests(host, reason);
   };
 
+  const abortAdmission = (record: BrowserSession) => {
+    const stillActive = sessions.get(record.session) === record;
+    if (stillActive) sessions.delete(record.session);
+    revokePeer(record.host);
+    revokePeer(record.browser);
+    if (stillActive) {
+      send(record.host, { type: 'end', session: record.session });
+      fail(record.browser, 'relay_unavailable');
+    }
+  };
+
   const validHostHeader = (request: Request, port: number) => request.headers.get('host') === expectedHost(port);
   const validBrowserOrigin = (request: Request, port: number) => request.headers.get('origin') === expectedOrigin(port);
 
@@ -308,6 +347,8 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
     if (pathname === '/') return { root: resolve(staticRoot, 'BrowserClient'), relative: 'index.html' };
     if (pathname === '/app.js') return { root: resolve(staticRoot, 'BrowserClient'), relative: 'app.js' };
     if (pathname === '/style.css') return { root: resolve(staticRoot, 'BrowserClient'), relative: 'style.css' };
+    if (!devRoutes && (pathname === '/probe/' || pathname === '/probe/probe.js' || pathname === '/probe/probe.css' ||
+        pathname === '/fixtures/code-scene.js')) return;
     if (pathname === '/probe/') return { root: resolve(staticRoot, 'BrowserProbe'), relative: 'index.html' };
     if (pathname === '/probe/probe.js') return { root: resolve(staticRoot, 'BrowserProbe'), relative: 'probe.js' };
     if (pathname === '/probe/probe.css') return { root: resolve(staticRoot, 'BrowserProbe'), relative: 'probe.css' };
@@ -388,7 +429,7 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
 
   const handleDiagnostics = async (request: Request, port: number) => {
     const headers = securityHeaders(port);
-    if (!diagnosticsDir) return new Response('Not found', { status: 404, headers });
+    if (!devRoutes || !diagnosticsDir) return new Response('Not found', { status: 404, headers });
     if (!validBrowserOrigin(request, port)) return Response.json({ error: 'origin_rejected' }, { status: 403, headers });
     if (request.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase() !== 'application/json') {
       return Response.json({ error: 'invalid_content_type' }, { status: 415, headers });
@@ -510,7 +551,8 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
     send(ws, { type: 'registered', hostID: message.hostID });
   };
 
-  const registerBrowser = (ws: Peer, message: Record<string, unknown>) => {
+  const registerBrowser = async (ws: Peer, message: Record<string, unknown>) => {
+    if (ws.data.registrationPending) { fail(ws, 'registration_pending'); return; }
     if (!exactKeys(message, ['type', 'hostID', 'session', 'ticket']) || message.type !== 'browser' ||
         !isHex32(message.hostID) || !isHex32(message.session) || !isHex32(message.ticket)) {
       fail(ws, 'invalid_registration'); return;
@@ -531,12 +573,48 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
 
     const record: BrowserSession = { hostID: ticket.hostID, host: ticket.host, browser: ws, session: ticket.session };
     sessions.set(record.session, record);
-    clearTimeout(ws.data.timer);
-    ws.data.authenticated = true;
+    ws.data.registrationPending = true;
     ws.data.hostID = record.hostID;
     ws.data.session = record.session;
+    clearTimeout(ws.data.timer);
+
+    let hostRelay;
+    try {
+      hostRelay = await relay.issue(record.session, 'host');
+    } catch {
+      ws.data.registrationPending = false;
+      abortAdmission(record);
+      return;
+    }
+    if (sessions.get(record.session) !== record) {
+      // Session already ended (host/browser closed, stop, or shutdown) while this issuance
+      // was in flight: these credentials never armed teardown bookkeeping, so revoke now.
+      relay.revoke(hostRelay.servers);
+      return;
+    }
+    record.host.data.iceServers = hostRelay.servers;
+    record.host.data.iceRevoked = false;
+    send(record.host, { type: 'ice', session: record.session, servers: hostRelay.servers, policy: hostRelay.policy });
     send(record.host, { type: 'joined', session: record.session });
+
+    let browserRelay;
+    try {
+      browserRelay = await relay.issue(record.session, 'browser');
+    } catch {
+      ws.data.registrationPending = false;
+      abortAdmission(record);
+      return;
+    }
+    if (sessions.get(record.session) !== record) {
+      relay.revoke(browserRelay.servers);
+      return;
+    }
+    ws.data.iceServers = browserRelay.servers;
+    ws.data.iceRevoked = false;
+    ws.data.authenticated = true;
+    ws.data.registrationPending = false;
     send(ws, { type: 'registered', session: record.session });
+    send(ws, { type: 'ice', servers: browserRelay.servers, policy: browserRelay.policy });
   };
 
   const handleBrowserMessage = (ws: Peer, message: Record<string, unknown>) => {
@@ -589,7 +667,9 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
       }
 
       if (url.pathname === '/api/diagnostics') {
-        if (!diagnosticsDir || request.method !== 'POST') return new Response('Not found', { status: 404, headers: securityHeaders(port) });
+        if (!devRoutes || !diagnosticsDir || request.method !== 'POST') {
+          return new Response('Not found', { status: 404, headers: securityHeaders(port) });
+        }
         return handleDiagnostics(request, port);
       }
 
@@ -625,8 +705,10 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
         } catch { fail(ws, 'invalid_message'); return; }
 
         if (!ws.data.authenticated) {
-          if (ws.data.route === 'host') registerHost(ws, message);
-          else registerBrowser(ws, message);
+          if (ws.data.route === 'host') { registerHost(ws, message); return; }
+          const task = registerBrowser(ws, message);
+          pendingRegistrations.add(task);
+          void task.then(() => pendingRegistrations.delete(task), () => pendingRegistrations.delete(task));
           return;
         }
         if (ws.data.route === 'host') handleHostMessage(ws, message);
@@ -662,10 +744,19 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
       hosts.clear();
       for (const peer of peers) {
         clearTimeout(peer.data.timer);
+        revokePeer(peer);
         if (peer.readyState === WebSocket.OPEN) peer.close(1001, 'service_stopped');
       }
       peers.clear();
       server.stop(true);
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const active = [...pendingRegistrations];
+        if (active.length === 0) break;
+        const remaining = deadline - Date.now();
+        await Promise.race([Promise.allSettled(active), new Promise(resolve => setTimeout(resolve, remaining))]);
+      }
+      await relay.drain(Math.max(0, deadline - Date.now()));
     },
   };
 }
