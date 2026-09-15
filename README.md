@@ -1,4 +1,25 @@
-# Pocket Desktop — native app
+# PocketDesk
+
+**Start here: [Product and design source of truth](PRODUCT.md), then [implementation record](Docs/IMPLEMENTATION-PLAN.md).** MVP implementation is active. The current pass completes work that does not require the physical phone; real capture/control, cellular, and forced-relay acceptance remain unproven.
+
+The next delivery is a small private feasibility MVP. The handoff uses swarm-orchestrator with efficient GPT workers, no Astra workers/reviewers, and parent-led integration and verification. Broader beta and commercial features remain follow-up scope.
+
+## Browser feasibility implementation
+
+The browser viewer and separate Mac browser enrollment are implemented, with an isolated synthetic native sender and loopback service. Run `./scripts/verify-browser.sh interactive` and `./scripts/verify-browser.sh view` for saved automated receipts. See [browser testing and tonight's physical checks](Docs/BROWSER-TESTING.md) for dependencies, preview commands and boundaries. Native phone pairing remains separate. Public code delivery, real phone capture/control and cellular/TURN are not validated by the local harness.
+
+## Current native MVP
+
+- `./script/build_and_run.sh --verify` builds, verifies the development signature, preserves the previous app, and launches the stable `/Applications/PocketDesk Host.app` copy. `--build` only builds. Neither command grants system permissions.
+- `./scripts/verify-remote.sh` runs service tests, Mac/phone simulator builds, and native integration tests. Set `POCKETDESK_RECEIPTS` to a fresh directory to preserve earlier evidence.
+- `./scripts/preflight-remote.sh` reports local readiness without changing settings or opening private configuration files.
+- [Device test checklist](Docs/DEVICE-TEST-CHECKLIST.md) records the remaining live gates. [Standalone networking](Docs/STANDALONE-NETWORK-READINESS.md) describes the prepared deployment path; Cloudflare account setup is deferred.
+
+Do not launch older host copies from build folders when checking permissions. Successful signing, a visible Settings switch, and real runtime permission are separate checks. The host must enumerate a display and report control permission before a live session can be claimed.
+
+The material below is the preserved earlier prototype README. Its test results and paths describe that historical workspace, not verification of the new remote-access application. Use PRODUCT.md for current scope and status.
+
+## Historical prototype README
 
 **12 September update:** A Mac companion and a real-stream client path have now been implemented. Read the [streaming implementation and current validation boundary](../streaming-mvp/README.md). Transport and codec components have been tested; selected-window streaming and remote control still require end-to-end verification.
 

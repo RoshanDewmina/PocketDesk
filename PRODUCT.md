@@ -1,0 +1,695 @@
+# PocketDesk — product and design source of truth
+
+**Version:** 0.10 · **Updated:** 13 September 2026 · **Status:** Local MVP checkpoint complete; physical acceptance pending; browser implementation locally tested; physical and WebKit compatibility acceptance pending
+
+**Implementation resumed in the new task on 12 September 2026**, following Roshan’s “Start this” request. The existing product scope and private feasibility stop line remain in force. The [implementation ledger](Docs/IMPLEMENTATION-PLAN.md) records current checks, changes, and unresolved live gates; historical pause statements below describe the preceding handoff.
+
+**Current session: browser feasibility implementation authorized (13 September 2026).** Roshan requested implementation after context recovery and pre-start questions, then authorized all independent work and testing while his iPhone is unavailable. Use a harmless code-edit-and-check task; preserve native clients and the later chat roadmap. Cloudflare account/public exposure remains paused. Physical phone, cellular and forced-relay acceptance must remain pending until actually tested. D18 and other planning-only statements record earlier tasks.
+
+The [planning assessment](Docs/IDEA-VALIDATION-2026-09-13.md) records recovered context, API feasibility, and the proposed sequence. The [competitor feature comparison](Docs/COMPETITOR-FEATURES-2026-09-13.md) is for learning from documented features; adoption and hands-on quality remain unverified. WhipDesk, ServerCC, and Offsite overlap with substantial parts of the workflow. Their existence does not establish market traction or settle PocketDesk's usefulness.
+
+The [Opus 5 review and reconciliation](Docs/CLAUDE-REVIEW-RECONCILIATION-2026-09-13.md) records two review passes, accepted changes, corrected claims, and remaining empirical gates. The plan is ready for a bounded implementation handoff when authorized; this is not a claim that the browser product works yet.
+
+The [implementing-agent handoff](Docs/AGENT-HANDOFF.md) packages the reviewed scope, parallel work assignments, verification entry points and first feasibility stop line for the next implementation task.
+
+The supporting [Apple API reference](Docs/APPLE-API-REFERENCE.md) records the dated macOS 27 review, SDK observations, retained source documents, and freshness checks for each future PocketDesk task. It does not change product scope or turn experimental platform features into shipping commitments.
+
+## 1. How to use this document
+
+This is the canonical product specification for PocketDesk: purpose, scope, features, journeys, screens, interaction rules, visual direction, technical boundaries, and acceptance criteria. Supporting research and engineering documents provide evidence and implementation detail; they do not independently set product scope.
+
+Canonical repository: `/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk`. Relative paths resolve from this document's directory. Sibling `PocketDesk-media` and `PocketDesk-signaling` are Git worktrees, not separate products or specifications; they remain preserved and are not being developed during the pause. `PocketDesk-research` contains earlier research exports; the supporting copies under this repository's `Docs/` are the references used here. No folders have been deleted or declared archived without checking their state.
+
+- **Confirmed:** Roshan explicitly chose this in the current conversation.
+- **Proposed:** recommended here, awaiting review. Most feature and design details have this status.
+- **Later:** an idea deliberately retained outside the proposed first release.
+- **Unverified:** implementation or behavior has not been demonstrated with the necessary evidence.
+
+**Quick navigation:** section 4 lists the native and browser feature inventory; section 7 describes the user journeys; section 9 defines staged acceptance; section 12 distinguishes built/local-tested work from unbuilt or physically unverified features. The implementation ledger holds execution receipts, and research reports hold supporting evidence. Feature scope and current decisions are maintained here.
+
+“Prototype,” “beta,” and “release” below are proposed stages, not delivery dates. A feature's proposed stage is separate from its implementation status.
+
+When a decision changes, update its original section and the decision log at the end. Keep one current version at this path. Do not create another competing PRD or treat mockups, code, an old chat, or the attachment as a replacement specification. New user instructions take precedence and should be incorporated here.
+
+## 2. Product purpose
+
+**Continue work on your own Mac from your phone while away from home.**
+
+Roshan intends to use PocketDesk for work, coding, ChatGPT or Claude, and university assignments (D08). The experience must support reading, editing, switching between existing Mac applications, and checking the result of a change. Quick interventions remain useful, but they no longer define the entire product. These user needs do not by themselves prove demand beyond Roshan.
+
+The primary user is the owner of the Mac. Helping someone else, team administration, and gaming are separate use cases. Comfortable longer work sessions are a design goal to validate; full-workday laptop replacement is not an established capability. Desired session length and external-keyboard use remain open.
+
+**Differentiation hypothesis:** open your existing Mac workspace from the AI chat you already use, with reliable live video and comfortable phone controls. Browser entry and phone usability support the same workflow. The split-screen idea and MCP support alone are not sufficient differentiation. Integrated pause/resume applies only to a cooperating authorized runtime, initially an adapter-owned coding-agent session; ordinary Mac GUI conversations remain directly viewable/controllable without claiming runtime ownership.
+
+**Confirmed intent:** commercial product, validated through Roshan's own use first (D07). Use the work scenarios below to compare layouts. Proposed validation: record four weeks of voluntary use without reminders, including task, outcome, reason for choosing PocketDesk, and failures. Record eligible away-from-Mac occasions as well as uses, including why PocketDesk was or was not chosen. Six useful sessions is only a provisional exploration target, not proof of demand; an infrequent emergency tool needs a different success criterion. Compare the chosen task against an existing app before claiming an advantage. Personal use validates usefulness for Roshan; external customer testing must still establish broader demand and willingness to pay.
+
+### Confirmed decisions
+
+| ID | Decision | Boundary |
+|---|---|---|
+| D01 | First job: control a Mac while away from home | Internet connectivity is central, not a later add-on |
+| D02 | Reconsider platforms and connectivity using research | The attachment's platform assumptions are not binding |
+| D03 | Build PocketDesk's own remote access from the start | Do not make installation of Tailscale a product requirement |
+| D04 | An awake, unlocked Mac is acceptable for the early prototype | This does not settle locked-host behavior for the public product |
+| D05 | Test equipment available: iPhone 17, M4 MacBook Air; possible borrowed iPad; Apple Developer membership | Device OS versions, provisioning, and physical test results are unverified |
+| D06 | Establish this document before more coding | Source of truth established; latest clarification keeps this task plan-only, as recorded in D10 |
+| D07 | Commercial product, validated through Roshan's own use first | Self-use is the first validation stage, not a substitute for external customer evidence |
+| D08 | Intended recurring use: work, coding, ChatGPT/Claude, and university assignments | Broader than quick checks; exact apps, session lengths, and keyboard preference remain unspecified |
+| D09 | From the first nine concepts, Roshan prefers 2, 3, and 7, also likes 4; asks for a much more polished Apple app feel with Liquid Glass | These are reference preferences, not approval of every pictured control or a final implementation |
+| D10 | Prepare an implementation plan for a new agent; do not continue coding in this task | All three refined concepts are acceptable references; prioritize full-screen content, collapsible controls, native SwiftUI styling, and measured performance over further static polishing. The initial interpretation to start now was explicitly corrected by Roshan |
+| D11 | Investigate a workspace sized for the phone and larger-text host resolutions | Portrait virtual-display support is an experiment, not a dependency on Sidecar or a verified capability |
+| D12 | Build only the smallest useful private MVP first to find out whether the experience works; prioritize speed to real-device evidence | Commercial intent remains later. Broader beta/release features and exhaustive benchmarking are not prerequisites to this first feasibility decision |
+| D13 | Use native GPT subagents as needed, with smaller efficient coding workers and parent-led judgment/integration, following swarm-orchestrator | No Astra workers or reviewers. Keep this task plan-only; the implementing agent verifies available models and concurrency before dispatching |
+| D14 | Explore many deliberately rough UI/UX alternatives using Paper and Figma, with Mobbin inspiration | No final layout, branding, or design system selected; Claude design tooling deferred. Mockups are comparison material, not implementation approval |
+| D15 | Research live desktop viewing and human interaction through MCP, ideally inside ChatGPT or Claude on a phone; compare existing products | Research only. Human live viewing, human control, and agent visual input are separate capabilities. Password entry is one example, not the whole scope; protected prompts and mobile host support remain unverified |
+| D16 | Prefer a protected live website as the viewer foundation, opened from chat; embed the same viewer in compatible chat apps later | Browser-first feasibility research and a concrete plan authorized, including parallel research of implementation options. No browser/MCP implementation, public exposure, or account setup authorized by this decision |
+| D17 | Consolidate the resulting feature list, status, and plan into this existing single source of truth | Research reports support PRODUCT; they do not independently authorize features or become competing specifications |
+| D18 | Explicitly reconfirmed: this session is planning only; do not start implementation | Finish research, feature inventory and proposed execution sequence only. No application changes, deployment or account setup |
+| D19 | Use comparable apps to learn useful features; delegate the feature comparison and obtain a critical Claude review of the finished plan using the requested Opus 5 model if available | Research and plan review only. Do not infer competitor adoption, silently substitute the requested review model, or start implementation |
+
+### Work scenarios that guide the designs
+
+These are proposed concrete tests derived from D08, not claims that Roshan has selected a particular editor, AI workflow, or assignment type.
+
+| Scenario | Proposed task | What the controller must make comfortable |
+|---|---|---|
+| Coding | Read an error, edit a few lines in the Mac's editor, run a harmless test/command, inspect its output | Sharp text, indentation/punctuation, caret placement, selection, shortcuts, switching editor and Terminal |
+| ChatGPT or Claude on the Mac | Read an existing conversation, enter/refine a prompt, then inspect or use its result in another Mac app | Long text, scrolling, prompt editing, switching applications, Mac-local copy/paste |
+| University work | Read a reference in one Mac window, edit an assignment in another, save and check it | Sustained reading, precise selection, app switching, keyboard visibility, and confidence that edits are saved |
+
+**Value question to test:** when does access to the existing Mac workspace help more than using the corresponding phone app or website? Possible reasons include open work, local files/tools, or a task already running on the Mac. These are hypotheses, not confirmed restrictions of ChatGPT, Claude, or university software. PocketDesk remains a general desktop controller. D15 now authorizes research into a live MCP viewer, but does not authorize implementing an AI integration, autonomous coding system, or assignment-submission feature.
+
+Design priority: compare both controller layouts while reading and editing, not only while clicking a target. Include a proposed 20-minute mixed reading/typing session and record fatigue, zoom/pan frequency, typing corrections, hidden content, and whether the user wants a keyboard or larger screen. This is a usability experiment, not a new minimum session-length promise. Revisit the external-keyboard milestone if phone-only entry prevents useful work.
+
+### Proposed platform scope
+
+Start with a native iPhone client and Apple-silicon Mac companion. Support ordinary phone portrait and landscape layouts first. Use an iPad as a secondary layout test, with dedicated iPad optimization considered after the phone journey works. Keep future Windows/Linux hosts and Android clients possible without building them now.
+
+The earlier Duo/foldable concept remains a layout exploration. It is not a requirement for first use or a promise of verified hinge behavior. Proposed minimum OS versions are iOS 26 and macOS 26, inherited from the handoff and still subject to compatibility review.
+
+## 3. Research translated into design
+
+The research gathered 24 numbered examples across iOS and other platforms, plus an away-access discussion. These are qualitative reports across different releases, not 24 unique participants, a representative survey, or a hands-on benchmark.
+
+| Evidence pattern | Design response | What we must test |
+|---|---|---|
+| Remote access is valuable for emergencies and short interventions | Saved Mac, simple Connect, readiness check before leaving | Complete a useful task on cellular without returning to the Mac |
+| Users may like one app's controls but trust another app's connections | Treat connection reliability and input comfort as separate goals | Compare both on the same tasks and networks |
+| Tiny targets, cursor jumps, and click offsets cause frustration | Relative trackpad by default; stable geometry; explicit click/drag controls | Correct target after zoom, rotation, keyboard opening, and display changes |
+| Software keyboards obscure useful desktop content | Reserve a visible desktop region; keep keyboard controls compact | Read and edit without repeatedly hiding the keyboard |
+| Text composition and shortcuts fail in surprising ways | Separate committed text from physical keys; visible modifier state | Unicode, composition, punctuation, shortcuts, and external keyboard cases |
+| Frozen views and endless connecting states undermine trust | Honest states, stale-view protection, bounded retries, next action | Recover safely from outages without replaying actions |
+| Pricing and companion requirements are confusing | Clearly explain included apps, service requirements, and future relay limits | Users understand the offer before payment |
+
+Screens and Jump Desktop are the closest initial comparisons. Moonlight/Sunshine and tablet/fold reports inform performance and interaction testing. Control Pro's advertised free local feature set weakens the original LAN-only differentiation claim. None of this establishes that PocketDesk will outperform them.
+
+## 4. Complete feature map
+
+Everything in this section is **proposed** unless it directly restates D01–D06. “Release” means required before the first public paid release; items may be delivered earlier. Later ideas are retained in section 11.
+
+### Connection, trust, and availability
+
+| ID | Feature | Proposed stage | Required experience |
+|---|---|---|---|
+| F01 | Built-in remote access | Prototype | Connect across networks through PocketDesk; no separate VPN app |
+| F02 | Direct connection with relay fallback | Prototype | Attempt a direct route; fall back when necessary; test both routes |
+| F03 | Pair beside the Mac | Prototype | Expiring QR, explicit local approval, persistent revocable trust |
+| F04 | Pairing fallback | Prototype | Paste the same full-strength invitation when scanning is unavailable; no weak short-code shortcut |
+| F05 | Saved Mac | Prototype | Return to a paired Mac without repeating setup |
+| F06 | Device management | Prototype / release | Prototype: one phone–Mac pair; release proposal: several saved Macs/phones, one controller per Mac at a time |
+| F07 | Reconnect and cancellation | Prototype | Fresh authenticated session after interruption; cancel always available; no action replay |
+| F08 | Before you leave check | Beta | Confirm host readiness and an actual outside-network test; show when last verified |
+| F09 | Host availability controls | Prototype | Clear awake/unlocked requirement, explicit keep-awake choice, dated capability observations; no guaranteed permission-expiry forecast |
+| F10 | Locked, sleeping, or restarted Mac | Release decision | Determine supported behavior before public promises; early prototype may stop |
+| F11 | Optional start at login | Beta | Explicit opt-in, off by default; does not imply recovery through login/FileVault |
+
+### Viewing and navigation
+
+| ID | Feature | Proposed stage | Required experience |
+|---|---|---|---|
+| F12 | Real selected-display stream | Prototype | Aspect-correct, fresh Mac content; captured cursor is authoritative |
+| F13 | Portrait viewing model | Design comparison | Compare adjustable split with full-screen plus revealable controls; no default approved |
+| F14 | Landscape view | Prototype | Preserve usable viewing/input after rotation; dedicated 70–75% side-control layout is a beta candidate |
+| F15 | Fit, zoom, and pan | Prototype | Continuous zoom, reset, and unambiguous viewport pan are required for reading; 1–3× is a starting range to validate |
+| F16 | Adjustable split / full-view mode | Beta | User can prioritize reading without losing an obvious control/disconnect route |
+| F17 | Display selection | Prototype / beta | Select one existing display on Mac first; safe in-session phone switching in beta |
+| F18 | Adaptive quality | Prototype / beta | Bounded live stream first; polished Auto, Sharp, and Save data controls in beta |
+| F19 | Quality and connection details | Beta | Actual route, resolution, frame rate, and measured network information when available |
+| F20 | View-only sessions | Prototype | Useful viewing without Accessibility permission or remote-control consent |
+
+### Input and task completion
+
+| ID | Feature | Proposed stage | Required experience |
+|---|---|---|---|
+| F21 | Relative trackpad | Prototype | One finger moves pointer; two fingers scroll; predictable sensitivity |
+| F22 | Click, right-click, double-click | Prototype | Gesture and labeled-button routes; no tiny essential targets |
+| F23 | Deliberate drag | Prototype | Visible held state; explicit release; bounded cleanup on interruption with documented failure modes; releasing cannot undo an already applied action |
+| F24 | Native text entry | Prototype | Evaluate immediate committed-text entry plus separate key events; compose-and-Send remains a fallback candidate, not the settled default |
+| F25 | Keys and shortcuts | Prototype | Esc, Tab, Return, Delete, arrows; Command/Option/Control/Shift clearly shown |
+| F26 | Modifier behavior | Beta | One-shot by default; deliberate lock/hold; visible and easy to clear |
+| F27 | Sensitivity and scroll preference | Beta | Adjustable linear gain, predictable fine movement, natural/reversed scrolling choice |
+| F28 | Optional direct-touch mode | Beta candidate | Tap actual content; reject letterboxing; separate remote drag from local pan |
+| F29 | External keyboard | Release | Tested shortcuts, text composition, and focus; no doubled input |
+| F30 | Essential shortcut buttons | Beta | Small user-tested set, such as Copy, Paste, Select All, Undo; operate Mac's existing clipboard only |
+
+### Safety, settings, and delivery
+
+| ID | Feature | Proposed stage | Required experience |
+|---|---|---|---|
+| F31 | Stop sharing and revoke | Prototype | Prominent Mac stop; phone disconnect; revoke removes future access |
+| F32 | Stale-view protection | Prototype | Visible stale state; prevent unsafe control while view is unreliable |
+| F33 | Permission center | Prototype | Capture and control separate; request only when needed; actionable recovery |
+| F34 | Interruption cleanup | Prototype | Release remote-held input; stop/clear video; never replay text/clicks |
+| F35 | Accessible native interface | Prototype / release | Accessible foundations immediately; full audit before release |
+| F36 | Privacy and diagnostics | Prototype / beta | No content logging; optional redacted diagnostics export in beta |
+| F37 | Phone background privacy | Prototype | End active control and conceal captured content in background/app switcher |
+| F38 | Distribution | Beta / release | TestFlight phone app and signed/notarized Mac host; clean-machine verification |
+| F39 | Pricing, purchase, restore | After validation | Free research beta; business model and relay economics reviewed before billing |
+| F40 | Help and support | Beta / release | Setup, permission help, network troubleshooting, privacy policy, support route |
+
+### Browser viewer and chat integration — current research direction
+
+#### Coverage of Roshan's previous conversation
+
+Checked against user messages in conversation `01a0992a-27f6-7ca3-862c-670b343deebd` on 13 September 2026. Times below are UTC. This is a traceability index into the existing specification, not another feature backlog. Technical safeguards and specific control layouts are proposed design responses rather than claims that Roshan dictated every detail.
+
+| User idea or request | Source moment | Where it is retained / status |
+|---|---|---|
+| Try many rough UI/UX directions using Paper and Figma, with Mobbin inspiration | 06:50:12–06:50:55 | D14, sections 5–6, design exploration exports; no final design selected |
+| Consider Claude design tooling for a later final design system; use Paper/Figma first | 06:50:55 | D14 and implementation ledger; deferred possibility, not a prerequisite |
+| While away from the laptop, see what is happening on the existing desktop during development | 06:51:58 | D01/D08/D15, B01–B05 and B14; browser work unbuilt |
+| Let an agent/Codex request screen sharing through an MCP integration | 06:51:58–06:52:32 | B16; later tool integration after standalone proof |
+| Live sharing for the human, not a replacement with screenshots | 06:52:32 | B04 is continuous video; B18 screenshots remain a separate optional model capability |
+| Live interaction inside ChatGPT or Claude's mobile app | 06:57:19–06:57:47 | B06–B07/B17; host compatibility unverified, preserved as an explicit goal |
+| Enter a password directly from the phone as one example of broader interaction | 06:57:19–06:57:47 | B20 plus B07; separate secure-field/protected-prompt experiments, no password through chat |
+| Check existing products and the actual Codex/Claude capabilities | 06:53:33–06:56:24 | API assessment and competitor feature comparison; current D19 prioritizes learning from features |
+| Use a live website if embedded chat support does not work | 07:17:26 | B01/B16/B17; protected browser selected as the foundation in D16 |
+| Research the approach, then keep the feature list in one source of truth | 07:18:21–07:20:21 | This document, B01–B20, section 9B2, and subordinate implementation packages |
+| Do not implement during this session | 07:26:58 | D18 remains in force; review is now separately authorized by D19 |
+
+Human takeover and return (B19) is a proposed workflow elaboration of direct interaction while an agent works. It remains in the plan, but a reliable pause/resume protocol is an engineering proposal, not a capability established by the original request. The earlier native F01–F40 inventory and broader work/university scenarios remain intact; selecting the browser foundation did not delete them.
+
+**Confirmed direction D16; proposed implementation scope. Every browser/MCP feature below is currently unbuilt.** Existing Mac/native foundations are listed in section 12. A website is another client of the Mac companion, not a way to capture or control an arbitrary Mac without installing and authorizing the companion. Preserve existing native clients while testing this route; no replacement or deletion was requested.
+
+The first supported target to prove is a standalone phone browser. Opening inside a chat app is optional and must not be required for basic live viewing. HTML supplies the interface; WebRTC carries video and human input. A live viewer for the human does not automatically supply video to an AI model. [Browser WebRTC](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API), [MCP Apps](https://modelcontextprotocol.io/extensions/apps/overview)
+
+| ID | Feature | Proposed stage | Required experience / acceptance boundary |
+|---|---|---|---|
+| B01 | Protected browser viewer | First browser proof | Open an HTTPS page in Safari/Chrome; clear Connect and End session actions; never imply a loaded page is a connected Mac |
+| B02 | Browser enrollment and Mac readiness | Before real access | Establish browser authority with the user at the Mac; name selected display, capture status, and separate control consent; reuse normal OS permission flows |
+| B03 | Short-lived, scoped access | Before real access | A chat link is an entry point, not a reusable key; bind each session to the authorized browser and Mac, expiry, and view/control mode; preview/prefetch must not start or consume a session |
+| B04 | Live selected-display video | First browser proof | Advancing WebRTC video, correct aspect ratio, observable freshness; generated fixtures prove transport only, followed by real Mac capture |
+| B05 | Fit, zoom, pan, and rotation | Browser viewing MVP | Keep Mac text inspectable and preserve viewport geometry when orientation or keyboard changes; distinguish local panning from remote pointer motion |
+| B06 | Relative trackpad and pointer actions | Browser control MVP | Touchpad, scroll, click, right-click, double-click, deliberate drag and Release; direct absolute touch remains a later option |
+| B07 | Text, keys, and shortcuts | Browser control MVP | Commit Unicode/IME text once, supply labeled special keys and one-shot modifiers, retain uncertain drafts visibly, and never replay uncertain input |
+| B08 | Explicit view-only access | Before real access | Viewing works without control permission; Mac rejects input even if a browser crafts packets. A data channel used for session/status messages is not a control grant |
+| B09 | Stale-view protection | Browser viewing/control MVP | Disable input when capture/video is unhealthy, show the reason, and do not treat repeated stale frames as healthy capture |
+| B10 | Interruption and held-input cleanup | Browser control MVP | Release remote-held state on hide/disconnect where possible; Mac-side lease remains authoritative when the browser is suspended or disappears |
+| B11 | Fresh reconnect and cancellation | Browser MVP | Revalidate authority and establish a fresh session after interruption; provide cancel/retry; never resume with queued clicks/text |
+| B12 | Stop, expiry, and revoke | Before real access | Mac Stop sharing and expiry end access; browser close is not the only cleanup mechanism; revoked/replayed credentials fail |
+| B13 | One active viewer/controller | Browser MVP | Do not silently evict the native phone or another tab; explain busy/ended state. Concurrent viewers and independent controller handoff are later work |
+| B14 | Direct/relay connection and diagnostics | Private/public acceptance | Distinguish page load, signaling, media, and input health; report actual route and measurements; test forced TURN separately from direct/private paths |
+| B15 | Mobile browser usability and accessibility | Browser MVP foundations | Visible focus, labeled controls, readable UI, comfortable touch targets, soft-keyboard layout, explicit playback fallback; streaming desktop semantics are not promised to screen readers |
+| B16 | Chat/MCP session tools and link | After standalone browser proof | An authorized agent can request session/status/stop and return the viewer entry point; human video and keystrokes travel outside the model/tool transcript |
+| B17 | Embedded chat viewer | Later compatibility layer | T1 external browser is the baseline; T2 embedded view-only may offer Open to control; T3 embedded full control remains a desired experiment. Test media, focus, keyboard, fullscreen and lifecycle per host; never mark T2 as proof of T3 |
+| B18 | Optional agent frame/status inspection | Later, separate grant | Agent receives requested fresh frames or structured state with clear scope; this is distinct from the human's continuous video |
+| B19 | Human/agent takeover and return | Later workflow experiment | A supported runtime adapter must acknowledge pause and account for queued/in-flight work before claiming human ownership; explicitly resume with fresh context. MCP alone does not control arbitrary running sessions. Cooperative ownership is not a guarantee against input from unrelated Mac software |
+| B20 | Secure fields and protected prompts | Early capability experiment after authorized input works | User types directly into the remote interface; no password through chat/tools or persistent logging. Use harmless test strings in browser and native secure fields; OS authorization is a separate case. Keep the feature pending evidence rather than predicting universal success or failure; no remote TCC repair or login/FileVault unlock promise |
+
+**Initial browser scope excludes:** audio/microphone forwarding, file/clipboard synchronization, session recording, multiple simultaneous viewers, billing, a new consumer account platform, and guaranteed locked/sleeping-host access. These remain explicit later decisions, not missing prerequisites for a generated-video experiment.
+
+**Host support, checked 13 September 2026:** Claude documents interactive connectors on iOS/Android, but PocketDesk WebRTC and keyboard behavior there remain untested. OpenAI's private developer-mode custom MCP app route is web-only; broader mobile plugin availability does not establish support for this private custom viewer. A standalone browser remains the common foundation. [Claude](https://support.claude.com/en/articles/13454812-use-interactive-connectors-in-claude), [OpenAI custom apps](https://help.openai.com/en/articles/12584461), [OpenAI plugins](https://learn.chatgpt.com/docs/plugins)
+
+## 5. Information architecture and screen designs
+
+These are structural wireframes and behavior specifications, **not approved final visual mockups**. Desktop areas always represent the real selected display; no decorative fake desktop, dock, or online badge should masquerade as functionality.
+
+### Phone screen inventory
+
+| Screen | Primary content | Primary action | Secondary routes |
+|---|---|---|---|
+| Home | Saved Mac cards; last contact clearly dated; truthful current availability if checked | Connect | Pair Mac, settings, help |
+| Pair Mac | Brief instructions; scan camera; expiry/approval progress | Scan pairing QR | Paste invitation, camera help, cancel |
+| Connecting | Mac name; current connection step; bounded progress | Cancel | Explanation and retry after failure |
+| Controller | Live desktop; control/view-only state; trackpad or keyboard | Operate Mac | Fit, zoom, display, quality, disconnect |
+| Session options | Display, layout, quality, input preferences, connection details | Apply selection | Stop session |
+| Mac details | Paired identity label; readiness; last verification | Connect / run readiness check | Forget this Mac |
+| Settings/help | Input preferences, appearance behavior, privacy, troubleshooting | Contextual action | Export redacted diagnostics when implemented |
+
+### Portrait controller — candidate A: split
+
+```text
+┌──────────────────────────────────┐
+│ MacBook Air  · Connected     [⋯]  │
+├──────────────────────────────────┤
+│                                  │
+│       Live Mac display           │
+│       Preserve aspect ratio      │
+│                                  │
+├──────────────────────────────────┤
+│ [Fit] [Zoom] [Keyboard]           │
+│                                  │
+│       Relative trackpad          │
+│                                  │
+│ [Click] [Right-click] [Drag]      │
+└──────────────────────────────────┘
+```
+
+Compare this adjustable split against candidate B below on iPhone 17. A 40–45% region is a starting hypothesis only. Fit-to-width can make desktop text unreadable in either portrait candidate: giving the image more height does not increase a width-constrained image's scale. Zoom and pan therefore belong in the first prototype. Evaluate actual Mac logical resolution, captured pixels, font size, and phone presentation; Claude's approximate 0.27× arithmetic is illustrative, not a measured result for these devices. Safe areas and larger text take priority. Session options always expose Disconnect; an active drag shows a prominent Release action.
+
+### Portrait controller — candidate B: full-screen with revealable controls
+
+```text
+┌──────────────────────────────────┐
+│ MacBook Air                 [⋯]  │
+│                                  │
+│       Live Mac display           │
+│       Zoom / pan viewport        │
+│                                  │
+│  [Reveal trackpad / keyboard]     │
+│  [Click] [Right-click] [Release]  │
+└──────────────────────────────────┘
+```
+
+This candidate uses more vertical space for a zoomed viewport but may obscure content with controls or a finger. Keep gestures for viewport navigation separate from remote input. Test the same reading, target selection, dragging, and typing tasks in both candidates; choose a default after review and task results. Full-screen is not presumed superior merely because it has more area.
+
+### Keyboard mode
+
+```text
+┌──────────────────────────────────┐
+│ MacBook Air  · Connected     [⋯]  │
+├──────────────────────────────────┤
+│       Live Mac display           │
+├──────────────────────────────────┤
+│ [Esc] [Tab] [⌘] [⌥] [⌃] [⇧]     │
+│ [Text for your Mac…]      [Send]  │
+│ [←] [↓] [↑] [→]   [Trackpad]     │
+├──────────────────────────────────┤
+│       Native phone keyboard      │
+└──────────────────────────────────┘
+```
+
+The wireframe above illustrates the compose-and-Send candidate. Compare it with immediate entry for search/autocomplete, document editing, and a harmless Terminal command. A shared ordered transport does not make text commits and physical key events equivalent: preserve IME composition, Unicode, key up/down, modifiers, and shortcut semantics separately. Do not convert all Unicode into guessed hardware keys. Transmit committed text once; label unsent drafts and never silently send them to another session. Keep the desktop result visible. Default typing behavior remains a design decision.
+
+### Landscape and expanded viewing
+
+```text
+┌─────────────────────────────────────┬─────────────────┐
+│ MacBook Air                    [⋯]  │ [Keyboard]      │
+│                                     │                 │
+│          Live Mac display           │    Trackpad     │
+│                                     │                 │
+│ [Fit] [Zoom]                        │ [Click] [Drag]  │
+└─────────────────────────────────────┴─────────────────┘
+```
+
+Start around 70–75% desktop width. A later full-view option uses a revealable compact controller. Opening the keyboard or rotating must not change what a pending click targets; cancel/reconcile active gestures before changing geometry.
+
+### Mac companion inventory
+
+| Screen | Content and behavior |
+|---|---|
+| Welcome/setup | Explain screen sharing; select display; separate capture and control permission steps |
+| Host home | Selected display, readiness, control toggle, Pair phone, prominent Stop sharing |
+| Pair phone | Expiring QR; pending approval; cancel invalidates enrollment; never show an invitation indefinitely |
+| Incoming approval | Explain that the holder of this invitation is requesting trust; approve or deny; device names are labels, not identity proof |
+| Menu bar | Sharing status, connected device label, selected display, Stop sharing, open settings, Quit |
+| Trusted devices | Paired device labels, revoke; revocation also ends current access |
+| Availability/settings | Explicit keep-awake and start-at-login preferences, permissions, connection details |
+
+The public onboarding should not require a person to understand signaling URLs, room hashes, or TURN settings. Those may exist in a clearly labeled developer setup during the prototype. They are not the proposed customer experience.
+
+## 6. Visual and interaction direction
+
+**Confirmed visual direction: a polished native Apple app using Liquid Glass.** The Mac content is the focus. Use system typography, standard navigation/sheets, SF Symbols, and Liquid Glass for floating navigation and controls. Keep the trackpad's touch surface quiet and remote content sharp; respect light/dark appearance. Do not blur the whole desktop or let glass treatment undermine reading. Apple's guidance places Liquid Glass in the control/navigation layer above content. [Apple materials guidance](https://developer.apple.com/design/human-interface-guidelines/materials).
+
+### Selected visual references — first round
+
+Numbers below refer specifically to the first set of nine images, not later refinement rounds. Files are the actual displayed references; their example desktop content and zoom labels are illustrations, not fidelity or performance evidence.
+
+| Original concept | User response | Element to explore | Source image |
+|---|---|---|---|
+| 2 — Immersive Canvas | Favourite | Screen-first viewing and minimal floating toolbar | [Image](/Users/roshansilva/.codex/generated_images/01a0957a-549b-7312-8f30-6b0920e12a8d/exec-dfc71eeb-df5a-4273-a57e-edd32cea3fcf.png) |
+| 3 — Floating Thumbpad | Favourite | Movable compact trackpad over the viewport | [Image](/Users/roshansilva/.codex/generated_images/01a0957a-549b-7312-8f30-6b0920e12a8d/exec-d77204ae-bd1b-431d-8514-526bf755f46c.png) |
+| 7 — Reading Room | Favourite | Reading-focused view with easy access to control | [Image](/Users/roshansilva/.codex/generated_images/01a0957a-549b-7312-8f30-6b0920e12a8d/exec-d71777d5-6729-48af-9362-eb7a1da847eb.png) |
+| 4 — Sliding Desk | Also liked | Pull-up control drawer | [Image](/Users/roshansilva/.codex/generated_images/01a0957a-549b-7312-8f30-6b0920e12a8d/exec-607fafc8-0039-452b-91ab-aeef0a8870c9.png) |
+
+Refinement brief: combine these into a consistent family with compact glass capsules, harmonious continuous corners, sparse accent colour, clear local-versus-remote hierarchy, and thumb-reachable controls. Reduce oversized headers, prominent destructive buttons, decorative laptop thumbnails, and bulky toolbar panels. Compare floating thumbpad, collapsed reading controls, and expanded drawer states. Exact default, gestures, and control placement remain proposals. HTML will approximate the material for design review; native Liquid Glass and motion need later SwiftUI/device verification.
+
+Second-round visual references, in their displayed order: [1](/Users/roshansilva/.codex/generated_images/01a0957a-549b-7312-8f30-6b0920e12a8d/exec-9187eba6-f1df-4f1d-88b2-3e9f9e1aacd3.png), [2](/Users/roshansilva/.codex/generated_images/01a0957a-549b-7312-8f30-6b0920e12a8d/exec-d944bb03-272b-43ce-a371-a608c3299601.png), [3](/Users/roshansilva/.codex/generated_images/01a0957a-549b-7312-8f30-6b0920e12a8d/exec-a1b1ac40-4b2f-4c9f-a44e-c266456f8af1.png). Roshan likes all three and prefers native implementation and screen-space efficiency over further static polishing. They remain illustrative mockups, not proof of native glass rendering or remote text readability.
+
+Use a system accent for primary actions, amber for degraded/held states, and red for destructive actions. Always pair color with text or an icon. Use at least 44-point touch targets, clear VoiceOver labels, Dynamic Type in chrome, sufficient contrast, Reduce Motion, and Reduce Transparency support. The streamed desktop itself has no promised semantic VoiceOver navigation.
+
+Optional haptics acknowledge local gestures, not remote delivery. Never use a local animation as proof that the Mac received an action. First-use teaching is a short dismissible hint, not a long tutorial carousel.
+
+**Design status:** initial controller references and Apple Liquid Glass refinements remain historical input. On 13 September, D14 reopened divergent rough exploration: [Paper](https://app.paper.design/file/01M2CRXJK2AWYFJXF0J741YASQ/1-0) contains seven phone arrangements and three Mac setup alternatives across four editable boards; [Figma](https://www.figma.com/design/G7YAHjVqpau7eIpGk78DfI?node-id=2-167) contains four partial concept cards before a plan limit stopped work. [Comparison and references](outputs/design-exploration-2026-09-13/research.md) explain tradeoffs. These are static rough wireframes, not working browser/native prototypes or final choices. A coherent final state system, browser-specific mobile layout, light/dark and larger-text review, branding, icon, spacing tokens, and name availability remain open.
+
+## 7. User journeys and state behavior
+
+### First setup
+
+Install Mac companion → understand capture/control → choose display → grant requested capabilities → open pairing → scan/paste invitation on phone → approve locally on Mac → persist trust → connect → receive fresh video → enable only authorized controls.
+
+Camera permission is requested only on Scan. Denial offers paste or permission help. Accessibility is optional for viewing. Enrollment expires after a proposed 120 seconds and is canceled when its UI closes. Reusable credentials belong in device-only secure storage, not screenshots or logs. Pairing review must cover someone photographing the QR, racing approval, or reusing an exposed invitation. Evaluate a comparison code bound to a fresh authenticated handshake on both devices; a cosmetic code or a device name is not sufficient. Pin the trusted cryptographic identity and authenticate the session's media fingerprint. The precise key/handshake design requires review rather than assuming an extra code fixes every pairing attack.
+
+### Away-from-home use
+
+Open phone app → select saved Mac → authenticate → establish direct or relayed path → show usable live view → complete task → disconnect. The consumer should not need router port forwarding or a second networking app.
+
+### Browser access from chat — proposed journey
+
+Prepare the Mac and browser authority beforehand → open PocketDesk from a chat link or bookmark → verify the named Mac/display and permitted mode → press Connect → see live content → use only authorized controls → End session. Opening or previewing a link alone must not start capture or consume a one-use credential. If a chat's embedded browser cannot support the session, offer the same viewer in the system browser.
+
+An agent may initiate this journey through a later MCP tool, but an agent is not required to use the browser viewer. Watching a build, reading an error, making a direct correction, and returning to chat is the primary proposed cross-surface walkthrough. Password entry is one separate acceptance case, not the defining task. Missing Mac capture/control permissions still require the existing setup/recovery flow; the website cannot be assumed to repair its own prerequisites.
+
+### Before leaving
+
+Verify host is running, selected display available, required permissions active, and supported awake/unlocked conditions met. Ask the user to turn off phone Wi-Fi and complete a real connection test. Store the result and time; a past test is not a guarantee that the Mac remains reachable later.
+
+Keep this as a lightweight prototype test step; the polished readiness screen can wait. A service heartbeat only proves that the host reached that service recently. It does not replace a phone-to-Mac cellular/media/control test. Report capture/control readiness separately, with the time and provenance of each check. Periodic re-approval behavior and permission loss need testing for the actual OS, API path, signing identity, and entitlements; do not invent an exact expiry countdown. Push alerts are a beta candidate, not a guarantee: a sleeping/offline host may be unable to report why it stopped.
+
+**Away-use recovery rule:** each failure must offer a phone-side action or explicitly state that access to the Mac is required. We cannot guarantee prevention of every host-side failure. Retry cannot repair revoked OS permissions, a powered-off Mac, or lost trust. Do not instruct users to weaken Mac security to avoid those cases.
+
+| Failure | Phone alone? | Honest recovery |
+|---|---|---|
+| Brief network interruption | Usually, if host and service recover | Retry/cancel, change phone network; establish a fresh session |
+| Setup service outage | No guaranteed remote recovery | Show service failure only when verified; retry later; do not blame the Mac |
+| Capture or Accessibility revoked | No in the proposed prototype | State that someone must act at the Mac; preserve pairing if still valid |
+| Expired invitation or replaced identity | No for new trust | Re-pair beside the Mac; never bypass identity checks while away |
+| Lost phone / lost all trusted clients | No independent revocation route yet | Prototype limitation; define independent recovery/revocation before external beta |
+| Display removed | Not in single-display prototype | Stop input; do not silently switch screens; host-side action required |
+| Sleep, lock, shutdown, logout, or restart | Not supported by current prototype | Explain limitation; do not imply a keep-awake option defeats lid closure or power loss |
+
+### Interruption
+
+Phone backgrounds, locks, or loses connectivity → disable control, release remote-held input, conceal video → reconnect through a fresh session on return. Preserve pairing, discard old queued actions. Never silently continue control over a frozen desktop.
+
+| State | What the user sees | Safe behavior / next action |
+|---|---|---|
+| No paired Mac | Setup explanation | Pair Mac |
+| Checking / connecting | Named step and cancel | Time out with useful recovery |
+| Waiting for approval | Check your Mac | Cancel or approve locally |
+| Invitation expired | Code expired | Generate a new invitation |
+| Connected | Live view and control state | Enable only authorized actions |
+| View only | Control disabled explanation | Continue viewing or grant control on Mac |
+| Poor connection | Quality reduced / connection unstable | Prefer freshness; expose details |
+| Stale view | Dimmed or hidden image, clear label | Disable input; recover or disconnect |
+| Reconnecting | Attempt status and cancel | Bounded retries; no replay |
+| Host unavailable | Cannot reach Mac | Explain possible causes without pretending to know sleep/lock status |
+| Permission lost | Specific permission, when known | Stop affected capability; recovery on Mac |
+| Display removed | Selected display unavailable | Stop input; explicitly select another display |
+| Another controller | Mac already controlled | Do not silently evict the other session |
+| Trust/version failure | Re-pair or update required | Fail closed; never bypass identity checks |
+| Disconnected | Session ended | Clear video and held input |
+
+## 8. Connectivity, privacy, and security boundaries
+
+**Confirmed outcome:** PocketDesk handles its own remote access. **Proposed architecture:** native WebRTC for video and input transport, a PocketDesk service to introduce authenticated devices, and a relay for networks that prevent direct connections. “Own remote access” means owning the integration and customer experience; it does not require inventing cryptography or codecs.
+
+```mermaid
+flowchart LR
+    Phone[Phone] <-->|Authenticated setup| Service[PocketDesk connection service]
+    Mac[Mac companion] <-->|Authenticated setup| Service
+    Phone <-->|Preferred encrypted direct session| Mac
+    Phone <-->|Encrypted fallback| Relay[PocketDesk relay]
+    Relay <-->|Encrypted fallback| Mac
+```
+
+The setup service should not be able to substitute a different authenticated endpoint. Protect negotiation end to end; bind sessions and inputs to fresh identifiers; reject replayed, malformed, oversized, expired, or revoked requests. Use maintained cryptographic and media components and obtain security review before public release.
+
+End-to-end encryption is a requirement, not a completed security certification. The service can still observe connection metadata such as addresses, timing, and traffic volume. Do not claim “no cloud,” “zero metadata,” or anonymity. Prototype beta access needs registration/relay abuse limits, short-lived relay credentials, and explicit cost controls.
+
+Screen capture begins only for authorized content after authentication. Control additionally requires the Mac user's consent and relevant OS permission. Stop sharing must end both promptly. No remote shell, arbitrary scripts, login-password storage, hidden screen capture, keystroke logging, automatic clipboard upload, or analytics SDK is proposed.
+
+Heartbeats and a proposed two-second session lease provide a fallback for lost disconnect messages. Separately evaluate a shorter held-button/modifier lease, starting at 0.5–1 second, and block new drags when delivery health is uncertain. Test loss and jitter before freezing timer values: aggressive expiry can release a legitimate drag unexpectedly, and releasing a mouse button can itself complete a file drop. No timeout can guarantee undoing actions already applied. The host releases only remote-generated held state. Stale-video detection must distinguish an unchanged desktop from an interrupted pipeline.
+
+Browser work extends the native capture-health mechanism: `RemoteCapture` already distinguishes `.complete`/`.idle` from unhealthy states and has a 0.8-second status cutoff. Host capture/status health and browser presented-video health must both be checked. An advancing signaling heartbeat does not prove that the displayed pixels are current. G0 must specify session/source revision, capture sequence, monotonic timing and the mapping to the frame actually presented; if the negotiated browser path cannot establish that mapping, input remains disabled until a supported freshness check exists. Include delayed-but-advancing media in tests. A provisional 600 ms upper bound on estimated displayed-frame age is a starting input-blocking experiment, separate from the later p95 performance targets; include clock-offset uncertainty and do not derive frame age from RTT alone. A source/crop geometry change invalidates prior input until the new revision is displayed. Exact transport fields and conservative timing bounds belong in the reviewed G0 contract.
+
+Retain existing native held-state cleanup and leases. Do not automatically inject Escape or move back to a drag origin on timeout: those actions can themselves have application effects. Test supported cancellation and release behavior in harmless fixtures and document what cannot be reversed. One-shot modifiers may use event flags where verified, but are not a universal substitute for testing keyboard semantics.
+
+Proposed media baseline: SDR H.264, aspect preservation, bounded queues, one automatic quality mode. Compare 30 and 60 fps with text readability, input response, motion, battery, and network cost measured together; neither rate is an approved shipping promise. Test sharp idle refresh without mistaking repeated stale frames for capture health. Defer user-facing quality presets. Hardware acceleration, achieved frame rate, battery life, and latency require physical measurement.
+
+Start the browser experiment at 30 fps and inspect negotiated H.264 profile, packetization and decoded output rather than assuming codec compatibility. Test small syntax-colored text at the phone's actual display scale early. Compare whole-display encoding/local zoom with a representative native-resolution crop; adopt viewport-aware encoding in the first useful viewer if the simpler baseline is unreadable. Cropping is a mitigation to measure, not a compulsory new subsystem without evidence. Keep protocol source/geometry revision support regardless of the selected rendering approach. The 30/60 comparison remains follow-up tuning if useful. [WebRTC codec requirements](https://www.rfc-editor.org/info/rfc7742/)
+
+#### Proposed browser admission decision for G0
+
+Use a separate browser credential namespace and store, initially one `BrowserPeer` record containing an identifier, public key, approved display scope, view/control grants and revocation state. Leave the existing native pair and its storage unchanged; no multi-peer native migration is required for the browser proof. Enrollment happens while the user has access to the Mac. The browser creates a WebCrypto P-256 key with a non-extractable private key stored in IndexedDB, and pins the Mac identity presented during enrollment. This identifies an enrolled browser profile, not a physical device. Same-origin malicious code could use the key, so non-extractability is not an XSS defense.
+
+Proposed connection flow: inert GET entry → explicit Connect → signed fresh challenge over authenticated HTTPS → short-lived single-use connection ticket → dedicated browser WSS route → host-verified session proof binding both identities, scope and media negotiation. The ticket travels in the first bounded WSS authentication message, not in a shareable URL; the server sends no session information before validation and closes unauthenticated sockets promptly. The long-lived browser key is never a tool result. G0 must settle canonical signed fields, expiry, replay handling and WebCrypto/CryptoKit signature representation using small cross-language fixtures and maintained primitives before real access. A ticket grants transport admission; the host separately enforces capture/control authority and verifies the peer/media binding. This is a proposed contract to review and test, not implemented cryptography.
+
+An exact Origin allowlist is an additional browser-origin defense, not authentication; non-browser clients can forge an Origin header. Preserve the native route's existing rejection while adding independent credential checks to the browser route. Do not use ambient cookies as the sole WSS authority. B03's link-preview/prefetch rule remains: GET does not mint, redeem or activate a grant.
+
+Storage loss is an expected state: Safari, private browsing, embedded partitions and installed web apps can have different persistence. No device fingerprint replaces a lost key, and chat embedding does not inherit Safari enrollment. Initially, re-enroll at the Mac; if away, show that access requires the Mac rather than silently granting recovery. A trusted-device recovery mechanism is later work. WebKit documents script-storage expiry and a first-party Home Screen exception, not a universal seven-calendar-day deadline. [WebKit storage policy](https://webkit.org/tracking-prevention/)
+
+The early prototype does not depend on Apple's Persistent Content Capture entitlement. Apple describes it for VNC apps and requires permission before use; PocketDesk has no recorded approval. If the tested capture path needs that entitlement for a later persistent-access claim, obtain approval and validate the exact signed build before making that claim. The entitlement alone does not prove locked-host, sleep, FileVault, or remote permission-repair support, and this review does not establish that every form of awake/unlocked away access requires it. [Apple entitlement documentation](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture)
+
+The unattended Mac's physical screen and notifications may reveal what is shared. Explain this during setup; offer notification guidance without silently changing system settings. Blanking the physical display while preserving usable capture is an unverified later capability.
+
+The detailed [remote protocol draft](Docs/REMOTE-PROTOCOL.md) is subordinate engineering material and may change after this review. The attachment's two-TCP LAN protocol is not the chosen internet architecture.
+
+## 9. Proposed milestones and acceptance
+
+### A. Product/design agreement — sufficient to begin implementation
+
+The second-round concepts and architecture discussion provide enough direction for an implementation handoff (D10). Roshan clarified that coding should continue with a new agent, not in this task. The recommended native direction uses an edge-to-edge session viewport, collapsible connection header, floating trackpad, and keyboard on demand. Interaction details still need device testing; existing exploratory code is evidence to assess, not a constraint on the design.
+
+### B. Working private prototype
+
+**Immediate milestone: a feasibility MVP (D12).** Deliver one phone controlling one awake, unlocked Mac across networks, using the existing stack, native default controls, readable fit/zoom/pan, basic mouse/text/keys, explicit trust/control consent, and safe disconnect. Developer setup is acceptable. Its purpose is to decide whether Roshan can complete one useful work task from the phone. Do not build the complete backlog before answering that question.
+
+MVP completion requires an observed physical iPhone/Mac task over cellular, a local baseline, a separately verified forced-relay session, successful pairing/rejection/revocation checks, and recovery/input-release checks including an interruption during a drag. Record actual response/readability, route, failures, and any Mac intervention. A small timing sample can guide feasibility, but cannot establish the later p95 targets. If devices or service access block the live test, report a runnable but **unvalidated MVP**, with the exact missing step; do not declare the hypothesis proven.
+
+Stop this delivery at the feasibility result and a concise continue/change/stop recommendation. Dedicated iPad work, virtual displays, lock/login support, accounts/billing, polished onboarding, multiple devices, audio/files/clipboard sync, extensive competitor benchmarking, and public release engineering stay outside this milestone. Authentication, input cleanup, meaningful tests, and independent review of sensitive paths remain required. The broader prototype and beta validation below is retained as follow-up scope; it is not all required before the first feasibility decision.
+
+One phone, one Mac, one explicitly selected existing display. The prototype has only four task-level requirements: establish trust and connect; read/navigate a zoomed view; make a precise pointer/text/key change; disconnect/recover safely. Pair/revoke, permission checks, view-only authorization, input cleanup, and honest failure states remain necessary foundations. The user may leave the host awake and unlocked. Developer-only setup is acceptable if clearly labeled.
+
+| Prototype must include | Next-stage scope, not required to pass prototype |
+|---|---|
+| Expiring pairing with local approval, stored trust, revoke, Stop sharing | Multiple saved devices, account recovery UI |
+| One selected display, fresh video, continuous zoom/pan, basic rotation | In-session display switching, custom landscape side panel, dedicated iPad |
+| Relative input, click/right/double-click, deliberate drag, text and keys | Direct touch, external keyboard, sensitivity preferences, shortcut palettes |
+| Permission/control consent, view-only when control is disabled | Elaborate mode selection or settings |
+| Direct and forced-relay connection; stale/error/cancel states | Quality presets, customer diagnostics panel, exports |
+| Explicit keep-awake choice and dated readiness observations; manual cellular check | Polished departure wizard, push alerts, service-independent LAN path |
+
+The feature map is the complete backlog. Mixed-stage entries describe progressively richer versions; the two columns above define the prototype boundary. No requirement for an external beta or public release is silently deleted by this narrowing.
+
+Expanded prototype validation after the initial feasibility MVP requires actual iPhone 17/M4 Mac task completion on LAN, cellular, and another external Wi-Fi network. A local loopback, simulator demo, or successful build does not pass the remote-access gate. Demonstrate a forced relay session separately from a direct session.
+
+Provisional connectivity/task gate: on two different days, away from home, make a small edit and run one harmless command in Terminal without someone touching the Mac during or to restore those sessions. Initial setup happens beforehand. This is a technical smoke test, not the full usability gate. Also exercise the coding, AI-conversation, and assignment scenarios in section 2, including a proposed 20-minute work session. Record completion time, errors, interventions, readability, and fatigue for both controller candidates.
+
+Provisional performance bars for review: at least 19/20 connection attempts reach a usable view within 10 seconds in each declared supported test condition; physical input-to-visible p95 at most 150 ms on the reference LAN and 400 ms on the declared relay route. These are proposed budgets, not measurements or guarantees. Record RTT, geography, load, resolution, and sample size; collect at least 100 interactions for latency. Developer records measurements; Roshan assesses readability and usefulness. Misses trigger investigation or an explicit documented scope/budget revision, not quietly moving the threshold after a test.
+
+### B2. Browser feasibility — proposed next sequence, not started
+
+Browser research does not replace or pass the native physical gates above. Restore runtime Mac permissions at the earliest authorized opportunity, in parallel with S0/G0; this has no promised duration and need not block generated-source learning. The prototype accepts an awake/unlocked Mac whose physical display may remain visible, as already selected in D04. Hidden/headless operation is not a new prerequisite. The website path can prove transport with generated frames while real Mac capture remains blocked, but must subsequently pass real capture and human-input tests.
+
+**S0 fixture specification:** render invented, non-sensitive code and a stack trace in a real monospace font at the target Mac display's pixel resolution and scaling. Include small punctuation, indentation, thin syntax-colored glyphs, selected text and dark/light editor backgrounds. Send it through the intended H.264 sender at recorded bitrate/resolution settings; compare full-display and native-scale cropped regions on the actual phone. Add a changing frame counter/timestamp and movement so a static image cannot pass. Record whether text can be read accurately and where zoom is needed. This provisionally measures codec/display readability only; repeat with authorized ScreenCaptureKit output before G1 is accepted.
+
+**Embedding tiers:** T1 passes when the chosen chat's link opens the authenticated standalone viewer, or a clear Open in browser action reaches it, and reconnect after backgrounding establishes fresh authority without replaying input. T2 passes when a separately authorized embedded view shows advancing video, supports local fit/zoom/pan, preserves view-only enforcement, and offers a working Open to control path to T1. T2 never requires or grants remote pointer input. T3 separately requires the remote pointer, keyboard/IME and lifecycle controls to pass in that host. A keyboard failure may leave T2 useful but cannot pass T3; no tier is claimed supported before its actual device test.
+
+| Gate | Scope / feature IDs | Evidence required before progressing |
+|---|---|---|
+| S0 · Early compatibility and readability probes | B04–B05, B15–B17 | After implementation authorization, send generated/non-sensitive code-like text and changing frames to physical iPhone Safari early; check decoded sharpness, local zoom versus a native-scale crop, keyboard viewport behavior in a local-only form, and opening an inert viewer link from the chosen chat. No Mac capture or OS input before reviewed admission. Use isolated private access and disposable session credentials; no public endpoint. This is an experiment, not a safety exemption or product acceptance |
+| G0 · Admission and protocol contract | B02–B04, B08, B12 | Use S0 observations to settle separate BrowserPeer storage, signed challenge and one-use ticket flow, origin policy, binary framing, identity/media binding, geometry revisions and displayed-frame freshness. Small cross-language valid/malformed/replay fixtures; native pairing and reconnect unchanged. Review before real access |
+| G1 · Standalone live viewer | B01, B04, B08–B09, B12 | Authorized selected real display as soon as runtime Mac permissions are repaired; generated source retained for deterministic failure tests. Physical Safari first. Readability judged here; use measured crop mitigation if needed. Explicit playback/error state, view-only injection denied, Stop/expiry/reload end old access. A generated-only result remains transport evidence |
+| G2 · Browser controls on physical phone | B05–B07, B10–B11, B15, early B20 probe | Develop with harmless fixtures and test on iPhone Safari from the first input slice. Pointer, committed Unicode/IME, shortcuts, keyboard layout, rotation, stale/delayed media and interrupted drag. Never replay uncertain input. Test harmless browser/native secure fields separately after ordinary input works; OS prompts remain a separate unproven case |
+| G3 · Complete private phone task | B02–B15 | One selected real display, readable content, reflected edit and interruption recovery on physical iPhone Safari; then test Chrome as a distinct surface. Tailscale may support this private test only. Confirm actual runtime Mac permissions; record app restart/reboot/permission-loss observations when available, without inventing consent cadence |
+| G4 · Standalone internet access | B14, F01–F02 | Provider/account work only after Roshan resumes it. Authenticated reachable signaling, physical cellular and separately forced TURN, actual route metrics, bounded usage, cleanup/revoke. Preparation can run alongside private work; neither Tailscale nor a heartbeat passes this gate |
+| G5a · MCP session tools | B16 | Local tool harness can follow G0; real hosted-chat acceptance needs a provider-reachable authenticated MCP endpoint plus G4's proven away viewer. Tools request/status/stop and return inert locators; no secrets or human input in model history. S0 link opening alone is not MCP acceptance |
+| G5b · Embedded viewing | B17, tier T2 | Probe each eligible host with the proven viewer and separate embedded enrollment/authorization. Continuous view-only media, lifecycle and Open to control fallback. Failure retains T1 external-browser access |
+| G5c · Embedded full control | B17, tier T3 | Distinct test of phone keyboard/IME, focus, pointer, soft-keyboard layout and interruption inside each chat host. T2 does not pass this gate; retain the requested feature as unverified if it fails |
+| G5d · Supported runtime handoff | B18–B19 selectively | One cooperating authorized runtime, initially an adapter-owned coding-agent session. Check queued/in-flight work, scoped pause acknowledgement, explicit control ownership and fresh-context resume. Does not claim control over arbitrary desktop chat sessions or unrelated processes |
+
+Use Safari and Chrome as distinct browser acceptance targets and test any in-app/embedded browser separately. Hardware keyboard, IME, soft-keyboard viewport changes, playback restrictions and background suspension need actual device observations. A browser-only loopback result is not physical iPhone proof. B20 protected-input testing remains separate and is not a prerequisite to showing a generated live stream.
+
+The execution packages, implementation write-sets and validation details belong in the [implementation ledger](Docs/IMPLEMENTATION-PLAN.md); this table is the authoritative product acceptance sequence. Research authorizes these proposals, not starting their implementation.
+
+### C. Usable external beta
+
+Unaided onboarding, readiness check, complete recovery/error flows, tuned keyboard/view layouts, accessible controls, diagnostics, and repeat-use research. Deliver through TestFlight and a signed/notarized Mac installer. Decide multi-device management and locked-host support before promising them.
+
+### D. Public release decision
+
+Require observed preference/repeated usefulness, sustainable relay economics, compatibility and security review, release signing, privacy/support materials, and a validated purchase model. No delivery date or guaranteed App Store approval is implied.
+
+| Area | Proposed acceptance evidence |
+|---|---|
+| Useful task | Exercise coding, Mac-based ChatGPT/Claude, and assignment workflows from outside home; evaluate a sustained reading/editing session as well as quick corrections |
+| Trust | Wrong/expired/replayed/revoked credentials cannot authorize video or input |
+| Relay | Direct and forced-relay sessions independently demonstrated; route correctly reported |
+| Input | No wrong-target click across fit/zoom/rotation/keyboard/display changes; no stuck holds past lease expiry |
+| Text | No doubled committed text; Unicode and shortcuts tested; secure-input limitations documented |
+| Recovery | Network change, outage, backgrounding, process termination, and permission loss tested; no replay |
+| Availability | Separate tests for lock, display sleep, system sleep, lid close, logout, restart, and display removal |
+| Stability | At least 50 connection cycles and a 30-minute session; bounded memory and no stale resource use |
+| Accessibility | VoiceOver for app controls, large text, contrast, reduced motion/transparency, labeled gesture alternatives |
+| Performance | Report median/p95 physical input-to-visible response and connection times by route/network; no invented latency claims |
+| Distribution | Fresh installation and pairing on physical devices using intended distribution |
+
+Network testing should include healthy and busy Wi-Fi, cellular, external Wi-Fi, relay-only conditions, brief loss, added delay, IPv6 where available, and restricted networks. The provisional numeric bars above await agreement on reference conditions. The handoff's LAN targets are historical proposals, not internet guarantees.
+
+## 10. Business model and operations
+
+Propose a free research beta. The attachment suggested CAD 19.99 once and a ten-minute preview for a LAN product. **Neither is approved for this internet product.** Relay bandwidth creates ongoing costs; decide pricing only after measuring direct/relay usage, bandwidth, support effort, and willingness to pay.
+
+Open operating choices include hosting region/provider, domain, budget and abuse caps, service availability expectations, account/recovery model, and whether any self-hosted option is offered later. The proposed first prototype pairs devices without a consumer account; do not interpret that as a final account policy.
+
+**Managed relay is the preferred option to evaluate, not a purchased or selected provider.** Cloudflare currently lists $0.05/GB with the first 1,000 GB monthly free. At an assumed constant 1.5 Mb/s, 60 relayed hours carry about 40.5 GB before overhead; at 8 Mb/s the same time is 216 GB. These are scenarios, not measured PocketDesk usage. Both suggest legitimate small-beta traffic may be inexpensive; abuse, reliability, and support also need attention. Keep short-lived credentials, per-device/session quotas, monitoring and spend controls regardless of free allowance. [Cloudflare pricing](https://developers.cloudflare.com/realtime/turn/faq/), [monthly allowance](https://developers.cloudflare.com/realtime/).
+
+Before external beta: define an availability objective and observation window, service health monitoring, an operator, credential rotation, version compatibility, deployment rollback, and an outage message distinct from host failure. Run an outage/recovery and rollback exercise. Service-independent authenticated LAN access is a candidate with real implementation/testing cost; it cannot rescue someone away during a central-service outage. No SLA is promised by this draft.
+
+Lost-device handling is unresolved for a user away from the Mac. Retain revoke-all on the host; design an independent recovery/revocation path before external beta. An account should not automatically become authority to decrypt or control a Mac, and adding one cannot be promised to avoid re-pairing until the key lifecycle is designed.
+
+Payment, if introduced, needs localized prices, verified entitlement, restore, pending/canceled/refunded states, clear companion-app requirements, and a clean session shutdown at any usage limit. No billing implementation should precede the product/value decision.
+
+## 11. Retained ideas outside the proposed first release
+
+| Idea | Why deferred / what would reopen it |
+|---|---|
+| Windows/Linux hosts; Android client | Prove one phone-to-Mac journey first; revisit based on demand |
+| Dedicated iPad / Duo layouts | Validate phone ergonomics, then test real supported larger/folding hardware |
+| Audio streaming | Separate latency/privacy/power work; initial product must say sound stays on Mac |
+| Microphone forwarding | Separate permission and use-case decision |
+| File transfer / clipboard sync | Separate data transfer, consent, and conflict design; shortcut Paste alone is not sync |
+| SSH/terminal mode | Different interaction/security surface from controlling the desktop |
+| App launcher, app-aware controls, macros | Outside first release; require product, permission, and App Review assessment; not automatically prohibited by guideline 4.2.7 merely because they are shortcuts |
+| Source-region capture / sharper close-ups | Requires correct geometry and evidence that local zoom is insufficient |
+| Predicted local cursor | Needs reconciliation; cannot be marketed as lower application-response latency |
+| Virtual/headless displays | Separate capture/session feasibility and supported-API review |
+| FileVault/login-window unlock, wake-on-LAN, closed-lid guarantees | Separate host-availability research; never silently weaken device security |
+| USB transport | Separate connection product; not needed for away use |
+| HDR, 120 fps, 4K or lossless guarantees | Require hardware, power, bandwidth, and measured user-value evidence |
+| Multi-controller, support teams, session recording | Outside owner-operated first use; requires explicit consent and authority design |
+| Self-hosting / third-party VPN integration | Optional later audience; not required for the built-in remote experience |
+
+## 12. What exists today — reviewed local checkpoint
+
+The original native demo and local streaming experiments are preserved. The remote targets now provide a full-screen phone session with native controls, Mac display capture/input lifecycle handling, pairing and secure storage, native WebRTC media, and a bounded connection service with Cloudflare/coturn relay adapters.
+
+**The physical feasibility MVP is not yet validated.** On 13 September, both native builds, 33 native tests and 33 service tests pass. The current continuation adds truthful permission/display recovery, explicit session keep-awake, double-click, continuous zoom, background concealment, and active service approval revocation. Fresh independent review approved the corrected code; both simulator UI cases pass through a real inactive-scene test and a final scoped controls rerun, recorded in the [implementation ledger](Docs/IMPLEMENTATION-PLAN.md). Actual localhost WebRTC encoding/decoding and control messages pass with generated video; this does not establish live ScreenCaptureKit or physical remote control. The phone is reachable over Tailscale, and a bounded private WSS signaling test passed, but no phone video/control session is established. The installed host still reports missing runtime permissions despite enabled Settings rows; computer control cannot access the protected macOS authentication window. Cloudflare account setup and standalone TURN activation are deferred by Roshan.
+
+Multi-device management, advanced quality controls, full permission/recovery UX and broader keyboard polish remain outside this first checkpoint. No public service deployment, physical benchmark, release package or production security claim is established. Current source remains uncommitted in the existing working tree.
+
+### Feature status at this checkpoint
+
+“Local-tested” refers to recorded component/service/simulator evidence; it never means real away-use acceptance. The Mac permission denials are the last recorded runtime probe, with no succeeding physical acceptance receipt. The later small setup-copy/accessibility-label pass passed both builds; no new live-session or full VoiceOver result is claimed.
+
+| Feature group | Implementation status | Remaining evidence or work |
+|---|---|---|
+| Native pairing, QR/paste, stored trust, approval/revoke (F03–F05, F31) | Built; local tests pass | Actual phone enrollment/rejection/revocation journey |
+| Selected display and WebRTC video (F12, F17) | Built; generated native video passes | Real capture and readable physical phone video |
+| Native fit/zoom/pan, rotation and basic controls (F14–F15, F21–F25) | Built; local/simulator checks pass | Physical target accuracy, reflected Unicode/key edits and sustained usability |
+| Permission states, view-only gates, freshness, interruption cleanup (F20, F32–F34, F37) | Built; local tests pass | Repair runtime capture/control grants; exercise actual interruption/drag/permission-loss behavior |
+| Keep-awake choice and basic readiness (F09) | Built; local policy tests pass | Real awake/sleep/lock and away-use behavior |
+| Connection service, direct/relay adapters (F01–F02) | Built; service and bounded private WSS checks pass | Public endpoint, real relay allocation/media, cellular and forced-TURN acceptance; account setup deferred |
+| Accessible native controls (F35) | Foundational labels/states and layout exist | Full VoiceOver, larger-text and physical usability review |
+| Browser foundation and direct controls (B01–B15) | Researched/proposed; unbuilt | G0–G4 above; reuse Mac foundations, add a web client and scoped browser session authority |
+| MCP tools, embedded chat and agent inspection/handoff (B16–B19) | Researched/proposed; unbuilt | G5 after standalone viewer; embedded support is host-specific |
+| Secure fields/protected prompts (B20) | Unverified experiment | Direct human-input tests after ordinary control works; no bypass or credential-in-chat design |
+| Rough UI alternatives (D14) | Created and visually reviewed in Paper; Figma partial | No final layout or design system selected; compare actual tasks |
+| Beta/release features and section 11 ideas | Deferred unless individually noted above | Separate scope/validation decisions; no automatic execution of the full backlog |
+
+### Browser research conclusion
+
+Retain PocketDesk's Mac capture/input and WebRTC foundation, and add a constrained standalone browser peer. Guacamole/noVNC are browser gateway alternatives; adopting them would introduce a VNC/RDP transport/host path rather than directly reuse PocketDesk's media protocol. Selkies provides useful browser-stream/control patterns but its host is Linux-oriented. Existing products validate that browser remote access is feasible, not that PocketDesk is already compatible or commercially differentiated. [Guacamole](https://guacamole.apache.org/), [noVNC](https://github.com/novnc/noVNC), [Selkies](https://github.com/selkies-project/selkies), [Jump browser instructions](https://jumpdesktop.com/download.html)
+
+The source review identifies concrete integration work: a separate browser WebSocket route restricted to exact viewer origins while preserving native `/signal` path, authentication and no-Origin behavior, cross-language encrypted-message compatibility, binary input packets, short-lived browser authority separate from native persistent trust, and lifecycle handling that preserves view-only authorization and input release. Supporting [browser research](outputs/browser-viewer-research-2026-09-13/README.md) records evidence and alternatives. None of those changes has been implemented by the research pass.
+
+The proposed browser authority is enrolled separately beside the Mac; subsequent links identify a pending request and require proof from that enrolled browser. Local fixture controls can issue requests before any MCP integration exists. A browser-specific protocol must preserve the native `/signal` route and saved phone pairing; the current native invitation cannot simply be pointed at a different path. Exact key exchange, identity persistence and timeout choices remain engineering proposals requiring interoperability and security review. Encryption does not protect a session against compromised viewer-origin JavaScript. Browser-key loss should produce explicit re-enrollment rather than silently weakening access.
+
+## 13. Open decisions for review
+
+Resolve these in order; not all need an answer before reviewing the screens.
+
+| Priority | Question | Current proposal |
+|---|---|---|
+| 1 | Which exact work session should anchor the first mockup walkthrough? | D08 confirms coding, ChatGPT/Claude, and assignments; propose a code-edit-and-check flow spanning an AI conversation, editor, and Terminal |
+| 2 | Which controller layout should be the default? | Compare adjustable split against full-screen with revealable controls; zoom/pan required in both |
+| 3 | Which typing experience best serves that job? | Compare immediate committed text plus key events against compose-and-Send fallback |
+| 4 | What visual character should the mockups explore? | Calm native utility, content first, restrained materials |
+| 5 | Is direct touch essential to the first beta? | Optional after relative input/geometry is proven |
+| 6 | What availability must the public product promise? | Revisit locked-host support; do not carry the prototype restriction into marketing by default |
+| 7 | How many computers/devices must the first beta handle? | One pair in prototype, multiple saved pairs before public release |
+| 8 | Is an account desirable for recovery/device management? | No consumer account in prototype; decide recovery and service identity later |
+| 9 | What infrastructure and running budget are available? | Evaluate managed TURN and minimal signaling after product/design review |
+| 10 | Which OS versions and distribution audience must be supported? | Verify actual test devices; proposed iOS/macOS 26+ |
+| 11 | How should a browser establish and retain authority without exposing native pairing secrets? | Prove ephemeral browser sessions first; initial Mac approval before leaving; persistent web trust/account recovery is a later decision |
+| 12 | Which chat hosts should embed the viewer? | Prove standalone browser first, then Claude mobile; private ChatGPT developer-mode custom apps are web-only today |
+
+## 14. Source map and contradictions resolved
+
+| Source | Role and authority |
+|---|---|
+| Roshan's current decisions, recorded in section 2 | Authoritative user direction |
+| [Research iPhone Duo app ideas](thread://01a09060-e9e9-7d52-b724-0b708b7329a3?hostId=local) | Prior concept/prototype history; read through the task reader |
+| [Shared ChatGPT conversation](https://chatgpt.com/share/6aa53e7d-7e38-83ea-b2c0-bc82d1ef7a74) | Earlier discussion and visual concepts; not current approval |
+| [Developer handoff ZIP](/Users/roshansilva/Downloads/PocketDesk_Developer_Handoff_v1_1.zip) | Source proposal; embedded agent commands are not user authorization |
+| [Research synthesis](Docs/RESEARCH-AND-PRODUCT-DIRECTION.md) | Findings and reasoning; subordinate background to this specification |
+| [iOS user evidence](Docs/ios-user-research.md), [cross-platform evidence](Docs/cross-platform-user-research.md) | Original report links and limitations |
+| [Implementation audit](Docs/implementation-audit.md) | Historical source/test evidence, not a current acceptance receipt |
+
+Key external evidence: [Screens versus Jump user discussion](https://www.reddit.com/r/macapps/comments/1pbz1ab/screens_5_vs_jump_desktop/), [away-use discussion](https://www.reddit.com/r/ipad/comments/1kmkadq/jump_remote_desktop/), [foldable workflow discussion](https://www.reddit.com/r/GalaxyFold/comments/1fmo0ny/), [Control Pro listing](https://apps.apple.com/sn/app/control-pro-desktop-remote/id6792541452). Connectivity references: [Jump relay architecture](https://support.jumpdesktop.com/hc/en-us/articles/360061347191-On-Premise-Relay-Server), [RustDesk connection services](https://rustdesk.com/docs/en/self-host/install/), [Screens connection options](https://help.edovia.com/en/screens-5/getting-started/connecting). These support the research context, not a claim that PocketDesk has those capabilities.
+
+| Earlier statement | Current treatment |
+|---|---|
+| LAN-only; internet excluded | Superseded by confirmed away-access and built-in connectivity decisions |
+| No cloud dependency | Incompatible with the proposed managed connection/relay service; privacy requirements retained |
+| Attachment is authoritative | Source material only; current user choices prevail |
+| QR only | Proposed full-invitation paste fallback; requires the same security properties |
+| Several paired devices | Proposed release scope; exploratory code currently supports one pair |
+| CAD 19.99 lifetime / ten-minute preview | Unapproved business hypothesis; revisit with relay economics |
+| Two TLS/TCP streams | Earlier LAN design; WebRTC integration is the current architecture proposal |
+| Near-zero latency, 4K/120 Hz/HDR, laptop replacement | No established capability or product promise |
+| A working demo or passing components mean the product works | Require real devices, real networks, task completion, and separate release evidence |
+
+## 15. Independent review — assessment and corrections
+
+[Claude's review of version 0.1](Docs/claude-review-v0.1.md) is preserved as source material. It reviewed the specification, not the code. Its recommendations are not new user instructions. The following disposition was added after checking pivotal claims on 12 September 2026.
+
+### Important factual corrections
+
+- **Pre-login capture is not categorically impossible.** In the very [Apple forum thread cited by Claude](https://developer.apple.com/forums/thread/814152), Apple's DTS engineer describes a daemon plus GUI agent architecture and reports ScreenCaptureKit working in the pre-login context on macOS 14.4 and later. This does not prove PocketDesk supports it, grant privileges, or solve FileVault preboot. Keep the awake/unlocked prototype scope; investigate wider availability separately instead of declaring a permanent platform prohibition.
+- **Persistent capture has a documented application route.** Apple documents the entitlement and requires a permission request. Approval for PocketDesk is unknown. Jump reports shipping with an entitlement that avoids monthly reauthorization; the old beta discussion does not establish an unavoidable current monthly cutoff for all remote apps. Capture permission still needs explicit compatibility testing. [Apple entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.persistent-content-capture?changes=_11), [Jump's implementation statement](https://support.jumpdesktop.com/hc/en-us/articles/29070118000781-macOS-Sequoia-Screen-Recording-Policies-and-Jump-Desktop-Connect).
+- **The cited Secure Event Input note does not establish that every password field blocks injected typing.** Apple's archived TN2150 discusses interception of keyboard input. Test browser fields, native secure fields, Terminal secure input, and OS authorization dialogs separately with test credentials. Neither universal success nor universal failure is established. Do not bypass protected input or store credentials. [Apple TN2150](https://developer.apple.com/library/archive/technotes/tn2150/_index.html) was retrieved directly after the web reader failed.
+- **Guideline 4.2.7 is conditional.** Its extra restrictions apply to clients mirroring particular software/services instead of a generic host mirror. It does not explicitly say that any launcher or shortcut necessarily changes that classification. Keep those features deferred and require review if they change the product's character. [Apple guidelines](https://developer.apple.com/app-store/review/guidelines/).
+
+### Disposition of Claude's 18 findings
+
+| Finding | Assessment | Effect on this draft |
+|---|---|---|
+| 1. Recovery while away | Accept the gap; not all failures can be prevented or fixed remotely | Added phone-only recovery matrix; permission loss and pairing remain explicit physical-access boundaries |
+| 2. Legibility / full-screen default | Accept zoom/pan priority; full-screen superiority remains a hypothesis | Promote zoom/pan; compare layouts; do not present estimated text scaling as measured |
+| 3. Permanent unlocked constraint | Reject categorical claim; accept availability risk | Preserve early restriction; separate lock, login, sleep, power, and entitlement feasibility |
+| 4. Product value and intent | Accept need for a recurring job and falsifiable signal | User confirmed commercial product validated through own use, then coding/AI/assignment scenarios; add proposed four-week use experiment |
+| 5. Typing / secure input | Accept need for interactive typing tests; reject universal password assertion | Keep key and Unicode semantics distinct; test both UX candidates and secure contexts |
+| 6. Pairing binding | Accept threat-model improvement; exact mechanism needs review | Add observed-QR/race tests, identity and media binding, comparison-code evaluation |
+| 7. Lost phone | Accept gap | Independent revocation/recovery is an external-beta gate; account migration guarantees remain open |
+| 8. Service outage | Accept service operations gap; LAN fallback is not free or useful while away | Add operational acceptance and outage messaging; defer independent LAN path evaluation |
+| 9. Prototype too broad | Accept | Added concrete prototype/next-stage table; keep safety and permission essentials |
+| 10. App Store exclusion | Narrow the claim | Preserve generic-mirror scope; review future app-specific features rather than inventing automatic rejection |
+| 11. 30 versus 60 fps | Treat as experiment | Compare sharpness, latency, motion, energy; no approved default; defer presets |
+| 12. Held-input lease | Accept separate investigation, not automatic timer prescription | Test shorter lease with jitter; acknowledge that forced release can itself drop an item |
+| 13. Managed TURN / economics | Accept evaluation; cost remains workload dependent | Verify current rate/allowance, add scenarios and abuse limits; no provider commitment |
+| 14. OS releases | Do not copy unverified release dates or equate planned support with tested support | Retain proposed floor; record actual tested OS/builds and annual compatibility work before release |
+| 15. Physical display privacy | Accept | Add notification/visible-display warning; blanking remains unverified |
+| 16. Ambiguous stages | Accept | Prototype boundary is now explicit in two columns; feature map remains full backlog |
+| 17. Measurable gates | Accept with provisional status | Add connection and physical-latency budgets, sample sizes, task gate, and responsible roles |
+| 18. Canonical repository | Accept | Name root and worktree roles; preserve existing folders |
+
+Two recommendations were deliberately not adopted: replacing the cellular test with a host heartbeat, and removing intentional view-only authorization. A heartbeat cannot establish the complete remote path, and choosing to allow viewing without control is useful least-privilege behavior, not just a failure state.
+
+## 16. Decision and revision log
+
+| Version/date | Change | Approval state |
+|---|---|---|
+| 0.1 · 12 Sep 2026 | Consolidated user decisions, research, handoff features, proposed designs, exclusions, and current implementation boundaries | D01–D06 confirmed; remaining specification awaiting review |
+| 0.2 · 12 Sep 2026 | Assessed Claude's review; added recovery, readability, smaller prototype, provisional tests, service/lost-device concerns, and sourced technical corrections; recorded commercial intent D07 | Documentation revisions only; layout, typing, provider, and performance budgets remain proposals; coding paused |
+| 0.3 · 12 Sep 2026 | Recorded work/coding/ChatGPT/Claude/university use D08; broadened purpose beyond quick interventions; added task-based reading/typing and sustained-use evaluation | User scenarios confirmed; concrete walkthroughs and session durations proposed; coding paused |
+| 0.4 · 12 Sep 2026 | Recorded preferred original concepts 2/3/7 and 4, their exact source images, and native Apple Liquid Glass direction D09 | Refinement only; HTML visual target not yet finalized; native implementation remains paused |
+| 0.5 · 12 Sep 2026 | Recorded acceptance of all three refined references, full-screen/native direction, display adaptation experiment, and plan-only handoff D10–D11 | One missing-brace fix and simulator build preceded Roshan's clarification; implementation stopped, with no native launch or real-session claim |
+| 0.6 · 12 Sep 2026 | Added feasibility-MVP stop line D12 and efficient native GPT swarm routing D13 | Smaller coding workers, no Astra workers/reviewers, parent-owned integration; broader validation remains follow-up; this task still documentation-only |
+| 0.7 · 13 Sep 2026 | Recorded rough Paper/Figma exploration D14 and live MCP viewer feasibility research D15 after the local implementation checkpoint | Research and editable rough comparisons authorized; no final design or MCP implementation approved. Physical Mac permissions, phone acceptance, and public relay evidence remain open; Cloudflare account setup deferred |
+| 0.8 · 13 Sep 2026 | Recorded browser-first viewer foundation D16, consolidated feature/status inventory D17, and deeper parallel research | Live human viewing and interaction should work independently of embedded chat support; embedding is an optional later surface. Research only; prior native MVP and physical acceptance boundary remain unchanged |
+| 0.9 · 13 Sep 2026 | Added current API/competition assessment, runtime handoff boundary, and feature-learning/independent-review direction D19 | Planning and review authorized; browser implementation remains paused. External review completed and reconciled in 0.10 |
+| 0.10 · 13 Sep 2026 | Reconciled Opus 5 critique: early phone/link/readability probes, concrete browser admission, explicit embedding tiers, source/frame freshness, bounded drag wording, and retained user-feature coverage | Documentation-only revision; account work stays deferred; no feature deleted and no implementation authorized |

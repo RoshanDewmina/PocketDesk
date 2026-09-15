@@ -1,0 +1,9 @@
+# Replace this host with the private signaling DNS name. Caddy obtains and renews TLS.
+signal.private.example {
+	handle /signal {
+		reverse_proxy 127.0.0.1:8787
+	}
+	handle {
+		respond 404
+	}
+}

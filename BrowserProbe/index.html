@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <title>PocketDesk synthetic browser probe</title>
+    <link rel="stylesheet" href="./probe.css" />
+  </head>
+  <body>
+    <main class="probe-shell">
+      <header class="probe-header">
+        <div><p class="eyebrow">PocketDesk S0</p><h1>Synthetic browser sender</h1></div>
+        <p id="status" class="status" aria-live="polite">Inert — press Start to create a local loopback.</p>
+      </header>
+      <section class="viewer-shell" aria-label="Synthetic loopback video">
+        <div id="stage" class="stage fit" tabindex="0" aria-label="Synthetic code video. Local pan surface.">
+          <video id="receiver" muted playsinline autoplay aria-label="Local WebRTC loopback video"></video>
+          <div class="stage-badge">Synthetic browser sender · not native capture · local WebRTC only</div>
+          <div class="pan-note">Drag here to pan when zoomed</div>
+        </div>
+      </section>
+      <section class="controls" aria-label="Probe controls">
+        <div class="control-row primary-actions">
+          <button id="start" type="button">Start local loopback</button>
+          <button id="stop" type="button" disabled>Stop and clear</button>
+          <button id="toggle-controls" class="compact-only" type="button" aria-expanded="true" aria-controls="control-details">Hide controls</button>
+        </div>
+        <div id="control-details" class="control-details">
+          <label>Mac-scale scene <select id="resolution"><option value="1440x900">1440 × 900</option><option value="1920x1080" selected>1920 × 1080</option><option value="2560x1440">2560 × 1440</option></select></label>
+          <label>Theme <select id="theme"><option value="dark">Dark editor</option><option value="light">Light editor</option></select></label>
+          <label>View <select id="view"><option value="fit">Fit</option><option value="zoom">Zoom</option><option value="crop">Native-scale crop</option></select></label>
+          <label>Zoom <input id="zoom" type="range" min="1" max="3" value="1" step="0.1" /><output id="zoom-value">1.0×</output></label>
+          <p id="codec" class="observation">Codec: inactive. The probe will prefer H.264 when the browser exposes it.</p>
+        </div>
+      </section>
+      <section class="keyboard-probe" aria-labelledby="keyboard-title">
+        <h2 id="keyboard-title">Local keyboard and composition observation</h2>
+        <p>Nothing entered here is sent, stored, or forwarded. This field only counts local composition events and viewport changes.</p>
+        <textarea id="local-input" rows="3" autocomplete="off" autocorrect="off" spellcheck="false" placeholder="Type a harmless local test phrase"></textarea>
+        <output id="input-observation">No local input observed.</output>
+      </section>
+    </main>
+    <script type="module" src="./probe.js"></script>
+  </body>
+</html>

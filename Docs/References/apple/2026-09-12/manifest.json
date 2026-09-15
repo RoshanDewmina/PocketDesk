@@ -1,0 +1,42 @@
+[
+  {
+    "name": "macos-27-release-notes",
+    "url": "https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes.md",
+    "retrievedUTC": "2026-09-12T13:01:49.156005+00:00",
+    "bytes": 66813,
+    "sha256": "5dd326aab73fd337eabf3614bfee9c870207363eb12db05a53d204c6e50d6220",
+    "file": "macos-27-release-notes.md"
+  },
+  {
+    "name": "network-migration-tn3213",
+    "url": "https://developer.apple.com/documentation/technotes/tn3213-moving-from-multipeer-connectivity-to-network-framework.md",
+    "retrievedUTC": "2026-09-12T13:01:49.158554+00:00",
+    "bytes": 67827,
+    "sha256": "3f92d60b6033bcc3093e24f37919ac4f7caaf0fcb08d5ebf254d3298c30d204c",
+    "file": "network-migration-tn3213.md"
+  },
+  {
+    "name": "screen-capture-sample",
+    "url": "https://developer.apple.com/documentation/screencapturekit/capturing-screen-content-in-macos.md",
+    "retrievedUTC": "2026-09-12T13:01:49.145565+00:00",
+    "bytes": 11237,
+    "sha256": "5ed9d10f67ce3847912454edefd70860fa4ad183a155ac835a8247f55c00d426",
+    "file": "screen-capture-sample.md"
+  },
+  {
+    "name": "sidecar-touch-tn3212",
+    "url": "https://developer.apple.com/documentation/technotes/tn3212-adopting-gesture-recognizers-for-sidecar-touch-support.md",
+    "retrievedUTC": "2026-09-12T13:01:49.022596+00:00",
+    "bytes": 15813,
+    "sha256": "196479edca742d044768efb14cdbe649ec5a354738fe3bd35febc318f77c14a3",
+    "file": "sidecar-touch-tn3212.md"
+  },
+  {
+    "name": "quic-datagrams",
+    "url": "https://developer.apple.com/documentation/network/quic/datagrams.md",
+    "retrievedUTC": "2026-09-12T13:01:48.633384+00:00",
+    "bytes": 1438,
+    "sha256": "8b4fc7f88610dee547c17313911f5f670e2de332b0014a8a8bc036656d4b89c6",
+    "file": "quic-datagrams.md"
+  }
+]

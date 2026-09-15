@@ -1,0 +1,9 @@
+# A named tunnel requires an existing Cloudflare account, a Cloudflare-managed
+# DNS zone, and a credentials file created outside this repository.
+tunnel: replace-with-tunnel-uuid
+credentials-file: /absolute/private/path/replace-with-tunnel-uuid.json
+
+ingress:
+  - hostname: signal.example.com
+    service: http://127.0.0.1:28788
+  - service: http_status:404

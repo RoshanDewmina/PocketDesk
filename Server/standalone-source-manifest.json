@@ -1,0 +1,27 @@
+{
+  "generatedAt": "2026-09-13T06:27:22Z",
+  "algorithm": "sha256",
+  "scope": "standalone-networking-package",
+  "files": {
+    "Server/.env.private.example": "3b3245076fb990d75196352cf5d35369e434e1509a8f34974dff5e5dabbd6201",
+    "Server/.env.standalone.example": "13277dea96141abe4be4c94b986429ee404d521899a3b889b367dc26a44e5d82",
+    "Server/Caddyfile.private.example": "37855a638a44eb521a669593d3575e67a59dc3c85039f474082d4775682f9da2",
+    "Server/Caddyfile.standalone.example": "54af16145ebc3b16c877ac017713c2fc732433f0dfa91e288f67fc07e61fa425",
+    "Server/README.md": "dbded822f228436ad423054518bf5af2b3ac8f2c5ebf0ffcf65918b4c9d316dd",
+    "Server/cloudflared.standalone.yml.example": "9fba7cef508380d1fff169ca353c6e418fc404368ef0681e7869ecf56f78f9f9",
+    "Server/package.json": "7fa613cc8aea8f6a24812299d4afa2761bc77ca1d11089e266ad673db969cc88",
+    "Server/scripts/approve-room.ts": "09b956efb184338237e6c309cb8304c1d2aca30a35602fab7f3a3794960aa9d2",
+    "Server/scripts/readiness.ts": "be0cab467f6f774a483e00339472185aa09a5dae9df66121bc3b0e308e1b7606",
+    "Server/scripts/run-bounded-standalone.sh": "beda0cec63586a525cf21be907b97cfe1e0d9454724c974ffee0f840bfe6b6e1",
+    "Server/src/config.ts": "e42da7728c3140ca9f5a37068d7976200be59f1a5fbaaf13cd24c89022778bd5",
+    "Server/src/index.ts": "b49c872d52b6a723adaf66114492a75ba13f70389c4f064a80e66b68d3aebdd8",
+    "Server/src/rooms.ts": "ca603a21a70ec90c95eae5b383af8292c8704e7f4c0e65d1b0c39a2bd9668e36",
+    "Server/src/server.ts": "5322dafcfd5d92aa838cbe930e85e91628b4d4a80cf502684967639f49891c5d",
+    "Server/src/turn.ts": "dac9665e38d6077804a5f1c8913eebf1f73619c1d75a11b242823d188c90726f",
+    "Server/tests/fixtures/room-mutation-worker.ts": "c3c9f8fb38a679db1ba2b4a5e1d9dc8739267a5f2a8f94187fd734466e34fe06",
+    "Server/tests/readiness.test.ts": "1558705963f5f9bfb732204cd9fba683a93046e0fd8efc965d6f498eb336f532",
+    "Server/tests/rooms.test.ts": "6b682170cf2f493f59e0fb7f3feb39dc1d391da91ed80f6ed199ff70fbb12722",
+    "Server/tests/server.test.ts": "cc9510f1b95b4a2b7cf49160e65c592049bc7cf998dae4dc24598b388ec2230d",
+    "Docs/STANDALONE-NETWORK-READINESS.md": "28a6c1885e0c6dcc34f8412974ee3ac6a550730afae176a1f3e57b5adbb20496"
+  }
+}

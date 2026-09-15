@@ -1,0 +1,510 @@
+# PocketDesk implementation plan
+
+Updated 13 September 2026. Execution record subordinate to [PRODUCT.md](../PRODUCT.md); this is not a second product specification.
+
+**Status: reviewed local checkpoint; physical feasibility not validated/blocked.** Roshan authorized this new task with “Start this” on 12 September 2026. Existing dirty `main` checkout preserved; parent owns shared contracts and integration. Physical/cellular feasibility remains unvalidated.
+
+**Earlier implementation continuation, 13 September:** Roshan authorized completing all remaining MVP work that does not require his phone while he is away. Do not wait for the earlier USB/unlock request. This covers local implementation, testing, setup/recovery improvements, and deployment preparation; physical acceptance and missing provider/account access remain separate gates. Broader beta/release scope remains deferred.
+
+**Current session: browser implementation authorized, 13 September 2026.** Roshan requested implementation, answered the pre-start questions, and authorized all work and verification possible while his iPhone is unavailable. Parent selects a harmless code-edit-and-check task. Mac is available; phone testing waits for his return. Cloudflare account/public exposure remains paused; prepare independently without publishing. Historical planning-only statements below describe prior tasks.
+
+| Earlier implementation package | Owner | State / evidence |
+|---|---|---|
+| Integrated baseline and stable host launch | Parent | Final service 33/33, native 33/33, Mac and phone simulator builds pass under `outputs/final-check-2026-09-13/`; stable installed launch verified; five isolated rollback/launch cases pass |
+| Standalone service and reconnect review | `/root/network_review`, Sol high; `/root/network_fix`, Sol high | Two findings corrected: live approval revocation and unsafe stale-lock cleanup. 33 service tests pass; fresh scoped re-review approved with no findings |
+| Truthful Mac permission/setup recovery | `/root/host_setup`, Sol high | Integrated truthful runtime permission/display state and off-by-default scoped keep-awake; 33 total native tests pass; graceful termination and consent-reset corrections independently approved |
+| Phone controls and read-only readiness | `/root/offline_readiness`, Terra medium | Integrated Double-click, continuous zoom, inactive concealment, metadata-only preflight and device checklist; real inactive-scene test and final controls test pass; AX sampling failure corrected with actual tap/field/text assertions |
+| Fresh native/script review | `/root/integration_review`, Sol high | Approved after launch rollback, graceful termination and pairing-consent corrections; one nonblocking keep-awake release-failure diagnostic limitation retained |
+
+Live runtime checks of the installed Mac app still return false for both Accessibility trust and screen-capture preflight. An earlier wired iPhone build/install/launch succeeded; a later remote-only attempt found it unavailable to Xcode but reachable over Tailscale. Device availability has not been rechecked during this planning pass. A bounded private WSS test passed authenticated exchange, unauthorized rejection, disconnect cleanup and path isolation; all temporary processes stopped and the prior Tailscale configuration was preserved. This is a same-Mac signaling test, not physical video/control or TURN evidence. Earlier user-authorized System Settings changes were recorded, but subsequent runtime checks still failed. The most recent refresh attempt required authentication and the computer-control tool refused access to the protected window, so that attempt changed no grants. Cloudflare account setup is explicitly deferred. No new public service is running.
+
+**Platform continuity:** [Apple API reference](APPLE-API-REFERENCE.md) records the current macOS 27 review, installed SDK findings, five dated official source snapshots, networking alternatives, and a freshness procedure for future tasks. The repository's AGENTS.md points each new task to these records.
+
+## Start here in the new task
+
+**Working repository:** `/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk`.
+
+Read `AGENTS.md`, then `PRODUCT.md`, this plan, and `Docs/APPLE-API-REFERENCE.md`. Inspect the existing working tree before editing; important application work and documents are still uncommitted/untracked, so a fresh clone or default-branch worktree alone will not contain the handoff. Continue in the existing repository, or deliberately carry its current working state into an isolated checkout.
+
+The initial delivery is the **smallest private feasibility MVP**: one physical phone controlling one awake, unlocked Mac over cellular, with a verified relay fallback and a useful work task. A runnable native baseline and a local capture/control loop are intermediate checkpoints. The objective is to discover quickly whether the experience works, not to finish a commercial product. Do not restart discovery or build another static design gallery: the user is satisfied with the three refined visual references and wants native controls, maximum useful screen space, and measured responsiveness. Product scope stays in PRODUCT; this file tracks execution and evidence.
+
+The preceding task ended with this handoff. The new implementation task was authorized by Roshan’s “Start this” request. No new agent, task, public service, or background monitoring was created by this handoff.
+
+## MVP scope and stop line
+
+Use PRODUCT section 9B's immediate feasibility milestone as the acceptance boundary. Keep the existing native/WebRTC direction unless a concrete blocker demands a change. Use standard SwiftUI/glass controls and a simple full-screen viewport; custom visual polish is not on the critical path. Developer-only service setup is acceptable for this private experiment.
+
+The first result must answer: can Roshan connect from cellular, read a useful part of his Mac workspace, make a correct edit or command, and recover safely from interruption? Demonstrate the direct/local baseline and forced relay separately, record the actual route and limitations, and include pairing rejection/revocation and held-input cleanup. Collect practical responsiveness evidence from the beginning; do not turn broad benchmarking into a prerequisite for trying the MVP.
+
+Defer dedicated iPad layouts, virtual displays, locked/pre-login access, consumer accounts, billing, multi-device management, audio, file transfer, clipboard sync, polished onboarding, exhaustive tuning, and public distribution. Leave those in the product backlog. The two-day/multiple-external-network study, larger connection/latency samples, competitor comparisons, and full beta matrix are follow-up validation after the first useful physical session. Basic correctness, consent, authentication, bounded resources, and failure recovery are not optional polish.
+
+At the feasibility gate, report **works for the tested task**, **needs a specific change**, or **not validated/blocked**, with evidence and the next smallest experiment. Stop that delivery there; do not automatically build beta/release scope. No claim of fastest, production-ready, or validated market demand follows from an MVP.
+
+## Swarm execution policy for the implementing agent
+
+Use [swarm-orchestrator](/Users/roshansilva/.agents/skills/swarm-orchestrator/SKILL.md) and its [verification pipeline](/Users/roshansilva/.agents/skills/swarm-orchestrator/references/verification-pipeline.md). Roshan explicitly requests as much useful native subagent delegation as needed to reach the MVP quickly, using efficient GPT coding workers and a parent that judges the result. This updates the future execution method; it does not restart development in this task.
+
+**No Astra workers or reviewers.** This user constraint overrides the skill's optional Astra escalation example. Keep the current GPT parent; do not silently change its model. For a newly configured parent, Sol at high effort is a suggested non-Astra option, subject to the user's selection and actual runtime availability. No model is assumed to guarantee quality or lower total cost.
+
+### Model routing
+
+The native tool catalog at handoff exposes `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.6-sol`, and `gpt-5.5`, in addition to the excluded Astra option. The routes below use supported efforts from that catalog. Recheck the actual catalog before each new kind of dispatch; do not assume example mini aliases are installed.
+
+| Work | Starting worker | Escalation / judgment |
+|---|---|---|
+| Bounded inventory, docs/config, simple fixtures | `gpt-5.6-luna`, low/medium | Terra if scope or output becomes unreliable |
+| Native UI and bounded code with a frozen interface | `gpt-5.6-terra`, medium; Luna medium for simple mechanical work | Sol for cross-module diagnosis or one failed correction |
+| Capture lifecycle, pairing/session/input safety, protocol changes | `gpt-5.6-sol`, high, bounded scope | Parent arbitrates; fresh capable non-Astra review is required |
+| Independent UI/low-risk review | Fresh Terra, medium/high | Sol when the relevant behavior exceeds that scope |
+| Independent sensitive review | Fresh Sol, high/xhigh; capable non-Astra GPT alternative if unavailable | Parent reads the full relevant change and evidence; unresolved safety/correctness blockers remain incomplete |
+
+Use the strongest available **permitted non-Astra GPT** for sensitive review, rather than lowering that gate to save cost. Sol is the default route here, not a claim of a universal capability ranking. If only one permitted model is available, use fresh contexts and disclose that tiered routing is unavailable. Do not switch to external providers, coding-agent CLIs, or third-party routers.
+
+For explicit model/effort overrides, use native `collaboration.spawn_agent` with `fork_turns: "none"` or a supported bounded history value; include the full essential brief. A full-history fork cannot carry these overrides. Never create separate user-visible tasks as a substitute for native workers unless Roshan requests that.
+
+### Packages and ownership
+
+Parent first inspects the dirty checkout, verifies baseline state, and freezes the minimum session/input/video contract. Shared contracts and project generation are serialized. Then keep independent worker slots useful while the parent handles interfaces, reviews evidence, and integrates. The current runtime permits four concurrent agents including the parent, so the initial ceiling is three workers; recheck this in the new task. More packages can run in later waves. Do not spawn recursively by default or create planning-only agents for each feature.
+
+| Package | Proposed owner | Allowed write-set | Dependency / evidence |
+|---|---|---|---|
+| P0: baseline and contracts | Parent | Shared protocol/coordinator interfaces, `project.yml`, generated Xcode project, lockfiles, run/test scripts, this ledger | Preserve existing uncommitted work; baseline build/check receipts; freeze worker contracts before parallel edits |
+| P1: minimal phone session | Terra medium | `RemotePhone/`; specifically assigned phone UI tests | P0 contract; native viewport and standard controls; inspect portrait/landscape, keyboard, fit/zoom/pan; no decorative rebuild |
+| P2: capture/input lifecycle | Sol high | `RemoteHost/`; specifically assigned new host/lifecycle tests | P0 contract; cancellation ownership, frame-health, bounds, release/lease and text-size behavior; actual recovery evidence where available |
+| P3: service readiness | Terra medium for bounded work, Sol high for authentication/credential semantics | `Server/`, including its package-local tests | P0 signal contract; service tests, bounded failures and relay-provider compatibility; no purchase/deploy without applicable user authorization |
+| P4: integrate shared session/media | Parent, or a bounded Sol high worker while shared writes are reserved to it | `RemoteShared/` and specifically allocated shared tests | P1–P3 contract findings; coordinate any API change before dependents edit; verify enrollment/reconnect and codec/route instrumentation |
+| P5: fresh independent review | Fresh permitted GPT by risk | Read-only relevant source/diff, dependents and receipts | Completed package/integrated artifact; concrete findings and check status, not author assurances |
+| P6: physical feasibility | Parent with user/device access; fresh verifier if useful | Evidence records and scoped fixes assigned back to owners | Local, cellular and forced-relay task; interruption/revoke cases; report actual behavior and stop at the MVP decision |
+
+Assign exact test filenames before dispatch so workers never share a write-set. Implementers own tests for their package; do not split coding and test-writing into parallel agents on the same feature. The parent wires target membership and performs project generation. No worker may edit shared interfaces, lockfiles, another worker's files, or the source-of-truth documents without coordinated reassignment.
+
+Native workers share a filesystem; spawning does not isolate them. Disjoint write-sets are sufficient for this MVP where practical. If isolation is necessary, preserve the current dirty/untracked state before creating worktrees, give absolute paths, and require explicit working directories. Never assume a default-branch worktree contains the existing prototype.
+
+Each brief specifies goal, risk, absolute workspace, exact write-set/exclusions, dependencies/contract, model/effort, relevant documentation, acceptance commands or concrete device procedure, stopping condition and escalation trigger. Return changed files, actual commands/results, failures, skipped checks, and limitations. Do not request hidden reasoning or invent token/cost figures.
+
+### Parent review, retries, and completion
+
+The parent is responsible for the final result. Inspect workers' actual changes and evidence, obtain fresh independent review, and rerun integration-relevant checks on the assembled state. A worker saying “done” is not a passed gate. Resolve blocking and evidence-supported major findings; investigate speculative major findings. Use the skill's verdict/check structure and one scoped re-review after correction, without redundant full review loops.
+
+A clear bounded failure gets one focused correction at the same tier. A second failure escalates to Sol or parent diagnosis. Sensitive uncertainty escalates immediately. If it remains unresolved at the permitted tier, narrow the experiment or report the blocker; do not invoke Astra automatically. Reuse workers for related fixes; use fresh contexts for independent review. Avoid repeating unchanged expensive checks unless integration, a fix, or a new concern invalidates them.
+
+No paid infrastructure, public publishing, or new recurring automation is authorized merely by this plan or skill. Prepare a concrete service configuration before asking for any genuinely missing access or approval. Continue independent useful work when physical access is pending, but report the live gate as incomplete.
+
+### Historical orchestration ledger — 12 September checkpoint
+
+The rows below preserve the first checkpoint. Current 13 September execution state is in the opening table and the latest receipt below; PRODUCT remains the product authority.
+
+| Package | State | Agent/model and checkout | Checks/review | Blocker / next action |
+|---|---|---|---|---|
+| P0 | Verified locally | Parent; existing dirty `main` | Both native Debug builds pass; repeatable verify/run scripts | Preserve uncommitted source and receipts |
+| P1 | Verified in simulator | `/root/phone`, Terra medium; same checkout | `RemotePhone/`; parent-owned `RemotePhoneUITests/SessionLayoutTests.swift` passes | Physical touch/readability still untested |
+| P2 | Corrected and verified locally | `/root/host`, Sol high; same checkout | `RemoteHost/`, `RemoteTests/HostLifecycleTests.swift`; nine lifecycle tests pass | Live ScreenCaptureKit/input/permissions still unobserved |
+| P3 | Verified locally | `/root/service`, Sol high; same checkout | `Server/`; 18 service tests pass | Private service/relay credentials and deployment unavailable |
+| P4 | Verified locally | Parent | Shared contracts/media; 20 total native tests pass, including actual localhost WebRTC | Generated video fixture is not physical capture proof |
+| P5 | Approved local checkpoint | `/root/review`, fresh Sol high | Complete sensitive source/dependent review; zero remaining findings after corrections | Approval excludes PRODUCT 9B live feasibility |
+| P6 | Not validated/blocked | Parent/device verification | Physical iPhone saved pairing found, but device connection failed | Connect/unlock phone; complete real permissions/control, then cellular and forced relay |
+
+## Historical baseline recovered before implementation
+
+- The preserved Pocket Desktop demo and LAN stream live alongside the new remote targets. Historical component tests do not establish physical remote use.
+- `RemotePhone`, `RemoteHost`, and `RemoteShared` contain an unfinished native WebRTC integration, encrypted negotiation, pairing, saved trust, input, capture, and reconnect handling.
+- `Server` contains a Bun signaling service and seven existing tests. No public service or managed relay deployment is established.
+- The first remote phone build had a missing brace. That one-line syntax fix was made before Roshan clarified this task should stop at planning; the subsequent phone simulator build succeeded. No native app was launched in this handoff.
+- Keep the existing working tree and older targets intact. Work in the canonical PocketDesk repository.
+
+## Sequence and acceptance
+
+1. **Recover a runnable baseline — next implementation task.** Phone simulator compilation passed once; compile the Mac target and rerun both builds after further changes. Run current security/service checks; establish repeatable run/test scripts. Review capture cancellation, stale-picture handling, input release, and permission transitions. Add measurement points as the pipeline is assembled so performance is observable from the first live session; the later performance checkpoint is a comparison gate, not the start of measurement. Gate: fresh build and test receipts with limitations recorded.
+2. **Native screen-first session.** Replace the large fixed split and permanent header with a full-screen viewport and native glass controls on demand. Include floating trackpad, fit/zoom/pan, compact text entry, and an always-recoverable control affordance. Gate: inspect running native UI, portrait/landscape, keyboard changes, accessibility labels, and unchanged pointer mapping.
+3. **Complete the local remote stack.** Start the connection service locally, pair with explicit Mac approval, see a changing practice document on the explicitly selected display, edit it, stop mid-drag, reconnect, and verify stale sessions cannot send input. The current remote target selects displays, not individual windows; a dedicated practice window can be the observed task without claiming window-only capture. Localhost setup is a development stage, not the intended away-access product. Gate: actual capture/control evidence; request OS permissions only when needed.
+4. **Built-in internet access.** Configure authenticated public signaling and a managed TURN relay, expiring credentials, quotas, and revocation. Gate: iPhone on cellular connects to the awake Mac, both direct and forced-relay cases pass, and interruptions recover. Provider/account setup remains unresolved; do not claim cellular readiness until tested.
+5. **MVP feasibility checkpoint and stop.** Record actual response, readability, selected route/codec, failures and host intervention for one useful physical work task. Verify hardware acceleration where observable and document any uncertainty. Avoid frame-by-frame network acknowledgement gating and unbounded queues. Tune only demonstrated bottlenecks; compare 30/60 fps if it resolves a concrete responsiveness/readability problem. Report works/needs-change/unvalidated with the next smallest experiment. The larger provisional performance budgets in PRODUCT remain future validation targets, not a reason to delay trying the MVP or claim benchmark success.
+6. **Follow-up backlog — outside this delivery.** Broader coding/AI/assignment usability research, controlled Screens/Jump comparisons, the full network/performance matrix, dedicated iPad layouts, virtual displays, and beta/release hardening proceed only after the feasibility result and a new scope decision. Preserve these ideas without implementing them speculatively.
+
+## Current build choices
+
+Swift/SwiftUI clients and Mac companion; ScreenCaptureKit capture; native WebRTC using H.264 hardware codec integration and native video rendering; Bun connection service; direct encrypted media preferred with managed relay fallback. Native glass belongs on controls, with readable remote content occupying the screen. The render/capture/input path must stay independent of SwiftUI update frequency.
+
+## Evidence and open boundaries
+
+No first-party physical iPhone measurement or competitor benchmark exists yet. Native launches and local checks are recorded below; they do not establish a security guarantee. Physical signing, device availability, public service access, and real OS permissions remain live gates.
+
+### Historical receipt from the preceding brief start
+
+- Change: `RemotePhone/RemotePhoneApp.swift`, keyboard action row, added the missing closing brace for the `HStack`. No other app implementation changes were made in this handoff.
+- Scheme: `PocketDeskRemote`; Debug; booted iOS 27 iPad mini simulator. This is not a physical iPhone check.
+- Build: succeeded in approximately 10 seconds; the build tool reported no warnings or errors.
+- Log: `/Users/roshansilva/Library/Developer/XcodeBuildMCP/workspaces/Saas-7c31650de626/logs/build_sim_2026-09-12T12-59-31-573Z_pid86862_af480679.log`.
+- Not done: new Mac build, app launch, security/service test rerun, actual capture/control, deployment, cellular access, native glass UI implementation.
+- Current edits are uncommitted. The existing modified/untracked work predates this handoff except for the one-line brace correction and these documentation updates. No reset, clean, overwrite of older targets, or commit was performed.
+
+## Historical code map at handoff (superseded by the integration receipt)
+
+| Location | Role and first review |
+|---|---|
+| `project.yml` / `PocketDesktop.xcodeproj` | XcodeGen source and generated project; new schemes PocketDeskRemote, PocketDeskRemoteHost, RemoteCoreTests; WebRTC pinned to 153.0.0 |
+| `RemotePhone/RemotePhoneApp.swift` | SwiftUI home/session, input model, Metal video surface; current session still uses the older large fixed split |
+| `RemotePhone/ScannerView.swift` | Pairing QR camera UI; device-only camera acceptance remains |
+| `RemoteShared/Pairing.swift` | Invitation validation, secure storage, signal encryption, replay guard |
+| `RemoteShared/RemoteCoordinator.swift` | Approval, enrollment rotation, signaling, session lifecycle, reconnect, input sequence validation |
+| `RemoteShared/PeerMedia.swift` | Native peer connection, codec factory, video source, reliable ordered input channel |
+| `RemoteShared/ControlProtocol.swift` | Input allowlist and payload limits; geometry epoch field exists but enforcement needs review |
+| `RemoteHost/RemoteHostApp.swift` | Display selection, control permission, approval, capture task, session lease |
+| `RemoteHost/RemoteCapture.swift` | ScreenCaptureKit capture and periodic retransmission of the last buffer |
+| `RemoteHost/RemoteInputDriver.swift` | Mouse/key injection and release; bounds and text-size consistency need review |
+| `RemoteTests/SecurityTests.swift` | Five existing crypto/replay/invitation/input tests, not rerun for this handoff |
+| `Server/src/server.ts` / `Server/src/index.ts` | Bun signaling service; defaults to loopback; production requires relay config and approved rooms |
+| `Server/tests/server.test.ts` | Seven previously passing service tests; rerun before relying on them |
+| `PocketDesktop*`, `Shared`, `StreamTests` | Preserved older demo/LAN stream, separate from the new remote target |
+
+## Initial engineering review priorities (addressed locally; live acceptance remains)
+
+These observations come from source inspection and are test hypotheses, not demonstrated runtime failures:
+
+1. **Capture cancellation:** start awaits stop/start operations, while the host launches asynchronous cleanup tasks. Verify that an old cleanup cannot stop a newer capture or a canceled start leave it running. Add a generation/ownership guard if necessary and exercise rapid connect/stop/reconnect.
+2. **Honest picture freshness:** the capture timer repeats the last buffer, and the phone treats received frames as freshness. Repeated stale pixels must not conceal a stalled capture. Distinguish a healthy unchanged desktop from lost capture using actual capture health, and test both.
+3. **Input safety and geometry:** review selected-display bounds for every positional action, keyboard/display changes, session epoch enforcement, and held input cleanup. Phone heartbeat alone must not keep an abandoned drag held indefinitely. Preserve a clear user-visible drag state.
+4. **Text delivery:** the protocol allows 4,096 UTF-8 bytes, while the host currently refuses more than 1,024 UTF-16 units. Resolve the mismatch with explicit bounds or chunking and acknowledged outcomes so the phone does not clear text that was silently dropped. Test Unicode, emoji, composition, and long text.
+5. **Transport tuning:** the current input channel is reliable and ordered. Evaluate whether old pointer movement can queue behind loss; preserve reliable key/button ordering and safe releases. Do not claim preferred H.264 means hardware use or that nominal 60 fps proves delivered performance.
+6. **Enrollment/revocation:** test interruption during key rotation, both sides' saved state, rejected approval, stale invitations, and lost-device removal. Crypto unit tests alone do not establish secure end-to-end enrollment.
+
+## First intermediate checkpoint for the implementing agent
+
+A repeatable build/run path for both native targets, passing relevant existing checks, a documented repair of any blocking lifecycle/input issues, and the native screen-first session structure. The earliest live acceptance uses a harmless practice document with a visibly changing clock. Actual capture and input must be observed, then tested with disconnect during a drag. Any manual macOS permission or physical-device step should be requested only when it becomes necessary. Continue from this intermediate checkpoint toward the scoped cellular MVP; do not call the local demo the completed MVP.
+
+## Context and boundaries to preserve
+
+- [PRODUCT.md](../PRODUCT.md) contains the complete feature map, exact design-image links, known research limitations, and corrected Claude review findings.
+- [Research direction](RESEARCH-AND-PRODUCT-DIRECTION.md), [iOS user evidence](ios-user-research.md), and [cross-platform evidence](cross-platform-user-research.md) explain why reliability, input, readable text, and recovery lead the plan. They are qualitative desk research, not controlled competitor benchmarks.
+- [Remote protocol](REMOTE-PROTOCOL.md) is an engineering draft subordinate to the product specification. [WebRTC license notes](WebRTC-distribution-license.md) concern the existing community binary dependency, not an endorsement or completed distribution audit.
+- [Claude review](claude-review-v0.1.md) is external critique, not instructions; several categorical platform claims were corrected in PRODUCT.
+- Prior task “Research iPhone Duo app ideas” was read for history. Its earlier selected-window acceptance remained incomplete; it must not be reported as a proven working session.
+- iPhone 17 and M4 MacBook Air, developer membership, and a possibly borrowed iPad are user-reported available resources. Actual OS versions, signing, and connection state remain to be checked.
+- No required Tailscale installation, no claim Sidecar APIs supply third-party touch transport, no promised portrait virtual display, no public service or purchase already arranged.
+- The server currently generates shared-secret TURN credentials. Confirm the chosen managed provider's credential API; a provider adapter may be necessary. Do not assume every managed service accepts this scheme. This handoff did not reverify provider prices.
+- Do not create a new product specification, continue the older LAN-only architecture as the internet product, or use synthetic screenshots as native/live-performance evidence.
+
+## Historical handoff completion
+
+The handoff includes the product decisions and exact design references, code map, prioritized source-review findings, six implementation milestones with acceptance gates, the single successful build receipt, remaining manual/service prerequisites, and dated Apple documentation with a future-session refresh procedure. Authored reference links and all five retained source checksums were validated. The existing one-line syntax correction remains recorded; no further app code changes, launches, test runs, or deployments were performed after the plan-only clarification.
+
+## Active contract — 12 September implementation
+
+`RemoteAction` adds `capture` (x=1 healthy, 0 unhealthy), `textResult` (key=request ID, x=1 injected /0 rejected). `geometry` carries logical width/height in x/y and host epoch. Phone stamps user input with the epoch; host rejects mismatches, always accepts release. Text is limited to both 4096 UTF-8 bytes and 1024 UTF-16 units; phone retains draft until matching host acknowledgment and never automatically retries uncertain delivery. Capture health and received-frame freshness are separate. Heartbeats do not renew the two-second held-input lease. Shared/project edits belong to parent.
+
+Runtime routes verified from native tool catalog: Luna, Terra, Sol, GPT-5.5 supported; four slots including parent. No Astra worker/reviewer dispatched.
+
+### Final local integration receipt — 12 September 2026
+
+**Feasibility verdict: not validated/blocked. Local checkpoint: independently approved.** The native implementation is runnable, but the physical/cellular acceptance in PRODUCT 9B has not occurred.
+
+Evidence under `outputs/implementation-2026-09-12/`:
+
+| Check | Final result | Receipt |
+|---|---|---|
+| Mac companion Debug build | Pass; launched process verified | `host-build.log` |
+| Phone arm64 simulator Debug build | Pass | `phone-build.log` |
+| Native core tests | 20 passed, zero failures | `core-tests.log` |
+| Bun service tests | 18 passed, zero failures | `service-tests.log` |
+| Native iPhone simulator UI test | 1 passed; portrait, landscape, keyboard, trackpad and offline input gate | `phone-ui-final.log`, `phone-ui-final.xcresult`, `ui-final-attachments/` |
+| Fresh sensitive source/dependent review | Sol high: approve; no remaining findings | `/root/review` verdict recorded here |
+| Whitespace/diff check | Pass | `git diff --check` |
+
+Reviewed source manifest: `outputs/implementation-2026-09-12/source-sha256.txt`; SHA-256 `cc5d75f9590d806db1e71bce3d528571c07edcd274474507a82ac89848f15de3` (25 implementation/test/build files). This identifies the uncommitted local checkpoint, not a published release.
+
+The 20 native tests include nine host lifecycle cases, five security cases, four session integration cases, and two route-classification cases. Integration launches a real local Bun service and native WebRTC peers for approval/refusal, trust persistence failure, generated H.264 video encoding/decoding, Unicode data-channel traffic, reconnect and revoke. Observed fixture diagnostics: Direct/H264/VideoToolbox. Those results do not measure ScreenCaptureKit, physical input, end-to-end response, or cellular behavior. Direct `xcrun xctest` is used because the Xcode test launcher failed to locate the native bundle executable; the direct runner passes.
+
+Corrected review findings: capture sends must all succeed and retain live ownership before starting; old capture cleanup cannot stop a newer session; failed mouse-up retains its hold identity for scoped retry; click/key/text pairs are allocated before posting; unknown ICE candidate types cannot claim Direct. An intermittent reconnect failure also exposed a weak-reference identity bug: old and current peers could both be nil, making `===` pass. Every callback now requires a live peer, and an obsolete-callback regression passes.
+
+Phone UI uses a full-screen viewport, adaptive native controls, retained acknowledged text drafts, geometry/health/frame gates and explicit offline layout fixtures. The final test used an iPhone 18 Pro iOS 27 simulator. An initial landscape failure led to a compact scrollable keyboard panel and an always-accessible Hide keyboard header; a subsequent stale test selector was updated to that explicit accessibility label. Earlier failed logs are retained. Simulator tests do not establish physical ergonomics or performance.
+
+The Mac companion is built and running, but native UI automation twice failed with “native pipe closed.” Screen capture/Accessibility consent, a changing practice document, real text injection, permission loss and disconnect during a real drag remain unobserved. Xcode's saved iPhone 17 pairing was visible; a fresh connection attempt failed. A request to connect/unlock the phone was sent to Roshan and remains unanswered.
+
+No public endpoint, DNS, Cloudflare TURN key, paid service or deployment exists. Complete private environment/proxy examples are prepared under `Server/`. Real provider issuance and external routes remain untested. Existing work and older targets were preserved; no commit, reset, public release or recurring automation was created.
+
+**Next smallest experiment:** connect and unlock the physical iPhone, establish its signing/access, then explicitly choose the Mac display and grant required permissions. Observe a changing clock and correct practice-document edit; interrupt a drag, reconnect and revoke. After private signaling/TURN access is supplied, repeat on cellular and forced relay separately, recording actual route and practical responsiveness. Stop at the feasibility verdict.
+
+### Repeatable commands
+
+- `./scripts/verify-remote.sh`: generate project, 18 service checks, both native builds, then direct native test runner. Set `POCKETDESK_UI_SIMULATOR` to an available iPhone simulator UUID to include the native portrait/landscape/keyboard acceptance test.
+- `./script/build_and_run.sh`: rebuild and launch the Mac companion; also wired to the repository Codex Run action.
+- `cd Server && bun run start`: development signaling on loopback port 8787. Use `ws://127.0.0.1:8787/signal` on Mac/simulator only. A physical phone requires a trusted WSS endpoint reachable from that phone; do not weaken TLS validation.
+- Private relay deployment inputs and complete environment/proxy examples: `Server/README.md`, `Server/.env.private.example`, `Server/Caddyfile.private.example`. No live service was created.
+
+Code checks are not permission grants. The next live task must explicitly choose the display, approve the phone, verify a visibly changing practice document and an edit, then disconnect during a drag. Physical/cellular/forced-relay gates remain open until observed.
+
+### Physical setup receipt — 13 September 2026
+
+Roshan connected/unlocked the physical iPhone and authorized the default installed signing account. A fresh device query verified wired connection, pairing and Developer Mode. Certificate inspection matched the existing development identity to its team; the phone target now records that team and automatic signing in Xcode and `project.yml`. The global unsigned development default remains; the physical build explicitly overrides signing to enabled.
+
+Physical iPhone 17 Debug build passed in 11.992 seconds; installation and launch succeeded. Receipts: `outputs/physical-2026-09-13/phone-build.log`, `phone-install.log`, `phone-launch.log`. Device build products and receipts are ignored by git. No app code changed and no new functional test result is claimed. Xcode's device-interaction tool only offered simulators, so the installed Apple command-line device tools performed build/install/launch.
+
+The prior physical connectivity/signing blocker is cleared. On-device visual verification is pending; no capture/control, cellular or forced-relay session has occurred. A trusted signaling endpoint reachable from the phone remains required. No public endpoint or relay was deployed.
+
+### Private Tailscale test setup — 13 September 2026
+
+Roshan approved a temporary Cloudflare tunnel, then offered installed Tailscale on both devices. No Cloudflare tunnel was started. Both Mac and iPhone are now observed online in the existing tailnet. A foreground Tailscale Serve listener on dedicated port 8444 proxies only `/signal` through loopback Caddy to the test Bun service. Existing listeners on 443, 8443 and 10000, including the unrelated Funnel setting, were preserved. The new listener has no Funnel exposure. TLS WebSocket connectivity and invalid-registration rejection passed from the Mac; other paths return 404. This is not yet physical app pairing or WebRTC media evidence.
+
+Temporary supervisor and logs are in `outputs/physical-2026-09-13/`; supervisor gives the test a 30-minute maximum lifetime and cleanup on interrupt. Inspect `private-test-pids.json` and live command ownership before ending it; do not reset all Tailscale Serve settings. Test service listens only on loopback, max four peers, normal enrollment auth; no TURN. A successful media session through Tailscale will not satisfy the built-in internet/forced-TURN gate. The host endpoint is `wss://roshans-macbook-air.tail8c17ee.ts.net:8444/signal`.
+
+Live setup exposed a Caddy example ordering defect: the fallback response could execute before the reverse proxy. Fixed the example to mutually exclusive handle blocks, validated config, and verified the same routing pattern over the private endpoint. Mac UI automation still fails, so the user must enter the endpoint and grant display/control permissions in the companion; instructions shown in conversation.
+
+Disk space repeatedly reached full. Parent removed only this task's rebuildable compiler intermediates/module caches (~300 MB) and duplicated downloaded dependency caches (~190 MB nominal), keeping apps/source/evidence. User requested a background disk scan and then authorized unused Docker images/cache and unneeded containers, with last-use checks. Existing phone worker was reassigned to that bounded cleanup; personal data/volumes are not authorized for deletion.
+
+### Physical pairing attempt and session cleanup — 13 September 2026
+
+User confirmed PocketDesk's pairing screen is visible on the physical phone, entered the private endpoint on Mac and reported Screen Recording and Accessibility granted. After Pair a phone/scan, phone reported `host_unavailable_or_unauthorized`; no desktop/video/control session was observed. Host had an established TCP connection to the private endpoint, but Mac UI status could not be inspected. The relay warning is expected without TURN and is not by itself the registration failure. Computer-use native helper still fails after disk space recovery, so its earlier failure cannot be attributed solely to disk space. A fresh Sol diagnostic worker is investigating the QR-publication and host-registration paths; no actual root cause is confirmed yet.
+
+The voice test ended. Parent stopped only the temporary test supervisor, Bun service, Caddy proxy and dedicated foreground Serve listener. Verified port 8444 absent and existing 443/8443/10000 listeners plus unrelated Funnel setting preserved. No Cloudflare connection was ever created.
+
+User separately authorized LM Studio uninstall and model removal. Its app, configured model directory, bundled models, runtimes, CLI, staged update and CLI shell entry were removed; small conversation/config records remain (about1.6MB), with roughly8GB filesystem space available afterward. Docker backend still failed to expose its local engine even after recovery; no Docker objects/data were removed and individual container last-use times remain unknown.
+
+### Pairing readiness correction — 13 September 2026
+
+Fresh diagnostic worker `pairing_diagnosis` (Sol/high, focused host write-set) confirmed that `RemoteHostModel.pair()` could create and persist a new invitation before `start()` rejected an empty or stale display selection. That path could display an unregistered code and is consistent with the phone error; the actual physical failure's cause remains unconfirmed.
+
+The host now checks the selected display against the loaded display list before invitation creation can run, and disables Pair until eligible. A pure preflight regression covers missing, stale, and valid selections without invoking credential creation on rejection. The parent integrated target membership and added coordinator-owned `hostRegistered`, set only after the service acknowledges host registration and cleared when the session resets. QR and copy controls require that state, so an unregistered or failed attempt cannot expose a scannable code. Terminal failures still use the existing Stop/retry recovery controls.
+
+Integrated verification receipts: `outputs/pairing-fix-2026-09-13/`. Mac build and iPhone simulator build passed; all 18 service tests and 21 native tests passed. The first native run exposed a test synchronization error: registration remains true during an active session, so the reconnect wait also needs to observe that the old connection has ended. Corrected the predicate and reran native build/tests successfully (2.425 seconds); the failed first receipt is retained separately. No new phone UI test or physical capture/control result is claimed. Computer-use inspection remains blocked by the native helper failure.
+
+Fresh independent `pairing_review` (Sol/high, no implementation edits) approved the focused host/shared changes, regression coverage, and earlier private Caddy routing correction with no actionable findings. Approval covers only this correction, not the older dirty baseline. `outputs/pairing-fix-2026-09-13/source-manifest.json` records the seven tested source/configuration files. This local correction milestone is complete; physical acceptance remains open.
+
+The temporary private endpoint remains stopped. Next physical attempt must launch the rebuilt host, restart the bounded private service, load/select a display, wait for a newly registered code, scan/approve, then verify live changing content, a reflected text edit, and safe disconnect during a drag. Tailscale testing does not satisfy cellular or forced-TURN acceptance.
+
+### Resumed device test and stable signing — 13 September 2026
+
+Roshan resumed the physical test with his iPhone connected. Parent restarted the same bounded 30-minute private test supervisor and relaunched the host. Updated physical phone build, install, and launch passed; receipts use `phone-pairing-fix-*` in `outputs/physical-2026-09-13/`. Public standalone networking was explicitly delegated in parallel to `standalone_networking` (Sol/high; owns `Server/` and its readiness report). A separate acceptance worker created `scripts/physical-acceptance.html`, a local clock/text/drag fixture; its source checks pass but no physical event receipt exists yet.
+
+At Roshan's request, iPhone Mirroring was opened through computer use. After Roshan locked the phone, the mirrored home screen was observed and PocketDesk was opened. The phone pairing screen is directly visible and operable. Mac companion inspection still crashes the computer-use helper; the targeted `SkyComputerUseService` crash report shows a Swift assertion in `Array.remove(at:)` during traversal. A process sample shows the host alive in its normal event loop. This is a tool failure, not evidence of a host crash or blanket inability to control macOS: System Settings and Mirroring work.
+
+Roshan reported Accessibility authorization not being recognized. The host artifact was ad hoc signed, so parent changed only the host target's signing settings to the already authorized Apple Development team and Automatic signing. Build passed (4.630 seconds); strict/deep signature verification passed for the app and nested WebRTC. The designated requirement now uses the Apple-issued development identity, rather than a version-specific ad hoc signature. Apple's [TN3127](https://developer.apple.com/documentation/technotes/tn3127-inside-code-signing-requirements) was checked for this identity behavior. This addresses a plausible source of lost grants across rebuilds, not a confirmed sole cause of the earlier failure.
+
+After Roshan approved System Settings' Touch ID prompt, parent selected the exact current app in Device Control and Data Access. Targeted TCC logs confirm an Allowed Accessibility record bound to that development-signed requirement. Screen & System Audio Recording was already listed on; parent refreshed only PocketDesk's switch off/on and selected Quit & Reopen, with the final switch verified on. No other application's permissions were changed, and no TCC database or permission checks were bypassed. Receipts: `host-stable-signing-*`, `tcc-pocketdesk*.log`, and `host-sample.txt`. Display enumeration, successful pairing, physical video, and actual control remain unproven. Next step is the app's Choose display/check permission action, then a newly registered code and phone approval.
+
+### Recorded permission failure — 13 September 2026, subsequent attempt
+
+Roshan supplied the 26.5-second `Screen Recording 2026-09-13 at 12.32.07 PM.mov` in Downloads. Extracted visual frames show screen-recording permission on, a permission/restart cycle, the control checkbox remaining unchecked, no display picker populated, and Enable remote access ending at "Choose an available display first." Review artifacts are under `outputs/physical-2026-09-13/recording-review/`.
+
+The corresponding targeted system log establishes a stale TCC identity problem: at 12:32 the current development-signed app is checked against the former ad-hoc CDHash requirement and fails with -67050. Accessibility replies explicitly return `result=false` and `auth_value=0`; the current valid artifact satisfies the Apple Development requirement that Settings had just written. The independent diagnostic worker confirmed this distinction. Thus the preceding visible Allowed switches were not runtime permission proof. The code-identity cache mechanism is inferred from repeated cached attribution; the denials and mismatched requirement are observed.
+
+Parent installed the unchanged, verified development-signed build at `/Applications/PocketDesk Host.app`, stopped the build-folder process, and launched only the installed copy. A read-only LLDB probe of the running installed app returned false from both `AXIsProcessTrusted()` and `CGPreflightScreenCaptureAccess()`; debugger detached successfully. Installation alone has not repaired stale authorization. Next correction is removal of only the old PocketDesk permission rows through System Settings, re-addition of this exact stable app to both services, then relaunch and verification of trusted input plus display enumeration. Row-selection automation is unreliable and the Mac host's AX traversal still crashes the helper; human assistance may be required for this exact UI step. Do not edit TCC databases or bypass permission checks.
+
+The bounded private test supervisor expired and reported all owned test services stopped. Restart a reviewed service for the next pairing attempt. Fresh standalone networking review found approval-file races, incomplete TURN cleanup, and a phone-first reconnect failure; service corrections were assigned back to `standalone_networking`, and the native retry correction to `pairing_diagnosis`, with disjoint write-sets. Public deployment remains withheld pending corrected tests and independent re-review. The standalone environment example is now explicitly included by `.gitignore`.
+
+
+### Non-phone completion audit — 13 September continuation
+
+This audit is against PRODUCT 9B, not the deferred beta backlog.
+
+| Requirement | Implementation / local evidence | Remaining live evidence |
+|---|---|---|
+| Expiring pairing, explicit approval, trust and revoke | Native integration covers authenticated pairing, reconnect and revoke; service approval revoke now closes active rooms and retires issued relay credentials. New identity clears previous control consent. | Actual phone approve/reject/re-pair/revoke experience |
+| Selected display, fresh picture, continuous zoom/pan and rotation | Capture lifecycle and synthetic native WebRTC tests pass. Phone has 1–3× continuous zoom and a pannable video viewport; UI test verifies slider state and layout only. | Real display capture, readable text, frame freshness, scaled video/pan and touch accuracy |
+| Mouse, right/double-click, drag, text and keys | Double-click affordance added; native bounds, epoch, held-input lease and text-result tests pass. Graceful quit and SIGTERM now use synchronous cleanup. | Actual reflected edit, drag interruption, Cmd-Q during drag; crashes/SIGKILL cannot guarantee a final mouse-up |
+| Permission/control consent and view-only | Runtime grant state is separate from control consent; display refresh clears stale results; replacement/revoked identity loses consent. | Refresh the installed app's OS permissions and observe capture/control. Computer-control tooling refuses the protected authentication window. |
+| Direct and relay transport; error/stale/cancel | Bounded coordinator/service tests pass. Private TLS signaling exchange, rejection and cleanup pass; temporary listener removed. | Public standalone WSS and real TURN allocation/media, cellular direct and separately forced relay. Cloudflare account setup explicitly deferred. |
+| Explicit keep-awake and readiness | Off-by-default session assertion and cleanup policy added, metadata-only preflight passes, stable host install rollback has isolated failure coverage. | Real sleep/display/lock behavior and a physical away-use task; lid/manual sleep remain limitations. |
+
+Receipts: baseline `outputs/resumed-check-2026-09-13/`; assembled checks `outputs/integrated-check-2026-09-13/`; bounded private signaling `outputs/private-network-check-2026-09-13/`. Failed UI runs are retained, not overwritten. No public service, account setup, new automation, or physical media success is claimed.
+
+
+### Final continuation receipt — 13 September 2026
+
+**Local checkpoint: complete and independently approved. Physical MVP: unvalidated.** All evidence-supported major findings from both review packages were corrected. The minor keep-awake note is retained: after repeated OS assertion-release failure, the app retains the assertion identifier and shows actual active state; another stop/toggle or process exit is the cleanup backstop. This was not observed in a live failure and does not block the private feasibility checkpoint.
+
+| Final check | Result / receipt |
+|---|---|
+| Mac host and iPhone simulator builds | Pass; `outputs/final-check-2026-09-13/host-build.log`, `phone-build.log` |
+| Native suite | 33 passed, zero failures; `core-tests.log` in final receipts, including localhost H.264 media/control and new permission, consent and termination cases |
+| Service suite | 33 passed, zero failures, 107 assertions; `service-tests.log` in final receipts |
+| Real inactive→Home→reactivation UI transition | Pass in `outputs/integrated-check-2026-09-13/phone-ui-corrected.xcresult`; this run retained an unrelated keyboard sampled-hittability failure |
+| Corrected phone controls UI | Pass in `outputs/final-check-2026-09-13/phone-controls.xcresult`; actual Keyboard tap, exact text entry, portrait/landscape controls, Double-click affordance, fail-closed offline drag and continuous slider value |
+| Stable Mac installation | Corrected `script/build_and_run.sh --verify` passed; `outputs/final-check-2026-09-13/installed-host/`; exact installed process path and stable PID verified, previous app preserved |
+| Install/launch rollback | Five isolated cases pass: success, open failure, missing launch identity, move failure and signature failure; `outputs/integrated-check-2026-09-13/launch-rollback-tests.log` |
+| Runtime OS permission checks | Both remain false in the newly installed app; `outputs/final-check-2026-09-13/installed-permission-probe.log`; debugger detached afterward |
+| Preflight and observed offline UI | Read-only preflight passes; `preflight.log` and `phone-offline-layout.jpg` in final receipts. Snapshot shows offline controls only, no live Mac video |
+| Temporary private network | Seven same-Mac WSS checks pass; `outputs/private-network-check-2026-09-13/result.log`; all owned services stopped, prior Tailscale configuration preserved per `cleanup.json` |
+| Fresh independent review | Network and native/script packages approved after corrections; final behavioral UI-test correction approved separately. No remaining major finding |
+
+The original UI failure was preserved under `outputs/resumed-check-2026-09-13/phone-ui.xcresult`. Later failures remain under the integrated receipt. Independent Sol diagnosis inspected the failure's screenshot, accessibility snapshot and action trace: exactly one visible compact Keyboard button existed; the sampled `isHittable` check timed out, but the same button tap opened the field. The final test checks the observable tap/entry outcome instead of inflating a flaky sampling timeout. A separate expanded-dock Zoom accessibility-label mismatch was corrected.
+
+**Next smallest live step:** enter authentication directly on the Mac to refresh the installed app's Screen Recording and Accessibility rows, reopen that exact copy, verify actual runtime grants/display enumeration, then perform the checklist's changing-clock/edit/interrupted-drag task. Computer-control tooling refused access to the protected macOS authentication window; no password or permission was entered through it. Tailscale phone reachability and same-Mac WSS checks are debugging evidence only. Cloudflare account setup remains deferred by explicit user choice. Public standalone WSS, real TURN allocation, physical cellular and forced-relay media are not validated. No new public service remains running.
+
+All source and receipts remain in the preserved dirty working tree; no commit, reset, destructive cleanup or public release was performed.
+
+### Rough UI exploration and live MCP research — 13 September 2026
+
+Roshan requested divergent, deliberately rough Paper and Figma concepts, using Mobbin inspiration; no final design selection or design system. Claude design tooling is deferred. In parallel, two native GPT researchers investigated live desktop viewing and human interaction through MCP, including existing clients/projects. Human password entry is one example within this broader use case, not a replacement scope. MCP implementation is not authorized by this research request. PRODUCT D14–D15 records these boundaries.
+
+Before the rough-design steering, a small clarity/accessibility pass moved the Mac's next action and pending approval nearer the top, clarified setup labels, and added explicit names/states to phone keyboard controls. Both app builds pass: the Mac stable build/install verification and phone simulator build are in `outputs/ui-ux-pass-2026-09-13/`. The phone build ended `BUILD SUCCEEDED` in 5.882 seconds. These are compilation/installation receipts, not new physical or VoiceOver acceptance. No further app UI implementation followed the rough-exploration request.
+
+Research and editable-board evidence live under `outputs/design-exploration-2026-09-13/`. Figma created four rough phone cards before its Starter-plan MCP rate limit stopped further writes and screenshot verification; Paper was subsequently signed in using the existing account and selected for the remaining visual exploration. No final design, public MCP service, account purchase, relay activation, or physical capture/control success is claimed.
+
+The Paper file now contains four editable comparison boards spanning seven phone arrangements and three Mac setup alternatives, with static exports and per-direction tradeoffs. Both MCP research reports are complete. Parent review reconciled the OpenAI documentation: the private developer-mode custom MCP App route is web-only; broader mobile plugin availability is not evidence of a private mobile viewer. Claude mobile documents interactive connector UI, while PocketDesk WebRTC, keyboard, and lifecycle behavior still require testing. Existing OpenAI Remote and community MCP projects are adjacent examples, not evidence of the full requested live interactive desktop experience. The exploration [index](../outputs/design-exploration-2026-09-13/README.md) links designs, exported previews, sources, and the proposed smallest experiment. No MCP spike was implemented.
+
+### Browser-first research fan-out — 13 September 2026
+
+Roshan selected a protected live website as the foundation, with a link from chat and embedding as a later compatibility layer, and explicitly requested extensive parallel research. PRODUCT D16 records the research-only boundary. No service, new account, browser implementation, or deployment is started. Parent owns synthesis and records evidence in this ledger; reports under `outputs/browser-viewer-research-2026-09-13/` are supporting research, not another product specification.
+
+| Package | Native worker/model | Write-set | Acceptance / current state |
+|---|---|---|---|
+| Browser media and human input | `mcp_live_architecture`, Sol/high | `browser-media-input.md` | Complete; parent reviewed current-code constraints, Safari/in-app/iframe distinctions and generated-media experiment |
+| Session access and security | `mcp_client_support`, Sol/high | `session-access-security.md` | Complete; parent reconciliation covers separate native trust, inert links, mutual identity binding and status-channel/input distinction |
+| Existing implementations | `design_fanout`, Terra/medium | `existing-solutions.md` | Complete; six candidates, official license/support evidence and maintenance dates reviewed |
+| Integration plan | Parent | PRODUCT, this ledger, research index/plan | Reconcile reports against source and inspect decisive claims; no implementation |
+
+All three available worker slots are used with disjoint files. Native GPT workers only; no Astra workers or external agent CLIs. Existing dirty/untracked source is preserved. Prior rough design files are unchanged during this research phase.
+
+### Proposed browser implementation packages — not started
+
+Roshan explicitly reconfirmed this session is planning only (PRODUCT D18). These are proposed write-sets for a later implementation task, not current assignments. PRODUCT section 9B2 owns acceptance and ordering; this table translates its gates into bounded engineering work. Revision 0.10 adds S0 before the reviewed admission contract and requires physical Safari throughout viewer/input development. The rows below are packages, not a requirement to finish desktop-only fixtures before touching a phone.
+
+| Package | Proposed files / ownership | Dependency and validation |
+|---|---|---|
+| Early compatibility probe | Isolated synthetic sender/browser experiment and receipts | S0 first after implementation authorization. Generated code-like text, physical Safari readability/crop comparison, local-only keyboard form, inert chat link. No real desktop or OS input until G0 admission is reviewed; preserve useful fixtures and receipts rather than automatically deleting work |
+| Contract and generated fixture | Browser-specific shared protocol types and tests; extend `RemoteTests` with advancing synthetic frames | G0 after S0. Follow PRODUCT section 8 browser admission: separate BrowserPeer record, no native-pair migration; proof-of-possession and single-use WSS admission message; settle geometry and frame-age mapping. Specify versioned fields, timestamps/counters, binary framing and authenticated mutual identity before live access. Review crypto design; fixed cross-language vectors, malformed/replay rejection, no native trust mutation. No real screen or injected Mac input |
+| Browser admission and grants | Dedicated route/state in `Server/`, browser enrollment/session integration in shared/host code | G0 contract. Preserve native `/signal`, Origin rejection, registration and rate limits; a separate browser route needs exact origin policy and independent credential types. Test inert GET/prefetch, wrong key/origin/mode, redemption race, expiry, Stop and native/browser revoke isolation |
+| Standalone viewer | Proposed new browser client directory, owned by one worker | G1 after contract and browser admission/grants. Use real authorized capture as soon as permissions are available; retain generated failure fixtures. Judge physical Safari text readability here and add crop encoding only if measurement requires it. HTTPS page, receive-only video, existing host-created ordered binary `control` channel used only for status in view mode, and explicit playback/failure UI. Channel-open currently drives capture startup; changing that requires an explicit shared lifecycle change. Generated counter advances; host denies crafted input in view-only; no saved phone credentials or production screen required |
+| Human input and lifecycle | Browser controls plus shared/host input gates; assign one integration owner | G2 after viewer, with physical Safari from the first control slice. Relative touchpad, zoom/pan, committed Unicode/IME text and explicit keys; test harmless fixture response, acknowledgements, cancel, stale frames, held-state lease and no replay. Direct absolute touch excluded |
+| Private physical acceptance | Test harness and redacted receipts | G3 after fixture. The prior private listener is stopped and its proxy served only `/signal`; reuse needs a reviewed restart and browser-route mapping, preserving unrelated configuration. Real capture requires restored runtime Mac permissions; physical Safari/Chrome, readable video, reflected edits and interrupted drag must be observed |
+| Public reachability | Provider configuration and operational tests | G4 only after user resumes provider/account work. Authenticated public WSS, physical cellular and separately forced TURN with actual route/usage observations; do not infer this from Tailscale or local signaling |
+| Chat integration | Small MCP control adapter; optional embedded client wrapper | G5a–G5d after standalone proof, with distinct tools, embedded view-only, embedded full-control, and supported-runtime handoff receipts. Tools request/status/stop and return inert locators. Local harness/Mac controls issue grants before this package exists. Check exact provider reachability and host capabilities; media and human input never enter tool history |
+
+Parent integration must preserve one active viewer policy and existing native clients. Browser enrollment must not use `createPair()`/`HostPair.rotated()` to overwrite the phone pair. A view-only session may retain a channel for status/readiness, but the Mac must reject input regardless of crafted browser packets. A new channel-free lifecycle is a separate change.
+
+Supporting reports and hosting assumptions are indexed in [browser research](../outputs/browser-viewer-research-2026-09-13/README.md). No browser code, new service, account, deployment or physical test was performed during this planning pass.
+
+Final planning review corrected stale device/permission wording, viewer dependencies, channel lifecycle, native-identity preservation and browser acceptance targets. All seven product/ledger/research documents passed local file-link validation; whitespace checks passed. These are documentation checks only. No browser implementation or live acceptance was performed.
+
+
+### Current plan review — 13 September 2026
+
+User authorized an external Claude critique after the plan and original feature coverage were assembled. The source conversation was checked again and PRODUCT now maps its late user requests to the retained features and decisions; all F01–F40 and B01–B20 entries remain present. The completed [competitor feature comparison](COMPETITOR-FEATURES-2026-09-13.md) was delegated to a native Sol reviewer and parent-reviewed. The [planning assessment](IDEA-VALIDATION-2026-09-13.md) captures API boundaries and the proposed sequence.
+
+The [review packet](CLAUDE-PLAN-REVIEW-PACKET-2026-09-13.md) is a dated snapshot for external review, not a competing specification. CLI review could not authenticate. Desktop showed Opus 5 but UI interaction failed. The normal Claude browser sign-in succeeded, Opus 5 was explicitly selected, and the attached packet plus critical-review request were submitted in [PocketDesk plan critical review](https://claude.ai/chat/d7820995-9114-48c8-8c6b-91207ec67fa3). Both review passes are complete. PRODUCT 0.10 incorporates the accepted changes; [the reconciliation record](CLAUDE-REVIEW-RECONCILIATION-2026-09-13.md) documents corrected or rejected suggestions and the final readiness conditions. The original uploaded packet is preserved as a snapshot. No implementation has started.
+
+
+### Agent-ready handoff — 13 September 2026
+
+The [implementing-agent handoff](AGENT-HANDOFF.md) is ready. It is subordinate to PRODUCT and this ledger, preserves the current dirty checkout, and packages the first browser feasibility checkpoint with S0–G4 dependency waves and the retained G5 roadmap. Current task remains planning only. No browser code or device/provider work was started.
+
+Roshan explicitly requested the swarm-orchestrator skill and maximum useful parallelism. The parent used all three available worker slots for bounded read-only audits, then reconciled their findings:
+
+| Review package | Worker / model | Evidence and disposition |
+|---|---|---|
+| Feature retention | `feature_comparison`, Sol/high | Checked PRODUCT and planning assessment; retained native product, practical phone controls, tiered embedding, separate model inspection and supported-runtime handoff |
+| Dependency and ownership review | `handoff_dependencies`, Sol/high | Split broad cross-subsystem packages into S0–G4 work waves; root owns shared interfaces/configuration and gate verdicts; fresh review follows author work |
+| Baseline and acceptance review | `handoff_acceptance`, Terra/high | Distinguished historical local passes from missing physical/browser/away proof; parent inspected existing script entry points and added commands plus their effects |
+
+Workers made no file edits and ran no product tests. Parent owns the handoff and this integration record. The future implementing agent must expand proposed path patterns into exact disjoint filenames and test ownership before dispatch; all substantive waves follow author checks, fresh independent non-Astra GPT review, bounded corrections and parent verification. There are at most three simultaneous workers in the current runtime.
+
+### Browser implementation — active 13 September 2026
+
+Fresh read-only preflight passed; installed host signature valid, macOS 27.0 (26A428), Xcode 27.0 (27A266a), 12 GiB available. Runtime capture/control grants remain unverified. Preserve dirty main, native targets, pairing and all prior receipts. S0 physical phone observations remain pending and must inform later adjustments; independent implementation and desktop tests are authorized despite phone absence.
+
+| Package | Exact ownership / exclusions | Route, checks and stop conditions |
+|---|---|---|
+| S0 browser fixture/probe | `BrowserProbe/index.html`, `BrowserProbe/probe.css`, `BrowserProbe/probe.js`, `BrowserFixtures/code-scene.js`, `BrowserFixtures/code-scene.test.ts` only; no real capture/input/service/config | Terra/medium; synthetic advancing code video, H.264 loopback, local keyboard/zoom/rotation and inert entry; bun tests and parent browser rendering. No physical acceptance claim |
+| G0 contract proposal | Read-only PRODUCT, shared/native/service sources; return proposed canonical contract to parent, no edits | Sol/high; signatures, separate browser trust, single-use transport tickets, mutual identity and displayed-frame age. Escalate unresolved security semantics |
+| Host/browser feasibility inventory | Read-only native sources, SDK and build scripts; no app launch/build/service/settings mutations | Sol/high; return exact integration call sites, native synthetic sender reuse and supported permission probe procedure. No live-permission claim |
+| Root | Shared contracts, configuration/lockfiles/project generation, documentation, baseline checks and integration | Freeze G0 before dependent writers; independent review before real access. No public deployment/account changes. Phone, cellular and TURN gates remain pending |
+
+Live catalog supports Terra/medium and Sol/high; root plus three workers maximum. No Astra workers/reviewers. Authors own scoped tests; fresh review follows stable artifacts. Root alone operates app/device/global service state and records gate verdicts.
+
+G0 implementation contract is frozen in the leading browser section of `Docs/REMOTE-PROTOCOL.md`; it narrows the proposal to one encrypted signaling key with direction-separated nonces, and a pixel-token conservative freshness gate. Native identities and transport remain separate. Author wave (fresh review follows):
+
+| Package | Exact allowed files | Checks / route |
+|---|---|---|
+| Browser service | `Server/src/browser/service.ts`, `Server/tests/browser-service.test.ts` | Sol/high; bounded loopback service, inert GET, Origin/Host, ticket races/expiry/Stop; Bun tests; never public |
+| Browser host coordinator | `RemoteHost/BrowserPeerController.swift`, `RemoteHost/BrowserPeerStore.swift`, `RemoteTests/BrowserPeerTests.swift` | Sol/high; contract implementation, distinct store, injected callbacks/native arbiter; parent compiles shared dependencies |
+| Browser viewer/controls | `BrowserClient/index.html`, `BrowserClient/style.css`, `BrowserClient/app.js`, `BrowserClient/src/viewer/marker.js`, `BrowserClient/src/control/input.js`, `BrowserClient/tests/input.test.ts`, `BrowserClient/tests/marker.test.ts` | Terra/medium; ES modules, protocol API below, explicit input/lifecycle gates; Bun tests and parent browser inspection |
+| Root shared/integration | `RemoteShared/BrowserCrypto.swift`, `BrowserClient/src/crypto.js`, crypto fixtures/tests, marker compositor/native capture wiring, native session arbiter, synthetic runner, scripts/config/docs | Parent owns exact cross-language contract and integration; no real access until independent G0 review |
+
+Authors stop and report any required cross-package edits rather than overlapping. iPhone absence means S0 physical observations pending; no synthetic test may pass G1–G4 acceptance.
+
+
+Parent integration update: Mac and iOS baseline passed again (33 native / 33 service); browser host built and initial native suite expanded to 42. Isolated Swift-generated video successfully reached Chromium through the real browser admission/media path: text acknowledgement, stale-video block, End and fresh reconnect observed. This is synthetic only. Nonprompting installed-host runtime checks return false for Screen Recording and Accessibility; no settings or permissions changed. Native CUA inspection failed with a closed pipe, so isolated headless browser tests are used.
+
+Fresh browser review required lifecycle, view-scope, stale-token, input-draft and CSP/mobile corrections. Fresh native/service review required encrypted enrollment and human-approval cancellation repair. Authors corrected their scoped files; parent finishes cross-package changes and runs re-review. A scanline-orientation regression caught the initial compositor flip; parent replaced Quartz composition with same-size YUV conversion plus row copying. Trusted browser-code delivery is now an explicit deployment boundary in REMOTE-PROTOCOL; public G4 remains pending. `scripts/verify-browser.sh` builds an isolated native fixture, runs loopback Chromium acceptance, writes redacted receipts, and cleans up its own processes.
+
+
+### Browser local checkpoint results — 13 September 2026
+
+Parent selected the harmless code-edit fixture and completed the available implementation: `BrowserProbe`, `BrowserClient`, dedicated `Server/src/browser/service.ts`, browser Keychain trust/controller, native capture/input adapter, pixel freshness gate/compositor, cross-language crypto, the synthetic Mac app, and repeatable scripts. Native targets and phone pairing are preserved. Initial author work was corrected through independent GPT reviews; parent performed integration and additional lifecycle/media tests.
+
+| Evidence | Result | Scope / receipt |
+|---|---|---|
+| Fresh native/service regression | PASS | 48 native and 49 service tests, Mac and iOS simulator builds, `outputs/remote-check-20260913T105750Z/` |
+| Combined JavaScript | PASS | 61 tests / 274 assertions, `outputs/browser-implementation-2026-09-13/all-js-tests.log`; includes overlapping service suites |
+| Chromium interactive | PASS | 18 actual native-to-browser synthetic checks plus 4 probe/race checks; `outputs/browser-check-20260913T110218Z-interactive/` |
+| Chromium view-only | PASS | 12 checks including crafted-input refusal with a fresh decoded token; `outputs/browser-check-20260913T105727Z-view/` |
+| WebKit compatibility | FAIL / pending investigation | Matching Playwright 1.63.0 + WebKit2359 enrolls/authenticates but stays ICE checking with zero RTP/frames; `outputs/browser-check-20260913T110307Z-view/`. No confirmed decoder issue; local-network candidate policy is only a hypothesis |
+| Browser fresh review | APPROVED | All prior blocking findings fixed; final follow-up approved decoded-frame status, no-media timeout and probe cancellation. Final hashes in `outputs/browser-implementation-2026-09-13/source-sha256.json` |
+| Native/service fresh review | APPROVED for local synthetic checkpoint | Enrollment relay substitution, human approval deadline/cancel, pending-ticket cancellation and fresh receipt directory fixes implemented |
+| Real Mac permissions/control | PENDING | Both installed-host runtime permission probes false during this task. No permission settings changed and no real desktop/input acceptance claimed |
+| Phone/private HTTPS/cellular/TURN | PENDING | iPhone unavailable; no provider account/public exposure. Local browser has no configured TURN |
+
+[Browser testing](BROWSER-TESTING.md) contains repeatable commands and tonight's physical checklist. The local implementation checkpoint is delivered; S0/G1/G2 physical acceptance, G3 private-device acceptance, public G4 and later chat/embedded roadmap are not passed by synthetic tests. Preserve the direct-only WebKit failure for follow-up. No background automation was created.
+
+
+Final native/service re-review approved after inspection of encrypted enrollment, human approval deadline/cancellation, proof-ticket cancellation, exact replacement/scope rules, browser/native exclusivity, input/permission/frame gates, capture/footer integration and safe receipt directory handling. The reviewer's final isolated service rerun was interrupted and is not counted as a fresh pass; parent-owned stable receipts above are the test authority.
+
+Installed and launched the signed current `/Applications/PocketDesk Host.app`; prior copy is preserved for rollback under `outputs/host-run-20260913T110403Z/`. A fresh nonprompting probe of the new installed process returned **false** for both Accessibility and Screen Recording, then detached cleanly; see `outputs/browser-implementation-2026-09-13/installed-permission-preflight.log`. Browser/capture/control access was not enabled. All synthetic apps and loopback test services were stopped; no public service or automation was created.
+
+
+### Physical phone follow-up and permission diagnosis — evening 13 September
+
+Roshan connected his iPhone and authorized physical tests. Wired iPhone17 is paired with Developer Mode enabled. The phone initially locked during preparation, then unlocked and ran both `RemotePhoneUITests` successfully: **2 passed, 0 failed**, covering real keyboard entry, portrait/landscape layout, zoom and inactive-scene concealment. These remain offline UI checks; see `outputs/physical-phone-20260913-evening/native-ui.xcresult`.
+
+Roshan reported both Mac permissions already enabled. Parent independently inspected live System Settings and confirmed **PocketDesk Host on** in Screen & System Audio Recording and Device Control and Data Access. The running signed app still returned false for both public permission APIs. Focused tccd logs identify the exact reason: **existing code requirement mismatch** for both services. The stored requirement uses an old binary cdhash; the current installed app has a valid Apple Development designated requirement. This is a stale build-identity grant, not user failure to enable the switches. No permission database was read or edited, no grants changed, and no API check bypassed. Next repair is limited to PocketDesk's two stale records, followed by explicit reapproval of the installed signed app and runtime verification.
+
+Roshan requested a durable note and prevention for future builds. Added [Mac permission identity runbook](MAC-PERMISSION-IDENTITY.md), linked from AGENTS and browser testing, and `script/verify_host_identity.sh`. Installation now checks exact designated-requirement continuity and native requirement validation for both the build and staged copy before interrupting the host. Ordinary changed binaries with the same certificate-backed identity are accepted; changed identities fail closed. Seven real signed-fixture checks passed, including same-team requirement changes, ad hoc and tampered builds; existing installed/build pair also passed read-only. No app relaunch or permission reset was needed for these checks. Independent native review approved after checking the staged-copy race fix and first-install baseline limits. Evidence: `outputs/permission-identity-20260913/receipt.json`. Current stale grants still need the documented one-time repair.
+
+
+### Live test restart — 13 September
+
+User asked to start testing. Fresh checks confirm connected physical iPhone 17 with no passcode required; installed-host public permission checks still both false, then debugger detached. Native CUA control failed with a closed pipe even after session reset. Parent gracefully stopped only the exact installed host and successfully reset only its ScreenCapture and Accessibility records using scoped tccutil. User must now open `/Applications/PocketDesk Host.app` and approve fresh grants; no post-repair runtime capture/input acceptance yet. Receipt: `outputs/permission-identity-20260913/live-test-restart.json`.
+
+
+User completed local reapproval and requested verification. Fresh checks inside the relaunched installed host return **true for Screen Recording and Accessibility**; debugger detached cleanly. Connected physical iPhone remains unlocked. The one-time stale-grant repair is now verified at the public API level. Receipt: `outputs/permission-identity-20260913/post-repair-verification.json`. Native CUA window access still fails; display enumeration and actual stream/input are not yet verified.
+
+
+User requested that computer use handle remaining setup without manual work. CUA inventory and Finder control work; selecting PocketDesk by installed path or name crashes SkyComputerUseService. Diagnostic report shows a Swift Array.remove(at:) assertion. CUA reset and one clean PocketDesk relaunch did not repair this. Host remains installed and no grants changed. Physical streaming remains untested; restore the native helper connection before continuing UI setup. Evidence: `outputs/permission-identity-20260913/computer-use-recovery.json`.
+
+
+### Computer-use GroupBox compatibility fix — 13 September
+
+Minimal standalone tests establish that one SwiftUI GroupBox crashes SkyComputerUseService during UIElementTreeTransformation; equivalent heading/VStack sections work. Added HostSettingsSection and replaced all six real host GroupBoxes, preserving semantic headings and individually accessible controls. Built and installed through the signature continuity guard; live CUA reads the whole host, clicks Check displays, and enumerates Display 1 (1920x1243). Both Mac permissions remain granted. Visual layout inspected; independent review approved with no findings. Diagnostic apps stopped. Receipts: `outputs/cua-window-diagnosis/receipt.json` and `outputs/host-run-20260913T132727Z/`. User requested reporting to OpenAI and a durable prevention note; AGENTS links `Docs/CUA-GROUPBOX-BUG-REPORT.md`. Support submission is in progress, not yet an accepted case.
+
+
+Bug report sent through authenticated OpenAI Help Center support chat with minimal reproduction, helper/app versions and sanitized crash metadata. Support says this chat cannot directly route to engineering or generate a case reference; do not claim engineering acceptance. Report is delivered in the support conversation. Full raw logs and screenshots were not shared. `outputs/cua-window-diagnosis/support-receipt.json` records this distinction.
+
+### Private Safari test preparation — 14 September 2026 (Malaysia)
+
+Roshan authorized starting the next private physical-phone milestone. Parent confirmed the installed host UI shows both permissions granted and Display 1 (1920×1243). A read-only Sol/high worker reviewed private routing, exact Origin/Host requirements and direct-only ICE limitations; parent owns service/UI changes. No product code changed.
+
+Temporarily ran `scripts/browser-dev.ts` on loopback 8788 with exact origin `https://roshans-macbook-air.tail8c17ee.ts.net:8444` and a 30-minute lifetime, plus a dedicated tailnet-only Tailscale Serve HTTPS route on 8444. System TLS verification and viewer GET passed, wrong Host returned 421, wrong browser API Origin returned 403, and existing proxy routes were preserved. The in-app browser displayed the inert viewer. The real Mac host connected over WSS and visibly reported **Browser access service is ready** with browser control off. These are HTTPS/service readiness checks, not live desktop or physical Safari acceptance.
+
+iPhone Mirroring repeatedly reported **iPhone in Use — Lock your iPhone to connect**. User was asked to lock the phone; no enrollment offer was created, no browser trust was added, and no capture/input session began. Cached device availability did not prove an active device connection. Physical Safari readability, input and interruption recovery remain pending.
+
+Cleanup verified: host browser access stopped, loopback process ended, only the temporary 8444 route removed, and Tailscale configuration exactly matched its before snapshot. Native pairing and OS grants were untouched. Receipts: `outputs/private-safari-20260914/https-preflight.json` and `session-receipt.json`. Resume with the same origin/service/route once the phone is locked, then enroll Safari view-only and follow `BROWSER-TESTING.md`; public provider work and cellular/TURN remain paused.
+
+### First physical Safari connection — 14 September 2026 (active follow-up)
+
+User resumed with Mirroring connected. The parent restarted the bounded private service and tailnet-only 8444 route. Initially native screenshots returned Stage Manager thumbnail dimensions; the user authorized native macOS screenshot capture, then brought Mirroring forward. Parent temporarily switched Stage Manager off (originally on) to keep test windows available together. This is desktop presentation, not a PocketDesk permission change, and must be restored during cleanup.
+
+The existing iPhone Tailscale connection was off; parent reconnected it and loaded the exact private HTTPS viewer in a new Safari tab. Physical view-only enrollment/approval succeeded. Safari received actual Mac desktop video, and later visible Mac window changes appeared in the stream. Local viewer zoom and pan changed the displayed region. Full-desktop fit makes small code text too small for comfortable portrait reading; this is not yet a full readability acceptance. View-only trust was revoked and forgotten before a fresh interactive enrollment. A Safari-sent Command–Space opened Mac Spotlight, observed through native screenshot capture. No native pairing changed.
+
+Direct phone use interrupted Mirroring; Safari leaving the foreground ended the session, concealed video, and required explicit Connect on return. Reconnect with the same authorized browser succeeded. Held-drag release, network loss, landscape/soft-keyboard layout and quantitative latency remain untested.
+
+The physical test exposed shortcut autocapitalization: Safari changed `a` to `A`, while the Mac key map accepts lowercase names. Sol/high author `mobile_key_fix` changed only `BrowserClient/index.html`, `BrowserClient/app.js`, `BrowserClient/src/control/input.js`, and `BrowserClient/tests/input.test.ts`. Symbolic key actions now trim/lowercase; text payloads and text receipt IDs remain exact. Shortcut/code fields disable autocapitalization, autocorrection and spellcheck. Parent browser checks passed **11 tests / 34 assertions**. Fresh Sol/high reviewer `mobile_key_review` approved, with a nonblocking nit for duplicate key-only normalization in the handler and packet boundary. Exact hashes/review are in `outputs/private-safari-20260914/mobile-key-fix.json`; no native rebuild was needed.
+
+Physical retest is currently pending: the Mac locked before Safari reload. User was asked to unlock the Mac, keep the phone locked and focus disposable `/tmp/pocketdesk-physical-acceptance-20260914/hello.py`. Its unchanged baseline runs successfully. Actual remote code edit/save is not yet verified. A bounded 20-minute keep-awake process was started; it does not bypass a locked Mac. Cleanup still required for this resumed run: end/revoke the test browser grant, forget the Safari enrollment, stop the private service, remove only 8444, restore Stage Manager, stop the temporary keep-awake process and restore the iPhone Tailscale connection to its original off state. Public/provider and cellular/TURN work remain paused.
+
+Paused-run cleanup update: Mac remained locked on a fresh check. Parent stopped the private service and temporary keep-awake process, removed only 8444 and verified the proxy configuration exactly matches its before snapshot. Temporary diagnostic screenshots were removed. UI cleanup still needs an unlocked Mac: revoke/forget the browser test grant, restore Stage Manager on and iPhone Tailscale off. See `outputs/private-safari-20260914/resumed-paused-receipt.json`. The browser session had already been ended before the lock; no active remote control session is left by this pause.
+
+### Current-network latency baseline — 14 September 2026, 10:17–10:23 MYT
+
+User requested network speed and latency checks before further optimization. Read-only measurements: Apple networkQuality over Wi-Fi measured 157.9 Mbps down / 62.8 Mbps up, 15.8 ms idle endpoint RTT and 912 RPM; busy self HTTP probes had median 87 ms / p95 312 ms. Concurrent active 50-packet probes measured local Mac–iPhone median 5.45 ms / p95 7.87 ms, versus tunnel-IP median 24.88 ms / p95 46.17 ms, both zero loss. All twelve Tailscale discovery pings used a direct local endpoint. This does not identify the actual WebRTC media route, and none of these values is PocketDesk input-to-visible latency. Initial idle outliers and differing probe cadence prevent attributing all variation to load or to a specific device.
+
+Read-only Sol/high code audit plus parent inspection identified full-video Safari canvas readback for an 88×48 marker as the first bounded optimization candidate. Crop area would be approximately 586× smaller at the observed display geometry; no runtime speedup is measured or implemented. Next establish real Safari route/encode/decode/callback/input-to-visible baseline, then A/B marker cropping while preserving both 600 ms freshness gates and all consent/security behavior. No product code, services or settings changed in this run; previous physical-test and UI-cleanup obligations remain pending. Receipt and interpretation: `outputs/network-check-20260914/REPORT.md`, `summary.json`, and raw probes.

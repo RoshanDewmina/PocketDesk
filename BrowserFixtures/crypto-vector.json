@@ -1,0 +1,46 @@
+{
+  "notice": "TEST ONLY fixed private scalars; never use for live sessions",
+  "fields": [
+    "challenge",
+    "fixture host",
+    "fixture browser",
+    "http://127.0.0.1:8788",
+    "view",
+    "synthetic",
+    "1",
+    "1111111111111111111111111111111111111111111111111111111111111111",
+    "2000000000000",
+    "2222222222222222222222222222222222222222222222222222222222222222",
+    "3333333333333333333333333333333333333333333333333333333333333333",
+    "BGsX0fLhLEJH+Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT+NC4v4af5uO5+tKfA+eFivOM1drMV7Oy7ZAaDe/UfU="
+  ],
+  "hash": "19c13d1dd0a975bb51365728534ddd0399bbc6bfae5a7ea0c49bde10e4310996",
+  "signingPublic": "BNEfVdPH2OiTzM4vLN4akxKnFMgcfSSU2ecWECFhXZ1Q8jiyaCq+gCoxOgcYFEjhpysC6hmckNHBmTlB76Z+laI=",
+  "signature": "5Tra6oy7QhT/Ar5WdO6uH4uqEOX9FslvKm0CzkNozjsUkOqX5Ktg4uZBhQAf27k/ZaDs4AICsNRJ18f9LDX+0g==",
+  "hostScalar": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAE=",
+  "hostPublic": "BGsX0fLhLEJH+Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT+NC4v4af5uO5+tKfA+eFivOM1drMV7Oy7ZAaDe/UfU=",
+  "browserPublic": "BHzyexiNA09+ilI4AwS1GsPAiWnid/IbNaYLSPxHZpl4B3dVENuO0EApPZrGn3Qw27p9reY86YIpngS3nSJ4c9E=",
+  "browserJWK": {
+    "kty": "EC",
+    "crv": "P-256",
+    "d": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAI",
+    "x": "fPJ7GI0DT36KUjgDBLUaw8CJaeJ38hs1pgtI_EdmmXg",
+    "y": "B3dVENuO0EApPZrGn3Qw27p9reY86YIpngS3nSJ4c9E",
+    "ext": true
+  },
+  "session": "1111111111111111111111111111111111111111111111111111111111111111",
+  "envelope": {
+    "direction": "host",
+    "sequence": "1",
+    "payload": "a1CBhnjqD6BQ2iBfFTiaeD66IFEzYnpBWW7e5ekuYOQ="
+  },
+  "enrollment": {
+    "secret": "3333333333333333333333333333333333333333333333333333333333333333",
+    "hostID": "4444444444444444444444444444444444444444444444444444444444444444",
+    "url": "http://127.0.0.1:8791",
+    "peerID": "5555555555555555555555555555555555555555555555555555555555555555",
+    "publicKey": "BNEfVdPH2OiTzM4vLN4akxKnFMgcfSSU2ecWECFhXZ1Q8jiyaCq+gCoxOgcYFEjhpysC6hmckNHBmTlB76Z+laI=",
+    "nonce": "BIzIQhstKEJWYlHq",
+    "payload": "Hvic1YcRIcV+QyDl6+75oQR4hzpm6gqsXK2if3K3c/45Tfwx/H8P3GPx4BIGh5mvxzLs5BUmDed6+soXgOhC2f7RtMWKahZhMGbKDaSVZHdEtM0qlJvVcG8C7rutwPm4DQ41Hzkr6bQdO5x1Ox37xREqdRsEdwO83hUi3riRiNmC/17iM4fieh/pcAn/GrUy6B0CjSgfWwZJRSYSfhRnXdTVhbUo3/3SMYbX4w6/db0bnrdfFd7iMaD0UD8bB0nfiplIRA=="
+  }
+}

@@ -77,3 +77,85 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
     scheme:
       testTargets: [StreamTests]
+  PocketDeskRemote:
+    type: application
+    platform: iOS
+    deploymentTarget: '26.0'
+    sources: [RemotePhone, RemoteShared, PocketDesktop/TrackpadSurface.swift]
+    dependencies:
+      - package: WebRTC
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote
+        DEVELOPMENT_TEAM: 39HM2X8GS6
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: PocketDesk
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Discover and connect securely to your paired Mac.
+        INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing code shown on your Mac.
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+    scheme:
+      testTargets: [RemotePhoneUITests]
+  RemotePhoneUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: '26.0'
+    sources: [RemotePhoneUITests]
+    dependencies:
+      - target: PocketDeskRemote
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+  PocketDeskRemoteHost:
+    type: application
+    platform: macOS
+    deploymentTarget: '26.0'
+    sources: [RemoteHost, RemoteShared]
+    dependencies:
+      - package: WebRTC
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: PocketDesk Host
+        INFOPLIST_KEY_NSScreenCaptureUsageDescription: Share a selected display with your paired phone.
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: Apple Development
+        DEVELOPMENT_TEAM: 39HM2X8GS6
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+    scheme: {}
+  RemoteCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: '26.0'
+    sources: [RemoteTests, RemoteShared, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift]
+    dependencies:
+      - package: WebRTC
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: '-'
+    scheme:
+      testTargets: [RemoteCoreTests]
+  PocketDeskBrowserFixture:
+    type: application
+    platform: macOS
+    deploymentTarget: '26.0'
+    sources: [BrowserFixtureHost, RemoteShared, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift]
+    dependencies:
+      - package: WebRTC
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.BrowserFixture
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: PocketDesk Synthetic Browser Test
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: '-'
+    scheme: {}
+packages:
+  WebRTC:
+    url: https://github.com/stasel/WebRTC.git
+    exactVersion: 153.0.0

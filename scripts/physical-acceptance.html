@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PocketDesk Physical Acceptance Fixture</title>
+  <style>
+    :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+    body { margin: 0; background: #111827; color: #f8fafc; }
+    main { max-width: 1050px; margin: auto; padding: 28px; }
+    h1 { margin: 0 0 8px; font-size: 30px; }
+    .hint { color: #cbd5e1; margin: 0 0 22px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    section { background: #1f2937; border: 2px solid #475569; border-radius: 16px; padding: 18px; }
+    .wide { grid-column: 1 / -1; }
+    h2 { margin: 0 0 12px; font-size: 20px; }
+    .clock { font: 700 36px ui-monospace, SFMono-Regular, monospace; color: #67e8f9; }
+    .tick { margin-top: 6px; color: #a5f3fc; }
+    textarea { box-sizing: border-box; width: 100%; min-height: 120px; padding: 12px; font: 18px/1.45 ui-monospace, SFMono-Regular, monospace; border: 2px solid #94a3b8; border-radius: 10px; background: #0f172a; color: #fff; }
+    .receipt { min-height: 48px; margin-top: 10px; padding: 10px; border-radius: 8px; background: #0f172a; font: 15px/1.4 ui-monospace, SFMono-Regular, monospace; white-space: pre-wrap; }
+    #board { position: relative; height: 290px; overflow: hidden; border: 2px dashed #64748b; border-radius: 12px; background: #0f172a; }
+    #target { position: absolute; left: 28px; top: 70px; width: 210px; height: 140px; border: 3px solid #fde68a; border-radius: 18px; background: #2563eb; color: white; font-size: 22px; font-weight: 700; cursor: grab; touch-action: none; user-select: none; }
+    #target.held { background: #b91c1c; cursor: grabbing; }
+    #dragState { display: inline-block; margin-bottom: 12px; padding: 8px 12px; border-radius: 999px; background: #334155; font-weight: 800; }
+    #dragState.held { background: #b91c1c; }
+    #dragState.released { background: #166534; }
+    button { min-height: 44px; margin-top: 14px; padding: 8px 14px; border: 0; border-radius: 9px; font-size: 16px; font-weight: 700; cursor: pointer; }
+    .reset { background: #f8fafc; color: #111827; }
+    .clear { background: #334155; color: #fff; }
+    @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } .wide { grid-column: auto; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>PocketDesk physical acceptance fixture</h1>
+    <p class="hint">Local, harmless test content. Keep this page visible on the selected Mac display.</p>
+    <div class="grid">
+      <section>
+        <h2>1. Changing video</h2>
+        <div id="clock" class="clock" aria-live="off"></div>
+        <div id="tick" class="tick"></div>
+      </section>
+
+      <section>
+        <h2>2. Remote text and keys</h2>
+        <label for="practice">Edit this from the phone, including Unicode:</label>
+        <textarea id="practice" spellcheck="false">PocketDesk practice: harmless local text.</textarea>
+        <div id="textReceipt" class="receipt" aria-live="polite">No remote edit observed yet.</div>
+        <div id="keyReceipt" class="receipt" aria-live="polite">No keyboard event observed yet.</div>
+        <button id="clearEvents" class="clear" type="button">Clear event receipts</button>
+      </section>
+
+      <section class="wide">
+        <h2>3. Disconnect during drag</h2>
+        <div id="dragState">IDLE — no pointer held</div>
+        <div id="dragReceipt" class="receipt">No drag event observed yet.</div>
+        <p>Press and hold the blue target from the phone, move it, then disconnect PocketDesk while still holding.</p>
+        <div id="board">
+          <button id="target" type="button">DRAG AND HOLD</button>
+        </div>
+      </section>
+    </div>
+    <button id="reset" class="reset" type="button">Reset local fixture</button>
+  </main>
+
+  <script>
+    (() => {
+      const initialText = 'PocketDesk practice: harmless local text.';
+      const clock = document.querySelector('#clock');
+      const tick = document.querySelector('#tick');
+      const practice = document.querySelector('#practice');
+      const textReceipt = document.querySelector('#textReceipt');
+      const keyReceipt = document.querySelector('#keyReceipt');
+      const dragState = document.querySelector('#dragState');
+      const dragReceipt = document.querySelector('#dragReceipt');
+      const board = document.querySelector('#board');
+      const target = document.querySelector('#target');
+      let ticks = 0;
+      let heldPointer = null;
+      let offsetX = 0;
+      let offsetY = 0;
+      let keyEvents = [];
+
+      const stamp = () => new Date().toLocaleTimeString([], { hour12: false });
+      const updateClock = () => {
+        const now = new Date();
+        clock.textContent = now.toLocaleTimeString([], { hour12: false });
+        tick.textContent = `Visible tick ${++ticks} · ${now.toLocaleDateString()}`;
+      };
+      updateClock();
+      setInterval(updateClock, 1000);
+
+      practice.addEventListener('input', event => {
+        textReceipt.textContent = `INPUT received ${stamp()} · type=${event.inputType || 'unknown'} · characters=${[...practice.value].length}\nCurrent text: ${practice.value}`;
+      });
+      for (const type of ['keydown', 'keyup']) {
+        practice.addEventListener(type, event => {
+          const modifiers = [['Meta', event.metaKey], ['Alt', event.altKey], ['Control', event.ctrlKey], ['Shift', event.shiftKey]];
+          keyEvents.push(`${type.toUpperCase()} ${stamp()} · key=${JSON.stringify(event.key)} · code=${event.code} · modifiers=${modifiers.filter(([, active]) => active).map(([name]) => name).join('+') || 'none'}`);
+          keyEvents = keyEvents.slice(-6);
+          keyReceipt.textContent = keyEvents.join('\n');
+        });
+      }
+
+      const finishPointer = (label, css, event) => {
+        if (heldPointer !== event.pointerId) return;
+        dragState.textContent = `${label} · ${stamp()}`;
+        dragState.className = css;
+        dragReceipt.textContent = `${event.type.toUpperCase()} received by this page at (${Math.round(event.clientX)}, ${Math.round(event.clientY)}) · pointer ${event.pointerId}`;
+        target.classList.remove('held');
+        heldPointer = null;
+      };
+      target.addEventListener('pointerdown', event => {
+        heldPointer = event.pointerId;
+        const rect = target.getBoundingClientRect();
+        offsetX = event.clientX - rect.left;
+        offsetY = event.clientY - rect.top;
+        target.setPointerCapture(event.pointerId);
+        target.classList.add('held');
+        dragState.textContent = `HELD · pointer ${event.pointerId} · ${stamp()}`;
+        dragState.className = 'held';
+        dragReceipt.textContent = `POINTERDOWN received at (${Math.round(event.clientX)}, ${Math.round(event.clientY)}). Waiting for pointerup.`;
+      });
+      target.addEventListener('pointermove', event => {
+        if (heldPointer !== event.pointerId) return;
+        const area = board.getBoundingClientRect();
+        const x = Math.max(0, Math.min(event.clientX - area.left - offsetX, board.clientWidth - target.offsetWidth));
+        const y = Math.max(0, Math.min(event.clientY - area.top - offsetY, board.clientHeight - target.offsetHeight));
+        target.style.left = `${x}px`;
+        target.style.top = `${y}px`;
+      });
+      target.addEventListener('pointerup', event => finishPointer('RELEASED — pointerup received', 'released', event));
+      target.addEventListener('pointercancel', event => finishPointer('CANCELLED — release unproven', '', event));
+      target.addEventListener('lostpointercapture', event => {
+        if (heldPointer !== event.pointerId) return;
+        dragState.textContent = `CAPTURE LOST — release unproven · ${stamp()}`;
+        dragState.className = '';
+        dragReceipt.textContent = 'No pointerup was received by this page.';
+        target.classList.remove('held');
+        heldPointer = null;
+      });
+
+      document.querySelector('#clearEvents').addEventListener('click', () => {
+        keyEvents = [];
+        textReceipt.textContent = 'No remote edit observed yet.';
+        keyReceipt.textContent = 'No keyboard event observed yet.';
+      });
+      document.querySelector('#reset').addEventListener('click', () => {
+        const previousPointer = heldPointer;
+        heldPointer = null;
+        if (previousPointer !== null && target.hasPointerCapture(previousPointer)) target.releasePointerCapture(previousPointer);
+        keyEvents = [];
+        practice.value = initialText;
+        textReceipt.textContent = 'No remote edit observed yet.';
+        keyReceipt.textContent = 'No keyboard event observed yet.';
+        target.className = '';
+        target.style.left = '28px';
+        target.style.top = '70px';
+        dragState.textContent = 'IDLE — no pointer held';
+        dragState.className = '';
+        dragReceipt.textContent = 'No drag event observed yet.';
+      });
+    })();
+  </script>
+</body>
+</html>

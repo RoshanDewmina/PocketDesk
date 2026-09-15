@@ -1,0 +1,29 @@
+:root { color-scheme: dark light; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0b1020; color: #edf2ff; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100dvh; background: radial-gradient(circle at top, #1b2a4a, #0b1020 54%); }
+button, select, input, textarea { font: inherit; }
+button, select, input, textarea { min-height: 44px; }
+button { border: 0; border-radius: 12px; padding: 0 16px; background: #5b8cff; color: white; font-weight: 700; cursor: pointer; }
+button:disabled { opacity: .48; cursor: not-allowed; }
+button:focus-visible, select:focus-visible, input:focus-visible, textarea:focus-visible, .stage:focus-visible { outline: 3px solid #9db8ff; outline-offset: 3px; }
+.probe-shell { width: min(1200px, 100%); margin: 0 auto; padding: max(18px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(18px, env(safe-area-inset-left)); }
+.probe-header { display: flex; gap: 18px; justify-content: space-between; align-items: start; margin-bottom: 16px; }
+.eyebrow { margin: 0 0 4px; color: #a8c3ff; font-size: .78rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }
+h1, h2 { margin: 0; } h1 { font-size: clamp(1.25rem, 4vw, 1.8rem); } h2 { font-size: 1rem; }
+.status { max-width: 35rem; margin: 0; color: #c2cee6; text-align: right; }
+.viewer-shell { border: 1px solid #38496d; border-radius: 18px; overflow: hidden; background: #030711; box-shadow: 0 20px 70px rgb(0 0 0 / .3); }
+.stage { position: relative; aspect-ratio: 16 / 9; overflow: hidden; touch-action: none; background: #111827; }
+.stage video { display: block; width: 100%; height: 100%; object-fit: contain; transform: translate(var(--pan-x, 0px), var(--pan-y, 0px)) scale(var(--zoom, 1)); transform-origin: center; will-change: transform; }
+.stage.crop video { object-fit: cover; transform-origin: 42% 30%; }
+.stage-badge, .pan-note { position: absolute; border-radius: 999px; padding: 7px 10px; background: rgb(3 7 17 / .8); color: #dce7ff; font-size: .76rem; pointer-events: none; }
+.stage-badge { top: 12px; left: 12px; }.pan-note { right: 12px; bottom: 12px; opacity: .75; }
+.controls, .keyboard-probe { margin-top: 16px; padding: 16px; border: 1px solid #38496d; border-radius: 16px; background: rgb(20 30 52 / .76); }
+.control-row, .control-details { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.control-details { margin-top: 12px; }
+label { display: inline-flex; gap: 8px; align-items: center; color: #d4def1; font-size: .9rem; }
+select, input, textarea { border: 1px solid #53678f; border-radius: 10px; padding: 7px 10px; color: inherit; background: #101a30; }
+input[type="range"] { padding: 0; min-width: 120px; } output, .observation { color: #b9c9e8; font-size: .88rem; }
+.observation { margin: 0; flex-basis: 100%; }.keyboard-probe p { margin: 7px 0; color: #b9c9e8; font-size: .9rem; }.keyboard-probe textarea { width: 100%; resize: vertical; }.keyboard-probe output { display: block; margin-top: 8px; }
+.compact-only { display: none; background: #263b66; }
+@media (max-width: 640px) { .probe-shell { padding-inline: 12px; }.probe-header { display: block; }.status { margin-top: 8px; text-align: left; }.viewer-shell { border-radius: 12px; }.stage { aspect-ratio: 9 / 16; max-height: calc(var(--visual-viewport-height, 100dvh) - 230px); }.stage.fit video { object-fit: contain; }.controls { padding: 12px; }.compact-only { display: inline-flex; }.control-details.is-collapsed { display: none; }.primary-actions button { flex: 1 1 130px; }.control-details label { width: 100%; justify-content: space-between; }.control-details select { max-width: 58%; }.keyboard-probe { margin-bottom: 18px; } }
+@media (prefers-color-scheme: light) { :root { background: #e8eef8; color: #172033; } body { background: linear-gradient(#f8fbff, #e7eefb); }.viewer-shell { border-color: #9eb0ce; }.controls, .keyboard-probe { background: rgb(255 255 255 / .82); border-color: #b7c4d8; }.status, .observation, .keyboard-probe p, output, label { color: #40516d; } select, input, textarea { background: #fff; color: #172033; border-color: #9eb0ce; } }

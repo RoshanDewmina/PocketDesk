@@ -1,6 +1,6 @@
 # PocketDesk: research and proposed product direction
 
-Research date: 12 September 2026. Status: research complete; connectivity implementation choice pending. This is a project decision artifact, not a claim that the product has been built or benchmarked.
+Research date: 12 September 2026. Status: supporting research; implementation paused for product/design review. The canonical current specification is [PRODUCT.md](../PRODUCT.md). This document records research and earlier proposals; it does not independently authorize implementation or claim that the product has been built or benchmarked.
 
 ## Direction
 
@@ -61,7 +61,7 @@ Most approaches separate finding/authenticating the other device from carrying t
 
 Sources: [Jump relay architecture](https://support.jumpdesktop.com/hc/en-us/articles/360061347191-On-Premise-Relay-Server), [Parsec connectivity](https://support.parsec.app/hc/en-us/articles/32381460716180-Parsec-Connectivity-Requirements), [RustDesk installation/relay](https://rustdesk.com/docs/en/self-host/install/), [Screens connection choices](https://help.edovia.com/en/screens-5/getting-started/connecting), [Tailscale connection types](https://tailscale.com/docs/reference/connection-types).
 
-**Recommendation:** the consumer experience should handle remote access within PocketDesk. The pending choice is whether the first implementation includes that infrastructure or uses Tailscale temporarily to validate controls sooner. The user requested an explanation of competitors before deciding; that was not acceptance of a VPN dependency.
+**Recommendation:** the consumer experience should handle remote access within PocketDesk. The pending choice is whether the first implementation includes that infrastructure or uses Tailscale temporarily to validate controls sooner. After the competitor explanation, the user selected building PocketDesk's own remote access from the start. Tailscale is not a product dependency.
 
 A built-in approach needs authenticated device registration/pairing, discovery/coordination, NAT traversal, end-to-end identity verification, relay fallback, revocation and abuse limits. Prefer maintained transport components over inventing cryptography or an unreliable media stack. Evaluate the transport against real mobile conditions before freezing the handoff's two-TCP design. A Tailscale prototype can reuse authenticated sockets, but cannot establish consumer onboarding quality or production economics.
 
@@ -119,4 +119,4 @@ This was targeted qualitative desk research, not interviews, a representative re
 - [Cross-platform evidence and original links](cross-platform-user-research.md)
 - [Implementation audit and historical verification boundaries](implementation-audit.md)
 
-No existing application source, account, network setting, permission or deployment was changed during this research phase.
+The original application source was preserved. Implementation continues in the separate PocketDesk project; no account, network permission or public deployment was changed during research.

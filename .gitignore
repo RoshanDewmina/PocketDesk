@@ -9,3 +9,11 @@ node_modules/
 *.xcuserstate
 xcuserdata/
 .work/
+
+/outputs/RemoteBuild/
+/outputs/RemoteDeviceBuild/
+/outputs/physical-2026-09-13/
+/outputs/pairing-fix-2026-09-13/
+/outputs/implementation-2026-09-12/
+!Server/.env.private.example
+!Server/.env.standalone.example
