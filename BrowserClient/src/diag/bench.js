@@ -31,15 +31,22 @@ function percentile(sorted, fraction) {
   return sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.floor(fraction * sorted.length))];
 }
 
+// median/p95/max are computed over successful ("detected") attempts only; every other status is a
+// failure reason and is counted in `failures` instead, so a run of mostly timeouts can't drag the
+// latency numbers toward misleadingly small (or absent) values.
 export function summarizeBench(results) {
   const latencies = results.filter((r) => r.status === 'detected').map((r) => r.latencyMs).sort((a, b) => a - b);
+  const failures = {};
+  for (const result of results) {
+    if (result.status === 'detected') continue;
+    failures[result.status] = (failures[result.status] ?? 0) + 1;
+  }
   return {
+    attempts: results.length,
     n: latencies.length,
     median: percentile(latencies, 0.5),
     p95: percentile(latencies, 0.95),
     max: latencies.length ? latencies[latencies.length - 1] : null,
-    timeouts: results.filter((r) => r.status === 'timeout').length,
-    staleRejects: results.filter((r) => r.status === 'stale').length,
-    errors: results.filter((r) => r.status === 'error').length,
+    failures,
   };
 }

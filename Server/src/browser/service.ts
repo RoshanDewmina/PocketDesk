@@ -155,9 +155,9 @@ function validViewerQuery(url: URL): boolean {
   return true;
 }
 
-class BodyTooLarge extends Error {}
+export class BodyTooLarge extends Error {}
 
-async function readBodyCapped(request: Request, cap: number): Promise<Uint8Array> {
+export async function readBodyCapped(request: Request, cap: number): Promise<Uint8Array> {
   if (!request.body) return new Uint8Array(0);
   const reader = request.body.getReader();
   const chunks: Uint8Array[] = [];

@@ -6,9 +6,27 @@ import { resolveTile } from './params.js';
 
 const MAX_STATS_SAMPLES = 3600;
 const MAX_REPORT_BYTES = 512 * 1024;
+const DEFAULT_BASELINE_TIMEOUT_MS = 300;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-export function createDiagController({ tile, benchCount, sendAction, getVideo, isFresh, getMarkerMode, statsIntervalMs = 1000, postSendGapMs = 250, sampleTile }) {
+function boundedInteger(name, value, minimum, maximum) {
+  if (!Number.isInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum} (received ${value})`);
+  }
+  return value;
+}
+
+export function createDiagController({
+  tile, benchCount, sendAction, getVideo, isFresh, getMarkerMode,
+  statsIntervalMs = 1000, postSendGapMs = 250, sampleTile,
+  baselineTimeoutMs = DEFAULT_BASELINE_TIMEOUT_MS, attemptTimeoutMs = BENCH_TIMEOUT_MS,
+}) {
+  boundedInteger('benchCount', benchCount, 0, 1000);
+  boundedInteger('statsIntervalMs', statsIntervalMs, 1, 60_000);
+  boundedInteger('postSendGapMs', postSendGapMs, 0, 60_000);
+  boundedInteger('baselineTimeoutMs', baselineTimeoutMs, 1, 60_000);
+  boundedInteger('attemptTimeoutMs', attemptTimeoutMs, 1, 60_000);
+
   const markerCost = createRing(2000);
   const bufferedAmount = createBufferedAmountTracker();
   const statsSamples = [];
@@ -50,20 +68,77 @@ export function createDiagController({ tile, benchCount, sendAction, getVideo, i
   }
   const readTile = sampleTile ?? defaultSampleTile;
 
-  function waitForCrossing(video, rect, expectBright, t0, run) {
+  // Presentation time on the same clock as `t0` (performance.now()): prefer the frame callback's
+  // own metadata.presentationTime when the browser supplies one, otherwise fall back to the
+  // callback's `now` argument, which rVFC guarantees is on that same clock.
+  function presentationTime(now, metadata) {
+    return typeof metadata?.presentationTime === 'number' ? metadata.presentationTime : now;
+  }
+
+  // Waits for exactly one presented frame and samples the tile on it, bounded by `timeoutMs` via a
+  // real timer so the promise still settles when no frame callback ever fires. `settled` scopes
+  // every guard to this single call: a callback or async tile-read that resolves after this promise
+  // has already settled (timeout, or the shared `run` token was aborted) is a no-op, so it can never
+  // bleed into a later attempt's baseline.
+  function observeFrame(video, rect, timeoutMs, run) {
     return new Promise((resolve) => {
-      const tick = (now, metadata) => {
-        if (run.aborted) { resolve({ status: 'aborted' }); return; }
+      let settled = false;
+      let handle;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (handle !== undefined) video.cancelVideoFrameCallback?.(handle);
+        resolve(value);
+      };
+      const timer = setTimeout(() => finish(null), timeoutMs);
+      const tick = async (now, metadata) => {
+        if (settled) return;
+        const presentedAt = presentationTime(now, metadata);
         let luminance;
-        try { luminance = readTile(video, rect); } catch { resolve({ status: 'error' }); return; }
-        if (crossedToward(luminance, expectBright)) {
-          resolve({ status: 'detected', latencyMs: now - t0, expectedDisplayTime: metadata?.expectedDisplayTime ?? null, presentationTime: metadata?.presentationTime ?? null });
+        try { luminance = await readTile(video, rect); } catch { finish(null); return; }
+        if (settled || run.aborted) { finish(null); return; }
+        finish({ luminance, presentedAt });
+      };
+      handle = video.requestVideoFrameCallback?.(tick);
+      if (handle === undefined) finish(null);
+    });
+  }
+
+  // Waits for a frame *presented after* `t0` to show the tile having crossed into `expectBright` --
+  // a frame already queued before the send is ignored and the wait keeps going. Bounded by
+  // `timeoutMs` via a real timer independent of the frame callback chain, so it resolves even if no
+  // frame (or no further frame) ever arrives. Once settled, any later callback or tile-read --
+  // including one that would show the tile flipping back to the wrong polarity -- is dropped rather
+  // than retroactively turned into a success.
+  function waitForTransition(video, rect, expectBright, t0, timeoutMs, run) {
+    return new Promise((resolve) => {
+      let settled = false;
+      let handle;
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(deadline);
+        if (handle !== undefined) video.cancelVideoFrameCallback?.(handle);
+        resolve(value);
+      };
+      const deadline = setTimeout(() => finish({ status: 'timeout' }), timeoutMs);
+      const tick = async (now, metadata) => {
+        if (settled) return;
+        const presentedAt = presentationTime(now, metadata);
+        let luminance;
+        try { luminance = await readTile(video, rect); } catch { finish({ status: 'error' }); return; }
+        if (settled) return;
+        if (run.aborted) { finish({ status: 'cancelled' }); return; }
+        if (presentedAt > t0 && crossedToward(luminance, expectBright)) {
+          finish({ status: 'detected', latencyMs: presentedAt - t0, expectedDisplayTime: metadata?.expectedDisplayTime ?? null, presentationTime: metadata?.presentationTime ?? null });
           return;
         }
-        if (now - t0 > BENCH_TIMEOUT_MS) { resolve({ status: 'timeout' }); return; }
-        if (!video.requestVideoFrameCallback?.(tick)) resolve({ status: 'error' });
+        handle = video.requestVideoFrameCallback?.(tick);
+        if (handle === undefined) finish({ status: 'error' });
       };
-      if (!video.requestVideoFrameCallback?.(tick)) resolve({ status: 'error' });
+      handle = video.requestVideoFrameCallback?.(tick);
+      if (handle === undefined) finish({ status: 'error' });
     });
   }
 
@@ -75,17 +150,22 @@ export function createDiagController({ tile, benchCount, sendAction, getVideo, i
     const video = getVideo();
     const rect = resolveTile(tile, video.videoWidth, video.videoHeight);
     const results = [];
-    let expectBright;
     for (let index = 0; index < benchCount && !run.aborted; index += 1) {
       if (!isFresh()) { results.push({ status: 'stale' }); await wait(postSendGapMs); continue; }
-      let baseline;
-      try { baseline = readTile(video, rect); } catch { results.push({ status: 'error' }); await wait(postSendGapMs); continue; }
-      if (expectBright === undefined) expectBright = !crossedToward(baseline, true);
+
+      // Every attempt observes its own pre-send baseline frame rather than trusting a toggled flag
+      // carried over from the previous attempt, so a missed transition can never desync expectBright.
+      const baseline = await observeFrame(video, rect, baselineTimeoutMs, run);
+      if (run.aborted) { results.push({ status: 'cancelled' }); break; }
+      if (!baseline) { results.push({ status: 'no_baseline' }); await wait(postSendGapMs); continue; }
+      const expectBright = !crossedToward(baseline.luminance, true);
+
       let t0;
-      try { t0 = performance.now(); sendAction({ action: 'key', key: BENCH_KEY, modifiers: [] }); } catch { results.push({ status: 'error' }); await wait(postSendGapMs); continue; }
-      results.push(await waitForCrossing(video, rect, expectBright, t0, run));
+      try { t0 = performance.now(); sendAction({ action: 'key', key: BENCH_KEY, modifiers: [] }); }
+      catch { results.push({ status: 'send_failed' }); await wait(postSendGapMs); continue; }
+
+      results.push(await waitForTransition(video, rect, expectBright, t0, attemptTimeoutMs, run));
       if (run.aborted) break;
-      expectBright = !expectBright;
       await wait(postSendGapMs);
     }
     if (currentRun === run) currentRun = undefined;

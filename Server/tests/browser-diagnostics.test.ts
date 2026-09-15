@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createBrowserService, type BrowserServiceConfig } from '../src/browser/service';
+import { BodyTooLarge, createBrowserService, readBodyCapped, type BrowserServiceConfig } from '../src/browser/service';
 
 type App = ReturnType<typeof createBrowserService>;
 const instances: App[] = [];
@@ -40,6 +40,36 @@ const validReport = () => ({
   bufferedAmount: { max: 0, positiveSends: 0, sends: 3 },
   stats: [{ at: 12, pair: { localAddressClass: 'private-lan', remoteAddressClass: 'public' }, inbound: null, bitrateBps: null }],
   benchSummary: null,
+});
+
+describe('readBodyCapped', () => {
+  test('throws BodyTooLarge once the cap is exceeded, without draining the whole oversized stream', async () => {
+    const cap = 1_000;
+    const chunkSize = 100;
+    const chunksAvailable = 1_000;
+    let pulls = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        if (pulls > chunksAvailable) { controller.close(); return; }
+        controller.enqueue(new Uint8Array(chunkSize).fill(0x78));
+      },
+    });
+    const request = new Request('http://example.test/', { method: 'POST', body: stream, duplex: 'half' } as RequestInit & { duplex: 'half' });
+    await expect(readBodyCapped(request, cap)).rejects.toBeInstanceOf(BodyTooLarge);
+    // Only enough chunks to cross the cap should ever be pulled (cap / chunkSize + 1 = 11); a bound
+    // far below the 1000 available chunks proves the reader stops instead of consuming the rest.
+    expect(pulls).toBeLessThan(chunksAvailable / 2);
+  });
+
+  test('returns the full body when it is under the cap', async () => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new TextEncoder().encode('hello')); controller.close(); },
+    });
+    const request = new Request('http://example.test/', { method: 'POST', body: stream, duplex: 'half' } as RequestInit & { duplex: 'half' });
+    const bytes = await readBodyCapped(request, 1_000);
+    expect(new TextDecoder().decode(bytes)).toBe('hello');
+  });
 });
 
 describe('browser diagnostics endpoint', () => {
@@ -103,7 +133,15 @@ describe('browser diagnostics endpoint', () => {
     expect(readdirSync(dir)).toHaveLength(0);
   });
 
-  test('caps the streamed body even when Content-Length lies about being small', async () => {
+  test('rejects an oversized body even when Content-Length lies about being small', async () => {
+    // fetch() with a ReadableStream body ignores a manually-set Content-Length and sends
+    // Transfer-Encoding: chunked instead (confirmed by capturing the raw request bytes on a
+    // Bun.listen() socket), so the full oversized body reaches the server and readBodyCapped's
+    // streaming cap is what rejects it -- almost always with 413. In rare timing windows, cancelling
+    // the reader mid-stream races Bun's own HTTP/1.1 framing (which sees both a stale Content-Length
+    // header and Transfer-Encoding: chunked on the wire) and the connection is torn down as a 400
+    // before our handler's response is written. Both outcomes correctly refuse the oversized body
+    // and write nothing to disk, so both are accepted here instead of pinning a single status code.
     const dir = diagDir();
     const app = setup({ diagnosticsDir: dir });
     const origin = `http://127.0.0.1:${app.port}`;
@@ -112,7 +150,7 @@ describe('browser diagnostics endpoint', () => {
     const response = await fetch(`${origin}/api/diagnostics`, {
       method: 'POST', headers: { 'content-type': 'application/json', origin, 'content-length': '10' }, body: stream, duplex: 'half',
     } as RequestInit & { duplex: 'half' });
-    expect(response.status).toBe(413);
+    expect([400, 413]).toContain(response.status);
     expect(readdirSync(dir)).toHaveLength(0);
   });
 

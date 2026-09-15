@@ -40,6 +40,7 @@
 		502BB74794B20B1D470BAE3E /* SessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57B016EC93DD7E70F9174455 /* SessionTests.swift */; };
 		507D7A3012B03B7CA6063FB8 /* BrowserPeerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A4A5C6B82AD42422582E6F /* BrowserPeerTests.swift */; };
 		51572A558D1FAA93C70B8BCC /* HostKeepAwakeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7BAE263EFD30201EEE4A3578 /* HostKeepAwakeTests.swift */; };
+		51A2755E7805D2ED3B887764 /* BrowserRelayPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 72DE368D956186BDF569C427 /* BrowserRelayPolicyTests.swift */; };
 		5326476F87B6F52DD4CAFD52 /* BrowserPeerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 173805F45FB3C845B4C84B82 /* BrowserPeerStore.swift */; };
 		5333B5539BA39A9A63B7286F /* HostPairingPreflight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8133C275FA11793AF24286F5 /* HostPairingPreflight.swift */; };
 		576310CB3DE8A911775B1E31 /* HostPermissionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147A5E06CF33E961BEBB437B /* HostPermissionState.swift */; };
@@ -137,6 +138,7 @@
 		57B016EC93DD7E70F9174455 /* SessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTests.swift; sourceTree = "<group>"; };
 		5E8E23E32E29CE19FC8ADCC7 /* PocketDeskRemoteHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketDeskRemoteHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		61439D711D81DE84D4388236 /* SecurityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityTests.swift; sourceTree = "<group>"; };
+		72DE368D956186BDF569C427 /* BrowserRelayPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserRelayPolicyTests.swift; sourceTree = "<group>"; };
 		7612B83EB1CE18C2A0FE2189 /* RemoteControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteControls.swift; sourceTree = "<group>"; };
 		7BAE263EFD30201EEE4A3578 /* HostKeepAwakeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeepAwakeTests.swift; sourceTree = "<group>"; };
 		7DD59E38BEC24B7621592F49 /* HostSettingsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostSettingsSection.swift; sourceTree = "<group>"; };
@@ -296,6 +298,7 @@
 			children = (
 				17CD4AA27077B3457AE5CAE0 /* BrowserCryptoTests.swift */,
 				E5A4A5C6B82AD42422582E6F /* BrowserPeerTests.swift */,
+				72DE368D956186BDF569C427 /* BrowserRelayPolicyTests.swift */,
 				7BAE263EFD30201EEE4A3578 /* HostKeepAwakeTests.swift */,
 				EFA249DD77BBAA809239D8E3 /* HostLifecycleTests.swift */,
 				DE8D633F7518C97C14277D3B /* HostPairingPreflightTests.swift */,
@@ -688,6 +691,7 @@
 				612F9849D1C4A9127D15DB09 /* BrowserPeerController.swift in Sources */,
 				9A7D8537812EEE39DAE71231 /* BrowserPeerStore.swift in Sources */,
 				507D7A3012B03B7CA6063FB8 /* BrowserPeerTests.swift in Sources */,
+				51A2755E7805D2ED3B887764 /* BrowserRelayPolicyTests.swift in Sources */,
 				A978B93E1328B10B4D2E04EB /* ControlProtocol.swift in Sources */,
 				96A553176C01BC12F4EBB6CE /* HostKeepAwake.swift in Sources */,
 				51572A558D1FAA93C70B8BCC /* HostKeepAwakeTests.swift in Sources */,

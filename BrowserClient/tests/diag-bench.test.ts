@@ -38,14 +38,22 @@ describe('runBenchSequence', () => {
 });
 
 describe('summarizeBench', () => {
-  test('computes median, p95, max and counts timeouts/stale/errors separately', () => {
+  test('computes median, p95 and max over successes only, and counts every other status by reason', () => {
     const results = [
       { status: 'detected', latencyMs: 10 }, { status: 'detected', latencyMs: 20 }, { status: 'detected', latencyMs: 30 },
-      { status: 'timeout' }, { status: 'stale' }, { status: 'error' },
+      { status: 'timeout' }, { status: 'stale' }, { status: 'error' }, { status: 'no_baseline' }, { status: 'cancelled' }, { status: 'send_failed' },
     ];
-    expect(summarizeBench(results)).toEqual({ n: 3, median: 20, p95: 30, max: 30, timeouts: 1, staleRejects: 1, errors: 0 + 1 });
+    expect(summarizeBench(results)).toEqual({
+      attempts: 9, n: 3, median: 20, p95: 30, max: 30,
+      failures: { timeout: 1, stale: 1, error: 1, no_baseline: 1, cancelled: 1, send_failed: 1 },
+    });
   });
   test('handles a run with no detections at all', () => {
-    expect(summarizeBench([{ status: 'timeout' }, { status: 'stale' }])).toEqual({ n: 0, median: null, p95: null, max: null, timeouts: 1, staleRejects: 1, errors: 0 });
+    expect(summarizeBench([{ status: 'timeout' }, { status: 'stale' }, { status: 'stale' }])).toEqual({
+      attempts: 3, n: 0, median: null, p95: null, max: null, failures: { timeout: 1, stale: 2 },
+    });
+  });
+  test('handles an empty run', () => {
+    expect(summarizeBench([])).toEqual({ attempts: 0, n: 0, median: null, p95: null, max: null, failures: {} });
   });
 });
