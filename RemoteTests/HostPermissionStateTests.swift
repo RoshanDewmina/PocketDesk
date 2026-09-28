@@ -44,7 +44,7 @@ final class HostPermissionStateTests: XCTestCase {
         XCTAssertFalse(generations.accepts(second))
     }
 
-    func testAccessibilityGrantNeverImpliesPocketDeskControlConsent() {
+    func testControlNeedsConsentPermissionAndHealthyCapture() {
         XCTAssertFalse(HostControlPolicy.isEnabled(
             userConsent: false,
             accessibilityPermission: .granted,
@@ -67,13 +67,16 @@ final class HostPermissionStateTests: XCTestCase {
         ))
     }
 
-    func testControlConsentCannotCrossPairingIdentity() {
+    func testControlConsentIsAStandingChoiceStillGatedByPermission() {
         var consent = HostControlConsentState()
-        consent.setAllowed(true)
-        XCTAssertTrue(consent.isAllowed)
+        XCTAssertTrue(consent.isAllowed, "Control is on by default once a phone is approved")
 
-        consent.pairingIdentityWillChange()
-
-        XCTAssertFalse(consent.isAllowed, "A replacement or revoked phone must require fresh local consent")
+        consent.setAllowed(false)
+        XCTAssertFalse(consent.isAllowed)
+        XCTAssertFalse(HostControlPolicy.isEnabled(
+            userConsent: HostControlConsentState().isAllowed,
+            accessibilityPermission: .denied,
+            captureHealthy: true
+        ), "Default consent never bypasses the macOS Accessibility grant")
     }
 }

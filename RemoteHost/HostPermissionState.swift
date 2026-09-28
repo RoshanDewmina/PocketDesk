@@ -100,13 +100,14 @@ enum HostControlPolicy {
 }
 
 struct HostControlConsentState: Equatable {
-    private(set) var isAllowed = false
+    static let defaultAllowed = true
+    private(set) var isAllowed: Bool
+
+    init(isAllowed: Bool = Self.defaultAllowed) {
+        self.isAllowed = isAllowed
+    }
 
     mutating func setAllowed(_ allowed: Bool) {
         isAllowed = allowed
-    }
-
-    mutating func pairingIdentityWillChange() {
-        isAllowed = false
     }
 }
