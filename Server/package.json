@@ -1,1 +1,15 @@
-{"name":"pocketdesk-signaling","private":true,"type":"module","scripts":{"start":"bun src/index.ts","test":"bun test","approve-room":"bun scripts/approve-room.ts","readiness":"bun scripts/readiness.ts"}}
+{
+  "name": "pocketdesk-signaling",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "test": "bun test",
+    "approve-room": "bun scripts/approve-room.ts",
+    "readiness": "bun scripts/readiness.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "4.6.5"
+  }
+}
