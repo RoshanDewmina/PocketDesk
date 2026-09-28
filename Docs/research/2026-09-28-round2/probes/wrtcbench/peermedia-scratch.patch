@@ -1,0 +1,33 @@
+--- /Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/RemoteShared/PeerMedia.swift	2026-09-28 17:19:15
++++ /private/tmp/claude-501/-Users-roshansilva/3353626d-7123-4a6e-ab3e-684346e1b8e0/scratchpad/wrtcbench/PeerMedia.swift	2026-09-28 19:19:09
+@@ -152,13 +152,29 @@
+     private func configureNativeSender() {
+         guard isHost, nativeDesktopCodecs, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return }
+         let parameters = sender.parameters
++        let env = ProcessInfo.processInfo.environment
+         for encoding in parameters.encodings {
+             encoding.maxFramerate = 60
+-            encoding.maxBitrateBps = 12_000_000
++            encoding.maxBitrateBps = NSNumber(value: Int(env["MAXBR"] ?? "") ?? 12_000_000)
++            if let m = env["MINBR"], let n = Int(m) { encoding.minBitrateBps = NSNumber(value: n) }
++            if let m = env["NETPRIO"], let n = Int(m) { encoding.networkPriority = RTCPriority(rawValue: n) ?? .high }
+         }
++        if let d = env["DEGRADE"], let n = Int(d) { parameters.degradationPreference = NSNumber(value: n) }
+         sender.parameters = parameters
++        if let v = env["BWE_START"], let n = Int(v) {
++            let ok = connection?.setBweMinBitrateBps(nil, currentBitrateBps: NSNumber(value: n), maxBitrateBps: NSNumber(value: max(n, Int(env["BWE_MAX"] ?? "") ?? 40_000_000))) ?? false
++            print("setBwe start=\(n) ok=\(ok)")
++        }
+     }
+ 
++    func debugForceKeyframe(width: Int, height: Int, bwe: Int?) {
++        if let bwe { print("refresh: setBwe \(bwe) ok=\(connection?.setBweMinBitrateBps(nil, currentBitrateBps: NSNumber(value: bwe), maxBitrateBps: NSNumber(value: 40_000_000)) ?? false)") }
++        captureLock.lock(); source?.adaptOutputFormat(toWidth: Int32(width - 2), height: Int32(height), fps: 60); captureLock.unlock()
++        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
++            guard let self else { return }
++            self.captureLock.lock(); self.source?.adaptOutputFormat(toWidth: Int32(width), height: Int32(height), fps: 60); self.captureLock.unlock()
++        }
++    }
+     func sendControl(_ data: Data) -> Bool {
+         guard !closed, data.count <= 16384, let channel, channel.readyState == .open, channel.bufferedAmount < 64 * 1024 else { return false }
+         let sent = channel.sendData(RTCDataBuffer(data: data, isBinary: true))
