@@ -1,0 +1,8 @@
+{
+  "spawnChildProcessPidFile": "__PID_FILE__",
+  "handlers": {
+    "thread/start": { "resultSequence": [{ "thread": { "id": "thread-1", "sessionId": "session-1", "status": { "type": "idle" }, "cwd": "/tmp", "path": null, "turns": [] } }] },
+    "turn/start": { "resultSequence": [{ "turn": { "id": "turn-1", "items": [], "itemsView": "full", "status": "inProgress", "error": null, "startedAt": 0, "completedAt": null, "durationMs": null } }] }
+  },
+  "exitAfterMethod": { "method": "turn/start", "delayMs": 20, "code": 1 }
+}

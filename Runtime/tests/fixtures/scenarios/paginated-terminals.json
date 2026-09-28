@@ -1,0 +1,23 @@
+{
+  "requestLogFile": "__REQUEST_LOG__",
+  "handlers": {
+    "thread/start": { "resultSequence": [{ "thread": { "id": "thread-1", "sessionId": "session-1", "status": { "type": "idle" }, "cwd": "/tmp", "path": null, "turns": [] } }] },
+    "turn/start": { "resultSequence": [{ "turn": { "id": "turn-1", "items": [], "itemsView": "full", "status": "inProgress", "error": null, "startedAt": 0, "completedAt": null, "durationMs": null } }] },
+    "turn/interrupt": {
+      "resultSequence": [{}],
+      "notifications": [
+        { "method": "turn/completed", "params": { "threadId": "thread-1", "turn": { "id": "turn-1", "items": [], "itemsView": "full", "status": "interrupted", "error": null, "startedAt": 0, "completedAt": 1, "durationMs": 5 } } },
+        { "method": "thread/status/changed", "params": { "threadId": "thread-1", "status": { "type": "idle" } } }
+      ]
+    },
+    "thread/backgroundTerminals/list": {
+      "resultSequence": [
+        { "data": [{ "itemId": "i1", "processId": "proc-1", "command": "one", "cwd": "/tmp", "osPid": null, "cpuPercent": null, "rssKb": null }], "nextCursor": "page-2" },
+        { "data": [{ "itemId": "i2", "processId": "proc-2", "command": "two", "cwd": "/tmp", "osPid": null, "cpuPercent": null, "rssKb": null }], "nextCursor": null },
+        { "data": [], "nextCursor": null }
+      ]
+    },
+    "thread/backgroundTerminals/terminate": { "resultSequence": [{}, {}] },
+    "thread/backgroundTerminals/clean": { "resultSequence": [{}] }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "spawnChildProcessPidFile": "__PID_FILE__",
+  "handlers": {
+    "thread/start": { "error": { "code": -32000, "message": "thread start failed with secret sk-super-secret" } }
+  }
+}

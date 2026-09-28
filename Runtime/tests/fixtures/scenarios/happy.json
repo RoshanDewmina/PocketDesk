@@ -1,0 +1,25 @@
+{
+  "handlers": {
+    "thread/start": {
+      "resultSequence": [
+        { "thread": { "id": "thread-1", "sessionId": "session-1", "status": { "type": "idle" }, "cwd": "/tmp", "path": null, "turns": [] } }
+      ]
+    },
+    "turn/start": {
+      "resultSequence": [{ "turn": { "id": "turn-1", "items": [], "itemsView": "full", "status": "inProgress", "error": null, "startedAt": 0, "completedAt": null, "durationMs": null } }],
+      "notifications": [
+        { "method": "turn/started", "params": { "threadId": "thread-1", "turn": { "id": "turn-1", "items": [], "itemsView": "full", "status": "inProgress", "error": null, "startedAt": 0, "completedAt": null, "durationMs": null } } }
+      ]
+    },
+    "turn/interrupt": {
+      "resultSequence": [{}],
+      "notifications": [
+        { "method": "turn/completed", "params": { "threadId": "thread-1", "turn": { "id": "turn-1", "items": [], "itemsView": "full", "status": "interrupted", "error": null, "startedAt": 0, "completedAt": 1, "durationMs": 5 } }, "delayMs": 15 },
+        { "method": "thread/status/changed", "params": { "threadId": "thread-1", "status": { "type": "idle" } } }
+      ]
+    },
+    "thread/backgroundTerminals/list": { "resultSequence": [{ "data": [], "nextCursor": null }] },
+    "thread/backgroundTerminals/terminate": { "resultSequence": [{}] },
+    "thread/backgroundTerminals/clean": { "resultSequence": [{}] }
+  }
+}
