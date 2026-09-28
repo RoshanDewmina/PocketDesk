@@ -142,6 +142,84 @@ final class SessionIntegrationTests: XCTestCase {
     }
 
     @MainActor
+    func testHostKeepsRegisteredRoomWhenPhoneLeavesOrMediaDrops() async throws {
+        let (service, url) = try service(); defer { service.terminate() }
+        let host = RemoteCoordinator(isHost: true, store: MemoryTrust())
+        let phone = RemoteCoordinator(isHost: false, store: MemoryTrust())
+        var hostStatuses: [String] = []
+        let observer = host.$status.sink { hostStatuses.append($0) }
+        defer {
+            print("HOST LISTENER RECEIPT: host=\(host.status), phone=\(phone.status), transitions=\(hostStatuses)")
+            withExtendedLifetime(observer) {}; host.stop(); phone.stop()
+        }
+
+        let invitation = try host.createPair(server: url, name: "Persistent Host")
+        host.start()
+        try await waitFor("host registered") { host.hostRegistered }
+        try phone.enroll(invitation.code())
+        try await waitFor("approval pending") { host.awaitingApproval }
+        host.approve()
+        try await waitFor("paired session connected", seconds: 25) { host.connected && phone.connected }
+
+        let departureStart = hostStatuses.count
+        phone.stop()
+        try await waitFor("host stayed registered after phone left") {
+            !host.connected && host.hostRegistered && host.status == "Ready for your paired phone"
+        }
+        XCTAssertTrue(hostStatuses.dropFirst(departureStart).contains { $0.contains("retrying") },
+                      "The first departure must re-register with rotated trust")
+
+        phone.start()
+        try await waitFor("phone rejoined without host restart", seconds: 25) { host.connected && phone.connected }
+        let sendFailureStart = hostStatuses.count
+        host.media?.close()
+        XCTAssertFalse(host.sendControl(RemoteAction(action: "heartbeat")),
+                       "A closed media channel must reject host control sends")
+        XCTAssertTrue(host.hostRegistered)
+        XCTAssertEqual(host.status, "Ready for your paired phone")
+        phone.stop()
+        XCTAssertFalse(hostStatuses.dropFirst(sendFailureStart).contains { $0.contains("retrying") })
+
+        phone.start()
+        try await waitFor("phone rejoined after host send failure", seconds: 25) { host.connected && phone.connected }
+        let mediaDropStart = hostStatuses.count
+        host.media?.onState?("disconnected")
+        try await waitFor("host retained listener after media dropped") {
+            !host.connected && host.hostRegistered && host.status == "Ready for your paired phone"
+        }
+        phone.stop()
+        XCTAssertFalse(hostStatuses.dropFirst(mediaDropStart).contains { $0.contains("retrying") },
+                       "A media/offline callback race must not close the registered host room")
+    }
+
+    @MainActor
+    func testDuplicateTransportLossKeepsPendingRetryAlive() async throws {
+        let (service, url) = try service(); defer { service.terminate() }
+        let host = RemoteCoordinator(isHost: true, store: MemoryTrust(),
+                                     retryLimit: 2, retryBaseNanoseconds: 200_000_000,
+                                     registrationStableNanoseconds: 100_000_000)
+        defer { host.stop() }
+        _ = try host.createPair(server: url, name: "Retry Host")
+        host.start()
+        try await waitFor("host registered") { host.hostRegistered }
+
+        host.simulateTransportLossForTesting()
+        XCTAssertTrue(host.status.contains("retrying"))
+        host.simulateTransportLossForTesting()
+        XCTAssertTrue(host.status.contains("retrying"), "Duplicate loss must not terminate a queued retry")
+        try await waitFor("host re-registered after duplicate loss") { host.hostRegistered }
+        try await Task.sleep(nanoseconds: 150_000_000)
+        host.simulateTransportLossForTesting()
+        XCTAssertTrue(host.status.contains("retrying"))
+        try await waitFor("host re-registered after separate outage") { host.hostRegistered }
+        try await Task.sleep(nanoseconds: 150_000_000)
+        host.simulateTransportLossForTesting()
+        XCTAssertTrue(host.status.contains("retrying"),
+                      "Separate healthy host registrations must replenish the bounded retry budget")
+        try await waitFor("host re-registered a third time") { host.hostRegistered }
+    }
+
+    @MainActor
     func testEnrollmentRecoversWhenPhoneRegistersBeforeHost() async throws {
         let (service, url) = try service(); defer { service.terminate() }
         let hostStore = MemoryTrust(), phoneStore = MemoryTrust()

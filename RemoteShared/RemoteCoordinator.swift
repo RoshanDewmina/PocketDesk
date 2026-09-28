@@ -22,6 +22,7 @@ final class RemoteCoordinator: ObservableObject {
     private let store: any PairPersistence
     private let relay = SignalingClient()
     private var cipher: SignalCipher?
+    private var registeredInvitation: PairInvitation?
     private var request = ""
     private var session = ""
     private var sequence: UInt64 = 0
@@ -32,6 +33,8 @@ final class RemoteCoordinator: ObservableObject {
     private var retryCount = 0
     private let retryLimit: Int
     private let retryBaseNanoseconds: UInt64
+    private let registrationStableNanoseconds: UInt64
+    private var registrationStability: Task<Void, Never>?
     private var stopped = true
     private var proofReceived = false
     private var sentControl: UInt64 = 0
@@ -41,12 +44,14 @@ final class RemoteCoordinator: ObservableObject {
         isHost: Bool,
         store: (any PairPersistence)? = nil,
         retryLimit: Int = 5,
-        retryBaseNanoseconds: UInt64 = 500_000_000
+        retryBaseNanoseconds: UInt64 = 500_000_000,
+        registrationStableNanoseconds: UInt64 = 5_000_000_000
     ) {
         self.isHost = isHost
         self.store = store ?? PairStore(account: isHost ? "host" : "phone")
         self.retryLimit = max(0, retryLimit)
         self.retryBaseNanoseconds = retryBaseNanoseconds
+        self.registrationStableNanoseconds = registrationStableNanoseconds
         relay.onMessage = { [weak self] message in self?.receive(message) }
         relay.onClose = { [weak self] in self?.connectionLost() }
     }
@@ -56,7 +61,7 @@ final class RemoteCoordinator: ObservableObject {
             try action.validate()
             sentControl += 1
             let data = try JSONEncoder().encode(ControlPacket(session: session, sequence: sentControl, action: action))
-            guard media?.sendControl(data) == true else { connectionLost(); return false }
+            guard media?.sendControl(data) == true else { peerDisconnected(); return false }
             return true
         } catch { connectionLost(); return false }
     }
@@ -94,6 +99,7 @@ final class RemoteCoordinator: ObservableObject {
             resetSession()
             cipher = try SignalCipher(key: invitation.key, room: invitation.room)
             status = "Connecting securely…"
+            registeredInvitation = invitation
             try relay.connect(invitation: invitation, hostToken: hostPair?.hostToken)
             setTimeout()
         } catch { fail(error.localizedDescription) }
@@ -111,10 +117,11 @@ final class RemoteCoordinator: ObservableObject {
     }
     func stop() {
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0
-        relay.close(); resetSession(); status = "Disconnected"
+        relay.close(); registeredInvitation = nil; resetSession(); status = "Disconnected"
     }
     private func resetSession() {
         timeout?.cancel(); timeout = nil
+        registrationStability?.cancel(); registrationStability = nil
         media?.close(); media = nil
         remoteVideo = nil; connected = false; awaitingApproval = false; hostRegistered = false
         diagnostics = "Route not measured"
@@ -126,7 +133,10 @@ final class RemoteCoordinator: ObservableObject {
         do {
             switch message.type {
             case "registered":
-                if isHost { hostRegistered = true; timeout?.cancel(); status = "Ready for your paired phone" }
+                if isHost {
+                    hostRegistered = true; timeout?.cancel(); status = "Ready for your paired phone"
+                    resetRetryBudgetAfterStableRegistration()
+                }
             case "ice":
                 servers = message.servers ?? []
                 guard servers.count <= 8, servers.allSatisfy({ $0.urls.count <= 8 }) else { throw RemoteError.invalidMessage }
@@ -138,9 +148,7 @@ final class RemoteCoordinator: ObservableObject {
                         send(kind: "request", handshake: true); status = "Authenticating your Mac…"; setTimeout()
                     }
                 } else {
-                    resetSession()
-                    if isHost { connectionLost() }
-                    else { connectionLost() }
+                    peerDisconnected()
                 }
             case "signal":
                 guard let cipher, let payload = message.payload else { throw RemoteError.invalidMessage }
@@ -148,7 +156,9 @@ final class RemoteCoordinator: ObservableObject {
             case "error":
                 let code = message.code ?? "unavailable"
                 let serviceError = "Connection service: \(code). Check the Mac and retry."
-                if !isHost, code == "host_unavailable_or_unauthorized" {
+                // A freshly stopped phone may still occupy the server's client slot
+                // for a moment. Retry within the existing bound; never evict it.
+                if !isHost, code == "host_unavailable_or_unauthorized" || code == "already_connected" {
                     connectionLost(finalStatus: serviceError)
                 } else {
                     fail(serviceError)
@@ -247,7 +257,7 @@ final class RemoteCoordinator: ObservableObject {
                 if state == "connected" {
                     guard !self.connected else { return }
                     self.connected = true; self.retryCount = 0; self.timeout?.cancel(); self.onAuthenticated?()
-                } else if state == "failed" || state == "disconnected" || state == "closed" { self.connectionLost() }
+                } else if state == "failed" || state == "disconnected" || state == "closed" { self.peerDisconnected() }
             }
         }
     }
@@ -267,10 +277,42 @@ final class RemoteCoordinator: ObservableObject {
             self?.fail("Connection timed out. Check that the Mac is awake and the service is reachable.")
         }
     }
+
+    private func peerDisconnected() {
+        // The relay keeps the host's registered room open when its phone leaves.
+        // Keep listening there; tearing down the host socket can exhaust its retry
+        // budget while the phone independently reconnects.
+        // First approval rotates the saved phone credential. The currently
+        // registered relay room and cipher still use the enrollment invitation,
+        // so that one session must re-register before accepting the saved phone.
+        guard isHost, hostRegistered, !stopped, registeredInvitation == invitation else {
+            connectionLost(); return
+        }
+        resetSession()
+        hostRegistered = true
+        status = "Ready for your paired phone"
+        resetRetryBudgetAfterStableRegistration()
+    }
+
+    private func resetRetryBudgetAfterStableRegistration() {
+        guard isHost else { return }
+        registrationStability?.cancel()
+        registrationStability = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(nanoseconds: self.registrationStableNanoseconds)
+            guard !Task.isCancelled, self.hostRegistered, !self.stopped else { return }
+            self.retryCount = 0
+            self.registrationStability = nil
+        }
+    }
+
     private func connectionLost(finalStatus: String = "Connection lost. Tap Connect to try again.") {
         guard !stopped else { return }
-        relay.close(); resetSession()
-        guard retry == nil, retryCount < retryLimit else {
+        // A media and signaling failure can report the same outage independently.
+        // The first event already closed the old transport and scheduled a retry.
+        guard retry == nil else { return }
+        relay.close(); registeredInvitation = nil; resetSession()
+        guard retryCount < retryLimit else {
             stopped = true
             status = finalStatus
             return
@@ -287,6 +329,10 @@ final class RemoteCoordinator: ObservableObject {
     }
     private func fail(_ message: String) {
         stopped = true; retry?.cancel(); retry = nil
-        relay.close(); resetSession(); status = message
+        relay.close(); registeredInvitation = nil; resetSession(); status = message
     }
+
+    #if DEBUG
+    func simulateTransportLossForTesting() { connectionLost() }
+    #endif
 }
