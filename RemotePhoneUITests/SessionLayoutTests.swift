@@ -2,6 +2,21 @@ import XCTest
 
 final class SessionLayoutTests: XCTestCase {
     @MainActor
+    func testEditableFocusPreviewOpensExistingKeyboardWithoutSending() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-auto-keyboard-preview-check"]
+        app.launch()
+        let field = app.textViews.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Editable-focus event should reveal the existing text editor")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Send text"].isEnabled, "Offline preview never admits Mac input")
+        attachScreenshot("Editable focus opens local keyboard - offline preview")
+        app.buttons["Hide keyboard"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5),
+                      "Manual dismissal must remain effective")
+    }
+
+    @MainActor
     func testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-voice-preview-check"]

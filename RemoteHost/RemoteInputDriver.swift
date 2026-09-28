@@ -12,6 +12,8 @@ struct RemoteInputOutcome: Equatable {
     var accepted = false
     var holdEvent: HoldEvent = .none
     var textRequestID: String?
+    /// Exact position used for an accepted click, before later pointer movement can change it.
+    var clickPoint: CGPoint?
 }
 
 struct RemoteInputLease {
@@ -284,6 +286,7 @@ final class RemoteInputDriver {
                 lastButton = button
                 lastSemanticPoint = point
                 outcome.accepted = true
+                outcome.clickPoint = point
                 break
             }
             for index in 0..<repetitions {
@@ -295,6 +298,7 @@ final class RemoteInputDriver {
                 events.append(.init(type: up, point: point, button: button, count: clicks))
             }
             outcome.accepted = eventSink.mouseSequence(events)
+            if outcome.accepted { outcome.clickPoint = point }
 
         case "dragDown":
             guard !held, let bounds = validBounds else { break }

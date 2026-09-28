@@ -13,10 +13,23 @@ struct RemoteAction: Codable {
     var pointerProbe: String? = nil
     var pointerLocation: PointerLocation? = nil
     var streamQuality: StreamQuality? = nil
+    var textFocusProbe: String? = nil
+    var textFocusEditable: Bool? = nil
 
     func validate() throws {
         try interaction?.validate()
         try pointerLocation?.validate()
+        if let textFocusProbe {
+            guard ["click", "double", "heartbeat"].contains(action),
+                  textFocusProbe.utf8.count == 32,
+                  textFocusProbe.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) })
+            else { throw RemoteError.invalidMessage }
+            if action != "heartbeat" {
+                guard interaction != nil, textFocusEditable == nil else { throw RemoteError.invalidMessage }
+            }
+        }
+        guard textFocusEditable == nil || (action == "heartbeat" && textFocusProbe != nil)
+        else { throw RemoteError.invalidMessage }
         guard streamQuality == nil || action == "heartbeat" || action == "capture" else { throw RemoteError.invalidMessage }
         if let pointerProbe {
             guard action == "heartbeat", !pointerProbe.isEmpty, pointerProbe.utf8.count <= 64 else { throw RemoteError.invalidMessage }

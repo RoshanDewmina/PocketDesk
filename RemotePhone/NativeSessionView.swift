@@ -15,6 +15,8 @@ struct NativeSessionView: View {
     @State private var geometryPending = false
     @State private var controlsCollapsed = true
     @State private var keyboardOpen = false
+    @State private var dismissedAutoKeyboardRevision: UInt64 = 0
+    @State private var autoKeyboardPreviewEmitted = false
     @State private var showControls = false
     @State private var showVoiceInput = false
     @StateObject private var voiceInput = VoiceInputController()
@@ -72,6 +74,22 @@ struct NativeSessionView: View {
         }
         .onChange(of: model.canControl) { _, allowed in
             if !allowed && voiceInput.phase == .listening { voiceInput.pauseForInterruption() }
+        }
+        .onChange(of: model.autoKeyboardRevision) { _, value in
+            guard value > dismissedAutoKeyboardRevision, !keyboardOpen, !panMode,
+                  !showControls, !showVoiceInput, scenePhase == .active,
+                  (model.canControl || autoKeyboardPreview), model.textEditable, !model.isComposingText,
+                  !model.dragging, !model.privacyShield, !model.contentConcealed else { return }
+            openKeyboard()
+        }
+        .task(id: scenePhase) {
+            #if DEBUG
+            guard autoKeyboardPreview, scenePhase == .active, !autoKeyboardPreviewEmitted else { return }
+            try? await Task.sleep(for: .milliseconds(200))
+            guard !Task.isCancelled, scenePhase == .active, !autoKeyboardPreviewEmitted else { return }
+            autoKeyboardPreviewEmitted = true
+            model.previewEditableFocusForTesting()
+            #endif
         }
         .onChange(of: model.voiceDeliveryStatus) { _, status in
             if status == .accepted { showVoiceInput = false }
@@ -546,6 +564,14 @@ struct NativeSessionView: View {
         (model.textEditable || (model.voiceDeliveryStatus == .uncertain && !model.voiceRetryTranscript.isEmpty))
     }
 
+    private var autoKeyboardPreview: Bool {
+        #if DEBUG
+        offlineLayoutCheck && ProcessInfo.processInfo.arguments.contains("--ui-auto-keyboard-preview-check")
+        #else
+        false
+        #endif
+    }
+
     private var voiceLimitMessage: String? {
         if displayedVoiceTranscript.utf8.count > 4_096 { return "Voice text exceeds the 4,096-byte limit. Record a shorter message." }
         if displayedVoiceTranscript.utf16.count > 1_024 { return "Voice text exceeds the 1,024-character-unit limit. Record a shorter message." }
@@ -972,6 +998,7 @@ struct NativeSessionView: View {
     }
 
     private func closeKeyboard() {
+        dismissedAutoKeyboardRevision = model.autoKeyboardRevision
         cancelGesture()
         keyboardOpen = false
     }

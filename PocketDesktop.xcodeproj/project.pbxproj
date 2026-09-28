@@ -58,6 +58,7 @@
 		4546132C3C59316E814ACEA8 /* HostTerminationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC94BB45B8A9E3D97A3B64EC /* HostTerminationTests.swift */; };
 		4612B9A404A3AFBC765E430F /* BrowserPeerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F31D1E535A3D1FAC3F46962 /* BrowserPeerController.swift */; };
 		490CEE27F3EE1F7720102CA6 /* HostSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A80921367AA2D6A17ED291F5 /* HostSettingsView.swift */; };
+		494EAB5102D869C94A882B0F /* HostTextFocusTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0170A2D76EFEED481C56663 /* HostTextFocusTests.swift */; };
 		4ED74B9A7A197DC5BC72BD5D /* StreamQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68E0D2431AB187AE68C1ED2 /* StreamQuality.swift */; };
 		502BB74794B20B1D470BAE3E /* SessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57B016EC93DD7E70F9174455 /* SessionTests.swift */; };
 		507D7A3012B03B7CA6063FB8 /* BrowserPeerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5A4A5C6B82AD42422582E6F /* BrowserPeerTests.swift */; };
@@ -105,6 +106,7 @@
 		88C196609E8E921FE6B1CB1D /* SessionLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E0861848B93929EDE7B10C1 /* SessionLayoutTests.swift */; };
 		8B2FA9CC9AD80729477CCC03 /* VideoCodecPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13D66B889B29B13BDE33779E /* VideoCodecPolicy.swift */; };
 		8D19BC0A8D8EC2D34E37443E /* NativeInputFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06983976A15578FF281A602 /* NativeInputFreshness.swift */; };
+		8E5503C99D336EF4B9360134 /* HostTextFocusProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4062788DDAD84E5D2C5B3E /* HostTextFocusProbe.swift */; };
 		90F2737AEC9BF5E1D5A062F2 /* HostStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F58935C4C0AA6C0044AA26E /* HostStyle.swift */; };
 		93FC776A7F136A76527A0ECF /* BrowserInputGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D2D5712350233BB04C2ED07 /* BrowserInputGate.swift */; };
 		9458DDBD79FC3EE79EBA0235 /* PocketDeskStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E3A80162075BC6B8C142A82 /* PocketDeskStyle.swift */; };
@@ -165,6 +167,7 @@
 		E7BD6817D1A5CCDD50C74C38 /* PeerMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A9CB4348526C909CF253F1 /* PeerMedia.swift */; };
 		E91E88BFB9AC3BB4E11E062D /* MediaDiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 878E8C2656F76F79E1128C2E /* MediaDiagnosticsTests.swift */; };
 		EA7F944B4587C08D0D6E1178 /* HostViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F688011A8DDECAEAAE11132 /* HostViewState.swift */; };
+		EAA7FA3C29D24885D2912AC8 /* HostTextFocusProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4062788DDAD84E5D2C5B3E /* HostTextFocusProbe.swift */; };
 		ED6A4108B6256C6B156556E1 /* BrowserPeerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 173805F45FB3C845B4C84B82 /* BrowserPeerStore.swift */; };
 		EF29F581505C94F234AD77C5 /* StreamQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68E0D2431AB187AE68C1ED2 /* StreamQuality.swift */; };
 		EF2A2DCC418832C87D99A404 /* RemoteSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A899CCAC0EDBAD3B9C45B3DA /* RemoteSession.swift */; };
@@ -223,6 +226,7 @@
 		1D855557157B394E9F2314DE /* DesktopPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopPreview.swift; sourceTree = "<group>"; };
 		25E810ABB45AB9AFCB4F7080 /* NativeSessionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeSessionView.swift; sourceTree = "<group>"; };
 		29800B2341E92E0C9C977718 /* HostKeepAwake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostKeepAwake.swift; sourceTree = "<group>"; };
+		2A4062788DDAD84E5D2C5B3E /* HostTextFocusProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostTextFocusProbe.swift; sourceTree = "<group>"; };
 		2B47A3584507A2F653CE0816 /* DesktopPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopPreview.swift; sourceTree = "<group>"; };
 		3113E7FFC8DA6DCE50ED6ACC /* HostModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostModel.swift; sourceTree = "<group>"; };
 		317BFB7BF5716BA9625EA3CF /* NativeCodecCapabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCodecCapabilityTests.swift; sourceTree = "<group>"; };
@@ -281,6 +285,7 @@
 		A80921367AA2D6A17ED291F5 /* HostSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostSettingsView.swift; sourceTree = "<group>"; };
 		A899CCAC0EDBAD3B9C45B3DA /* RemoteSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSession.swift; sourceTree = "<group>"; };
 		ABC5305205008EFB73744EAF /* HostSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostSetupView.swift; sourceTree = "<group>"; };
+		B0170A2D76EFEED481C56663 /* HostTextFocusTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostTextFocusTests.swift; sourceTree = "<group>"; };
 		B0E9A460F4C70492B4EFA2FC /* HostInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostInput.swift; sourceTree = "<group>"; };
 		B10107405AE87CFAB89018C7 /* SessionLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLifecycleTests.swift; sourceTree = "<group>"; };
 		BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCrypto.swift; sourceTree = "<group>"; };
@@ -424,6 +429,7 @@
 				ABC5305205008EFB73744EAF /* HostSetupView.swift */,
 				6F58935C4C0AA6C0044AA26E /* HostStyle.swift */,
 				09B1DC55741DE99187B84DA6 /* HostTermination.swift */,
+				2A4062788DDAD84E5D2C5B3E /* HostTextFocusProbe.swift */,
 				6F688011A8DDECAEAAE11132 /* HostViewState.swift */,
 				924606EF7002CFDE239145B3 /* RemoteCapture.swift */,
 				9C6528802DEF73BFE075870D /* RemoteHostApp.swift */,
@@ -468,6 +474,7 @@
 				DF3D9BC731A6956F31889D35 /* HostPermissionStateTests.swift */,
 				4242DD41D0DF29B3EE9CD1C4 /* HostReadinessTests.swift */,
 				EC94BB45B8A9E3D97A3B64EC /* HostTerminationTests.swift */,
+				B0170A2D76EFEED481C56663 /* HostTextFocusTests.swift */,
 				878E8C2656F76F79E1128C2E /* MediaDiagnosticsTests.swift */,
 				317BFB7BF5716BA9625EA3CF /* NativeCodecCapabilityTests.swift */,
 				DAC85148D3F395A0D9046A13 /* NativeGestureEngineTests.swift */,
@@ -937,6 +944,7 @@
 				DDAFF4FE9C4E04D80074BF2F /* HostSetupView.swift in Sources */,
 				71ED4C874CB2092BC7A13D7C /* HostStyle.swift in Sources */,
 				749BE9E013A01EB0780B6226 /* HostTermination.swift in Sources */,
+				8E5503C99D336EF4B9360134 /* HostTextFocusProbe.swift in Sources */,
 				29CA6EFF90D466EE4C3284BB /* HostViewState.swift in Sources */,
 				9A19AC3434D8E9167C18AB35 /* NativeCodecCapability.swift in Sources */,
 				C20AC78A6D67C31712E16C1E /* NativeGestureEngine.swift in Sources */,
@@ -992,6 +1000,8 @@
 				1953750CD853D7A15007852A /* HostReadinessTests.swift in Sources */,
 				FC651DAF83819F07FBBB0455 /* HostTermination.swift in Sources */,
 				4546132C3C59316E814ACEA8 /* HostTerminationTests.swift in Sources */,
+				EAA7FA3C29D24885D2912AC8 /* HostTextFocusProbe.swift in Sources */,
+				494EAB5102D869C94A882B0F /* HostTextFocusTests.swift in Sources */,
 				E91E88BFB9AC3BB4E11E062D /* MediaDiagnosticsTests.swift in Sources */,
 				E1750C00EBA4BABD95628160 /* NativeCodecCapability.swift in Sources */,
 				C4324CC42C0F48FEC5F2C5A7 /* NativeCodecCapabilityTests.swift in Sources */,
@@ -1143,7 +1153,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20260928.1;
+				CURRENT_PROJECT_VERSION = 20260928.11;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = PocketDesk;
@@ -1392,7 +1402,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20260928.1;
+				CURRENT_PROJECT_VERSION = 20260928.11;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = PocketDesk;

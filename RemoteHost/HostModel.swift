@@ -51,6 +51,8 @@ final class RemoteHostModel: ObservableObject {
     private var captureAttempt: UInt64 = 0
     private var inputEpoch = RemoteInputEpoch()
     private var inputFreshness = NativeInputFreshness()
+    private var textFocusRevision: UInt64 = 0
+    private var textFocusTask: Task<Void, Never>?
     private var captureHealthy = false
     private var capturedDisplayID: CGDirectDisplayID?
     private var pointerLocator = HostPointerLocator()
@@ -394,6 +396,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func stop() {
+        invalidateTextFocus()
         browserSession.stop()
         releaseRemoteInput(notifyPhone: true)
         sendCaptureHealth(false)
@@ -403,6 +406,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func stopForTermination() {
+        invalidateTextFocus()
         browserSession.stop()
         terminating = true
         permissionTimer?.invalidate()
@@ -528,6 +532,7 @@ final class RemoteHostModel: ObservableObject {
 
     private func applyControlState(notifyPhone: Bool) {
         let effective = allowControl && accessibilityPermission.isGranted
+        if !effective { invalidateTextFocus() }
         input.enabled = HostControlPolicy.isEnabled(
             userConsent: allowControl,
             accessibilityPermission: accessibilityPermission,
@@ -614,6 +619,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func endCapture() {
+        invalidateTextFocus()
         releaseRemoteInput(notifyPhone: false)
         inputFreshness.invalidate()
         input.resetNativeSequence()
@@ -640,6 +646,9 @@ final class RemoteHostModel: ObservableObject {
 
     private func receive(_ data: Data) {
         guard let action = try? JSONDecoder().decode(RemoteAction.self, from: data) else { stop(); return }
+        if action.action == "release" || Self.userInputActions.contains(action.action) {
+            invalidateTextFocus()
+        }
         if action.action == "release" {
             if inputFreshness.acceptsRelease(
                 action, epoch: inputEpoch.value, activeHold: input.externalHoldID
@@ -701,13 +710,51 @@ final class RemoteHostModel: ObservableObject {
         }
         inputLease.record(action: action.action, accepted: outcome.accepted, at: now)
         if outcome.holdEvent == .ended { inputLease.cancel() }
+        if admission == .upgraded, outcome.accepted,
+           (action.action == "click" || action.action == "double"),
+           HostTextFocusProbe.isValidID(action.textFocusProbe),
+           let probe = action.textFocusProbe, let point = outcome.clickPoint {
+            scheduleTextFocusProbe(probe, point: point, issuedAt: now)
+        }
         if action.action == "text" {
             sendTextResult(for: action.key, accepted: outcome.accepted)
         }
     }
 
+    private func scheduleTextFocusProbe(_ probe: String, point: CGPoint, issuedAt: TimeInterval) {
+        guard let peer = connection.media else { return }
+        let ticket = HostTextFocusTicket(epoch: inputEpoch.value,
+                                         revision: textFocusRevision, issuedAt: issuedAt)
+        textFocusTask = Task { [weak self] in
+            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+            guard let self, self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else { return }
+            let editable = await HostTextFocusProbe.editableAtClick(point)
+            guard self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else { return }
+            _ = self.connection.sendControl(RemoteAction(
+                action: "heartbeat", epoch: ticket.epoch,
+                textFocusProbe: probe, textFocusEditable: editable
+            ))
+        }
+    }
+
+    private func textFocusIsCurrent(_ ticket: HostTextFocusTicket, peer: PeerMedia) -> Bool {
+        ticket.isCurrent(epoch: inputEpoch.value, revision: textFocusRevision,
+                         now: ProcessInfo.processInfo.systemUptime,
+                         active: active && !terminating,
+                         connected: connection.connected && connection.media === peer,
+                         controlEnabled: allowControl && input.enabled && AXIsProcessTrusted(),
+                         captureHealthy: captureHealthy)
+    }
+
+    private func invalidateTextFocus() {
+        textFocusRevision &+= 1
+        textFocusTask?.cancel()
+        textFocusTask = nil
+    }
+
     private func captureHealthChanged(_ healthy: Bool) {
         if captureHealthy && !healthy {
+            invalidateTextFocus()
             releaseRemoteInput(notifyPhone: true)
             inputFreshness.expireTokens()
         }
@@ -831,6 +878,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func advanceEpoch() {
+        invalidateTextFocus()
         inputEpoch.beginSession()
         inputFreshness.expireTokens()
         input.resetNativeSequence()

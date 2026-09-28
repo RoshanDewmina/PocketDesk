@@ -5,6 +5,42 @@ import Combine
 
 @MainActor
 final class SessionLifecycleTests: XCTestCase {
+    func testEditableFocusReplyOpensOnlyForNewestFreshClickOnce() {
+        var gate = TextFocusProbeGate()
+        let first = gate.begin(epoch: 9, at: 10)
+        XCTAssertEqual(first.count, 32)
+        XCTAssertTrue(first.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) })
+        let second = gate.begin(epoch: 9, at: 10.1)
+        XCTAssertNotEqual(first, second)
+        XCTAssertFalse(gate.consume(probe: first, editable: true, responseEpoch: 9,
+                                    currentEpoch: 9, at: 10.2, allowed: true))
+        XCTAssertTrue(gate.consume(probe: second, editable: true, responseEpoch: 9,
+                                   currentEpoch: 9, at: 10.3, allowed: true))
+        XCTAssertFalse(gate.consume(probe: second, editable: true, responseEpoch: 9,
+                                    currentEpoch: 9, at: 10.4, allowed: true), "Reply is one-shot")
+    }
+
+    func testEditableFocusReplyRejectsLateWrongEpochNoneditableAndDismissed() {
+        var gate = TextFocusProbeGate()
+        let expired = gate.begin(epoch: 4, at: 20)
+        XCTAssertFalse(gate.consume(probe: expired, editable: true, responseEpoch: 4,
+                                    currentEpoch: 4, at: 21.01, allowed: true))
+        let staleEpoch = gate.begin(epoch: 4, at: 30)
+        XCTAssertFalse(gate.consume(probe: staleEpoch, editable: true, responseEpoch: 4,
+                                    currentEpoch: 5, at: 30.1, allowed: true))
+        let noneditable = gate.begin(epoch: 5, at: 40)
+        XCTAssertFalse(gate.consume(probe: noneditable, editable: false, responseEpoch: 5,
+                                    currentEpoch: 5, at: 40.1, allowed: true))
+        let inactive = gate.begin(epoch: 5, at: 50)
+        XCTAssertFalse(gate.consume(probe: inactive, editable: true, responseEpoch: 5,
+                                    currentEpoch: 5, at: 50.1, allowed: false))
+        let dismissed = gate.begin(epoch: 5, at: 60)
+        gate.invalidate()
+        XCTAssertFalse(gate.consume(probe: dismissed, editable: true, responseEpoch: 5,
+                                    currentEpoch: 5, at: 60.1, allowed: true),
+                       "Manual keyboard dismissal and modal opening invalidate pending focus")
+    }
+
     func testPointerFollowAcceptsValidRoundTripBeyondEightyMillisecondsAndStopsOnLift() {
         let locator = PointerLocator()
         var followed: [CGPoint] = []

@@ -39,6 +39,31 @@ enum VoiceDeliveryStatus: Equatable {
     case idle, waiting, accepted, refused, uncertain, notQueued
 }
 
+/// A focus reply may open the local keyboard only for the most recent admitted click.
+struct TextFocusProbeGate {
+    private(set) var pending: (probe: String, epoch: UInt64, sentAt: TimeInterval)?
+
+    mutating func begin(epoch: UInt64, at now: TimeInterval) -> String {
+        let probe = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        pending = (probe, epoch, now)
+        return probe
+    }
+
+    mutating func invalidate() { pending = nil }
+
+    mutating func consume(probe: String?, editable: Bool?, responseEpoch: UInt64,
+                          currentEpoch: UInt64, at now: TimeInterval, allowed: Bool) -> Bool {
+        guard let pending else { return false }
+        guard now >= pending.sentAt, now - pending.sentAt <= 1 else {
+            self.pending = nil
+            return false
+        }
+        guard probe == pending.probe else { return false }
+        self.pending = nil
+        return editable == true && allowed && responseEpoch == pending.epoch && currentEpoch == pending.epoch
+    }
+}
+
 @MainActor
 final class PhoneRemoteModel: ObservableObject {
     let connection = RemoteCoordinator(isHost: false)
@@ -83,6 +108,7 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var sourceSize = CGSize(width: 1440, height: 900)
     @Published private(set) var inputRevision: UInt64 = 0
     @Published private(set) var acceptedClicks: UInt64 = 0
+    @Published private(set) var autoKeyboardRevision: UInt64 = 0
     @Published private(set) var nativeInteractionSupported = false
     @Published private(set) var doubleClickInterval: TimeInterval = 0.5
     @Published var hapticsEnabled = UserDefaults.standard.object(forKey: "clickHaptics") == nil ? true : UserDefaults.standard.bool(forKey: "clickHaptics") {
@@ -98,6 +124,8 @@ final class PhoneRemoteModel: ObservableObject {
     private var lastFrame = 0.0
     private var lastCaptureHealth = 0.0
     private var pendingText: PendingText?
+    private var textFocusProbe = TextFocusProbeGate()
+    private var sceneIsActive = false
     private var timer: Timer?
 
     init() {
@@ -146,6 +174,10 @@ final class PhoneRemoteModel: ObservableObject {
         return nil
     }
 
+    #if DEBUG
+    func previewEditableFocusForTesting() { autoKeyboardRevision &+= 1 }
+    #endif
+
     @discardableResult
     func enroll(_ code: String) -> Bool {
         do {
@@ -173,8 +205,12 @@ final class PhoneRemoteModel: ObservableObject {
     private func sendInput(_ name: String, x: Double = 0, y: Double = 0,
                            count: Int? = nil, hold: String? = nil,
                            phase: String? = nil, stream: String? = nil,
-                           text: String = "", key: String = "", modifiers: [String] = []) -> Bool {
+                           text: String = "", key: String = "", modifiers: [String] = [],
+                           probeTextFocus: Bool = false) -> Bool {
+        textFocusProbe.invalidate()
         guard canControl else { return false }
+        let focusProbe = probeTextFocus && nativeInteractionSupported && !dragging && activeHold == nil
+            ? textFocusProbe.begin(epoch: geometryEpoch, at: ProcessInfo.processInfo.systemUptime) : nil
         let envelope = nativeInteractionSupported
             ? NativeInteraction(token: inputToken, hold: hold ?? activeHold,
                                 clickCount: count ?? (activeHold == nil ? nil : activeHoldCount),
@@ -182,7 +218,9 @@ final class PhoneRemoteModel: ObservableObject {
         let isClick = ["click", "right", "double"].contains(name)
         if isClick && hapticsEnabled { clickFeedback.prepare() }
         let accepted = connection.sendControl(RemoteAction(action: name, x: x, y: y,
-            text: text, key: key, modifiers: modifiers, epoch: geometryEpoch, interaction: envelope))
+            text: text, key: key, modifiers: modifiers, epoch: geometryEpoch, interaction: envelope,
+            textFocusProbe: focusProbe))
+        if !accepted { textFocusProbe.invalidate() }
         if accepted && isClick {
             acceptedClicks &+= 1
             if hapticsEnabled { clickFeedback.impactOccurred(intensity: 1.0) }
@@ -202,7 +240,7 @@ final class PhoneRemoteModel: ObservableObject {
             return sendInput("scroll", x: delta.width, y: delta.height, phase: phase, stream: stream)
         case .click(let count):
             // Legacy hosts have no semantic count contract. First tap is still prompt.
-            return sendInput("click", count: count)
+            return sendInput("click", count: count, probeTextFocus: count == 1 || count == 2)
         case .secondaryClick:
             return sendInput("right", count: 1)
         case .workspaceSwipe(let direction):
@@ -233,6 +271,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func cancelInput() {
+        textFocusProbe.invalidate()
         pointerLocator.clear()
         release()
         inputRevision &+= 1
@@ -291,6 +330,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func release() {
+        textFocusProbe.invalidate()
         if connection.connected {
             if nativeInteractionSupported {
                 if let activeHold {
@@ -319,14 +359,17 @@ final class PhoneRemoteModel: ObservableObject {
     func sceneChanged(_ phase: ScenePhase) {
         switch phase {
         case .active:
+            sceneIsActive = true
             hasBeenActive = true
             privacyShield = false
         case .inactive:
+            sceneIsActive = false
             if hasBeenActive {
                 cancelInput()
                 privacyShield = true
             }
         case .background:
+            sceneIsActive = false
             privacyShield = false
             if hasBeenActive { concealForBackground() }
         @unknown default:
@@ -384,6 +427,12 @@ final class PhoneRemoteModel: ObservableObject {
             controlAllowed = action.x == 1
             if !controlAllowed { pointerLocator.clear(); release() }
         case "heartbeat":
+            if textFocusProbe.consume(probe: action.textFocusProbe, editable: action.textFocusEditable,
+                                      responseEpoch: action.epoch, currentEpoch: geometryEpoch,
+                                      at: ProcessInfo.processInfo.systemUptime,
+                                      allowed: sceneIsActive && canControl && !dragging && textEditable && !isComposingText) {
+                autoKeyboardRevision &+= 1
+            }
             if action.epoch == geometryEpoch, canControl, pointerLocatorSupported {
                 pointerLocator.receive(action, at: ProcessInfo.processInfo.systemUptime, sourceSize: sourceSize)
             }
@@ -499,6 +548,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func end() {
+        textFocusProbe.invalidate()
         pointerTimer?.invalidate()
         pointerTimer = nil
         pointerLocatorSupported = false
