@@ -32,6 +32,7 @@ export type ServiceConfig = {
   credentialIssuesPerMinute?: number;
   maxRoomLifetimeMs?: number;
   approvalAuditMs?: number;
+  testForceRelay?: boolean;
 };
 
 const token = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -53,6 +54,10 @@ export function createService(config: ServiceConfig = {}) {
   if (!Number.isSafeInteger(approvalAuditMs) || approvalAuditMs < 100 || approvalAuditMs > 5000) {
     throw new Error('approval audit interval must be an integer from 100 to 5000 milliseconds');
   }
+  if (config.testForceRelay && !config.turnProvider) throw new Error('testForceRelay requires a relay provider');
+  const relayPolicy = config.testForceRelay ? { policy: 'relay' as const } : {};
+  const startedAt = Date.now();
+  const providerHealth = { lastOutcome: 'none' as 'none' | 'ok' | 'failed', consecutiveFailures: 0, rateLimited: 0 };
   const pendingIssuances = new Set<Promise<IceServer[]>>();
   const pendingRevocations = new Set<Promise<void>>();
   const pendingRegistrations = new Set<Promise<void>>();
@@ -106,7 +111,10 @@ export function createService(config: ServiceConfig = {}) {
     if (config.turnProvider) {
       const now = Date.now();
       if (now - credentialWindow >= 60_000) { credentialWindow = now; credentialIssues = 0; }
-      if (credentialIssues >= credentialIssuesPerMinute) throw new Error('relay issuance rate exceeded');
+      if (credentialIssues >= credentialIssuesPerMinute) {
+        providerHealth.rateLimited += 1;
+        throw new Error('relay issuance rate exceeded');
+      }
       credentialIssues += 1;
       let timer: Timer | undefined;
       let timedOut = false;
@@ -125,7 +133,13 @@ export function createService(config: ServiceConfig = {}) {
           }),
         ]);
         issuedByProvider = issued;
+        providerHealth.lastOutcome = 'ok';
+        providerHealth.consecutiveFailures = 0;
         servers.push(...issued);
+      } catch (failure) {
+        providerHealth.lastOutcome = 'failed';
+        providerHealth.consecutiveFailures += 1;
+        throw failure;
       } finally {
         clearTimeout(timer);
       }
@@ -202,11 +216,35 @@ export function createService(config: ServiceConfig = {}) {
     ws.data.room = msg.room;
     clearTimeout(ws.data.timer);
     send(ws, { type: 'registered', role });
-    send(ws, { type: 'ice', servers });
+    send(ws, { type: 'ice', servers, ...relayPolicy });
     if (room.client) {
       send(room.host, { type: 'peer', online: true });
       send(room.client, { type: 'peer', online: true });
     }
+  };
+
+  const readiness = () => {
+    const reasons: string[] = [];
+    if (!config.turnProvider) reasons.push('relay_not_configured');
+    if (providerHealth.consecutiveFailures >= 3) reasons.push('relay_provider_failing');
+    if (stopping) reasons.push('stopping');
+    const ready = reasons.length === 0;
+    return Response.json({
+      status: ready ? 'ready' : 'not_ready',
+      protocol: 1,
+      reasons,
+      relay: {
+        provider: config.turnProvider?.kind ?? 'none',
+        policy: config.testForceRelay ? 'relay' : 'all',
+        lastIssue: providerHealth.lastOutcome,
+        consecutiveFailures: providerHealth.consecutiveFailures,
+        issuanceRateLimited: providerHealth.rateLimited,
+      },
+      approval: config.roomApproval ? 'file' : config.allowedRooms ? 'static' : 'open',
+      peers: peers.size,
+      rooms: rooms.size,
+      uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+    }, { status: ready ? 200 : 503, headers: { 'cache-control': 'no-store' } });
   };
 
   const server = Bun.serve<PeerData>({
@@ -215,6 +253,7 @@ export function createService(config: ServiceConfig = {}) {
     fetch(req, bunServer) {
       const url = new URL(req.url);
       if (url.pathname === '/health') return Response.json({ status: 'ok', protocol: 1 });
+      if (url.pathname === '/ready' && req.method === 'GET') return readiness();
       if (url.pathname !== '/signal' || url.search || req.method !== 'GET') return new Response('Not found', { status: 404 });
       if (req.headers.has('origin')) return new Response('Native clients only', { status: 403 });
       if (peers.size >= maxPeers) return new Response('Busy', { status: 503 });

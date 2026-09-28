@@ -17,3 +17,4 @@ xcuserdata/
 /outputs/implementation-2026-09-12/
 !Server/.env.private.example
 !Server/.env.standalone.example
+!Server/.env.relay.example
