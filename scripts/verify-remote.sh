@@ -14,7 +14,7 @@ print "Remote checks passed. Receipts: $receipt"
 if [[ -n "${POCKETDESK_UI_SIMULATOR:-}" ]]; then
   xcodebuild -project PocketDesktop.xcodeproj -scheme PocketDeskRemote \
     -destination "id=$POCKETDESK_UI_SIMULATOR" -derivedDataPath outputs/RemoteBuild \
-    -only-testing:RemotePhoneUITests -collect-test-diagnostics never test \
+    -only-testing:RemotePhoneTests -only-testing:RemotePhoneUITests -collect-test-diagnostics never test \
     > "$receipt/phone-ui-tests.log" 2>&1
   print "Native phone UI acceptance passed."
 fi

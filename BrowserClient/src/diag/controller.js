@@ -7,6 +7,7 @@ import { resolveTile } from './params.js';
 const MAX_STATS_SAMPLES = 3600;
 const MAX_REPORT_BYTES = 512 * 1024;
 const DEFAULT_BASELINE_TIMEOUT_MS = 300;
+const BENCH_METRIC = 'browser-send to presented-frame response';
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function boundedInteger(name, value, minimum, maximum) {
@@ -169,7 +170,7 @@ export function createDiagController({
       await wait(postSendGapMs);
     }
     if (currentRun === run) currentRun = undefined;
-    latestBenchSummary = summarizeBench(results);
+    latestBenchSummary = { metric: BENCH_METRIC, ...summarizeBench(results) };
     return latestBenchSummary;
   }
 

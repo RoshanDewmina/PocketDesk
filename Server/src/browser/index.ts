@@ -24,6 +24,7 @@ const port = integer('POCKETDESK_BROWSER_PORT', 8788, 0, 65_535);
 const hostname = env.POCKETDESK_BROWSER_BIND ?? '127.0.0.1';
 const origin = env.POCKETDESK_BROWSER_ORIGIN;
 const diagnosticsDir = env.POCKETDESK_BROWSER_DIAG_DIR;
+const mcpPrivateDir = env.POCKETDESK_MCP_PRIVATE_DIR;
 
 // TURN/STUN parsing mirrors ../config.ts (loadServiceConfig) for the native service: same env
 // names, same shape. Reused via ../turn.ts rather than re-run through loadServiceConfig, since
@@ -65,6 +66,7 @@ const service = createBrowserService({
   port,
   hostname,
   origin,
+  mcpPrivateDir,
   diagnosticsDir,
   devRoutes: false,
   turnProvider,

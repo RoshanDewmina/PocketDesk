@@ -1,10 +1,18 @@
 # PocketDesk — product and design source of truth
 
-**Version:** 0.10 · **Updated:** 13 September 2026 · **Status:** Local MVP checkpoint complete; physical acceptance pending; browser implementation locally tested; physical and WebKit compatibility acceptance pending
+**Version:** 0.13 · **Updated:** 28 September 2026 · **Status:** Native interaction checkpoint and both app appearance overhauls installed; larger pointer, full physical task/feel and away/relay acceptance pending
+
+**Latest session UI correction — 28 September 2026:** Roshan requests an uninterrupted mirrored desktop with both permanent top status/End bar and bottom buttons hidden into recoverable swipe-up/down chrome. Default to a subtle dock handle; double-tap that handle to open and focus the keyboard (explicitly confirmed). Keep normal desktop double-click semantics. Refresh the bulky gray session panels into compact native overlays; End and status remain discoverable when controls are revealed, and active Release remains reachable. Automatic text-field recognition from streamed pixels is not established and must not be claimed.
+
+**Latest direction — 28 September 2026:** Roshan requests a build plan with deep Mac trackpad research, iOS 27, iPad and iPhone Duo adaptation. Roshan authorized the S0–S3 native implementation with “Sure get started building this.” The active coding scope is the first native interaction milestone; physical acceptance remains a separate gate. The default is the streamed desktop as a relative trackpad, a larger accurate pointer, locally accepted-click haptics, compact native controls and portrait/landscape support. Paperwash supplies restrained visual character. The phone is a pannable viewport, not a responsive reflow of Mac applications. Native, satisfying pointer/scroll/drag behavior is a primary acceptance goal.
+
+The [native experience build plan](Docs/NATIVE-EXPERIENCE-BUILD-PLAN-2026-09-28.md), [Apple interaction research](Docs/APPLE-INTERACTION-RESEARCH-2026-09-28.md) and [scoped native handoff](Docs/NATIVE-INTERACTION-HANDOFF-2026-09-28.md) define the proposed next program. First coding slice is S0–S3 (baseline, unobstructed input, authoritative pointer and feel tuning); iPad/Duo optimization and release work follow. The current user instruction authorizes S0–S3 implementation and local verification; deployment of public services and submission remain outside this pass. The 17 November launch target is proposed and conditional, with a 2 November go/no-go and 3 November submission target.
+
+Latest physical receipt: installed/paired iPhone 17 shows live Mac video with control enabled. This is not completed native input-task, haptic, latency, cellular or forced-relay validation. Earlier status sections and browser-first authorizations below are historical snapshots where they conflict with this update.
 
 **Implementation resumed in the new task on 12 September 2026**, following Roshan’s “Start this” request. The existing product scope and private feasibility stop line remain in force. The [implementation ledger](Docs/IMPLEMENTATION-PLAN.md) records current checks, changes, and unresolved live gates; historical pause statements below describe the preceding handoff.
 
-**Current session: browser feasibility implementation authorized (13 September 2026).** Roshan requested implementation after context recovery and pre-start questions, then authorized all independent work and testing while his iPhone is unavailable. Use a harmless code-edit-and-check task; preserve native clients and the later chat roadmap. Cloudflare account/public exposure remains paused. Physical phone, cellular and forced-relay acceptance must remain pending until actually tested. D18 and other planning-only statements record earlier tasks.
+**Historical session: browser feasibility implementation authorized (13 September 2026).** Roshan requested implementation after context recovery and pre-start questions, then authorized all independent work and testing while his iPhone is unavailable. Use a harmless code-edit-and-check task; preserve native clients and the later chat roadmap. Cloudflare account/public exposure remains paused. Physical phone, cellular and forced-relay acceptance must remain pending until actually tested. D18 and other planning-only statements record earlier tasks.
 
 The [planning assessment](Docs/IDEA-VALIDATION-2026-09-13.md) records recovered context, API feasibility, and the proposed sequence. The [competitor feature comparison](Docs/COMPETITOR-FEATURES-2026-09-13.md) is for learning from documented features; adoption and hands-on quality remain unverified. WhipDesk, ServerCC, and Offsite overlap with substantial parts of the workflow. Their existence does not establish market traction or settle PocketDesk's usefulness.
 
@@ -66,6 +74,11 @@ The primary user is the owner of the Mac. Helping someone else, team administrat
 | D17 | Consolidate the resulting feature list, status, and plan into this existing single source of truth | Research reports support PRODUCT; they do not independently authorize features or become competing specifications |
 | D18 | Explicitly reconfirmed: this session is planning only; do not start implementation | Finish research, feature inventory and proposed execution sequence only. No application changes, deployment or account setup |
 | D19 | Use comparable apps to learn useful features; delegate the feature comparison and obtain a critical Claude review of the finished plan using the requested Opus 5 model if available | Research and plan review only. Do not infer competitor adoption, silently substitute the requested review model, or start implementation |
+| D20 | Use the streamed desktop as the default relative trackpad with a larger readable pointer and click haptics | Confirmed 28 Sep; native implementation pending; no pressure sensing or remote-completion claim |
+| D21 | Prepare a native build plan informed by current Apple docs, iPad and iPhone Duo; delegate research as useful | Planning authorized, not native coding; advanced layouts and release remain staged |
+| D22 | Prioritize native, satisfying Mac-like trackpad interactions | Research gesture timing, precision, acceleration, scroll momentum and drag; exact parameters require physical tuning |
+| D23 | Start building the reviewed S0–S3 native plan | Authorized in the current chat on 28 Sep; preserve existing work, verify integrated code, report physical and pointer feasibility gaps honestly; no automatic S4–S6 release execution |
+| D24 | Overhaul both the mobile app and desktop companion appearance | User explicitly requested both native surfaces on 28 Sep and authorized subagent delegation. Apply restrained Paperwash warmth, native Apple controls, coherent light/dark styling and clearer connection/setup hierarchy while preserving tested input and security behavior |
 
 ### Work scenarios that guide the designs
 
@@ -85,7 +98,7 @@ Design priority: compare both controller layouts while reading and editing, not 
 
 Start with a native iPhone client and Apple-silicon Mac companion. Support ordinary phone portrait and landscape layouts first. Use an iPad as a secondary layout test, with dedicated iPad optimization considered after the phone journey works. Keep future Windows/Linux hosts and Android clients possible without building them now.
 
-The earlier Duo/foldable concept remains a layout exploration. It is not a requirement for first use or a promise of verified hinge behavior. Proposed minimum OS versions are iOS 26 and macOS 26, inherited from the handoff and still subject to compatibility review.
+The 28 September plan includes basic adaptive iPad/Duo compatibility and later device-specific testing, with specialized folded/dual-display experiences deferred. Apple now documents Duo and iOS 27.1 SDK adaptation; this is no longer only a speculative device concept. Physical support remains unverified. Keep the current iOS 26/macOS 26 deployment baseline unless explicitly changed; newer SDK APIs need availability checks.
 
 ## 3. Research translated into design
 
@@ -543,12 +556,34 @@ Lost-device handling is unresolved for a user away from the Mac. Retain revoke-a
 
 Payment, if introduced, needs localized prices, verified entitlement, restore, pending/canceled/refunded states, clear companion-app requirements, and a clean session shutdown at any usage limit. No billing implementation should precede the product/value decision.
 
+### Phone interaction improvement backlog — 28 September 2026
+
+**Latest exploration direction:** Roshan proposes eliminating the separate trackpad overlay and using the streamed desktop itself as a relative trackpad, plus a light iPhone haptic on click. Make this the default direction for the next native implementation discussion. Finger movement moves the existing cursor; a tap clicks at that cursor, not at the finger location. Define scrolling, pinch, double-click, drag and cancellation semantics explicitly. Local haptics acknowledge accepted gestures, not remote completion. A small dockable pad is now an optional comparison only. The web interaction lab has a visual click pulse; native haptics and the revised native controls are not implemented by this planning update.
+
+Roshan approved adding the following ideas while continuing to brainstorm and test the existing build. Backlog approval does not mean these features are implemented or authorize a redesign in this session.
+
+| Priority | Improvement | Acceptance / investigation |
+|---|---|---|
+| First · physical-test feedback | Larger, clearly visible pointer | Roshan could not see the pointer easily. Maintain a readable screen-space cursor through zoom, with contrast and an accurate hotspot; consider a size preference. Inspect captured-cursor composition and authoritative host position before adding a client overlay, avoiding duplicate or misleading cursors. The phone is a pannable viewport over the desktop, not responsive webpage reflow; distinguish pointer motion, remote scrolling and local viewport pan |
+| First | Natural pinch zoom and bounded pan | Preserve the content under the pinch midpoint; constrain pan to useful screen bounds; retain an obvious Fit/reset action |
+| First | Stable keyboard and rotation framing | Preserve the viewed region when the keyboard opens or orientation changes; keep rendering and input geometry aligned |
+| Next | Focus action | Zoom around the pointer to a readable region; investigate Fit this window using host window information; preserve remote double-click semantics |
+| Next | Keep typing visible | Investigate caret-aware positioning across apps, with manual positioning when caret information is unavailable |
+| Next | Precision and direct-touch controls | Compare direct tap for large targets with trackpad precision; investigate an optional targeting magnifier and explicit gesture modes |
+| First · physical-test feedback | Keep trackpad and controls clear of the cursor/task region | Roshan's 28 September landscape screenshot shows the central trackpad and large bars obscuring the desktop. Compare a nearly invisible relative-pointer canvas with a small manually dockable thumb pad. Investigate cursor-aware corner placement only with reliable host cursor coordinates; protect the surrounding target region, never relocate beneath an active finger or during drag/typing, and retain manual positioning. Compact status and toolbar while preserving accessible targets and End access. Planning only; not implemented |
+| Next | Compact shortcut strip | Thumb-reachable keyboard, Escape, Command, Undo and app switching; use Sidecar as an interaction reference |
+| Experiment | Sharper zoomed regions | Compare existing local video enlargement with source-region capture/encoding; measure readability, bandwidth and input-to-visible latency before adopting |
+
+Current source inspection: browser viewer has centre-origin 1–3× pinch/slider zoom, pan and Fit/reset; native phone viewer has 1–3× slider zoom, pan and Fit/reset. Smart focus, caret following and source-region streaming are not established implementations. Physical-device usability is still a separate test.
+
+Apple now documents direct Sidecar touch in macOS 27 and iPadOS 27. Its gesture-receiver APIs do not establish a third-party iPhone touch transport or a switch PocketDesk can enable. Reference: [Sidecar support](https://support.apple.com/en-us/102597), [TN3212](https://developer.apple.com/documentation/technotes/tn3212-adopting-gesture-recognizers-for-sidecar-touch-support), checked 28 September 2026. Preserve older-OS compatibility unless explicitly changed.
+
 ## 11. Retained ideas outside the proposed first release
 
 | Idea | Why deferred / what would reopen it |
 |---|---|
 | Windows/Linux hosts; Android client | Prove one phone-to-Mac journey first; revisit based on demand |
-| Dedicated iPad / Duo layouts | Validate phone ergonomics, then test real supported larger/folding hardware |
+| Specialized iPad / Duo layouts | Basic adaptation is in the 28 Sep plan; custom tabletop, dual-display and accessory modes follow validated phone ergonomics |
 | Audio streaming | Separate latency/privacy/power work; initial product must say sound stays on Mac |
 | Microphone forwarding | Separate permission and use-case decision |
 | File transfer / clipboard sync | Separate data transfer, consent, and conflict design; shortcut Paste alone is not sync |
@@ -605,7 +640,7 @@ Resolve these in order; not all need an answer before reviewing the screens.
 | Priority | Question | Current proposal |
 |---|---|---|
 | 1 | Which exact work session should anchor the first mockup walkthrough? | D08 confirms coding, ChatGPT/Claude, and assignments; propose a code-edit-and-check flow spanning an AI conversation, editor, and Terminal |
-| 2 | Which controller layout should be the default? | Compare adjustable split against full-screen with revealable controls; zoom/pan required in both |
+| 2 | Which controller layout should be the default? | Resolved 28 Sep: full-canvas relative trackpad with compact recoverable controls; zoom/pan separate from remote scroll |
 | 3 | Which typing experience best serves that job? | Compare immediate committed text plus key events against compose-and-Send fallback |
 | 4 | What visual character should the mockups explore? | Calm native utility, content first, restrained materials |
 | 5 | Is direct touch essential to the first beta? | Optional after relative input/geometry is proven |
@@ -693,3 +728,18 @@ Two recommendations were deliberately not adopted: replacing the cellular test w
 | 0.8 · 13 Sep 2026 | Recorded browser-first viewer foundation D16, consolidated feature/status inventory D17, and deeper parallel research | Live human viewing and interaction should work independently of embedded chat support; embedding is an optional later surface. Research only; prior native MVP and physical acceptance boundary remain unchanged |
 | 0.9 · 13 Sep 2026 | Added current API/competition assessment, runtime handoff boundary, and feature-learning/independent-review direction D19 | Planning and review authorized; browser implementation remains paused. External review completed and reconciled in 0.10 |
 | 0.10 · 13 Sep 2026 | Reconciled Opus 5 critique: early phone/link/readability probes, concrete browser admission, explicit embedding tiers, source/frame freshness, bounded drag wording, and retained user-feature coverage | Documentation-only revision; account work stays deferred; no feature deleted and no implementation authorized |
+| 0.11 · 28 Sep 2026 | Recorded screen-trackpad, readable-pointer, haptic and native-feel direction; current Apple/iPad/Duo research and scoped build handoff | Planning only; S0–S3 proposed next; release date conditional; no new native tests |
+
+### 28 September physical-phone fullscreen follow-up
+
+Roshan confirms the lag is observed directly on the iPhone, not inferred through iPhone Mirroring. Current request: default to an aspect-preserving Fill viewport across the full scene; retain explicit Fit for the whole display, midpoint pinch and local pan. Keep the collapsed dock and double-tap-handle keyboard shortcut. Filling mismatched aspect ratios necessarily crops part of the Mac desktop; pan exposes that content without changing Mac application layout.
+
+A temporary contrasting pointer-location ring is an interim findability aid during recent remote movement. Keep the captured cursor, its real shape, and its visibility. The ring must expire on stale/mismatched telemetry, interaction/context changes, or lost authority. It is not a completed replacement larger cursor and is not frame-synchronized targeting evidence. Cross-app cursor visibility/shape remains an S2 gap.
+
+Higher frame-rate streaming is requested for capable paths. Current live Mac display-mode inspection reports 60 Hz; native capture is capped at 60 and the pinned WebRTC Metal view exposes no public refresh setting. Do not claim 120 fps, adaptive high refresh, or improved physical latency from these viewport changes. A supported higher-refresh renderer and capability negotiation remain follow-up work; delivered fps and physical input-to-visible delay must be measured separately.
+
+### 28 September follow-through: edge-follow and sharper capture
+
+Roshan explicitly confirms automatic viewport following was expected, and requests higher resolution. The continuation adds movement-driven edge-follow using fresh authenticated selected-display cursor positions. Pan minimally to keep the pointer in the safe visible area, preserving zoom. Stop on lift/cancellation, 80 ms without movement, secondary gesture ownership, manual pan, panels, stale state and drag. Manual navigation takes precedence until deliberate pointer movement resumes. This is edge-follow at the current zoom; automatic semantic/caret zoom remains deferred.
+
+Phone controls offer Sharper (native physical capture pixels, bounded to a 3840-pixel long edge) and Responsive (1920-pixel long edge). The current phone requests Sharper by default after capability advertisement; legacy clients keep Responsive. Do not upscale small sources. In-place configuration changes preserve session and logical input geometry. Show requested/applied disagreement instead of claiming the Mac applied a failed change. Higher resolution may increase bandwidth/latency and does not raise the existing 60 fps capture limit.

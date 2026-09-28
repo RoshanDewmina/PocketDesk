@@ -3,10 +3,17 @@ import { mkdir } from 'node:fs/promises';
 import { realpathSync, statSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 import type { ServerWebSocket } from 'bun';
+import { createMcpApp, type McpApp } from '../mcp/app';
 import type { IceServer, TurnCredentialProvider } from '../turn';
+import {
+  createBrowserMcpHostBridge,
+  type BrowserMcpHostBridge,
+  type HostRpcReply,
+} from './mcp-host-bridge';
 import { createBrowserRelay } from './relay';
 
 const MAX_RECORD_BYTES = 256 * 1024;
+const MAX_PENDING_HOST_SIGNAL_BYTES = 512 * 1024;
 const MAX_HTTP_BODY_BYTES = 64 * 1024;
 const MAX_STATIC_BYTES = 4 * 1024 * 1024;
 const MAX_DIAGNOSTICS_BYTES = 512 * 1024;
@@ -14,6 +21,7 @@ const MAX_TICKET_TTL_MS = 15_000;
 const MAX_ENROLLMENT_TIMEOUT_MS = 120_000;
 const HEX_32 = /^[a-f0-9]{64}$/;
 const ERROR_CODE = /^[a-z0-9_]{1,64}$/;
+const MCP_INTENT_COOKIE = '__Host-pocketdesk_intent';
 
 type RouteKind = 'host' | 'browser';
 
@@ -23,6 +31,7 @@ type PeerData = {
   registrationPending?: boolean;
   hostID?: string;
   session?: string;
+  intentID?: string;
   timer?: Timer;
   messages: number;
   messageWindow: number;
@@ -47,13 +56,16 @@ type BrowserSession = {
   host: Peer;
   browser: Peer;
   session: string;
+  scope: 'view' | 'control';
+  browserIceDelivered: boolean;
+  pendingHostSignals: Record<string, unknown>[];
+  pendingHostSignalBytes: number;
 };
 
 type PendingRequest = {
   host: Peer;
   timer: Timer;
-  headers: Record<string, string>;
-  finish: (response: Response) => void;
+  finish: (reply: HostRpcReply) => void;
   signal: AbortSignal;
   abort: () => void;
 };
@@ -62,6 +74,7 @@ export type BrowserServiceConfig = {
   port?: number;
   hostname?: string;
   origin?: string;
+  mcpPrivateDir?: string;
   staticRoot?: string;
   authTimeoutMs?: number;
   ticketTTLms?: number;
@@ -141,7 +154,7 @@ function integerOption(name: string, value: number, minimum: number, maximum: nu
   return value;
 }
 
-const VIEWER_QUERY_KEYS = new Set(['diag', 'marker', 'bench', 'tile']);
+const VIEWER_QUERY_KEYS = new Set(['diag', 'marker', 'bench', 'tile', 'intent']);
 
 function validViewerQuery(url: URL): boolean {
   if (!url.search) return true;
@@ -163,7 +176,18 @@ function validViewerQuery(url: URL): boolean {
     const parts = tile.split(',');
     if (parts.length !== 4 || !parts.every(part => /^(0|[1-9][0-9]{0,5})$/.test(part))) return false;
   }
+  const intent = url.searchParams.get('intent');
+  if (intent !== null && !isHex32(intent)) return false;
   return true;
+}
+
+function intentCookie(request: Request): string | undefined {
+  const cookie = request.headers.get('cookie');
+  if (!cookie || cookie.length > 4096) return;
+  const matches = cookie.split(';').map(value => value.trim()).filter(value => value.startsWith(`${MCP_INTENT_COOKIE}=`));
+  if (matches.length !== 1) return;
+  const value = matches[0].slice(MCP_INTENT_COOKIE.length + 1);
+  return isHex32(value) ? value : undefined;
 }
 
 export class BodyTooLarge extends Error {}
@@ -209,6 +233,8 @@ function containsRawIPv6(text: string): boolean {
 export function createBrowserService(config: BrowserServiceConfig = {}) {
   const hostname = config.hostname ?? '127.0.0.1';
   const configuredOrigin = checkedOrigin(config.origin);
+  const mcpPrivateDir = config.mcpPrivateDir ? resolve(config.mcpPrivateDir) : undefined;
+  if (mcpPrivateDir && !configuredOrigin) throw new Error('MCP requires an exact HTTPS origin with mcpPrivateDir');
   const authTimeoutMs = integerOption('authTimeoutMs', config.authTimeoutMs ?? 5_000, 10, 30_000);
   const ticketTTLms = integerOption('ticketTTLms', config.ticketTTLms ?? MAX_TICKET_TTL_MS, 1, MAX_TICKET_TTL_MS);
   const enrollmentTimeoutMs = integerOption(
@@ -234,8 +260,11 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
   const tickets = new Map<string, Ticket>();
   const sessions = new Map<string, BrowserSession>();
   const requests = new Map<string, PendingRequest>();
+  const sessionScopes = new Map<string, 'view' | 'control'>();
   const pendingRegistrations = new Set<Promise<void>>();
   let stopped = false;
+  let mcpBridge: BrowserMcpHostBridge | undefined;
+  let mcpApp: McpApp | undefined;
 
   const expectedHost = (port: number) => configuredOrigin ? new URL(configuredOrigin).host :
     `${hostname.includes(':') && !hostname.startsWith('[') ? `[${hostname}]` : hostname}:${port}`;
@@ -269,27 +298,50 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
     if (close) ws.close(1008, code);
   };
 
-  const finishRequest = (id: string, response: Response) => {
+  const finishRequest = (id: string, reply: HostRpcReply) => {
     const pending = requests.get(id);
     if (!pending) return false;
     clearTimeout(pending.timer);
     requests.delete(id);
     pending.signal.removeEventListener('abort', pending.abort);
-    pending.finish(response);
+    pending.finish(reply);
     return true;
   };
 
-  const cancelRequest = (id: string, response: Response) => {
+  const cancelRequest = (id: string, reply: HostRpcReply) => {
     const pending = requests.get(id);
     if (!pending) return;
     send(pending.host, { type: 'cancel', id });
-    finishRequest(id, response);
+    finishRequest(id, reply);
   };
 
   const cancelHostRequests = (host: Peer, code = 'host_unavailable') => {
     for (const [id, pending] of requests) {
-      if (pending.host === host) finishRequest(id, Response.json({ error: code }, { status: 503, headers: pending.headers }));
+      if (pending.host === host) finishRequest(id, { kind: 'offline', code });
     }
+  };
+
+  const requestHost = (
+    hostID: string,
+    operation: string,
+    body: Record<string, unknown>,
+    signal: AbortSignal,
+    timeoutMs: number,
+  ): Promise<HostRpcReply> => {
+    const host = hosts.get(hostID);
+    if (stopped || !host || host.readyState !== WebSocket.OPEN) return Promise.resolve({ kind: 'offline' });
+    if (requests.size >= maxPendingRequests) return Promise.resolve({ kind: 'error', code: 'busy' });
+    const id = randomBytes(32).toString('hex');
+    return new Promise(finish => {
+      const timer = setTimeout(() => cancelRequest(id, { kind: 'timeout' }), timeoutMs);
+      const abort = () => cancelRequest(id, { kind: 'aborted' });
+      requests.set(id, { host, timer, finish, signal, abort });
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+      if (requests.has(id) && !send(host, { type: 'request', id, operation, body })) {
+        finishRequest(id, { kind: 'offline' });
+      }
+    });
   };
 
   const removeTicket = (key: string) => {
@@ -312,6 +364,7 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
   const endSession = (record: BrowserSession, initiator?: Peer, reason = 'session_ended') => {
     if (sessions.get(record.session) !== record) return;
     sessions.delete(record.session);
+    sessionScopes.delete(record.session);
     revokePeer(record.host);
     revokePeer(record.browser);
     if (initiator !== record.host) send(record.host, { type: 'end', session: record.session });
@@ -339,6 +392,38 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
       fail(record.browser, 'relay_unavailable');
     }
   };
+
+  if (configuredOrigin && mcpPrivateDir) {
+    mcpBridge = createBrowserMcpHostBridge({
+      authorizationHostID() {
+        const connected = [...hosts.entries()].filter(([, host]) => host.readyState === WebSocket.OPEN);
+        return connected.length === 1 ? connected[0][0] : undefined;
+      },
+      hostConnected(hostID) {
+        return hosts.get(hostID)?.readyState === WebSocket.OPEN;
+      },
+      request(hostID, operation, body, signal) {
+        return requestHost(
+          hostID,
+          operation,
+          body,
+          signal,
+          operation === 'mcp_authorize' ? enrollmentTimeoutMs : requestTimeoutMs,
+        );
+      },
+      session(hostID, sessionID) {
+        const record = sessions.get(sessionID);
+        return record?.hostID === hostID && record.browserIceDelivered ? { scope: record.scope } : undefined;
+      },
+      stopSession(hostID, sessionID) {
+        const record = sessions.get(sessionID);
+        if (!record || record.hostID !== hostID) return false;
+        endSession(record, undefined, 'mcp_stopped');
+        return true;
+      },
+    });
+    mcpApp = createMcpApp({ origin: configuredOrigin, privateDir: mcpPrivateDir, host: mcpBridge });
+  }
 
   const validHostHeader = (request: Request, port: number) => request.headers.get('host') === expectedHost(port);
   const validBrowserOrigin = (request: Request, port: number) => request.headers.get('origin') === expectedOrigin(port);
@@ -405,26 +490,28 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
       return Response.json({ error: 'invalid_request' }, { status: 400, headers });
     }
     if (!validOperationBody(operation, body)) return Response.json({ error: 'invalid_request' }, { status: 400, headers });
-    const host = hosts.get(hostID);
-    if (!host || host.readyState !== WebSocket.OPEN) return Response.json({ error: 'host_unavailable' }, { status: 503, headers });
-    if (requests.size >= maxPendingRequests) return Response.json({ error: 'busy' }, { status: 503, headers });
-
-    const id = randomBytes(32).toString('hex');
-    return await new Promise<Response>(finish => {
-      const timeoutMs = operation === 'enroll' ? enrollmentTimeoutMs : requestTimeoutMs;
-      const timer = setTimeout(() => {
-        cancelRequest(id, Response.json({ error: 'request_timeout' }, { status: 504, headers }));
-      }, timeoutMs);
-      const abort = () => {
-        cancelRequest(id, Response.json({ error: 'request_cancelled' }, { status: 499, headers }));
-      };
-      requests.set(id, { host, timer, headers, finish, signal: request.signal, abort });
-      request.signal.addEventListener('abort', abort, { once: true });
-      if (request.signal.aborted) abort();
-      if (requests.has(id) && !send(host, { type: 'request', id, operation, body })) {
-        finishRequest(id, Response.json({ error: 'host_unavailable' }, { status: 503, headers }));
+    const reply = await requestHost(
+      hostID,
+      operation,
+      body,
+      request.signal,
+      operation === 'enroll' ? enrollmentTimeoutMs : requestTimeoutMs,
+    );
+    if (reply.kind === 'response') {
+      if (operation === 'challenge' && isObject(reply.body) && exactKeys(reply.body, ['fields', 'signature']) &&
+          Array.isArray(reply.body.fields) && reply.body.fields.length === 12 && reply.body.fields[0] === 'challenge' &&
+          reply.body.fields[1] === hostID && reply.body.fields[4] === body.mode && isHex32(reply.body.fields[7])) {
+        sessionScopes.set(reply.body.fields[7], body.mode === 'interactive' ? 'control' : 'view');
       }
-    });
+      return Response.json(reply.body, { headers });
+    }
+    if (reply.kind === 'error') {
+      const status = reply.code === 'busy' ? 503 : 400;
+      return Response.json({ error: reply.code }, { status, headers });
+    }
+    if (reply.kind === 'timeout') return Response.json({ error: 'request_timeout' }, { status: 504, headers });
+    if (reply.kind === 'aborted') return Response.json({ error: reply.code ?? 'request_cancelled' }, { status: 499, headers });
+    return Response.json({ error: reply.code ?? 'host_unavailable' }, { status: 503, headers });
   };
 
   const handleDiagnostics = async (request: Request, port: number) => {
@@ -508,9 +595,9 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
       if (!pending) return;
       if (pending.host !== ws) { fail(ws, 'invalid_message'); return; }
       if (hasError) {
-        finishRequest(message.id, Response.json({ error: message.error }, { status: 400, headers: pending.headers }));
+        finishRequest(message.id, { kind: 'error', code: message.error as string });
       } else {
-        finishRequest(message.id, Response.json(message.body, { headers: pending.headers }));
+        finishRequest(message.id, { kind: 'response', body: message.body });
       }
       return;
     }
@@ -532,6 +619,17 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
       }
       const record = sessions.get(message.session);
       if (!record || record.host !== ws) { fail(ws, 'invalid_session', false); return; }
+      if (!record.browserIceDelivered) {
+        const bytes = Buffer.byteLength(JSON.stringify(message));
+        if (record.pendingHostSignals.length >= 32 || record.pendingHostSignalBytes + bytes > MAX_PENDING_HOST_SIGNAL_BYTES) {
+          fail(ws, 'ice_not_ready', false);
+          abortAdmission(record);
+          return;
+        }
+        record.pendingHostSignals.push(message);
+        record.pendingHostSignalBytes += bytes;
+        return;
+      }
       send(record.browser, message);
       return;
     }
@@ -571,7 +669,16 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
       fail(ws, 'unauthorized'); return;
     }
 
-    const record: BrowserSession = { hostID: ticket.hostID, host: ticket.host, browser: ws, session: ticket.session };
+    const record: BrowserSession = {
+      hostID: ticket.hostID,
+      host: ticket.host,
+      browser: ws,
+      session: ticket.session,
+      scope: sessionScopes.get(ticket.session) ?? 'view',
+      browserIceDelivered: false,
+      pendingHostSignals: [],
+      pendingHostSignalBytes: 0,
+    };
     sessions.set(record.session, record);
     ws.data.registrationPending = true;
     ws.data.hostID = record.hostID;
@@ -594,8 +701,12 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
     }
     record.host.data.iceServers = hostRelay.servers;
     record.host.data.iceRevoked = false;
-    send(record.host, { type: 'ice', session: record.session, servers: hostRelay.servers, policy: hostRelay.policy });
-    send(record.host, { type: 'joined', session: record.session });
+    if (!send(record.host, { type: 'ice', session: record.session, servers: hostRelay.servers, policy: hostRelay.policy }) ||
+        !send(record.host, { type: 'joined', session: record.session })) {
+      ws.data.registrationPending = false;
+      abortAdmission(record);
+      return;
+    }
 
     let browserRelay;
     try {
@@ -613,8 +724,27 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
     ws.data.iceRevoked = false;
     ws.data.authenticated = true;
     ws.data.registrationPending = false;
-    send(ws, { type: 'registered', session: record.session });
-    send(ws, { type: 'ice', servers: browserRelay.servers, policy: browserRelay.policy });
+    if (!send(ws, { type: 'registered', session: record.session }) ||
+        !send(ws, { type: 'ice', servers: browserRelay.servers, policy: browserRelay.policy })) {
+      abortAdmission(record);
+      return;
+    }
+    record.browserIceDelivered = true;
+    for (const signal of record.pendingHostSignals.splice(0)) {
+      if (!send(ws, signal)) {
+        abortAdmission(record);
+        return;
+      }
+    }
+    record.pendingHostSignalBytes = 0;
+    if (ws.data.intentID) {
+      mcpBridge?.associateSession({
+        intentID: ws.data.intentID,
+        hostID: record.hostID,
+        sessionID: record.session,
+        scope: record.scope,
+      });
+    }
   };
 
   const handleBrowserMessage = (ws: Peer, message: Record<string, unknown>) => {
@@ -644,11 +774,9 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
       if (!validHostHeader(request, port)) return new Response('Misdirected request', { status: 421, headers: securityHeaders(port) });
       const url = new URL(request.url);
       const isViewerDocument = url.pathname === '/' && (request.method === 'GET' || request.method === 'HEAD');
-      if (url.search && !(isViewerDocument && validViewerQuery(url))) {
-        return new Response('Not found', { status: 404, headers: securityHeaders(port) });
-      }
 
       if (url.pathname === '/browser-host' || url.pathname === '/browser-signal') {
+        if (url.search) return new Response('Not found', { status: 404, headers: securityHeaders(port) });
         if (request.method !== 'GET') return new Response('Not found', { status: 404, headers: securityHeaders(port) });
         const route: RouteKind = url.pathname === '/browser-host' ? 'host' : 'browser';
         if (route === 'host' ? request.headers.has('origin') : !validBrowserOrigin(request, port)) {
@@ -656,25 +784,44 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
         }
         if (peers.size >= maxPeers) return new Response('Busy', { status: 503, headers: securityHeaders(port) });
         const now = Date.now();
-        if (bunServer.upgrade(request, { data: { route, authenticated: false, messages: 0, messageWindow: now } })) return;
+        const intentID = route === 'browser' ? intentCookie(request) : undefined;
+        if (bunServer.upgrade(request, {
+          data: { route, authenticated: false, messages: 0, messageWindow: now, ...(intentID ? { intentID } : {}) },
+        })) return;
         return new Response('Upgrade required', { status: 426, headers: securityHeaders(port) });
       }
 
       const api = /^\/browser-api\/([a-f0-9]{64})\/(enroll|challenge|proof)$/.exec(url.pathname);
       if (api) {
+        if (url.search) return new Response('Not found', { status: 404, headers: securityHeaders(port) });
         if (request.method !== 'POST') return new Response('Not found', { status: 404, headers: securityHeaders(port) });
         return handleAPI(request, port, api[1], api[2]);
       }
 
       if (url.pathname === '/api/diagnostics') {
+        if (url.search) return new Response('Not found', { status: 404, headers: securityHeaders(port) });
         if (!devRoutes || !diagnosticsDir || request.method !== 'POST') {
           return new Response('Not found', { status: 404, headers: securityHeaders(port) });
         }
         return handleDiagnostics(request, port);
       }
 
+      const mcpResponse = await mcpApp?.handle(request);
+      if (mcpResponse) return mcpResponse;
+
       if ((request.method === 'GET' || request.method === 'HEAD') && staticTarget(url.pathname)) {
-        return serveStatic(url.pathname, request.method, port);
+        if (url.search && !(isViewerDocument && validViewerQuery(url))) {
+          return new Response('Not found', { status: 404, headers: securityHeaders(port) });
+        }
+        const response = serveStatic(url.pathname, request.method, port);
+        const intentID = isViewerDocument ? url.searchParams.get('intent') : null;
+        if (intentID && mcpBridge && response.status === 200 && await mcpBridge.lookupIntent(intentID)) {
+          response.headers.set(
+            'Set-Cookie',
+            `${MCP_INTENT_COOKIE}=${intentID}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=600`,
+          );
+        }
+        return response;
       }
       return new Response('Not found', { status: 404, headers: securityHeaders(port) });
     },
@@ -737,8 +884,10 @@ export function createBrowserService(config: BrowserServiceConfig = {}) {
       for (const [id, pending] of [...requests]) {
         requests.delete(id);
         pending.signal.removeEventListener('abort', pending.abort);
-        pending.finish(Response.json({ error: 'service_stopped' }, { status: 503, headers: pending.headers }));
+        pending.finish({ kind: 'offline', code: 'service_stopped' });
       }
+      await mcpApp?.stop();
+      mcpBridge?.stop();
       for (const key of [...tickets.keys()]) removeTicket(key);
       for (const record of [...sessions.values()]) endSession(record, undefined, 'service_stopped');
       hosts.clear();

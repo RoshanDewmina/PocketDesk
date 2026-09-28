@@ -18,11 +18,16 @@ private final class MemoryTrust: PairPersistence {
 private final class TestFrameReceiver: NSObject, RTCVideoRenderer {
     private let lock = NSLock()
     private var count = 0
+    private var lastSize = CGSize.zero
     var received: Bool { lock.lock(); defer { lock.unlock() }; return count > 0 }
+    var frameSize: CGSize { lock.lock(); defer { lock.unlock() }; return lastSize }
     func setSize(_ size: CGSize) {}
     func renderFrame(_ frame: RTCVideoFrame?) {
-        guard frame != nil else { return }
-        lock.lock(); count += 1; lock.unlock()
+        guard let frame else { return }
+        lock.lock()
+        count += 1
+        lastSize = CGSize(width: Int(frame.width), height: Int(frame.height))
+        lock.unlock()
     }
 }
 
@@ -93,6 +98,25 @@ final class SessionIntegrationTests: XCTestCase {
         try await waitFor("generated fixture encoded and decoded through native WebRTC") { renderer.received }
         try await waitFor("measured candidate route available") { host.diagnostics.hasPrefix("Direct") }
         print("LOCAL MEDIA RECEIPT: \(host.diagnostics)")
+        // Exercise an in-session resolution increase and decrease through the
+        // real encoder/decoder. This proves dimensions, not network performance.
+        for size in [CGSize(width: 3840, height: 2160), CGSize(width: 1920, height: 1080)] {
+            var sizedBuffer: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height),
+                kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary,
+                &sizedBuffer), kCVReturnSuccess)
+            let sizedPixels = try XCTUnwrap(sizedBuffer)
+            CVPixelBufferLockBaseAddress(sizedPixels, [])
+            memset(CVPixelBufferGetBaseAddress(sizedPixels), 90, CVPixelBufferGetDataSize(sizedPixels))
+            CVPixelBufferUnlockBaseAddress(sizedPixels, [])
+            for _ in 0..<20 {
+                host.media?.pushFrame(sizedPixels, timeStampNs: Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000))
+                try await Task.sleep(nanoseconds: 100_000_000)
+                if renderer.frameSize == size { break }
+            }
+            try await waitFor("native stream decodes changed frame size \(size)") { renderer.frameSize == size }
+            print("RESOLUTION RECEIPT: decoded \(Int(renderer.frameSize.width)) x \(Int(renderer.frameSize.height))")
+        }
         var received: RemoteAction?
         host.onControl = { data in received = try? JSONDecoder().decode(RemoteAction.self, from: data) }
         XCTAssertTrue(phone.sendControl(RemoteAction(action: "text", text: "Bonjour 👋 中文", key: "test-1", epoch: 42)))

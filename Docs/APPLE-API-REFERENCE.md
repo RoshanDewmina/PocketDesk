@@ -1,6 +1,20 @@
 # Apple API reference and freshness record
 
-Checked **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.
+Latest focused refresh **28 September 2026**; original capture/transport snapshot **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.
+
+## Focused interaction and adaptive-layout refresh — 28 September 2026
+
+Follow-up source/SDK review: `NSCursor.currentSystem` is a deprecated public cross-app image/hotspot API; installed `NSCursor.h:155–156` warns it will return nil in a future macOS version. `current` is application-local. This materially strengthens the S0 pointer feasibility gate; no complete replacement visibility/shape contract or runtime support was demonstrated. See the [follow-up research](APPLE-INTERACTION-RESEARCH-2026-09-28.md#follow-up-review-cursor-feasibility-and-native-control-references) for sources, source-format differences and limits. Xcode27.0/27A266a and iPhoneOS SDK27.0 were rechecked. No builds or new native tests ran.
+
+See [Apple interaction research](APPLE-INTERACTION-RESEARCH-2026-09-28.md) for current source links and [native build plan](NATIVE-EXPERIENCE-BUILD-PLAN-2026-09-28.md) for proposed uses. Reviewed current Mac gestures/Force Touch, public double-click timing, scroll phases, UIKit gesture/indirect input, haptics, iPad windowing and official Duo preparation.
+
+- Local command verification: Xcode27.0 build27A266a, iPhoneOS SDK27.0. Device OS and physical performance were not refreshed by this pass.
+- [Apple Duo preparation](https://developer.apple.com/videos/play/tech-talks/111461/) documents SDK27.1 full inner-display layout, scene bounds/size classes and asymmetric safe areas. Reserved-region APIs require compatible SDK/runtime gating. No Duo simulator or physical validation was performed here.
+- Public [NSEvent.doubleClickInterval](https://developer.apple.com/documentation/appkit/nsevent/doubleclickinterval) exposes host preference; exact private acceleration and gesture heuristics remain unavailable. [Momentum phases](https://developer.apple.com/documentation/appkit/nsevent/momentumphase) describe native scroll semantics, not proof of equivalent injected behavior.
+- Haptic feedback depends on device capability. [Apple haptic preparation](https://developer.apple.com/documentation/corehaptics/preparing-your-app-to-play-haptics) identifies unsupported devices including iPad. Local acknowledgement cannot certify remote completion.
+- The source audit found cursor included in capture and no separate cursor state contract; public cursor position/visibility/shape feasibility must precede an overlay. SDK symbol presence alone will not pass this test.
+
+The environment table and capture/transport findings below remain dated historical evidence except where explicitly refreshed above.
 
 ## Environment verified locally
 

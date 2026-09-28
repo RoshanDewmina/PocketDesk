@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createMcpApp, type McpApp } from '../src/mcp/app';
+import { fetchClientMetadataDocument } from '../src/mcp/cimd';
 import { createFakeBridge, FakeClock, pkcePair } from './mcp-fixtures';
 
 const ORIGIN = 'https://mcp.pocketdesk.test';
@@ -261,6 +262,16 @@ test('CIMD fetch rejects redirects and oversized documents', async () => {
   }
 });
 
+test('CIMD deadline covers a response body that never finishes', async () => {
+  const clientId = 'https://93.184.216.35/slow-body.json';
+  const fetchImpl = (async () => new Response(new ReadableStream({
+    pull() { return new Promise(() => {}); },
+  }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+  const started = performance.now();
+  await expect(fetchClientMetadataDocument(clientId, Date.now, fetchImpl)).rejects.toThrow('cimd_timeout');
+  expect(performance.now() - started).toBeLessThan(3_500);
+}, 5_000);
+
 test('Dynamic Client Registration is bounded per minute', async () => {
   let last: Response | undefined;
   for (let i = 0; i < 11; i++) {
@@ -271,6 +282,21 @@ test('Dynamic Client Registration is bounded per minute', async () => {
     })))!;
   }
   expect(last!.status).toBe(429);
+});
+
+test('Dynamic Client Registration rejects plaintext and credential-bearing redirect URIs', async () => {
+  for (const redirectUri of [
+    'http://client.test/callback',
+    'http://127.0.0.1/callback',
+    'https://user:password@client.test/callback',
+  ]) {
+    const response = await app.handle(new Request(`${ORIGIN}/oauth/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ redirect_uris: [redirectUri] }),
+    }));
+    expect(response!.status).toBe(400);
+  }
 });
 
 test('refresh token rotation, and reuse of a rotated-away token revokes the whole grant', async () => {

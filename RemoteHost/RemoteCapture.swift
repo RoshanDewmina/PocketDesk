@@ -50,23 +50,63 @@ struct CaptureHealthState {
     }
 }
 
+/// Capture pixels are independent of the logical points used for remote input.
+struct CapturePixelDimensions: Equatable {
+    let width: Int
+    let height: Int
+
+    static func fitted(contentSize: CGSize, pointPixelScale: Double,
+                       quality: StreamQuality) -> CapturePixelDimensions? {
+        let sourceWidth = Double(contentSize.width) * pointPixelScale
+        let sourceHeight = Double(contentSize.height) * pointPixelScale
+        guard pointPixelScale.isFinite, pointPixelScale > 0,
+              sourceWidth.isFinite, sourceHeight.isFinite,
+              sourceWidth >= 2, sourceHeight >= 2 else { return nil }
+
+        let maximum = Double(quality.maximumDimension)
+        let scale = min(1, maximum / max(sourceWidth, sourceHeight))
+        let width = Int((sourceWidth * scale).rounded(.down)) & ~1
+        let height = Int((sourceHeight * scale).rounded(.down)) & ~1
+        guard width >= 2, height >= 2 else { return nil }
+        return CapturePixelDimensions(width: width, height: height)
+    }
+}
+
+private enum CaptureSizingError: Error { case invalidSource }
+
 @MainActor
 final class RemoteCapture {
     var onFailure: (() -> Void)?
     var onHealth: ((Bool) -> Void)?
+    var onQuality: ((StreamQuality) -> Void)?
+    private(set) var appliedQuality: StreamQuality?
 
     private var ownership = ScopedCaptureOwner()
     private var session: RemoteCaptureSession?
+    private var requestedQuality: StreamQuality = .balanced
+    private var captureStarted = false
+    private var qualityUpdateTask: Task<Void, Never>?
+
+    func setQuality(_ quality: StreamQuality) {
+        guard quality != requestedQuality else { return }
+        requestedQuality = quality
+        scheduleQualityUpdate()
+    }
 
     func start(display: SCDisplay, peer: PeerMedia) async throws -> UInt64 {
         let owner = ownership.begin()
+        qualityUpdateTask?.cancel()
+        qualityUpdateTask = nil
+        captureStarted = false
+        appliedQuality = nil
         let previous = session
         session = nil
         await previous?.stop()
         try Task.checkCancellation()
         guard ownership.owns(owner) else { throw CancellationError() }
 
-        let next = RemoteCaptureSession(display: display, peer: peer)
+        let initialQuality = requestedQuality
+        let next = try RemoteCaptureSession(display: display, peer: peer, quality: initialQuality)
         next.onHealth = { [weak self, weak next] healthy in
             Task { @MainActor in
                 guard let self, let next, self.ownership.owns(owner), self.session === next else { return }
@@ -85,6 +125,10 @@ final class RemoteCapture {
             try await next.start()
             try Task.checkCancellation()
             guard ownership.owns(owner), session === next else { throw CancellationError() }
+            captureStarted = true
+            appliedQuality = initialQuality
+            onQuality?(initialQuality)
+            scheduleQualityUpdate()
             return owner
         } catch {
             if ownership.owns(owner), session === next { session = nil }
@@ -102,10 +146,41 @@ final class RemoteCapture {
     @discardableResult
     func stop() -> Task<Void, Never>? {
         ownership.invalidate()
+        qualityUpdateTask?.cancel()
+        qualityUpdateTask = nil
+        requestedQuality = .balanced
+        appliedQuality = nil
+        captureStarted = false
         let previous = session
         session = nil
         guard let previous else { return nil }
         return Task { await previous.stop() }
+    }
+
+    private func scheduleQualityUpdate() {
+        guard qualityUpdateTask == nil, captureStarted, let session,
+              requestedQuality != appliedQuality else { return }
+        let owner = ownership.current
+        qualityUpdateTask = Task { [weak self] in
+            await self?.applyRequestedQuality(to: session, owner: owner)
+        }
+    }
+
+    private func applyRequestedQuality(to target: RemoteCaptureSession, owner: UInt64) async {
+        while !Task.isCancelled, ownership.owns(owner), session === target,
+              let appliedQuality, requestedQuality != appliedQuality {
+            let quality = requestedQuality
+            let succeeded = await target.updateQuality(quality)
+            guard !Task.isCancelled, ownership.owns(owner), session === target else { break }
+            if succeeded {
+                self.appliedQuality = quality
+                onQuality?(quality)
+            } else if requestedQuality == quality {
+                break
+            }
+        }
+        guard ownership.owns(owner), session === target else { return }
+        qualityUpdateTask = nil
     }
 }
 
@@ -118,27 +193,50 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private var lastBuffer: CVPixelBuffer?
     private var lastSentAt = 0.0
     private var stopping = false
+    private let filter: SCContentFilter
 
     var onFailure: (() -> Void)?
     var onHealth: ((Bool) -> Void)?
 
-    init(display: SCDisplay, peer: PeerMedia) {
+    init(display: SCDisplay, peer: PeerMedia, quality: StreamQuality) throws {
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        guard let configuration = Self.configuration(for: filter, quality: quality) else {
+            throw CaptureSizingError.invalidSource
+        }
+        self.filter = filter
+        self.peer = peer
+        super.init()
+        self.stream = SCStream(filter: filter, configuration: configuration, delegate: self)
+    }
+
+    private static func configuration(for filter: SCContentFilter,
+                                      quality: StreamQuality) -> SCStreamConfiguration? {
+        guard let dimensions = CapturePixelDimensions.fitted(
+            contentSize: filter.contentRect.size,
+            pointPixelScale: Double(filter.pointPixelScale), quality: quality
+        ) else { return nil }
         let configuration = SCStreamConfiguration()
-        let ratio = min(1.0, 1920.0 / Double(display.width))
-        configuration.width = max(2, Int(Double(display.width) * ratio) / 2 * 2)
-        configuration.height = max(2, Int(Double(display.height) * ratio) / 2 * 2)
+        configuration.width = dimensions.width
+        configuration.height = dimensions.height
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
         configuration.queueDepth = 3
         configuration.showsCursor = true
         configuration.capturesAudio = false
         configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-        self.peer = peer
-        super.init()
-        self.stream = SCStream(
-            filter: SCContentFilter(display: display, excludingWindows: []),
-            configuration: configuration,
-            delegate: self
-        )
+        return configuration
+    }
+
+    func updateQuality(_ quality: StreamQuality) async -> Bool {
+        let stopped = queue.sync { stopping }
+        guard !stopped, let configuration = Self.configuration(for: filter, quality: quality) else {
+            return false
+        }
+        do {
+            try await stream.updateConfiguration(configuration)
+            return !queue.sync { stopping }
+        } catch {
+            return false
+        }
     }
 
     func start() async throws {

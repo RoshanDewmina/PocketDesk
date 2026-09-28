@@ -108,6 +108,7 @@ describe('runLatencyBench: baseline and post-send transition', () => {
     const afterSend = performance.now();
     video.fire(2, afterSend, { presentationTime: afterSend });
     const summary = await runPromise;
+    expect(summary.metric).toBe('browser-send to presented-frame response');
     expect(summary.n).toBe(1);
     expect(summary.attempts).toBe(1);
   });
@@ -240,7 +241,15 @@ describe('runLatencyBench stops sending once aborted', () => {
     video.fire(1, performance.now()); // deliver a frame to the now-aborted transition wait
     const summary = await runPromise;
     expect(sends).toBe(1);
-    expect(summary).toEqual({ attempts: 1, n: 0, median: null, p95: null, max: null, failures: { cancelled: 1 } });
+    expect(summary).toEqual({
+      metric: 'browser-send to presented-frame response',
+      attempts: 1,
+      n: 0,
+      median: null,
+      p95: null,
+      max: null,
+      failures: { cancelled: 1 },
+    });
   });
 
   test('abort() on an already-finished run is a harmless no-op for the next run', async () => {

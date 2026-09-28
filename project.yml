@@ -87,6 +87,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote
+        CURRENT_PROJECT_VERSION: 20260928.5
+        MARKETING_VERSION: '0.1'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
@@ -96,7 +98,17 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing code shown on your Mac.
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
     scheme:
-      testTargets: [RemotePhoneUITests]
+      testTargets: [RemotePhoneTests, RemotePhoneUITests]
+  RemotePhoneTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: '26.0'
+    sources: [RemotePhoneTests]
+    dependencies:
+      - target: PocketDeskRemote
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
   RemotePhoneUITests:
     type: bundle.ui-testing
     platform: iOS

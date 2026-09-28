@@ -34,7 +34,7 @@ struct RemoteInputLease {
     mutating func record(action: String, accepted: Bool, at time: TimeInterval) {
         guard accepted else { return }
         if action == "dragDown" { begin(at: time) }
-        else if action == "move" { refreshFromMove(at: time) }
+        else if action == "move" || action == "holdRenew" { refreshFromMove(at: time) }
     }
 
     mutating func cancel() {
@@ -73,6 +73,7 @@ struct RemoteInputEventSink {
     var pointerLocation: () -> CGPoint
     var mouseSequence: ([MouseEvent]) -> Bool
     var scroll: (CGPoint, Double, Double) -> Bool
+    var scrollDetailed: ((CGPoint, Double, Double, String) -> Bool)? = nil
     var text: ([UniChar]) -> Bool
     var key: (CGKeyCode, CGEventFlags) -> Bool
 
@@ -103,6 +104,35 @@ struct RemoteInputEventSink {
                 wheel3: 0
             ) else { return false }
             event.location = point
+            event.post(tap: .cghidEventTap)
+            return true
+        },
+        scrollDetailed: { point, horizontal, vertical, phase in
+            let clampedX = min(2000, max(-2000, horizontal))
+            let clampedY = min(2000, max(-2000, vertical))
+            guard let event = CGEvent(
+                scrollWheelEvent2Source: nil,
+                units: .pixel,
+                wheelCount: 2,
+                wheel1: Int32(clampedY.rounded(.towardZero)),
+                wheel2: Int32(clampedX.rounded(.towardZero)),
+                wheel3: 0
+            ) else { return false }
+            event.location = point
+            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1, value: Int64((clampedY * 65_536).rounded()))
+            event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis2, value: Int64((clampedX * 65_536).rounded()))
+            event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(clampedY.rounded()))
+            event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(clampedX.rounded()))
+            let phaseValue: Int64
+            switch phase {
+            case "began": phaseValue = 1
+            case "changed": phaseValue = 2
+            case "ended": phaseValue = 4
+            case "cancelled": phaseValue = 8
+            default: phaseValue = 0
+            }
+            if phaseValue != 0 { event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phaseValue) }
             event.post(tap: .cghidEventTap)
             return true
         },
@@ -139,10 +169,20 @@ final class RemoteInputDriver {
 
     private(set) var held = false
     private(set) var holdID: UInt64?
+    private(set) var externalHoldID: String?
     private var nextHoldID: UInt64 = 0
+    private var retiredHolds: Set<String> = []
+    private var retiredHoldOrder: [String] = []
+    private var heldClickCount: Int64 = 1
     private var lastClick = 0.0
     private var clicks: Int64 = 0
     private var lastPoint = CGPoint.zero
+    private var lastButton: CGMouseButton?
+    private var lastSemanticPoint: CGPoint?
+    private var activeScroll: String?
+    private var retiredScrolls: Set<String> = []
+    private var retiredScrollOrder: [String] = []
+    private var scrollDeadline: TimeInterval = 0
     private let eventSink: RemoteInputEventSink
     private let isTrusted: () -> Bool
 
@@ -156,6 +196,7 @@ final class RemoteInputDriver {
 
     func configure(_ filter: SCContentFilter) {
         release()
+        resetNativeSequence()
         if filter.style == .display {
             displayBounds = filter.includedDisplays.first?.frame
             windowID = nil
@@ -167,11 +208,12 @@ final class RemoteInputDriver {
 
     func configure(bounds: CGRect?) {
         release()
+        resetNativeSequence()
         displayBounds = bounds
         windowID = nil
     }
 
-    func handle(_ input: RemoteAction) -> RemoteInputOutcome {
+    func handle(_ input: RemoteAction, upgraded: Bool = false, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> RemoteInputOutcome {
         let requestID = input.action == "text" ? input.key : nil
         if input.action == "release" {
             let hadHold = held
@@ -185,10 +227,15 @@ final class RemoteInputDriver {
         guard enabled, isTrusted(), input.x.isFinite, input.y.isFinite else {
             return RemoteInputOutcome(textRequestID: requestID)
         }
+        if upgraded, input.action != "scroll", let activeScroll {
+            retireScroll(activeScroll)
+            self.activeScroll = nil
+        }
 
         var outcome = RemoteInputOutcome(textRequestID: requestID)
         switch input.action {
         case "move":
+            if upgraded && held && (input.interaction?.hold != externalHoldID || input.interaction?.clickCount != Int(heldClickCount)) { break }
             guard let bounds = validBounds else { break }
             let current = clamped(eventSink.pointerLocation(), to: bounds)
             let point = clamped(
@@ -200,10 +247,12 @@ final class RemoteInputDriver {
                 type: wasHeld ? .leftMouseDragged : .mouseMoved,
                 point: point,
                 button: .left,
-                count: 1
+                count: wasHeld ? heldClickCount : 1
             )
             guard eventSink.mouseSequence([event]) else { break }
             lastPoint = point
+            if !wasHeld, let semanticPoint = lastSemanticPoint,
+               hypot(point.x - semanticPoint.x, point.y - semanticPoint.y) > 5 { resetClickSequence() }
             outcome.accepted = true
             outcome.holdEvent = wasHeld ? .refreshed : .none
 
@@ -217,6 +266,26 @@ final class RemoteInputDriver {
             let repetitions = input.action == "double" ? 2 : 1
             var events: [RemoteInputEventSink.MouseEvent] = []
             lastPoint = point
+            if upgraded {
+                guard let count = input.interaction?.clickCount,
+                      count == 1 || count == 2,
+                      (count == 1 || (clicks == 1 && lastButton == button &&
+                        lastSemanticPoint.map { hypot($0.x - point.x, $0.y - point.y) <= 5 } == true)),
+                      (!right || count == 1),
+                      (input.action != "double" || count == 1)
+                else { break }
+                for index in 0..<repetitions {
+                    let eventCount = Int64(count + index)
+                    events.append(.init(type: down, point: point, button: button, count: eventCount))
+                    events.append(.init(type: up, point: point, button: button, count: eventCount))
+                }
+                guard eventSink.mouseSequence(events) else { break }
+                clicks = Int64(count + repetitions - 1)
+                lastButton = button
+                lastSemanticPoint = point
+                outcome.accepted = true
+                break
+            }
             for index in 0..<repetitions {
                 let now = CACurrentMediaTime()
                 clicks = now - lastClick < NSEvent.doubleClickInterval ? min(clicks + 1, 3) : 1
@@ -229,11 +298,25 @@ final class RemoteInputDriver {
 
         case "dragDown":
             guard !held, let bounds = validBounds else { break }
+            if upgraded {
+                guard let identity = input.interaction?.hold,
+                      !identity.isEmpty, !retiredHolds.contains(identity),
+                      let count = input.interaction?.clickCount, count == 1 || count == 2
+                else { break }
+                let point = clamped(eventSink.pointerLocation(), to: bounds)
+                guard count == 1 || (clicks == 1 && lastButton == .left &&
+                    lastSemanticPoint.map { hypot($0.x - point.x, $0.y - point.y) <= 5 } == true)
+                else { break }
+            }
             let point = clamped(eventSink.pointerLocation(), to: bounds)
-            let event = RemoteInputEventSink.MouseEvent(type: .leftMouseDown, point: point, button: .left, count: 1)
+            let count = upgraded ? Int64(input.interaction!.clickCount!) : 1
+            let event = RemoteInputEventSink.MouseEvent(type: .leftMouseDown, point: point, button: .left, count: count)
             guard eventSink.mouseSequence([event]) else { break }
             lastPoint = point
             held = true
+            heldClickCount = count
+            externalHoldID = upgraded ? input.interaction?.hold : nil
+            if let externalHoldID { retireHold(externalHoldID) }
             nextHoldID &+= 1
             if nextHoldID == 0 { nextHoldID = 1 }
             holdID = nextHoldID
@@ -241,20 +324,52 @@ final class RemoteInputDriver {
             outcome.holdEvent = .began
 
         case "dragUp":
+            if upgraded && (input.interaction?.hold != externalHoldID || input.interaction?.clickCount != Int(heldClickCount)) { break }
             let wasHeld = held
             outcome.accepted = release()
             outcome.holdEvent = wasHeld && outcome.accepted ? .ended : .none
 
+        case "holdRenew":
+            guard upgraded, held, input.interaction?.hold == externalHoldID,
+                  input.interaction?.clickCount == Int(heldClickCount) else { break }
+            outcome.accepted = true
+            outcome.holdEvent = .refreshed
+
         case "scroll":
             guard let bounds = validBounds else { break }
+            if upgraded {
+                guard let stream = input.interaction?.stream,
+                      let phase = input.interaction?.phase else { break }
+                if let activeScroll, now >= scrollDeadline {
+                    retireScroll(activeScroll)
+                    self.activeScroll = nil
+                }
+                if phase == "began" {
+                    guard activeScroll != stream, !retiredScrolls.contains(stream) else { break }
+                    if let activeScroll { retireScroll(activeScroll) }
+                    activeScroll = stream
+                } else {
+                    guard activeScroll == stream, now < scrollDeadline else { break }
+                }
+                scrollDeadline = now + 0.5
+                if phase == "ended" || phase == "cancelled" {
+                    retireScroll(stream)
+                    activeScroll = nil
+                }
+            }
             let point = clamped(eventSink.pointerLocation(), to: bounds)
             lastPoint = point
-            outcome.accepted = eventSink.scroll(point, input.x, input.y)
+            if upgraded, let detailed = eventSink.scrollDetailed {
+                outcome.accepted = detailed(point, input.x, input.y, input.interaction!.phase!)
+            } else {
+                outcome.accepted = eventSink.scroll(point, input.x, input.y)
+            }
 
         case "text":
             guard !input.key.isEmpty, input.key.utf8.count <= 32,
                   input.text.utf8.count <= 4096, input.text.utf16.count <= 1024 else { break }
             outcome.accepted = eventSink.text(Array(input.text.utf16))
+            if outcome.accepted { resetClickSequence() }
 
         case "key":
             guard let key = Self.keys[input.key] else { break }
@@ -269,6 +384,7 @@ final class RemoteInputDriver {
                 }
             }
             outcome.accepted = eventSink.key(key, flags)
+            if outcome.accepted { resetClickSequence() }
 
         default:
             break
@@ -284,12 +400,48 @@ final class RemoteInputDriver {
             type: .leftMouseUp,
             point: lastPoint,
             button: .left,
-            count: 1
+            count: heldClickCount
         )
         guard eventSink.mouseSequence([event]) else { return false }
         held = false
         holdID = nil
+        externalHoldID = nil
+        heldClickCount = 1
+        resetClickSequence()
         return true
+    }
+
+    func resetNativeSequence() {
+        resetClickSequence()
+        externalHoldID = nil
+        retiredHolds.removeAll()
+        retiredHoldOrder.removeAll()
+        activeScroll = nil
+        retiredScrolls.removeAll()
+        retiredScrollOrder.removeAll()
+        scrollDeadline = 0
+    }
+
+    private func retireHold(_ identity: String) {
+        guard retiredHolds.insert(identity).inserted else { return }
+        retiredHoldOrder.append(identity)
+        if retiredHoldOrder.count > 1024 {
+            retiredHolds.remove(retiredHoldOrder.removeFirst())
+        }
+    }
+
+    private func retireScroll(_ identity: String) {
+        guard retiredScrolls.insert(identity).inserted else { return }
+        retiredScrollOrder.append(identity)
+        if retiredScrollOrder.count > 1024 {
+            retiredScrolls.remove(retiredScrollOrder.removeFirst())
+        }
+    }
+
+    private func resetClickSequence() {
+        clicks = 0
+        lastButton = nil
+        lastSemanticPoint = nil
     }
 
     private var validBounds: CGRect? {

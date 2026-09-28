@@ -1,0 +1,364 @@
+import Foundation
+import CoreGraphics
+
+/// Commands emitted by direct phone touches. `move` is already in host logical points.
+enum NativeGestureCommand {
+    case move(CGSize)
+    case scroll(delta: CGSize, phase: String, stream: String)
+    case click(count: Int)
+    case secondaryClick
+    case dragBegan(id: String, count: Int)
+    case dragEnded(id: String)
+    case zoom(factor: CGFloat, anchor: CGPoint)
+    case pan(CGSize)
+}
+
+/// A deterministic, single-owner touch arbiter. Call `update` with the entire active
+/// direct-touch set after each UIKit event, and `tick` while touches are active.
+final class NativeGestureEngine {
+    struct Touch: Equatable {
+        let id: UInt64
+        let point: CGPoint
+    }
+
+    var onCommand: (NativeGestureCommand) -> Bool
+    var onPointerMotionEnded: () -> Void = {}
+    private var pointerMotionActive = false
+
+    private enum Mode { case candidate, pointer, multiCandidate, scroll, zoom, pan, drag, blocked }
+    private var mode: Mode = .blocked
+    private var active: [UInt64: CGPoint] = [:]
+    private var firstPoint: CGPoint = .zero
+    private var lastPoint: CGPoint = .zero
+    private var lastMotionTime: TimeInterval = 0
+    private var startTime: TimeInterval = 0
+    private var maxDistance: CGFloat = 0
+    private var hadTwo = false
+    private var multiTapEligible = false
+    private var multiStartCenter: CGPoint = .zero
+    private var multiLastCenter: CGPoint = .zero
+    private var multiStartDistance: CGFloat = 0
+    private var multiLastDistance: CGFloat = 0
+    private var scrollID: String?
+    private var dragID: String?
+    private var residual: CGSize = .zero
+    private var lastTap: (time: TimeInterval, point: CGPoint)?
+    private var secondTap = false
+
+    private(set) var enabled: Bool
+    private(set) var panMode: Bool
+    private(set) var revision: UInt64
+    private var sensitivity: CGFloat
+    private var pointerScale: CGFloat
+    private var doubleClickInterval: TimeInterval
+    private var gestureSensitivity: CGFloat = 1
+    private var gestureScale: CGFloat = 1
+
+    init(enabled: Bool, panMode: Bool, revision: UInt64, sensitivity: CGFloat,
+         pointerScale: CGFloat, doubleClickInterval: TimeInterval,
+         onCommand: @escaping (NativeGestureCommand) -> Bool) {
+        self.enabled = enabled
+        self.panMode = panMode
+        self.revision = revision
+        self.sensitivity = Self.safeSensitivity(sensitivity)
+        self.pointerScale = Self.safeScale(pointerScale)
+        self.doubleClickInterval = Self.safeInterval(doubleClickInterval)
+        self.onCommand = onCommand
+    }
+
+    var hasActiveTouches: Bool { !active.isEmpty }
+
+    func configure(enabled: Bool, panMode: Bool, revision: UInt64, sensitivity: CGFloat,
+                   pointerScale: CGFloat, doubleClickInterval: TimeInterval) {
+        if self.enabled != enabled || self.panMode != panMode || self.revision != revision {
+            cancel()
+            // A surviving physical contact must lift before it can start a new command.
+            mode = .blocked
+            lastTap = nil
+        }
+        self.enabled = enabled
+        self.panMode = panMode
+        self.revision = revision
+        self.sensitivity = Self.safeSensitivity(sensitivity)
+        self.pointerScale = Self.safeScale(pointerScale)
+        self.doubleClickInterval = Self.safeInterval(doubleClickInterval)
+    }
+
+    func update(_ touches: [Touch], at time: TimeInterval, cancelled: Bool = false) {
+        guard time.isFinite else { return }
+        if cancelled {
+            cancel()
+            active = Dictionary(uniqueKeysWithValues: touches.map { ($0.id, $0.point) })
+            return
+        }
+        let next = Dictionary(uniqueKeysWithValues: touches.filter {
+            $0.point.x.isFinite && $0.point.y.isFinite
+        }.map { ($0.id, $0.point) })
+        let oldCount = active.count
+        let count = next.count
+        if oldCount == 0 {
+            active = next
+            guard count > 0 else { return }
+            guard count <= 2, let point = next.values.first else { mode = .blocked; return }
+            startTime = time
+            lastMotionTime = time
+            firstPoint = point
+            lastPoint = point
+            maxDistance = 0
+            residual = .zero
+            gestureSensitivity = sensitivity
+            gestureScale = pointerScale
+            hadTwo = count == 2
+            if count == 2 {
+                multiTapEligible = true
+                beginMulti(next)
+                lastTap = nil
+            } else {
+                secondTap = !panMode && enabled && lastTap.map {
+                    time >= $0.time && time - $0.time <= doubleClickInterval &&
+                    distance(point, $0.point) <= 24
+                } ?? false
+                mode = panMode ? .pan : .candidate
+            }
+            return
+        }
+
+        if count >= 3 {
+            cancelOwnedCommand()
+            mode = .blocked
+            hadTwo = true
+            lastTap = nil
+            active = next
+            return
+        }
+        if count > oldCount && count == 2 {
+            if hadTwo {
+                // A completed multi-touch gesture owns the whole physical sequence.
+                mode = .blocked
+                active = next
+                return
+            }
+            multiTapEligible = mode == .candidate
+            cancelOwnedCommand()
+            hadTwo = true
+            lastTap = nil
+            beginMulti(next)
+            active = next
+            return
+        }
+
+        if hadTwo {
+            if count == 2 { processMulti(next) }
+            if count < 2 && (mode == .scroll || mode == .zoom) { finishContinuous(cancelled: false) }
+            if count == 0 {
+                if mode == .multiCandidate && multiTapEligible && enabled && !panMode &&
+                    time - startTime <= 0.55 && maxDistance <= 8 {
+                    _ = onCommand(.secondaryClick)
+                }
+                resetSequence()
+            } else if count == 1 {
+                // Keep ownership until the last finger lifts, even on uneven removal.
+                if oldCount == 2 {
+                    lastPoint = next.values.first!
+                } else if let point = next.values.first {
+                    maxDistance = max(maxDistance, distance(point, lastPoint))
+                    if maxDistance > 8 { mode = .blocked }
+                }
+                if mode != .multiCandidate { mode = .blocked }
+            }
+            active = next
+            return
+        }
+
+        if count == 0 {
+            if mode == .candidate && enabled && !panMode && maxDistance <= 8 &&
+                time - startTime <= 0.55 {
+                let clickCount = secondTap ? 2 : 1
+                let accepted = onCommand(.click(count: clickCount))
+                lastTap = accepted && clickCount == 1 ? (time, firstPoint) : nil
+            } else if mode == .drag {
+                finishContinuous(cancelled: false)
+                lastTap = nil
+            } else {
+                lastTap = nil
+            }
+            resetSequence()
+            active = next
+            return
+        }
+        if let point = next.values.first { processOne(point, at: time) }
+        active = next
+    }
+
+    /// Needed for a stationary second-tap hold; timestamps use UITouch/system uptime.
+    func tick(at time: TimeInterval) {
+        if time.isFinite, pointerMotionActive, time - lastMotionTime >= 0.08 { endPointerMotion() }
+        guard time.isFinite, active.count == 1, mode == .candidate, secondTap,
+              enabled, !panMode, time - startTime >= 0.22 else { return }
+        beginDrag()
+    }
+
+    func cancel() {
+        cancelOwnedCommand()
+        lastTap = nil
+        if !active.isEmpty { mode = .blocked }
+    }
+
+    private func processOne(_ point: CGPoint, at time: TimeInterval) {
+        maxDistance = max(maxDistance, distance(point, firstPoint))
+        switch mode {
+        case .candidate:
+            guard maxDistance > 4 else { return }
+            if secondTap {
+                if time - startTime >= 0.07 { beginDrag() }
+                if mode == .drag { sendMotion(point, at: time) }
+            } else {
+                mode = .pointer
+                lastTap = nil
+                sendMotion(point, at: time)
+            }
+        case .pointer, .drag:
+            sendMotion(point, at: time)
+        case .pan:
+            if maxDistance > 4 {
+                let delta = CGSize(width: point.x - lastPoint.x, height: point.y - lastPoint.y)
+                if delta != .zero { _ = onCommand(.pan(delta)) }
+                lastPoint = point
+            }
+        default: break
+        }
+    }
+
+    private func beginDrag() {
+        let id = UUID().uuidString
+        if onCommand(.dragBegan(id: id, count: 2)) {
+            dragID = id
+            mode = .drag
+            lastTap = nil
+        } else {
+            mode = .blocked
+        }
+    }
+
+    private func sendMotion(_ point: CGPoint, at time: TimeInterval) {
+        let dx = point.x - lastPoint.x
+        let dy = point.y - lastPoint.y
+        let dt = max(1.0 / 240.0, min(0.1, time - lastMotionTime))
+        lastPoint = point
+        lastMotionTime = time
+        guard enabled, dx.isFinite, dy.isFinite else { return }
+        let speed = hypot(dx, dy) / dt
+        // Continuous bounded curve. A constant physical speed yields the same
+        // total travel at different callback rates; no smoothing or inertia.
+        let t = min(1, max(0, (speed - 35) / 900))
+        let gain = gestureSensitivity * (0.55 + 1.95 * t * t * (3 - 2 * t)) / gestureScale
+        let x = dx * gain + residual.width
+        let y = dy * gain + residual.height
+        let unit: CGFloat = 64
+        let sentX = (x * unit).rounded(.towardZero) / unit
+        let sentY = (y * unit).rounded(.towardZero) / unit
+        residual = CGSize(width: x - sentX, height: y - sentY)
+        if sentX != 0 || sentY != 0 {
+            let accepted = onCommand(.move(CGSize(width: sentX, height: sentY)))
+            if accepted && mode == .pointer { pointerMotionActive = true }
+        }
+    }
+
+    private func beginMulti(_ touches: [UInt64: CGPoint]) {
+        let points = Array(touches.values)
+        guard points.count == 2 else { mode = .blocked; return }
+        multiStartCenter = midpoint(points[0], points[1])
+        multiLastCenter = multiStartCenter
+        multiStartDistance = distance(points[0], points[1])
+        multiLastDistance = multiStartDistance
+        maxDistance = 0
+        mode = .multiCandidate
+    }
+
+    private func processMulti(_ touches: [UInt64: CGPoint]) {
+        let points = Array(touches.values)
+        let center = midpoint(points[0], points[1])
+        let span = distance(points[0], points[1])
+        let travel = distance(center, multiStartCenter)
+        let scaleChange = abs(log(max(span, 1) / max(multiStartDistance, 1)))
+        maxDistance = max(maxDistance, travel, abs(span - multiStartDistance))
+        var justRecognizedZoom = false
+        if mode == .multiCandidate {
+            if scaleChange >= 0.055 && abs(span - multiStartDistance) >= 5 {
+                mode = .zoom
+                justRecognizedZoom = true
+            } else if travel >= 5 && scaleChange < 0.055 {
+                if panMode {
+                    mode = .pan
+                    _ = onCommand(.pan(CGSize(width: center.x - multiStartCenter.x,
+                                               height: center.y - multiStartCenter.y)))
+                } else {
+                    mode = .scroll
+                }
+                if enabled && !panMode {
+                    let id = UUID().uuidString
+                    scrollID = id
+                    _ = onCommand(.scroll(delta: CGSize(width: center.x - multiStartCenter.x,
+                                                       height: center.y - multiStartCenter.y),
+                                          phase: "began", stream: id))
+                }
+            }
+        } else if mode == .zoom {
+            let factor = span / max(multiLastDistance, 1)
+            if factor.isFinite && factor > 0 { _ = onCommand(.zoom(factor: factor, anchor: center)) }
+        } else if mode == .scroll, let id = scrollID, enabled {
+            let delta = CGSize(width: center.x - multiLastCenter.x,
+                               height: center.y - multiLastCenter.y)
+            if delta != .zero { _ = onCommand(.scroll(delta: delta, phase: "changed", stream: id)) }
+        } else if mode == .pan && panMode {
+            let delta = CGSize(width: center.x - multiLastCenter.x,
+                               height: center.y - multiLastCenter.y)
+            if delta != .zero { _ = onCommand(.pan(delta)) }
+        }
+        // The first recognition sample is included in its selected mode.
+        if justRecognizedZoom {
+            let factor = span / max(multiStartDistance, 1)
+            if factor.isFinite && factor > 0 { _ = onCommand(.zoom(factor: factor, anchor: center)) }
+        }
+        multiLastCenter = center
+        multiLastDistance = span
+    }
+
+    private func endPointerMotion() {
+        guard pointerMotionActive else { return }
+        pointerMotionActive = false
+        onPointerMotionEnded()
+    }
+
+    private func finishContinuous(cancelled: Bool) {
+        endPointerMotion()
+        if let id = scrollID {
+            _ = onCommand(.scroll(delta: .zero, phase: cancelled ? "cancelled" : "ended", stream: id))
+            scrollID = nil
+        }
+        if let id = dragID {
+            _ = onCommand(.dragEnded(id: id))
+            dragID = nil
+        }
+    }
+
+    private func cancelOwnedCommand() { finishContinuous(cancelled: true) }
+
+    private func resetSequence() {
+        endPointerMotion()
+        mode = .blocked
+        hadTwo = false
+        multiTapEligible = false
+        secondTap = false
+        residual = .zero
+    }
+
+    private static func safeSensitivity(_ x: CGFloat) -> CGFloat { x.isFinite ? min(2, max(0.5, x)) : 1 }
+    private static func safeScale(_ x: CGFloat) -> CGFloat { x.isFinite ? min(8, max(0.05, x)) : 1 }
+    private static func safeInterval(_ x: TimeInterval) -> TimeInterval { x.isFinite ? min(2, max(0.1, x)) : 0.5 }
+}
+
+private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
+private func midpoint(_ a: CGPoint, _ b: CGPoint) -> CGPoint {
+    CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+}

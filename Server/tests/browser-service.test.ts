@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBrowserService, type BrowserServiceConfig } from '../src/browser/service';
+import type { IceServer, TurnCredentialProvider } from '../src/turn';
 
 const hostToken = 'a'.repeat(64);
 const hostID = createHash('sha256').update(hostToken).digest('hex');
@@ -293,6 +294,33 @@ test('ticket admits one browser and relays only that session', async () => {
   const hostEnvelope = { sequence: '1', direction: 'host', payload: 'opaque-response' };
   host.send({ type: 'signal', session, envelope: hostEnvelope });
   expect(await browser.next()).toEqual({ type: 'signal', session, envelope: hostEnvelope });
+});
+
+test('host signaling is withheld until browser ICE has been issued and delivered', async () => {
+  let resolveBrowserIce!: (servers: IceServer[]) => void;
+  const browserIce = new Promise<IceServer[]>(resolve => { resolveBrowserIce = resolve; });
+  const provider: TurnCredentialProvider = {
+    kind: 'coturn',
+    issue: ({ role }) => role === 'host'
+      ? Promise.resolve([{ urls: ['turn:relay.example.test'], username: 'host', credential: 'secret' }])
+      : browserIce,
+  };
+  const app = setup({ turnProvider: provider });
+  const host = await connectHost(app);
+  installTicket(host);
+  const browser = await connectBrowser(app);
+  expect((await host.next()).type).toBe('ice');
+  expect(await host.next()).toEqual({ type: 'joined', session });
+
+  const envelope = { direction: 'host', sequence: '1', payload: 'opaque' };
+  host.send({ type: 'signal', session, envelope });
+  await Bun.sleep(20);
+  expect(browser.messages).toEqual([]);
+
+  resolveBrowserIce([{ urls: ['turn:relay.example.test'], username: 'browser', credential: 'secret' }]);
+  expect(await browser.next()).toEqual({ type: 'registered', session });
+  expect((await browser.next()).type).toBe('ice');
+  expect(await browser.next()).toEqual({ type: 'signal', session, envelope });
 });
 
 test('peer count and message rate limits have bounded failures', async () => {

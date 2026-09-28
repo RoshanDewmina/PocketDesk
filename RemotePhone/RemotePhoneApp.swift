@@ -34,11 +34,30 @@ private struct PendingText {
 @MainActor
 final class PhoneRemoteModel: ObservableObject {
     let connection = RemoteCoordinator(isHost: false)
+    let pointerLocator = PointerLocator()
+    private var pointerLocatorSupported = false
+    @Published private(set) var appliedStreamQuality: StreamQuality?
+    @Published var streamQuality: StreamQuality = .sharp {
+        didSet {
+            if oldValue != streamQuality { qualityRequestedAt = ProcessInfo.processInfo.systemUptime }
+        }
+    }
+    private var qualityRequestedAt: TimeInterval?
+
+    var streamQualityStatus: String? {
+        guard let appliedStreamQuality else { return "Picture quality needs the updated Mac companion." }
+        guard appliedStreamQuality != streamQuality else { return nil }
+        let elapsed = ProcessInfo.processInfo.systemUptime - (qualityRequestedAt ?? ProcessInfo.processInfo.systemUptime)
+        return elapsed < 3 ? "Switching to \(streamQuality.title)…"
+            : "Mac is still using \(appliedStreamQuality.title). Switch modes to retry."
+    }
+    private var pointerTimer: Timer?
 
     @Published var pairing = ""
     @Published var error = ""
     @Published var showScanner = false
     @Published var draft = ""
+    @Published var isComposingText = false
     @Published var dragging = false
     @Published var modifiers: Set<String> = []
     @Published var controlAllowed = false
@@ -47,6 +66,21 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var geometryEpoch: UInt64 = 0
     @Published var textStatus = ""
     @Published private(set) var contentConcealed = false
+
+    @Published var sourceSize = CGSize(width: 1440, height: 900)
+    @Published private(set) var inputRevision: UInt64 = 0
+    @Published private(set) var acceptedClicks: UInt64 = 0
+    @Published private(set) var nativeInteractionSupported = false
+    @Published private(set) var doubleClickInterval: TimeInterval = 0.5
+    @Published var hapticsEnabled = UserDefaults.standard.object(forKey: "clickHaptics") == nil ? true : UserDefaults.standard.bool(forKey: "clickHaptics") {
+        didSet { UserDefaults.standard.set(hapticsEnabled, forKey: "clickHaptics") }
+    }
+    private var inputToken: String?
+    private var tokenReceivedAt: TimeInterval = 0
+    private var activeHold: String?
+    private var activeHoldCount = 1
+    private var explicitHoldDeadline: TimeInterval?
+    private let clickFeedback = UIImpactFeedbackGenerator(style: .light)
 
     private var lastFrame = 0.0
     private var lastCaptureHealth = 0.0
@@ -74,10 +108,13 @@ final class PhoneRemoteModel: ObservableObject {
 
     var canControl: Bool {
         connection.connected && controlAllowed && fresh && captureHealthy && geometryEpoch > 0
+            && (!nativeInteractionSupported || (inputToken != nil && ProcessInfo.processInfo.systemUptime - tokenReceivedAt < 1))
     }
 
+    var textEditable: Bool { pendingText == nil }
+
     var textCanSend: Bool {
-        !draft.isEmpty && draft.utf8.count <= 4_096 && draft.utf16.count <= 1_024 && pendingText == nil
+        !isComposingText && !draft.isEmpty && draft.utf8.count <= 4_096 && draft.utf16.count <= 1_024 && pendingText == nil
     }
 
     var textLimitMessage: String? {
@@ -102,14 +139,73 @@ final class PhoneRemoteModel: ObservableObject {
         fresh = true
     }
 
-    func action(_ name: String, x: Double = 0, y: Double = 0) {
-        guard canControl else { return }
-        _ = connection.sendControl(RemoteAction(action: name, x: x, y: y, epoch: geometryEpoch))
+    @discardableResult
+    func action(_ name: String, x: Double = 0, y: Double = 0) -> Bool {
+        sendInput(name, x: x, y: y, count: ["click", "right", "double"].contains(name) ? 1 : nil)
+    }
+
+    @discardableResult
+    private func sendInput(_ name: String, x: Double = 0, y: Double = 0,
+                           count: Int? = nil, hold: String? = nil,
+                           phase: String? = nil, stream: String? = nil,
+                           text: String = "", key: String = "", modifiers: [String] = []) -> Bool {
+        guard canControl else { return false }
+        let envelope = nativeInteractionSupported
+            ? NativeInteraction(token: inputToken, hold: hold ?? activeHold,
+                                clickCount: count ?? (activeHold == nil ? nil : activeHoldCount),
+                                phase: phase, stream: stream) : nil
+        let isClick = ["click", "right", "double"].contains(name)
+        if isClick && hapticsEnabled { clickFeedback.prepare() }
+        let accepted = connection.sendControl(RemoteAction(action: name, x: x, y: y,
+            text: text, key: key, modifiers: modifiers, epoch: geometryEpoch, interaction: envelope))
+        if accepted && isClick {
+            acceptedClicks &+= 1
+            if hapticsEnabled { clickFeedback.impactOccurred(intensity: 0.65) }
+        }
+        return accepted
+    }
+
+    @discardableResult
+    func gesture(_ command: NativeGestureCommand) -> Bool {
+        switch command {
+        case .move(let delta):
+            let accepted = sendInput("move", x: delta.width, y: delta.height)
+            if accepted && !dragging { pointerLocator.moved(at: ProcessInfo.processInfo.systemUptime) }
+            return accepted
+        case .scroll(let delta, let phase, let stream):
+            pointerLocator.clear()
+            return sendInput("scroll", x: delta.width, y: delta.height, phase: phase, stream: stream)
+        case .click(let count):
+            // Legacy hosts have no semantic count contract. First tap is still prompt.
+            return sendInput("click", count: count)
+        case .secondaryClick:
+            return sendInput("right", count: 1)
+        case .dragBegan(let id, let count):
+            pointerLocator.clear()
+            guard nativeInteractionSupported, activeHold == nil,
+                  sendInput("dragDown", count: count, hold: id) else { return false }
+            activeHold = id; activeHoldCount = count
+            explicitHoldDeadline = nil; dragging = true
+            return true
+        case .dragEnded(let id):
+            guard id == activeHold else { return false }
+            let accepted = sendInput("dragUp", count: activeHoldCount, hold: id)
+            release()
+            return accepted
+        case .zoom, .pan:
+            return false
+        }
+    }
+
+    func cancelInput() {
+        pointerLocator.clear()
+        release()
+        inputRevision &+= 1
     }
 
     func key(_ key: String) {
         guard canControl else { return }
-        _ = connection.sendControl(RemoteAction(action: "key", key: key, modifiers: Array(modifiers), epoch: geometryEpoch))
+        _ = sendInput("key", key: key, modifiers: Array(modifiers))
         modifiers.removeAll()
     }
 
@@ -120,7 +216,7 @@ final class PhoneRemoteModel: ObservableObject {
             draft: draft,
             sentAt: ProcessInfo.processInfo.systemUptime
         )
-        guard connection.sendControl(RemoteAction(action: "text", text: pending.draft, key: pending.requestID, epoch: geometryEpoch)) else {
+        guard sendInput("text", text: pending.draft, key: pending.requestID) else {
             textStatus = "Text was not queued. Your draft is still here."
             return
         }
@@ -129,16 +225,29 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func drag() {
-        guard canControl else { return }
-        dragging.toggle()
-        action(dragging ? "dragDown" : "dragUp")
+        if dragging { cancelInput(); return }
+        // The explicitly labeled command mode is bounded, unlike a hidden drag lock.
+        guard nativeInteractionSupported, canControl else { return }
+        let id = UUID().uuidString
+        guard sendInput("dragDown", count: 1, hold: id) else { return }
+        activeHold = id; activeHoldCount = 1; dragging = true
+        explicitHoldDeadline = ProcessInfo.processInfo.systemUptime + 10
     }
 
     func release() {
         if connection.connected {
-            _ = connection.sendControl(RemoteAction(action: "release", epoch: geometryEpoch))
+            if nativeInteractionSupported {
+                if let activeHold {
+                    _ = connection.sendControl(RemoteAction(action: "release", epoch: geometryEpoch,
+                        interaction: NativeInteraction(token: inputToken, hold: activeHold, clickCount: activeHoldCount)))
+                }
+            } else {
+                _ = connection.sendControl(RemoteAction(action: "release", epoch: geometryEpoch))
+            }
         }
         dragging = false
+        activeHold = nil
+        explicitHoldDeadline = nil
         modifiers.removeAll()
     }
 
@@ -167,14 +276,33 @@ final class PhoneRemoteModel: ObservableObject {
         switch action.action {
         case "viewing":
             controlAllowed = action.x == 1
-            if !controlAllowed { release() }
+            if !controlAllowed { pointerLocator.clear(); release() }
+        case "heartbeat":
+            if action.epoch == geometryEpoch, canControl, pointerLocatorSupported {
+                pointerLocator.receive(action, at: ProcessInfo.processInfo.systemUptime, sourceSize: sourceSize)
+            }
         case "capture":
+            appliedStreamQuality = action.streamQuality
+            if action.streamQuality != nil, action.streamQuality != streamQuality, qualityRequestedAt == nil {
+                qualityRequestedAt = ProcessInfo.processInfo.systemUptime
+            }
+            pointerLocatorSupported = action.pointerLocatorSupported == true
+            if let interaction = action.interaction, interaction.version == 1 {
+                nativeInteractionSupported = true
+                inputToken = interaction.token
+                tokenReceivedAt = ProcessInfo.processInfo.systemUptime
+                if let interval = interaction.doubleClickInterval { doubleClickInterval = interval }
+            }
             captureHealthy = action.x == 1
             lastCaptureHealth = captureHealthy ? ProcessInfo.processInfo.systemUptime : 0
-            if !captureHealthy { release() }
+            if !captureHealthy { pointerLocator.clear(); release() }
         case "geometry":
             guard action.epoch != geometryEpoch else { return }
-            release()
+            cancelInput()
+            inputToken = nil
+            if action.x.isFinite, action.y.isFinite, action.x > 0, action.y > 0 {
+                sourceSize = CGSize(width: action.x, height: action.y)
+            }
             geometryEpoch = action.epoch
             fresh = false
             captureHealthy = false
@@ -183,7 +311,14 @@ final class PhoneRemoteModel: ObservableObject {
         case "textResult":
             receiveTextResult(action)
         case "release":
+            if nativeInteractionSupported {
+                guard let activeHold, action.epoch == geometryEpoch,
+                      action.interaction?.hold == activeHold else { return }
+            }
+            activeHold = nil
+            explicitHoldDeadline = nil
             dragging = false
+            inputRevision &+= 1
             modifiers.removeAll()
             textStatus = "Drag ended on your Mac."
         default:
@@ -203,6 +338,17 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func beginHeartbeat() {
+        pointerTimer?.invalidate()
+        pointerLocator.clear()
+        pointerTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                let now = ProcessInfo.processInfo.systemUptime
+                if let probe = self.pointerLocator.poll(at: now, available: self.canControl && self.pointerLocatorSupported) {
+                    _ = self.connection.sendControl(RemoteAction(action: "heartbeat", epoch: self.geometryEpoch, pointerProbe: probe))
+                }
+            }
+        }
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -212,15 +358,25 @@ final class PhoneRemoteModel: ObservableObject {
     private func tick() {
         let now = ProcessInfo.processInfo.systemUptime
         if connection.connected {
-            _ = connection.sendControl(RemoteAction(action: "heartbeat", epoch: geometryEpoch))
+            _ = connection.sendControl(RemoteAction(action: "heartbeat", epoch: geometryEpoch,
+                streamQuality: appliedStreamQuality == nil ? nil : streamQuality))
         }
         if fresh && now - lastFrame > 2 {
             fresh = false
+            pointerLocator.clear()
             release()
         }
         if captureHealthy && now - lastCaptureHealth > 2 {
             captureHealthy = false
+            pointerLocator.clear()
             release()
+        }
+        if activeHold != nil {
+            if !canControl || explicitHoldDeadline.map({ now >= $0 }) == true {
+                cancelInput()
+            } else {
+                _ = sendInput("holdRenew", hold: activeHold)
+            }
         }
         if let pending = pendingText, now - pending.sentAt > 4, textStatus.hasPrefix("Waiting") {
             textStatus = "Delivery is uncertain. Your draft is still here; it was not sent again."
@@ -228,14 +384,26 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func end() {
+        pointerTimer?.invalidate()
+        pointerTimer = nil
+        pointerLocatorSupported = false
+        appliedStreamQuality = nil
+        qualityRequestedAt = nil
+        pointerLocator.clear()
         timer?.invalidate()
         timer = nil
         fresh = false
         captureHealthy = false
         controlAllowed = false
         dragging = false
+        activeHold = nil
+        explicitHoldDeadline = nil
         modifiers.removeAll()
         geometryEpoch = 0
+        nativeInteractionSupported = false
+        inputToken = nil
+        tokenReceivedAt = 0
+        inputRevision &+= 1
         lastFrame = 0
         lastCaptureHealth = 0
         pendingText = nil
@@ -246,15 +414,18 @@ final class PhoneRemoteModel: ObservableObject {
 struct PhoneRemoteView: View {
     @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: PocketDeskPalette { .resolve(colorScheme) }
 
     var body: some View {
         Group {
             if model.contentConcealed {
                 ConcealedRemoteView(model: model)
             } else if connection.connected || connection.remoteVideo != nil {
-                PhoneSessionView(model: model, connection: connection, offlineLayoutCheck: false)
+                NativeSessionView(model: model, connection: connection, offlineLayoutCheck: false)
             } else if layoutCheck {
-                PhoneSessionView(model: model, connection: connection, offlineLayoutCheck: true)
+                NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true)
             } else {
                 home
             }
@@ -271,71 +442,166 @@ struct PhoneRemoteView: View {
     private var home: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
-                    Image(systemName: "macbook.and.iphone")
-                        .font(.system(size: 52))
-                        .foregroundStyle(.tint)
-                        .padding(.top, 32)
-                    Text("A small task.\nYour whole Mac.")
-                        .font(.largeTitle.bold())
-                    Text("Pair with your Mac once. To connect while you’re away, leave it awake with remote access enabled.")
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 28) {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("PocketDesk", systemImage: "rectangle.on.rectangle")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(palette.accent)
+                        Text("Your Mac, within reach.")
+                            .font(.system(.largeTitle, design: .serif, weight: .regular))
+                            .foregroundStyle(palette.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text(connection.invitation == nil
+                             ? "Pair your Mac once, then return to your desktop from here."
+                             : "Pick up where you left off on your Mac.")
+                            .font(.body)
+                            .foregroundStyle(palette.muted)
+                    }
+                    .padding(.top, 18)
+
                     if let invitation = connection.invitation {
-                        GroupBox {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Label(invitation.name, systemImage: "laptopcomputer").font(.headline)
-                                Text(connection.status).font(.callout).foregroundStyle(.secondary)
-                                HStack {
-                                    Button("Connect") { connection.start() }.buttonStyle(.borderedProminent)
-                                    Button("Cancel", action: model.disconnect)
+                        VStack(alignment: .leading, spacing: 20) {
+                            HStack(alignment: .top, spacing: 14) {
+                                Image(systemName: "laptopcomputer")
+                                    .font(.title2)
+                                    .foregroundStyle(palette.accent)
+                                    .frame(width: 48, height: 48)
+                                    .background(palette.paper, in: RoundedRectangle(cornerRadius: 14))
+                                VStack(alignment: .leading, spacing: 5) {
+                                    Text(invitation.name)
+                                        .font(.title3.weight(.semibold))
+                                        .foregroundStyle(palette.ink)
+                                    HStack(alignment: .firstTextBaseline, spacing: 7) {
+                                        Circle()
+                                            .fill(homeStatusTone)
+                                            .frame(width: 7, height: 7)
+                                            .accessibilityHidden(true)
+                                        Text(connection.status)
+                                            .font(.subheadline)
+                                            .foregroundStyle(palette.muted)
+                                            .lineLimit(2)
+                                    }
                                 }
+                                Spacer(minLength: 0)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
+                            Button { connection.start() } label: {
+                                Label("Connect", systemImage: "arrow.right")
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                            }
+                            .buttonStyle(.borderedProminent)
+                .foregroundStyle(colorScheme == .dark ? palette.paper : Color.white)
+                            .tint(palette.accent)
+                            if connection.status != "Ready to connect" && connection.status != "Disconnected" {
+                                Button("Cancel connection", action: model.disconnect)
+                                    .font(.subheadline)
+                                    .foregroundStyle(palette.muted)
+                            }
+                        }
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(palette.raised, in: RoundedRectangle(cornerRadius: 22))
+                        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(palette.line))
+                    } else {
+                        VStack(alignment: .leading, spacing: 14) {
+                            Label("Add your Mac", systemImage: "laptopcomputer")
+                                .font(.headline)
+                                .foregroundStyle(palette.ink)
+                            Text("Open PocketDesk on your Mac and scan its pairing code.")
+                                .font(.subheadline)
+                                .foregroundStyle(palette.muted)
+                            Button {
+                                model.showScanner = true
+                            } label: {
+                                Label("Scan pairing code", systemImage: "qrcode.viewfinder")
+                                    .frame(maxWidth: .infinity, minHeight: 44)
+                            }
+                            .buttonStyle(.borderedProminent)
+                .foregroundStyle(colorScheme == .dark ? palette.paper : Color.white)
+                            .tint(palette.accent)
+                        }
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(palette.raised, in: RoundedRectangle(cornerRadius: 22))
+                        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(palette.line))
+                    }
+
+                    if connection.invitation != nil {
+                        Button {
+                            model.showScanner = true
+                        } label: {
+                            Label("Scan pairing code", systemImage: "qrcode.viewfinder")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    VStack(alignment: .leading, spacing: 16) {
+                        DisclosureGroup("Paste a pairing code") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                TextField("Code from your Mac", text: $model.pairing, axis: .vertical)
+                                    .accessibilityLabel("Pairing code")
+                                    .textInputAutocapitalization(.never)
+                                    .autocorrectionDisabled()
+                                    .privacySensitive()
+                                    .textFieldStyle(.roundedBorder)
+                                Button("Pair Mac") { model.enroll(model.pairing) }
+                                    .buttonStyle(.bordered)
+                                    .disabled(model.pairing.isEmpty)
+                            }
+                            .padding(.top, 12)
+                        }
+                        DisclosureGroup("Developer connection details") {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Toggle("Relay-only test", isOn: relayOnlyBinding)
+                                    .disabled(connection.connected)
+                                Text(connection.diagnostics)
+                                    .font(.caption)
+                                    .foregroundStyle(palette.muted)
+                                    .textSelection(.enabled)
+                            }
+                            .padding(.top, 12)
                         }
                     }
-                    Button {
-                        model.showScanner = true
-                    } label: {
-                        Label("Scan pairing code", systemImage: "qrcode.viewfinder")
-                            .frame(maxWidth: .infinity)
-                            .padding(8)
+                    .tint(palette.accent)
+                    .foregroundStyle(palette.ink)
+
+                    if !model.error.isEmpty {
+                        Label(model.error, systemImage: "exclamationmark.circle")
+                            .font(.callout)
+                            .foregroundStyle(palette.warning)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.updatesFrequently)
                     }
-                    .buttonStyle(.bordered)
-                    DisclosureGroup("Paste a pairing code") {
-                        TextField("Code from your Mac", text: $model.pairing, axis: .vertical)
-                            .accessibilityLabel("Pairing code")
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .privacySensitive()
-                        Button("Pair Mac") { model.enroll(model.pairing) }
-                            .disabled(model.pairing.isEmpty)
-                    }
-                    DisclosureGroup("Developer connection details") {
-                        Toggle("Relay-only test", isOn: relayOnlyBinding)
-                            .disabled(connection.connected)
-                        Text(connection.diagnostics)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                    }
-                    if !model.error.isEmpty { Text(model.error).foregroundStyle(.red).font(.callout) }
-                    if connection.invitation == nil { Text(connection.status).font(.callout).foregroundStyle(.secondary) }
-                    Text("Early prototype · Mac must be awake and unlocked. Remote service setup is required before cellular use.")
+                    Text("Keep your Mac awake and unlocked. Away access needs remote service setup.")
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.muted)
                     if connection.invitation != nil {
                         Button("Forget Mac", role: .destructive) { connection.revoke() }
+                            .font(.footnote)
                     }
                 }
-                .padding(24)
+                .padding(.horizontal, 24)
+                .padding(.bottom, 32)
+                .frame(maxWidth: 620, alignment: .leading)
+                .frame(maxWidth: .infinity)
             }
-            .navigationTitle(connection.invitation?.name ?? "PocketDesk")
+            .background(palette.paper.ignoresSafeArea())
+            .toolbar(.hidden, for: .navigationBar)
+            .accessibilityIdentifier("phone.home")
         }
     }
 
     private var relayOnlyBinding: Binding<Bool> {
         Binding(get: { connection.forceRelay }, set: { connection.forceRelay = $0 })
+    }
+
+    private var homeStatusTone: Color {
+        if connection.status.hasPrefix("Connecting") || connection.status.hasPrefix("Authenticating") {
+            return palette.accent
+        }
+        if connection.status.contains("retrying") || connection.status.contains("expired") {
+            return palette.warning
+        }
+        return palette.muted
     }
 
     private var layoutCheck: Bool {
@@ -350,359 +616,31 @@ struct PhoneRemoteView: View {
 
 private struct ConcealedRemoteView: View {
     @ObservedObject var model: PhoneRemoteModel
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var palette: PocketDeskPalette { .resolve(colorScheme) }
 
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: "eye.slash.fill").font(.largeTitle)
+            Image(systemName: "eye.slash")
+                .font(.title)
+                .foregroundStyle(palette.accent)
             Text("Remote view hidden")
-                .font(.title3.weight(.semibold))
+                .font(.system(.title2, design: .serif, weight: .regular))
             Text("PocketDesk ended the session while it was inactive.")
-                .foregroundStyle(.secondary)
+                .foregroundStyle(palette.muted)
                 .multilineTextAlignment(.center)
             Button("Return to PocketDesk", action: model.dismissConcealment)
                 .buttonStyle(.borderedProminent)
+                .foregroundStyle(colorScheme == .dark ? palette.paper : Color.white)
+                .tint(palette.accent)
         }
         .padding(32)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.black)
-        .foregroundStyle(.white)
+        .background(palette.paper)
+        .foregroundStyle(palette.ink)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.concealed")
-    }
-}
-
-private struct PhoneSessionView: View {
-    @ObservedObject var model: PhoneRemoteModel
-    @ObservedObject var connection: RemoteCoordinator
-    let offlineLayoutCheck: Bool
-    @State private var zoom: CGFloat = 1
-    @State private var panel: SessionPanel?
-    @FocusState private var draftFocused: Bool
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
-
-    private enum SessionPanel: Equatable { case trackpad, keyboard, zoom }
-
-    var body: some View {
-        ZStack {
-            viewport.ignoresSafeArea()
-            sessionChrome
-        }
-        .background(.black)
-    }
-
-    private var viewport: some View {
-        GeometryReader { geometry in
-            ZStack {
-                Color.black
-                if let track = connection.remoteVideo {
-                    ScrollView([.horizontal, .vertical], showsIndicators: zoom > 1) {
-                        RemoteVideoSurface(track: track, onFrame: model.frameReceived)
-                            .frame(width: geometry.size.width * zoom, height: geometry.size.height * zoom)
-                    }
-                    .scrollDisabled(zoom <= 1)
-                }
-                if !model.fresh {
-                    SessionStatus(label: "Waiting for a fresh picture", icon: "wifi.exclamationmark")
-                } else if !model.captureHealthy {
-                    SessionStatus(label: "Screen sharing needs attention on your Mac", icon: "rectangle.inset.filled.badge.exclamationmark")
-                }
-            }
-            .clipped()
-            .privacySensitive()
-        }
-    }
-
-    @ViewBuilder
-    private var sessionChrome: some View {
-        VStack(spacing: 12) {
-            if offlineLayoutCheck && verticalSizeClass != .compact {
-                Label("Offline layout check · no Mac connected", systemImage: "exclamationmark.triangle.fill")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(.regularMaterial, in: Capsule())
-                    .accessibilityLabel("Offline layout check. No Mac is connected.")
-            }
-            sessionBar
-            Spacer(minLength: 0)
-            if let panel {
-                panelContainer(panel)
-            }
-            controlDock
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-    }
-
-    private var sessionBar: some View {
-        HStack(spacing: 10) {
-            Label(
-                offlineLayoutCheck ? "Offline layout check" : (model.canControl ? "Control" : "View only"),
-                systemImage: offlineLayoutCheck ? "exclamationmark.triangle.fill" : (model.canControl ? "cursorarrow.rays" : "eye")
-            )
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(offlineLayoutCheck ? .orange : (model.canControl ? .primary : .secondary))
-            Spacer()
-            Menu {
-                Button("Fit view", systemImage: "arrow.down.right.and.arrow.up.left") { zoom = 1 }
-                Button("Show trackpad", systemImage: "hand.draw") { setPanel(.trackpad) }
-                Button("Show keyboard", systemImage: "keyboard") { setPanel(.keyboard) }
-                Button("Adjust zoom", systemImage: "plus.magnifyingglass") { setPanel(.zoom) }
-                Toggle("Relay-only test", isOn: relayOnlyBinding)
-                    .disabled(connection.connected)
-                Text(connection.diagnostics)
-                Divider()
-                Button("Disconnect", systemImage: "xmark.circle", role: .destructive, action: model.disconnect)
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.title3)
-                    .accessibilityLabel("Session options")
-            }
-            .buttonStyle(.bordered)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: Capsule())
-    }
-
-    private var controlDock: some View {
-        ViewThatFits(in: .horizontal) {
-            expandedControlDock
-            compactControlDock
-        }
-    }
-
-    private var expandedControlDock: some View {
-        HStack(spacing: 10) {
-            Button {
-                setPanel(panel == .trackpad ? nil : .trackpad)
-            } label: {
-                Label("Trackpad", systemImage: "hand.draw")
-            }
-            Button {
-                setPanel(panel == .keyboard ? nil : .keyboard)
-            } label: {
-                Label("Keyboard", systemImage: "keyboard")
-            }
-            Button("Fit") { zoom = 1 }
-            Button("Zoom") { setPanel(panel == .zoom ? nil : .zoom) }
-                .accessibilityLabel("Adjust zoom")
-            if model.dragging {
-                Button("Release", action: model.release)
-                    .tint(.orange)
-                    .accessibilityHint("Ends the remote drag immediately")
-            }
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.regular)
-        .padding(8)
-        .background(.ultraThinMaterial, in: Capsule())
-        .fixedSize(horizontal: true, vertical: false)
-    }
-
-    private var compactControlDock: some View {
-        HStack(spacing: 4) {
-            compactButton("Trackpad", systemImage: "hand.draw") {
-                setPanel(panel == .trackpad ? nil : .trackpad)
-            }
-            compactButton("Keyboard", systemImage: "keyboard") {
-                setPanel(panel == .keyboard ? nil : .keyboard)
-            }
-            compactButton("Fit view", systemImage: "arrow.down.right.and.arrow.up.left") {
-                zoom = 1
-            }
-            compactButton("Adjust zoom", systemImage: "plus.magnifyingglass") {
-                setPanel(panel == .zoom ? nil : .zoom)
-            }
-            if model.dragging {
-                compactButton("Release drag", systemImage: "hand.raised.fill", tint: .orange, action: model.release)
-            }
-        }
-        .padding(6)
-        .background(.ultraThinMaterial, in: Capsule())
-    }
-
-    private func compactButton(
-        _ label: String,
-        systemImage: String,
-        tint: Color = .accentColor,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .frame(width: 44, height: 44)
-                .accessibilityLabel(label)
-        }
-        .buttonStyle(.bordered)
-        .tint(tint)
-    }
-
-    private func panelContainer(_ panel: SessionPanel) -> some View {
-        VStack(spacing: 0) {
-            HStack {
-                Label(panelTitle(panel), systemImage: panelIcon(panel))
-                    .font(.caption.weight(.semibold))
-                Spacer()
-                Button("Hide", action: closePanel)
-                    .font(.caption.weight(.semibold))
-                    .frame(minWidth: 44, minHeight: 36)
-                    .accessibilityLabel("Hide \(panelTitle(panel).lowercased())")
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 10)
-            ScrollView(.vertical, showsIndicators: false) {
-                inputPanel(panel)
-            }
-            .frame(maxHeight: verticalSizeClass == .compact ? 150 : 300)
-        }
-        .frame(maxWidth: 460)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .layoutPriority(1)
-    }
-
-    @ViewBuilder
-    private func inputPanel(_ panel: SessionPanel) -> some View {
-        switch panel {
-        case .trackpad:
-            VStack(spacing: 10) {
-                TrackpadSurface(
-                    onMove: { model.action("move", x: $0.width * 1.6, y: $0.height * 1.6) },
-                    onScroll: { model.action("scroll", x: $0.width, y: $0.height) },
-                    onClick: { model.action("click") },
-                    onRightClick: { model.action("right") }
-                )
-                .frame(height: 132)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-                .accessibilityIdentifier("remote.trackpad")
-                HStack {
-                    Button("Click") { model.action("click") }
-                    Button("Right-click") { model.action("right") }
-                    Button("Double-click") { model.action("double") }
-                    Button(model.dragging ? "Release" : "Drag", action: model.drag)
-                        .tint(model.dragging ? .orange : .accentColor)
-                        .accessibilityValue(model.dragging ? "Dragging on your Mac" : "Not dragging")
-                        .accessibilityHint(model.dragging ? "Ends the remote drag" : "Begins a remote drag")
-                }
-                .buttonStyle(.bordered)
-            }
-            .padding(14)
-            .frame(maxWidth: 420)
-        case .zoom:
-            VStack(alignment: .leading, spacing: 12) {
-                Text("Zoom changes continuously from 1× to 3×. Drag the slider, then pan the enlarged view.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Slider(value: $zoom, in: 1...3)
-                    .accessibilityLabel("Zoom level")
-                    .accessibilityValue("\(zoom, format: .number.precision(.fractionLength(1))) times")
-                HStack {
-                    Text("1×")
-                    Spacer()
-                    Text("\(zoom, format: .number.precision(.fractionLength(1)))×")
-                        .accessibilityLabel("Current zoom")
-                        .accessibilityValue("\(zoom, format: .number.precision(.fractionLength(1)))")
-                    Spacer()
-                    Text("3×")
-                }
-                .font(.caption.monospacedDigit())
-                Button("Fit view") { zoom = 1 }
-            }
-            .padding(14)
-            .frame(maxWidth: 420)
-        case .keyboard:
-            VStack(alignment: .leading, spacing: 10) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack {
-                        ForEach(["command", "option", "control", "shift"], id: \.self) { modifier in
-                            Button(modifier.capitalized) { toggle(modifier) }
-                                .tint(model.modifiers.contains(modifier) ? .orange : .accentColor)
-                                .accessibilityValue(model.modifiers.contains(modifier) ? "Selected for the next key" : "Not selected")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                }
-                TextField("Text for your Mac", text: $model.draft, axis: .vertical)
-                    .accessibilityLabel("Text for your Mac")
-                    .lineLimit(1...3)
-                    .textFieldStyle(.roundedBorder)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .privacySensitive()
-                    .focused($draftFocused)
-                if let textLimit = model.textLimitMessage {
-                    Text(textLimit).font(.caption).foregroundStyle(.red)
-                }
-                if !model.textStatus.isEmpty {
-                    HStack {
-                        Text(model.textStatus).font(.caption).foregroundStyle(.secondary)
-                        if model.textStatus.hasPrefix("Delivery is uncertain") {
-                            Button("Edit or send again", action: model.clearUncertainText).font(.caption)
-                        }
-                    }
-                }
-                HStack {
-                    Button("Send text", action: model.sendText).disabled(!model.canControl || !model.textCanSend)
-                    Button("Esc") { model.key("escape") }
-                        .accessibilityLabel("Escape")
-                    Button("Tab") { model.key("tab") }
-                    Button("⌫") { model.key("delete") }
-                        .accessibilityLabel("Delete")
-                    Button("↵") { model.key("return") }
-                        .accessibilityLabel("Return")
-                }
-                .buttonStyle(.bordered)
-                HStack {
-                    ForEach(["left", "down", "up", "right"], id: \.self) { key in
-                        Button { model.key(key) } label: { Image(systemName: "arrow.\(key)") }
-                            .accessibilityLabel("\(key.capitalized) arrow")
-                    }
-                }
-                .buttonStyle(.bordered)
-            }
-            .padding(14)
-            .frame(maxWidth: 460)
-        }
-    }
-
-    private func toggle(_ modifier: String) {
-        if model.modifiers.contains(modifier) {
-            model.modifiers.remove(modifier)
-        } else {
-            model.modifiers.insert(modifier)
-        }
-    }
-
-    private func setPanel(_ newPanel: SessionPanel?) {
-        guard panel != newPanel else { return }
-        model.release()
-        if newPanel != .keyboard { draftFocused = false }
-        panel = newPanel
-    }
-
-    private func closePanel() {
-        draftFocused = false
-        setPanel(nil)
-    }
-
-    private func panelTitle(_ panel: SessionPanel) -> String {
-        switch panel {
-        case .trackpad: return "Relative trackpad"
-        case .keyboard: return "Keyboard"
-        case .zoom: return "Zoom"
-        }
-    }
-
-    private func panelIcon(_ panel: SessionPanel) -> String {
-        switch panel {
-        case .trackpad: return "hand.draw"
-        case .keyboard: return "keyboard"
-        case .zoom: return "plus.magnifyingglass"
-        }
-    }
-
-    private var relayOnlyBinding: Binding<Bool> {
-        Binding(get: { connection.forceRelay }, set: { connection.forceRelay = $0 })
     }
 }
 
