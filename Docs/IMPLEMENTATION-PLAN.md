@@ -1,3 +1,7 @@
+# Click haptic strength — 28 September 2026
+
+Roshan requested a stronger click haptic. Changed the phone impact style from light to heavy and intensity from 0.65 to 1.0. Existing local-admission and haptics-enabled gates are unchanged. This bounded two-line change was handled locally; no new tests were added for numeric/style settings. Signed phone build 20260928.8 compiled, installed and launched successfully. Physical strength is for Roshan to assess. No host update was needed. Receipts: `work/continuation/phone-strong-haptic-{build,install,launch}.log`. Apple’s live UIKit heavy-style and impact-intensity documentation were checked; the latter specifies the range 0.0–1.0.
+
 # Active follow-up — smooth zoom and measured encoder pressure, 28 September 2026
 
 Roshan reconnected and reported broken follow while zoomed, requesting Screen Studio-like easing. Source baseline is `da2579f`; the current follow-up stays on `pocketdesk-remote-chat` and preserves old Claude worktrees. Parent owns integration, project version, signing and local installs. `/root/phone` (GPT6 Sol/high) owns follow/motion and scoped viewport/gesture tests; `/root/encoder_research` (GPT6 Sol/high) analyzed the live trace and reduced Sharper capture to2560; `/root/ui_review` (GPT6 Sol/high), a non-author, reviews the combined diff. No network/authentication/permission change.

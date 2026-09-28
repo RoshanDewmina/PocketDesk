@@ -80,7 +80,7 @@ final class PhoneRemoteModel: ObservableObject {
     private var activeHold: String?
     private var activeHoldCount = 1
     private var explicitHoldDeadline: TimeInterval?
-    private let clickFeedback = UIImpactFeedbackGenerator(style: .light)
+    private let clickFeedback = UIImpactFeedbackGenerator(style: .heavy)
 
     private var lastFrame = 0.0
     private var lastCaptureHealth = 0.0
@@ -172,7 +172,7 @@ final class PhoneRemoteModel: ObservableObject {
             text: text, key: key, modifiers: modifiers, epoch: geometryEpoch, interaction: envelope))
         if accepted && isClick {
             acceptedClicks &+= 1
-            if hapticsEnabled { clickFeedback.impactOccurred(intensity: 0.65) }
+            if hapticsEnabled { clickFeedback.impactOccurred(intensity: 1.0) }
         }
         return accepted
     }
