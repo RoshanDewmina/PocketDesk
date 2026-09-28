@@ -33,6 +33,14 @@ final class PeerMedia: NSObject {
     var onControl: ((Data) -> Void)?
     var onState: ((String) -> Void)?
     var onDiagnostics: ((String) -> Void)?
+    var onStreamStatistics: ((StreamStatsReport) -> Void)?
+    var onSenderStatistics: ((StreamStatsReport) -> Void)?
+    let counters = StreamCounters()
+    var captureMaximumDimension: Int?
+    private let isHost: Bool
+    private var previousSample: StreamStatsSample?
+    private var cadenceRenderer: StreamCadenceRenderer?
+    private var observedTrack: RTCVideoTrack?
     private var statisticsTimer: Timer?
     private var statisticsPending = false
     private static let factory: RTCPeerConnectionFactory = {
@@ -57,6 +65,7 @@ final class PeerMedia: NSObject {
     }
 
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false) {
+        self.isHost = isHost
         super.init()
         let configuration = RTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan
@@ -112,22 +121,33 @@ final class PeerMedia: NSObject {
                         DispatchQueue.main.async { self?.setLocal(description, error: error) }
                     }
                 }
-                if let track = self.connection?.receivers.compactMap({ $0.track as? RTCVideoTrack }).first { self.onRemoteVideo?(track) }
+                if let track = self.connection?.receivers.compactMap({ $0.track as? RTCVideoTrack }).first {
+                    self.observeRemoteVideo(track)
+                    self.onRemoteVideo?(track)
+                }
             }
         }
     }
     func sendControl(_ data: Data) -> Bool {
         guard !closed, data.count <= 16384, let channel, channel.readyState == .open, channel.bufferedAmount < 64 * 1024 else { return false }
-        return channel.sendData(RTCDataBuffer(data: data, isBinary: true))
+        let sent = channel.sendData(RTCDataBuffer(data: data, isBinary: true))
+        counters.inputBuffered(channel.bufferedAmount)
+        return sent
+    }
+
+    var controlBufferedAmount: UInt64? {
+        guard !closed, let channel, channel.readyState == .open else { return nil }
+        return channel.bufferedAmount
     }
     func pushFrame(_ buffer: CVPixelBuffer, timeStampNs: Int64) {
-        guard captureLock.try() else { return }
+        guard captureLock.try() else { counters.pushSkipped(); return }
         defer { captureLock.unlock() }
         guard !closed, let source, let capturer else { return }
         let output: CVPixelBuffer
         if let frameTransform { guard let transformed = frameTransform(buffer, timeStampNs) else { return }; output = transformed }
         else { output = buffer }
         source.capturer(capturer, didCapture: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: output), rotation: ._0, timeStampNs: timeStampNs))
+        counters.pushed()
     }
     func startDiagnostics() {
         guard statisticsTimer == nil else { return }
@@ -155,11 +175,37 @@ final class PeerMedia: NSObject {
                 let rtt = (pair?.values["currentRoundTripTime"] as? NSNumber).map { String(format: "%.0f ms network RTT", $0.doubleValue * 1000) } ?? "RTT pending"
                 let implementation = (rtp?.values["encoderImplementation"] as? String) ?? (rtp?.values["decoderImplementation"] as? String) ?? "codec implementation unreported"
                 self.onDiagnostics?("\(route) · \(codec) · \(fps) · \(rtt) · \(implementation)")
+                self.publishStreamStatistics(report)
             }
         }
     }
+    private func publishStreamStatistics(_ report: RTCStatisticsReport) {
+        let entries = report.statistics.values.map {
+            StreamStatsEntry(id: $0.id, type: $0.type, values: $0.values, timestamp: $0.timestamp_us / 1_000_000)
+        }
+        let sample = StreamStatsSample(entries: entries)
+        let counts = counters.drain(inputBufferedBytes: controlBufferedAmount)
+        var stats = StreamStatsReport(role: isHost ? "host" : "phone", previous: previousSample,
+                                      current: sample, counters: previousSample == nil ? nil : counts)
+        stats.captureMaximumDimension = captureMaximumDimension
+        previousSample = sample
+        StreamDebug.record(stats)
+        onStreamStatistics?(stats)
+        if isHost { onSenderStatistics?(stats) }
+    }
+
+    private func observeRemoteVideo(_ track: RTCVideoTrack) {
+        guard cadenceRenderer == nil else { return }
+        let renderer = StreamCadenceRenderer(counters: counters)
+        cadenceRenderer = renderer
+        observedTrack = track
+        track.add(renderer)
+    }
+
     func close() {
         statisticsTimer?.invalidate(); statisticsTimer = nil
+        if let cadenceRenderer { observedTrack?.remove(cadenceRenderer) }
+        cadenceRenderer = nil; observedTrack = nil
         captureLock.lock(); closed = true; source = nil; capturer = nil; frameTransform = nil; captureLock.unlock()
         channel?.delegate = nil; channel?.close(); channel = nil
         connection?.delegate = nil; connection?.close(); connection = nil
@@ -169,7 +215,9 @@ final class PeerMedia: NSObject {
 extension PeerMedia: RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
-        if let track = stream.videoTracks.first { DispatchQueue.main.async { [weak self] in self?.onRemoteVideo?(track) } }
+        if let track = stream.videoTracks.first {
+            DispatchQueue.main.async { [weak self] in self?.observeRemoteVideo(track); self?.onRemoteVideo?(track) }
+        }
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
@@ -205,5 +253,16 @@ extension PeerMedia: RTCDataChannelDelegate {
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
         guard buffer.isBinary, buffer.data.count <= 16384 else { DispatchQueue.main.async { [weak self] in self?.onState?("failed") }; return }
         DispatchQueue.main.async { [weak self] in guard let self, !self.closed else { return }; self.onControl?(buffer.data) }
+    }
+}
+
+/// Counts frames WebRTC hands to renderers; RTCMTLVideoView draws the newest of these on its display link.
+final class StreamCadenceRenderer: NSObject, RTCVideoRenderer {
+    private let counters: StreamCounters
+    init(counters: StreamCounters) { self.counters = counters }
+    func setSize(_ size: CGSize) {}
+    func renderFrame(_ frame: RTCVideoFrame?) {
+        guard frame != nil else { return }
+        counters.rendered()
     }
 }

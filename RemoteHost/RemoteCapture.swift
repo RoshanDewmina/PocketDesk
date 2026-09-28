@@ -287,6 +287,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
         let now = CACurrentMediaTime()
         health.observe(status, at: now)
+        if status == .complete || status == .idle { peer?.counters.captured(idle: status == .idle) }
         guard status == .complete,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer),
               peer != nil else { return }
