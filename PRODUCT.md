@@ -1,8 +1,10 @@
 # PocketDesk — product and design source of truth
 
-**Version:** 0.14 · **Updated:** 28 September 2026 · **Status:** Native interaction checkpoint and both app appearance overhauls installed; larger pointer, full physical task/feel and away/relay acceptance pending
+**Version:** 0.15 · **Updated:** 28 September 2026 · **Status:** Streaming fix, native redesigns and View/Control gestures installed; physical gesture/task/feel and away/relay acceptance pending
 
 **Benchmark adopted — 28 September 2026:** Roshan named **Astropad Workbench** the primary benchmark: match or beat every Workbench feature, then exceed it on phone UX (dynamic zoom, crisp pointer, haptics) and agent integration. The [Workbench benchmark and feature matrix](Docs/BENCHMARK-WORKBENCH-2026-09-28.md) is the parity checklist; engine parity (frame delivery, codec, text fidelity, measured latency) is the critical path. Supporting research: [competitor landscape](Docs/COMPETITOR-LANDSCAPE-2026-09-28.md), [cursor research](Docs/CURSOR-RESEARCH-2026-09-28.md) (programmatic system pointer enlargement rejected; phone-rendered pointer preferred), and `Docs/research/2026-09-28/`. Same-day decisions: Apple-native visual direction with faint Paperwash accents; Fill-with-full-reachability and Fit-inside-safe-area view modes plus a quick toggle; Mac companion becomes a menu bar app with a setup window, browser access hidden from its UI, mouse/keyboard control on by default after pairing.
+
+**Claude continuation — 28 September 2026:** The resumed scope is the interrupted three-package native build (streaming, phone UI, Mac host) plus five research reports and a prioritized plan. Fit uses the safe viewport; Fill permits reaching every desktop edge. Brief inactive interruptions conceal content and cancel held input while retaining the session; full backgrounding still ends it. The experimental pointer ring is removed while the captured Mac pointer remains. Native H.264 level negotiation is capability-gated, with older-peer size limits; browser codec behavior stays separate. See the [continuation research and priorities](Docs/research/2026-09-28/BUILD-PRIORITIES.md) and implementation ledger for verified build/install results. Dynamic caret zoom, a larger authoritative pointer, owned internet access, and chat/agent handoff remain future work. No comparative performance win is established.
 
 **Latest session UI correction — 28 September 2026:** Roshan requests an uninterrupted mirrored desktop with both permanent top status/End bar and bottom buttons hidden into recoverable swipe-up/down chrome. Default to a subtle dock handle; double-tap that handle to open and focus the keyboard (explicitly confirmed). Keep normal desktop double-click semantics. Refresh the bulky gray session panels into compact native overlays; End and status remain discoverable when controls are revealed, and active Release remains reachable. Automatic text-field recognition from streamed pixels is not established and must not be claimed.
 
@@ -81,6 +83,8 @@ The primary user is the owner of the Mac. Helping someone else, team administrat
 | D22 | Prioritize native, satisfying Mac-like trackpad interactions | Research gesture timing, precision, acceleration, scroll momentum and drag; exact parameters require physical tuning |
 | D23 | Start building the reviewed S0–S3 native plan | Authorized in the current chat on 28 Sep; preserve existing work, verify integrated code, report physical and pointer feasibility gaps honestly; no automatic S4–S6 release execution |
 | D24 | Overhaul both the mobile app and desktop companion appearance | User explicitly requested both native surfaces on 28 Sep and authorized subagent delegation. Apply restrained Paperwash warmth, native Apple controls, coherent light/dark styling and clearer connection/setup hierarchy while preserving tested input and security behavior |
+| D25 | Continue Claude Code's interrupted native streaming, phone and host packages and complete the research/priority handoff | 28 Sep continuation authorized; retain original worktrees and validate integrated build, signing and compatibility; no public deployment |
+| D26 | Make phone gestures natural and reproduce practical Mac trackpad actions, including three-finger fullscreen/Space switching | User delegates mapping choice. Control remains the default; View offers local pan/pinch/double-tap zoom. Add safe Control+arrow equivalents for workspace gestures; physical conflicts and unsupported pressure/rotation stay explicit |
 
 ### Work scenarios that guide the designs
 
@@ -604,25 +608,25 @@ Apple now documents direct Sidecar touch in macOS 27 and iPadOS 27. Its gesture-
 
 The original native demo and local streaming experiments are preserved. The remote targets now provide a full-screen phone session with native controls, Mac display capture/input lifecycle handling, pairing and secure storage, native WebRTC media, and a bounded connection service with Cloudflare/coturn relay adapters.
 
-**The physical feasibility MVP is not yet validated.** On 13 September, both native builds, 33 native tests and 33 service tests pass. The current continuation adds truthful permission/display recovery, explicit session keep-awake, double-click, continuous zoom, background concealment, and active service approval revocation. Fresh independent review approved the corrected code; both simulator UI cases pass through a real inactive-scene test and a final scoped controls rerun, recorded in the [implementation ledger](Docs/IMPLEMENTATION-PLAN.md). Actual localhost WebRTC encoding/decoding and control messages pass with generated video; this does not establish live ScreenCaptureKit or physical remote control. The phone is reachable over Tailscale, and a bounded private WSS signaling test passed, but no phone video/control session is established. The installed host still reports missing runtime permissions despite enabled Settings rows; computer control cannot access the protected macOS authentication window. Cloudflare account setup and standalone TURN activation are deferred by Roshan.
+**The physical feasibility MVP is not yet fully validated.** Current continuation code includes hardware-gated native H.264, older-receiver size limits, safe Fit/Fill viewport geometry, interruption shielding, a menu-bar Mac companion and View/Control gestures. Native core checks cover admission, freshness, input release, viewport geometry, gesture ownership and actual local video negotiation. The updated installed Mac host reports Screen Recording and Accessibility allowed and retains the existing phone pairing. Earlier September permission-denial statements describe historical builds.
 
-Multi-device management, advanced quality controls, full permission/recovery UX and broader keyboard polish remain outside this first checkpoint. No public service deployment, physical benchmark, release package or production security claim is established. Current source remains uncommitted in the existing working tree.
+The browser implementation also exists: the current synthetic interactive check passed all 18 checks. An earlier run rejected an input and timed out without a rejection acknowledgement from the fixture; its precise rejection cause was not recorded. This is retained as a test limitation. Full physical edit/save/check, real gesture feel and conflicts, cellular/forced relay, and comparative Workbench performance remain unproven. No public service deployment, paid infrastructure or release submission was performed. See [current continuation receipt](Docs/CONTINUATION-RECEIPT-2026-09-28.md).
 
 ### Feature status at this checkpoint
 
-“Local-tested” refers to recorded component/service/simulator evidence; it never means real away-use acceptance. The Mac permission denials are the last recorded runtime probe, with no succeeding physical acceptance receipt. The later small setup-copy/accessibility-label pass passed both builds; no new live-session or full VoiceOver result is claimed.
+“Local-tested” refers to recorded component/service/simulator evidence; it never means real away-use acceptance. Installed-host readiness is separately observed. Full VoiceOver and physical multi-touch behavior remain acceptance gates.
 
 | Feature group | Implementation status | Remaining evidence or work |
 |---|---|---|
 | Native pairing, QR/paste, stored trust, approval/revoke (F03–F05, F31) | Built; local tests pass | Actual phone enrollment/rejection/revocation journey |
 | Selected display and WebRTC video (F12, F17) | Built; generated native video passes | Real capture and readable physical phone video |
 | Native fit/zoom/pan, rotation and basic controls (F14–F15, F21–F25) | Built; local/simulator checks pass | Physical target accuracy, reflected Unicode/key edits and sustained usability |
-| Permission states, view-only gates, freshness, interruption cleanup (F20, F32–F34, F37) | Built; local tests pass | Repair runtime capture/control grants; exercise actual interruption/drag/permission-loss behavior |
+| Permission states, view-only gates, freshness, interruption cleanup (F20, F32–F34, F37) | Built; local tests pass | Exercise actual interruption/drag/permission-loss behavior on the physical phone |
 | Keep-awake choice and basic readiness (F09) | Built; local policy tests pass | Real awake/sleep/lock and away-use behavior |
 | Connection service, direct/relay adapters (F01–F02) | Built; service and bounded private WSS checks pass | Public endpoint, real relay allocation/media, cellular and forced-TURN acceptance; account setup deferred |
 | Accessible native controls (F35) | Foundational labels/states and layout exist | Full VoiceOver, larger-text and physical usability review |
-| Browser foundation and direct controls (B01–B15) | Researched/proposed; unbuilt | G0–G4 above; reuse Mac foundations, add a web client and scoped browser session authority |
-| MCP tools, embedded chat and agent inspection/handoff (B16–B19) | Researched/proposed; unbuilt | G5 after standalone viewer; embedded support is host-specific |
+| Browser foundation and direct controls (B01–B15) | Built; service/unit and synthetic interactive checks pass | Physical useful-task acceptance, fixture failure diagnosis, cellular/relay and release hardening |
+| MCP tools, embedded chat and agent inspection/handoff (B16–B19) | Tool source exists but routes are unmounted; authenticated chat/agent handoff is unimplemented | G5 after standalone viewer; adapter-owned demonstration and per-host support |
 | Secure fields/protected prompts (B20) | Unverified experiment | Direct human-input tests after ordinary control works; no bypass or credential-in-chat design |
 | Rough UI alternatives (D14) | Created and visually reviewed in Paper; Figma partial | No final layout or design system selected; compare actual tasks |
 | Beta/release features and section 11 ideas | Deferred unless individually noted above | Separate scope/validation decisions; no automatic execution of the full backlog |
@@ -717,6 +721,8 @@ Key external evidence: [Screens versus Jump user discussion](https://www.reddit.
 Two recommendations were deliberately not adopted: replacing the cellular test with a host heartbeat, and removing intentional view-only authorization. A heartbeat cannot establish the complete remote path, and choosing to allow viewing without control is useful least-privilege behavior, not just a failure state.
 
 ## 16. Decision and revision log
+
+**0.15 · 28 Sep 2026:** Continued the interrupted native build, finished the encoder/network/UX/host/agent research set, corrected competitive claims, and added D25–D26. Build/installation results and physical limits live in the continuation receipt.
 
 | Version/date | Change | Approval state |
 |---|---|---|

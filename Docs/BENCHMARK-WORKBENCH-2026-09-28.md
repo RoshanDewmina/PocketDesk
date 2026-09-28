@@ -67,24 +67,26 @@ Legend: ✅ have · 🟡 partial/unverified · 🔨 in progress (28 Sep agents) 
 | Workbench | PocketDesk |
 |---|---|
 | Global relay, 11 regions, no port forwarding, cellular/VPN/corporate networks | ❌ Tailscale only; own signalling/TURN code exists, not deployed |
-| End-to-end AES-256 | ✅ WebRTC DTLS-SRTP |
+| End-to-end AES-256 | Protected WebRTC DTLS-SRTP media; negotiated cipher parity has not been verified |
 | Account + 2FA required | ⭐ no account: QR pairing + approval on the Mac |
 | Free 20–30 min/day; $14.99/mo, $79.99/yr | ⭐ proposed: unlimited free on own network; CA$5.99/mo or CA$49.99/yr remote |
 
 ### AI and agents
 | Workbench | PocketDesk |
 |---|---|
-| Marketed for monitoring agents; in practice remote desktop + dictation | 🟡 MCP backend built (routes unmounted); open-from-chat and agent pause/takeover/resume planned — **potential decisive advantage** |
+| Marketed for monitoring agents; in practice remote desktop + dictation | 🟡 MCP backend built (routes unmounted); open-from-chat and agent pause/takeover/resume planned — **proposed differentiator, not an implemented authenticated chat handoff** |
 
 ## Where we stand
 
 - **Behind:** the streaming engine (frame delivery, codec, text fidelity, measured latency), Mac-side polish (privacy curtain, watchdog, sleep), deployed relay, clipboard, dictation, PiP, mini map, multi-display.
-- **Ahead or differentiated:** trackpad-first phone ergonomics, auto-follow, haptics, no account, free local use, planned chat/agent integration.
+- **Potential differentiators, not measured competitive wins:** trackpad-first phone ergonomics, auto-follow, haptics, no account, free local use, planned chat/agent integration.
+
+The completed [research synthesis and priority order](research/2026-09-28/BUILD-PRIORITIES.md) supersedes the rough order below. Privacy curtain, PiP, background persistence and virtual display support are not established quick additions. Current build verification is recorded in the implementation ledger.
 
 ## Plan to match, then beat
 
 1. **Engine parity (critical path).** Fix frame delivery; HEVC; text-fidelity strategy (content-aware / region-based encoding); publish our own measured latency. See encoder research in `Docs/research/2026-09-28/`.
-2. **Quick parity features:** clipboard sync, dictation button, zoom indicator (iPhone) and mini map (iPad), privacy curtain, watchdog + launch at login, PiP, background persistence, optional direct-touch mode.
+2. **Separate feature experiments (public API and lifecycle validation required):** clipboard sync, dictation button, zoom indicator (iPhone) and mini map (iPad), privacy curtain, watchdog + launch at login, PiP, background persistence, optional direct-touch mode.
 3. **Beat on UX:** dynamic zoom (caret-follow while typing, tap-to-fit window), phone-rendered crisp pointer, haptics, gesture coach, one-tap reconnect.
 4. **Beat on agents:** open your Mac from ChatGPT/Claude, “agent needs you” alerts, explicit takeover and hand-back.
 5. **Access parity:** deploy owned relay for cellular without Tailscale before charging.

@@ -1,3 +1,22 @@
+# Current continuation — 28 September 2026
+
+Resumed Claude Code’s “Codex conversations on Pocket Desk”, session `c208998b-b486-4ca8-90bd-fbcc457e7b9b`, from main `3410a0a`. Existing Claude worktrees preserved. The user then requested natural gestures and delegated the Mac-trackpad mapping choice. PRODUCT D25–D26 record the scope. No public deployment, paid service, global memory change or store submission.
+
+| Package | Owner | Result |
+|---|---|---|
+| Streaming, compatibility and final integration | Parent | Hardware-gated native H.264, older-peer capture bounds, browser isolation and truthful metrics integrated; 141 core tests (1 benchmark skip), two native loopbacks and default-receiver check pass |
+| Phone redesign and gesture UI | `/root/phone`, GPT6 Sol/high, existing phone worktree | Safe Fit/Fill, native controls, interruption shielding, local View navigation and Control workspace gestures integrated; signed build installed; three focused UI checks passed (landscape zoom, View/Control, exact multiline keyboard) |
+| Mac menu-bar companion | `/root/host`, GPT6 Sol/high, existing host worktree | Recovered `0177e28` + Stop Sharing fix `3928740`; integrated with display/error/capture-status review corrections; installed through stable identity path; live Ready/paired/permissions observed |
+| Encoder and gesture research | `/root/encoder_research`, GPT6 Sol/high | Encoder report and bounded hardware decode probe; independent browser rerun passed all 18 checks; gesture feasibility map complete |
+| Research synthesis and ledger | Parent | Network/session, phone UX, Mac host and agent integration reports plus priorities complete; benchmark overclaims corrected |
+| Independent review | `/root/ui_review`, GPT6 Sol/high | Reviewed host, codec, viewport, interruption, sheet input gating and new gestures; material findings fixed; no remaining code finding in reviewed paths |
+
+Runtime limited to parent plus three active workers; no Astra worker. Parent owns shared contracts, generated project, signing/install and final acceptance. Full physical useful-task, three-finger behavior, iOS gesture conflicts and cellular/relay acceptance remain unverified. Details and exact test limitations: [continuation receipt](CONTINUATION-RECEIPT-2026-09-28.md). Research: [priority order](research/2026-09-28/BUILD-PRIORITIES.md), [gesture map](research/2026-09-28/GESTURE-MAP.md).
+
+Local loopback at 2940×1912 now encoded/sent/decoded 60 fps through VideoToolbox in an 8-second sample; 1920×1248 encoded/sent 60, decoded57. Default receiver negotiated level3.1 and received720×468 at about59fps. These synthetic results do not prove physical latency, text fidelity or Workbench superiority. Earlier benchmark used an invalid wrapping-marker latency calculation, now removed.
+
+The broad simulator flow had a missed typed character, and an earlier browser run rejected input without fixture rejection acknowledgement; those failed runs remain recorded. No test failure was concealed or security gate weakened. All three final targeted UI checks passed; exact results are in the continuation receipt. Historical entries below remain as dated evidence rather than current status.
+
 # Active follow-up — immersive session dock, 28 September 2026
 
 User approved collapsible session chrome and double-tap dock-handle keyboard access, then explicitly requested removing the permanent top status/End bar and refreshing bulky session styling. Parent owns editor focus lifecycle and integration; `/root/dock_ui` (gpt-6-sol, high) owns NativeSessionView and its UI tests. Existing dirty work is preserved in the same checkout. Shared interface: backward-compatible CommittedTextField focusOnAppear flag, enabled by session editors. Scope excludes remote text-field detection, protocol changes and physical-feel claims. Acceptance: 6 text/focus/composition tests passed; final actual simulator dock/keyboard interaction flow and four screenshots passed review; earlier home/privacy flows passed. Fresh independent review approved after pending-editor identity and composition-dismissal corrections, and its VoiceOver-hint nit was corrected. Signed iPhone build and install passed (28 Sep). Source fingerprints and output receipt live in the current chat's outputs/immersive-ui-update.md and dock-source-manifest.json. Physical Mirroring observation works but automated clicks still fail with noWindowsAvailable.

@@ -87,7 +87,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote
-        CURRENT_PROJECT_VERSION: 20260928.5
+        CURRENT_PROJECT_VERSION: 20260928.6
         MARKETING_VERSION: '0.1'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
@@ -132,6 +132,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: PocketDesk Host
         INFOPLIST_KEY_NSScreenCaptureUsageDescription: Share a selected display with your paired phone.
+        INFOPLIST_KEY_LSUIElement: YES
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_IDENTITY: Apple Development
         DEVELOPMENT_TEAM: 39HM2X8GS6
@@ -142,7 +143,7 @@ targets:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [RemoteTests, RemoteShared, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift]
+    sources: [RemoteTests, RemoteShared, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift]
     dependencies:
       - package: WebRTC
     settings:
@@ -152,6 +153,28 @@ targets:
         CODE_SIGN_IDENTITY: '-'
     scheme:
       testTargets: [RemoteCoreTests]
+  HostUISnapshotTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: '26.0'
+    sources:
+      - HostUITests
+      - RemoteShared/Pairing.swift
+      - RemoteHost/HostReadiness.swift
+      - RemoteHost/HostViewState.swift
+      - RemoteHost/HostPermissionState.swift
+      - RemoteHost/HostStyle.swift
+      - RemoteHost/HostSettingsSection.swift
+      - RemoteHost/HostMenuContent.swift
+      - RemoteHost/HostSetupView.swift
+      - RemoteHost/HostSettingsView.swift
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: '-'
+    scheme:
+      testTargets: [HostUISnapshotTests]
   PocketDeskBrowserFixture:
     type: application
     platform: macOS

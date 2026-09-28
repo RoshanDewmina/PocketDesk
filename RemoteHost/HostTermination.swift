@@ -44,6 +44,18 @@ final class RemoteHostAppDelegate: NSObject, NSApplicationDelegate {
         sigtermSource = source
     }
 
+    var onLaunch: (() -> Void)?
+    var onReopen: (() -> Void)?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        onLaunch?()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { onReopen?() }
+        return true
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         lifecycle?.applicationWillTerminate()
     }

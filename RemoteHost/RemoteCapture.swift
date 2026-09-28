@@ -65,8 +65,12 @@ struct CapturePixelDimensions: Equatable {
 
         let maximum = Double(quality.maximumDimension)
         let scale = min(1, maximum / max(sourceWidth, sourceHeight))
-        let width = Int((sourceWidth * scale).rounded(.down)) & ~1
-        let height = Int((sourceHeight * scale).rounded(.down)) & ~1
+        var width = Int((sourceWidth * scale).rounded(.down)) & ~1
+        var height = Int((sourceHeight * scale).rounded(.down)) & ~1
+        while width >= 2, height >= 2, !H264LevelPolicy.fitsAt60FPS(width: width, height: height) {
+            width -= 2
+            height = Int((Double(width) * sourceHeight / sourceWidth).rounded(.down)) & ~1
+        }
         guard width >= 2, height >= 2 else { return nil }
         return CapturePixelDimensions(width: width, height: height)
     }
@@ -200,7 +204,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     init(display: SCDisplay, peer: PeerMedia, quality: StreamQuality) throws {
         let filter = SCContentFilter(display: display, excludingWindows: [])
-        guard let configuration = Self.configuration(for: filter, quality: quality) else {
+        guard let configuration = Self.configuration(for: filter, quality: quality, budget: peer.nativeCaptureBudget) else {
             throw CaptureSizingError.invalidSource
         }
         self.filter = filter
@@ -210,14 +214,15 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     }
 
     private static func configuration(for filter: SCContentFilter,
-                                      quality: StreamQuality) -> SCStreamConfiguration? {
+                                      quality: StreamQuality, budget: H264FrameBudget?) -> SCStreamConfiguration? {
         guard let dimensions = CapturePixelDimensions.fitted(
             contentSize: filter.contentRect.size,
             pointPixelScale: Double(filter.pointPixelScale), quality: quality
         ) else { return nil }
         let configuration = SCStreamConfiguration()
-        configuration.width = dimensions.width
-        configuration.height = dimensions.height
+        let fitted = budget?.fitted(width: dimensions.width, height: dimensions.height)
+        configuration.width = fitted?.width ?? dimensions.width
+        configuration.height = fitted?.height ?? dimensions.height
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
         configuration.queueDepth = 3
         configuration.showsCursor = true
@@ -228,7 +233,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     func updateQuality(_ quality: StreamQuality) async -> Bool {
         let stopped = queue.sync { stopping }
-        guard !stopped, let configuration = Self.configuration(for: filter, quality: quality) else {
+        guard !stopped, let configuration = Self.configuration(for: filter, quality: quality, budget: peer?.nativeCaptureBudget) else {
             return false
         }
         do {
@@ -287,6 +292,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
         let now = CACurrentMediaTime()
         health.observe(status, at: now)
+        if status == .complete || status == .idle { peer?.counters.captured(idle: status == .idle) }
         guard status == .complete,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer),
               peer != nil else { return }

@@ -6,23 +6,20 @@ import AVFoundation
 struct RemotePhoneApp: App {
     @StateObject private var model = PhoneRemoteModel()
     @Environment(\.scenePhase) private var phase
-    @State private var hasBeenActive = false
 
     var body: some Scene {
         WindowGroup {
             PhoneRemoteView(model: model, connection: model.connection)
-                .onAppear {
-                    if phase == .active { hasBeenActive = true }
-                }
-                .onChange(of: phase) { _, value in
-                    if value == .active {
-                        hasBeenActive = true
-                    } else if hasBeenActive {
-                        model.concealForInactiveScene()
-                    }
-                }
+                .tint(PhoneTheme.tint)
+                .onAppear { model.sceneChanged(phase) }
+                .onChange(of: phase) { _, value in model.sceneChanged(value) }
         }
     }
+}
+
+enum PairingEntry: String, Identifiable {
+    case scan, paste
+    var id: String { rawValue }
 }
 
 private struct PendingText {
@@ -37,6 +34,7 @@ final class PhoneRemoteModel: ObservableObject {
     let pointerLocator = PointerLocator()
     private var pointerLocatorSupported = false
     @Published private(set) var appliedStreamQuality: StreamQuality?
+    @Published private(set) var streamSummaryLines: [String] = []
     @Published var streamQuality: StreamQuality = .sharp {
         didSet {
             if oldValue != streamQuality { qualityRequestedAt = ProcessInfo.processInfo.systemUptime }
@@ -53,9 +51,11 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private var pointerTimer: Timer?
 
-    @Published var pairing = ""
+    @Published var pairingCode = ""
     @Published var error = ""
-    @Published var showScanner = false
+    @Published var pairingEntry: PairingEntry?
+    @Published private(set) var privacyShield = false
+    private var hasBeenActive = false
     @Published var draft = ""
     @Published var isComposingText = false
     @Published var dragging = false
@@ -91,10 +91,19 @@ final class PhoneRemoteModel: ObservableObject {
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
         #endif
+        if let mode = LaunchOptions.viewportOverride { ViewportPreference.store(mode) }
         connection.restore()
         connection.onAuthenticated = { [weak self] in
             guard let self else { return }
             self.contentConcealed = false
+            if let peer = self.connection.media {
+                peer.onStreamStatistics = { [weak self, weak peer] report in
+                    Task { @MainActor in
+                        guard let self, let peer, self.connection.media === peer else { return }
+                        self.streamSummaryLines = report.summaryLines
+                    }
+                }
+            }
             self.beginHeartbeat()
         }
         connection.onEnded = { [weak self] in
@@ -107,7 +116,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     var canControl: Bool {
-        connection.connected && controlAllowed && fresh && captureHealthy && geometryEpoch > 0
+        !privacyShield && !contentConcealed && connection.connected && controlAllowed && fresh && captureHealthy && geometryEpoch > 0
             && (!nativeInteractionSupported || (inputToken != nil && ProcessInfo.processInfo.systemUptime - tokenReceivedAt < 1))
     }
 
@@ -124,13 +133,16 @@ final class PhoneRemoteModel: ObservableObject {
         return nil
     }
 
-    func enroll(_ code: String) {
+    @discardableResult
+    func enroll(_ code: String) -> Bool {
         do {
             try connection.enroll(code.trimmingCharacters(in: .whitespacesAndNewlines))
-            pairing = ""
+            pairingCode = ""
             error = ""
+            return true
         } catch {
             self.error = error.localizedDescription
+            return false
         }
     }
 
@@ -180,6 +192,16 @@ final class PhoneRemoteModel: ObservableObject {
             return sendInput("click", count: count)
         case .secondaryClick:
             return sendInput("right", count: 1)
+        case .workspaceSwipe(let direction):
+            guard !dragging, activeHold == nil else { return false }
+            let key: String
+            switch direction {
+            case .left: key = "right"
+            case .right: key = "left"
+            case .up: key = "up"
+            case .down: key = "down"
+            }
+            return sendInput("key", key: key, modifiers: ["control"])
         case .dragBegan(let id, let count):
             pointerLocator.clear()
             guard nativeInteractionSupported, activeHold == nil,
@@ -192,7 +214,7 @@ final class PhoneRemoteModel: ObservableObject {
             let accepted = sendInput("dragUp", count: activeHoldCount, hold: id)
             release()
             return accepted
-        case .zoom, .pan:
+        case .zoom, .zoomEnded, .zoomToggle, .navigate, .pan:
             return false
         }
     }
@@ -257,7 +279,28 @@ final class PhoneRemoteModel: ObservableObject {
         end()
     }
 
-    func concealForInactiveScene() {
+    /// `.inactive` covers Control Center, Notification Center, call banners and the start of a
+    /// screen recording: the session survives and the picture is only shielded until the scene
+    /// is active again. A real `.background` ends the session and keeps the screen hidden.
+    func sceneChanged(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            hasBeenActive = true
+            privacyShield = false
+        case .inactive:
+            if hasBeenActive {
+                cancelInput()
+                privacyShield = true
+            }
+        case .background:
+            privacyShield = false
+            if hasBeenActive { concealForBackground() }
+        @unknown default:
+            break
+        }
+    }
+
+    func concealForBackground() {
         contentConcealed = true
         disconnect()
     }
@@ -265,6 +308,12 @@ final class PhoneRemoteModel: ObservableObject {
     func dismissConcealment() {
         guard !connection.connected else { return }
         contentConcealed = false
+    }
+
+    func reconnect() {
+        dismissConcealment()
+        guard !contentConcealed, connection.invitation != nil else { return }
+        connection.start()
     }
 
     func clearUncertainText() {
@@ -388,6 +437,7 @@ final class PhoneRemoteModel: ObservableObject {
         pointerTimer = nil
         pointerLocatorSupported = false
         appliedStreamQuality = nil
+        streamSummaryLines = []
         qualityRequestedAt = nil
         pointerLocator.clear()
         timer?.invalidate()
@@ -408,254 +458,6 @@ final class PhoneRemoteModel: ObservableObject {
         lastCaptureHealth = 0
         pendingText = nil
         textStatus = ""
-    }
-}
-
-struct PhoneRemoteView: View {
-    @ObservedObject var model: PhoneRemoteModel
-    @ObservedObject var connection: RemoteCoordinator
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var palette: PocketDeskPalette { .resolve(colorScheme) }
-
-    var body: some View {
-        Group {
-            if model.contentConcealed {
-                ConcealedRemoteView(model: model)
-            } else if connection.connected || connection.remoteVideo != nil {
-                NativeSessionView(model: model, connection: connection, offlineLayoutCheck: false)
-            } else if layoutCheck {
-                NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true)
-            } else {
-                home
-            }
-        }
-        .sheet(isPresented: $model.showScanner) {
-            ScannerView { code in
-                model.showScanner = false
-                model.enroll(code)
-            }
-            .ignoresSafeArea()
-        }
-    }
-
-    private var home: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 28) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("PocketDesk", systemImage: "rectangle.on.rectangle")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(palette.accent)
-                        Text("Your Mac, within reach.")
-                            .font(.system(.largeTitle, design: .serif, weight: .regular))
-                            .foregroundStyle(palette.ink)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(connection.invitation == nil
-                             ? "Pair your Mac once, then return to your desktop from here."
-                             : "Pick up where you left off on your Mac.")
-                            .font(.body)
-                            .foregroundStyle(palette.muted)
-                    }
-                    .padding(.top, 18)
-
-                    if let invitation = connection.invitation {
-                        VStack(alignment: .leading, spacing: 20) {
-                            HStack(alignment: .top, spacing: 14) {
-                                Image(systemName: "laptopcomputer")
-                                    .font(.title2)
-                                    .foregroundStyle(palette.accent)
-                                    .frame(width: 48, height: 48)
-                                    .background(palette.paper, in: RoundedRectangle(cornerRadius: 14))
-                                VStack(alignment: .leading, spacing: 5) {
-                                    Text(invitation.name)
-                                        .font(.title3.weight(.semibold))
-                                        .foregroundStyle(palette.ink)
-                                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                                        Circle()
-                                            .fill(homeStatusTone)
-                                            .frame(width: 7, height: 7)
-                                            .accessibilityHidden(true)
-                                        Text(connection.status)
-                                            .font(.subheadline)
-                                            .foregroundStyle(palette.muted)
-                                            .lineLimit(2)
-                                    }
-                                }
-                                Spacer(minLength: 0)
-                            }
-                            Button { connection.start() } label: {
-                                Label("Connect", systemImage: "arrow.right")
-                                    .frame(maxWidth: .infinity, minHeight: 44)
-                            }
-                            .buttonStyle(.borderedProminent)
-                .foregroundStyle(colorScheme == .dark ? palette.paper : Color.white)
-                            .tint(palette.accent)
-                            if connection.status != "Ready to connect" && connection.status != "Disconnected" {
-                                Button("Cancel connection", action: model.disconnect)
-                                    .font(.subheadline)
-                                    .foregroundStyle(palette.muted)
-                            }
-                        }
-                        .padding(20)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(palette.raised, in: RoundedRectangle(cornerRadius: 22))
-                        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(palette.line))
-                    } else {
-                        VStack(alignment: .leading, spacing: 14) {
-                            Label("Add your Mac", systemImage: "laptopcomputer")
-                                .font(.headline)
-                                .foregroundStyle(palette.ink)
-                            Text("Open PocketDesk on your Mac and scan its pairing code.")
-                                .font(.subheadline)
-                                .foregroundStyle(palette.muted)
-                            Button {
-                                model.showScanner = true
-                            } label: {
-                                Label("Scan pairing code", systemImage: "qrcode.viewfinder")
-                                    .frame(maxWidth: .infinity, minHeight: 44)
-                            }
-                            .buttonStyle(.borderedProminent)
-                .foregroundStyle(colorScheme == .dark ? palette.paper : Color.white)
-                            .tint(palette.accent)
-                        }
-                        .padding(20)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(palette.raised, in: RoundedRectangle(cornerRadius: 22))
-                        .overlay(RoundedRectangle(cornerRadius: 22).strokeBorder(palette.line))
-                    }
-
-                    if connection.invitation != nil {
-                        Button {
-                            model.showScanner = true
-                        } label: {
-                            Label("Scan pairing code", systemImage: "qrcode.viewfinder")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-
-                    VStack(alignment: .leading, spacing: 16) {
-                        DisclosureGroup("Paste a pairing code") {
-                            VStack(alignment: .leading, spacing: 12) {
-                                TextField("Code from your Mac", text: $model.pairing, axis: .vertical)
-                                    .accessibilityLabel("Pairing code")
-                                    .textInputAutocapitalization(.never)
-                                    .autocorrectionDisabled()
-                                    .privacySensitive()
-                                    .textFieldStyle(.roundedBorder)
-                                Button("Pair Mac") { model.enroll(model.pairing) }
-                                    .buttonStyle(.bordered)
-                                    .disabled(model.pairing.isEmpty)
-                            }
-                            .padding(.top, 12)
-                        }
-                        DisclosureGroup("Developer connection details") {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Toggle("Relay-only test", isOn: relayOnlyBinding)
-                                    .disabled(connection.connected)
-                                Text(connection.diagnostics)
-                                    .font(.caption)
-                                    .foregroundStyle(palette.muted)
-                                    .textSelection(.enabled)
-                            }
-                            .padding(.top, 12)
-                        }
-                    }
-                    .tint(palette.accent)
-                    .foregroundStyle(palette.ink)
-
-                    if !model.error.isEmpty {
-                        Label(model.error, systemImage: "exclamationmark.circle")
-                            .font(.callout)
-                            .foregroundStyle(palette.warning)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityAddTraits(.updatesFrequently)
-                    }
-                    Text("Keep your Mac awake and unlocked. Away access needs remote service setup.")
-                        .font(.footnote)
-                        .foregroundStyle(palette.muted)
-                    if connection.invitation != nil {
-                        Button("Forget Mac", role: .destructive) { connection.revoke() }
-                            .font(.footnote)
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.bottom, 32)
-                .frame(maxWidth: 620, alignment: .leading)
-                .frame(maxWidth: .infinity)
-            }
-            .background(palette.paper.ignoresSafeArea())
-            .toolbar(.hidden, for: .navigationBar)
-            .accessibilityIdentifier("phone.home")
-        }
-    }
-
-    private var relayOnlyBinding: Binding<Bool> {
-        Binding(get: { connection.forceRelay }, set: { connection.forceRelay = $0 })
-    }
-
-    private var homeStatusTone: Color {
-        if connection.status.hasPrefix("Connecting") || connection.status.hasPrefix("Authenticating") {
-            return palette.accent
-        }
-        if connection.status.contains("retrying") || connection.status.contains("expired") {
-            return palette.warning
-        }
-        return palette.muted
-    }
-
-    private var layoutCheck: Bool {
-        #if DEBUG
-        ProcessInfo.processInfo.arguments.contains("--ui-layout-check")
-        #else
-        false
-        #endif
-    }
-
-}
-
-private struct ConcealedRemoteView: View {
-    @ObservedObject var model: PhoneRemoteModel
-    @Environment(\.colorScheme) private var colorScheme
-
-    private var palette: PocketDeskPalette { .resolve(colorScheme) }
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "eye.slash")
-                .font(.title)
-                .foregroundStyle(palette.accent)
-            Text("Remote view hidden")
-                .font(.system(.title2, design: .serif, weight: .regular))
-            Text("PocketDesk ended the session while it was inactive.")
-                .foregroundStyle(palette.muted)
-                .multilineTextAlignment(.center)
-            Button("Return to PocketDesk", action: model.dismissConcealment)
-                .buttonStyle(.borderedProminent)
-                .foregroundStyle(colorScheme == .dark ? palette.paper : Color.white)
-                .tint(palette.accent)
-        }
-        .padding(32)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(palette.paper)
-        .foregroundStyle(palette.ink)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("remote.concealed")
-    }
-}
-
-private struct SessionStatus: View {
-    let label: String
-    let icon: String
-
-    var body: some View {
-        Label(label, systemImage: icon)
-            .font(.subheadline.weight(.medium))
-            .multilineTextAlignment(.center)
-            .padding(14)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .padding()
-            .accessibilityLabel(label)
     }
 }
 

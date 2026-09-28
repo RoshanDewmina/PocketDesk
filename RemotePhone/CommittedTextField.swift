@@ -21,11 +21,9 @@ struct CommittedTextField: UIViewRepresentable {
         view.adjustsFontForContentSizeCategory = true
         view.autocapitalizationType = .none
         view.autocorrectionType = .no
-        view.textContainerInset = UIEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        view.textContainerInset = UIEdgeInsets(top: 11, left: 16, bottom: 11, right: 12)
         view.textContainer.lineFragmentPadding = 0
-        view.backgroundColor = .secondarySystemBackground
-        view.layer.cornerRadius = 10
-        view.layer.masksToBounds = true
+        view.backgroundColor = .clear
         view.isScrollEnabled = true
         view.isEditable = isEnabled
         view.isSelectable = true

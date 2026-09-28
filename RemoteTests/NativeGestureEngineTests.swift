@@ -23,6 +23,89 @@ final class NativeGestureEngineTests: XCTestCase {
         }
     }
 
+    func testViewDoubleTapZoomsWithoutAnyMacClick() {
+        let log = CommandLog()
+        let input = engine(log, enabled: false, panMode: true)
+        input.update([touch(1, 100, 100)], at: 1)
+        input.update([], at: 1.05)
+        input.update([touch(2, 102, 101)], at: 1.2)
+        input.update([], at: 1.25)
+        XCTAssertEqual(log.zoomToggles, [CGPoint(x: 102, y: 101)])
+        XCTAssertTrue(log.clicks.isEmpty)
+        XCTAssertEqual(log.dragBegins, 0)
+    }
+
+    func testViewTwoFingerPanCanBecomePinchWithoutLifting() {
+        let log = CommandLog()
+        let input = engine(log, enabled: false, panMode: true)
+        input.update([touch(1, 0), touch(2, 100)], at: 1)
+        input.update([touch(1, 10), touch(2, 110)], at: 1.1)
+        input.update([touch(1, 0), touch(2, 140)], at: 1.2)
+        input.update([touch(2, 140)], at: 1.3)
+        input.update([touch(2, 180)], at: 1.4)
+        input.update([], at: 1.5)
+        XCTAssertEqual(log.navigation.count, 2)
+        XCTAssertEqual(log.navigation[0].factor, 1, accuracy: 0.001)
+        XCTAssertEqual(log.navigation[0].translation.width, 10, accuracy: 0.001)
+        XCTAssertEqual(log.navigation[1].factor, 1.4, accuracy: 0.001)
+        XCTAssertEqual(log.navigation[1].anchor.x, 60, accuracy: 0.001)
+        XCTAssertEqual(log.navigation[1].translation.width, 10, accuracy: 0.001)
+        XCTAssertEqual(log.zoomEnds, 1)
+        XCTAssertTrue(log.scrollPhases.isEmpty)
+        XCTAssertTrue(log.clicks.isEmpty)
+    }
+
+    func testThreeFingerDirectionsFireOnceAndDoNotLeakAfterUnevenLift() {
+        let paths: [(CGFloat, CGFloat, NativeSwipeDirection)] = [(-80,0,.left),(80,0,.right),(0,-80,.up),(0,80,.down)]
+        for (dx,dy,direction) in paths {
+            let log = CommandLog(); let input = engine(log)
+            input.update([touch(1, 100, 100), touch(2, 130, 100), touch(3, 160, 100)], at: 1)
+            input.update([touch(1, 100+dx, 100+dy), touch(2, 130+dx, 100+dy), touch(3, 160+dx, 100+dy)], at: 1.2)
+            input.update([touch(1, 100+dx*2, 100+dy*2), touch(2, 130+dx*2, 100+dy*2), touch(3, 160+dx*2, 100+dy*2)], at: 1.3)
+            input.update([touch(1, 100)], at: 1.4)
+            input.update([], at: 1.5)
+            XCTAssertEqual(log.workspaceSwipes, [direction])
+            XCTAssertTrue(log.clicks.isEmpty)
+            XCTAssertTrue(log.scrollPhases.isEmpty)
+            XCTAssertTrue(log.moves.isEmpty)
+        }
+    }
+
+    func testThreeFingerGestureRequiresControlAndRejectsIncoherentMovement() {
+        for (enabled, pan) in [(false,false), (true,true)] {
+            let log = CommandLog(); let input = engine(log, enabled: enabled, panMode: pan)
+            input.update([touch(1, 0), touch(2, 30), touch(3, 60)], at: 1)
+            input.update([touch(1, 90), touch(2, 120), touch(3, 150)], at: 1.2)
+            input.update([], at: 1.3)
+            XCTAssertTrue(log.workspaceSwipes.isEmpty)
+        }
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 0), touch(2, 30), touch(3, 60)], at: 1)
+        input.update([touch(1, 210), touch(2, 30), touch(3, 60)], at: 1.2)
+        input.update([], at: 1.3)
+        XCTAssertTrue(log.workspaceSwipes.isEmpty, "One moving finger is not a workspace swipe")
+    }
+
+    func testAddingThirdFingerAfterScrollingCannotSwitchSpaces() {
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 0), touch(2, 30)], at: 1)
+        input.update([touch(1, 0, 20), touch(2, 30, 20)], at: 1.1)
+        input.update([touch(1, 0, 20), touch(2, 30, 20), touch(3, 60, 20)], at: 1.15)
+        input.update([touch(1, 90, 20), touch(2, 120, 20), touch(3, 150, 20)], at: 1.25)
+        input.update([], at: 1.3)
+        XCTAssertTrue(log.workspaceSwipes.isEmpty)
+        XCTAssertEqual(log.scrollPhases, ["began", "cancelled"])
+    }
+
+    func testRevisionCancelsPendingWorkspaceSwipe() {
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 0), touch(2, 30), touch(3, 60)], at: 1)
+        input.configure(enabled: true, panMode: false, revision: 2, sensitivity: 1, pointerScale: 1, doubleClickInterval: 0.5)
+        input.update([touch(1, 90), touch(2, 120), touch(3, 150)], at: 1.2)
+        input.update([], at: 1.3)
+        XCTAssertTrue(log.workspaceSwipes.isEmpty)
+    }
+
     private func touch(_ id: UInt64, _ x: CGFloat, _ y: CGFloat = 0) -> NativeGestureEngine.Touch {
         .init(id: id, point: CGPoint(x: x, y: y))
     }
@@ -107,6 +190,7 @@ final class NativeGestureEngineTests: XCTestCase {
         input.update([touch(3, 40)], at: 1.08)
         input.update([], at: 1.1)
         XCTAssertEqual(log.zooms, 1)
+        XCTAssertEqual(log.zoomEnds, 1, "A pinch settles exactly once, however its fingers lift")
         XCTAssertEqual(log.secondary, 0)
         XCTAssertEqual(log.clicks, [])
     }
@@ -197,11 +281,15 @@ final class NativeGestureEngineTests: XCTestCase {
 }
 
 private final class CommandLog {
+    var zoomToggles: [CGPoint] = []
+    var navigation: [(factor: CGFloat, anchor: CGPoint, translation: CGSize)] = []
+    var workspaceSwipes: [NativeSwipeDirection] = []
     var clicks: [Int] = []
     var secondary = 0
     var moves: [CGSize] = []
     var scrollPhases: [String] = []
     var zooms = 0
+    var zoomEnds = 0
     var pans = 0
     var dragBegins = 0
     var dragEnds = 0
@@ -209,11 +297,15 @@ private final class CommandLog {
 
     func record(_ command: NativeGestureCommand) -> Bool {
         switch command {
+        case .zoomToggle(let anchor): zoomToggles.append(anchor)
+        case .navigate(let factor, let anchor, let translation): navigation.append((factor, anchor, translation))
+        case .workspaceSwipe(let direction): workspaceSwipes.append(direction)
         case .click(let count): clicks.append(count)
         case .secondaryClick: secondary += 1
         case .move(let delta): moves.append(delta)
         case .scroll(_, let phase, _): scrollPhases.append(phase)
         case .zoom: zooms += 1
+        case .zoomEnded: zoomEnds += 1
         case .pan: pans += 1
         case .dragBegan: dragBegins += 1; return acceptDrag
         case .dragEnded: dragEnds += 1

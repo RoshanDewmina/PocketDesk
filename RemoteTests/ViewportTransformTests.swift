@@ -3,6 +3,29 @@ import CoreGraphics
 import XCTest
 
 final class ViewportTransformTests: XCTestCase {
+    func testDoubleTapZoomKeepsTappedContentThenReturnsToSafeFit() {
+        var view = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
+                                     canvasSize: CGSize(width: 390, height: 844), mode: .fill)
+        let anchor = CGPoint(x: 150, y: 400)
+        let source = view.sourcePoint(fromView: anchor)!
+        let oldScale = view.scale
+        view.toggleZoom(anchoredAt: anchor)
+        XCTAssertEqual(view.scale, oldScale * 2, accuracy: 0.001)
+        XCTAssertEqual(view.viewPoint(fromSource: source).x, anchor.x, accuracy: 0.001)
+        XCTAssertEqual(view.viewPoint(fromSource: source).y, anchor.y, accuracy: 0.001)
+        view.toggleZoom(anchoredAt: anchor)
+        XCTAssertEqual(view.mode, .fit)
+        XCTAssertTrue(view.safeRect.contains(view.contentRect))
+    }
+
+    func testDoubleTapOnFitLetterboxDoesNotJumpTheView() {
+        var view = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
+                                     canvasSize: CGSize(width: 390, height: 844), mode: .fit)
+        let oldRect = view.contentRect
+        view.toggleZoom(anchoredAt: CGPoint(x: 50, y: 20))
+        XCTAssertEqual(view.contentRect, oldRect)
+    }
+
     func testCornersRoundTripThroughLetterboxedContent() {
         let transform = ViewportTransform(
             sourceSize: CGSize(width: 1_920, height: 1_080),
@@ -263,5 +286,166 @@ final class ViewportTransformTests: XCTestCase {
         XCTAssertFalse(transform.reveal(sourcePoint: CGPoint(x: 500, y: 250),
                                         in: canvas, margin: .nan))
         XCTAssertEqual(transform.offset, before)
+    }
+
+    // MARK: - Safe-area aware Fill and Fit
+
+    private let desktop = CGSize(width: 1_440, height: 900)
+    private let portrait = CGSize(width: 402, height: 874)
+    private let landscape = CGSize(width: 874, height: 402)
+    private let portraitInsets = ViewportInsets(top: 62, left: 0, bottom: 34, right: 0)
+    private let landscapeInsets = ViewportInsets(top: 0, left: 62, bottom: 21, right: 62)
+    private let keyboardInsets = ViewportInsets(top: 62, left: 0, bottom: 34 + 336 + 104, right: 0)
+
+    private func assertInside(_ rect: CGRect, _ bounds: CGRect, _ message: String,
+                              file: StaticString = #filePath, line: UInt = #line) {
+        let e: CGFloat = 0.000_1
+        XCTAssertGreaterThanOrEqual(rect.minX, bounds.minX - e, message, file: file, line: line)
+        XCTAssertGreaterThanOrEqual(rect.minY, bounds.minY - e, message, file: file, line: line)
+        XCTAssertLessThanOrEqual(rect.maxX, bounds.maxX + e, message, file: file, line: line)
+        XCTAssertLessThanOrEqual(rect.maxY, bounds.maxY + e, message, file: file, line: line)
+    }
+
+    func testFitKeepsWholeDesktopInsideSafeAreaForEveryEdge() {
+        for (canvas, insets) in [(portrait, portraitInsets), (landscape, landscapeInsets), (portrait, keyboardInsets)] {
+            let transform = ViewportTransform(sourceSize: desktop, canvasSize: canvas, mode: .fit, safeInsets: insets)
+            let safe = transform.safeRect
+            XCTAssertEqual(safe, CGRect(x: insets.left, y: insets.top,
+                                        width: canvas.width - insets.left - insets.right,
+                                        height: canvas.height - insets.top - insets.bottom))
+            assertInside(transform.contentRect, safe,
+                         "Fit must never place the desktop under a display corner, the sensor housing or the keyboard")
+            XCTAssertEqual(transform.contentRect.width / transform.contentRect.height, 1.6, accuracy: 0.000_1)
+            let touchesWidth = abs(transform.contentRect.width - safe.width) < 0.001
+            let touchesHeight = abs(transform.contentRect.height - safe.height) < 0.001
+            XCTAssertTrue(touchesWidth || touchesHeight, "Fit uses the largest size that fits the safe area")
+            XCTAssertEqual(transform.contentRect.midX, safe.midX, accuracy: 0.000_1)
+            XCTAssertEqual(transform.contentRect.midY, safe.midY, accuracy: 0.000_1)
+        }
+    }
+
+    func testFillCoversWholeCanvasEdgeToEdgeWithInsets() {
+        for (canvas, insets) in [(portrait, portraitInsets), (landscape, landscapeInsets)] {
+            let transform = ViewportTransform(sourceSize: desktop, canvasSize: canvas, safeInsets: insets)
+            XCTAssertEqual(transform.mode, .fill)
+            XCTAssertTrue(transform.isAtBaseline)
+            let rect = transform.contentRect
+            XCTAssertLessThanOrEqual(rect.minX, 0.000_1)
+            XCTAssertLessThanOrEqual(rect.minY, 0.000_1)
+            XCTAssertGreaterThanOrEqual(rect.maxX, canvas.width - 0.000_1)
+            XCTAssertGreaterThanOrEqual(rect.maxY, canvas.height - 0.000_1)
+            XCTAssertEqual(rect.midX, canvas.width / 2, accuracy: 0.000_1, "Fill crops symmetrically")
+        }
+    }
+
+    func testEveryDesktopCornerCanBeRevealedInsideSafeAreaInFill() {
+        let corners = [CGPoint(x: 0, y: 0), CGPoint(x: 1_440, y: 0),
+                       CGPoint(x: 0, y: 900), CGPoint(x: 1_440, y: 900)]
+        for (canvas, insets) in [(portrait, portraitInsets), (landscape, landscapeInsets), (portrait, keyboardInsets)] {
+            for zoom: CGFloat in [1, 1.7, 3] {
+                for corner in corners {
+                    var transform = ViewportTransform(sourceSize: desktop, canvasSize: canvas, safeInsets: insets)
+                    transform.setZoom(zoom, anchoredAt: CGPoint(x: canvas.width / 2, y: canvas.height / 2))
+                    _ = transform.reveal(sourcePoint: corner, in: transform.safeRect, margin: 0)
+                    let point = transform.viewPoint(fromSource: corner)
+                    assertInside(CGRect(origin: point, size: .zero), transform.safeRect,
+                                 "Corner \(corner) at zoom \(zoom) in \(canvas) must be reachable")
+                }
+            }
+        }
+    }
+
+    func testPanningFillBringsMenuBarAndDockClearOfSensorHousingAndHomeIndicator() {
+        var transform = ViewportTransform(sourceSize: desktop, canvasSize: landscape, safeInsets: landscapeInsets)
+        transform.pan(by: CGSize(width: 10_000, height: 10_000))
+        XCTAssertEqual(transform.contentRect.minX, 62, accuracy: 0.000_1, "Left edge clears the sensor housing")
+        XCTAssertEqual(transform.contentRect.minY, 0, accuracy: 0.000_1, "The menu bar reaches the top safe edge")
+        transform.pan(by: CGSize(width: -20_000, height: -20_000))
+        XCTAssertEqual(transform.contentRect.maxX, 874 - 62, accuracy: 0.000_1)
+        XCTAssertEqual(transform.contentRect.maxY, 402 - 21, accuracy: 0.000_1, "The Dock clears the home indicator")
+
+        var upright = ViewportTransform(sourceSize: desktop, canvasSize: portrait, safeInsets: portraitInsets)
+        upright.pan(by: CGSize(width: 0, height: 10_000))
+        XCTAssertEqual(upright.contentRect.minY, 62, accuracy: 0.000_1, "The menu bar can move below the Dynamic Island")
+        XCTAssertNotNil(upright.sourcePoint(fromView: CGPoint(x: 201, y: 62.5)))
+        upright.pan(by: CGSize(width: 0, height: -20_000))
+        XCTAssertEqual(upright.contentRect.maxY, 874 - 34, accuracy: 0.000_1)
+    }
+
+    func testKeyboardInsetKeepsFocusVisibleAndRestoresExactlyWhenClosed() {
+        var transform = ViewportTransform(sourceSize: desktop, canvasSize: portrait, safeInsets: portraitInsets)
+        transform.setZoom(1.4, anchoredAt: CGPoint(x: 201, y: 451))
+        transform.pan(by: CGSize(width: -30, height: 0))
+        let before = transform
+        let oldCenter = CGPoint(x: transform.safeRect.midX, y: transform.safeRect.midY)
+        let focus = transform.sourcePoint(fromView: oldCenter)!
+
+        transform.updateSafeInsets(keyboardInsets)
+        let newCenter = CGPoint(x: transform.safeRect.midX, y: transform.safeRect.midY)
+        let moved = transform.viewPoint(fromSource: focus)
+        XCTAssertEqual(moved.x, newCenter.x, accuracy: 0.001)
+        XCTAssertEqual(moved.y, newCenter.y, accuracy: 0.001, "What you were looking at stays centred above the keyboard")
+        XCTAssertEqual(transform.zoom, before.zoom)
+
+        transform.updateSafeInsets(portraitInsets)
+        XCTAssertEqual(transform.offset, before.offset, "Closing the keyboard returns to the same view")
+        XCTAssertEqual(transform.zoom, before.zoom)
+
+        var baseline = ViewportTransform(sourceSize: desktop, canvasSize: portrait, safeInsets: portraitInsets)
+        baseline.updateSafeInsets(keyboardInsets)
+        baseline.updateSafeInsets(portraitInsets)
+        XCTAssertTrue(baseline.isAtBaseline, "An untouched Fill view survives a keyboard round trip")
+    }
+
+    func testFitShrinksAboveKeyboardAndReturns() {
+        var transform = ViewportTransform(sourceSize: desktop, canvasSize: landscape, mode: .fit, safeInsets: landscapeInsets)
+        let resting = transform.contentRect
+        transform.updateSafeInsets(ViewportInsets(top: 0, left: 62, bottom: 250, right: 62))
+        assertInside(transform.contentRect, transform.safeRect, "Fit stays whole above the keyboard")
+        XCTAssertLessThan(transform.contentRect.height, resting.height)
+        transform.updateSafeInsets(landscapeInsets)
+        XCTAssertEqual(transform.contentRect, resting)
+    }
+
+    func testPinchingFillDownSettlesToFitAndSmallPinchSpringsBack() {
+        var transform = ViewportTransform(sourceSize: desktop, canvasSize: landscape, safeInsets: landscapeInsets)
+        let center = CGPoint(x: 437, y: 190)
+        XCTAssertLessThan(transform.zoomRange.lowerBound, 1, "Fill can be pinched toward the Fit size")
+        transform.setZoom(0.97, anchoredAt: center)
+        XCTAssertFalse(transform.settleZoom())
+        XCTAssertEqual(transform.mode, .fill)
+        XCTAssertEqual(transform.zoom, 1, "A small pinch springs back to Fill")
+
+        transform.setZoom(transform.zoomRange.lowerBound, anchoredAt: center)
+        XCTAssertTrue(transform.settleZoom())
+        XCTAssertEqual(transform.mode, .fit)
+        XCTAssertTrue(transform.isAtBaseline)
+        assertInside(transform.contentRect, transform.safeRect, "Settled Fit shows the whole desktop")
+    }
+
+    func testPinchingFitOutToFillSizeSwitchesToFillButOtherZoomsStay() {
+        var transform = ViewportTransform(sourceSize: desktop, canvasSize: landscape, mode: .fit, safeInsets: landscapeInsets)
+        let center = CGPoint(x: 437, y: 190)
+        transform.setZoom(1.1, anchoredAt: center)
+        XCTAssertFalse(transform.settleZoom())
+        XCTAssertEqual(transform.mode, .fit)
+        XCTAssertEqual(transform.zoom, 1.1, accuracy: 0.000_1)
+
+        transform.setZoom(transform.fillScale / transform.fitScale, anchoredAt: center)
+        XCTAssertTrue(transform.settleZoom())
+        XCTAssertEqual(transform.mode, .fill)
+        XCTAssertTrue(transform.isAtBaseline)
+    }
+
+    func testModeToggleAndIPadResizeUseActualBounds() {
+        var transform = ViewportTransform(sourceSize: desktop, canvasSize: CGSize(width: 820, height: 1_180),
+                                          safeInsets: ViewportInsets(top: 24, bottom: 20))
+        XCTAssertEqual(transform.mode.toggled, .fit)
+        transform.setMode(transform.mode.toggled)
+        XCTAssertEqual(transform.mode, .fit)
+        transform.resize(sourceSize: desktop, canvasSize: CGSize(width: 507, height: 1_180),
+                         safeInsets: ViewportInsets(top: 24, bottom: 20))
+        assertInside(transform.contentRect, transform.safeRect, "Narrow split-view windows still fit the whole desktop")
+        XCTAssertEqual(transform.contentRect.width, 507, accuracy: 0.000_1)
     }
 }

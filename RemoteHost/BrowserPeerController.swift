@@ -736,7 +736,7 @@ final class BrowserPeerController: ObservableObject {
         case .proceed(let decided):
             forceRelay = decided
         }
-        let next = PeerMedia(isHost: true, servers: iceServers, forceRelay: forceRelay)
+        let next = PeerMedia(isHost: true, servers: iceServers, forceRelay: forceRelay, nativeDesktopCodecs: false)
         peer = next
         next.onSignal = { [weak self, weak next] signal in
             Task { @MainActor in
