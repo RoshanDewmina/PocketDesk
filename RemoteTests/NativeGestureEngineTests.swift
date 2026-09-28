@@ -107,6 +107,7 @@ final class NativeGestureEngineTests: XCTestCase {
         input.update([touch(3, 40)], at: 1.08)
         input.update([], at: 1.1)
         XCTAssertEqual(log.zooms, 1)
+        XCTAssertEqual(log.zoomEnds, 1, "A pinch settles exactly once, however its fingers lift")
         XCTAssertEqual(log.secondary, 0)
         XCTAssertEqual(log.clicks, [])
     }
@@ -202,6 +203,7 @@ private final class CommandLog {
     var moves: [CGSize] = []
     var scrollPhases: [String] = []
     var zooms = 0
+    var zoomEnds = 0
     var pans = 0
     var dragBegins = 0
     var dragEnds = 0
@@ -214,6 +216,7 @@ private final class CommandLog {
         case .move(let delta): moves.append(delta)
         case .scroll(_, let phase, _): scrollPhases.append(phase)
         case .zoom: zooms += 1
+        case .zoomEnded: zoomEnds += 1
         case .pan: pans += 1
         case .dragBegan: dragBegins += 1; return acceptDrag
         case .dragEnded: dragEnds += 1

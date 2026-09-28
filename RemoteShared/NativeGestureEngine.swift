@@ -1,15 +1,22 @@
 import Foundation
 import CoreGraphics
 
+enum NativeSwipeDirection { case left, right, up, down }
+
 /// Commands emitted by direct phone touches. `move` is already in host logical points.
 enum NativeGestureCommand {
     case move(CGSize)
     case scroll(delta: CGSize, phase: String, stream: String)
     case click(count: Int)
     case secondaryClick
+    case workspaceSwipe(direction: NativeSwipeDirection)
     case dragBegan(id: String, count: Int)
     case dragEnded(id: String)
     case zoom(factor: CGFloat, anchor: CGPoint)
+    /// Sent once when a recognized pinch ends or is cancelled, so the view can settle.
+    case zoomEnded
+    case zoomToggle(anchor: CGPoint)
+    case navigate(factor: CGFloat, anchor: CGPoint, translation: CGSize)
     case pan(CGSize)
 }
 
@@ -25,7 +32,7 @@ final class NativeGestureEngine {
     var onPointerMotionEnded: () -> Void = {}
     private var pointerMotionActive = false
 
-    private enum Mode { case candidate, pointer, multiCandidate, scroll, zoom, pan, drag, blocked }
+    private enum Mode { case candidate, pointer, multiCandidate, scroll, zoom, pan, drag, workspaceCandidate, workspaceFired, blocked }
     private var mode: Mode = .blocked
     private var active: [UInt64: CGPoint] = [:]
     private var firstPoint: CGPoint = .zero
@@ -33,6 +40,8 @@ final class NativeGestureEngine {
     private var lastMotionTime: TimeInterval = 0
     private var startTime: TimeInterval = 0
     private var maxDistance: CGFloat = 0
+    private var workspaceSequence = false
+    private var workspaceOrigins: [UInt64: CGPoint] = [:]
     private var hadTwo = false
     private var multiTapEligible = false
     private var multiStartCenter: CGPoint = .zero
@@ -41,6 +50,7 @@ final class NativeGestureEngine {
     private var multiLastDistance: CGFloat = 0
     private var scrollID: String?
     private var dragID: String?
+    private var zoomActive = false
     private var residual: CGSize = .zero
     private var lastTap: (time: TimeInterval, point: CGPoint)?
     private var secondTap = false
@@ -99,7 +109,7 @@ final class NativeGestureEngine {
         if oldCount == 0 {
             active = next
             guard count > 0 else { return }
-            guard count <= 2, let point = next.values.first else { mode = .blocked; return }
+            guard count <= 3, let point = next.values.first else { mode = .blocked; return }
             startTime = time
             lastMotionTime = time
             firstPoint = point
@@ -109,13 +119,15 @@ final class NativeGestureEngine {
             gestureSensitivity = sensitivity
             gestureScale = pointerScale
             hadTwo = count == 2
-            if count == 2 {
+            if count == 3 {
+                beginWorkspace(next, eligible: enabled && !panMode)
+            } else if count == 2 {
                 multiTapEligible = true
                 beginMulti(next)
                 lastTap = nil
             } else {
-                secondTap = !panMode && enabled && lastTap.map {
-                    time >= $0.time && time - $0.time <= doubleClickInterval &&
+                secondTap = (panMode || enabled) && lastTap.map {
+                    time >= $0.time && time - $0.time <= (panMode ? 0.35 : doubleClickInterval) &&
                     distance(point, $0.point) <= 24
                 } ?? false
                 mode = panMode ? .pan : .candidate
@@ -123,11 +135,22 @@ final class NativeGestureEngine {
             return
         }
 
+        if workspaceSequence {
+            if count == 0 {
+                resetSequence()
+            } else if count == 3 && Set(next.keys) == Set(workspaceOrigins.keys) {
+                processWorkspace(next, at: time)
+            } else {
+                mode = .blocked
+            }
+            active = next
+            return
+        }
         if count >= 3 {
+            let eligible = count == 3 && enabled && !panMode &&
+                (mode == .candidate || mode == .multiCandidate) && time - startTime <= 0.2
             cancelOwnedCommand()
-            mode = .blocked
-            hadTwo = true
-            lastTap = nil
+            beginWorkspace(next, eligible: eligible)
             active = next
             return
         }
@@ -171,7 +194,14 @@ final class NativeGestureEngine {
         }
 
         if count == 0 {
-            if mode == .candidate && enabled && !panMode && maxDistance <= 8 &&
+            if panMode && mode == .pan && maxDistance <= 4 && time - startTime <= 0.55 {
+                if secondTap {
+                    _ = onCommand(.zoomToggle(anchor: firstPoint))
+                    lastTap = nil
+                } else {
+                    lastTap = (time, firstPoint)
+                }
+            } else if mode == .candidate && enabled && !panMode && maxDistance <= 8 &&
                 time - startTime <= 0.55 {
                 let clickCount = secondTap ? 2 : 1
                 let accepted = onCommand(.click(count: clickCount))
@@ -221,6 +251,7 @@ final class NativeGestureEngine {
             sendMotion(point, at: time)
         case .pan:
             if maxDistance > 4 {
+                lastTap = nil
                 let delta = CGSize(width: point.x - lastPoint.x, height: point.y - lastPoint.y)
                 if delta != .zero { _ = onCommand(.pan(delta)) }
                 lastPoint = point
@@ -282,10 +313,31 @@ final class NativeGestureEngine {
         let travel = distance(center, multiStartCenter)
         let scaleChange = abs(log(max(span, 1) / max(multiStartDistance, 1)))
         maxDistance = max(maxDistance, travel, abs(span - multiStartDistance))
+        if panMode {
+            // View navigation owns both translation and scale, so moving the fingers
+            // together can become a pinch without lifting or leaking a Mac scroll.
+            let starting = mode == .multiCandidate
+            guard mode == .zoom || (starting && (travel >= 5 ||
+                (scaleChange >= 0.055 && abs(span - multiStartDistance) >= 5))) else { return }
+            let previousCenter = starting ? multiStartCenter : multiLastCenter
+            let previousSpan = starting ? multiStartDistance : multiLastDistance
+            mode = .zoom
+            let factor = span / max(previousSpan, 1)
+            if factor.isFinite && factor > 0 {
+                if abs(factor - 1) > 0.001 { zoomActive = true }
+                _ = onCommand(.navigate(factor: factor, anchor: previousCenter,
+                    translation: CGSize(width: center.x - previousCenter.x,
+                                        height: center.y - previousCenter.y)))
+            }
+            multiLastCenter = center
+            multiLastDistance = span
+            return
+        }
         var justRecognizedZoom = false
         if mode == .multiCandidate {
             if scaleChange >= 0.055 && abs(span - multiStartDistance) >= 5 {
                 mode = .zoom
+                zoomActive = true
                 justRecognizedZoom = true
             } else if travel >= 5 && scaleChange < 0.055 {
                 if panMode {
@@ -324,6 +376,36 @@ final class NativeGestureEngine {
         multiLastDistance = span
     }
 
+    private func beginWorkspace(_ touches: [UInt64: CGPoint], eligible: Bool) {
+        workspaceSequence = true
+        workspaceOrigins = touches
+        lastTap = nil
+        hadTwo = true
+        mode = eligible ? .workspaceCandidate : .blocked
+    }
+
+    private func processWorkspace(_ touches: [UInt64: CGPoint], at time: TimeInterval) {
+        guard mode == .workspaceCandidate, enabled, !panMode else { return }
+        guard time - startTime <= 1 else { mode = .blocked; return }
+        let deltas = touches.compactMap { id, point -> CGSize? in
+            guard let origin = workspaceOrigins[id] else { return nil }
+            return CGSize(width: point.x - origin.x, height: point.y - origin.y)
+        }
+        guard deltas.count == 3 else { mode = .blocked; return }
+        let dx = deltas.reduce(CGFloat.zero) { $0 + $1.width } / 3
+        let dy = deltas.reduce(CGFloat.zero) { $0 + $1.height } / 3
+        let horizontal = abs(dx) > abs(dy) * 1.4
+        let vertical = abs(dy) > abs(dx) * 1.4
+        let direction: NativeSwipeDirection
+        if horizontal && abs(dx) >= 60 && deltas.allSatisfy({ $0.width * (dx > 0 ? 1 : -1) >= 20 }) {
+            direction = dx > 0 ? .right : .left
+        } else if vertical && abs(dy) >= 60 && deltas.allSatisfy({ $0.height * (dy > 0 ? 1 : -1) >= 20 }) {
+            direction = dy > 0 ? .down : .up
+        } else { return }
+        mode = .workspaceFired
+        _ = onCommand(.workspaceSwipe(direction: direction))
+    }
+
     private func endPointerMotion() {
         guard pointerMotionActive else { return }
         pointerMotionActive = false
@@ -340,6 +422,10 @@ final class NativeGestureEngine {
             _ = onCommand(.dragEnded(id: id))
             dragID = nil
         }
+        if zoomActive {
+            zoomActive = false
+            _ = onCommand(.zoomEnded)
+        }
     }
 
     private func cancelOwnedCommand() { finishContinuous(cancelled: true) }
@@ -347,6 +433,8 @@ final class NativeGestureEngine {
     private func resetSequence() {
         endPointerMotion()
         mode = .blocked
+        workspaceSequence = false
+        workspaceOrigins = [:]
         hadTwo = false
         multiTapEligible = false
         secondTap = false

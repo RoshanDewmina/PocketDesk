@@ -49,12 +49,17 @@ final class PointerLocator: ObservableObject {
     }
 }
 
+/// Set `showsRing` to false to remove the ring; locating and edge-follow keep working.
+enum PointerLocatorAppearance {
+    static let showsRing = false
+}
+
 struct PointerLocatorOverlay: View {
     @ObservedObject var locator: PointerLocator
     let viewport: ViewportTransform
 
     var body: some View {
-        if let point = locator.point {
+        if PointerLocatorAppearance.showsRing, let point = locator.point {
             let mapped = viewport.viewPoint(fromSource: point)
             if mapped.x >= 0, mapped.y >= 0,
                mapped.x <= viewport.canvasSize.width, mapped.y <= viewport.canvasSize.height {

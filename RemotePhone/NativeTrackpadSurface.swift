@@ -26,6 +26,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
                               doubleClickInterval: doubleClickInterval)
         view.engine.onCommand = onCommand
         view.engine.onPointerMotionEnded = onPointerMotionEnded
+        view.updateAccessibility(panMode: panMode)
     }
 }
 
@@ -61,6 +62,20 @@ final class NativeTrackpadInputView: UIView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func updateAccessibility(panMode: Bool) {
+        accessibilityLabel = panMode ? "Remote desktop view" : "Remote desktop trackpad"
+        accessibilityHint = panMode
+            ? "Drag to move the view. Pinch to zoom. Double-tap to zoom in or fit the whole display."
+            : "One finger moves the pointer. Two fingers scroll or pinch to zoom. Three fingers switch Mac workspaces."
+        accessibilityCustomActions = panMode
+            ? [UIAccessibilityCustomAction(name: "Zoom view", target: self,
+                                           selector: #selector(accessibilityDoubleClick))]
+            : [UIAccessibilityCustomAction(name: "Right-click", target: self,
+                                           selector: #selector(accessibilityRightClick)),
+               UIAccessibilityCustomAction(name: "Double-click", target: self,
+                                           selector: #selector(accessibilityDoubleClick))]
+    }
 
     deinit {
         holdTimer?.invalidate()
@@ -108,7 +123,11 @@ final class NativeTrackpadInputView: UIView {
     }
 
     override func accessibilityActivate() -> Bool {
-        guard engine.enabled, !engine.panMode, !engine.hasActiveTouches else { return false }
+        guard !engine.hasActiveTouches else { return false }
+        if engine.panMode {
+            return engine.onCommand(.zoomToggle(anchor: CGPoint(x: bounds.midX, y: bounds.midY)))
+        }
+        guard engine.enabled else { return false }
         return engine.onCommand(.click(count: 1))
     }
 
@@ -118,7 +137,11 @@ final class NativeTrackpadInputView: UIView {
     }
 
     @objc private func accessibilityDoubleClick() -> Bool {
-        guard engine.enabled, !engine.panMode, !engine.hasActiveTouches else { return false }
+        guard !engine.hasActiveTouches else { return false }
+        if engine.panMode {
+            return engine.onCommand(.zoomToggle(anchor: CGPoint(x: bounds.midX, y: bounds.midY)))
+        }
+        guard engine.enabled else { return false }
         guard engine.onCommand(.click(count: 1)) else { return false }
         return engine.onCommand(.click(count: 2))
     }

@@ -1,322 +1,588 @@
 import SwiftUI
 
-/// Low-frequency chrome and viewport state; video remains in its Metal renderer.
+/// Full-bleed remote desktop with Liquid Glass chrome that stays out of the way.
+/// Video stays in its Metal renderer; this view owns only low-frequency chrome and viewport state.
 struct NativeSessionView: View {
     @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
     let offlineLayoutCheck: Bool
-    @State private var viewport = ViewportTransform(sourceSize: CGSize(width: 1440, height: 900), canvasSize: .zero)
-    @State private var panel: Panel?
+
+    @State private var viewport = ViewportTransform(sourceSize: CGSize(width: 1440, height: 900),
+                                                    canvasSize: .zero, mode: ViewportPreference.stored())
+    @State private var canvasFrame: CGRect = .zero
+    @State private var safeFrame: CGRect = .zero
+    @State private var geometryPending = false
     @State private var controlsCollapsed = true
+    @State private var keyboardOpen = false
+    @State private var showControls = false
     @State private var panMode = false
     @State private var clickAcknowledged = false
+    @State private var zoomBadge: String?
+    @State private var zoomBadgeToken = 0
     @State private var revision: UInt64 = 0
     @AppStorage("pointerSensitivity") private var sensitivity = 1.0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.verticalSizeClass) private var verticalSizeClass
-    @Environment(\.colorScheme) private var colorScheme
-    private enum Panel { case actions, keyboard, zoom }
-    private var palette: PocketDeskPalette { .resolve(colorScheme) }
+
+    private let sideSlot: CGFloat = 52
 
     var body: some View {
-        canvas
-            .statusBarHidden(true)
-            .background(Color.black.ignoresSafeArea())
-            .overlay(alignment: .bottom) {
-                if panel != .keyboard {
-                    bottomChrome
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 6)
+        ZStack {
+            stage.ignoresSafeArea()
+            Color.clear
+                .allowsHitTesting(false)
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                    safeFrame = frame
+                    scheduleGeometry()
                 }
-            }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if panel == .keyboard {
-                    bottomChrome
-                        .padding(.horizontal, 10)
-                        .padding(.bottom, 6)
-                }
-            }
-            .preferredColorScheme(.dark)
-            .onChange(of: model.sourceSize) { _, size in
-                cancelGesture()
-                viewport.resize(sourceSize: size, canvasSize: viewport.canvasSize)
-            }
-            .onDisappear { model.cancelInput() }
-            .task(id: model.acceptedClicks) {
-                guard model.acceptedClicks > 0 else { return }
-                clickAcknowledged = true
-                do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
-                clickAcknowledged = false
-            }
-    }
-
-    private var canvas: some View {
-        GeometryReader { safeGeometry in
-            // The input surface and chrome use the safe rectangle. Only the picture
-            // expands into scene edges; the keyboard's reserved region stays excluded.
-            let insets = safeGeometry.safeAreaInsets
-            ZStack(alignment: .topLeading) {
-                NativeTrackpadSurface(enabled: model.canControl, panMode: panMode,
-                    revision: model.inputRevision &+ revision, sensitivity: CGFloat(sensitivity),
-                    pointerScale: viewport.scale, doubleClickInterval: model.doubleClickInterval,
-                    onCommand: { handle($0, canvasOrigin: CGPoint(x: insets.leading, y: insets.top)) },
-                    onPointerMotionEnded: { model.pointerLocator.stopFollowing() })
-                    .frame(width: safeGeometry.size.width, height: safeGeometry.size.height)
-                    .accessibilityIdentifier("remote.canvas")
-
-                if !offlineLayoutCheck && (!model.fresh || !model.captureHealthy) {
-                    Label(model.fresh ? "Screen sharing needs attention on your Mac" : "Waiting for a fresh picture",
-                          systemImage: model.fresh ? "exclamationmark.display" : "display")
-                        .font(.callout.weight(.medium))
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(palette.ink)
-                        .padding(.horizontal, 16).padding(.vertical, 12)
-                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
-                }
-            }
-            .frame(width: safeGeometry.size.width, height: safeGeometry.size.height)
-            .background {
-                GeometryReader { videoGeometry in
-                    videoCanvas
-                        .frame(width: videoGeometry.size.width, height: videoGeometry.size.height)
-                        .clipped()
-                        .allowsHitTesting(false)
-                        .onAppear { resize(videoGeometry.size) }
-                        .onChange(of: videoGeometry.size) { _, size in resize(size) }
-                }
-                .ignoresSafeArea(.container, edges: panel == .keyboard ? [.top, .leading, .trailing] : .all)
-            }
-            .onReceive(model.pointerLocator.followUpdates) { point in
-                guard model.canControl, !model.dragging, controlsCollapsed, panel == nil, !panMode else { return }
-                let usable = CGRect(x: insets.leading, y: insets.top,
-                    width: safeGeometry.size.width, height: max(0, safeGeometry.size.height - 56))
-                _ = viewport.reveal(sourcePoint: point, in: usable)
-            }
-            .privacySensitive()
+            centerNotices
+        }
+        .overlay(alignment: .top) { topPills }
+        .overlay(alignment: .bottom) {
+            if !keyboardOpen { dock }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if keyboardOpen { keyboardBar }
+        }
+        .overlay {
+            if model.privacyShield { privacyShield }
+        }
+        .background(PhoneTheme.letterbox.ignoresSafeArea())
+        .statusBarHidden(true)
+        .persistentSystemOverlays(.hidden)
+        .defersSystemGestures(on: .vertical)
+        .sheet(isPresented: $showControls) { controlsSheet }
+        .sensoryFeedback(.selection, trigger: viewport.mode)
+        .onChange(of: viewport.mode) { _, mode in ViewportPreference.store(mode) }
+        .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
+        .onDisappear { model.cancelInput() }
+        .task(id: model.acceptedClicks) {
+            guard model.acceptedClicks > 0 else { return }
+            clickAcknowledged = true
+            do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
+            clickAcknowledged = false
+        }
+        .task(id: zoomBadgeToken) {
+            guard zoomBadge != nil else { return }
+            do { try await Task.sleep(for: .milliseconds(900)) } catch { return }
+            withAnimation(.easeOut(duration: 0.25)) { zoomBadge = nil }
         }
     }
 
-    private var videoCanvas: some View {
+    // MARK: - Stage
+
+    private var stage: some View {
         ZStack(alignment: .topLeading) {
-            Color.black
+            videoLayer
+            NativeTrackpadSurface(enabled: model.canControl && !panMode && !showControls, panMode: panMode,
+                                  revision: model.inputRevision &+ revision, sensitivity: CGFloat(sensitivity),
+                                  pointerScale: viewport.scale, doubleClickInterval: model.doubleClickInterval,
+                                  onCommand: handle,
+                                  onPointerMotionEnded: { model.pointerLocator.stopFollowing() })
+                .accessibilityIdentifier("remote.canvas")
+                .allowsHitTesting(!showControls && !model.privacyShield && !model.contentConcealed)
+        }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+            canvasFrame = frame
+            scheduleGeometry()
+        }
+        .onReceive(model.pointerLocator.followUpdates, perform: follow)
+        .privacySensitive()
+    }
+
+    private var videoLayer: some View {
+        ZStack(alignment: .topLeading) {
+            PhoneTheme.letterbox
+            let rect = viewport.contentRect
             if let track = connection.remoteVideo {
                 RemoteVideoSurface(track: track, onFrame: model.frameReceived)
-                    .frame(width: viewport.contentRect.width, height: viewport.contentRect.height)
-                    .position(x: viewport.contentRect.midX, y: viewport.contentRect.midY)
+                    .frame(width: rect.width, height: rect.height)
+                    .position(x: rect.midX, y: rect.midY)
             } else if offlineLayoutCheck {
-                offlineCanvas
-                    .frame(width: model.sourceSize.width, height: model.sourceSize.height)
-                    .scaleEffect(viewport.scale)
-                    .frame(width: viewport.contentRect.width, height: viewport.contentRect.height)
-                    .position(x: viewport.contentRect.midX, y: viewport.contentRect.midY)
+                DesktopPreview(size: model.sourceSize)
+                    .scaleEffect(viewport.scale, anchor: .topLeading)
+                    .frame(width: rect.width, height: rect.height, alignment: .topLeading)
+                    .position(x: rect.midX, y: rect.midY)
             }
             PointerLocatorOverlay(locator: model.pointerLocator, viewport: viewport)
         }
+        .allowsHitTesting(false)
     }
 
-    private var offlineCanvas: some View {
-        ZStack {
-            // A distinct, full-source fixture makes uncovered screen edges visible
-            // in UI captures even when Fill intentionally crops the source corners.
-            Color(red: 0.12, green: 0.20, blue: 0.27)
-            Rectangle().fill(Color.white.opacity(0.10)).frame(height: 2)
-            Rectangle().fill(Color.white.opacity(0.10)).frame(width: 2)
-            VStack(spacing: 16) {
-                Text("PocketDesk").font(.system(size: 54, weight: .medium, design: .serif))
-                Text("MAC DISPLAY CENTER")
-                    .font(.system(size: 22, weight: .bold, design: .monospaced))
-                Text("Move to point  •  Pinch to zoom  •  Pan to explore")
-                    .font(.system(size: 19))
-                Text("Offline preview · no remote actions")
-                    .font(.system(size: 17, design: .monospaced))
-            }
-            .multilineTextAlignment(.center)
-            .foregroundStyle(Color.white)
-            .padding(36)
-            .background(Color.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 24))
+    @ViewBuilder private var centerNotices: some View {
+        if !offlineLayoutCheck && (!model.fresh || !model.captureHealthy) {
+            Label(model.fresh ? "Screen sharing needs attention on your Mac" : "Waiting for a fresh picture",
+                  systemImage: model.fresh ? "exclamationmark.display" : "hourglass")
+                .font(.callout.weight(.medium))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 18).padding(.vertical, 12)
+                .glassEffect(.regular, in: .capsule)
+                .allowsHitTesting(false)
         }
     }
 
-    private var bottomChrome: some View {
-        VStack(spacing: 6) {
-            if panel == .keyboard {
-                compactKeyboard
-            } else {
-                if !controlsCollapsed {
-                    if let panel { panelView(panel) }
-                    sessionHeader
-                    dock
+    @ViewBuilder private var topPills: some View {
+        VStack(spacing: 8) {
+            if StreamDebug.enabled && !model.streamSummaryLines.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    ForEach(Array(model.streamSummaryLines.prefix(3).enumerated()), id: \.offset) { _, line in
+                        Text(line)
+                    }
                 }
-                dockHandleRail
-            }
-        }
-        .frame(maxWidth: 500)
-    }
-
-    private var sessionHeader: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(offlineLayoutCheck ? palette.warning : model.canControl ? palette.sage : palette.muted)
-                .frame(width: 7, height: 7)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.white)
+                .padding(8)
+                .frame(maxWidth: 320, alignment: .leading)
+                .background(.black.opacity(0.78), in: .rect(cornerRadius: 10))
+                .allowsHitTesting(false)
                 .accessibilityHidden(true)
-            Text(status)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(palette.ink)
-                .lineLimit(2)
-                .accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : status)
-            Spacer(minLength: 4)
-            if panMode {
-                Button("Done") { cancelGesture(); panMode = false }
-                    .accessibilityLabel("Done panning")
-                    .frame(minWidth: 44, minHeight: 44)
-                    .buttonStyle(.bordered)
             }
-            Button("End", role: .destructive) { model.disconnect() }
-                .frame(minWidth: 44, minHeight: 44)
-                .accessibilityLabel("End session")
-                .buttonStyle(.bordered)
-                .tint(palette.warning)
+            if panMode {
+                HStack(spacing: 10) {
+                    Image(systemName: "hand.draw").accessibilityHidden(true)
+                    Text("View · drag or pinch").font(.subheadline.weight(.medium))
+                    Button("Control") { setInteractionMode(false) }
+                        .buttonStyle(.glassProminent)
+                        .accessibilityLabel("Control desktop")
+                }
+                .padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 6)
+                .glassEffect(.regular, in: .capsule)
+                .transition(.opacity)
+            }
+            if let zoomBadge {
+                Text(zoomBadge)
+                    .font(.subheadline.weight(.semibold).monospacedDigit())
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .glassEffect(.regular, in: .capsule)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
         }
-        .padding(.leading, 14).padding(.trailing, 6)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(palette.line))
-        .contentShape(Capsule())
-        .onTapGesture {}
+        .padding(.top, 8)
     }
 
-    private var status: String {
-        if panMode { return "Pan view · move the desktop" }
-        if offlineLayoutCheck { return "Offline layout check" }
-        if model.dragging { return "Dragging · Release to drop" }
-        if !model.fresh || !model.captureHealthy { return "Input paused" }
-        if model.canControl && clickAcknowledged { return "Click accepted on this device" }
-        return model.canControl ? "Controlling your Mac" : "View only"
+    private var privacyShield: some View {
+        ZStack {
+            PhoneTheme.letterbox
+            Image(systemName: "lock.fill")
+                .font(.title2)
+                .foregroundStyle(.white.opacity(0.5))
+        }
+        .ignoresSafeArea()
+        .accessibilityLabel("Remote screen hidden")
+        .accessibilityIdentifier("remote.privacyShield")
     }
+
+    // MARK: - Dock
 
     private var dock: some View {
-        HStack(spacing: 4) {
-            dockButton("Keyboard", "keyboard") { setPanel(.keyboard) }
-            dockButton(viewport.mode == .fill ? "Fit whole display" : "Fill screen",
-                       viewport.mode == .fill ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right") {
-                cancelGesture()
-                if viewport.mode == .fill { viewport.fit() } else { viewport.fill() }
-            }
-            dockButton("Controls", "slider.horizontal.3") { setPanel(panel == .actions ? nil : .actions) }
-        }
-        .buttonStyle(.borderless)
-        .tint(palette.accent)
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(palette.line))
-        .contentShape(Capsule())
-        .onTapGesture {}
-    }
-
-    private var dockHandleRail: some View {
-        HStack(spacing: 0) {
-            Color.clear.frame(width: 44, height: 44).allowsHitTesting(false).accessibilityHidden(true)
-            Spacer(minLength: 0)
-            dockHandle
-            Spacer(minLength: 0)
-            if model.dragging {
-                Button { model.cancelInput() } label: {
-                    Image(systemName: "hand.raised.fill")
-                        .frame(width: 44, height: 44)
+        VStack(spacing: 10) {
+            if !controlsCollapsed {
+                GlassEffectContainer(spacing: 14) {
+                    VStack(spacing: 10) {
+                        statusPill
+                        HStack(spacing: 10) {
+                            endButton.frame(width: sideSlot)
+                            dockCluster
+                            releaseSlot.frame(width: sideSlot)
+                        }
+                    }
                 }
-                .buttonStyle(.borderless)
-                .foregroundStyle(palette.warning)
-                .background(.ultraThinMaterial, in: Circle())
-                .accessibilityLabel("Release")
-                .accessibilityHint("Drops the held item on your Mac")
-            } else {
-                Color.clear.frame(width: 44, height: 44).allowsHitTesting(false).accessibilityHidden(true)
+                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
+            dockHandle
         }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: 560)
     }
 
-    private var dockHandle: some View {
-        let taps = TapGesture(count: 2).exclusively(before: TapGesture(count: 1))
-        return Capsule()
-            .fill(palette.ink.opacity(0.85))
-            .frame(width: 34, height: 5)
-            .frame(width: 88, height: 44)
-            .contentShape(Rectangle())
-        .gesture(taps.onEnded { result in
-            switch result {
-            case .first: openKeyboard()
-            case .second: controlsCollapsed ? revealControls() : collapseControls()
+    private var statusPill: some View {
+        HStack(spacing: 8) {
+            StatusDot(color: statusColor)
+            Text(status)
+                .font(.footnote.weight(.semibold))
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .glassEffect(.regular, in: .capsule)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : status)
+    }
+
+    private var endButton: some View {
+        Button { model.disconnect() } label: {
+            Text("End")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.red)
+                .frame(width: sideSlot, height: 48)
+                .contentShape(.capsule)
+        }
+        .buttonStyle(.plain)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .accessibilityLabel("End session")
+    }
+
+    private var dockCluster: some View {
+        HStack(spacing: 0) {
+            dockButton("Keyboard", "keyboard") { openKeyboard() }
+            dockButton(viewport.mode == .fill ? "Fit whole display" : "Fill screen",
+                       viewport.mode == .fill ? "arrow.down.right.and.arrow.up.left"
+                                              : "arrow.up.left.and.arrow.down.right") { toggleMode() }
+            dockButton(panMode ? "Control desktop" : "Move view", panMode ? "cursorarrow.motionlines" : "hand.draw") {
+                setInteractionMode(!panMode)
             }
-        })
-        .highPriorityGesture(DragGesture(minimumDistance: 8).onChanged { value in
-            let movement = value.translation
-            guard abs(movement.height) > 12, abs(movement.height) > abs(movement.width) else { return }
-            if movement.height > 0 { collapseControls() }
-            else { revealControls() }
-        })
-        .accessibilityElement(children: .ignore)
-        .accessibilityAddTraits(.isButton)
-        .accessibilityLabel(controlsCollapsed ? "Show controls" : "Hide controls")
-        .accessibilityHint("Activate to show or hide controls. Use the Show keyboard action to type.")
-        .accessibilityAction { controlsCollapsed ? revealControls() : collapseControls() }
-        .accessibilityAction(named: Text("Show keyboard")) { openKeyboard() }
+            dockButton("Controls", "slider.horizontal.3") { cancelGesture(); showControls = true }
+        }
+        .padding(.horizontal, 6)
+        .glassEffect(.regular.interactive(), in: .capsule)
+    }
+
+    @ViewBuilder private var releaseSlot: some View {
+        if model.dragging {
+            Button { model.cancelInput() } label: {
+                Image(systemName: "hand.raised.fill")
+                    .font(.title3)
+                    .frame(width: sideSlot, height: 48)
+                    .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .glassEffect(.regular.tint(PhoneTheme.caution).interactive(), in: .capsule)
+            .accessibilityLabel("Release")
+            .accessibilityHint("Drops the held item on your Mac")
+        } else {
+            Color.clear.frame(height: 48).allowsHitTesting(false).accessibilityHidden(true)
+        }
     }
 
     private func dockButton(_ title: String, _ icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .foregroundStyle(palette.ink)
-                .frame(width: 44, height: 44)
-                .accessibilityLabel(title)
+                .font(.title3)
+                .frame(width: 52, height: 48)
+                .contentShape(.rect)
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
     }
 
-    private func panelView(_ selected: Panel) -> some View {
-        VStack(spacing: 6) {
-            HStack {
-                Text(selected == .keyboard ? "Keyboard" : selected == .zoom ? "Zoom" : "Controls")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(palette.ink)
-                Spacer()
-                Button("Hide") { setPanel(nil) }
-                    .frame(minWidth: 44, minHeight: 44)
-                    .accessibilityLabel(selected == .keyboard ? "Hide keyboard" : "Hide controls")
-            }
-            ScrollView {
-                switch selected {
-                case .actions: actions
-                case .zoom: zoomControls
-                case .keyboard: EmptyView()
+    private var dockHandle: some View {
+        let taps = TapGesture(count: 2).exclusively(before: TapGesture(count: 1))
+        return Capsule()
+            .fill(.white.opacity(0.92))
+            .frame(width: 40, height: 5)
+            .shadow(color: .black.opacity(0.5), radius: 1.5)
+            .frame(width: 110, height: 44)
+            .contentShape(.rect)
+            .gesture(taps.onEnded { result in
+                switch result {
+                case .first: openKeyboard()
+                case .second: controlsCollapsed ? revealControls() : collapseControls()
+                }
+            })
+            .highPriorityGesture(DragGesture(minimumDistance: 8).onEnded { value in
+                let movement = value.translation
+                guard abs(movement.height) > 12, abs(movement.height) > abs(movement.width) else { return }
+                if movement.height > 0 { collapseControls() } else { revealControls() }
+            })
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityLabel(controlsCollapsed ? "Show controls" : "Hide controls")
+            .accessibilityHint("Swipe up for controls, swipe down to hide them. Double-tap to type.")
+            .accessibilityAction { controlsCollapsed ? revealControls() : collapseControls() }
+            .accessibilityAction(named: Text("Show keyboard")) { openKeyboard() }
+    }
+
+    private var status: String {
+        if offlineLayoutCheck { return "Offline preview" }
+        if model.dragging { return "Holding · tap Release to drop" }
+        if !model.fresh || !model.captureHealthy { return "Input paused" }
+        if panMode { return "Moving view" }
+        if model.canControl && clickAcknowledged { return "Click sent" }
+        return model.canControl ? "Controlling your Mac" : "View only"
+    }
+
+    private var statusColor: Color {
+        if offlineLayoutCheck || !model.fresh || !model.captureHealthy { return PhoneTheme.busy }
+        if model.dragging { return PhoneTheme.caution }
+        if panMode { return .secondary }
+        return model.canControl ? PhoneTheme.ready : .secondary
+    }
+
+    // MARK: - Keyboard
+
+    private var keyboardBar: some View {
+        GlassEffectContainer(spacing: 8) {
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 0) {
+                            keyButton("Escape", "escape", "escape")
+                            keyButton("Tab", "arrow.right.to.line", "tab")
+                            Divider().frame(height: 22).padding(.horizontal, 4)
+                            modifierButton("Control", "control", "control")
+                            modifierButton("Option", "option", "option")
+                            modifierButton("Shift", "shift", "shift")
+                            modifierButton("Command", "command", "command")
+                            Divider().frame(height: 22).padding(.horizontal, 4)
+                            keyButton("Left arrow", "arrow.left", "left")
+                            keyButton("Down arrow", "arrow.down", "down")
+                            keyButton("Up arrow", "arrow.up", "up")
+                            keyButton("Right arrow", "arrow.right", "right")
+                            Divider().frame(height: 22).padding(.horizontal, 4)
+                            keyButton("Delete", "delete.left", "delete")
+                            keyButton("Return", "return", "return")
+                        }
+                        .padding(.horizontal, 8)
+                    }
+                    .scrollIndicators(.hidden)
+                    .frame(height: 44)
+                    .clipShape(.capsule)
+                    .glassEffect(.regular, in: .capsule)
+                    .accessibilityIdentifier("remote.keys")
+
+                    if model.dragging {
+                        Button { model.cancelInput() } label: {
+                            Image(systemName: "hand.raised.fill").frame(width: 44, height: 44)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.white)
+                        .glassEffect(.regular.tint(PhoneTheme.caution).interactive(), in: .circle)
+                        .accessibilityLabel("Release")
+                        .accessibilityHint("Drops the held item on your Mac")
+                    }
+                    Button { closeKeyboard() } label: {
+                        Image(systemName: "keyboard.chevron.compact.down").frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .accessibilityLabel("Hide keyboard")
+                }
+
+                HStack(alignment: .center, spacing: 8) {
+                    textField
+                    Button { model.sendText() } label: {
+                        Image(systemName: "arrow.up")
+                            .font(.body.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(width: 36, height: 36)
+                            .background(canSend ? PhoneTheme.tint : Color.gray.opacity(0.5), in: .circle)
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!canSend)
+                    .accessibilityLabel("Send text")
+                }
+                if let limit = model.textLimitMessage {
+                    Text(limit).font(.caption).foregroundStyle(PhoneTheme.caution)
+                } else if model.textEditable && !model.textStatus.isEmpty {
+                    Text(model.textStatus).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .frame(maxHeight: verticalSizeClass == .compact ? 115 : 180)
-            .accessibilityIdentifier("remote.controls.content")
         }
-        .padding(.horizontal, 14).padding(.bottom, 12)
-        .frame(maxWidth: 500)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20))
-        .overlay(RoundedRectangle(cornerRadius: 20).strokeBorder(palette.line))
-        .contentShape(RoundedRectangle(cornerRadius: 20))
-        .onTapGesture {}
-        .tint(palette.accent)
+        .padding(.horizontal, 10)
+        .padding(.bottom, 6)
+        .frame(maxWidth: 640)
     }
 
-    private var actions: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Move anywhere to point. Taps click at the Mac pointer.")
-                .font(.caption).foregroundStyle(palette.muted)
-            HStack {
-                Button("Click") { model.action("click") }
-                Button("Right-click") { model.action("right") }
-                Button("Double-click") { model.action("double") }
-            }.disabled(!model.canControl)
-            HStack {
-                Button("Drag") { model.drag() }
-                    .disabled(!model.canControl || !model.nativeInteractionSupported)
-                    .accessibilityHint("Starts a visible drag for up to ten seconds. Use Release to drop.")
-                Button("Pan view") { setPanel(nil); cancelGesture(); panMode = true }
-                Button("Adjust zoom") { setPanel(.zoom) }
+    private var canSend: Bool { model.canControl && model.textCanSend }
+
+    private var textField: some View {
+        ZStack(alignment: .leading) {
+            CommittedTextField(text: $model.draft, isComposing: $model.isComposingText, focusOnAppear: true)
+                .disabled(!model.textEditable)
+                .opacity(model.textEditable ? 1 : 0)
+                .allowsHitTesting(model.textEditable)
+                .privacySensitive()
+            if model.textEditable && model.draft.isEmpty {
+                Text("Type for your Mac")
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 16)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
             }
+            if !model.textEditable {
+                if model.textStatus.hasPrefix("Delivery is uncertain") {
+                    Button("Edit or send again", action: model.clearUncertainText)
+                        .font(.footnote)
+                        .padding(.leading, 16)
+                        .accessibilityHint(model.textStatus)
+                } else {
+                    Text(model.textStatus.isEmpty ? "Waiting for your Mac…" : model.textStatus)
+                        .font(.footnote)
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 16)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 44)
+        .glassEffect(.regular, in: .rect(cornerRadius: 22))
+    }
+
+    private func keyButton(_ label: String, _ symbol: String, _ key: String) -> some View {
+        Button { model.key(key) } label: {
+            Image(systemName: symbol)
+                .font(.body.weight(.medium))
+                .frame(width: 40, height: 40)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!model.canControl)
+        .accessibilityLabel(label)
+    }
+
+    private func modifierButton(_ label: String, _ symbol: String, _ modifier: String) -> some View {
+        let active = model.modifiers.contains(modifier)
+        return Button {
+            if active { model.modifiers.remove(modifier) } else { model.modifiers.insert(modifier) }
+        } label: {
+            Image(systemName: symbol)
+                .font(.body.weight(active ? .bold : .medium))
+                .foregroundStyle(active ? PhoneTheme.tint : .primary)
+                .frame(width: 40, height: 40)
+                .background(active ? PhoneTheme.tint.opacity(0.18) : .clear, in: .circle)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityAddTraits(active ? .isSelected : [])
+    }
+
+    // MARK: - Controls sheet
+
+    private var controlsSheet: some View {
+        NavigationStack {
+            Form {
+                viewSection
+                pointerSection
+                gesturesSection
+                workspaceSection
+                pictureSection
+                feelSection
+            }
+            .navigationTitle("Controls")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done", systemImage: "checkmark") { showControls = false }
+                }
+            }
+            .accessibilityIdentifier("remote.controls.content")
+        }
+        .presentationDetents(verticalSizeClass == .compact ? [.large] : [.medium, .large])
+    }
+
+    private var pointerSection: some View {
+        Section {
+            Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+                GridRow {
+                    actionTile("Click", "cursorarrow.click") { model.action("click") }
+                    actionTile("Right-click", "contextualmenu.and.cursorarrow") { model.action("right") }
+                }
+                GridRow {
+                    actionTile("Double-click", "cursorarrow.click.2") { model.action("double") }
+                    actionTile(model.dragging ? "Release" : "Drag", model.dragging ? "hand.raised.fill" : "hand.point.up.left.and.text") {
+                        model.drag()
+                    }
+                    .disabled(!model.dragging && !model.nativeInteractionSupported)
+                    .accessibilityHint("Starts a visible drag for up to ten seconds. Use Release to drop.")
+                }
+            }
+            .disabled((!model.canControl || panMode) && !model.dragging)
+            .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
+            .listRowBackground(Color.clear)
+        } header: {
+            Text("Pointer")
+        } footer: {
+            Text(panMode ? "Switch to Control to send clicks to your Mac."
+                         : "Move one finger to point. Tap to click, two fingers to right-click, or double-tap and hold to drag.")
+        }
+    }
+
+    private var viewSection: some View {
+        Section {
+            Picker("Screen", selection: Binding(get: { viewport.mode }, set: { setMode($0) })) {
+                Text("Fill").tag(ViewportMode.fill)
+                Text("Fit").tag(ViewportMode.fit)
+            }
+            .pickerStyle(.segmented)
+            .accessibilityLabel("Screen size")
+            LabeledContent {
+                Text(zoomDescription)
+                    .monospacedDigit()
+                    .accessibilityLabel("Current zoom")
+                    .accessibilityValue(String(format: "%.1f", Double(viewport.zoom)))
+            } label: {
+                Text("Zoom")
+            }
+            zoomSlider
+            Button {
+                showControls = false
+                setInteractionMode(!panMode)
+            } label: {
+                Label(panMode ? "Control desktop" : "Move view", systemImage: panMode ? "cursorarrow.motionlines" : "hand.draw")
+            }
+        } header: {
+            Text("View")
+        } footer: {
+            Text("Fill uses the whole screen. Fit keeps the entire display inside the safe area. In View, drag to move, pinch to zoom, or double-tap to switch between close-up and Fit.")
+        }
+    }
+
+    private var gesturesSection: some View {
+        Section("Gestures") {
+            if panMode {
+                Text("View: drag with one or two fingers to move the screen. Pinch to zoom. Double-tap to zoom in or fit the whole display.")
+            } else {
+                Text("Control: drag one finger to move the pointer. Two fingers scroll. Pinch to zoom the view. Three fingers left or right switch Spaces; up opens Mission Control; down opens App Exposé.")
+            }
+        }
+    }
+
+    private var workspaceSection: some View {
+        Section("Mac workspace") {
+            Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+                GridRow {
+                    actionTile("Previous Space", "arrow.left") { _ = model.gesture(.workspaceSwipe(direction: .right)) }
+                    actionTile("Next Space", "arrow.right") { _ = model.gesture(.workspaceSwipe(direction: .left)) }
+                }
+                GridRow {
+                    actionTile("Mission Control", "rectangle.3.group") { _ = model.gesture(.workspaceSwipe(direction: .up)) }
+                    actionTile("App Exposé", "rectangle.stack") { _ = model.gesture(.workspaceSwipe(direction: .down)) }
+                }
+            }
+            .disabled(!model.canControl || panMode)
+            .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
+            .listRowBackground(Color.clear)
+        }
+    }
+
+    private var zoomBinding: Binding<Double> {
+        Binding(get: { Double(viewport.zoom) }, set: { value in
+            cancelGesture()
+            let center = CGPoint(x: viewport.safeRect.midX, y: viewport.safeRect.midY)
+            viewport.setZoom(CGFloat(value), anchoredAt: center)
+        })
+    }
+
+    private var zoomSlider: some View {
+        let range = viewport.zoomRange
+        let bounds: ClosedRange<Double> = Double(range.lowerBound)...Double(range.upperBound)
+        return Slider(value: zoomBinding, in: bounds, onEditingChanged: settleSlider)
+            .accessibilityLabel("Zoom level")
+    }
+
+    private func settleSlider(_ editing: Bool) {
+        guard !editing else { return }
+        withAnimation(.snappy) { _ = viewport.settleZoom() }
+    }
+
+    private var pictureSection: some View {
+        Section {
             Picker("Picture quality", selection: $model.streamQuality) {
                 ForEach(StreamQuality.allCases, id: \.self) { quality in
                     Text(quality.title).tag(quality)
@@ -325,139 +591,145 @@ struct NativeSessionView: View {
             .pickerStyle(.segmented)
             .accessibilityLabel("Picture quality")
             .disabled(model.appliedStreamQuality == nil && !offlineLayoutCheck)
-            Text(model.streamQuality == .sharp ? "Sharper text · up to native 4K. Uses more bandwidth." : "Lower resolution for a more responsive connection.")
-                .font(.caption).foregroundStyle(palette.muted)
+            Text(model.streamQuality == .sharp ? "Sharper text · up to native 4K. Uses more bandwidth."
+                                               : "Lower resolution for a more responsive connection.")
+                .font(.footnote).foregroundStyle(.secondary)
             if !offlineLayoutCheck, let status = model.streamQualityStatus {
-                Text(status).font(.caption).foregroundStyle(palette.warning)
+                Text(status).font(.footnote).foregroundStyle(PhoneTheme.caution)
             }
+        } header: {
+            Text("Picture")
+        }
+    }
+
+    private var feelSection: some View {
+        Section {
             Toggle("Click haptics", isOn: $model.hapticsEnabled)
-            Text("Pointer sensitivity").font(.caption).foregroundStyle(palette.ink)
-            Slider(value: $sensitivity, in: 0.5...1.8)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Pointer speed")
+                Slider(value: $sensitivity, in: 0.5...1.8) {
+                    Text("Pointer speed")
+                } minimumValueLabel: {
+                    Image(systemName: "tortoise").accessibilityHidden(true)
+                } maximumValueLabel: {
+                    Image(systemName: "hare").accessibilityHidden(true)
+                }
                 .accessibilityLabel("Pointer sensitivity")
-            Text("Pinch zooms this view. Two-finger scrolling stays in the Mac app.")
-                .font(.caption).foregroundStyle(palette.muted)
-        }.buttonStyle(.bordered)
-    }
-
-    private var zoomControls: some View {
-        VStack(spacing: 10) {
-            Slider(value: Binding(get: { Double(viewport.zoom) }, set: { value in
-                cancelGesture()
-                viewport.setZoom(CGFloat(value), anchoredAt: CGPoint(x: viewport.canvasSize.width / 2, y: viewport.canvasSize.height / 2))
-            }), in: 1...3).accessibilityLabel("Zoom level")
-            Text(viewport.zoom, format: .number.precision(.fractionLength(1)))
-                .accessibilityLabel("Current zoom")
-                .accessibilityValue(String(format: "%.1f", Double(viewport.zoom)))
-            HStack {
-                Button("Fill screen") { cancelGesture(); viewport.fill() }
-                Button("Fit whole display") { cancelGesture(); viewport.fit() }
-                Button("Pan view") { setPanel(nil); panMode = true }
-            }.buttonStyle(.bordered)
+            }
+        } header: {
+            Text("Feel")
         }
     }
 
-    private var compactKeyboard: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 4) {
-                ZStack {
-                    CommittedTextField(text: $model.draft, isComposing: $model.isComposingText, focusOnAppear: true)
-                        .disabled(!model.textEditable)
-                        .opacity(model.textEditable ? 1 : 0)
-                        .allowsHitTesting(model.textEditable)
-                        .privacySensitive()
-                    if !model.textEditable {
-                        if model.textStatus.hasPrefix("Delivery is uncertain") {
-                            Button("Edit or send again", action: model.clearUncertainText)
-                                .font(.caption)
-                                .accessibilityHint(model.textStatus)
-                        } else {
-                            Text(model.textStatus.isEmpty ? "Waiting for your Mac…" : model.textStatus)
-                                .font(.caption)
-                                .lineLimit(1)
-                                .foregroundStyle(palette.muted)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: 44)
-                Button { model.sendText() } label: {
-                    Image(systemName: "paperplane.fill").frame(width: 44, height: 44)
-                }
-                .disabled(!model.canControl || !model.textCanSend)
-                .accessibilityLabel("Send text")
-                Group {
-                    if model.dragging {
-                        Button { model.cancelInput() } label: {
-                            Image(systemName: "hand.raised.fill").frame(width: 44, height: 44)
-                        }
-                        .foregroundStyle(palette.warning)
-                        .accessibilityLabel("Release")
-                        .accessibilityHint("Drops the held item on your Mac")
-                    } else {
-                        Menu {
-                            ForEach(["command", "option", "control", "shift"], id: \.self) { modifier in
-                                Button {
-                                    if model.modifiers.contains(modifier) { model.modifiers.remove(modifier) }
-                                    else { model.modifiers.insert(modifier) }
-                                } label: {
-                                    Label(modifier.capitalized,
-                                          systemImage: model.modifiers.contains(modifier) ? "checkmark.circle.fill" : "circle")
-                                }
-                            }
-                            Divider()
-                            ForEach(["escape", "tab", "delete", "return", "left", "down", "up", "right"], id: \.self) { key in
-                                Button(key.capitalized) { model.key(key) }.disabled(!model.canControl)
-                            }
-                        } label: {
-                            Image(systemName: "command").frame(width: 44, height: 44)
-                        }
-                        .accessibilityLabel("Keyboard commands")
-                    }
-                }
-                Button { setPanel(nil) } label: {
-                    Image(systemName: "keyboard.chevron.compact.down").frame(width: 44, height: 44)
-                }
-                .accessibilityLabel("Hide keyboard")
-                Button("End", role: .destructive) { model.disconnect() }
-                    .frame(minWidth: 44, minHeight: 44)
-                    .accessibilityLabel("End session")
-                    .tint(palette.warning)
+    private func actionTile(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                Image(systemName: symbol).font(.title2)
+                Text(title).font(.footnote.weight(.medium))
             }
-            if let limit = model.textLimitMessage {
-                Text(limit).font(.caption).foregroundStyle(palette.warning)
-            } else if model.textEditable && !model.textStatus.isEmpty {
-                Text(model.textStatus).font(.caption).foregroundStyle(palette.muted)
-            }
+            .frame(maxWidth: .infinity, minHeight: 72)
+            .contentShape(.rect)
         }
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 8).padding(.vertical, 3)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
-        .overlay(RoundedRectangle(cornerRadius: 14).strokeBorder(palette.line))
-        .contentShape(RoundedRectangle(cornerRadius: 14))
-        .onTapGesture {}
-        .tint(palette.accent)
+        .buttonStyle(.glass)
+        .buttonBorderShape(.roundedRectangle(radius: 18))
+        .accessibilityLabel(title)
     }
 
-    private func handle(_ command: NativeGestureCommand, canvasOrigin: CGPoint) -> Bool {
+    private var zoomDescription: String {
+        if viewport.zoom == 1 { return viewport.mode == .fill ? "Fill" : "Fit" }
+        let magnification = viewport.fitScale > 0 ? viewport.scale / viewport.fitScale : 1
+        return String(format: "%.1f×", Double(magnification))
+    }
+
+    // MARK: - Behaviour
+
+    private func handle(_ command: NativeGestureCommand) -> Bool {
+        guard !showControls, !model.privacyShield, !model.contentConcealed else { return false }
         switch command {
+        case .zoomToggle(let anchor):
+            model.pointerLocator.clear()
+            withAnimation(reduceMotion ? nil : .snappy) { viewport.toggleZoom(anchoredAt: anchor) }
+            showZoomBadge()
+            return true
+        case .navigate(let factor, let anchor, let translation):
+            model.pointerLocator.clear()
+            viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
+            viewport.pan(by: translation)
+            showZoomBadge()
+            return true
         case .zoom(let factor, let anchor):
             model.pointerLocator.clear()
-            // Gesture coordinates start at the safe input layer; the video starts at the screen edge.
-            let canvasAnchor = CGPoint(x: anchor.x + canvasOrigin.x, y: anchor.y + canvasOrigin.y)
-            viewport.setZoom(viewport.zoom * factor, anchoredAt: canvasAnchor)
+            viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
+            showZoomBadge()
+            return true
+        case .zoomEnded:
+            DispatchQueue.main.async {
+                guard !showControls, !model.privacyShield, !model.contentConcealed else { return }
+                withAnimation(reduceMotion ? nil : .snappy) { _ = viewport.settleZoom() }
+                showZoomBadge()
+            }
             return true
         case .pan(let delta):
             model.pointerLocator.clear()
             viewport.pan(by: delta)
             return true
-        default: return model.gesture(command)
+        default:
+            return model.gesture(command)
         }
     }
 
-    private func resize(_ size: CGSize) {
-        guard size != viewport.canvasSize else { return }
+    private func follow(_ point: CGPoint) {
+        guard model.canControl, !model.dragging, controlsCollapsed, !keyboardOpen,
+              !showControls, !panMode else { return }
+        let safe = viewport.safeRect
+        let usable = CGRect(x: safe.minX, y: safe.minY, width: safe.width, height: max(0, safe.height - 34))
+        _ = viewport.reveal(sourcePoint: point, in: usable)
+    }
+
+    private func showZoomBadge() {
+        zoomBadge = zoomDescription
+        zoomBadgeToken &+= 1
+    }
+
+    private func scheduleGeometry() {
+        guard !geometryPending else { return }
+        geometryPending = true
+        DispatchQueue.main.async {
+            geometryPending = false
+            applyGeometry()
+        }
+    }
+
+    /// Rotation, iPad resizing and new source sizes remap the viewport; the keyboard and
+    /// other bottom obstructions only change the safe insets.
+    private func applyGeometry() {
+        guard canvasFrame.width > 0, canvasFrame.height > 0, safeFrame.width > 0, safeFrame.height > 0 else { return }
+        let insets = ViewportInsets(top: max(0, safeFrame.minY - canvasFrame.minY),
+                                    left: max(0, safeFrame.minX - canvasFrame.minX),
+                                    bottom: max(0, canvasFrame.maxY - safeFrame.maxY),
+                                    right: max(0, canvasFrame.maxX - safeFrame.maxX))
+        if viewport.canvasSize != canvasFrame.size || viewport.sourceSize != model.sourceSize {
+            cancelGesture()
+            viewport.resize(sourceSize: model.sourceSize, canvasSize: canvasFrame.size, safeInsets: insets)
+        } else if viewport.safeInsets != insets {
+            withAnimation(reduceMotion ? nil : .snappy) { viewport.updateSafeInsets(insets) }
+        }
+    }
+
+    private func setMode(_ mode: ViewportMode) {
+        guard mode != viewport.mode || !viewport.isAtBaseline else { return }
         cancelGesture()
-        viewport.resize(sourceSize: model.sourceSize, canvasSize: size)
+        withAnimation(reduceMotion ? nil : .snappy) { viewport.setMode(mode) }
+        showZoomBadge()
+    }
+
+    private func toggleMode() { setMode(viewport.mode.toggled) }
+
+    private func setInteractionMode(_ viewMode: Bool) {
+        guard panMode != viewMode else { return }
+        cancelGesture()
+        model.pointerLocator.clear()
+        withAnimation(reduceMotion ? nil : .snappy) { panMode = viewMode }
     }
 
     private func cancelGesture() {
@@ -465,29 +737,27 @@ struct NativeSessionView: View {
         revision &+= 1
     }
 
-    private func setPanel(_ newPanel: Panel?) {
-        guard panel != newPanel else { return }
-        cancelGesture()
-        panMode = false
-        panel = newPanel
-    }
-
     private func revealControls() {
         guard controlsCollapsed else { return }
         cancelGesture()
-        controlsCollapsed = false
+        withAnimation(reduceMotion ? nil : .snappy) { controlsCollapsed = false }
     }
 
     private func collapseControls() {
         guard !controlsCollapsed else { return }
         cancelGesture()
-        panMode = false
-        panel = nil
-        controlsCollapsed = true
+        withAnimation(reduceMotion ? nil : .snappy) {
+            controlsCollapsed = true
+        }
     }
 
     private func openKeyboard() {
-        if controlsCollapsed { revealControls() }
-        setPanel(.keyboard)
+        cancelGesture()
+        keyboardOpen = true
+    }
+
+    private func closeKeyboard() {
+        cancelGesture()
+        keyboardOpen = false
     }
 }
