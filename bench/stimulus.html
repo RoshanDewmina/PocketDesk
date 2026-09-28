@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>PocketDesk bench</title>
+<style>
+:root{color-scheme:light}
+html,body{margin:0;height:100%;background:#f4f1ea;font-family:-apple-system,system-ui,sans-serif;overflow:hidden}
+#clock{position:absolute;top:24px;left:24px;font:700 96px/1 ui-monospace,Menlo,monospace;color:#111}
+#fps{position:absolute;top:130px;left:28px;font:500 18px ui-monospace,Menlo,monospace;color:#555}
+#lane{position:absolute;left:0;right:0;top:48%;height:90px;border-top:1px solid #0002;border-bottom:1px solid #0002}
+#box{position:absolute;top:10px;width:70px;height:70px;background:#c0392b;border-radius:10px}
+#flash{position:absolute;right:24px;top:24px;width:220px;height:220px;border-radius:24px;background:#222;color:#fff;display:grid;place-items:center;font:600 20px system-ui;user-select:none}
+#text{position:absolute;left:24px;right:24px;bottom:24px;display:grid;grid-template-columns:repeat(4,1fr);gap:18px;color:#222}
+#text p{margin:0}
+.s9{font-size:9px}.s11{font-size:11px}.s13{font-size:13px}.m11{font:11px Menlo,monospace}
+</style></head><body>
+<div id="clock">0.000</div><div id="fps"></div>
+<div id="lane"><div id="box"></div></div>
+<div id="flash">tap / click me</div>
+<div id="text">
+<p class="s9">9 px — The quick brown fox jumps over the lazy dog 0123456789 Il1| O0 rn m</p>
+<p class="s11">11 px — The quick brown fox jumps over the lazy dog 0123456789 Il1| O0 rn m</p>
+<p class="s13">13 px — The quick brown fox jumps over the lazy dog 0123456789 Il1| O0 rn m</p>
+<p class="m11">let latency = frames.map { $0.presentedAt - $0.sentAt } // Il1| O0 {}[]</p>
+</div>
+<script>
+const clock=document.getElementById('clock'),box=document.getElementById('box'),fps=document.getElementById('fps'),flash=document.getElementById('flash');
+const t0=performance.now();let n=0,last=t0;
+function tick(now){const t=(now-t0)/1000;clock.textContent=t.toFixed(3);
+const w=innerWidth-70,p=(t*0.5)%2;box.style.transform=`translateX(${(p<1?p:2-p)*w}px)`;
+n++;if(now-last>1000){fps.textContent=`page ${Math.round(n*1000/(now-last))} fps · ${innerWidth}×${innerHeight} @${devicePixelRatio}x`;n=0;last=now}
+requestAnimationFrame(tick)}requestAnimationFrame(tick);
+let on=false;flash.addEventListener('pointerdown',()=>{on=!on;flash.style.background=on?'#27ae60':'#222'});
+</script></body></html>
