@@ -91,8 +91,14 @@ Set `TURN_PROVIDER=coturn`, `TURN_URLS`, and `TURN_SECRET`. This is deliberately
 | `MESSAGES_PER_SECOND` | `100` | 2–1000 messages per connection |
 | `TURN_CREDENTIAL_ISSUES_PER_MINUTE` | `12` | 2–120 provider credential calls across the process |
 | `ROOM_LIFETIME_SECONDS` | `1800` | 60–86400; closes signaling so native clients tear down media |
+| `POCKETDESK_TEST_FORCE_RELAY` | `0` | `1`/`true` adds `policy: "relay"` to the `ice` message so both native peers use relay-only ICE; refused without a TURN provider; acceptance testing only |
+| `POCKETDESK_SECRET_SOURCE` | `env` | `keychain` reads the Cloudflare TURN key ID and token from macOS Keychain and refuses to start if either is also in the environment |
+| `POCKETDESK_KEYCHAIN_SLOT` | `a` | 1–8 lowercase letters or digits; slot `a` uses `pocketdesk.cloudflare.turn-key-id` and `pocketdesk.cloudflare.turn-api-token`, another slot appends `.<slot>` (used to rotate keys) |
+| `POCKETDESK_KEYCHAIN_PREFIX` | `pocketdesk.cloudflare` | Keychain service-name prefix |
+| `PD_PUBLIC_HOST` | — | Deployment-only: the public relay hostname (no scheme or path); read by the deploy scripts and readiness check, ignored by the service |
+| `PD_TUNNEL_NAME` | `pocketdesk-relay` | Deployment-only: the named tunnel |
 
-The service also caps WebSocket payloads at 256 KiB, accepted JSON text at 200 KiB, encrypted `signal.payload` at 180 KiB, provider responses at 64 KiB, ICE output at 8 servers with 8 URLs each, and backpressure at 512 KiB. Clients that miss authentication, exceed limits, or fail relay provisioning receive an existing `error` message and are closed. `/health` reports only service/protocol status and never provider configuration or secrets.
+The service also caps WebSocket payloads at 256 KiB, accepted JSON text at 200 KiB, encrypted `signal.payload` at 180 KiB, provider responses at 64 KiB, ICE output at 8 servers with 8 URLs each, and backpressure at 512 KiB. Clients that miss authentication, exceed limits, or fail relay provisioning receive an existing `error` message and are closed. `/health` reports only service/protocol status and never provider configuration or secrets. `GET /ready` (loopback and monitoring only; the tunnel template never routes it) answers 200 when a relay provider is configured and not failing, and 503 with `reasons` (`relay_not_configured`, `relay_provider_failing` after three consecutive provider failures, `stopping`) otherwise. It also reports the ICE policy, the last issuance outcome, how often the per-minute issuance limit refused a request, connection counts and uptime. It never contains room IDs, credentials, usernames, or keys.
 
 Passing automated tests and a local health response establish configuration and failure behavior only. Cellular reachability, WSS certificate acceptance, Cloudflare account access, actual TURN allocation, forced-relay route selection, quotas, and relay spend still require a real private deployment and physical-device test.
 
@@ -107,3 +113,18 @@ bun run readiness --env-file /absolute/private/path/pocketdesk.env
 ```
 
 After the endpoint is live, add `--wss wss://signal.example.com/signal`. The check temporarily approves a generated room, authenticates a synthetic host and phone through the public WSS route, validates the real ICE messages, closes both peers, and restores the prior approval set. This proves WSS signaling and provider credential issuance. It does not prove that a TURN allocation carries media; that requires the physical phone's **Relay-only test** and route diagnostics to report `Relay`.
+
+## Cloudflare relay deployment (named tunnel and Realtime TURN)
+
+The dry-run-by-default tooling for a stable relay lives beside this README. The full procedure, including the steps only the account owner can perform, is in [`Docs/research/2026-09-28-round2/RELAY-DEPLOYMENT-RUNBOOK.md`](../Docs/research/2026-09-28-round2/RELAY-DEPLOYMENT-RUNBOOK.md).
+
+| File | Purpose |
+|---|---|
+| `.env.relay.example` | Non-secret configuration template; `bun scripts/relay-env.ts init --host <host>` renders it to `~/.pocketdesk/relay/relay.env` (mode 600) and creates an empty approved-rooms file |
+| `scripts/readiness.ts` | `--offline` validates configuration, file permissions, Keychain secrets and the cloudflared ingress with no network; without it the check also issues and revokes one real credential; `--public` (or `--wss`) adds the public route and authenticated-pair check; `--slot` verifies the alternate Keychain slot |
+| `scripts/deploy-cloudflare.sh` | Dry run by default. `--apply` performs local and account steps; the DNS record and tunnel launch agent additionally need `POCKETDESK_APPROVE_PUBLIC=yes`. Exits 78 without the environment file, the secrets or the `cloudflared` login certificate |
+| `scripts/teardown-cloudflare.sh` | Stops the tunnel and then the service; optional tunnel deletion, Keychain purge and file cleanup |
+| `scripts/rotate-turn-key.sh` | Stores a new key in the idle Keychain slot, verifies it against Cloudflare, switches slots and restarts the service |
+| `deploy/` | Signal-only `cloudflared` ingress template and the two launchd agent templates |
+
+The ingress template routes only `^/signal$` on the relay hostname to the loopback service and answers every other path with 404, so `/health`, `/ready` and the browser routes are never public. Media never crosses the tunnel; it uses WebRTC to Cloudflare TURN only when ICE selects a relay.

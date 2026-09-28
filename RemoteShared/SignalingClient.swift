@@ -11,6 +11,7 @@ struct RelayMessage: Codable {
     var online: Bool?
     var code: String?
     var servers: [ICEServerConfiguration]?
+    var policy: String?
 }
 
 @MainActor

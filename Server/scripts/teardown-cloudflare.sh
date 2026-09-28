@@ -14,7 +14,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 . "$here/relay-lib.sh"
 
 usage() {
-  sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 delete_tunnel=0
