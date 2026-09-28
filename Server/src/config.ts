@@ -18,7 +18,18 @@ function requireValue(env: Record<string, string | undefined>, name: string) {
   return value;
 }
 
-export function loadServiceConfig(env: Record<string, string | undefined>): ServiceConfig {
+function flag(env: Record<string, string | undefined>, name: string) {
+  const raw = env[name];
+  if (raw === undefined) return false;
+  if (raw === '1' || raw === 'true') return true;
+  if (raw === '0' || raw === 'false') return false;
+  throw new Error(`${name} must be 0, 1, true, or false`);
+}
+
+export function loadServiceConfig(
+  env: Record<string, string | undefined>,
+  options: { fetch?: typeof globalThis.fetch } = {},
+): ServiceConfig {
   const production = env.NODE_ENV === 'production';
   const port = integer(env, 'PORT', 8787, 1, 65_535);
   const credentialTTLSeconds = integer(env, 'TURN_CREDENTIAL_TTL_SECONDS', 3600, 60, 86_400);
@@ -67,6 +78,7 @@ export function loadServiceConfig(env: Record<string, string | undefined>): Serv
       apiToken: requireValue(env, 'CLOUDFLARE_TURN_KEY_API_TOKEN'),
       ttlSeconds: credentialTTLSeconds,
       timeoutMs: providerTimeoutMs,
+      fetch: options.fetch,
     });
   } else if (providerName) {
     throw new Error('TURN_PROVIDER must be coturn or cloudflare');
@@ -76,6 +88,10 @@ export function loadServiceConfig(env: Record<string, string | undefined>): Serv
     throw new Error('Production requires ALLOWED_ROOMS or APPROVED_ROOMS_FILE');
   }
   if (production && !turnProvider) throw new Error('Production requires TURN_PROVIDER=coturn or TURN_PROVIDER=cloudflare');
+  const testForceRelay = flag(env, 'POCKETDESK_TEST_FORCE_RELAY');
+  if (testForceRelay && !turnProvider) {
+    throw new Error('POCKETDESK_TEST_FORCE_RELAY requires TURN_PROVIDER=coturn or TURN_PROVIDER=cloudflare');
+  }
 
   return {
     hostname: env.BIND ?? '127.0.0.1',
@@ -92,5 +108,6 @@ export function loadServiceConfig(env: Record<string, string | undefined>): Serv
     credentialIssuesPerMinute: integer(env, 'TURN_CREDENTIAL_ISSUES_PER_MINUTE', 12, 2, 120),
     maxRoomLifetimeMs: roomLifetimeSeconds * 1000,
     approvalAuditMs,
+    testForceRelay,
   };
 }

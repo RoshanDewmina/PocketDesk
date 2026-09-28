@@ -3,13 +3,30 @@ import { randomBytes, createHash } from 'node:crypto';
 import { lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, resolve } from 'node:path';
 import { loadServiceConfig } from '../src/config';
+import { preflightRelay, type Check } from '../src/relay-config';
 import { mutateApprovedRooms, readApprovedRooms } from '../src/rooms';
+import { resolveRelaySecrets, type KeychainPresence, type KeychainReader } from '../src/secrets';
 import type { IceServer } from '../src/turn';
 
 function option(name: string) {
   const index = process.argv.indexOf(name);
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
+const hasFlag = (name: string) => process.argv.includes(name);
+const usage = 'usage: readiness.ts --env-file /absolute/private/path [--offline] [--wss wss://host/signal | --public] [--slot a] [--cloudflared-config /absolute/path.yml]';
+
+export type ReadinessOptions = {
+  envFile: string;
+  offline?: boolean;
+  wss?: string;
+  publicHost?: boolean;
+  slot?: string;
+  cloudflaredConfig?: string;
+  repoRoot?: string;
+  fetch?: typeof globalThis.fetch;
+  keychainReader?: KeychainReader;
+  keychainPresent?: KeychainPresence;
+};
 
 export function parsePrivateEnvFile(path: string): Record<string, string> {
   if (!isAbsolute(path)) throw new Error('environment file path must be absolute');
@@ -70,13 +87,103 @@ function websocket(url: string) {
   return { socket, opened, next };
 }
 
-async function main() {
-  const envPath = option('--env-file');
-  if (!envPath) throw new Error('usage: readiness.ts --env-file /absolute/private/path [--wss wss://host/signal]');
-  const env = parsePrivateEnvFile(envPath);
-  if (env.NODE_ENV !== 'production') throw new Error('readiness requires NODE_ENV=production');
-  const config = loadServiceConfig(env);
+const publicProbePaths = ['/health', '/ready', '/', '/browser-host', '/api/diagnostics'];
+
+async function checkPublicRoutes(url: URL, fetcher: typeof globalThis.fetch): Promise<Record<string, number>> {
+  const statuses: Record<string, number> = {};
+  for (const path of publicProbePaths) {
+    const response = await fetcher(new URL(path, `https://${url.host}`), {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    });
+    statuses[path] = response.status;
+    await response.body?.cancel();
+    if (response.status >= 200 && response.status < 300) throw new Error(`public route ${path} must not be reachable through the tunnel`);
+  }
+  return statuses;
+}
+
+async function checkPublicSignal(
+  wssURL: string,
+  env: Record<string, string>,
+  expectedPolicy: 'all' | 'relay',
+  fetcher: typeof globalThis.fetch,
+) {
+  const url = new URL(wssURL);
+  if (url.protocol !== 'wss:' || url.pathname !== '/signal' || url.search || url.hash) throw new Error('--wss must be a clean wss://.../signal URL');
+  if (!env.APPROVED_ROOMS_FILE) throw new Error('live WSS check requires APPROVED_ROOMS_FILE');
+  const routes = await checkPublicRoutes(url, fetcher);
+  const approvedPath = resolve(env.APPROVED_ROOMS_FILE);
+  const hostToken = randomBytes(32).toString('hex');
+  const publicRoom = createHash('sha256').update(hostToken).digest('hex');
+  const clientToken = randomBytes(32).toString('hex');
+  const original = readApprovedRooms(approvedPath);
+  if (original.includes(publicRoom)) throw new Error('generated readiness room unexpectedly already exists');
+  mutateApprovedRooms(approvedPath, current => current.includes(publicRoom) ? current : [...current, publicRoom]);
+  const host = websocket(wssURL);
+  const client = websocket(wssURL);
+  try {
+    await host.opened;
+    host.socket.send(JSON.stringify({
+      type: 'register', version: 1, role: 'host', room: publicRoom, token: hostToken,
+      clientTokenHash: createHash('sha256').update(clientToken).digest('hex'),
+    }));
+    const hostRegistered = await host.next() as { type?: string };
+    const hostIce = await host.next() as { type?: string; servers?: IceServer[]; policy?: string };
+    if (hostRegistered.type !== 'registered' || hostIce.type !== 'ice' || !hostIce.servers) throw new Error('public host registration failed');
+    const hostSummary = summarizeIce(hostIce.servers);
+
+    await client.opened;
+    client.socket.send(JSON.stringify({ type: 'register', version: 1, role: 'client', room: publicRoom, token: clientToken }));
+    const clientRegistered = await client.next() as { type?: string };
+    const clientIce = await client.next() as { type?: string; servers?: IceServer[]; policy?: string };
+    if (clientRegistered.type !== 'registered' || clientIce.type !== 'ice' || !clientIce.servers) throw new Error('public client registration failed');
+    const clientSummary = summarizeIce(clientIce.servers);
+    for (const policy of [hostIce.policy, clientIce.policy]) {
+      if ((policy ?? 'all') !== expectedPolicy) throw new Error(`public service ICE policy is not ${expectedPolicy}`);
+    }
+    return { tested: true, authenticatedPair: true, icePolicy: expectedPolicy, publicRouteStatuses: routes, hostIce: hostSummary, clientIce: clientSummary };
+  } finally {
+    host.socket.close();
+    client.socket.close();
+    mutateApprovedRooms(approvedPath, current => current.filter(room => room !== publicRoom));
+  }
+}
+
+export async function runReadiness(options: ReadinessOptions) {
+  const fileEnv = parsePrivateEnvFile(options.envFile);
+  if (options.slot) fileEnv.POCKETDESK_KEYCHAIN_SLOT = options.slot;
+  let resolvedEnv: Record<string, string | undefined> | undefined;
+  let resolveError: string | undefined;
+  try { resolvedEnv = await resolveRelaySecrets(fileEnv, { reader: options.keychainReader }); }
+  catch (error) { resolveError = error instanceof Error ? error.message : String(error); }
+
+  const preflight = await preflightRelay(fileEnv, {
+    repoRoot: options.repoRoot,
+    cloudflaredConfigPath: options.cloudflaredConfig ?? fileEnv.POCKETDESK_CLOUDFLARED_CONFIG,
+    keychainPresent: options.keychainPresent,
+    resolvedEnv,
+    resolveError,
+    fetch: options.fetch,
+  });
+  const mode = options.offline ? 'offline' : 'live';
+  if (!preflight.ok || !resolvedEnv) return { status: 'blocked' as const, mode, checks: preflight.checks };
+
+  const config = loadServiceConfig(resolvedEnv, { fetch: options.fetch });
   if (!config.turnProvider) throw new Error('production TURN provider is missing');
+  const summary = {
+    status: 'ready' as const,
+    mode,
+    checks: preflight.checks as Check[],
+    productionConfig: true,
+    provider: config.turnProvider.kind,
+    requestedCredentialTTLSeconds: Number(fileEnv.TURN_CREDENTIAL_TTL_SECONDS ?? 3600),
+    credentialIssuanceLimitPerMinute: config.credentialIssuesPerMinute,
+    maxPeers: config.maxPeers,
+    roomLifetimeSeconds: (config.maxRoomLifetimeMs ?? 0) / 1000,
+    forceRelay: config.testForceRelay === true,
+  };
+  if (options.offline) return summary;
 
   const room = randomBytes(32).toString('hex');
   const directServers = await config.turnProvider.issue({ room, role: 'host' });
@@ -86,57 +193,28 @@ async function main() {
     await config.turnProvider.revoke(directServers);
     directRevocation = 'confirmed';
   }
+  const wssTarget = options.wss ?? (options.publicHost && fileEnv.PD_PUBLIC_HOST ? `wss://${fileEnv.PD_PUBLIC_HOST}/signal` : undefined);
+  if (options.publicHost && !wssTarget) throw new Error('--public requires PD_PUBLIC_HOST in the environment file');
+  const wssSummary = wssTarget
+    ? await checkPublicSignal(wssTarget, fileEnv, config.testForceRelay ? 'relay' : 'all', options.fetch ?? globalThis.fetch)
+    : { tested: false };
+  return { ...summary, directCredentialCheck: { issued: true, revoked: directRevocation, ice: directSummary }, publicWSS: wssSummary };
+}
 
-  let wssSummary: Record<string, unknown> = { tested: false };
-  const wssURL = option('--wss');
-  if (wssURL) {
-    const url = new URL(wssURL);
-    if (url.protocol !== 'wss:' || url.pathname !== '/signal' || url.search || url.hash) throw new Error('--wss must be a clean wss://.../signal URL');
-    if (!env.APPROVED_ROOMS_FILE) throw new Error('live WSS check requires APPROVED_ROOMS_FILE');
-    const approvedPath = resolve(env.APPROVED_ROOMS_FILE);
-    const hostToken = randomBytes(32).toString('hex');
-    const publicRoom = createHash('sha256').update(hostToken).digest('hex');
-    const clientToken = randomBytes(32).toString('hex');
-    const original = readApprovedRooms(approvedPath);
-    if (original.includes(publicRoom)) throw new Error('generated readiness room unexpectedly already exists');
-    mutateApprovedRooms(approvedPath, current => current.includes(publicRoom) ? current : [...current, publicRoom]);
-    const host = websocket(wssURL);
-    const client = websocket(wssURL);
-    try {
-      await host.opened;
-      host.socket.send(JSON.stringify({
-        type: 'register', version: 1, role: 'host', room: publicRoom, token: hostToken,
-        clientTokenHash: createHash('sha256').update(clientToken).digest('hex'),
-      }));
-      const hostRegistered = await host.next() as { type?: string };
-      const hostIce = await host.next() as { type?: string; servers?: IceServer[] };
-      if (hostRegistered.type !== 'registered' || hostIce.type !== 'ice' || !hostIce.servers) throw new Error('public host registration failed');
-      const hostSummary = summarizeIce(hostIce.servers);
-
-      await client.opened;
-      client.socket.send(JSON.stringify({ type: 'register', version: 1, role: 'client', room: publicRoom, token: clientToken }));
-      const clientRegistered = await client.next() as { type?: string };
-      const clientIce = await client.next() as { type?: string; servers?: IceServer[] };
-      if (clientRegistered.type !== 'registered' || clientIce.type !== 'ice' || !clientIce.servers) throw new Error('public client registration failed');
-      const clientSummary = summarizeIce(clientIce.servers);
-      wssSummary = { tested: true, authenticatedPair: true, hostIce: hostSummary, clientIce: clientSummary };
-    } finally {
-      host.socket.close();
-      client.socket.close();
-      mutateApprovedRooms(approvedPath, current => current.filter(room => room !== publicRoom));
-    }
-  }
-
-  console.log(JSON.stringify({
-    status: 'ready',
-    productionConfig: true,
-    provider: config.turnProvider.kind,
-    requestedCredentialTTLSeconds: Number(env.TURN_CREDENTIAL_TTL_SECONDS ?? 3600),
-    credentialIssuanceLimitPerMinute: config.credentialIssuesPerMinute,
-    roomLifetimeSeconds: (config.maxRoomLifetimeMs ?? 0) / 1000,
-    directCredentialCheck: { issued: true, revoked: directRevocation, ice: directSummary },
-    publicWSS: wssSummary,
-  }, null, 2));
+async function main() {
+  const envFile = option('--env-file');
+  if (!envFile) throw new Error(usage);
+  const report = await runReadiness({
+    envFile,
+    offline: hasFlag('--offline'),
+    wss: option('--wss'),
+    publicHost: hasFlag('--public'),
+    slot: option('--slot'),
+    cloudflaredConfig: option('--cloudflared-config'),
+    repoRoot: resolve(import.meta.dir, '..', '..'),
+  });
+  console.log(JSON.stringify(report, null, 2));
+  if (report.status === 'blocked') process.exit(1);
 }
 
 if (import.meta.main) {

@@ -15,6 +15,27 @@ struct MediaSignal: Codable {
     var line: Int32?
 }
 
+enum NativeRelayPolicy {
+    enum Decision: Equatable {
+        case proceed(forceRelay: Bool)
+        case relayRequiredUnavailable(serverRequired: Bool)
+    }
+
+    static func isValid(_ policy: String?) -> Bool {
+        policy == nil || policy == "all" || policy == "relay"
+    }
+
+    static func hasRelay(_ servers: [ICEServerConfiguration]) -> Bool {
+        servers.contains { $0.urls.contains { $0.hasPrefix("turn:") || $0.hasPrefix("turns:") } }
+    }
+
+    static func decide(servers: [ICEServerConfiguration], policy: String?, localForce: Bool) -> Decision {
+        let serverRequires = policy == "relay"
+        guard serverRequires || localForce else { return .proceed(forceRelay: false) }
+        return hasRelay(servers) ? .proceed(forceRelay: true) : .relayRequiredUnavailable(serverRequired: serverRequires)
+    }
+}
+
 enum MediaRoute {
     static func classify(selected: Bool, local: String?, remote: String?) -> String {
         guard selected else { return "Route pending" }

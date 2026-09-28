@@ -27,7 +27,8 @@ final class RemoteCoordinator: ObservableObject {
     private var session = ""
     private var sequence: UInt64 = 0
     private var guardState: SessionReplayGuard?
-        private var servers: [ICEServerConfiguration] = []
+    private var servers: [ICEServerConfiguration] = []
+    private var relayPolicy: String?
     private var timeout: Task<Void, Never>?
     private var retry: Task<Void, Never>?
     private var retryCount = 0
@@ -139,8 +140,10 @@ final class RemoteCoordinator: ObservableObject {
                 }
             case "ice":
                 servers = message.servers ?? []
-                guard servers.count <= 8, servers.allSatisfy({ $0.urls.count <= 8 }) else { throw RemoteError.invalidMessage }
-                hasRelay = servers.contains { $0.urls.contains { $0.hasPrefix("turn:") || $0.hasPrefix("turns:") } }
+                guard servers.count <= 8, servers.allSatisfy({ $0.urls.count <= 8 }),
+                      NativeRelayPolicy.isValid(message.policy) else { throw RemoteError.invalidMessage }
+                relayPolicy = message.policy
+                hasRelay = NativeRelayPolicy.hasRelay(servers)
             case "peer":
                 if message.online == true {
                     if !isHost {
@@ -225,8 +228,15 @@ final class RemoteCoordinator: ObservableObject {
         } catch { fail(error.localizedDescription) }
     }
     private func prepareMedia() {
-        guard !forceRelay || hasRelay else { fail("Relay-only test requires a configured TURN service."); return }
-        let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: forceRelay)
+        let relayOnly: Bool
+        switch NativeRelayPolicy.decide(servers: servers, policy: relayPolicy, localForce: forceRelay) {
+        case .proceed(let force):
+            relayOnly = force
+        case .relayRequiredUnavailable(let serverRequired):
+            fail(serverRequired ? "The connection service requires a relay, but none was provided." : "Relay-only test requires a configured TURN service.")
+            return
+        }
+        let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly)
         media = peer
         peer.onDiagnostics = { [weak self, weak peer] value in
             Task { @MainActor in if let self, let peer, self.media === peer { self.diagnostics = value } }

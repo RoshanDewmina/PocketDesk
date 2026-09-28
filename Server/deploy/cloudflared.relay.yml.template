@@ -1,0 +1,9 @@
+# Rendered by scripts/deploy-cloudflare.sh. Only /signal is routed; every other path answers 404.
+tunnel: @TUNNEL_ID@
+credentials-file: @CREDENTIALS_FILE@
+
+ingress:
+  - hostname: @PD_PUBLIC_HOST@
+    path: ^/signal$
+    service: http://127.0.0.1:@PORT@
+  - service: http_status:404

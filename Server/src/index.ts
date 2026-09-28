@@ -1,7 +1,8 @@
 import { loadServiceConfig } from './config';
+import { resolveRelaySecrets } from './secrets';
 import { createService } from './server';
 
-const app = createService(loadServiceConfig(process.env));
+const app = createService(loadServiceConfig(await resolveRelaySecrets(process.env)));
 console.log(`PocketDesk signaling listening on ${app.server.hostname}:${app.server.port}`);
 let shuttingDown = false;
 async function shutdown() {

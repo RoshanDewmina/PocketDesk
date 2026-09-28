@@ -1,8 +1,9 @@
 import { createBrowserService } from './service';
+import { resolveRelaySecrets } from '../secrets';
 import { createCloudflareTurnProvider, createCoturnProvider } from '../turn';
 import type { TurnCredentialProvider } from '../turn';
 
-const env = process.env;
+const env = await resolveRelaySecrets(process.env);
 const list = (value?: string) => value?.split(',').map(item => item.trim()).filter(Boolean) ?? [];
 
 function integer(name: string, fallback: number, min: number, max: number) {

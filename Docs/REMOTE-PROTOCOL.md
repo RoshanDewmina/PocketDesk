@@ -14,6 +14,8 @@ Client: same fields with `role:"client"`, token is clientToken, no clientTokenHa
 
 Server response `{ "type":"registered", "role":"host|client" }`, then optional `{ "type":"ice", "servers":[{"urls":["turn:..."],"username":"...","credential":"..."}] }`. Configured TURN credentials come from the selected Cloudflare API adapter or coturn shared-secret adapter, expire, and never expose the long-lived issuer secret to apps. No configured TURN means direct-only test coverage, not reliable public connectivity.
 
+The `ice` message may carry an optional `"policy":"relay"` (test-only service setting `POCKETDESK_TEST_FORCE_RELAY=1`; absence means `all`). A native peer that receives `policy:"relay"` builds its peer connection with relay-only ICE and, if no `turn:`/`turns:` server was delivered, fails closed instead of connecting directly. Any other `policy` value is a protocol error. Older peers ignore the field and connect normally, so a forced-relay test needs updated apps on both devices. The phone's local Relay-only toggle remains an independent way to force relay on that side only.
+
 Peer state `{ "type":"peer", "online":true|false }`. Both peers are notified when counterpart joins. Host disconnect closes its client. Client disconnect notifies host and keeps host registration. Client-to-server `{ "type":"signal", "payload":"<base64 opaque sealed bytes>" }` forwards only to authenticated counterpart in that room. Error `{ "type":"error", "code":"..." }` with sanitized reason. No SDP, ICE, remote input or video parsed by signaling service.
 
 ## Endpoint authentication and session binding

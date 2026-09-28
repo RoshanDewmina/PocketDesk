@@ -33,3 +33,54 @@ final class BrowserRelayPolicyTests: XCTestCase {
         XCTAssertEqual(BrowserRelayPolicy.relayDecision(servers: [turns()], policy: "relay"), .proceed(forceRelay: true))
     }
 }
+
+final class NativeRelayPolicyTests: XCTestCase {
+    private let stun = ICEServerConfiguration(urls: ["stun:stun.cloudflare.com:3478"], username: nil, credential: nil)
+    private let turn = ICEServerConfiguration(
+        urls: ["turn:turn.cloudflare.com:3478?transport=udp", "turns:turn.cloudflare.com:443?transport=tcp"],
+        username: "u", credential: "c")
+
+    func testNoPolicyAndNoLocalOverrideNeverForcesRelay() {
+        XCTAssertEqual(NativeRelayPolicy.decide(servers: [], policy: nil, localForce: false), .proceed(forceRelay: false))
+        XCTAssertEqual(NativeRelayPolicy.decide(servers: [stun, turn], policy: "all", localForce: false), .proceed(forceRelay: false))
+    }
+
+    func testServerRelayPolicyForcesRelayWhenATurnServerIsPresent() {
+        XCTAssertEqual(NativeRelayPolicy.decide(servers: [stun, turn], policy: "relay", localForce: false), .proceed(forceRelay: true))
+    }
+
+    func testServerRelayPolicyWithoutTurnFailsClosed() {
+        XCTAssertEqual(NativeRelayPolicy.decide(servers: [stun], policy: "relay", localForce: false),
+                       .relayRequiredUnavailable(serverRequired: true))
+        XCTAssertEqual(NativeRelayPolicy.decide(servers: [], policy: "relay", localForce: false),
+                       .relayRequiredUnavailable(serverRequired: true))
+    }
+
+    func testLocalRelayOnlyToggleKeepsItsOwnBehavior() {
+        XCTAssertEqual(NativeRelayPolicy.decide(servers: [stun, turn], policy: nil, localForce: true), .proceed(forceRelay: true))
+        XCTAssertEqual(NativeRelayPolicy.decide(servers: [stun], policy: nil, localForce: true),
+                       .relayRequiredUnavailable(serverRequired: false))
+    }
+
+    func testOnlyKnownPoliciesAreAccepted() {
+        XCTAssertTrue(NativeRelayPolicy.isValid(nil))
+        XCTAssertTrue(NativeRelayPolicy.isValid("all"))
+        XCTAssertTrue(NativeRelayPolicy.isValid("relay"))
+        XCTAssertFalse(NativeRelayPolicy.isValid("direct"))
+        XCTAssertFalse(NativeRelayPolicy.isValid(""))
+    }
+
+    func testIceMessageDecodesWithAndWithoutPolicySoOlderServicesStayCompatible() throws {
+        let body = #"{"type":"ice","servers":[{"urls":["turn:turn.cloudflare.com:3478"],"username":"u","credential":"c"}]"#
+        let legacy = try JSONDecoder().decode(RelayMessage.self, from: Data((body + "}").utf8))
+        XCTAssertNil(legacy.policy)
+        XCTAssertEqual(legacy.servers?.count, 1)
+        let forced = try JSONDecoder().decode(RelayMessage.self, from: Data((body + #","policy":"relay"}"#).utf8))
+        XCTAssertEqual(forced.policy, "relay")
+    }
+
+    func testOutboundMessagesOmitThePolicyField() throws {
+        let data = try JSONEncoder().encode(RelayMessage(type: "signal", payload: "abc"))
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("policy"))
+    }
+}
