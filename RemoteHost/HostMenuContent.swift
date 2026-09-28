@@ -28,21 +28,21 @@ enum HostMenuAction: Equatable {
 enum HostMenuModel {
     static func items(for state: HostViewState) -> [HostMenuItem] {
         let status = state.status
-        var items: [HostMenuItem] = [.status("PocketDesk — \(status.menuTitle)", systemImage: statusSymbol(status))]
+        var items: [HostMenuItem] = [.status(status.menuTitle, systemImage: statusSymbol(status))]
 
         switch status {
         case .controlling:
-            items.append(.note("It can use this Mac’s mouse and keyboard."))
+            items.append(.note("Mouse & keyboard enabled"))
         case .viewing where state.controlNeedsAccessibility:
-            items.append(.note("View only until Accessibility is allowed."))
+            items.append(.note("View only · Grant access"))
         case .viewing:
-            items.append(.note("View only. Control is off in Settings."))
+            items.append(.note("View only · Control is off"))
         case .ready:
-            items.append(.note("Your phone can connect to \(state.macName)."))
+            items.append(.note("Phone can connect to this Mac"))
         case .unavailable:
-            items.append(.note(state.detail ?? "Can’t reach the connection service."))
+            items.append(.note("Connection service unavailable"))
         case .needsScreenRecording:
-            items.append(.note("Allow Screen Recording to share this Mac."))
+            items.append(.note("Allow Screen Recording"))
         default:
             break
         }

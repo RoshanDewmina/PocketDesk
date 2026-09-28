@@ -27,7 +27,7 @@ final class RemoteHostModel: ObservableObject {
     @Published private var controlConsent: HostControlConsentState
     @Published private(set) var detail: String?
     @Published private(set) var active = false
-    @Published private(set) var wantsSharing = true
+    @Published private(set) var wantsSharing: Bool
     @Published private(set) var screenRecordingPermission: HostPermissionStatus = .unchecked
     @Published private(set) var accessibilityPermission: HostPermissionStatus = .unchecked
     @Published private(set) var screenRecordingSettingsOpened = false
@@ -139,6 +139,7 @@ final class RemoteHostModel: ObservableObject {
     init() {
         controlConsent = HostControlConsentState(isAllowed: preferences.allowControl)
         keepAwakeEnabled = preferences.keepAwake
+        wantsSharing = preferences.sharingEnabled
         accessibilitySkipped = preferences.accessibilitySkipped
         openAtLogin = SMAppService.mainApp.status == .enabled
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.active && !self.connection.connected }
@@ -273,6 +274,7 @@ final class RemoteHostModel: ObservableObject {
             pairingExpires = invitation.expires
             pairingExpired = false
             wantsSharing = true
+            preferences.sharingEnabled = true
             autoStart.clear()
             active = false
             start(display: display)
@@ -318,12 +320,14 @@ final class RemoteHostModel: ObservableObject {
 
     func stopSharing() {
         wantsSharing = false
+        preferences.sharingEnabled = false
         stop()
         if !hasPairedPhone { clearPairingCode() }
     }
 
     func resumeSharing() {
         wantsSharing = true
+        preferences.sharingEnabled = true
         autoStart.clear()
         detail = nil
         if displayRefreshStatus != .ready { loadDisplays() } else { reconcileSharing() }

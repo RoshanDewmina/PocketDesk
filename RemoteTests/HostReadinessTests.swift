@@ -98,10 +98,15 @@ final class HostReadinessTests: XCTestCase {
         let preferences = HostPreferences(defaults: defaults)
         XCTAssertTrue(preferences.allowControl)
         XCTAssertTrue(preferences.keepAwake)
+        XCTAssertTrue(preferences.sharingEnabled)
         XCTAssertTrue(HostControlConsentState().isAllowed)
 
         preferences.allowControl = false
         XCTAssertFalse(HostPreferences(defaults: defaults).allowControl)
+
+        preferences.sharingEnabled = false
+        XCTAssertFalse(HostPreferences(defaults: defaults).sharingEnabled,
+                       "Stop Sharing must survive quitting and reopening the host")
     }
 
     func testServiceAddressUsesFirstValidSource() {

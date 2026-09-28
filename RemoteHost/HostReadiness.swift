@@ -160,6 +160,7 @@ struct HostPreferences {
     private enum Key {
         static let allowControl = "allowControl"
         static let keepAwake = "keepAwakeWhileSharing"
+        static let sharingEnabled = "sharingEnabled"
         static let accessibilitySkipped = "setupAccessibilitySkipped"
         static let serviceAddress = "PocketDeskServiceURL"
     }
@@ -168,7 +169,7 @@ struct HostPreferences {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.allowControl: true, Key.keepAwake: true])
+        defaults.register(defaults: [Key.allowControl: true, Key.keepAwake: true, Key.sharingEnabled: true])
     }
 
     var allowControl: Bool {
@@ -179,6 +180,11 @@ struct HostPreferences {
     var keepAwake: Bool {
         get { defaults.bool(forKey: Key.keepAwake) }
         nonmutating set { defaults.set(newValue, forKey: Key.keepAwake) }
+    }
+
+    var sharingEnabled: Bool {
+        get { defaults.bool(forKey: Key.sharingEnabled) }
+        nonmutating set { defaults.set(newValue, forKey: Key.sharingEnabled) }
     }
 
     var accessibilitySkipped: Bool {

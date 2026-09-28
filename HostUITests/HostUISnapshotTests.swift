@@ -36,7 +36,17 @@ final class HostUISnapshotTests: XCTestCase {
             ("menu-needs-attention", ready(.needsScreenRecording) { $0.screenRecording = .denied })
         ]
         for (name, state) in states {
-            XCTAssertFalse(HostMenuModel.items(for: state).isEmpty)
+            let items = HostMenuModel.items(for: state)
+            XCTAssertFalse(items.isEmpty)
+            for item in items {
+                switch item {
+                case .status(let title, _), .note(let title):
+                    XCTAssertLessThanOrEqual(title.count, 30, "Menu text should stay scannable in \(name)")
+                case .action(let action):
+                    XCTAssertLessThanOrEqual(action.title.count, 30)
+                case .separator: break
+                }
+            }
             try render(name, HostMenuPreview(state: state), menuChrome: true)
         }
     }
