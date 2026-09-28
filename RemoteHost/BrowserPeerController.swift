@@ -154,6 +154,9 @@ final class BrowserPeerController: ObservableObject {
     private var session: ActiveSession?
     private var lease = BrowserLeaseOwnership()
     private var iceServers: [ICEServerConfiguration] = []
+    private var icePolicy = "all"
+    private var iceWaitSession: String?
+    private var iceReceivedSession: String?
 
     private var socket: URLSessionWebSocketTask?
     private var socketGeneration = UUID()
@@ -163,6 +166,7 @@ final class BrowserPeerController: ObservableObject {
     private var enrollmentTimeout: Task<Void, Never>?
     private var authorityTimeout: Task<Void, Never>?
     private var sessionTimeout: Task<Void, Never>?
+    private var iceTimeout: Task<Void, Never>?
 
     init(
         store: BrowserPeerStore = BrowserPeerStore(),
@@ -377,7 +381,7 @@ final class BrowserPeerController: ObservableObject {
         case "registered":
             status = "Browser access service is ready"
         case "ice":
-            iceServers = try decodeICEServers(message["servers"])
+            try handleIce(message)
         case "request":
             try handleRequest(message)
         case "cancel":
@@ -588,6 +592,11 @@ final class BrowserPeerController: ObservableObject {
                 expiresAt: ticketExpiresAt,
                 sessionExpiresAt: sessionExpiresAt
             )
+            // ICE for this session must land before the ticket admission window
+            // closes; a separate timer survives past `joined` so a contract
+            // violation (joined arriving without ice) still fails closed.
+            iceWaitSession = sessionID
+            scheduleIceTimeout(until: ticketExpiresAt, session: sessionID)
 
             // The authenticated host socket is ordered: install transport authority
             // before returning it to the browser.
@@ -684,12 +693,50 @@ final class BrowserPeerController: ObservableObject {
         peer.receive(signal)
     }
 
+    private func handleIce(_ message: [String: Any]) throws {
+        guard message.count == 4,
+              Set(message.keys) == Set(["type", "session", "servers", "policy"]),
+              let sessionID = message["session"] as? String,
+              let policy = message["policy"] as? String,
+              ["all", "relay"].contains(policy),
+              let waitingSession = iceWaitSession,
+              sessionID == waitingSession,
+              iceReceivedSession == nil else {
+            throw BrowserControllerError.invalidMessage
+        }
+        let servers = try decodeICEServers(message["servers"])
+        iceServers = servers
+        icePolicy = policy
+        iceReceivedSession = sessionID
+        iceTimeout?.cancel()
+        iceTimeout = nil
+    }
+
+    private func scheduleIceTimeout(until deadline: Date, session sessionID: String) {
+        iceTimeout?.cancel()
+        let delay = max(0, deadline.timeIntervalSince(now()))
+        iceTimeout = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.iceWaitSession == sessionID else { return }
+            self.terminateLiveSession(status: "Browser ICE delivery timed out (ice_timeout)")
+        }
+    }
+
     private func preparePeer(for sessionID: String) {
         guard peer == nil, let current = session,
               current.session == sessionID,
               current.receivedKeyConfirmation,
-              lease.isOwned else { return }
-        let next = PeerMedia(isHost: true, servers: iceServers)
+              lease.isOwned,
+              iceReceivedSession == sessionID else { return }
+        let forceRelay: Bool
+        switch BrowserRelayPolicy.relayDecision(servers: iceServers, policy: icePolicy) {
+        case .relayRequiredUnavailable:
+            terminateLiveSession(status: "Browser session requires relay but no TURN server was issued (relay_required_unavailable)")
+            return
+        case .proceed(let decided):
+            forceRelay = decided
+        }
+        let next = PeerMedia(isHost: true, servers: iceServers, forceRelay: forceRelay)
         peer = next
         next.onSignal = { [weak self, weak next] signal in
             Task { @MainActor in
@@ -869,6 +916,8 @@ final class BrowserPeerController: ObservableObject {
         authorityTimeout = nil
         sessionTimeout?.cancel()
         sessionTimeout = nil
+        iceTimeout?.cancel()
+        iceTimeout = nil
         challenge = nil
         ticket = nil
         session = nil
@@ -876,6 +925,10 @@ final class BrowserPeerController: ObservableObject {
         connected = false
         peer?.close()
         peer = nil
+        iceServers = []
+        icePolicy = "all"
+        iceWaitSession = nil
+        iceReceivedSession = nil
         let released = lease.release(using: releaseAcquired)
         if notifyEnded && released { onEnded?() }
     }
@@ -933,6 +986,11 @@ final class BrowserPeerController: ObservableObject {
         socket = nil
         pendingWrites.removeAll()
         iceServers.removeAll()
+        icePolicy = "all"
+        iceWaitSession = nil
+        iceReceivedSession = nil
+        iceTimeout?.cancel()
+        iceTimeout = nil
     }
 
     private func decodeICEServers(_ object: Any?) throws -> [ICEServerConfiguration] {
@@ -965,4 +1023,19 @@ final class BrowserPeerController: ObservableObject {
 
 private enum BrowserControllerError: Error {
     case invalidMessage
+}
+
+enum BrowserRelayDecision: Equatable {
+    case proceed(forceRelay: Bool)
+    case relayRequiredUnavailable
+}
+
+enum BrowserRelayPolicy {
+    static func relayDecision(servers: [ICEServerConfiguration], policy: String) -> BrowserRelayDecision {
+        guard policy == "relay" else { return .proceed(forceRelay: false) }
+        let hasRelay = servers.contains { server in
+            server.urls.contains { $0.hasPrefix("turn:") || $0.hasPrefix("turns:") }
+        }
+        return hasRelay ? .proceed(forceRelay: true) : .relayRequiredUnavailable
+    }
 }
