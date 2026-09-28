@@ -4,6 +4,12 @@
 
 Workbench facts are from its product page, App Store listing, help centre and press, checked 28 September 2026. Vendor claims are marked as such; nothing below was hands-on tested by us yet.
 
+## Later same-day status refresh
+
+The original matrix below records the Claude checkpoint, before the subsequent local updates. PocketDesk now has installed hardware H.264 streaming, a native menu-bar host, natural View/Control gestures, three-finger workspace shortcuts, a gesture guide, eased cursor-follow that works above the dock, and heavy click haptics. Sharper is now capped at2560 pixels to address measured encoder pressure. Brief inactive interruptions preserve the connection; full backgrounding still ends it. These are implemented choices, not proven performance superiority.
+
+Roshan’s next request is dedicated voice input matching Workbench’s [mic → speak → Done insertion](https://support.astropad.com/en/articles/14011148-voice-to-text-input). He chose direct insertion, not an intermediate editable draft. Dedicated voice input is implemented and installed in phone build 20260928.9. Phone component and focused UI checks pass; physical recognition and real-speech delivery are not yet verified. Clipboard, owned internet relay, virtual/unified displays and authenticated agent handoff remain gaps. The recovered original and current comparison were shown in the continuation chat; PRODUCT and the implementation ledger remain authoritative for scope and receipts.
+
 ## Workbench at a glance
 
 - Native Mac + iPhone + iPad apps. Launched 24 March 2026 (1.0), announced 8 April; **1.3.1 on 17 September 2026**; ten releases in six months.

@@ -1,6 +1,23 @@
 import XCTest
 
 final class SessionLayoutTests: XCTestCase {
+    @MainActor
+    func testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-voice-preview-check"]
+        app.launch()
+        let transcript = app.descendants(matching: .any)["remote.voice.transcript"].firstMatch
+        XCTAssertTrue(transcript.waitForExistence(timeout: 5))
+        let done = app.buttons["remote.voice.done"]
+        XCTAssertTrue(done.exists && done.isHittable)
+        XCTAssertFalse(done.isEnabled, "Offline preview cannot insert text on a Mac")
+        attachScreenshot("Voice input long transcript - portrait preview")
+        rotate(app, to: .landscapeLeft)
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        XCTAssertTrue(done.isHittable, "The anchored Done action stays reachable below long speech")
+        attachScreenshot("Voice input long transcript - landscape preview")
+    }
+
     override func setUp() {
         super.setUp()
         continueAfterFailure = false

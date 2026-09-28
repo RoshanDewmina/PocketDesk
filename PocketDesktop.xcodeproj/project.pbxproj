@@ -139,6 +139,7 @@
 		B85EA1D0BE330E3824689904 /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412B04FA6976C7A9157CAECE /* SignalingClient.swift */; };
 		B8B6AF345E0BB96720DEF475 /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412B04FA6976C7A9157CAECE /* SignalingClient.swift */; };
 		BA1C0BA7DC6B46312FF2421E /* BrowserCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */; };
+		BB19004C1116A7B5899703F4 /* VoiceInputController.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1D8D7257177BB3F021DAFED /* VoiceInputController.swift */; };
 		BB2DA682D207BD16F08C55CF /* CommittedTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E4539B888291F193DD3C21E /* CommittedTextField.swift */; };
 		C1ED9FCC36FF29ED9A9DC921 /* BrowserFrameMarker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB6DA47FDA33D0407262019B /* BrowserFrameMarker.swift */; };
 		C20AC78A6D67C31712E16C1E /* NativeGestureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EBEF9617A31797FAF4B8D81 /* NativeGestureEngine.swift */; };
@@ -290,6 +291,7 @@
 		CDB43E9A47D0C0BFAB1B5988 /* StreamWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamWire.swift; sourceTree = "<group>"; };
 		CE2406BCA00220ED02C01518 /* NativeInputSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeInputSafetyTests.swift; sourceTree = "<group>"; };
 		D0F8CA7B8BEAF31928685E31 /* ScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerView.swift; sourceTree = "<group>"; };
+		D1D8D7257177BB3F021DAFED /* VoiceInputController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputController.swift; sourceTree = "<group>"; };
 		D8FC077F3131B8830DBE715F /* RemotePhoneApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemotePhoneApp.swift; sourceTree = "<group>"; };
 		D9895ECA161AEB9A4D3B2451 /* TrackpadSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrackpadSurface.swift; sourceTree = "<group>"; };
 		DAC85148D3F395A0D9046A13 /* NativeGestureEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGestureEngineTests.swift; sourceTree = "<group>"; };
@@ -575,6 +577,7 @@
 				D8FC077F3131B8830DBE715F /* RemotePhoneApp.swift */,
 				D0F8CA7B8BEAF31928685E31 /* ScannerView.swift */,
 				4A5C9E326152AE8499CB924A /* ViewportPreference.swift */,
+				D1D8D7257177BB3F021DAFED /* VoiceInputController.swift */,
 			);
 			path = RemotePhone;
 			sourceTree = "<group>";
@@ -1053,6 +1056,7 @@
 				14AA7C0B85F30F77B1C952D8 /* VideoCodecPolicy.swift in Sources */,
 				72BC245E190C402DA7C039D9 /* ViewportPreference.swift in Sources */,
 				CEC79788BAFA48075F8DBBCE /* ViewportTransform.swift in Sources */,
+				BB19004C1116A7B5899703F4 /* VoiceInputController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1139,12 +1143,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20260928.8;
+				CURRENT_PROJECT_VERSION = 20260928.9;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = PocketDesk;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the pairing code shown on your Mac.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Discover and connect securely to your paired Mac.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Use your microphone to dictate text for your Mac.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Turn your speech into text for the active field on your Mac.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
@@ -1386,12 +1392,14 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20260928.8;
+				CURRENT_PROJECT_VERSION = 20260928.9;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = PocketDesk;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Scan the pairing code shown on your Mac.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Discover and connect securely to your paired Mac.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Use your microphone to dictate text for your Mac.";
+				INFOPLIST_KEY_NSSpeechRecognitionUsageDescription = "Turn your speech into text for the active field on your Mac.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;

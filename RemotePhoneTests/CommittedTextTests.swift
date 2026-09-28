@@ -5,6 +5,27 @@ import UIKit
 
 @MainActor
 final class CommittedTextTests: XCTestCase {
+    func testVoiceAcknowledgmentNeverClearsTypedDraftEvenWhenIdentical() {
+        let voice = PendingText(requestID: "voice", payload: "same words", origin: .voice, sentAt: 1)
+        let typed = PendingText(requestID: "typed", payload: "same words", origin: .draft, sentAt: 1)
+        XCTAssertEqual(voice.draftAfterAcknowledgment("same words", accepted: true), "same words")
+        XCTAssertEqual(voice.draftAfterAcknowledgment("same words", accepted: false), "same words")
+        XCTAssertEqual(typed.draftAfterAcknowledgment("same words", accepted: true), "")
+        XCTAssertEqual(typed.draftAfterAcknowledgment("edited draft", accepted: true), "edited draft")
+    }
+
+    func testFinalizedVoiceCanWaitForExplicitRetryWhenControlIsUnavailable() {
+        let model = PhoneRemoteModel()
+        model.draft = "unsent typed draft"
+        model.stageVoiceRetry("spoken text")
+        XCTAssertEqual(model.voiceRetryTranscript, "spoken text")
+        XCTAssertEqual(model.voiceDeliveryStatus, .notQueued)
+        XCTAssertEqual(model.draft, "unsent typed draft")
+        XCTAssertFalse(model.sendVoiceText("spoken text"), "A disconnected session cannot send")
+        XCTAssertEqual(model.voiceRetryTranscript, "spoken text")
+        XCTAssertEqual(model.draft, "unsent typed draft")
+    }
+
     private func drainMainQueue() async {
         await withCheckedContinuation { continuation in
             DispatchQueue.main.async { continuation.resume() }
@@ -145,5 +166,96 @@ final class CommittedTextTests: XCTestCase {
         XCTAssertFalse(editor?.isEditable ?? true, "In-flight draft must reject new composition until acknowledgment")
         XCTAssertTrue(editor?.isSelectable ?? false)
         window.isHidden = true
+    }
+}
+
+@MainActor
+private final class FakeVoiceBackend: VoiceRecognitionBackend {
+    var authorizationCount = 0
+    var started = 0
+    var stopped = 0
+    var cancelled = 0
+    var result: (@MainActor (String, Bool) -> Void)?
+    var failure: (@MainActor () -> Void)?
+    var suspendAuthorization = false
+    var authorizationStarted: XCTestExpectation?
+    private var authorizationContinuation: CheckedContinuation<Void, Never>?
+
+    func authorize(shouldContinue: @escaping @MainActor () -> Bool) async throws {
+        authorizationCount += 1
+        authorizationStarted?.fulfill()
+        if suspendAuthorization {
+            await withCheckedContinuation { authorizationContinuation = $0 }
+        }
+    }
+
+    func finishAuthorization() {
+        authorizationContinuation?.resume()
+        authorizationContinuation = nil
+    }
+
+    func begin(onResult: @escaping @MainActor (String, Bool) -> Void,
+               onFailure: @escaping @MainActor () -> Void) throws {
+        started += 1
+        result = onResult
+        failure = onFailure
+    }
+
+    func stop() { stopped += 1 }
+    func cancel() { cancelled += 1 }
+}
+
+@MainActor
+final class VoiceInputTests: XCTestCase {
+    func testDismissedSheetNeverRequestsPermission() async {
+        let backend = FakeVoiceBackend()
+        let controller = VoiceInputController(backend: backend)
+        await controller.start(whileAllowed: { false })
+        XCTAssertEqual(backend.authorizationCount, 0)
+        XCTAssertEqual(controller.phase, .idle)
+    }
+
+    func testFinalRecognitionWaitsForExplicitDoneAndOnlyCompletesOnce() async {
+        let backend = FakeVoiceBackend()
+        let controller = VoiceInputController(backend: backend)
+        await controller.start(whileAllowed: { true })
+        XCTAssertEqual(controller.phase, .listening)
+        backend.result?("Hello Mac", false)
+        backend.result?("Hello Mac.", true)
+        XCTAssertEqual(controller.phase, .ready)
+        XCTAssertEqual(backend.stopped, 1)
+        var insertions: [String] = []
+        controller.finish { value in if let value { insertions.append(value) } }
+        backend.result?("late duplicate", true)
+        controller.finish { value in if let value { insertions.append(value) } }
+        XCTAssertEqual(insertions, ["Hello Mac."])
+    }
+
+    func testCancelDuringAuthorizationPreventsLateRecordingAndInsertion() async {
+        let backend = FakeVoiceBackend()
+        backend.suspendAuthorization = true
+        backend.authorizationStarted = expectation(description: "authorization started")
+        let controller = VoiceInputController(backend: backend)
+        let request = Task { await controller.start(whileAllowed: { true }) }
+        await fulfillment(of: [backend.authorizationStarted!], timeout: 2)
+        controller.cancel()
+        backend.finishAuthorization()
+        await request.value
+        XCTAssertEqual(backend.started, 0)
+        XCTAssertEqual(controller.phase, .idle)
+        XCTAssertTrue(controller.transcript.isEmpty)
+    }
+
+    func testInterruptionRetainsPartialTextWithoutAutomaticInsertion() async {
+        let backend = FakeVoiceBackend()
+        let controller = VoiceInputController(backend: backend)
+        await controller.start(whileAllowed: { true })
+        backend.result?("partially spoken", false)
+        controller.pauseForInterruption()
+        XCTAssertEqual(controller.phase, .ready)
+        XCTAssertEqual(controller.transcript, "partially spoken")
+        XCTAssertGreaterThan(backend.cancelled, 0)
+        backend.result?("late result", true)
+        XCTAssertEqual(controller.transcript, "partially spoken", "An interrupted recording ignores late recognition")
     }
 }

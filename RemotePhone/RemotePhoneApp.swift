@@ -22,10 +22,21 @@ enum PairingEntry: String, Identifiable {
     var id: String { rawValue }
 }
 
-private struct PendingText {
+struct PendingText {
     let requestID: String
-    let draft: String
+    let payload: String
+    let origin: TextOrigin
     let sentAt: TimeInterval
+
+    func draftAfterAcknowledgment(_ currentDraft: String, accepted: Bool) -> String {
+        accepted && origin == .draft && currentDraft == payload ? "" : currentDraft
+    }
+}
+
+enum TextOrigin { case draft, voice }
+
+enum VoiceDeliveryStatus: Equatable {
+    case idle, waiting, accepted, refused, uncertain, notQueued
 }
 
 @MainActor
@@ -65,6 +76,8 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var captureHealthy = false
     @Published var geometryEpoch: UInt64 = 0
     @Published var textStatus = ""
+    @Published private(set) var voiceDeliveryStatus: VoiceDeliveryStatus = .idle
+    @Published private(set) var voiceRetryTranscript = ""
     @Published private(set) var contentConcealed = false
 
     @Published var sourceSize = CGSize(width: 1440, height: 900)
@@ -233,17 +246,38 @@ final class PhoneRemoteModel: ObservableObject {
 
     func sendText() {
         guard canControl, textCanSend else { return }
+        _ = queueText(draft, origin: .draft)
+    }
+
+    @discardableResult
+    func sendVoiceText(_ transcript: String) -> Bool {
+        guard pendingText == nil else { return false }
+        stageVoiceRetry(transcript)
+        guard canControl, !isComposingText,
+              !transcript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              transcript.utf8.count <= 4_096, transcript.utf16.count <= 1_024 else {
+            voiceDeliveryStatus = .notQueued
+            return false
+        }
+        return queueText(transcript, origin: .voice)
+    }
+
+    private func queueText(_ payload: String, origin: TextOrigin) -> Bool {
         let pending = PendingText(
             requestID: UUID().uuidString.replacingOccurrences(of: "-", with: ""),
-            draft: draft,
+            payload: payload,
+            origin: origin,
             sentAt: ProcessInfo.processInfo.systemUptime
         )
-        guard sendInput("text", text: pending.draft, key: pending.requestID) else {
-            textStatus = "Text was not queued. Your draft is still here."
-            return
+        guard sendInput("text", text: payload, key: pending.requestID) else {
+            if origin == .voice { voiceDeliveryStatus = .notQueued }
+            else { textStatus = "Text was not queued. Your draft is still here." }
+            return false
         }
         pendingText = pending
-        textStatus = "Waiting for your Mac to confirm text delivery…"
+        if origin == .voice { voiceDeliveryStatus = .waiting }
+        else { textStatus = "Waiting for your Mac to confirm text delivery…" }
+        return true
     }
 
     func drag() {
@@ -317,8 +351,31 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func clearUncertainText() {
+        guard pendingText?.origin == .draft else { return }
         pendingText = nil
         textStatus = ""
+    }
+
+    func clearUncertainVoiceText() {
+        guard pendingText?.origin == .voice, voiceDeliveryStatus == .uncertain else { return }
+        pendingText = nil
+        voiceDeliveryStatus = .idle
+    }
+
+    func prepareVoiceInput() {
+        if pendingText?.origin != .voice && voiceRetryTranscript.isEmpty { voiceDeliveryStatus = .idle }
+    }
+
+    func stageVoiceRetry(_ transcript: String) {
+        guard !transcript.isEmpty else { return }
+        voiceRetryTranscript = transcript
+        voiceDeliveryStatus = .notQueued
+    }
+
+    func discardVoiceRetry() {
+        if pendingText?.origin == .voice { pendingText = nil }
+        voiceRetryTranscript = ""
+        voiceDeliveryStatus = .idle
     }
 
     private func receive(_ action: RemoteAction) {
@@ -378,8 +435,13 @@ final class PhoneRemoteModel: ObservableObject {
     private func receiveTextResult(_ action: RemoteAction) {
         guard let pending = pendingText, action.key == pending.requestID else { return }
         pendingText = nil
+        if pending.origin == .voice {
+            voiceDeliveryStatus = action.x == 1 ? .accepted : .refused
+            if action.x == 1 { voiceRetryTranscript = "" }
+            return
+        }
         if action.x == 1 {
-            if draft == pending.draft { draft = "" }
+            draft = pending.draftAfterAcknowledgment(draft, accepted: true)
             textStatus = draft.isEmpty ? "Sent to your Mac." : "Mac accepted input; your edited draft was kept."
         } else {
             textStatus = "Your Mac refused the text. Your draft is still here."
@@ -427,8 +489,12 @@ final class PhoneRemoteModel: ObservableObject {
                 _ = sendInput("holdRenew", hold: activeHold)
             }
         }
-        if let pending = pendingText, now - pending.sentAt > 4, textStatus.hasPrefix("Waiting") {
-            textStatus = "Delivery is uncertain. Your draft is still here; it was not sent again."
+        if let pending = pendingText, now - pending.sentAt > 4 {
+            if pending.origin == .voice, voiceDeliveryStatus == .waiting {
+                voiceDeliveryStatus = .uncertain
+            } else if pending.origin == .draft, textStatus.hasPrefix("Waiting") {
+                textStatus = "Delivery is uncertain. Your draft is still here; it was not sent again."
+            }
         }
     }
 
@@ -456,6 +522,7 @@ final class PhoneRemoteModel: ObservableObject {
         inputRevision &+= 1
         lastFrame = 0
         lastCaptureHealth = 0
+        if pendingText?.origin == .voice { voiceDeliveryStatus = .uncertain }
         pendingText = nil
         textStatus = ""
     }

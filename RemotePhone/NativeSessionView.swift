@@ -16,6 +16,8 @@ struct NativeSessionView: View {
     @State private var controlsCollapsed = true
     @State private var keyboardOpen = false
     @State private var showControls = false
+    @State private var showVoiceInput = false
+    @StateObject private var voiceInput = VoiceInputController()
     @State private var panMode = false
     @State private var clickAcknowledged = false
     @State private var zoomBadge: String?
@@ -24,6 +26,7 @@ struct NativeSessionView: View {
     @AppStorage("pointerSensitivity") private var sensitivity = 1.0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.scenePhase) private var scenePhase
 
     private let sideSlot: CGFloat = 52
 
@@ -55,10 +58,36 @@ struct NativeSessionView: View {
         .persistentSystemOverlays(.hidden)
         .defersSystemGestures(on: .vertical)
         .sheet(isPresented: $showControls) { controlsSheet }
+        .sheet(isPresented: $showVoiceInput, onDismiss: { voiceInput.cancel() }) { voiceSheet }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { cancelVoiceInput() }
+            else if phase == .inactive && voiceInput.phase != .requestingPermission {
+                voiceInput.pauseForInterruption()
+            }
+        }
+        .onChange(of: connection.connected) { _, connected in if !connected { cancelVoiceInput() } }
+        .onChange(of: model.contentConcealed) { _, concealed in if concealed { cancelVoiceInput() } }
+        .onChange(of: model.privacyShield) { _, shielded in
+            if shielded && voiceInput.phase != .requestingPermission { voiceInput.pauseForInterruption() }
+        }
+        .onChange(of: model.canControl) { _, allowed in
+            if !allowed && voiceInput.phase == .listening { voiceInput.pauseForInterruption() }
+        }
+        .onChange(of: model.voiceDeliveryStatus) { _, status in
+            if status == .accepted { showVoiceInput = false }
+        }
         .sensoryFeedback(.selection, trigger: viewport.mode)
         .onChange(of: viewport.mode) { _, mode in ViewportPreference.store(mode) }
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
-        .onDisappear { model.cancelInput() }
+        .onAppear {
+            #if DEBUG
+            if offlineLayoutCheck && ProcessInfo.processInfo.arguments.contains("--ui-voice-preview-check") {
+                voiceInput.loadNonRecordingPreview(String(repeating: "A long spoken note stays readable while the insert action remains in reach. ", count: 12))
+                showVoiceInput = true
+            }
+            #endif
+        }
+        .onDisappear { model.cancelInput(); cancelVoiceInput() }
         .task(id: model.acceptedClicks) {
             guard model.acceptedClicks > 0 else { return }
             clickAcknowledged = true
@@ -77,13 +106,13 @@ struct NativeSessionView: View {
     private var stage: some View {
         ZStack(alignment: .topLeading) {
             videoLayer
-            NativeTrackpadSurface(enabled: model.canControl && !panMode && !showControls, panMode: panMode,
+            NativeTrackpadSurface(enabled: model.canControl && !panMode && !showControls && !showVoiceInput, panMode: panMode,
                                   revision: model.inputRevision &+ revision, sensitivity: CGFloat(sensitivity),
                                   pointerScale: viewport.scale, doubleClickInterval: model.doubleClickInterval,
                                   onCommand: handle,
                                   onPointerMotionEnded: { model.pointerLocator.stopFollowing() })
                 .accessibilityIdentifier("remote.canvas")
-                .allowsHitTesting(!showControls && !model.privacyShield && !model.contentConcealed)
+                .allowsHitTesting(!showControls && !showVoiceInput && !model.privacyShield && !model.contentConcealed)
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
             canvasFrame = frame
@@ -256,7 +285,17 @@ struct NativeSessionView: View {
             .accessibilityLabel("Release")
             .accessibilityHint("Drops the held item on your Mac")
         } else {
-            Color.clear.frame(height: 48).allowsHitTesting(false).accessibilityHidden(true)
+            Button(action: openVoiceInput) {
+                Image(systemName: "mic.fill")
+                    .font(.title3)
+                    .frame(width: sideSlot, height: 48)
+                    .contentShape(.capsule)
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .disabled(!voiceEntryAvailable)
+            .accessibilityLabel("Voice input")
+            .accessibilityHint("Speak on this iPhone, then tap Done to insert text on your Mac")
         }
     }
 
@@ -366,6 +405,14 @@ struct NativeSessionView: View {
 
                 HStack(alignment: .center, spacing: 8) {
                     textField
+                    Button(action: openVoiceInput) {
+                        Image(systemName: "mic.fill")
+                            .frame(width: 44, height: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(.regular.interactive(), in: .circle)
+                    .disabled(!voiceEntryAvailable)
+                    .accessibilityLabel("Voice input")
                     Button { model.sendText() } label: {
                         Image(systemName: "arrow.up")
                             .font(.body.weight(.bold))
@@ -391,6 +438,162 @@ struct NativeSessionView: View {
     }
 
     private var canSend: Bool { model.canControl && model.textCanSend }
+
+    private var voiceSheet: some View {
+        NavigationStack {
+            ScrollView {
+                if voiceContentHidden {
+                    Label("Voice input hidden", systemImage: "lock.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, minHeight: 180)
+                        .accessibilityIdentifier("remote.voice.hidden")
+                } else {
+                    VStack(spacing: 22) {
+                    Image(systemName: voiceInput.phase == .listening ? "waveform" : "mic.fill")
+                        .font(.system(size: 38, weight: .medium))
+                        .foregroundStyle(voiceInput.phase == .listening ? PhoneTheme.ready : PhoneTheme.tint)
+                        .accessibilityHidden(true)
+                    Text(voiceInput.phase == .listening ? "Listening on this iPhone" : "Voice input")
+                        .font(.title3.weight(.semibold))
+                    Text(displayedVoiceTranscript.isEmpty ? "Your words will appear here as you speak."
+                                                        : displayedVoiceTranscript)
+                        .font(.body)
+                        .foregroundStyle(displayedVoiceTranscript.isEmpty ? .secondary : .primary)
+                        .frame(maxWidth: .infinity, minHeight: 88, alignment: .topLeading)
+                        .padding(16)
+                        .background(.quaternary, in: .rect(cornerRadius: 16))
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("remote.voice.transcript")
+                    if let message = voiceInput.message {
+                        Text(message).font(.footnote).foregroundStyle(PhoneTheme.caution)
+                    }
+                    if let message = voiceDeliveryMessage {
+                        Text(message).font(.footnote).foregroundStyle(PhoneTheme.caution)
+                    }
+                    if let message = voiceLimitMessage {
+                        Text(message).font(.footnote).foregroundStyle(PhoneTheme.caution)
+                    }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(24)
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if !voiceContentHidden {
+                VStack(spacing: 10) {
+                if voiceInput.phase == .requestingPermission || voiceInput.phase == .finishing {
+                    ProgressView(voiceInput.phase == .requestingPermission ? "Checking microphone access…" : "Finishing speech…")
+                }
+                if model.voiceDeliveryStatus == .waiting {
+                    ProgressView("Waiting for your Mac to confirm insertion…")
+                } else if [.refused, .uncertain, .notQueued].contains(model.voiceDeliveryStatus),
+                          !displayedVoiceTranscript.isEmpty {
+                    Button("Try insertion again", action: retryVoiceInsertion)
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!model.canControl || model.isComposingText || voiceLimitMessage != nil)
+                        .accessibilityHint("Check your Mac first if delivery was uncertain")
+                } else if voiceInput.canFinish {
+                    Button("Done") { voiceInput.finish(insertVoiceTranscript) }
+                        .buttonStyle(.borderedProminent)
+                        .tint(PhoneTheme.ready)
+                        .disabled(displayedVoiceTranscript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                                  !model.canControl || model.isComposingText || !model.textEditable ||
+                                  voiceLimitMessage != nil)
+                        .accessibilityIdentifier("remote.voice.done")
+                }
+                if !model.voiceRetryTranscript.isEmpty && model.voiceDeliveryStatus != .waiting {
+                    Button("Record again") { model.discardVoiceRetry(); beginVoiceCapture() }
+                        .disabled(!model.canControl)
+                }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(16)
+                .background(.regularMaterial)
+                }
+            }
+            .navigationTitle("Voice input")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { cancelVoiceInput() }
+                }
+            }
+        }
+        .presentationDetents([.large])
+        .interactiveDismissDisabled(voiceInput.phase == .finishing || model.voiceDeliveryStatus == .waiting)
+    }
+
+    private var voiceDeliveryMessage: String? {
+        switch model.voiceDeliveryStatus {
+        case .idle, .accepted: nil
+        case .waiting: nil
+        case .refused: "Your Mac refused the text. The transcript is still here."
+        case .uncertain: "Delivery is uncertain. Check your Mac before retrying; the text was not sent again."
+        case .notQueued: "Text was not queued. Check the connection and text length, then try again."
+        }
+    }
+
+    private var displayedVoiceTranscript: String {
+        voiceInput.transcript.isEmpty ? model.voiceRetryTranscript : voiceInput.transcript
+    }
+
+    private var voiceContentHidden: Bool {
+        scenePhase != .active || model.privacyShield || model.contentConcealed
+    }
+
+    private var voiceEntryAvailable: Bool {
+        model.canControl && !model.dragging &&
+        (model.textEditable || (model.voiceDeliveryStatus == .uncertain && !model.voiceRetryTranscript.isEmpty))
+    }
+
+    private var voiceLimitMessage: String? {
+        if displayedVoiceTranscript.utf8.count > 4_096 { return "Voice text exceeds the 4,096-byte limit. Record a shorter message." }
+        if displayedVoiceTranscript.utf16.count > 1_024 { return "Voice text exceeds the 1,024-character-unit limit. Record a shorter message." }
+        return nil
+    }
+
+    private func openVoiceInput() {
+        guard voiceEntryAvailable else { return }
+        cancelGesture()
+        if keyboardOpen { closeKeyboard() }
+        model.prepareVoiceInput()
+        voiceInput.cancel()
+        showVoiceInput = true
+        if model.voiceRetryTranscript.isEmpty { beginVoiceCapture() }
+    }
+
+    private func beginVoiceCapture() {
+        guard let expectedMedia = connection.media else { return }
+        voiceInput.cancel()
+        Task {
+            await voiceInput.start(whileAllowed: {
+                showVoiceInput && scenePhase == .active && model.canControl &&
+                connection.connected && connection.media === expectedMedia &&
+                !model.contentConcealed && !model.privacyShield
+            })
+        }
+    }
+
+    private func insertVoiceTranscript(_ transcript: String?) {
+        guard let transcript else { return }
+        model.stageVoiceRetry(transcript)
+        guard showVoiceInput,
+              scenePhase == .active, model.canControl, model.textEditable,
+              !model.isComposingText, !model.contentConcealed, !model.privacyShield else { return }
+        _ = model.sendVoiceText(transcript)
+    }
+
+    private func retryVoiceInsertion() {
+        guard model.voiceDeliveryStatus != .waiting, scenePhase == .active,
+              model.canControl, !model.isComposingText else { return }
+        if model.voiceDeliveryStatus == .uncertain { model.clearUncertainVoiceText() }
+        _ = model.sendVoiceText(displayedVoiceTranscript.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private func cancelVoiceInput() {
+        voiceInput.cancel()
+        showVoiceInput = false
+    }
 
     private var textField: some View {
         ZStack(alignment: .leading) {
@@ -649,7 +852,7 @@ struct NativeSessionView: View {
     // MARK: - Behaviour
 
     private func handle(_ command: NativeGestureCommand) -> Bool {
-        guard !showControls, !model.privacyShield, !model.contentConcealed else { return false }
+        guard !showControls, !showVoiceInput, !model.privacyShield, !model.contentConcealed else { return false }
         switch command {
         case .zoomToggle(let anchor):
             model.pointerLocator.clear()
