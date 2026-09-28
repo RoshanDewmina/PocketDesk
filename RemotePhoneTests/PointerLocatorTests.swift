@@ -44,7 +44,8 @@ final class PointerLocatorTests: XCTestCase {
         locator.receive(RemoteAction(action: "heartbeat", pointerProbe: resumed,
             pointerLocation: PointerLocation(x: 90, y: 50)), at: 2.10,
             sourceSize: CGSize(width: 100, height: 100))
-        XCTAssertEqual(followed.count, 1, "A stalled finger cannot create delayed camera motion")
+        XCTAssertEqual(followed.last, CGPoint(x: 90, y: 50),
+                       "A held finger can finish following a valid delayed probe")
         locator.moved(at: 2.11)
         let current = locator.poll(at: 2.11, available: true)!
         locator.receive(RemoteAction(action: "heartbeat", pointerProbe: current,

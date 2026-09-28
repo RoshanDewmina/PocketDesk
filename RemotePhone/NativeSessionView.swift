@@ -11,6 +11,7 @@ struct NativeSessionView: View {
                                                     canvasSize: .zero, mode: ViewportPreference.stored())
     @State private var canvasFrame: CGRect = .zero
     @State private var safeFrame: CGRect = .zero
+    @State private var dockFrame: CGRect = .zero
     @State private var geometryPending = false
     @State private var controlsCollapsed = true
     @State private var keyboardOpen = false
@@ -39,7 +40,9 @@ struct NativeSessionView: View {
         }
         .overlay(alignment: .top) { topPills }
         .overlay(alignment: .bottom) {
-            if !keyboardOpen { dock }
+            if !keyboardOpen {
+                dock.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { dockFrame = $0 }
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if keyboardOpen { keyboardBar }
@@ -578,7 +581,9 @@ struct NativeSessionView: View {
 
     private func settleSlider(_ editing: Bool) {
         guard !editing else { return }
-        withAnimation(.snappy) { _ = viewport.settleZoom() }
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
+            _ = viewport.settleZoom()
+        }
     }
 
     private var pictureSection: some View {
@@ -591,7 +596,7 @@ struct NativeSessionView: View {
             .pickerStyle(.segmented)
             .accessibilityLabel("Picture quality")
             .disabled(model.appliedStreamQuality == nil && !offlineLayoutCheck)
-            Text(model.streamQuality == .sharp ? "Sharper text · up to native 4K. Uses more bandwidth."
+            Text(model.streamQuality == .sharp ? "Sharper text and detail. Uses more bandwidth."
                                                : "Lower resolution for a more responsive connection.")
                 .font(.footnote).foregroundStyle(.secondary)
             if !offlineLayoutCheck, let status = model.streamQualityStatus {
@@ -648,7 +653,9 @@ struct NativeSessionView: View {
         switch command {
         case .zoomToggle(let anchor):
             model.pointerLocator.clear()
-            withAnimation(reduceMotion ? nil : .snappy) { viewport.toggleZoom(anchoredAt: anchor) }
+            withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
+                viewport.toggleZoom(anchoredAt: anchor)
+            }
             showZoomBadge()
             return true
         case .navigate(let factor, let anchor, let translation):
@@ -665,7 +672,9 @@ struct NativeSessionView: View {
         case .zoomEnded:
             DispatchQueue.main.async {
                 guard !showControls, !model.privacyShield, !model.contentConcealed else { return }
-                withAnimation(reduceMotion ? nil : .snappy) { _ = viewport.settleZoom() }
+                withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
+                    _ = viewport.settleZoom()
+                }
                 showZoomBadge()
             }
             return true
@@ -679,11 +688,14 @@ struct NativeSessionView: View {
     }
 
     private func follow(_ point: CGPoint) {
-        guard model.canControl, !model.dragging, controlsCollapsed, !keyboardOpen,
-              !showControls, !panMode else { return }
-        let safe = viewport.safeRect
-        let usable = CGRect(x: safe.minX, y: safe.minY, width: safe.width, height: max(0, safe.height - 34))
-        _ = viewport.reveal(sourcePoint: point, in: usable)
+        guard model.canControl, !model.dragging, !keyboardOpen, !showControls, !panMode,
+              !model.privacyShield, !model.contentConcealed else { return }
+        let usable = PointerFollowLayout.usableRect(safeRect: viewport.safeRect,
+                                                   canvasFrame: canvasFrame,
+                                                   dockFrame: dockFrame)
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
+            _ = viewport.reveal(sourcePoint: point, in: usable)
+        }
     }
 
     private func showZoomBadge() {
@@ -719,7 +731,7 @@ struct NativeSessionView: View {
     private func setMode(_ mode: ViewportMode) {
         guard mode != viewport.mode || !viewport.isAtBaseline else { return }
         cancelGesture()
-        withAnimation(reduceMotion ? nil : .snappy) { viewport.setMode(mode) }
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) { viewport.setMode(mode) }
         showZoomBadge()
     }
 
@@ -759,5 +771,19 @@ struct NativeSessionView: View {
     private func closeKeyboard() {
         cancelGesture()
         keyboardOpen = false
+    }
+}
+
+/// Keeps automatic pointer follow above the dock without reserving permanent
+/// screen space when the controls are collapsed.
+enum PointerFollowLayout {
+    static func usableRect(safeRect: CGRect, canvasFrame: CGRect, dockFrame: CGRect) -> CGRect {
+        let measuredTop = dockFrame.minY - canvasFrame.minY - 12
+        let bottom = dockFrame.height > 0 && canvasFrame.intersects(dockFrame) &&
+            measuredTop > safeRect.minY
+            ? min(safeRect.maxY, measuredTop)
+            : safeRect.maxY - 34
+        return CGRect(x: safeRect.minX, y: safeRect.minY,
+                      width: safeRect.width, height: max(1, bottom - safeRect.minY))
     }
 }

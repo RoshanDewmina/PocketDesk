@@ -50,7 +50,7 @@ final class VideoCodecPolicyTests: XCTestCase {
         let dimensions = try XCTUnwrap(CapturePixelDimensions.fitted(
             contentSize: CGSize(width: 1920, height: 1248), pointPixelScale: 2, quality: .sharp))
         XCTAssertTrue(H264LevelPolicy.fitsAt60FPS(width: dimensions.width, height: dimensions.height))
-        XCTAssertGreaterThan(dimensions.width, 3600)
+        XCTAssertEqual(dimensions.width, 2560)
         XCTAssertEqual(Double(dimensions.width) / Double(dimensions.height), 3840.0 / 2496.0, accuracy: 0.01)
         XCTAssertEqual(dimensions.width % 2, 0)
         XCTAssertEqual(dimensions.height % 2, 0)

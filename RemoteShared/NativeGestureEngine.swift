@@ -222,7 +222,6 @@ final class NativeGestureEngine {
 
     /// Needed for a stationary second-tap hold; timestamps use UITouch/system uptime.
     func tick(at time: TimeInterval) {
-        if time.isFinite, pointerMotionActive, time - lastMotionTime >= 0.08 { endPointerMotion() }
         guard time.isFinite, active.count == 1, mode == .candidate, secondTap,
               enabled, !panMode, time - startTime >= 0.22 else { return }
         beginDrag()

@@ -201,7 +201,9 @@ public struct ViewportTransform {
     @discardableResult
     public mutating func reveal(sourcePoint: CGPoint, in visibleRect: CGRect,
                                 margin: CGFloat = 32) -> Bool {
-        guard Self.isFinite(sourcePoint), scale > 0,
+        // When the entire source already fits, following would needlessly move
+        // the overview out of the safe area to clear transient chrome.
+        guard scale > fitScale * 1.001, Self.isFinite(sourcePoint), scale > 0,
               sourcePoint.x >= 0, sourcePoint.x <= sourceSize.width,
               sourcePoint.y >= 0, sourcePoint.y <= sourceSize.height,
               margin.isFinite, margin >= 0,
@@ -224,7 +226,10 @@ public struct ViewportTransform {
         let deltaY = abs(target.y - position.y) > 0.000_001 ? target.y - position.y : 0
         guard deltaX != 0 || deltaY != 0 else { return false }
         let previous = offset
-        offset = clampedOffset(CGPoint(x: offset.x + deltaX, y: offset.y + deltaY))
+        // Automatic following may use a smaller unobstructed rectangle than the
+        // safe area (for example while the dock is open). Clamp to that rectangle
+        // so a pointer near the source edge can actually clear the obstruction.
+        offset = clampedOffset(CGPoint(x: offset.x + deltaX, y: offset.y + deltaY), in: usable)
         return abs(offset.x - previous.x) > 0.000_001 || abs(offset.y - previous.y) > 0.000_001
     }
 
@@ -318,12 +323,12 @@ public struct ViewportTransform {
         return CGPoint(x: frame.midX - size.width / 2, y: frame.midY - size.height / 2)
     }
 
-    private func clampedOffset(_ proposed: CGPoint) -> CGPoint {
+    private func clampedOffset(_ proposed: CGPoint, in visibleRect: CGRect? = nil) -> CGPoint {
         guard scale > 0 else { return CGPoint() }
         let size = CGSize(width: sourceSize.width * scale, height: sourceSize.height * scale)
         guard size.width.isFinite, size.height.isFinite else { return CGPoint() }
         let origin = baselineOrigin(for: size)
-        let safe = safeRect
+        let safe = visibleRect ?? safeRect
         let x = Self.clampedOrigin(origin.x + proposed.x, length: size.width,
                                    safeMin: safe.minX, safeMax: safe.maxX) - origin.x
         let y = Self.clampedOrigin(origin.y + proposed.y, length: size.height,

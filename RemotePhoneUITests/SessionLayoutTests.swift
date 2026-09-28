@@ -20,12 +20,18 @@ final class SessionLayoutTests: XCTestCase {
         revealDock(app)
         app.buttons["Controls"].tap()
         let responsive = app.buttons["Responsive"]
-        XCTAssertTrue(responsive.waitForExistence(timeout: 3))
-        if !responsive.isHittable { app.swipeUp() }
+        let controlsContent = app.descendants(matching: .any)["remote.controls.content"].firstMatch
+        XCTAssertTrue(controlsContent.waitForExistence(timeout: 3))
+        for _ in 0..<5 {
+            if responsive.exists && responsive.isHittable { break }
+            controlsContent.swipeUp()
+        }
+        XCTAssertTrue(responsive.exists && responsive.isHittable,
+                      "Picture quality must remain reachable below the gesture and workspace controls")
         responsive.tap()
         XCTAssertTrue(app.staticTexts["Lower resolution for a more responsive connection."].exists)
         app.buttons["Sharper"].tap()
-        XCTAssertTrue(app.staticTexts["Sharper text · up to native 4K. Uses more bandwidth."].exists)
+        XCTAssertTrue(app.staticTexts["Sharper text and detail. Uses more bandwidth."].exists)
         XCTAssertFalse(app.keyboards.firstMatch.exists)
         attachScreenshot("Picture quality controls - offline layout")
     }

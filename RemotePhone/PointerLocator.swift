@@ -36,7 +36,9 @@ final class PointerLocator: ObservableObject {
         guard now >= lastMotion, now - lastMotion < 0.8, let probe = action.pointerProbe else { return }
         let accepted = state.receive(probe: probe, location: action.pointerLocation, at: now, sourceSize: sourceSize)
         point = state.point
-        if accepted, followingMotion, now - lastMotion <= 0.08, let point {
+        // The challenge already rejects responses older than 250 ms. Requiring
+        // another 80 ms from the last touch discarded ordinary round trips.
+        if accepted, followingMotion, let point {
             followUpdates.send(point)
         }
     }

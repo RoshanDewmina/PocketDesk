@@ -2,6 +2,12 @@
 
 Latest focused refresh **28 September 2026**; original capture/transport snapshot **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.
 
+## Camera easing refresh — 28 September 2026
+
+For the cursor-follow correction, rechecked Apple’s live [smooth spring animation](https://developer.apple.com/documentation/swiftui/animation/smooth(duration:extrabounce:)) documentation and the SwiftUI section of the [iOS27 release notes](https://developer.apple.com/documentation/ios-ipados-release-notes/ios-ipados-27-release-notes), using the linked Markdown forms. Apple describes smooth as a tunable no-bounce spring; PocketDesk uses0.36s for automatic camera movement and discrete zoom, with Reduce Motion bypass. The app continues to build against SDK27 with iOS26 deployment. This API choice does not measure physical rendering cadence.
+
+[Screen Studio’s animation guide](https://screen.studio/guide/animations) separates fast-settling readable motion from more fluid camera motion. Its homepage demo and guide inform the easing reference; PocketDesk does not copy its private animation algorithm or add postprocessed cursor movement/motion blur.
+
 ## Focused interaction and adaptive-layout refresh — 28 September 2026
 
 Follow-up source/SDK review: `NSCursor.currentSystem` is a deprecated public cross-app image/hotspot API; installed `NSCursor.h:155–156` warns it will return nil in a future macOS version. `current` is application-local. This materially strengthens the S0 pointer feasibility gate; no complete replacement visibility/shape contract or runtime support was demonstrated. See the [follow-up research](APPLE-INTERACTION-RESEARCH-2026-09-28.md#follow-up-review-cursor-feasibility-and-native-control-references) for sources, source-format differences and limits. Xcode27.0/27A266a and iPhoneOS SDK27.0 were rechecked. No builds or new native tests ran.

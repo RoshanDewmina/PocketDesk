@@ -13,6 +13,9 @@ final class ViewportTransformTests: XCTestCase {
         XCTAssertEqual(view.scale, oldScale * 2, accuracy: 0.001)
         XCTAssertEqual(view.viewPoint(fromSource: source).x, anchor.x, accuracy: 0.001)
         XCTAssertEqual(view.viewPoint(fromSource: source).y, anchor.y, accuracy: 0.001)
+        view.pan(by: CGSize(width: 20, height: -15))
+        XCTAssertEqual(view.viewPoint(fromSource: source).x, anchor.x + 20, accuracy: 0.001)
+        XCTAssertEqual(view.viewPoint(fromSource: source).y, anchor.y - 15, accuracy: 0.001)
         view.toggleZoom(anchoredAt: anchor)
         XCTAssertEqual(view.mode, .fit)
         XCTAssertTrue(view.safeRect.contains(view.contentRect))
@@ -238,6 +241,37 @@ final class ViewportTransformTests: XCTestCase {
             in: CGRect(x: 0, y: 0, width: 400, height: 800)
         ))
         XCTAssertEqual(transform.offset, before)
+    }
+
+    func testRevealCanClearOpenDockWithoutChangingManualPanBounds() {
+        var transform = ViewportTransform(
+            sourceSize: CGSize(width: 1_440, height: 900),
+            canvasSize: CGSize(width: 390, height: 844),
+            mode: .fill, zoom: 1.6,
+            safeInsets: ViewportInsets(top: 50, bottom: 34)
+        )
+        let visible = CGRect(x: 0, y: 50, width: 390, height: 598)
+        let point = CGPoint(x: 720, y: 800)
+        XCTAssertTrue(transform.reveal(sourcePoint: point, in: visible, margin: 32))
+        XCTAssertLessThanOrEqual(transform.viewPoint(fromSource: point).y,
+                                 visible.maxY - 32 + 0.001)
+        XCTAssertEqual(transform.zoom, 1.6)
+
+        transform.pan(by: CGSize(width: 0, height: -10_000))
+        XCTAssertEqual(transform.contentRect.minY, transform.safeRect.maxY - transform.contentRect.height,
+                       accuracy: 0.001, "Manual panning retains the safe-area clamp")
+    }
+
+    func testLandscapeFitOverviewDoesNotMoveBehindOpenDock() {
+        var transform = ViewportTransform(
+            sourceSize: CGSize(width: 1_920, height: 1_080),
+            canvasSize: CGSize(width: 844, height: 390), mode: .fit,
+            safeInsets: ViewportInsets(top: 0, left: 59, bottom: 21, right: 59)
+        )
+        let baseline = transform.contentRect
+        let aboveDock = CGRect(x: 59, y: 0, width: 726, height: 220)
+        XCTAssertFalse(transform.reveal(sourcePoint: CGPoint(x: 960, y: 1_000), in: aboveDock))
+        XCTAssertEqual(transform.contentRect, baseline, "A fitted overview stays inside the safe area")
     }
 
     func testRevealRespectsSafeUsableRectAndCapsMarginForTinyRect() {

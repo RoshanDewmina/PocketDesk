@@ -14,7 +14,10 @@ final class NativeGestureEngineTests: XCTestCase {
             switch ending {
             case 0: input.update([], at: 1.06)
             case 1: input.update([touch(1, 20), touch(2, 40)], at: 1.06)
-            case 2: input.tick(at: 1.14)
+            case 2:
+                input.tick(at: 1.35)
+                XCTAssertEqual(stops, 0, "A held finger keeps camera follow alive for a valid probe reply")
+                input.update([], at: 1.36)
             default: input.cancel()
             }
             XCTAssertEqual(stops, 1)

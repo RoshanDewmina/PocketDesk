@@ -9,7 +9,16 @@ final class StreamQualityTests: XCTestCase {
                        CapturePixelDimensions(width: 1920, height: 1080))
         XCTAssertEqual(CapturePixelDimensions.fitted(contentSize: size, pointPixelScale: 2,
                                                     quality: .sharp),
-                       CapturePixelDimensions(width: 3840, height: 2160))
+                       CapturePixelDimensions(width: 2560, height: 1440))
+    }
+
+    func testSharperCapsLargeLandscapeAndPortraitSourcesAt2560WithoutChangingAspect() {
+        XCTAssertEqual(CapturePixelDimensions.fitted(contentSize: CGSize(width: 1842, height: 1192),
+                                                    pointPixelScale: 2, quality: .sharp),
+                       CapturePixelDimensions(width: 2560, height: 1656))
+        XCTAssertEqual(CapturePixelDimensions.fitted(contentSize: CGSize(width: 1200, height: 1800),
+                                                    pointPixelScale: 2, quality: .sharp),
+                       CapturePixelDimensions(width: 1706, height: 2560))
     }
 
     func testNeverUpscalesSmallerSourceAndPreservesPortraitRatio() {

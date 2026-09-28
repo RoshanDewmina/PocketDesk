@@ -5,5 +5,5 @@ enum StreamQuality: String, Codable, CaseIterable {
     case sharp
 
     var title: String { self == .sharp ? "Sharper" : "Responsive" }
-    var maximumDimension: Int { self == .sharp ? 3840 : 1920 }
+    var maximumDimension: Int { self == .sharp ? 2560 : 1920 }
 }
