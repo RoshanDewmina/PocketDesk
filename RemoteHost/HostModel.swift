@@ -1151,6 +1151,9 @@ final class RemoteHostModel: ObservableObject {
             if connection.connected, action.epoch == inputEpoch.value, let quality = action.streamQuality {
                 capture.setQuality(quality)
             }
+            if connection.connected, action.epoch == inputEpoch.value, let pixels = action.screenPixels {
+                capture.setClientPixels(pixels)
+            }
             if let probe = action.clock, !probe.isEcho, (try? probe.validate()) != nil {
                 let received = min(MachClock.nowMs(), connection.media?.controlArrivalMs ?? .infinity)
                 _ = connection.sendControl(RemoteAction(
