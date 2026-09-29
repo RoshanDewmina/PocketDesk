@@ -78,6 +78,26 @@ struct CapturePixelDimensions: Equatable {
     }
 }
 
+/// ScreenCaptureKit output and configuration completion can reach the capture queue in
+/// either order. Decide whether the cached frame belongs to the newly applied output.
+enum CaptureFrameCachePolicy {
+    static func shouldDiscard(cachedDimensions: CapturePixelDimensions?, frameArrivedDuringUpdate: Bool,
+                              cachedDisplayTime: UInt64, updateRequestedAt: UInt64,
+                              previous: CaptureRegion, next: CaptureRegion) -> Bool {
+        guard ViewportCapturePolicy.needsReconfiguration(from: previous, to: next) else { return false }
+        let previousOutput = CapturePixelDimensions(width: previous.outputWidth, height: previous.outputHeight)
+        let nextOutput = CapturePixelDimensions(width: next.outputWidth, height: next.outputHeight)
+        // Dimensions identify new output only for a size change over the same source.
+        // Arrival alone cannot reject a delayed old callback in an A→B→A cycle.
+        // Both timestamps use ScreenCaptureKit's existing mach absolute time domain.
+        guard previous.isWholeDisplay == next.isWholeDisplay, previous.rect == next.rect,
+              previousOutput != nextOutput, frameArrivedDuringUpdate, cachedDimensions == nextOutput,
+              cachedDisplayTime > 0, updateRequestedAt > 0, cachedDisplayTime >= updateRequestedAt
+        else { return true }
+        return false
+    }
+}
+
 /// The refresh rate of the display being captured, from CoreGraphics' current mode or the
 /// matching NSScreen; nil when neither reports one (some virtual and adaptive displays say 0).
 enum DisplayRefresh {
@@ -494,6 +514,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private var timer: DispatchSourceTimer?
     private var health = CaptureHealthState()
     private var lastBuffer: CVPixelBuffer?
+    private var bufferVersion: UInt64 = 0
+    private var lastBufferDisplayTime: UInt64 = 0
     private var lastSentAt = 0.0
     private var stopping = false
     private let display: SCDisplay
@@ -657,6 +679,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             fps: min(targetFPS, inputs.ladderFPS ?? targetFPS),
             displayRefreshHz: displayRefreshHz, tuning: tuning
         )
+        let previousRegion = appliedRegion
+        let bufferVersionAtStart = bufferVersion
+        let updateRequestedAt = mach_absolute_time()
         stream.updateConfiguration(configuration) { [self] error in
             queue.async { [self] in
                 // stop() already answered the waiters.
@@ -664,7 +689,13 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                 if error == nil {
                     applied = inputs
                     // The idle refresh must not resend a frame of the old region under the new one.
-                    if geometryChanges { lastBuffer = nil }
+                    if CaptureFrameCachePolicy.shouldDiscard(
+                        cachedDimensions: lastBuffer.map {
+                            CapturePixelDimensions(width: CVPixelBufferGetWidth($0), height: CVPixelBufferGetHeight($0))
+                        }, frameArrivedDuringUpdate: bufferVersion != bufferVersionAtStart,
+                        cachedDisplayTime: lastBufferDisplayTime, updateRequestedAt: updateRequestedAt,
+                        previous: previousRegion, next: region
+                    ) { lastBuffer = nil }
                     publish(region)
                 } else if requested == inputs {
                     requested = applied
@@ -762,8 +793,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
         let now = CACurrentMediaTime()
         health.observe(status, at: now)
+        let displayTime = (attachments.first?[.displayTime] as? NSNumber)?.uint64Value ?? 0
         if status == .complete || status == .idle {
-            let displayTime = (attachments.first?[.displayTime] as? NSNumber)?.uint64Value ?? 0
             peer?.counters.captured(idle: status == .idle,
                                     displayLatencyMs: CaptureTiming.displayLatencyMs(displayTime: displayTime),
                                     displayTimeMs: displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : nil)
@@ -772,6 +803,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer),
               peer != nil else { return }
         lastBuffer = buffer
+        bufferVersion &+= 1
+        lastBufferDisplayTime = displayTime
         deliver(buffer, at: now)
     }
 
