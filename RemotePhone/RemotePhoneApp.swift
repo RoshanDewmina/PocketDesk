@@ -1232,7 +1232,7 @@ final class PhoneRemoteModel: ObservableObject {
         heartbeatsSent = 0
         pointerTimer?.invalidate()
         pointerLocator.clear()
-        pointerTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+        let pointerTimer = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 let now = ProcessInfo.processInfo.systemUptime
@@ -1242,10 +1242,14 @@ final class PhoneRemoteModel: ObservableObject {
                 }
             }
         }
+        self.pointerTimer = pointerTimer
+        RunLoop.main.add(pointerTimer, forMode: .common)
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+        let heartbeatTimer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+        timer = heartbeatTimer
+        RunLoop.main.add(heartbeatTimer, forMode: .common)
     }
 
     private func tick() {
