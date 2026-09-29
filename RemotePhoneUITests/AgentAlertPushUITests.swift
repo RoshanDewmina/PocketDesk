@@ -57,6 +57,7 @@ final class AgentAlertPushUITests: XCTestCase {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let banner = springboard.staticTexts[tapText]
         XCTAssertTrue(banner.waitForExistence(timeout: 60), "The pushed notification did not arrive: \(springboard.debugDescription.prefix(300))")
+        Thread.sleep(forTimeInterval: 0.8)
         attach("Banner: \(tapText)")
         banner.tap()
 
