@@ -110,6 +110,11 @@ struct NativeSessionView: View {
         .defersSystemGestures(on: .vertical)
         .sheet(isPresented: controlsSheetPresented) { controlsSheet }
         .onChange(of: controlsAsOverlay) { _, _ in if showControls { closeControls() } }
+        .onChange(of: controlsBlockInput) { _, blocked in
+            // A Hold click starts in the key panel, outside NativeTrackpadSurface. Settings and
+            // the expanded sheet hide Drop, so release that hold before covering the canvas.
+            if blocked { cancelGesture() }
+        }
         .fullScreenCover(isPresented: $primingMicrophone) {
             PermissionPrimingView(kind: .microphone) {
                 primingMicrophone = false

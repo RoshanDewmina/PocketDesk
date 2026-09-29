@@ -65,6 +65,22 @@ final class SessionLayoutTests: XCTestCase {
     }
 
     @MainActor
+    func testOpeningSettingsDropsExplicitHoldBeforeDropIsHidden() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "--ui-controls-check",
+                               "--ui-hold-preview=explicit"]
+        launchOfflineFixture(app)
+        XCTAssertTrue(app.descendants(matching: .any)["remote.holdChip"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Drop"].firstMatch.exists)
+
+        app.buttons["remote.controls.settings"].firstMatch.tap()
+        XCTAssertTrue(app.buttons["remote.settings.picture"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Done"].firstMatch.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["remote.holdChip"].firstMatch.waitForNonExistence(timeout: 3),
+                      "A hidden Drop control must never leave the Mac mouse button held")
+    }
+
+    @MainActor
     func testHomeKeepsPairingAndRecoveryDiscoverable() throws {
         let app = XCUIApplication()
         app.launch()
