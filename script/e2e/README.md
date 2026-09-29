@@ -6,9 +6,12 @@ meant to run unattended (overnight loops) and writes a JSON + Markdown report pe
 
 ## Run it
 
-After the integrated Debug host is installed (`script/build_and_run.sh` from the main checkout):
+Install the integrated **Debug** host first; `script/build_and_run.sh` builds the Debug
+configuration, so the installed host and its `FarsideWatchdog` carry the E2E hooks (inert unless
+launched with the E2E argument and environment):
 
 ```sh
+script/build_and_run.sh                                                         # from the main checkout
 script/e2e/run-e2e.sh --host-app "/Applications/PocketDesk Host.app"             # all scenarios once
 script/e2e/run-e2e.sh --host-app "/Applications/PocketDesk Host.app" --repeat 8  # overnight loop
 script/e2e/run-e2e.sh --host-app "/Applications/PocketDesk Host.app" --long      # 45-min soak past the 30-min lease
