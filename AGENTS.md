@@ -27,3 +27,9 @@ The detailed routing, package write-sets, escalation rules, and orchestration le
 ## Concurrent agents (Codex and Claude Code)
 
 Codex threads and Claude Code sessions both work on this repository, sometimes at the same time. Before editing the main checkout, check whether another agent is active: a Codex rollout under `~/.codex/sessions/` written in the last few minutes, or uncommitted changes you did not make. If one is active, work in a separate worktree (Claude worktrees live under `.claude/worktrees/`) and integrate only after the other agent has committed. Commit finished work promptly so the other agent can build on it, and push `pocketdesk-remote-chat` to `origin` (private GitHub backup) after each verified checkpoint. Do not install to the phone or `/Applications` from a worktree; installs go through `script/build_and_run.sh` from the integrated main checkout only.
+
+## Paths and the shared Mac
+
+The repository lives at `~/Developer/PocketDesk` (moved 29 September 2026). `~/Documents/ChatGPT/Saas/PocketDesk` is only a compatibility link for older documents and Codex threads; use the real path, because `xcodebuild test`/`xctest` under `~/Documents` hit macOS privacy errors. Xcode's default DerivedData is on the external SSD at `/Volumes/Studio/Development/Caches/Xcode/DerivedData`; simulators must stay on the internal disk because CoreSimulator does not load a device set linked to the SSD.
+
+The Mac is a fanless M4 MacBook Air with 16 GB that is also the host being measured. Run at most one or two Xcode-heavy agents at a time, wrap builds in the shared `lockf -k /tmp/farside-xcodebuild.lock` lock, and shut down simulators, headless Chrome and test services when finished. Take performance measurements only when no builds, simulators or browsers are running.
