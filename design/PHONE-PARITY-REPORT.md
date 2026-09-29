@@ -29,7 +29,7 @@ Three-finger tap in both touch modes (unused before: the engine only knew three-
 - Physical keys go to the Mac **by position** (USB HID usage → Mac virtual key code) with ⌘⌥⌃⇧ as flags, so the Mac's own layout, dead keys and input methods apply exactly as on a Mac keyboard. Letters, digits, punctuation, Return/Tab/Space/Delete/Forward Delete/Escape, arrows, Home/End/Page Up/Page Down/Help, F1–F20, keypad and JIS keys. The Mac adds the Fn or numeric-pad flag a Mac keyboard sets. Caps Lock capitalises letters (not with ⌘/⌃/⌥).
 - No on-screen keyboard: the canvas holds first responder without being a text input. When the keyboard bar's text field is focused, typing goes into the local draft instead — never both (UI-tested).
 - **Escape always reaches the Mac** and never ends the session (a Workbench complaint): iOS gives Esc to its focus/dismiss systems first, so the canvas registers priority key commands for Esc with every modifier combination.
-- **⌘W, ⌘M, ⌘Q, ⌘N and ⌘, go to the Mac, not to Farside's window.** iPadOS 26 gives Farside a menu bar whose Close Window, Minimize, Quit, New Window and Settings shortcuts are resolved before any key command: on the iPad simulator ⌘W/⌘M closed or minimized Farside (the session went behind the privacy cover) even with priority key commands. While a session canvas sends keys to the Mac, Farside rebuilds its main menu (`UIMainMenuSystem` build handler, installed on first use, SwiftUI's own menu contributions kept) with those items still in the menu bar but without their shortcuts, so the keys reach the canvas and the Mac. The shortcuts come back when the session ends or Controls, voice or the keyboard bar take over. iPad only; the iPhone never lost them.
+- **⌘W, ⌘M, ⌘Q, ⌘N and ⌘, for the Mac (iPhone verified; iPad in progress).** On iPhone they reach the Mac through the canvas's priority key commands and Farside stays open (UI-tested). On the iPad simulator ⌘W/⌘M sent Farside to the Home Screen (the session went behind the privacy cover) even with priority key commands, because iPadOS 26 gives Farside a menu bar whose Close Window, Minimize, Quit, New Window and Settings shortcuts win. Two changes, iPad only: (1) while a session canvas sends keys to the Mac, Farside rebuilds its main menu (`UIMainMenuSystem` build handler, installed on first use, SwiftUI's own menu contributions kept) with those items still in the menu bar but without their shortcuts; this alone did **not** stop ⌘W/⌘M on the simulator; (2) the canvas answers iPadOS 26's `performClose:` (File ▸ Close Window) while keys go to the Mac, so ⌘W closes the Mac's window and the menu item reads "Close Mac Window" (unit-tested; the iPad UI run was cut short by the machine checkpoint). Minimize (⌘M) has no public action; if it proves to be handled by the system, ⌃⌥M is the way to send ⌘M. DEBUG probe notes record what the rebuilt menu held and which window actions UIKit asked the canvas about, so the next iPad run shows which mechanism applies; drop the menu rebuild if it turns out to do nothing.
 - **Shortcuts the system keeps** (⌘Tab, ⌘Space, ⌘H, screenshots never reach an app): press **⌃⌥ instead of ⌘** — ⌃⌥Tab → ⌘Tab (⌃⌥⇧Tab backwards), ⌃⌥Space → ⌘Space, ⌃⌥H → ⌘H, ⌃⌥Q → ⌘Q, ⌃⌥W → ⌘W, ⌃⌥M → ⌘M, ⌃⌥, → ⌘,, ⌃⌥D → ⌥⌘D, ⌃⌥3/4/5 → ⇧⌘3/4/5. On by default, switchable in Controls → Keyboard and pointer, with the list. Unlike Workbench's remap, other chords pass through untouched.
 - Held keys repeat on the phone (0.5 s, then every 70 ms, latest key only, never Escape or function keys) so a lost connection can never leave a key down on the Mac. Modifiers held on the keyboard also apply to taps, clicks and drags (⌘-click, ⇧-click, ⌥-drag).
 - Keyboard connect/disconnect via `GCKeyboard` notifications: a notice "Keyboard connected · keys go to your Mac"; disconnect, background, focus loss and sheets release repeats and modifiers.
@@ -61,13 +61,28 @@ Details in `Docs/REMOTE-PROTOCOL.md` ("Phone parity capabilities"). Four new fea
 
 ## Verification
 
-Results are filled in below from the final runs after the rebase.
+**Checkpoint, 29 Sep 2026 06:45** — work stopped for a machine restart (disk 98% full, load average above 200) before the final full run. The branch is rebased onto `pocketdesk-remote-chat` at `3b18365` (E2E harness merged); conflicts in `HostModel.swift` (E2E fence `#endif` + `moveTo` telemetry), `HomeView.swift` (touch override + E2E onboarding note) and `project.yml` (core test sources) were resolved keeping both sides and the project regenerated with XcodeGen. Simulators: "Farside Parity iPhone 17" and "Farside Parity iPad Pro 11", iOS 27.0.
 
-VERIFICATION_TABLE
+| Check | Code | Result |
+|---|---|---|
+| `RemoteCoreTests`, whole suite (macOS) | rebased, `01dfcd9`; shared/host code unchanged since | 425 tests, 3 skipped, 18 failed. All 18 fail before reaching code this branch touches: `BrowserCryptoTests` ×2 cannot read `BrowserFixtures/crypto-vector.json` ("you don't have permission to view it" — the test process cannot read `~/Documents`), and `SessionIntegrationTests` ×8, `SessionRenewalIntegrationTests` ×4, `HostRestartIntegrationTests` ×3, `E2EHooksTests` ×1 start the bun signalling service from inside the test process and it never prints its port. Every new suite passes (direct touch engine and mapping, absolute pointer/host injection, hardware key map/remaps/repeat/pointer router, mini map, display selection and host catalog). |
+| Builds: Mac host, E2E stub host, browser fixture (all compile `RemoteShared`) | rebased, `01dfcd9` | succeeded |
+| Phone app and tests, build-for-testing (iPhone + iPad) | `2754e09` | succeeded |
+| Phone unit: `CanvasKeyCommandTests` (Esc priority commands; Close Window goes to the Mac only while keys do), `MacShortcutMenuTests` | `2754e09` | pass on iPhone and iPad |
+| UI, iPhone: mini map (drag pans, tap jumps, VoiceOver description follows, fades), ⌃⌥ remaps + ⌘⇧Z, ⌘W and ⌘M reach the Mac and Farside stays open | `2754e09` | pass |
+| UI, iPhone: hardware keys with modifiers/arrows/digits/⌃⌥/F-key and no on-screen keyboard; keys go to the draft, never twice | pre-rebase `1430dea` | pass |
+| UI, iPad: ⌘W/⌘M | rebased `01dfcd9` (menu rebuild only) | **fail** — Farside went to the Home Screen (`~/Downloads/farside-parity-ipad-cmd-w-m-simulator-before-fix.png`) |
+| UI, iPad: ⌘W/⌘M with `performClose:`; mini map on iPad | `2754e09` | **not run** — the UI test runner crashed while bootstrapping (`XCTWaiter handleStalledWait`, twice under this load when unit and UI tests shared one `xcodebuild`) |
+| UI, both: direct touch at Fit/zoom/landscape/Fill with probe targets, direct drag/two-finger/three-finger, trackpad tap, iPad mouse Follow/click/right-click/scroll, display picker, touch and mini map settings | before the rebase | passed earlier in this task; **not re-run** after the rebase |
+| `MiniMapVideoTests` (frames stamped 0 reach the mini map's `RTCMTLVideoView`; nothing after disconnect) | `40fa5ac` onward | compiles; **not run yet** |
+
+Simulator findings: XCTest's synthesized Escape and Forward Delete never reach the app on the iOS 27 simulator (neither as presses nor as key commands; the probe's raw-key diagnostic sees nothing), and F5 arrives as HID F4 — their mappings are unit-tested and need a real keyboard. The mini map drag always worked; the earlier UI failures came from the outline's accessibility frame (see §5). Screenshots taken with the phone in landscape come back upright on iOS 27 (no rotation needed when exporting).
+
+Still to run after the restart: the complete sequence above on the rebased tip (core; host/stub/fixture builds; phone build; phone unit suite including `MiniMapVideoTests`; the whole iPhone UI suite; the iPad parity suite with unit and UI tests in separate `xcodebuild` runs; parity screenshots), then delete the two simulators.
 
 ## Screenshots
 
-In `~/Downloads/`: SCREENSHOT_LIST
+In `~/Downloads/`: `farside-parity-landscape-minimap-test.png` and `farside-parity-landscape-minimap-after-drag.png` (iPhone landscape, mini map before and after dragging the outline, probe log visible), `farside-parity-ipad-minimap-test.png` (iPad, zoomed, outline and veil), `farside-parity-ipad-cmd-w-m-simulator-before-fix.png` (iPad: ⌘W/⌘M sent Farside home before the `performClose:` change). Not captured yet (need the screenshot run): direct touch, hardware keys, display picker, iPad pointer, Controls sections.
 
 ## Compared with Workbench
 
@@ -76,7 +91,7 @@ In `~/Downloads/`: SCREENSHOT_LIST
 | iPhone touch is direct (tap where you want) | ⭐ both: Trackpad (default, precise) and Direct, switchable; Direct adds touch-and-hold press, double-tap-drag and two-finger right-click where the fingers are |
 | Two-finger scroll; touch-and-hold drag | ✅ in both styles |
 | External mouse/trackpad and hardware keyboard through iPhone/iPad | ✅ keyboard on both (by position, Esc kept for the Mac, remaps); ✅ mouse/trackpad Follow on iPad; 🟡 no pointer lock yet |
-| iPad shortcut remapping | ⭐ ⌘W/⌘M/⌘Q/⌘N/⌘, taken back from Farside's own menu bar for the Mac; ⌃⌥ stand-ins for the shortcuts the system keeps, on by default, others untouched |
+| iPad shortcut remapping | ⭐ ⌃⌥ stand-ins for the shortcuts the system keeps, on by default, others untouched; ⌘W to the Mac via Close Window (iPad verification pending), ⌘M on iPad possibly system-owned |
 | Middle mouse (3D/CAD) | ✅ click (three-finger tap, middle button); 🟡 no middle-drag |
 | Mini map with zoom slider (iPad only) | ✅ iPad, ⭐ also iPhone landscape, pointer dot, auto-hide; zoom stays in pinch/slider |
 | Unified Display / multiple displays | 🟡 one display at a time, switchable in session and remembered per Mac (no combined view) |
@@ -91,4 +106,4 @@ In `~/Downloads/`: SCREENSHOT_LIST
 
 ## Not done / follow-ups
 
-Pointer lock and relative mouse deltas; middle-button drag (needs a button-aware hold on the host); modifier flags on scroll events; a remap editor; momentum scrolling from hardware; iPhone Duo-specific layout.
+Pointer lock and relative mouse deltas; middle-button drag (needs a button-aware hold on the host); modifier flags on scroll events; a remap editor; momentum scrolling from hardware; iPhone Duo-specific layout; the E2E harness's host input fence rejects `moveTo` and `middle` (fails closed) — allow them inside the Test Pad when E2E covers direct touch or a mouse.
