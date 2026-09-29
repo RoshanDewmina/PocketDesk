@@ -316,11 +316,9 @@ struct NativeSessionView: View {
             }
             clipboardStatus
             if let notice = model.sessionNotice {
-                Text(notice)
-                    .font(.subheadline.weight(.medium))
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .glassEffect(.regular, in: .capsule)
+                FarsideNotice(message: notice, tone: .info)
+                    .frame(maxWidth: 420)
+                    .padding(.horizontal, 16)
                     .transition(.opacity)
                     .allowsHitTesting(false)
             }
@@ -1300,16 +1298,22 @@ struct NativeSessionView: View {
             Section {
                 Toggle("Hide Mac screen", isOn: Binding(get: { state.preferenceOn },
                                                         set: { model.setMacCurtain($0) }))
+                    .toggleStyle(FarsideSwitchStyle())
                     .disabled(!model.canChangeCurtain)
+                    .opacity(model.canChangeCurtain ? 1 : 0.45)
                     .accessibilityIdentifier("remote.macCurtain")
+                    .listRowBackground(Farside.Palette.panel)
                 if state == .liftedLocally {
                     Button("Hide it again") { model.setMacCurtain(true) }
+                        .foregroundStyle(Farside.Palette.bone)
                         .disabled(!model.canChangeCurtain)
+                        .listRowBackground(Farside.Palette.panel)
                 }
             } header: {
-                Text("Mac privacy")
+                sectionHeader("Mac privacy")
             } footer: {
                 Text(macCurtainFooter(state))
+                    .foregroundStyle(Farside.Palette.ash)
             }
         }
     }
