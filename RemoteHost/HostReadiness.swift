@@ -165,6 +165,7 @@ struct HostPreferences {
         static let accessibilitySkipped = "setupAccessibilitySkipped"
         static let serviceAddress = "PocketDeskServiceURL"
         static let chimeOnConnect = "chimeOnConnect"
+        static let privacyCurtain = "privacyCurtainWhileSharing"
     }
 
     let defaults: UserDefaults
@@ -199,6 +200,12 @@ struct HostPreferences {
     var accessibilitySkipped: Bool {
         get { defaults.bool(forKey: Key.accessibilitySkipped) }
         nonmutating set { defaults.set(newValue, forKey: Key.accessibilitySkipped) }
+    }
+
+    /// Off unless the person turns it on; covering the Mac's screen is never a surprise.
+    var privacyCurtain: Bool {
+        get { defaults.bool(forKey: Key.privacyCurtain) }
+        nonmutating set { defaults.set(newValue, forKey: Key.privacyCurtain) }
     }
 
     var serviceAddress: String? {

@@ -7,7 +7,8 @@ enum SessionFeature {
     static let clipboardText = "clipboard.text.1"
     static let backgroundPause = "pause.1"
     static let displayWake = "display.wake.1"
-    static let host = [clipboardText, backgroundPause, displayWake]
+    static let privacyCurtain = "curtain.1"
+    static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain]
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as
@@ -16,11 +17,58 @@ enum HostPresence: String {
     case displayAsleep, sleeping, locked, switchedUser
 }
 
-extension RemoteAction {
-    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake"]
+/// The Mac's privacy curtain as reported on `capture` status. Unknown values mean "off".
+enum PrivacyCurtainState: String, Equatable {
+    /// The preference is off.
+    case off
+    /// On, waiting for a healthy picture before covering the Mac.
+    case pending
+    /// Every display is covered; the phone still sees the desktop.
+    case up
+    /// Someone at the Mac lifted it for this session.
+    case liftedLocally
+    /// On, but the Mac lacks Accessibility, which the local Escape shortcut needs.
+    case unavailable
+    /// The Mac could not confirm the curtain was hidden from the stream, so it stayed down.
+    case failed
 
-    /// Validates the appended clipboard/pause/presence fields. Returns true when the action is a
-    /// session-extension action that is now fully validated.
+    /// The phone's toggle reflects the Mac's preference, not whether the screen is covered now.
+    var preferenceOn: Bool { self != .off }
+}
+
+/// Values a phone may request with the `curtain` action.
+enum PrivacyCurtainRequest: String {
+    case up, down
+}
+
+/// One-shot facts about the Mac app itself, reported on `capture` status.
+enum HostLifecycleEvent: String {
+    /// Farside on the Mac restarted after it quit unexpectedly or stopped responding.
+    case recovered
+}
+
+/// Short-lived explanations the phone shows over a live session.
+enum PhoneSessionNotice {
+    static let hostRecovered = "Your Mac’s Farside restarted — reconnected."
+    static let curtainLiftedLocally = "Someone at your Mac lifted the privacy curtain."
+    static let curtainFailed = "Your Mac couldn’t hide its screen safely, so it stayed visible."
+
+    /// What changed on the Mac between two `capture` reports, if it is worth telling the person.
+    static func curtainChange(from previous: PrivacyCurtainState?, to current: PrivacyCurtainState?) -> String? {
+        guard previous != current else { return nil }
+        switch current {
+        case .liftedLocally where previous == .up: return curtainLiftedLocally
+        case .failed: return curtainFailed
+        default: return nil
+        }
+    }
+}
+
+extension RemoteAction {
+    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake", "curtain"]
+
+    /// Validates the appended clipboard/pause/presence/curtain fields. Returns true when the action
+    /// is a session-extension action that is now fully validated.
     func validateSessionExtension() throws -> Bool {
         if let features {
             guard action == "capture", features.count <= 16, features.allSatisfy(Self.isFeatureName) else {
@@ -29,6 +77,14 @@ extension RemoteAction {
         }
         if let hostState {
             guard action == "capture", ClipboardFrame.isWellFormedStatus(hostState) else { throw RemoteError.invalidMessage }
+        }
+        if let hostEvent {
+            guard action == "capture", ClipboardFrame.isWellFormedStatus(hostEvent) else { throw RemoteError.invalidMessage }
+        }
+        if let curtain {
+            guard action == "capture" || action == "curtain", ClipboardFrame.isWellFormedStatus(curtain) else {
+                throw RemoteError.invalidMessage
+            }
         }
         guard Self.sessionExtensionActions.contains(action) else {
             guard clipboard == nil else { throw RemoteError.invalidMessage }
@@ -42,6 +98,11 @@ extension RemoteAction {
             guard let clipboard else { throw RemoteError.invalidMessage }
             try clipboard.validate()
         } else if clipboard != nil {
+            throw RemoteError.invalidMessage
+        }
+        if action == "curtain" {
+            guard let curtain, PrivacyCurtainRequest(rawValue: curtain) != nil else { throw RemoteError.invalidMessage }
+        } else if curtain != nil {
             throw RemoteError.invalidMessage
         }
         return true

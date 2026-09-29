@@ -92,6 +92,11 @@ final class RemoteCapture {
     /// therefore sees a brief duplicate at a transition, never a missing pointer.
     var cursorInVideo: Bool { appliedShowsCursor && requestedShowsCursor }
 
+    /// Windows the running stream excludes (the privacy curtain) were dropped because capture
+    /// stopped or restarted; whoever owns them must not rely on the old exclusion.
+    var onExclusionLost: (() -> Void)?
+    private(set) var excludedWindowIDs: Set<CGWindowID> = []
+
     private var ownership = ScopedCaptureOwner()
     private var session: RemoteCaptureSession?
     private weak var streamPeer: PeerMedia?
@@ -99,6 +104,8 @@ final class RemoteCapture {
     private var requestedShowsCursor = true
     private var captureStarted = false
     private var qualityUpdateTask: Task<Void, Never>?
+    private var exclusionGeneration: UInt64 = 0
+    private var exclusionTask: Task<Bool, Never>?
 
     func setQuality(_ quality: StreamQuality) {
         guard quality != requestedQuality else { return }
@@ -117,6 +124,7 @@ final class RemoteCapture {
 
     func start(display: SCDisplay, peer: PeerMedia) async throws -> UInt64 {
         let owner = ownership.begin()
+        dropExclusions()
         qualityUpdateTask?.cancel()
         qualityUpdateTask = nil
         captureStarted = false
@@ -172,6 +180,7 @@ final class RemoteCapture {
     @discardableResult
     func stop() -> Task<Void, Never>? {
         ownership.invalidate()
+        dropExclusions()
         qualityUpdateTask?.cancel()
         qualityUpdateTask = nil
         requestedQuality = .balanced
@@ -183,6 +192,51 @@ final class RemoteCapture {
         session = nil
         guard let previous else { return nil }
         return Task { await previous.stop() }
+    }
+
+    /// Hides the given windows (the privacy curtain) from the running stream. True only once the live
+    /// content filter excludes every one of them. Requests are applied in order, so an older request
+    /// finishing late can never replace a newer filter.
+    func excludeWindows(_ ids: Set<CGWindowID>) async -> Bool {
+        exclusionGeneration &+= 1
+        let generation = exclusionGeneration
+        let previous = exclusionTask
+        let task = Task { @MainActor [weak self] () -> Bool in
+            _ = await previous?.value
+            guard let self, generation == self.exclusionGeneration else { return false }
+            return await self.applyExclusion(ids)
+        }
+        exclusionTask = task
+        return await task.value
+    }
+
+    /// A coarse luma grid of the most recent captured frame, used to verify the curtain stays out
+    /// of the stream.
+    func lumaSignature() async -> CaptureLumaSignature? {
+        guard captureStarted, let session else { return nil }
+        return await session.lumaSignature()
+    }
+
+    private func applyExclusion(_ ids: Set<CGWindowID>) async -> Bool {
+        guard !ids.isEmpty, captureStarted, let target = session else { return false }
+        let owner = ownership.current
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false),
+              ownership.owns(owner), session === target,
+              let windows = CaptureWindowExclusion.windows(for: ids, in: content.windows, id: { $0.windowID })
+        else { return false }
+        guard await target.updateExcludedWindows(windows), ownership.owns(owner), session === target else {
+            return false
+        }
+        excludedWindowIDs = ids
+        return true
+    }
+
+    private func dropExclusions() {
+        exclusionGeneration &+= 1
+        exclusionTask = nil
+        guard !excludedWindowIDs.isEmpty else { return }
+        excludedWindowIDs = []
+        onExclusionLost?()
     }
 
     private func scheduleQualityUpdate() {
@@ -272,6 +326,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private var lastSentAt = 0.0
     private var stopping = false
     private let filter: SCContentFilter
+    private let display: SCDisplay
 
     var onFailure: (() -> Void)?
     var onHealth: ((Bool) -> Void)?
@@ -283,6 +338,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             throw CaptureSizingError.invalidSource
         }
         self.filter = filter
+        self.display = display
         self.peer = peer
         super.init()
         self.stream = SCStream(filter: filter, configuration: configuration, delegate: self)
@@ -317,6 +373,25 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             return !queue.sync { stopping }
         } catch {
             return false
+        }
+    }
+
+    /// Same display, minus the given windows. Sizing is unchanged, so the configuration stays.
+    func updateExcludedWindows(_ windows: [SCWindow]) async -> Bool {
+        guard !queue.sync(execute: { stopping }) else { return false }
+        do {
+            try await stream.updateContentFilter(SCContentFilter(display: display, excludingWindows: windows))
+            return !queue.sync { stopping }
+        } catch {
+            return false
+        }
+    }
+
+    func lumaSignature() async -> CaptureLumaSignature? {
+        await withCheckedContinuation { continuation in
+            queue.async { [weak self] in
+                continuation.resume(returning: self?.lastBuffer.flatMap(CaptureLumaSignature.init(pixelBuffer:)))
+            }
         }
     }
 

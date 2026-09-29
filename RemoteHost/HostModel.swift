@@ -41,7 +41,28 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var chimeOnConnect: Bool
     @Published private(set) var timedPause = HostTimedPause()
     @Published private(set) var unavailableReason: HostAvailabilityNote?
+    @Published private(set) var loginItemState: HostBackgroundItemState = .off
+    @Published private(set) var recoveryState: HostBackgroundItemState = .off
+    @Published private(set) var curtainPreference: Bool
+    @Published private(set) var curtainState: PrivacyCurtainState = .off
+    @Published private(set) var crashLoopStopped = false
     @Published private var autoStart = HostAutoStartGate()
+    let events = HostEventLog()
+    private let background = HostBackgroundServices.live()
+    private let watchdog = HostWatchdogReporter.live()
+    private var hangWatchdog: HostHangWatchdog?
+    private let curtain = PrivacyCurtainController()
+    private var curtainRaising = false
+    private var curtainLocallyDismissed = false
+    private var curtainRaiseFailed = false
+    private var captureUnhealthySince: TimeInterval?
+    /// Set when this launch followed an unexpected exit; told to the first phone that connects.
+    private var recoveryNoticePending = false
+    private var recoveryNoticeDelivered = false
+    private var setupWasComplete = false
+    private var sessionsThisLaunch = 0
+    private var sessionStartedAt: Date?
+    private var lastSessionDuration: TimeInterval?
     private let preferences = HostPreferences()
     private let input = RemoteInputDriver()
     private let capture = RemoteCapture()
@@ -152,6 +173,11 @@ final class RemoteHostModel: ObservableObject {
             pausedUntil: timedPause.resumesAt,
             session: status.isSessionLive ? HostSessionReadout.parse(connection.diagnostics) : nil,
             availability: availabilityNote,
+            loginItem: loginItemState,
+            automaticRecovery: recoveryState,
+            privacyCurtain: curtainPreference,
+            curtainStatus: Self.curtainStatus(curtainState, displays: NSScreen.screens.count),
+            crashLoopStopped: crashLoopStopped,
             displays: displays.map { HostDisplayOption(id: $0.displayID, name: Self.displayName(for: $0.displayID)) },
             selectedDisplayID: selected,
             detail: detail
@@ -177,7 +203,10 @@ final class RemoteHostModel: ObservableObject {
         chimeOnConnect = preferences.chimeOnConnect
         wantsSharing = preferences.sharingEnabled
         accessibilitySkipped = preferences.accessibilitySkipped
-        openAtLogin = SMAppService.mainApp.status == .enabled
+        curtainPreference = preferences.privacyCurtain
+        refreshBackgroundStates()
+        background.onChange = { [weak self] in self?.refreshBackgroundStates() }
+        startWatchdog()
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.active && !self.connection.connected }
         connection.restore()
         connection.onAuthenticated = { [weak self] in self?.phoneConnected() }
@@ -197,6 +226,13 @@ final class RemoteHostModel: ObservableObject {
         }
         capture.onFailure = { [weak self] in self?.captureFailed() }
         capture.onHealth = { [weak self] healthy in self?.captureHealthChanged(healthy) }
+        capture.onExclusionLost = { [weak self] in
+            guard let self, self.curtain.phase != .down else { return }
+            self.curtain.lift()
+            self.reconcileCurtain()
+        }
+        curtain.onLocalLift = { [weak self] in self?.curtainLiftedLocally() }
+        curtain.onPhaseChange = { [weak self] _ in self?.reconcileCurtain() }
         pointerTelemetry.send = { [weak self] action in self?.connection.sendControl(action) ?? false }
         pointerTelemetry.setCaptureShowsCursor = { [weak self] shows in self?.capture.setShowsCursor(shows) }
         pointerTelemetry.captureShowsCursor = { [weak self] in self?.capture.cursorInVideo ?? true }
@@ -372,12 +408,18 @@ final class RemoteHostModel: ObservableObject {
         cancelTimedPause()
         wantsSharing = false
         preferences.sharingEnabled = false
+        events.record(.sharing, "Stop Sharing")
         stop()
         if !hasPairedPhone { clearPairingCode() }
     }
 
     func resumeSharing() {
         cancelTimedPause()
+        if crashLoopStopped {
+            crashLoopStopped = false
+            watchdog?.requestCrashLoopReset()
+            events.record(.recovery, "Resumed after a crash-loop stop")
+        }
         wantsSharing = true
         preferences.sharingEnabled = true
         autoStart.clear()
@@ -449,12 +491,221 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func setOpenAtLogin(_ enabled: Bool) {
-        do {
-            if enabled { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
-        } catch {
-            detail = "Couldn’t change Open at Login: \(error.localizedDescription)"
+        if let problem = background.setLoginItem(enabled) {
+            detail = problem
+            events.record(.error, problem)
         }
-        openAtLogin = SMAppService.mainApp.status == .enabled
+        events.record(.settings, "Open at login \(enabled ? "on" : "off")")
+        refreshBackgroundStates()
+    }
+
+    func setAutomaticRecovery(_ enabled: Bool) {
+        if let problem = background.setRecovery(enabled, setupComplete: setupStep == .done) {
+            detail = problem
+            events.record(.error, problem)
+        }
+        events.record(.settings, "Automatic recovery \(enabled ? "on" : "off")")
+        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: background.recoveryWanted)
+        refreshBackgroundStates()
+    }
+
+    func openLoginItems() {
+        SMAppService.openSystemSettingsLoginItems()
+    }
+
+    /// The Mac's "hide screen while sharing" preference; the phone changes the same preference.
+    func setPrivacyCurtain(_ enabled: Bool) {
+        curtainPreference = enabled
+        preferences.privacyCurtain = enabled
+        if enabled {
+            curtainLocallyDismissed = false
+            curtainRaiseFailed = false
+        }
+        events.record(.curtain, "Hide screen while sharing \(enabled ? "on" : "off")")
+        reconcileCurtain()
+    }
+
+    func copyDiagnostics() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(diagnosticsReport(), forType: .string)
+        events.record(.settings, "Diagnostics copied")
+    }
+
+    func diagnosticsReport() -> String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let ledger = watchdog?.ledger
+        let boot = watchdog?.record.bootSession
+        let sameBoot = ledger?.bootSession != nil && ledger?.bootSession == boot
+        var snapshot = HostDiagnosticsSnapshot()
+        snapshot.appVersion = info["CFBundleShortVersionString"] as? String ?? "?"
+        snapshot.appBuild = info["CFBundleVersion"] as? String ?? "?"
+        snapshot.osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+        snapshot.hardwareModel = HostHardware.model
+        snapshot.installedInApplications = background.installed
+        snapshot.appUptime = Date().timeIntervalSince(watchdog?.launchedAt ?? Date())
+        snapshot.screenRecording = screenRecordingPermission.isGranted ? "allowed" : "not allowed"
+        snapshot.accessibility = accessibilityPermission.isGranted ? "allowed"
+            : (accessibilitySkipped ? "not allowed (skipped in setup)" : "not allowed")
+        snapshot.loginItem = loginItemState.diagnosticsText
+        snapshot.automaticRecovery = background.recoveryWanted ? recoveryState.diagnosticsText : "off"
+        snapshot.status = status.title
+        snapshot.sharingWanted = wantsSharing
+        snapshot.sharingActive = active
+        snapshot.phonePaired = hasPairedPhone
+        snapshot.phoneConnected = connection.connected
+        snapshot.controlEffective = allowControl && accessibilityPermission.isGranted && captureHealthy
+        snapshot.keepAwake = keepAwakeEnabled
+        snapshot.displayCount = displays.count
+        snapshot.detail = detail
+        snapshot.curtainPreference = curtainPreference
+        snapshot.curtainState = curtainState.rawValue
+        snapshot.recoveredThisLaunch = watchdog?.assessment.recoveredFromUnexpectedExit ?? false
+        snapshot.previousExit = watchdog?.assessment.previousExit?.rawValue
+        snapshot.safeMode = crashLoopStopped
+        snapshot.watchdogRelaunchesThisBoot = sameBoot ? ledger?.relaunches ?? 0 : 0
+        snapshot.watchdogLastExit = sameBoot ? ledger?.lastExit?.rawValue : nil
+        snapshot.watchdogLastExitAt = sameBoot ? ledger?.lastExitAt : nil
+        snapshot.watchdogStoppedAt = sameBoot ? ledger?.stoppedAt : nil
+        snapshot.sessionsThisLaunch = sessionsThisLaunch
+        snapshot.lastSessionDuration = sessionStartedAt.map { Date().timeIntervalSince($0) } ?? lastSessionDuration
+        snapshot.route = connection.connected ? connection.diagnostics : nil
+        snapshot.streamQuality = capture.appliedQuality?.title
+        snapshot.events = events.entries
+        return HostDiagnosticsReport.render(snapshot)
+    }
+
+    private func refreshBackgroundStates() {
+        background.refresh()
+        loginItemState = background.loginState
+        recoveryState = background.recoveryState
+        openAtLogin = loginItemState.isRegistered
+    }
+
+    /// Launch at login and automatic recovery turn on once setup is complete; later choices stick.
+    private func applyBackgroundDefaults() {
+        if let problem = background.applyDefaults(setupComplete: true) { events.record(.error, problem) }
+        refreshBackgroundStates()
+        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: background.recoveryWanted)
+    }
+
+    // MARK: Watchdog and recovery
+
+    private func startWatchdog() {
+        let hang = HostHangWatchdog(onHang: watchdog.map {
+            HostWatchdogReporter.hangHandler(files: $0.files, launchID: $0.record.launchID)
+        } ?? { _ in _exit(3) })
+        hang.update(curtainUp: false, recoveryEnabled: background.recoveryWanted)
+        hangWatchdog = hang
+        hang.start()
+        guard let watchdog else {
+            events.record(.launch, "Launched; watchdog state unavailable")
+            return
+        }
+        watchdog.start()
+        let assessment = watchdog.assessment
+        recoveryNoticePending = assessment.recoveredFromUnexpectedExit
+        if assessment.recoveredFromUnexpectedExit {
+            events.record(.recovery, "Restarted after the previous run ended unexpectedly (\(assessment.previousExit?.rawValue ?? "unknown"))")
+        } else {
+            events.record(.launch, "Launched")
+        }
+        if assessment.safeMode {
+            crashLoopStopped = true
+            autoStart.suspend()
+            detail = Self.crashLoopDetail
+            events.record(.recovery, "Stopped after repeated crashes; sharing paused until resumed")
+        }
+    }
+
+    private static let crashLoopDetail = "Farside stopped after repeated crashes. Sharing is paused until you resume it."
+    /// A recovery notice is still worth telling a phone that connects within this window.
+    private static let recoveryNoticeLifetime: TimeInterval = 60 * 60
+
+    private var recoveryEventForPhone: String? {
+        guard recoveryNoticePending,
+              Date().timeIntervalSince(watchdog?.launchedAt ?? .distantPast) < Self.recoveryNoticeLifetime
+        else { return nil }
+        return HostLifecycleEvent.recovered.rawValue
+    }
+
+    // MARK: Privacy curtain
+
+    private func reconcileCurtain() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let inputs = PrivacyCurtainInputs(
+            preference: curtainPreference,
+            sessionLive: active && connection.connected && !terminating,
+            captureHealthy: captureHealthy,
+            unhealthyFor: captureUnhealthySince.map { now - $0 } ?? 0,
+            displayAsleep: displayAsleep,
+            phonePaused: phonePause.isPaused,
+            screenLocked: screenLocked,
+            accessibilityGranted: accessibilityPermission.isGranted,
+            locallyDismissed: curtainLocallyDismissed,
+            raiseFailed: curtainRaiseFailed,
+            safeMode: crashLoopStopped
+        )
+        switch PrivacyCurtainPolicy.desired(inputs, currentlyUp: curtain.phase != .down) {
+        case .up where curtain.phase == .down && !curtainRaising:
+            raiseCurtain()
+        case .down where curtain.phase != .down:
+            curtain.lift()
+        default:
+            break
+        }
+        let covering = curtain.phase != .down
+        watchdog?.setCurtainUp(covering)
+        hangWatchdog?.update(curtainUp: covering, recoveryEnabled: background.recoveryWanted)
+        let state = PrivacyCurtainPolicy.protocolState(inputs, up: curtain.phase == .up)
+        if state != curtainState {
+            curtainState = state
+            sendCaptureHealth(captureHealthy)
+        }
+    }
+
+    private func raiseCurtain() {
+        curtainRaising = true
+        let hooks = PrivacyCurtainController.CaptureHooks(
+            exclude: { [weak self] ids in await self?.capture.excludeWindows(ids) ?? false },
+            signature: { [weak self] in await self?.capture.lumaSignature() }
+        )
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let result = await self.curtain.raise(hooks: hooks)
+            self.curtainRaising = false
+            switch result {
+            case .raised:
+                self.events.record(.curtain, "Curtain up on \(NSScreen.screens.count) display(s)")
+            case .exclusionFailed, .verificationFailed, .noScreens:
+                self.curtainRaiseFailed = true
+                self.events.record(.error, "Privacy curtain stayed down: \(result)")
+            case .cancelled:
+                break
+            }
+            self.reconcileCurtain()
+        }
+    }
+
+    private func curtainLiftedLocally() {
+        curtainLocallyDismissed = true
+        events.record(.curtain, "Lifted at the Mac with Esc ×3")
+    }
+
+    /// Lifts synchronously; used where sharing ends, before anything else is torn down.
+    private func liftCurtain() {
+        if curtain.phase != .down { curtain.lift() }
+        watchdog?.setCurtainUp(false)
+        hangWatchdog?.update(curtainUp: false, recoveryEnabled: background.recoveryWanted)
+    }
+
+    private static func curtainStatus(_ state: PrivacyCurtainState, displays: Int) -> String? {
+        switch state {
+        case .off, .pending: nil
+        case .up: "Covering \(displays == 1 ? "your display" : "\(displays) displays"). Your phone still sees the desktop."
+        case .liftedLocally: "Lifted at this Mac for the current session."
+        case .unavailable: "Needs Accessibility, so Esc can always lift it."
+        case .failed: "Couldn’t confirm the phone’s picture stayed clear, so the screen stayed visible."
+        }
     }
 
     private func start(display: SCDisplay) {
@@ -469,6 +720,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func stop() {
+        liftCurtain()
         invalidateTextFocus()
         unavailabilityTeardown?.cancel(); unavailabilityTeardown = nil
         browserSession.stop()
@@ -480,6 +732,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func stopForTermination() {
+        liftCurtain()
         invalidateTextFocus()
         browserSession.stop()
         terminating = true
@@ -490,6 +743,8 @@ final class RemoteHostModel: ObservableObject {
         active = false
         releaseKeepAwake()
         connection.stop()
+        // An intentional quit: the watchdog helper must not reopen Farside.
+        watchdog?.markCleanExit()
     }
 
     // MARK: Permissions and displays
@@ -515,6 +770,9 @@ final class RemoteHostModel: ObservableObject {
         }
         let locked = HostScreenLock.isLocked()
         if locked != screenLocked { handleAvailability(locked ? .screenLocked : .screenUnlocked) }
+        let setupComplete = setupStep == .done
+        if setupComplete && !setupWasComplete { applyBackgroundDefaults() }
+        setupWasComplete = setupComplete
     }
 
     func loadDisplays() {
@@ -621,6 +879,7 @@ final class RemoteHostModel: ObservableObject {
         if notifyPhone, connection.connected {
             _ = connection.sendControl(RemoteAction(action: "viewing", x: effective ? 1 : 0, epoch: inputEpoch.value))
         }
+        reconcileCurtain()
     }
 
     // MARK: Capture session
@@ -634,6 +893,12 @@ final class RemoteHostModel: ObservableObject {
         }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
+        if sessionStartedAt == nil {
+            sessionStartedAt = Date()
+            sessionsThisLaunch += 1
+            events.record(.session, "Phone connected")
+        }
+        captureUnhealthySince = nil
         wakeDisplayForRemoteSession()
         updatePowerAssertions()
         captureAttempt &+= 1
@@ -671,6 +936,7 @@ final class RemoteHostModel: ObservableObject {
                     self.accessibilityPermission = .denied
                     self.applyControlState(notifyPhone: true)
                 }
+                self.reconcileCurtain()
             }
         }
 
@@ -702,11 +968,25 @@ final class RemoteHostModel: ObservableObject {
                 self.stop()
                 self.autoStart.suspend()
                 self.detail = "Screen sharing couldn’t start. Try again."
+                self.events.record(.error, "Capture could not start")
             }
         }
     }
 
     private func endCapture() {
+        liftCurtain()
+        curtainLocallyDismissed = false
+        curtainRaiseFailed = false
+        captureUnhealthySince = nil
+        if let sessionStartedAt {
+            lastSessionDuration = Date().timeIntervalSince(sessionStartedAt)
+            events.record(.session, "Phone disconnected after \(HostDiagnosticsReport.duration(lastSessionDuration ?? 0))")
+            self.sessionStartedAt = nil
+        }
+        if recoveryNoticeDelivered {
+            recoveryNoticePending = false
+            recoveryNoticeDelivered = false
+        }
         invalidateTextFocus()
         phonePause.clear()
         clipboard.reset()
@@ -723,6 +1003,7 @@ final class RemoteHostModel: ObservableObject {
         captureTask?.cancel(); captureTask = nil
         _ = capture.stop()
         updatePowerAssertions()
+        reconcileCurtain()
     }
 
     private func captureFailed() {
@@ -731,6 +1012,7 @@ final class RemoteHostModel: ObservableObject {
         if screenRecordingPermission.isGranted {
             autoStart.suspend()
             detail = "Screen sharing stopped unexpectedly. Try again."
+            events.record(.error, "Capture stopped unexpectedly")
         } else {
             invalidateDisplays(status: .permissionDenied)
         }
@@ -865,7 +1147,13 @@ final class RemoteHostModel: ObservableObject {
             releaseRemoteInput(notifyPhone: true)
             inputFreshness.expireTokens()
         }
+        if healthy {
+            captureUnhealthySince = nil
+        } else if captureUnhealthySince == nil {
+            captureUnhealthySince = ProcessInfo.processInfo.systemUptime
+        }
         captureHealthy = healthy
+        defer { reconcileCurtain() }
         let trusted: HostPermissionStatus = AXIsProcessTrusted() ? .granted : .denied
         if trusted != accessibilityPermission {
             accessibilityPermission = trusted
@@ -907,13 +1195,16 @@ final class RemoteHostModel: ObservableObject {
             now: ProcessInfo.processInfo.systemUptime,
             doubleClickInterval: min(2, max(0.1, NSEvent.doubleClickInterval))
         )
-        _ = connection.sendControl(RemoteAction(
+        let event = recoveryEventForPhone
+        let sent = connection.sendControl(RemoteAction(
             action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: true,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
             features: SessionFeature.host, hostState: state?.rawValue,
-            hostStream: connection.media?.takeHostSummary()
+            hostStream: connection.media?.takeHostSummary(),
+            curtain: curtainState.rawValue, hostEvent: event
         ))
+        if sent && event != nil { recoveryNoticeDelivered = true }
     }
 
     // MARK: Session extensions
@@ -931,6 +1222,15 @@ final class RemoteHostModel: ObservableObject {
         case "clipboard":
             guard let frame = action.clipboard else { return }
             clipboard.receive(frame, allowed: current && !phonePause.isPaused && controlEffective)
+        case "curtain":
+            // Covering the Mac's own screen needs the same authority as controlling it.
+            guard current, controlEffective, !phonePause.isPaused,
+                  let request = action.curtain.flatMap(PrivacyCurtainRequest.init(rawValue:)) else {
+                sendCaptureHealth(captureHealthy)
+                return
+            }
+            events.record(.curtain, "Phone asked to \(request == .up ? "hide" : "show") the screen")
+            setPrivacyCurtain(request == .up)
         default:
             break
         }
@@ -940,6 +1240,7 @@ final class RemoteHostModel: ObservableObject {
     /// session slot so a quick return resumes without renegotiation.
     private func pauseForPhoneBackground() {
         guard !phonePause.isPaused else { return }
+        liftCurtain()
         phonePause.begin(at: ProcessInfo.processInfo.systemUptime)
         clipboard.reset()
         invalidateTextFocus()
@@ -954,6 +1255,7 @@ final class RemoteHostModel: ObservableObject {
         captureTask?.cancel(); captureTask = nil
         _ = capture.stop()
         updatePowerAssertions()
+        reconcileCurtain()
     }
 
     /// A fresh epoch, geometry and capture follow, so no pre-background input can apply.
@@ -1009,11 +1311,14 @@ final class RemoteHostModel: ObservableObject {
             displayAsleep = false
             if connection.connected { sendCaptureHealth(captureHealthy) }
         }
+        reconcileCurtain()
     }
 
     /// Input stops at once; the phone gets the reason on the ordered channel just before the
     /// session closes, so it can say why instead of guessing.
     private func tearDownForUnavailability(_ presence: HostPresence) {
+        liftCurtain()
+        events.record(.availability, "Sharing paused: \(presence.rawValue)")
         guard connection.connected else {
             if active || connection.isRunning || browserSession.controller.running { stop() }
             return

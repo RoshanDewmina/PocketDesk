@@ -231,6 +231,13 @@ struct HostPopoverPresentation: Equatable {
                 caption: "Your iPhone can’t connect", message: nil, symbol: "pause",
                 showsSessionToggles: false, actions: [.resumeSharing]
             )
+        case .unavailable where state.crashLoopStopped:
+            return Self(
+                mood: .attention, headline: "Stopped after repeated crashes", title: "Farside stopped itself",
+                caption: "It quit 3 times in 5 minutes",
+                message: "Sharing is paused so it can’t keep crashing. Try again when you’re ready; Copy Diagnostics in Settings helps find out why.",
+                symbol: "exclamationmark.arrow.circlepath", showsSessionToggles: false, actions: [.tryAgain]
+            )
         case .unavailable:
             let note: (headline: String, title: String, caption: String?, symbol: String) = switch state.availability {
             case .locked: ("This Mac is locked", "This Mac is locked", "Sharing resumes when it’s unlocked", "lock")
@@ -463,5 +470,36 @@ struct HostReadyCheck: Equatable, Identifiable {
             ? Self(id: .openAtLogin, title: "Opens at login", detail: "Back by itself after a restart", result: .pass)
             : Self(id: .openAtLogin, title: "Opens at login", detail: "Recommended, so a restart doesn’t strand you",
                    result: .optional, fix: .openAtLogin)
+    }
+}
+
+// MARK: Reliability and privacy rows
+
+/// What a login item or the watchdog helper is doing, in plain words. Never "on" unless macOS
+/// says it is enabled.
+enum HostBackgroundItemCopy {
+    static func loginSubtitle(_ state: HostBackgroundItemState) -> String {
+        switch state {
+        case .on: "Back by itself after a restart"
+        case .off: "Recommended, so a restart doesn’t strand you"
+        case .needsApproval: "Waiting for approval in Login Items"
+        case .unavailable: "Move Farside to Applications first"
+        }
+    }
+
+    static func recoverySubtitle(_ state: HostBackgroundItemState) -> String {
+        switch state {
+        case .on: "A small helper reopens Farside after a crash or freeze"
+        case .off: "Farside stays closed if it crashes"
+        case .needsApproval: "Waiting for approval in Login Items"
+        case .unavailable: "Move Farside to Applications first"
+        }
+    }
+}
+
+enum HostCurtainCopy {
+    static func subtitle(for state: HostViewState) -> String {
+        if state.curtainNeedsAccessibility { return "Needs Accessibility, so Esc can always lift it" }
+        return state.curtainStatus ?? "Covers the screen while your iPhone is connected"
     }
 }

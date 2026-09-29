@@ -126,9 +126,22 @@ targets:
     type: application
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [RemoteHost, RemoteShared]
+    sources:
+      - RemoteHost
+      - RemoteShared
+      - path: RemoteWatchdog/LaunchAgent/com.roshan.PocketDesk.RemoteHost.watchdog.plist
+        buildPhase:
+          copyFiles:
+            destination: wrapper
+            subpath: Contents/Library/LaunchAgents
     dependencies:
       - package: WebRTC
+      - target: FarsideWatchdog
+        embed: true
+        link: false
+        codeSign: true
+        copy:
+          destination: executables
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost
@@ -143,11 +156,25 @@ targets:
         CODE_SIGN_STYLE: Automatic
         ENABLE_HARDENED_RUNTIME: YES
     scheme: {}
+  FarsideWatchdog:
+    type: tool
+    platform: macOS
+    deploymentTarget: '26.0'
+    sources: [RemoteWatchdog/main.swift, RemoteWatchdog/WatchdogSupervisor.swift, RemoteHost/HostWatchdogState.swift]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost.watchdog
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: Apple Development
+        DEVELOPMENT_TEAM: 39HM2X8GS6
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        SKIP_INSTALL: YES
   RemoteCoreTests:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [RemoteTests, RemoteShared, RemoteHost/HostPresentation.swift, RemoteHost/HostViewState.swift, RemoteHost/HostTextFocusProbe.swift, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift]
+    sources: [RemoteTests, RemoteShared, RemoteHost/HostPresentation.swift, RemoteHost/HostTextFocusProbe.swift, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift, RemoteHost/HostWatchdogState.swift, RemoteHost/HostHangWatchdog.swift, RemoteHost/HostWatchdogReporter.swift, RemoteHost/HostLoginItem.swift, RemoteHost/HostViewState.swift, RemoteHost/PrivacyCurtain.swift, RemoteHost/HostDiagnostics.swift]
     dependencies:
       - package: WebRTC
     settings:

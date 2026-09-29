@@ -82,6 +82,22 @@ struct HostPopoverView: View {
             HostToggleRow(title: "Chime when a phone connects", subtitle: "So you always know",
                           isOn: state.chimeOnConnect, set: actions.setChimeOnConnect)
                 .accessibilityIdentifier("farside.popover.chime")
+            HostToggleRow(title: "Hide this Mac’s screen", subtitle: HostCurtainCopy.subtitle(for: state),
+                          isOn: state.privacyCurtain, set: actions.setPrivacyCurtain)
+                .accessibilityIdentifier("farside.popover.privacyCurtain")
+            VStack(alignment: .leading, spacing: 6) {
+                HostToggleRow(title: "Open at login", subtitle: HostBackgroundItemCopy.loginSubtitle(state.loginItem),
+                              isOn: state.openAtLogin, set: actions.setOpenAtLogin)
+                    .accessibilityIdentifier("farside.popover.openAtLogin")
+                if state.loginItem == .needsApproval {
+                    Button("Allow in Login Items…") {
+                        dismiss()
+                        actions.openLoginItems()
+                    }
+                    .buttonStyle(HostButtonStyle(kind: .inline))
+                    .accessibilityIdentifier("farside.popover.allowLoginItem")
+                }
+            }
         }
     }
 
