@@ -11,6 +11,14 @@ protocol AnywhereEntitlementSource: AnyObject {
 
 extension AnywhereStore: AnywhereEntitlementSource {}
 
+enum RemovalResumeError: LocalizedError {
+    case unfinished
+
+    var errorDescription: String? {
+        "Finish or cancel Server Data removal before pairing or connecting again."
+    }
+}
+
 /// The entitlement handshake (Backend/ENTITLEMENT-CONTRACT.md): sends the current signed
 /// transaction to the service, keeps the token it returns in the Keychain until it expires, and
 /// hands it to signaling for `register`. Every failure degrades to "no token": the same Wi-Fi keeps
@@ -190,13 +198,9 @@ final class AnywhereAccess: ObservableObject {
     /// Before a person-started connection: gets a token if none is held, but never holds the
     /// connection back longer than `timeout`. A late answer still lands for the next attempt.
     func prepareForConnection(timeout: TimeInterval = 4) async {
-        guard !removalPending, !localCleanupPending, !removalRecoveryRequired else { return }
         // Only an explicit new Connect resumes verification after a completed unlink.
-        if removalState != nil {
-            do { try removalPersistence?.delete() }
-            catch { return }
-            removalState = nil
-        }
+        do { try resumeAfterCompletedRemoval() }
+        catch { return }
         guard source.entitlement.hasAccess else { return }
         guard currentToken() == nil else {
             if grant?.needsRefresh(at: now()) == true { Task { await refresh() } }
@@ -289,6 +293,17 @@ final class AnywhereAccess: ObservableObject {
         removalPending = recovered?.pending != nil
         localCleanupPending = recovered?.pending == nil && recovered?.cleanup != nil
         removalRecoveryRequired = false
+    }
+
+    /// A person may explicitly re-pair or connect after the server and local cleanup both finished.
+    /// Background reconnect never calls this, and an unreadable or unfinished marker stays closed.
+    func resumeAfterCompletedRemoval() throws {
+        try recoverRemovalState()
+        guard !removing, !removalPending, !localCleanupPending else { throw RemovalResumeError.unfinished }
+        guard removalState != nil else { return }
+        try removalPersistence?.delete()
+        objectWillChange.send()
+        removalState = nil
     }
 
     /// Call only after the coordinator has removed, or safely superseded, the original pairing.
