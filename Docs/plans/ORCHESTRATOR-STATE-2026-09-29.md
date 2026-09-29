@@ -38,18 +38,37 @@ under `~/Documents/ChatGPT/Saas/PocketDesk` refer to the same repo.
 
 ## Agents at the stop
 
-Both agents were told at about 05:40 to stop at a safe point, commit all work in progress
-(including untracked files), push their branch to origin and report what is left. Nothing of theirs
-is merged into main. Tips when this file was first saved (not yet pushed then; see the follow-up
-commit for the pushed tips):
+Both agents stopped at a safe point, committed everything, pushed their branch and ran nothing
+further. Nothing of theirs is merged into main. All simulators were shut down (none deleted except
+the integrations agent's own, which it deleted during cleanup).
 
-- **Phone parity** `a9c91c9bb117300d3`, branch `worktree-agent-a9c91c9bb117300d3`, local tip
-  `2754e09`, clean. Scope: direct touch, iPad hardware keyboard/mouse (with middle click), mini map,
-  display picker. Known issue: its `MiniMapView` adds a second `RTCMTLVideoView` straight to the
-  track, so the mini map would be black until it uses `RestampingRenderer`.
-- **System integrations** `a752967d0e530c55c`, branch `worktree-agent-a752967d0e530c55c`, local
-  tip `3d6f7db`, 1 uncommitted file (its `design/SYSTEM-INTEGRATIONS-REPORT.md`). Scope: App
-  Intents/Siri, agent-needs-you notifications, session Live Activity, Mac agent-hook scaffold.
+- **Phone parity** `a9c91c9bb117300d3`: branch `worktree-agent-a9c91c9bb117300d3`, pushed tip
+  `66d432e`, clean, rebased on `3b18365` (needs one more rebase onto current main). Report:
+  `design/PHONE-PARITY-REPORT.md`. Done: direct touch, iPad hardware keyboard/mouse with middle
+  click, mini map (now drawn through `RestampingRenderer`, commit `40fa5ac`), display picker; iPhone
+  UI tests for mini map drag/tap/fade, ⌃⌥ stand-ins and ⌘W/⌘M pass on the tip. Left:
+  - iPad ⌘W/⌘M still send Farside to the Home Screen on the iPad simulator; the ⌘W-closes-Mac-window
+    change is only unit-tested (iPad UI runner crashed under load). ⌘M may be iPadOS-owned (then ⌃⌥M).
+  - Run `MiniMapVideoTests` (written, compiles, never run).
+  - Re-run on the rebased tip: full phone unit suite, full iPhone UI suite, iPad parity suite (unit
+    and UI in separate xcodebuild runs), screenshot run (direct touch, hardware keys, display
+    picker, iPad mouse).
+  - E2E host input fence blocks the new `moveTo` and `middle` actions (safe; follow-up in the report).
+  - Delete its simulators afterwards: Farside Parity iPhone 17 `8578AF30-…`, iPad Pro 11 `8EBD7942-…`.
+  - Macro test note: 18 RemoteCoreTests failures on the tip are environment-only (bun signalling
+    service started from inside the test process never reports its port; BrowserFixtures JSON
+    unreadable under the test sandbox), none in code the branch changes.
+- **System integrations** `a752967d0e530c55c`: branch `worktree-agent-a752967d0e530c55c`, pushed
+  tip `153835b`, clean, rebased on `3b18365` (17 commits). Report:
+  `design/SYSTEM-INTEGRATIONS-REPORT.md`, evidence in `design/system-integrations/`. Done: App
+  Shortcuts (Connect, Is my Mac awake?, End session), "needs you" notifications with actions,
+  session Live Activity (Lock Screen + Dynamic Island), Mac agent-hook scaffold (off by default).
+  `FARSIDE_ENABLE_PUSH=YES` gates push/Time Sensitive/Associated Domains, OFF by default, so the
+  wildcard-profile device build signs. Verified on the rebased tree: phone unit 173/173,
+  RemoteCoreTests 412 (xctest) 0 failures, host snapshots 15/15, one push routing sample end to end.
+  Left: the other three push samples and the Snooze/Not now test; re-run the Lock Screen End test
+  (flaked once under load); full phone UI suite (2 pre-existing fixture-launch timeouts at load ~200
+  on the old base); Siri phrases, Spotlight and Always-On need a real phone.
 
 ## Resume checklist (after the restart)
 
