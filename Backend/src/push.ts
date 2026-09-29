@@ -229,5 +229,8 @@ export async function purgePushRetention(db: D1Database, now: number): Promise<v
   await db.batch([
     db.prepare("DELETE FROM push_reports WHERE EXISTS (SELECT 1 FROM push_events e WHERE e.room=push_reports.room AND e.id=push_reports.id AND e.expires_at<=?1)").bind(now),
     db.prepare("DELETE FROM push_events WHERE expires_at<=?1").bind(now),
+    db.prepare(`DELETE FROM push_registrations WHERE updated_at < ?1 OR NOT EXISTS
+      (SELECT 1 FROM rooms WHERE rooms.id=push_registrations.room AND rooms.status='active')`)
+      .bind(now - 365 * 24 * 60 * 60_000),
   ]);
 }
