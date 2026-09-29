@@ -157,6 +157,16 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(model.resumeState, .none)
     }
 
+    func testMacReportedDeparturesAreExplainedWithoutGuessing() {
+        let date = Date(timeIntervalSince1970: 1_790_000_000)
+        let time = date.formatted(date: .omitted, time: .shortened)
+        XCTAssertEqual(PhoneRemoteModel.notice(for: .sleeping, at: date), "Your Mac went to sleep at \(time). Wake it to reconnect.")
+        XCTAssertTrue(PhoneRemoteModel.notice(for: .locked, at: date).contains("can’t unlock it"))
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        XCTAssertNil(model.macNotice, "Nothing is claimed without a report from the Mac")
+        XCTAssertFalse(model.canWakeDisplay)
+    }
+
     func testClipboardActionsExplainWhyTheyAreUnavailable() {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
         XCTAssertFalse(model.clipboardSupported)

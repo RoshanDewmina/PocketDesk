@@ -6,19 +6,29 @@ import Foundation
 enum SessionFeature {
     static let clipboardText = "clipboard.text.1"
     static let backgroundPause = "pause.1"
-    static let host = [clipboardText, backgroundPause]
+    static let displayWake = "display.wake.1"
+    static let host = [clipboardText, backgroundPause, displayWake]
+}
+
+/// Availability the Mac itself reports on `capture` status. The phone states only these as
+/// fact; without one, it must not guess whether the Mac is asleep or locked.
+enum HostPresence: String {
+    case displayAsleep, sleeping, locked, switchedUser
 }
 
 extension RemoteAction {
-    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume"]
+    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake"]
 
-    /// Validates the appended clipboard/pause fields. Returns true when the action is a
+    /// Validates the appended clipboard/pause/presence fields. Returns true when the action is a
     /// session-extension action that is now fully validated.
     func validateSessionExtension() throws -> Bool {
         if let features {
             guard action == "capture", features.count <= 16, features.allSatisfy(Self.isFeatureName) else {
                 throw RemoteError.invalidMessage
             }
+        }
+        if let hostState {
+            guard action == "capture", ClipboardFrame.isWellFormedStatus(hostState) else { throw RemoteError.invalidMessage }
         }
         guard Self.sessionExtensionActions.contains(action) else {
             guard clipboard == nil else { throw RemoteError.invalidMessage }

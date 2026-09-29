@@ -73,3 +73,43 @@ final class HostKeepAwakeTests: XCTestCase {
         ))
     }
 }
+
+final class HostAvailabilityTests: XCTestCase {
+    func testDisplaySleepAloneKeepsSharingWhileSleepLockAndUserSwitchTearDown() {
+        XCTAssertEqual(HostSleepPolicy.response(to: .displaySlept), .displayAsleep)
+        XCTAssertEqual(HostSleepPolicy.response(to: .displayWoke), .displayAwake)
+        XCTAssertEqual(HostSleepPolicy.response(to: .systemWillSleep), .tearDown(.sleeping))
+        XCTAssertEqual(HostSleepPolicy.response(to: .screenLocked), .tearDown(.locked))
+        XCTAssertEqual(HostSleepPolicy.response(to: .sessionResigned), .tearDown(.switchedUser))
+        for event in [HostSleepPolicy.Event.systemDidWake, .sessionActivated, .screenUnlocked] {
+            XCTAssertEqual(HostSleepPolicy.response(to: event), .recover)
+        }
+    }
+
+    func testSystemStaysReachableWhileSharingButTheDisplayIsHeldOnlyForAConnectedPhone() {
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: false) == (true, false))
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: true) == (true, true))
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: false, phoneConnected: true) == (false, false))
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: false, sharing: true, phoneConnected: true) == (false, false),
+                      "Turning off Keep awake leaves normal macOS sleep settings in charge")
+    }
+
+    func testLockDetectionReadsTheSessionDictionary() {
+        XCTAssertTrue(HostScreenLock.isLocked(["CGSSessionScreenIsLocked": true]))
+        XCTAssertFalse(HostScreenLock.isLocked(["CGSSessionScreenIsLocked": false]))
+        XCTAssertFalse(HostScreenLock.isLocked(["kCGSSessionOnConsoleKey": true]))
+        XCTAssertFalse(HostScreenLock.isLocked(nil))
+    }
+
+    func testPresenceTravelsOnlyOnCaptureStatusAndOlderPeersIgnoreIt() throws {
+        XCTAssertNoThrow(try RemoteAction(action: "capture", hostState: HostPresence.displayAsleep.rawValue).validate())
+        XCTAssertNoThrow(try RemoteAction(action: "wake", epoch: 2).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "heartbeat", hostState: "locked").validate())
+        XCTAssertThrowsError(try RemoteAction(action: "wake", epoch: 2, hostState: "locked").validate())
+        XCTAssertThrowsError(try RemoteAction(action: "capture", hostState: "not valid").validate())
+        let future = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(
+            RemoteAction(action: "capture", hostState: "hibernating")))
+        XCTAssertNoThrow(try future.validate())
+        XCTAssertNil(future.hostState.flatMap(HostPresence.init(rawValue:)))
+    }
+}

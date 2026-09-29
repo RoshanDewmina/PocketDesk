@@ -78,6 +78,10 @@ final class PhoneRemoteModel: ObservableObject {
     let clipboard = PhoneClipboard()
     @Published private(set) var hostFeatures: Set<String> = []
     @Published private(set) var resumeState: ResumeState = .none
+    @Published private(set) var hostPresence: HostPresence?
+    /// Why the last session ended, when the Mac itself said so.
+    @Published private(set) var macNotice: String?
+    private var departureReason: HostPresence?
     private var continuity = BackgroundContinuity()
     private let background: BackgroundExecution
     private var holdTask: Task<Void, Never>?
@@ -157,6 +161,7 @@ final class PhoneRemoteModel: ObservableObject {
             guard let self else { return }
             self.contentConcealed = false
             self.resumeState = .none
+            self.macNotice = nil
             if let peer = self.connection.media {
                 peer.onStreamStatistics = { [weak self, weak peer] report in
                     Task { @MainActor in
@@ -243,6 +248,16 @@ final class PhoneRemoteModel: ObservableObject {
         if !clipboardSupported { return "Clipboard needs the updated PocketDesk on your Mac." }
         if !controlAllowed { return "Your Mac is view-only, so the clipboard is off." }
         return "The clipboard is unavailable right now."
+    }
+
+    var canWakeDisplay: Bool {
+        hostFeatures.contains(SessionFeature.displayWake) && connection.connected && controlAllowed
+            && !privacyShield && !contentConcealed
+    }
+
+    func wakeMacDisplay() {
+        guard canWakeDisplay else { return }
+        _ = connection.sendControl(RemoteAction(action: "wake", epoch: geometryEpoch))
     }
 
     @discardableResult
@@ -654,6 +669,8 @@ final class PhoneRemoteModel: ObservableObject {
         case "capture":
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             hostFeatures = Set(action.features ?? [])
+            hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
+            if let hostPresence, hostPresence != .displayAsleep { departureReason = hostPresence }
             appliedStreamQuality = action.streamQuality
             if action.streamQuality != nil, action.streamQuality != streamQuality, qualityRequestedAt == nil {
                 qualityRequestedAt = ProcessInfo.processInfo.systemUptime
@@ -700,6 +717,16 @@ final class PhoneRemoteModel: ObservableObject {
             textStatus = "Drag ended on your Mac."
         default:
             break
+        }
+    }
+
+    static func notice(for presence: HostPresence, at date: Date = Date()) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        switch presence {
+        case .sleeping: return "Your Mac went to sleep at \(time). Wake it to reconnect."
+        case .locked: return "Your Mac was locked at \(time). PocketDesk can’t unlock it; unlock it in person to reconnect."
+        case .switchedUser: return "Another user started using your Mac at \(time)."
+        case .displayAsleep: return "Your Mac’s display is asleep."
         }
     }
 
@@ -802,6 +829,9 @@ final class PhoneRemoteModel: ObservableObject {
         pendingText = nil
         textStatus = ""
         hostFeatures = []
+        hostPresence = nil
+        if let departureReason { macNotice = Self.notice(for: departureReason) }
+        departureReason = nil
         clipboard.cancel()
         resumeWatchdog?.cancel(); resumeWatchdog = nil
     }

@@ -109,6 +109,8 @@ struct NativeSessionView: View {
                 voiceInput.loadNonRecordingPreview(String(repeating: "A long spoken note stays readable while the insert action remains in reach. ", count: 12))
                 showVoiceInput = true
             }
+            if offlineLayoutCheck && ProcessInfo.processInfo.arguments.contains("--ui-keyboard-check") { keyboardOpen = true }
+            if offlineLayoutCheck && ProcessInfo.processInfo.arguments.contains("--ui-controls-check") { showControls = true }
             #endif
         }
         .onDisappear { model.cancelInput(); cancelVoiceInput() }
@@ -184,7 +186,19 @@ struct NativeSessionView: View {
     }
 
     @ViewBuilder private var centerNotices: some View {
-        if !offlineLayoutCheck && (!model.fresh || !model.captureHealthy) {
+        if !offlineLayoutCheck && model.hostPresence == .displayAsleep {
+            VStack(spacing: 12) {
+                Label("Your Mac’s display is asleep", systemImage: "moon.zzz")
+                    .font(.callout.weight(.medium))
+                if model.canWakeDisplay {
+                    Button("Wake display", action: model.wakeMacDisplay)
+                        .buttonStyle(.glassProminent)
+                        .accessibilityHint("Turns your Mac’s display back on")
+                }
+            }
+            .padding(.horizontal, 18).padding(.vertical, 14)
+            .glassEffect(.regular, in: .rect(cornerRadius: 22))
+        } else if !offlineLayoutCheck && (!model.fresh || !model.captureHealthy) {
             Label(model.fresh ? "Screen sharing needs attention on your Mac" : "Waiting for a fresh picture",
                   systemImage: model.fresh ? "exclamationmark.display" : "hourglass")
                 .font(.callout.weight(.medium))
@@ -780,14 +794,23 @@ struct NativeSessionView: View {
 
     private var controlsSheet: some View {
         NavigationStack {
-            Form {
-                viewSection
-                pointerSection
-                clipboardSection
-                gesturesSection
-                workspaceSection
-                pictureSection
-                feelSection
+            ScrollViewReader { proxy in
+                Form {
+                    viewSection
+                    pointerSection
+                    clipboardSection
+                    gesturesSection
+                    workspaceSection
+                    pictureSection
+                    feelSection
+                }
+                .onAppear {
+                    #if DEBUG
+                    if offlineLayoutCheck && ProcessInfo.processInfo.arguments.contains("--ui-clipboard-check") {
+                        proxy.scrollTo("remote.clipboard", anchor: .top)
+                    }
+                    #endif
+                }
             }
             .navigationTitle("Controls")
             .navigationBarTitleDisplayMode(.inline)
@@ -838,6 +861,7 @@ struct NativeSessionView: View {
                         .labelStyle(.titleAndIcon)
                         .buttonBorderShape(.capsule)
                 }
+                .id("remote.clipboard")
                 Grid(horizontalSpacing: 10, verticalSpacing: 10) {
                     GridRow {
                         actionTile("Copy selection", "doc.on.doc") { model.copySelectionFromMac() }

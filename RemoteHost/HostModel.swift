@@ -36,12 +36,17 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var displayRefreshStatus: HostDisplayRefreshStatus = .notChecked
     @Published private(set) var keepAwakeEnabled: Bool
     @Published private(set) var keepAwakeActive = false
+    @Published private(set) var displayAsleep = false
     @Published private(set) var openAtLogin = false
     @Published private var autoStart = HostAutoStartGate()
     private let preferences = HostPreferences()
     private let input = RemoteInputDriver()
     private let capture = RemoteCapture()
     private let keepAwake = HostKeepAwake()
+    private let remoteAccessAwake = HostKeepAwake(backend: .idleSystem)
+    private let displayWake = HostDisplayWake()
+    private var screenLocked = false
+    private var unavailabilityTeardown: Task<Void, Never>?
     private let clipboard = HostClipboardService()
     private var phonePause = HostPhonePause()
     private var lifecycleTimer: Timer?
@@ -175,26 +180,26 @@ final class RemoteHostModel: ObservableObject {
             self.pointerTelemetry.captureCursorChanged(showsCursor: shows)
             self.sendCaptureHealth(self.captureHealthy)
         }
-        for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.screensDidSleepNotification] {
+        let workspaceEvents: [(Notification.Name, HostSleepPolicy.Event)] = [
+            (NSWorkspace.willSleepNotification, .systemWillSleep),
+            (NSWorkspace.didWakeNotification, .systemDidWake),
+            (NSWorkspace.sessionDidResignActiveNotification, .sessionResigned),
+            (NSWorkspace.sessionDidBecomeActiveNotification, .sessionActivated),
+            (NSWorkspace.screensDidSleepNotification, .displaySlept),
+            (NSWorkspace.screensDidWakeNotification, .displayWoke)
+        ]
+        for (name, event) in workspaceEvents {
             observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.autoStart.suspend()
-                    self.stop()
-                    self.detail = "This Mac went to sleep or was locked. Sharing resumes when it wakes."
-                }
+                Task { @MainActor in self?.handleAvailability(event) }
             })
         }
-        for name in [NSWorkspace.didWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification, NSWorkspace.screensDidWakeNotification] {
-            observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.autoStart.clear()
-                    self.detail = nil
-                    self.reconcileSharing()
-                }
+        for (name, event) in [(HostScreenLock.locked, HostSleepPolicy.Event.screenLocked),
+                              (HostScreenLock.unlocked, HostSleepPolicy.Event.screenUnlocked)] {
+            observers.append(DistributedNotificationCenter.default().addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in self?.handleAvailability(event) }
             })
         }
+        if HostScreenLock.isLocked() { handleAvailability(.screenLocked) }
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
@@ -382,10 +387,7 @@ final class RemoteHostModel: ObservableObject {
     func setKeepAwake(_ enabled: Bool) {
         keepAwakeEnabled = enabled
         preferences.keepAwake = enabled
-        guard enabled else { releaseKeepAwake(); return }
-        guard active else { return }
-        keepAwakeActive = keepAwake.start()
-        if !keepAwakeActive { detail = "PocketDesk couldn’t keep this Mac awake. Normal sleep settings still apply." }
+        updatePowerAssertions()
     }
 
     func setOpenAtLogin(_ enabled: Bool) {
@@ -403,16 +405,14 @@ final class RemoteHostModel: ObservableObject {
         input.enabled = false
         active = true
         detail = nil
-        if keepAwakeEnabled {
-            keepAwakeActive = keepAwake.start()
-            if !keepAwakeActive { detail = "PocketDesk couldn’t keep this Mac awake. Normal sleep settings still apply." }
-        }
+        updatePowerAssertions()
         connection.start()
         reconcileStartResult()
     }
 
     func stop() {
         invalidateTextFocus()
+        unavailabilityTeardown?.cancel(); unavailabilityTeardown = nil
         browserSession.stop()
         releaseRemoteInput(notifyPhone: true)
         sendCaptureHealth(false)
@@ -455,6 +455,8 @@ final class RemoteHostModel: ObservableObject {
         if let pairingExpires, !pairingExpired, !pairingCode.isEmpty, pairingExpires <= Date() {
             pairingExpired = true
         }
+        let locked = HostScreenLock.isLocked()
+        if locked != screenLocked { handleAvailability(locked ? .screenLocked : .screenUnlocked) }
     }
 
     func loadDisplays() {
@@ -573,6 +575,9 @@ final class RemoteHostModel: ObservableObject {
             return
         }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
+        if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
+        wakeDisplayForRemoteSession()
+        updatePowerAssertions()
         captureAttempt &+= 1
         if captureAttempt == 0 { captureAttempt = 1 }
         let attempt = captureAttempt
@@ -659,6 +664,7 @@ final class RemoteHostModel: ObservableObject {
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
         _ = capture.stop()
+        updatePowerAssertions()
     }
 
     private func captureFailed() {
@@ -835,8 +841,9 @@ final class RemoteHostModel: ObservableObject {
         ))
     }
 
-    private func sendCaptureHealth(_ healthy: Bool) {
+    private func sendCaptureHealth(_ healthy: Bool, presence: HostPresence? = nil) {
         guard connection.connected else { return }
+        let state = presence ?? (displayAsleep ? .displayAsleep : nil)
         let capability = inputFreshness.capability(
             epoch: inputEpoch.value,
             now: ProcessInfo.processInfo.systemUptime,
@@ -846,7 +853,7 @@ final class RemoteHostModel: ObservableObject {
             action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: true,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
-            features: SessionFeature.host
+            features: SessionFeature.host, hostState: state?.rawValue
         ))
     }
 
@@ -854,14 +861,16 @@ final class RemoteHostModel: ObservableObject {
 
     private func receiveSessionExtension(_ action: RemoteAction) {
         let current = connection.connected && active && action.epoch == inputEpoch.value
+        let controlEffective = allowControl && accessibilityPermission.isGranted
         switch action.action {
+        case "wake":
+            if current && controlEffective && !phonePause.isPaused { wakeDisplayForRemoteSession(force: true) }
         case "pause":
             if current { pauseForPhoneBackground() }
         case "resume":
             if current { resumeAfterPhoneBackground() }
         case "clipboard":
             guard let frame = action.clipboard else { return }
-            let controlEffective = allowControl && accessibilityPermission.isGranted
             clipboard.receive(frame, allowed: current && !phonePause.isPaused && controlEffective)
         default:
             break
@@ -885,6 +894,7 @@ final class RemoteHostModel: ObservableObject {
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
         _ = capture.stop()
+        updatePowerAssertions()
     }
 
     /// A fresh epoch, geometry and capture follow, so no pre-background input can apply.
@@ -897,6 +907,84 @@ final class RemoteHostModel: ObservableObject {
     private func expirePhonePause() {
         phonePause.clear()
         connection.dropPeerSession()
+    }
+
+    // MARK: Sleep, lock and display availability
+
+    private func handleAvailability(_ event: HostSleepPolicy.Event) {
+        switch HostSleepPolicy.response(to: event) {
+        case .tearDown(let presence):
+            if presence == .locked {
+                guard !screenLocked else { return }
+                screenLocked = true
+            }
+            autoStart.suspend()
+            switch presence {
+            case .locked: detail = "This Mac is locked. Sharing resumes when it’s unlocked."
+            case .switchedUser: detail = "Another user is using this Mac. Sharing resumes when you switch back."
+            default: detail = "This Mac went to sleep. Sharing resumes when it wakes."
+            }
+            tearDownForUnavailability(presence)
+        case .recover:
+            if event == .screenUnlocked {
+                guard screenLocked else { return }
+                screenLocked = false
+            }
+            if HostScreenLock.isLocked() { screenLocked = true; return }
+            autoStart.clear()
+            detail = nil
+            reconcileSharing()
+        case .displayAsleep:
+            displayAsleep = true
+            guard active, connection.connected else { return }
+            releaseRemoteInput(notifyPhone: true)
+            sendCaptureHealth(captureHealthy)
+        case .displayAwake:
+            displayAsleep = false
+            if connection.connected { sendCaptureHealth(captureHealthy) }
+        }
+    }
+
+    /// Input stops at once; the phone gets the reason on the ordered channel just before the
+    /// session closes, so it can say why instead of guessing.
+    private func tearDownForUnavailability(_ presence: HostPresence) {
+        guard connection.connected else {
+            if active || connection.isRunning || browserSession.controller.running { stop() }
+            return
+        }
+        invalidateTextFocus()
+        pointerTelemetry.end()
+        releaseRemoteInput(notifyPhone: true)
+        inputFreshness.expireTokens()
+        input.enabled = false
+        captureHealthy = false
+        captureAttempt &+= 1
+        captureTask?.cancel(); captureTask = nil
+        _ = capture.stop()
+        sendCaptureHealth(false, presence: presence)
+        unavailabilityTeardown?.cancel()
+        unavailabilityTeardown = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 200_000_000)
+            guard !Task.isCancelled else { return }
+            self?.stop()
+        }
+    }
+
+    private func wakeDisplayForRemoteSession(force: Bool = false) {
+        guard force || displayAsleep || CGDisplayIsAsleep(selected) != 0 else { return }
+        displayWake.declareRemoteActivity()
+    }
+
+    private func updatePowerAssertions() {
+        let wanted = HostPowerPolicy.assertions(keepAwake: keepAwakeEnabled, sharing: active,
+                                                phoneConnected: connection.connected && !phonePause.isPaused)
+        if wanted.system {
+            if !remoteAccessAwake.start() { detail = "PocketDesk couldn’t keep this Mac awake. Normal sleep settings still apply." }
+        } else {
+            _ = remoteAccessAwake.stop()
+        }
+        if wanted.display { _ = keepAwake.start() } else { _ = keepAwake.stop() }
+        keepAwakeActive = remoteAccessAwake.isActive
     }
 
     private func sendTextResult(for requestID: String, accepted: Bool) {
@@ -980,7 +1068,8 @@ final class RemoteHostModel: ObservableObject {
 
     private func releaseKeepAwake() {
         _ = keepAwake.stop()
-        keepAwakeActive = keepAwake.isActive
+        _ = remoteAccessAwake.stop()
+        keepAwakeActive = remoteAccessAwake.isActive
     }
 
     private func reconcileStartResult() {

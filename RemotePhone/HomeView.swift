@@ -59,6 +59,12 @@ struct HomeView: View {
                     } else {
                         addMacCard
                     }
+                    if let notice = model.macNotice {
+                        Label(notice, systemImage: "moon.zzz")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                     if !model.error.isEmpty {
                         Label(model.error, systemImage: "exclamationmark.triangle.fill")
                             .font(.callout)
@@ -332,7 +338,7 @@ struct ConcealedRemoteView: View {
         switch presentation {
         case .hidden: "PocketDesk hides your Mac’s screen while it’s in the background."
         case .reconnecting: "Resuming your session with \(macName). Your pairing is kept."
-        case .reconnectFailed: MacStatus(connection.status).text
+        case .reconnectFailed: model.macNotice ?? MacStatus(connection.status).text
         case .ended: "PocketDesk hid your Mac’s screen while it was in the background. Reconnect to continue."
         }
     }

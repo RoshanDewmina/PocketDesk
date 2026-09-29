@@ -19,6 +19,7 @@ struct RemoteAction: Codable {
     // Session extensions (clipboard, background pause). Validated in SessionContinuity.swift.
     var clipboard: ClipboardFrame? = nil
     var features: [String]? = nil
+    var hostState: String? = nil
 
     func validate() throws {
         if try validateSessionExtension() { return }
