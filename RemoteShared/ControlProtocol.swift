@@ -25,11 +25,16 @@ struct RemoteAction: Codable {
     // Privacy curtain request ("curtain" action) or state (on "capture"); host lifecycle event.
     var curtain: String? = nil
     var hostEvent: String? = nil
+    /// Display selection (`displays`, `display`); validated in DisplaySelection.swift.
+    var displays: [DisplayDescriptor]? = nil
+    var display: UInt32? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
         try hostStream?.validate()
         guard hostStream == nil || action == "capture" else { throw RemoteError.invalidMessage }
+        // Also before the early returns, so no other action can carry a display list.
+        if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }
         if try validatePointerSync() { return }
         try interaction?.validate()
@@ -51,10 +56,14 @@ struct RemoteAction: Codable {
         }
         guard pointerLocation == nil || (action == "heartbeat" && pointerProbe != nil),
               pointerLocatorSupported == nil || action == "capture" else { throw RemoteError.invalidMessage }
-        guard ["move", "click", "right", "double", "dragDown", "dragUp", "scroll", "text", "key", "release", "heartbeat", "viewing", "geometry", "capture", "textResult", "holdRenew"].contains(action),
+        guard ["move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "scroll", "text", "key", "release", "heartbeat", "viewing", "geometry", "capture", "textResult", "holdRenew"].contains(action),
               x.isFinite, y.isFinite, abs(x) <= 20000, abs(y) <= 20000,
               text.utf8.count <= 4096, text.utf16.count <= 1024, key.utf8.count <= 32, modifiers.count <= 4,
               modifiers.allSatisfy({ ["command", "shift", "option", "control"].contains($0) }) else { throw RemoteError.invalidMessage }
+        // An absolute position is display-local, so it can never be negative. Phones send these
+        // new actions only after the host advertises `SessionFeature.absolutePointer`/`middleButton`.
+        guard action != "moveTo" || (x >= 0 && y >= 0) else { throw RemoteError.invalidMessage }
+        guard action != "middle" || interaction == nil || interaction?.clickCount == 1 else { throw RemoteError.invalidMessage }
     }
 }
 

@@ -1,0 +1,228 @@
+import UIKit
+import GameController
+
+/// Physical key presses from a keyboard attached to the iPhone or iPad, sent to the Mac by key
+/// position with the held modifiers. Only while the session canvas is the first responder: when
+/// the keyboard bar's text field is focused, typing goes into the local draft instead, so a key
+/// never reaches the Mac twice.
+@MainActor
+final class HardwareKeyboardRouter {
+    /// Sends one key press (down and up) to the Mac. Returns false if it was not sent.
+    var send: (_ key: String, _ modifiers: [String]) -> Bool = { _, _ in false }
+    /// Hardware modifiers currently held, for ⌘-click and friends.
+    var modifiersChanged: (_ modifiers: [String]) -> Void = { _ in }
+    var remapEnabled: () -> Bool = { true }
+
+    private var repeatState = HardwareKeyRepeat()
+    private var repeatTimer: Timer?
+    private(set) var heldModifiers: [String] = []
+
+    /// Returns true when the press was for the Mac (handled), false to let UIKit have it.
+    func pressBegan(usage: Int, flags: UIKeyModifierFlags, at time: TimeInterval) -> Bool {
+        updateModifiers(flags)
+        if HardwareKeyMap.isModifier(usage) || usage == HardwareKeyMap.capsLock { return true }
+        guard let name = HardwareKeyMap.name(forHIDUsage: usage) else { return false }
+        let modifiers = HardwareKeyMap.modifiers(Set(heldModifiers), capsLock: flags.contains(.alphaShift), for: name)
+        let chord = ShortcutRemap.resolve(key: name, modifiers: modifiers, enabled: remapEnabled())
+        guard send(chord.key, chord.modifiers) else {
+            repeatState.cancel()
+            stopTimerIfIdle()
+            return true
+        }
+        repeatState.pressed(usage: usage, key: chord.key, modifiers: chord.modifiers, at: time)
+        startTimerIfNeeded()
+        return true
+    }
+
+    /// A key UIKit hands over as a key command (Escape) rather than a press: sent once, never
+    /// repeated, because its release may never be reported.
+    func commandPressed(usage: Int, flags: UIKeyModifierFlags) {
+        guard let name = HardwareKeyMap.name(forHIDUsage: usage) else { return }
+        let modifiers = HardwareKeyMap.modifiers(Set(Self.names(for: flags)), capsLock: false, for: name)
+        let chord = ShortcutRemap.resolve(key: name, modifiers: modifiers, enabled: remapEnabled())
+        _ = send(chord.key, chord.modifiers)
+    }
+
+    func pressEnded(usage: Int, flags: UIKeyModifierFlags) -> Bool {
+        updateModifiers(flags)
+        repeatState.released(usage: usage)
+        stopTimerIfIdle()
+        return HardwareKeyMap.isModifier(usage) || usage == HardwareKeyMap.capsLock
+            || HardwareKeyMap.name(forHIDUsage: usage) != nil
+    }
+
+    /// Focus moved away, the keyboard disconnected, the app resigned: nothing may keep repeating.
+    func releaseAll() {
+        repeatState.cancel()
+        stopTimerIfIdle()
+        if !heldModifiers.isEmpty {
+            heldModifiers = []
+            modifiersChanged([])
+        }
+    }
+
+    func updateModifiers(_ flags: UIKeyModifierFlags) {
+        let names = Self.names(for: flags)
+        guard names != heldModifiers else { return }
+        // A repeat carries the chord it started with; once the modifiers change it would be stale.
+        repeatState.cancel()
+        stopTimerIfIdle()
+        heldModifiers = names
+        modifiersChanged(names)
+    }
+
+    static func names(for flags: UIKeyModifierFlags) -> [String] {
+        var names: [String] = []
+        if flags.contains(.command) { names.append("command") }
+        if flags.contains(.shift) { names.append("shift") }
+        if flags.contains(.alternate) { names.append("option") }
+        if flags.contains(.control) { names.append("control") }
+        return names
+    }
+
+    private func startTimerIfNeeded() {
+        guard repeatState.isRepeating, repeatTimer == nil else { return }
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.fireRepeat() }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        repeatTimer = timer
+    }
+
+    private func fireRepeat() {
+        if let due = repeatState.due(at: ProcessInfo.processInfo.systemUptime), !send(due.key, due.modifiers) {
+            repeatState.cancel()
+        }
+        stopTimerIfIdle()
+    }
+
+    private func stopTimerIfIdle() {
+        guard !repeatState.isRepeating else { return }
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+    }
+}
+
+/// iPadOS 26 gives Farside a menu bar whose Close Window (⌘W), Minimize (⌘M), Quit (⌘Q), New
+/// Window (⌘N) and Settings (⌘,) shortcuts are resolved before any key command, so a Mac user's
+/// ⌘W would close Farside. While a session canvas sends hardware keys to the Mac, those menu items
+/// stay in the menu bar but give up their shortcuts, which then reach the canvas and the Mac.
+@MainActor
+enum MacShortcutMenu {
+    static let inputs = ["w", "m", "q", "n", ","]
+    static let modifierSets: [UIKeyModifierFlags] = [.command, [.command, .shift], [.command, .alternate]]
+
+    private static var owners = Set<ObjectIdentifier>()
+    private static var installed = false
+
+    static var isActive: Bool { !owners.isEmpty }
+
+    #if DEBUG
+    /// Offline input probe: which of these shortcuts the built menu held, to verify on a simulator.
+    static var debugNote: ((String) -> Void)?
+    #endif
+
+    static func set(_ active: Bool, for owner: AnyObject) {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        let wasActive = isActive
+        if active { owners.insert(ObjectIdentifier(owner)) } else { owners.remove(ObjectIdentifier(owner)) }
+        guard isActive != wasActive else { return }
+        if installed {
+            UIMainMenuSystem.shared.setNeedsRebuild()
+        } else if isActive {
+            // Installed on first use only, so Farside's menus are untouched until a session wants keys.
+            installed = true
+            UIMainMenuSystem.shared.setBuildConfiguration(UIMainMenuSystem.Configuration()) { builder in
+                MainActor.assumeIsolated {
+                    // A build handler replaces the app's own buildMenu(with:); keep SwiftUI's.
+                    (UIApplication.shared.delegate as? UIResponder)?.buildMenu(with: builder)
+                    #if DEBUG
+                    if let debugNote, let root = builder.menu(for: .root) {
+                        let held = shortcuts(in: root).map {
+                            "\($0.title) \($0.input ?? "") \($0.modifierFlags.rawValue) \($0.action.map(NSStringFromSelector) ?? "-")"
+                        }
+                        debugNote("menu \(isActive ? "releases" : "keeps") [\(held.joined(separator: "; "))]")
+                    }
+                    #endif
+                    if isActive { releaseShortcuts(in: builder) }
+                }
+            }
+        }
+    }
+
+    static func releasesShortcut(_ command: UIKeyCommand) -> Bool {
+        guard let input = command.input?.lowercased() else { return false }
+        return inputs.contains(input) && modifierSets.contains(command.modifierFlags)
+    }
+
+    /// Every command in a menu tree whose shortcut the Mac should get.
+    static func shortcuts(in element: UIMenuElement) -> [UIKeyCommand] {
+        if let menu = element as? UIMenu { return menu.children.flatMap(shortcuts) }
+        guard let command = element as? UIKeyCommand, releasesShortcut(command) else { return [] }
+        return [command]
+    }
+
+    /// The same menu with the Mac's shortcuts removed from its commands; everything else unchanged.
+    static func releasing(_ element: UIMenuElement) -> UIMenuElement {
+        if let menu = element as? UIMenu { return menu.replacingChildren(menu.children.map(releasing)) }
+        guard let command = element as? UIKeyCommand, releasesShortcut(command), let action = command.action
+        else { return element }
+        return UICommand(title: command.title, image: command.image, action: action,
+                         propertyList: command.propertyList, alternates: command.alternates,
+                         discoverabilityTitle: command.discoverabilityTitle,
+                         attributes: command.attributes, state: command.state)
+    }
+
+    private static func releaseShortcuts(in builder: any UIMenuBuilder) {
+        guard let root = builder.menu(for: .root) else { return }
+        for case let menu as UIMenu in root.children {
+            builder.replaceChildren(ofMenu: menu.identifier) { $0.map(releasing) }
+        }
+    }
+}
+
+/// Keyboard and mouse connection state from GameController, which also carries the mouse's
+/// middle button (UIKit reports only primary and secondary). One instance, because each mouse
+/// has a single middle-button handler.
+@MainActor
+final class HardwarePeripherals: ObservableObject {
+    static let shared = HardwarePeripherals()
+
+    @Published private(set) var keyboardConnected = GCKeyboard.coalesced != nil
+    @Published private(set) var mouseConnected = !GCMouse.mice().isEmpty
+    var onKeyboardDisconnect: () -> Void = {}
+    var onMiddleButton: (_ pressed: Bool) -> Void = { _ in }
+    private var observers: [NSObjectProtocol] = []
+
+    private init() {
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: .GCKeyboardDidConnect, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.keyboardConnected = true }
+        })
+        observers.append(center.addObserver(forName: .GCKeyboardDidDisconnect, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.keyboardConnected = GCKeyboard.coalesced != nil
+                self?.onKeyboardDisconnect()
+            }
+        })
+        for name in [Notification.Name.GCMouseDidConnect, .GCMouseDidBecomeCurrent] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.attachMice() }
+            })
+        }
+        observers.append(center.addObserver(forName: .GCMouseDidDisconnect, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.mouseConnected = !GCMouse.mice().isEmpty }
+        })
+        attachMice()
+    }
+
+    private func attachMice() {
+        mouseConnected = !GCMouse.mice().isEmpty
+        for mouse in GCMouse.mice() {
+            mouse.handlerQueue = .main
+            mouse.mouseInput?.middleButton?.pressedChangedHandler = { [weak self] _, _, pressed in
+                MainActor.assumeIsolated { self?.onMiddleButton(pressed) }
+            }
+        }
+    }
+}

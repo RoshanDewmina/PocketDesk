@@ -256,7 +256,11 @@ final class GestureCoachModel: ObservableObject {
         case .workspaceSwipe:
             note = "Three fingers switch Spaces on your Mac. Not needed here."
             return true
-        case .zoomToggle, .navigate, .pan:
+        case .middleClick:
+            flash(at: pointer)
+            note = "A three-finger tap is a middle click. Handy in 3D and CAD apps."
+            return true
+        case .zoomToggle, .navigate, .pan, .pointTo:
             return false
         }
     }

@@ -1083,6 +1083,10 @@ final class RemoteHostModel: ObservableObject {
             receiveSessionExtension(action)
             return
         }
+        if RemoteAction.displayActions.contains(action.action) {
+            receiveDisplaySelection(action)
+            return
+        }
 
         pointerTelemetry.moveProcessed(action)
         guard Self.userInputActions.contains(action.action), inputEpoch.accepts(action) else {
@@ -1138,7 +1142,7 @@ final class RemoteHostModel: ObservableObject {
         }
         let outcome = input.handle(action, upgraded: admission == .upgraded, now: now)
         #endif
-        if action.action == "move", outcome.accepted {
+        if action.action == "move" || action.action == "moveTo", outcome.accepted {
             pointerTelemetry.moveInjected(globalPoint: input.lastPoint, at: now)
         }
         if admission == .upgraded, action.action == "dragDown", !outcome.accepted,
@@ -1252,7 +1256,8 @@ final class RemoteHostModel: ObservableObject {
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
             features: SessionFeature.host, hostState: state?.rawValue,
             hostStream: connection.media?.takeHostSummary(),
-            curtain: curtainState.rawValue, hostEvent: event
+            curtain: curtainState.rawValue, hostEvent: event,
+            display: capturedDisplayID
         ))
         if sent && event != nil { recoveryNoticeDelivered = true }
     }
@@ -1284,6 +1289,54 @@ final class RemoteHostModel: ObservableObject {
         default:
             break
         }
+    }
+
+    // MARK: Display selection
+
+    private func receiveDisplaySelection(_ action: RemoteAction) {
+        guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused else { return }
+        switch action.action {
+        case "displays":
+            sendDisplayList()
+        case "display":
+            guard let requested = action.display else { return }
+            let decision = HostDisplayCatalog.decide(
+                requested: requested, available: displays.map(\.displayID), streaming: capturedDisplayID,
+                controlEffective: allowControl && accessibilityPermission.isGranted)
+            switch decision {
+            case .resendList:
+                sendDisplayList()
+            case .switchTo(let id):
+                events.record(.sharing, "Phone switched the shared display to \(Self.displayName(for: id))")
+                switchSessionDisplay(to: id)
+            }
+        default:
+            break
+        }
+    }
+
+    /// The phone chose another display: stream it in the same session. A new epoch and geometry
+    /// follow, so input meant for the old display can never land on the new one.
+    private func switchSessionDisplay(to id: CGDirectDisplayID) {
+        liftCurtain()
+        selected = id
+        beginCapture()
+        sendDisplayList()
+    }
+
+    private func sendDisplayList() {
+        guard connection.connected else { return }
+        let entries = displays.map { display in
+            HostDisplayCatalog.Display(
+                id: display.displayID, name: Self.displayName(for: display.displayID),
+                width: Double(display.frame.width), height: Double(display.frame.height),
+                pixelWidth: CGDisplayCopyDisplayMode(display.displayID).map { $0.pixelWidth },
+                pixelHeight: CGDisplayCopyDisplayMode(display.displayID).map { $0.pixelHeight },
+                main: display.displayID == CGMainDisplayID())
+        }
+        _ = connection.sendControl(RemoteAction(action: "displays", epoch: inputEpoch.value,
+                                                displays: HostDisplayCatalog.descriptors(entries),
+                                                display: capturedDisplayID))
     }
 
     /// The phone is backgrounding: stop capture and input now, but keep the peer and its
@@ -1523,7 +1576,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private static let userInputActions: Set<String> = [
-        "move", "click", "right", "double", "dragDown", "dragUp", "holdRenew", "scroll", "text", "key"
+        "move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "holdRenew", "scroll", "text", "key"
     ]
 }
 

@@ -281,6 +281,32 @@ public struct ViewportTransform {
                                   resultingOffset: offset, resultingZoom: zoom, mode: mode)
     }
 
+    /// The part of the source drawn on the canvas, in source points. Empty when nothing is drawn.
+    public var visibleSourceRect: CGRect {
+        let rect = contentRect
+        let visible = rect.intersection(CGRect(origin: .zero, size: canvasSize))
+        guard scale > 0, !visible.isNull, visible.width > 0, visible.height > 0 else { return .zero }
+        return CGRect(x: (visible.minX - rect.minX) / scale, y: (visible.minY - rect.minY) / scale,
+                      width: visible.width / scale, height: visible.height / scale)
+    }
+
+    /// True when part of the source is off screen, so a navigator has something to show.
+    public var isCropped: Bool {
+        let visible = visibleSourceRect
+        guard sourceSize.width > 0, sourceSize.height > 0, visible.width > 0 else { return false }
+        return visible.width < sourceSize.width - 0.5 || visible.height < sourceSize.height - 0.5
+    }
+
+    /// Pans (without zooming) so a source point sits at the centre of the safe rectangle, as far
+    /// as the pan limits allow. Used by the mini map's tap-to-jump.
+    public mutating func center(onSourcePoint point: CGPoint) {
+        guard Self.isFinite(point), scale > 0, sourceSize.width > 0, sourceSize.height > 0 else { return }
+        let target = CGPoint(x: min(max(point.x, 0), sourceSize.width), y: min(max(point.y, 0), sourceSize.height))
+        let safe = safeRect
+        insetReturn = nil
+        place(target, at: CGPoint(x: safe.midX, y: safe.midY))
+    }
+
     /// Covers the canvas while preserving the source aspect ratio.
     public mutating func fill() { setMode(.fill) }
 

@@ -5,7 +5,7 @@ import CoreGraphics
 ///
 /// Phone `heartbeat`: presence advertises support; `overlay == true` asks the host to
 /// omit the cursor from video because the phone is drawing it from fresh telemetry.
-/// Phone `move`: `move` is a per-epoch ordinal so the host can acknowledge it.
+/// Phone `move` and `moveTo`: `move` is a per-epoch ordinal so the host can acknowledge it.
 /// Host `capture`: presence advertises support; `videoCursor` reports the applied capture setting.
 /// Host `pointer`: an authoritative sample in capture-display logical points. Hosts send this
 /// action only to a phone that advertised support, because older phones reject unknown actions.
@@ -29,7 +29,7 @@ struct PointerSync: Codable, Equatable {
         switch action {
         case "heartbeat":
             guard overlay != nil, move == nil, videoCursor == nil, !positional else { throw RemoteError.invalidMessage }
-        case "move":
+        case "move", "moveTo":
             guard let move, move > 0, overlay == nil, videoCursor == nil, !positional else { throw RemoteError.invalidMessage }
         case "capture":
             guard videoCursor != nil, overlay == nil, move == nil, !positional else { throw RemoteError.invalidMessage }

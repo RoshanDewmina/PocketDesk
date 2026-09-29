@@ -175,8 +175,21 @@ final class PhoneRemoteModel: ObservableObject {
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
         if contentConcealed { resumeState = .needsChoice }
+        if let inputProbe {
+            // Behave like an upgraded Mac so drags, holds and new actions take their real paths.
+            nativeInteractionSupported = true
+            inputToken = "probe"
+            controlAllowed = true
+            geometryEpoch = 1
+            MacShortcutMenu.debugNote = { [weak inputProbe] in inputProbe?.note($0) }
+        }
         #endif
         if let mode = LaunchOptions.viewportOverride { ViewportPreference.store(mode) }
+        if let mode = LaunchOptions.touchModeOverride { UserDefaults.standard.set(mode.rawValue, forKey: TouchInputMode.key) }
+        if LaunchOptions.has("--ui-minimap-reset") {
+            UserDefaults.standard.removeObject(forKey: "miniMap.phoneLandscape")
+            UserDefaults.standard.removeObject(forKey: "miniMap.pad")
+        }
         connection.restore()
         connection.onAuthenticated = { [weak self] in
             guard let self else { return }
@@ -226,8 +239,160 @@ final class PhoneRemoteModel: ObservableObject {
     #endif
 
     var canControl: Bool {
-        !privacyShield && !contentConcealed && connection.connected && controlAllowed && fresh && captureHealthy && geometryEpoch > 0
+        #if DEBUG
+        if inputProbe != nil { return !privacyShield && !contentConcealed }
+        #endif
+        return !privacyShield && !contentConcealed && connection.connected && controlAllowed && fresh && captureHealthy && geometryEpoch > 0
             && (!nativeInteractionSupported || (inputToken != nil && ProcessInfo.processInfo.systemUptime - tokenReceivedAt < 1))
+    }
+
+    /// The Mac accepts `moveTo`, triple-click counts and hardware modifier flags on pointer actions.
+    var absolutePointerSupported: Bool { supports(SessionFeature.absolutePointer) }
+    var middleButtonSupported: Bool { supports(SessionFeature.middleButton) }
+    var extendedKeysSupported: Bool { supports(SessionFeature.extendedKeys) }
+
+    /// Modifier keys held on a hardware keyboard, applied to clicks and pointer motion (⌘-click).
+    var hardwareModifiers: [String] = []
+    private var extendedKeyNoticeShown = false
+
+    private static let pointerActions: Set<String> = ["move", "moveTo", "click", "right", "double", "middle", "dragDown"]
+
+    // MARK: Display selection
+
+    /// The Mac's displays, when it lists them (`SessionFeature.displaySelection`).
+    @Published private(set) var displays: [DisplayDescriptor] = []
+    /// The display the Mac is streaming now.
+    @Published private(set) var currentDisplayID: UInt32?
+    /// A switch the phone asked for and the Mac has not confirmed yet.
+    @Published private(set) var pendingDisplayID: UInt32?
+    private var displaysRequested = false
+    private var rememberedDisplayApplied = false
+    private let displayMemory = DisplayMemory()
+
+    var displaySelectionSupported: Bool { supports(SessionFeature.displaySelection) }
+
+    /// Choosing what the Mac shares needs the same authority as controlling it.
+    var canChooseDisplay: Bool { displaySelectionSupported && canControl && pendingDisplayID == nil }
+
+    func requestDisplays() {
+        guard displaySelectionSupported, connection.connected || probeActive else { return }
+        displaysRequested = true
+        #if DEBUG
+        if let inputProbe {
+            _ = inputProbe.record(RemoteAction(action: "displays", epoch: geometryEpoch))
+            receiveDisplays(RemoteAction(action: "displays", epoch: geometryEpoch,
+                                         displays: Self.probeDisplays, display: currentDisplayID ?? Self.probeDisplays[0].id))
+            return
+        }
+        #endif
+        _ = transmit(RemoteAction(action: "displays", epoch: geometryEpoch))
+    }
+
+    private var probeActive: Bool {
+        #if DEBUG
+        inputProbe != nil
+        #else
+        false
+        #endif
+    }
+
+    #if DEBUG
+    /// Two displays for offline checks of the picker (`--ui-input-probe`).
+    static let probeDisplays = [
+        DisplayDescriptor(id: 1, name: "Built-in Retina Display", width: 1440, height: 900,
+                          pixelWidth: 2880, pixelHeight: 1800, main: true),
+        DisplayDescriptor(id: 2, name: "Studio Display", width: 2560, height: 1440,
+                          pixelWidth: 5120, pixelHeight: 2880, main: false)
+    ]
+    #endif
+
+    /// Streams another display in the same session and remembers the choice for this Mac.
+    @discardableResult
+    func selectDisplay(_ id: UInt32) -> Bool {
+        guard canChooseDisplay, id != currentDisplayID, let display = displays.first(where: { $0.id == id }) else { return false }
+        if let room = connection.invitation?.room {
+            displayMemory.remember(.init(id: display.id, name: display.name), forRoom: room)
+        }
+        guard transmit(RemoteAction(action: "display", epoch: geometryEpoch, display: id)) else { return false }
+        pendingDisplayID = id
+        showSessionNotice("Switching to \(display.name)…")
+        #if DEBUG
+        if inputProbe != nil { simulateProbeDisplaySwitch(to: display) }
+        #endif
+        return true
+    }
+
+    /// The Mac answers every display request with its list: after switching, or unchanged when it
+    /// declined (view only, unknown display).
+    private func receiveDisplays(_ action: RemoteAction) {
+        displays = action.displays ?? []
+        if let display = action.display { currentDisplayID = display }
+        if let pending = pendingDisplayID, pending != currentDisplayID,
+           let kept = displays.first(where: { $0.id == currentDisplayID }) {
+            showSessionNotice("Your Mac kept showing \(kept.name).")
+        }
+        pendingDisplayID = nil
+        applyRememberedDisplay()
+    }
+
+    #if DEBUG
+    /// Offline stand-in for the Mac: a new epoch and geometry, then the list, as a real switch does.
+    private func simulateProbeDisplaySwitch(to display: DisplayDescriptor) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            guard let self else { return }
+            self.receive(RemoteAction(action: "geometry", x: display.width, y: display.height,
+                                      epoch: self.geometryEpoch &+ 1))
+            self.fresh = true
+            self.captureHealthy = true
+            self.receiveDisplays(RemoteAction(action: "displays", epoch: self.geometryEpoch,
+                                              displays: Self.probeDisplays, display: display.id))
+        }
+    }
+    #endif
+
+    /// On the first list of a session, return to the display chosen last time for this Mac.
+    private func applyRememberedDisplay() {
+        guard !rememberedDisplayApplied, let room = connection.invitation?.room, canControl else { return }
+        rememberedDisplayApplied = true
+        guard let wanted = DisplayMemory.match(displayMemory.choice(forRoom: room), in: displays),
+              wanted.id != currentDisplayID else { return }
+        guard transmit(RemoteAction(action: "display", epoch: geometryEpoch, display: wanted.id)) else { return }
+        pendingDisplayID = wanted.id
+    }
+
+    /// One physical key press from a hardware keyboard, by position, with its modifiers.
+    @discardableResult
+    func hardwareKey(_ key: String, modifiers: [String]) -> Bool {
+        guard canControl else { return false }
+        if HardwareKeyMap.needsExtendedKeys(key) && !extendedKeysSupported {
+            if !extendedKeyNoticeShown {
+                extendedKeyNoticeShown = true
+                showSessionNotice("Some keys need the updated Farside on your Mac. Letters, arrows and Return work now.")
+            }
+            return false
+        }
+        return sendInput("key", key: key, modifiers: modifiers)
+    }
+
+    private func supports(_ feature: String) -> Bool {
+        #if DEBUG
+        if inputProbe != nil { return true }
+        #endif
+        return hostFeatures.contains(feature)
+    }
+
+    #if DEBUG
+    /// Offline UI checks (`--ui-layout-check --ui-input-probe`) admit input locally and record
+    /// exactly what would have been sent. Nothing leaves the phone.
+    let inputProbe: InputProbe? = LaunchOptions.layoutCheck && LaunchOptions.has("--ui-input-probe") ? InputProbe() : nil
+    #endif
+
+    /// Every control message leaves through here, so the offline probe sees the same actions.
+    private func transmit(_ action: RemoteAction) -> Bool {
+        #if DEBUG
+        if let inputProbe { return inputProbe.record(action) }
+        #endif
+        return connection.sendControl(action)
     }
 
     var textEditable: Bool { pendingText == nil }
@@ -312,6 +477,12 @@ final class PhoneRemoteModel: ObservableObject {
         return connection.sendControl(RemoteAction(action: "curtain", epoch: geometryEpoch, curtain: request.rawValue))
     }
 
+    /// A short notice over the live session (and to VoiceOver).
+    func announce(_ text: String) {
+        showSessionNotice(text)
+        AccessibilityNotification.Announcement(text).post()
+    }
+
     private func showSessionNotice(_ text: String) {
         sessionNotice = text
         sessionNoticeTask?.cancel()
@@ -368,27 +539,59 @@ final class PhoneRemoteModel: ObservableObject {
             ? NativeInteraction(token: inputToken, hold: hold ?? activeHold,
                                 clickCount: count ?? (activeHold == nil ? nil : activeHoldCount),
                                 phase: phase, stream: stream) : nil
-        let isClick = ["click", "right", "double"].contains(name)
-        if isClick && hapticsEnabled { (name == "right" ? secondaryClickFeedback : clickFeedback).prepare() }
-        let accepted = connection.sendControl(RemoteAction(action: name, x: x, y: y,
-            text: text, key: key, modifiers: modifiers, epoch: geometryEpoch, interaction: envelope,
+        let isClick = ["click", "right", "double", "middle"].contains(name)
+        if isClick && hapticsEnabled { (name == "click" || name == "double" ? clickFeedback : secondaryClickFeedback).prepare() }
+        // A Mac that places the pointer absolutely also applies held hardware modifiers to it.
+        let pointerModifiers = modifiers.isEmpty && absolutePointerSupported && Self.pointerActions.contains(name)
+            ? hardwareModifiers : modifiers
+        let accepted = transmit(RemoteAction(action: name, x: x, y: y,
+            text: text, key: key, modifiers: pointerModifiers, epoch: geometryEpoch, interaction: envelope,
             pointerSync: pointerSync, textFocusProbe: focusProbe))
         if !accepted { textFocusProbe.invalidate() }
         if accepted && isClick {
             lastAcceptedClick = name == "click" && (count ?? 1) >= 2 ? "double" : name
             acceptedClicks &+= 1
-            if hapticsEnabled { playClickHaptic(secondary: name == "right") }
+            if hapticsEnabled { playClickHaptic(name) }
         }
         return accepted
     }
 
-    /// A click is one heavy tap; a right-click is two lighter rigid taps 70 ms apart.
-    private func playClickHaptic(secondary: Bool) {
-        guard secondary else { clickFeedback.impactOccurred(intensity: 1.0); return }
-        secondaryClickFeedback.impactOccurred(intensity: 0.75)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) { [secondaryClickFeedback] in
+    /// A click is one heavy tap; a right-click is two lighter rigid taps 70 ms apart; a middle
+    /// click is one rigid tap.
+    private func playClickHaptic(_ name: String) {
+        switch name {
+        case "right":
             secondaryClickFeedback.impactOccurred(intensity: 0.75)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) { [secondaryClickFeedback] in
+                secondaryClickFeedback.impactOccurred(intensity: 0.75)
+            }
+        case "middle":
+            secondaryClickFeedback.impactOccurred(intensity: 0.9)
+        default:
+            clickFeedback.impactOccurred(intensity: 1.0)
         }
+    }
+
+    /// Places the Mac pointer at a display-local point (direct touch, hardware pointer). The
+    /// drawn pointer jumps there at once; the Mac confirms through pointer telemetry.
+    @discardableResult
+    func pointTo(_ source: CGPoint, modifiers: [String] = []) -> Bool {
+        guard absolutePointerSupported, source.x.isFinite, source.y.isFinite,
+              source.x >= 0, source.y >= 0 else { return false }
+        let ordinal = pointerOverlay.reserveMoveOrdinal()
+        let accepted = sendInput("moveTo", x: Double(source.x), y: Double(source.y), modifiers: modifiers,
+                                 pointerSync: ordinal.map { PointerSync(move: $0) })
+        if accepted {
+            pointerLocator.clear()
+            pointerOverlay.localWarp(ordinal: ordinal, to: source)
+        }
+        return accepted
+    }
+
+    @discardableResult
+    func middleClick(modifiers: [String] = []) -> Bool {
+        guard middleButtonSupported, !dragging, activeHold == nil else { return false }
+        return sendInput("middle", count: 1, modifiers: modifiers)
     }
 
     @discardableResult
@@ -413,6 +616,11 @@ final class PhoneRemoteModel: ObservableObject {
             return sendInput("click", count: count, probeTextFocus: count == 1 || count == 2)
         case .secondaryClick:
             return sendInput("right", count: 1)
+        case .middleClick:
+            return middleClick()
+        case .pointTo:
+            // Canvas points need the session's viewport; the session maps them and calls `pointTo`.
+            return false
         case .workspaceSwipe(let direction):
             guard !dragging, activeHold == nil else { return false }
             let key: String
@@ -504,13 +712,18 @@ final class PhoneRemoteModel: ObservableObject {
         if connection.connected {
             if nativeInteractionSupported {
                 if let activeHold {
-                    _ = connection.sendControl(RemoteAction(action: "release", epoch: geometryEpoch,
+                    _ = transmit(RemoteAction(action: "release", epoch: geometryEpoch,
                         interaction: NativeInteraction(token: inputToken, hold: activeHold, clickCount: activeHoldCount)))
                 }
             } else {
-                _ = connection.sendControl(RemoteAction(action: "release", epoch: geometryEpoch))
+                _ = transmit(RemoteAction(action: "release", epoch: geometryEpoch))
             }
         }
+        #if DEBUG
+        if let inputProbe, activeHold != nil, !connection.connected {
+            _ = inputProbe.record(RemoteAction(action: "release", epoch: geometryEpoch))
+        }
+        #endif
         dragging = false
         activeHold = nil
         explicitHoldDeadline = nil
@@ -772,6 +985,8 @@ final class PhoneRemoteModel: ObservableObject {
             captureHealthy = action.x == 1
             lastCaptureHealth = captureHealthy ? ProcessInfo.processInfo.systemUptime : 0
             if !captureHealthy { pointerLocator.clear(); release() }
+            if let display = action.display, display != currentDisplayID { currentDisplayID = display }
+            if displaySelectionSupported && !displaysRequested { requestDisplays() }
         case "geometry":
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             guard action.epoch != geometryEpoch else { return }
@@ -788,6 +1003,9 @@ final class PhoneRemoteModel: ObservableObject {
             lastCaptureHealth = 0
         case "textResult":
             receiveTextResult(action)
+        case "displays":
+            guard action.epoch == geometryEpoch else { return }
+            receiveDisplays(action)
         case "clipboard":
             if let frame = action.clipboard { clipboard.receive(frame) }
         case "release":
@@ -859,6 +1077,7 @@ final class PhoneRemoteModel: ObservableObject {
                 streamQuality: appliedStreamQuality == nil ? nil : streamQuality))
         }
         pointerOverlay.refresh()
+        if !rememberedDisplayApplied && !displays.isEmpty && canControl { applyRememberedDisplay() }
         if fresh && now - lastFrame > 2 {
             fresh = false
             pointerLocator.clear()
@@ -905,6 +1124,13 @@ final class PhoneRemoteModel: ObservableObject {
         activeHold = nil
         explicitHoldDeadline = nil
         modifiers.removeAll()
+        hardwareModifiers = []
+        extendedKeyNoticeShown = false
+        displays = []
+        currentDisplayID = nil
+        pendingDisplayID = nil
+        displaysRequested = false
+        rememberedDisplayApplied = false
         geometryEpoch = 0
         nativeInteractionSupported = false
         inputToken = nil

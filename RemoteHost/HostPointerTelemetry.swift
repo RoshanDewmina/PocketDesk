@@ -59,7 +59,7 @@ final class HostPointerTelemetry {
     }
 
     func moveProcessed(_ action: RemoteAction) {
-        guard action.action == "move", action.epoch == epoch else { return }
+        guard action.action == "move" || action.action == "moveTo", action.epoch == epoch else { return }
         policy.moveProcessed(ordinal: action.pointerSync?.move)
     }
 

@@ -6,9 +6,14 @@ enum NativeSwipeDirection { case left, right, up, down }
 /// Commands emitted by direct phone touches. `move` is already in host logical points.
 enum NativeGestureCommand {
     case move(CGSize)
+    /// Direct touch: put the Mac pointer under this canvas point. The receiver maps it through
+    /// the viewport and rejects points outside the picture (letterbox bands).
+    case pointTo(CGPoint)
     case scroll(delta: CGSize, phase: String, stream: String)
     case click(count: Int)
     case secondaryClick
+    /// A three-finger tap: the Mac's middle mouse button.
+    case middleClick
     case workspaceSwipe(direction: NativeSwipeDirection)
     case dragBegan(id: String, count: Int)
     case dragEnded(id: String)
@@ -22,11 +27,24 @@ enum NativeGestureCommand {
 
 /// A deterministic, single-owner touch arbiter. Call `update` with the entire active
 /// direct-touch set after each UIKit event, and `tick` while touches are active.
+///
+/// Trackpad (default) moves the Mac pointer relatively. Direct places it under the finger:
+/// a tap clicks there, a drag (or a stationary hold) presses the button there and follows the
+/// finger, and two-finger gestures act on what is under the fingers. View mode stays local.
 final class NativeGestureEngine {
     struct Touch: Equatable {
         let id: UInt64
         let point: CGPoint
     }
+
+    /// Movement that turns a direct tap into a click-drag. Larger than the trackpad's 4 pt
+    /// pointer threshold so an ordinary tap is not mistaken for a drag.
+    static let directSlop: CGFloat = 10
+    /// A still direct touch held this long presses the button, like touch-and-hold on a screen.
+    static let directHoldDelay: TimeInterval = 0.5
+    /// A three-finger tap: every finger lifts within this time and moves less than `tapTravel`.
+    static let threeFingerTapDuration: TimeInterval = 0.45
+    static let threeFingerTapTravel: CGFloat = 12
 
     var onCommand: (NativeGestureCommand) -> Bool
     var onPointerMotionEnded: () -> Void = {}
@@ -54,9 +72,14 @@ final class NativeGestureEngine {
     private var residual: CGSize = .zero
     private var lastTap: (time: TimeInterval, point: CGPoint)?
     private var secondTap = false
+    /// The canvas point a direct touch targets: where it landed, or the first tap of a double tap.
+    private var directPoint: CGPoint = .zero
+    private var workspaceTapEligible = false
+    private var workspaceSwipeFired = false
 
     private(set) var enabled: Bool
     private(set) var panMode: Bool
+    private(set) var direct = false
     private(set) var revision: UInt64
     private var sensitivity: CGFloat
     private var pointerScale: CGFloat
@@ -65,10 +88,11 @@ final class NativeGestureEngine {
     private var gestureScale: CGFloat = 1
 
     init(enabled: Bool, panMode: Bool, revision: UInt64, sensitivity: CGFloat,
-         pointerScale: CGFloat, doubleClickInterval: TimeInterval,
+         pointerScale: CGFloat, doubleClickInterval: TimeInterval, direct: Bool = false,
          onCommand: @escaping (NativeGestureCommand) -> Bool) {
         self.enabled = enabled
         self.panMode = panMode
+        self.direct = direct
         self.revision = revision
         self.sensitivity = Self.safeSensitivity(sensitivity)
         self.pointerScale = Self.safeScale(pointerScale)
@@ -79,8 +103,8 @@ final class NativeGestureEngine {
     var hasActiveTouches: Bool { !active.isEmpty }
 
     func configure(enabled: Bool, panMode: Bool, revision: UInt64, sensitivity: CGFloat,
-                   pointerScale: CGFloat, doubleClickInterval: TimeInterval) {
-        if self.enabled != enabled || self.panMode != panMode || self.revision != revision {
+                   pointerScale: CGFloat, doubleClickInterval: TimeInterval, direct: Bool = false) {
+        if self.enabled != enabled || self.panMode != panMode || self.revision != revision || self.direct != direct {
             cancel()
             // A surviving physical contact must lift before it can start a new command.
             mode = .blocked
@@ -88,6 +112,7 @@ final class NativeGestureEngine {
         }
         self.enabled = enabled
         self.panMode = panMode
+        self.direct = direct
         self.revision = revision
         self.sensitivity = Self.safeSensitivity(sensitivity)
         self.pointerScale = Self.safeScale(pointerScale)
@@ -130,17 +155,42 @@ final class NativeGestureEngine {
                     time >= $0.time && time - $0.time <= (panMode ? 0.35 : doubleClickInterval) &&
                     distance(point, $0.point) <= 24
                 } ?? false
-                mode = panMode ? .pan : .candidate
+                if panMode {
+                    mode = .pan
+                } else if direct && enabled {
+                    // The second tap of a double tap lands exactly on the first, as a mouse would.
+                    directPoint = secondTap ? lastTap?.point ?? point : point
+                    if onCommand(.pointTo(directPoint)) {
+                        mode = .candidate
+                    } else {
+                        mode = .blocked
+                        secondTap = false
+                        lastTap = nil
+                    }
+                } else {
+                    mode = .candidate
+                }
             }
             return
         }
 
         if workspaceSequence {
             if count == 0 {
+                if workspaceTapEligible && !workspaceSwipeFired && enabled && !panMode &&
+                    time - startTime <= Self.threeFingerTapDuration {
+                    fireMiddleClick()
+                }
                 resetSequence()
             } else if count == 3 && Set(next.keys) == Set(workspaceOrigins.keys) {
+                trackWorkspaceTravel(next)
                 processWorkspace(next, at: time)
             } else {
+                // Uneven lifting may still finish a tap; a new or replaced finger cannot.
+                if count > 3 || !Set(next.keys).isSubset(of: Set(workspaceOrigins.keys)) {
+                    workspaceTapEligible = false
+                } else {
+                    trackWorkspaceTravel(next)
+                }
                 mode = .blocked
             }
             active = next
@@ -176,7 +226,11 @@ final class NativeGestureEngine {
             if count == 0 {
                 if mode == .multiCandidate && multiTapEligible && enabled && !panMode &&
                     time - startTime <= 0.55 && maxDistance <= 8 {
-                    _ = onCommand(.secondaryClick)
+                    // Direct touch right-clicks what is under the fingers, never where the
+                    // pointer happened to be.
+                    if !direct || onCommand(.pointTo(multiStartCenter)) {
+                        _ = onCommand(.secondaryClick)
+                    }
                 }
                 resetSequence()
             } else if count == 1 {
@@ -201,11 +255,11 @@ final class NativeGestureEngine {
                 } else {
                     lastTap = (time, firstPoint)
                 }
-            } else if mode == .candidate && enabled && !panMode && maxDistance <= 8 &&
-                time - startTime <= 0.55 {
+            } else if mode == .candidate && enabled && !panMode &&
+                maxDistance <= (direct ? Self.directSlop : 8) && time - startTime <= 0.55 {
                 let clickCount = secondTap ? 2 : 1
                 let accepted = onCommand(.click(count: clickCount))
-                lastTap = accepted && clickCount == 1 ? (time, firstPoint) : nil
+                lastTap = accepted && clickCount == 1 ? (time, direct ? directPoint : firstPoint) : nil
             } else if mode == .drag {
                 finishContinuous(cancelled: false)
                 lastTap = nil
@@ -220,11 +274,16 @@ final class NativeGestureEngine {
         active = next
     }
 
-    /// Needed for a stationary second-tap hold; timestamps use UITouch/system uptime.
+    /// Needed for a stationary second-tap hold (and a direct touch-and-hold); timestamps use
+    /// UITouch/system uptime.
     func tick(at time: TimeInterval) {
-        guard time.isFinite, active.count == 1, mode == .candidate, secondTap,
-              enabled, !panMode, time - startTime >= 0.22 else { return }
-        beginDrag()
+        guard time.isFinite, active.count == 1, mode == .candidate, enabled, !panMode else { return }
+        if secondTap {
+            guard time - startTime >= 0.22 else { return }
+            beginDrag(count: 2)
+        } else if direct, time - startTime >= Self.directHoldDelay {
+            beginDrag(count: 1)
+        }
     }
 
     func cancel() {
@@ -236,16 +295,23 @@ final class NativeGestureEngine {
     private func processOne(_ point: CGPoint, at time: TimeInterval) {
         maxDistance = max(maxDistance, distance(point, firstPoint))
         switch mode {
+        case .candidate where direct && enabled:
+            // A deliberate slide presses the button where the touch landed, then follows it.
+            guard maxDistance > Self.directSlop else { return }
+            beginDrag(count: secondTap ? 2 : 1)
+            if mode == .drag { pointDirectly(at: point) }
         case .candidate:
             guard maxDistance > 4 else { return }
             if secondTap {
-                if time - startTime >= 0.07 { beginDrag() }
+                if time - startTime >= 0.07 { beginDrag(count: 2) }
                 if mode == .drag { sendMotion(point, at: time) }
             } else {
                 mode = .pointer
                 lastTap = nil
                 sendMotion(point, at: time)
             }
+        case .drag where direct:
+            pointDirectly(at: point)
         case .pointer, .drag:
             sendMotion(point, at: time)
         case .pan:
@@ -259,15 +325,22 @@ final class NativeGestureEngine {
         }
     }
 
-    private func beginDrag() {
+    private func beginDrag(count: Int) {
         let id = UUID().uuidString
-        if onCommand(.dragBegan(id: id, count: 2)) {
+        if onCommand(.dragBegan(id: id, count: count)) {
             dragID = id
             mode = .drag
             lastTap = nil
         } else {
             mode = .blocked
         }
+    }
+
+    /// Absolute motion needs no gain or residual: the pointer is wherever the finger is.
+    private func pointDirectly(at point: CGPoint) {
+        guard enabled, point != lastPoint else { return }
+        lastPoint = point
+        _ = onCommand(.pointTo(point))
     }
 
     private func sendMotion(_ point: CGPoint, at time: TimeInterval) {
@@ -347,6 +420,9 @@ final class NativeGestureEngine {
                     mode = .scroll
                 }
                 if enabled && !panMode {
+                    // Direct touch scrolls what is under the fingers. The pointer stays put for
+                    // the rest of the scroll so the Mac keeps one scroll target.
+                    if direct { _ = onCommand(.pointTo(multiStartCenter)) }
                     let id = UUID().uuidString
                     scrollID = id
                     _ = onCommand(.scroll(delta: CGSize(width: center.x - multiStartCenter.x,
@@ -378,9 +454,33 @@ final class NativeGestureEngine {
     private func beginWorkspace(_ touches: [UInt64: CGPoint], eligible: Bool) {
         workspaceSequence = true
         workspaceOrigins = touches
+        workspaceTapEligible = eligible && touches.count == 3
+        workspaceSwipeFired = false
         lastTap = nil
         hadTwo = true
         mode = eligible ? .workspaceCandidate : .blocked
+    }
+
+    private func trackWorkspaceTravel(_ touches: [UInt64: CGPoint]) {
+        guard workspaceTapEligible else { return }
+        for (id, point) in touches {
+            guard let origin = workspaceOrigins[id] else { continue }
+            if distance(point, origin) > Self.threeFingerTapTravel {
+                workspaceTapEligible = false
+                return
+            }
+        }
+    }
+
+    private func fireMiddleClick() {
+        if direct {
+            let points = Array(workspaceOrigins.values)
+            guard !points.isEmpty else { return }
+            let centroid = CGPoint(x: points.map(\.x).reduce(0, +) / CGFloat(points.count),
+                                   y: points.map(\.y).reduce(0, +) / CGFloat(points.count))
+            guard onCommand(.pointTo(centroid)) else { return }
+        }
+        _ = onCommand(.middleClick)
     }
 
     private func processWorkspace(_ touches: [UInt64: CGPoint], at time: TimeInterval) {
@@ -402,6 +502,8 @@ final class NativeGestureEngine {
             direction = dy > 0 ? .down : .up
         } else { return }
         mode = .workspaceFired
+        workspaceSwipeFired = true
+        workspaceTapEligible = false
         _ = onCommand(.workspaceSwipe(direction: direction))
     }
 
@@ -434,6 +536,8 @@ final class NativeGestureEngine {
         mode = .blocked
         workspaceSequence = false
         workspaceOrigins = [:]
+        workspaceTapEligible = false
+        workspaceSwipeFired = false
         hadTwo = false
         multiTapEligible = false
         secondTap = false

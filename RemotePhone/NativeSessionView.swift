@@ -30,6 +30,13 @@ struct NativeSessionView: View {
     @State private var zoomBadgeToken = 0
     @State private var revision: UInt64 = 0
     @AppStorage("pointerSensitivity") private var sensitivity = 1.0
+    @AppStorage(TouchInputMode.key) private var touchMode: TouchInputMode = .trackpad
+    @AppStorage("remapReservedShortcuts") private var remapShortcuts = true
+    @AppStorage("miniMap.pad") private var miniMapPad = true
+    @AppStorage("miniMap.phoneLandscape") private var miniMapPhone = false
+    @State private var miniMap = MiniMapVisibility()
+    @State private var miniMapToken = 0
+    @ObservedObject private var peripherals = HardwarePeripherals.shared
     @AppStorage(PointerSizePreference.key) private var pointerSize: PointerSizePreference = .medium
     @AppStorage(StreamDebug.defaultsKey) private var streamStatsEnabled = false
     @AppStorage(StreamTuning.legacyDefaultsKey) private var legacyStreamTuning = false
@@ -57,9 +64,24 @@ struct NativeSessionView: View {
             }
         }
         .overlay(alignment: .top) { topPills }
+        #if DEBUG
+        .overlay(alignment: .topLeading) {
+            if let probe = model.inputProbe, !LaunchOptions.has("--ui-probe-quiet") {
+                InputProbeOverlay(probe: probe).padding(.top, 60).padding(.leading, 12)
+            }
+        }
+        #endif
         .overlay(alignment: .bottom) {
             if !keyboardOpen {
                 dock.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { dockFrame = $0 }
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if miniMap.shown && miniMapEligible {
+                sessionMiniMap
+                    .padding(.trailing, 12)
+                    .padding(.bottom, 12)
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.92, anchor: .bottomTrailing)))
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -116,6 +138,11 @@ struct NativeSessionView: View {
             if status == .accepted { showVoiceInput = false }
         }
         .sensoryFeedback(.selection, trigger: viewport.mode)
+        .sensoryFeedback(.selection, trigger: touchMode)
+        .sensoryFeedback(.selection, trigger: model.currentDisplayID) { old, new in old != nil && new != nil }
+        .onChange(of: peripherals.keyboardConnected) { _, connected in
+            if connected && model.canControl { model.announce("Keyboard connected · keys go to your Mac") }
+        }
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: controlsCollapsed)
         .sensoryFeedback(trigger: model.dragging) { _, holding in
             holding ? .impact(weight: .medium) : .impact(weight: .light)
@@ -130,6 +157,19 @@ struct NativeSessionView: View {
             dockFrame: dockFrame, keyboardOpen: keyboardOpen, panMode: panMode,
             showControls: showControls, controlsCollapsed: controlsCollapsed)))
         .onChange(of: viewport.mode) { _, mode in ViewportPreference.store(mode) }
+        .onChange(of: viewport.offset) { _, _ in pokeMiniMap() }
+        .onChange(of: viewport.zoom) { _, _ in pokeMiniMap() }
+        .onChange(of: viewport.canvasSize) { _, _ in pokeMiniMap() }
+        .onChange(of: miniMapEligible) { _, eligible in
+            // Closing the dock or a sheet after zooming shows where you are, briefly.
+            if eligible { pokeMiniMap() } else { withAnimation(miniMapMotion) { miniMap.eligibilityChanged(false) } }
+        }
+        .task(id: miniMapToken) {
+            guard miniMapToken > 0, !LaunchOptions.has("--ui-minimap-pinned") else { return }
+            let linger = LaunchOptions.value("--ui-minimap-linger=").flatMap(Double.init) ?? MiniMapVisibility.linger
+            do { try await Task.sleep(for: .seconds(linger)) } catch { return }
+            withAnimation(miniMapMotion) { miniMap.lingerExpired() }
+        }
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
         .onAppear {
             if !offlineLayoutCheck && !model.fresh { lockVisible = true }
@@ -217,13 +257,34 @@ struct NativeSessionView: View {
 
     private var inputSurface: some View {
             NativeTrackpadSurface(enabled: model.canControl && !panMode && !showControls && !showVoiceInput, panMode: panMode,
+                                  direct: directTouch,
                                   revision: model.inputRevision &+ revision, sensitivity: CGFloat(sensitivity),
                                   pointerScale: viewport.scale, doubleClickInterval: model.doubleClickInterval,
+                                  middleClickAvailable: model.middleButtonSupported,
+                                  hardwareKeys: model.canControl && !showControls && !showVoiceInput && !keyboardOpen,
+                                  hardwarePointer: model.canControl && model.absolutePointerSupported
+                                    && !showControls && !showVoiceInput,
+                                  keyboardFocus: !keyboardOpen && !showControls && !showVoiceInput
+                                    && !primingMicrophone && scenePhase == .active,
+                                  remapShortcuts: remapShortcuts,
                                   onCommand: handle,
-                                  onPointerMotionEnded: { model.pointerLocator.stopFollowing() })
+                                  onPointerMotionEnded: { model.pointerLocator.stopFollowing() },
+                                  onHardwareKey: { key, modifiers in model.hardwareKey(key, modifiers: modifiers) },
+                                  onHardwareModifiers: { model.hardwareModifiers = $0 },
+                                  onKeyDiagnostic: keyDiagnostic)
                 .accessibilityIdentifier("remote.canvas")
                 .allowsHitTesting(!showControls && !showVoiceInput && !model.privacyShield && !model.contentConcealed)
     }
+
+    private var keyDiagnostic: ((String) -> Void)? {
+        #if DEBUG
+        if let probe = model.inputProbe { return { probe.note($0) } }
+        #endif
+        return nil
+    }
+
+    /// Direct touch needs a Mac that places the pointer absolutely; otherwise touches stay a trackpad.
+    private var directTouch: Bool { touchMode == .direct && model.absolutePointerSupported }
 
     private var videoLayer: some View {
         ZStack(alignment: .topLeading) {
@@ -247,6 +308,9 @@ struct NativeSessionView: View {
             #if DEBUG
             if offlineLayoutCheck && LaunchOptions.has("--ui-pointer-gallery") {
                 PointerGlyphGallery(size: pointerSize)
+            }
+            if model.inputProbe != nil && !LaunchOptions.has("--ui-probe-quiet") {
+                InputProbeTargets(viewport: viewport)
             }
             #endif
         }
@@ -615,7 +679,7 @@ struct NativeSessionView: View {
         if !model.fresh || !model.captureHealthy { return "Reconnecting the picture · controls paused" }
         if panMode { return "View · drag or pinch to look around" }
         if model.canControl && clickAcknowledged { return "Click sent" }
-        if model.canControl { return "Controlling your Mac" }
+        if model.canControl { return directTouch ? "Controlling your Mac · direct touch" : "Controlling your Mac" }
         return model.controlAllowed ? "View only" : "Mouse and keyboard are off on your Mac"
     }
 
@@ -719,6 +783,7 @@ struct NativeSessionView: View {
                 .buttonStyle(.plain)
                 .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
                 .accessibilityLabel("Hide keyboard")
+                .accessibilityIdentifier("remote.keyboard.hide")
             }
 
             HStack(alignment: .center, spacing: 8) {
@@ -1062,16 +1127,21 @@ struct NativeSessionView: View {
                 Form {
                     viewSection
                     pointerSection
+                    displaySection
+                    touchSection
+                    miniMapSection
                     clipboardSection
                     gesturesSection
                     workspaceSection
                     pictureSection
+                    hardwareSection
                     macPrivacySection
                     feelSection
                 }
                 .scrollContentBackground(.hidden)
                 .background(Farside.Palette.void2)
                 .onAppear {
+                    if model.displays.isEmpty { model.requestDisplays() }
                     #if DEBUG
                     if offlineLayoutCheck && LaunchOptions.has("--ui-clipboard-check") {
                         proxy.scrollTo("remote.clipboard", anchor: .top)
@@ -1120,9 +1190,153 @@ struct NativeSessionView: View {
             sectionHeader("Pointer")
         } footer: {
             Text(panMode ? "Switch to Control to send clicks to your Mac."
-                         : "Move one finger to point. Tap to click, two fingers to right-click, or double-tap and hold to drag.")
+                 : directTouch ? "Tap where you want to click. Tap with two fingers to right-click there, or drag to click and drag."
+                 : "Move one finger to point. Tap to click, two fingers to right-click, or double-tap and hold to drag.")
                 .foregroundStyle(Farside.Palette.ash)
         }
+    }
+
+    private var touchSection: some View {
+        Section {
+            FarsideSegmented(label: "Touch",
+                             options: TouchInputMode.allCases.map { (value: $0, title: $0.title) },
+                             selection: Binding(get: { touchMode }, set: setTouchMode))
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
+                .accessibilityIdentifier("remote.touchMode")
+        } header: {
+            sectionHeader("Touch")
+        } footer: {
+            Text(touchFooter)
+                .foregroundStyle(Farside.Palette.ash)
+                .accessibilityIdentifier("remote.touchMode.footer")
+        }
+    }
+
+    private var touchFooter: String {
+        switch touchMode {
+        case .trackpad:
+            "Trackpad: slide one finger to move the pointer, tap to click. Precise on small targets."
+        case .direct where !model.absolutePointerSupported && !offlineLayoutCheck:
+            "Direct touch needs the updated Farside on your Mac. Until then, touches work as a trackpad."
+        case .direct:
+            "Direct: tap exactly where you want to click; drag, or touch and hold, to click and drag. Two fingers still scroll and pinch."
+        }
+    }
+
+    @ViewBuilder private var displaySection: some View {
+        if model.displaySelectionSupported && model.displays.count > 1 {
+            Section {
+                ForEach(model.displays) { display in
+                    let current = display.id == model.currentDisplayID
+                    Button { model.selectDisplay(display.id) } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: display.main ? "laptopcomputer" : "display")
+                                .foregroundStyle(Farside.Palette.ash)
+                                .frame(width: 24)
+                                .accessibilityHidden(true)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(display.name).foregroundStyle(Farside.Palette.bone)
+                                Text(display.resolution).farsideCaption()
+                            }
+                            Spacer(minLength: 8)
+                            if display.id == model.pendingDisplayID {
+                                ProgressView().tint(Farside.Palette.bone)
+                            } else if current {
+                                Image(systemName: "checkmark")
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(Farside.Palette.bone)
+                                    .accessibilityHidden(true)
+                            }
+                        }
+                        .contentShape(.rect)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!current && !model.canChooseDisplay)
+                    .accessibilityLabel("\(display.name), \(display.resolution)")
+                    .accessibilityAddTraits(current ? .isSelected : [])
+                    .accessibilityHint(current ? "Showing now" : "Shows this display instead")
+                    .accessibilityIdentifier("remote.display.\(display.id)")
+                    .listRowBackground(Farside.Palette.panel)
+                }
+            } header: {
+                sectionHeader("Display")
+            } footer: {
+                Text(model.canControl || offlineLayoutCheck
+                     ? "Your Mac has more than one display. Farside remembers your choice for this Mac."
+                     : "Choosing a display needs control of your Mac.")
+                    .foregroundStyle(Farside.Palette.ash)
+            }
+        }
+    }
+
+    private var miniMapSection: some View {
+        Section {
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                Toggle("Mini map", isOn: $miniMapPad)
+                    .toggleStyle(FarsideSwitchStyle())
+                    .listRowBackground(Farside.Palette.panel)
+                    .accessibilityIdentifier("remote.minimap.setting")
+            } else {
+                Toggle("Mini map in landscape", isOn: $miniMapPhone)
+                    .toggleStyle(FarsideSwitchStyle())
+                    .listRowBackground(Farside.Palette.panel)
+                    .accessibilityIdentifier("remote.minimap.setting")
+            }
+        } header: {
+            sectionHeader("Mini map")
+        } footer: {
+            Text("While part of your Mac’s screen is off the edge, a small overview appears in the corner. Drag its outline to move around, or tap to jump. It fades when you stop moving.")
+                .foregroundStyle(Farside.Palette.ash)
+        }
+    }
+
+    private var hardwareSection: some View {
+        Section {
+            Label(peripherals.keyboardConnected ? "Keyboard connected · keys go to your Mac" : "No hardware keyboard connected",
+                  systemImage: "keyboard")
+                .foregroundStyle(Farside.Palette.bone)
+                .listRowBackground(Farside.Palette.panel)
+                .accessibilityIdentifier("remote.hardware.keyboard")
+            if peripherals.mouseConnected {
+                Label("Mouse or trackpad connected", systemImage: "computermouse")
+                    .foregroundStyle(Farside.Palette.bone)
+                    .listRowBackground(Farside.Palette.panel)
+            }
+            Toggle("Use ⌃⌥ for shortcuts iPadOS keeps", isOn: $remapShortcuts)
+                .toggleStyle(FarsideSwitchStyle())
+                .listRowBackground(Farside.Palette.panel)
+                .accessibilityIdentifier("remote.hardware.remap")
+            if remapShortcuts {
+                DisclosureGroup("Shortcuts") {
+                    ForEach(ShortcutRemap.defaults) { remap in
+                        LabeledContent {
+                            Text("\(remap.chord) → \(remap.result)")
+                                .font(Farside.Typeface.caption(.footnote))
+                                .foregroundStyle(Farside.Palette.bone)
+                        } label: {
+                            Text(remap.title).foregroundStyle(Farside.Palette.bone)
+                        }
+                        .accessibilityElement(children: .combine)
+                    }
+                }
+                .tint(Farside.Palette.ash)
+                .foregroundStyle(Farside.Palette.bone)
+                .listRowBackground(Farside.Palette.panel)
+            }
+        } header: {
+            sectionHeader("Keyboard and pointer")
+        } footer: {
+            Text("Keys go to your Mac by position, so keep the same keyboard layout on both. Esc always reaches the Mac; End session never uses a key. On iPad, a mouse or trackpad points exactly where you move it, right-clicks with the secondary button and middle-clicks with the middle button.")
+                .foregroundStyle(Farside.Palette.ash)
+        }
+    }
+
+    private func setTouchMode(_ mode: TouchInputMode) {
+        guard mode != touchMode else { return }
+        cancelGesture()
+        model.pointerLocator.clear()
+        touchMode = mode
     }
 
     @ViewBuilder private var clipboardSection: some View {
@@ -1212,7 +1426,11 @@ struct NativeSessionView: View {
     private var gesturesSection: some View {
         Section {
             Text(panMode ? "View: drag with one or two fingers to move the screen. Pinch to zoom. Double-tap to zoom in or fit the whole display."
-                         : "Control: drag one finger to move the pointer. Two fingers scroll. Pinch to zoom the view. Three fingers left or right switch Spaces; up opens Mission Control; down opens App Exposé.")
+                 : (directTouch
+                    ? "Control, direct: tap to click where you touch; drag to click and drag. Two fingers scroll what is under them. Pinch to zoom the view."
+                    : "Control: drag one finger to move the pointer. Two fingers scroll. Pinch to zoom the view.")
+                   + " Three fingers left or right switch Spaces; up opens Mission Control; down opens App Exposé."
+                   + (model.middleButtonSupported ? " Tap with three fingers to middle-click." : ""))
                 .foregroundStyle(Farside.Palette.bone)
                 .listRowBackground(Farside.Palette.panel)
         } header: {
@@ -1431,6 +1649,10 @@ struct NativeSessionView: View {
             model.pointerLocator.clear()
             viewport.pan(by: delta)
             return true
+        case .pointTo(let point):
+            // Letterbox bands and anything outside the picture have no Mac point: no click there.
+            guard let source = DirectTouchMapping.sourcePoint(for: point, in: viewport) else { return false }
+            return model.pointTo(source)
         default:
             return model.gesture(command)
         }
@@ -1450,6 +1672,88 @@ struct NativeSessionView: View {
     private func showZoomBadge() {
         zoomBadge = zoomDescription
         zoomBadgeToken &+= 1
+    }
+
+    // MARK: - Mini map
+
+    /// On by default on iPad; an option on iPhone, in landscape only.
+    private var miniMapSetting: Bool {
+        if UIDevice.current.userInterfaceIdiom == .pad { return miniMapPad }
+        return miniMapPhone && compactHeight
+    }
+
+    private var miniMapEligible: Bool {
+        miniMapSetting && viewport.isCropped && controlsCollapsed && !keyboardOpen && !showControls
+            && !showVoiceInput && !model.privacyShield && !model.contentConcealed && !lockVisible
+    }
+
+    private var miniMapMotion: Animation {
+        reduceMotion ? .easeInOut(duration: 0.2) : Farside.Motion.easeOut(Farside.Motion.standard)
+    }
+
+    private func pokeMiniMap() {
+        var next = miniMap
+        let restart = next.viewportChanged(eligible: miniMapEligible)
+        guard next != miniMap else {
+            if restart { miniMapToken &+= 1 }
+            return
+        }
+        withAnimation(miniMapMotion) { miniMap = next }
+        if restart { miniMapToken &+= 1 }
+    }
+
+    private var miniMapSize: CGSize {
+        UIDevice.current.userInterfaceIdiom == .pad ? CGSize(width: 220, height: 150) : CGSize(width: 150, height: 96)
+    }
+
+    private var sessionMiniMap: some View {
+        MiniMapPointerSource(model: model.pointerOverlay, viewport: viewport) { pointer, current in
+            MiniMapView(viewport: current, pointer: pointer, maxSize: miniMapSize, thumbnail: miniMapThumbnail,
+                        onPan: { translation in
+                            model.pointerLocator.clear()
+                            viewport.pan(by: translation)
+                            #if DEBUG
+                            let visible = viewport.visibleSourceRect
+                            model.inputProbe?.note(String(format: "minimap pan %.1f %.1f to %.0f %.0f", translation.width,
+                                                          translation.height, visible.midX, visible.midY))
+                            #endif
+                        },
+                        onJump: { point in
+                            model.pointerLocator.clear()
+                            withAnimation(reduceMotion ? nil : .smooth(duration: 0.28, extraBounce: 0)) {
+                                viewport.center(onSourcePoint: point)
+                            }
+                            #if DEBUG
+                            model.inputProbe?.note(String(format: "minimap jump %.0f %.0f", point.x, point.y))
+                            #endif
+                        },
+                        onTouch: { active in
+                            if miniMap.touch(active, eligible: miniMapEligible) { miniMapToken &+= 1 }
+                            #if DEBUG
+                            model.inputProbe?.note("minimap touch \(active)")
+                            if !active, model.inputProbe != nil {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                    let visible = viewport.visibleSourceRect
+                                    model.inputProbe?.note(String(format: "minimap settled %.0f %.0f", visible.midX, visible.midY))
+                                }
+                            }
+                            #endif
+                        },
+                        onShowAll: { setMode(.fit) })
+        }
+        .sensoryFeedback(.selection, trigger: miniMap.touching) { _, touching in touching }
+    }
+
+    @ViewBuilder private func miniMapThumbnail(_ size: CGSize) -> some View {
+        if let track = connection.remoteVideo, !model.contentConcealed {
+            MiniMapVideo(track: track)
+        } else if offlineLayoutCheck {
+            DesktopPreview(size: model.sourceSize)
+                .scaleEffect(size.width / max(model.sourceSize.width, 1), anchor: .topLeading)
+                .frame(width: size.width, height: size.height, alignment: .topLeading)
+        } else {
+            Farside.Palette.void2
+        }
     }
 
     private func scheduleGeometry() {
