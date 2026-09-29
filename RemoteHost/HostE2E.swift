@@ -79,6 +79,8 @@ final class HostE2E {
         preferences.sharingEnabled = true
         preferences.accessibilitySkipped = false
         preferences.serviceAddress = signalURL
+        // An unattended loop connects dozens of times; the Mac should not chime all night.
+        preferences.chimeOnConnect = false
         if options.has(E2E.resetArgument) {
             try? pairStore.delete()
             recorder.event("pairing.reset", ["reason": "reset argument"])

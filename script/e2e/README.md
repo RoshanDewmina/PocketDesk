@@ -84,7 +84,8 @@ A Debug build enters E2E mode only with **both** the `--farside-e2e` launch argu
 as a normal app. In E2E mode:
 
 - **Isolation.** The host keeps its trust in Keychain account `host.e2e` and its preferences in the
-  suite `com.roshan.PocketDesk.RemoteHost.e2e`; the phone uses account `phone.e2e`. The owner's real
+  suite `com.roshan.PocketDesk.RemoteHost.e2e` (control allowed, keep awake on, connect chime off so
+  overnight loops stay silent); the phone uses account `phone.e2e`. The owner's real
   pairing and settings are never read or replaced. The harness launches a *second* host instance
   (`open -n`); the owner's running host is untouched, and only the PID the harness launched (checked
   by launch id and executable path) is ever signalled.
