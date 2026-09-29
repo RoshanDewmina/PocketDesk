@@ -32,7 +32,7 @@ Cloudflare currently documents TURN at USD 0.05 per outbound real-time GB after 
 
 TURN analytics are available through Cloudflare's GraphQL API and include ingress bytes, egress bytes, and concurrent connections, filterable by TURN key and username. Cloudflare recommends separate test and production TURN keys and monitoring for credential abuse. [TURN analytics](https://developers.cloudflare.com/realtime/turn/analytics/) · [Provider monitoring guidance](https://developers.cloudflare.com/realtime/turn/replacing-existing/)
 
-Cloudflare budget alerts are informational and do not stop usage. There is no provider-enforced byte or dollar cutoff established in this repository. For this bounded test, the effective controls are one dedicated test key, four maximum WebSocket peers, eight credential issuances per minute, a 30-minute room and process lifetime, file-revocation auditing every second, disconnect credential revocation, and deletion of the test TURN key after evidence is collected. Account billing alerts should be configured before any longer-running beta, but they are not a hard cap. [Budget alert behavior](https://developers.cloudflare.com/billing/manage/budget-alerts/)
+Cloudflare budget alerts are informational and do not stop usage. There is no provider-enforced byte or dollar cutoff established in this repository. For this bounded test, the effective controls are one dedicated test key, four maximum WebSocket peers, eight credential issuances per minute, a 30-minute process lifetime enforced by the bounded runner (the 30-minute room lease is extended by current apps while they stay connected, so it is no longer a cost cap; `SESSION_RENEWAL=0` restores it), file-revocation auditing every second, disconnect credential revocation, and deletion of the test TURN key after evidence is collected. Account billing alerts should be configured before any longer-running beta, but they are not a hard cap. [Budget alert behavior](https://developers.cloudflare.com/billing/manage/budget-alerts/)
 
 ## Local deployment inventory
 
@@ -76,8 +76,8 @@ No Cloudflare account was created or configured, no login was performed, no TURN
 | `Server/src/rooms.ts` | Private reloadable approvals and bounded pending fingerprints |
 | `Server/scripts/approve-room.ts` | Local list/approve/revoke workflow |
 | `Server/scripts/readiness.ts` | Actual credential, client-limit, revocation, and optional public-WSS check |
-| `Server/scripts/run-bounded-standalone.sh` | 30-minute owned-process supervisor for Bun, Caddy, and tunnel |
-| `Server/.env.standalone.example` | Four-peer, 30-minute standalone test configuration |
+| `Server/scripts/run-bounded-standalone.sh` | Owned-process supervisor for Bun, Caddy, and tunnel; stops them after its duration (30 minutes by default, up to 60), so pass a longer duration for a session-length test |
+| `Server/.env.standalone.example` | Four-peer standalone test configuration with a 30-minute room lease and session renewal on |
 | `Server/Caddyfile.standalone.example` | Loopback-only `/signal` route on dedicated ports |
 | `Server/cloudflared.standalone.yml.example` | Stable named-tunnel template for later review |
 | `Server/src/config.ts` | Production approval, issuance, and room-lifetime settings |
