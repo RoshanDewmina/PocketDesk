@@ -37,6 +37,7 @@ struct PhoneRemoteView: View {
                 GestureCoachView(onFinish: onboarding.coachFinished)
             }
         }
+        .farsideSystemRoutes(model: model, onboarding: onboarding)
         .onChange(of: connection.connected) { _, connected in
             if connected {
                 lastReachedAt = Date().timeIntervalSince1970

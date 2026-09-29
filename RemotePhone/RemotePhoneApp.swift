@@ -13,7 +13,10 @@ struct RemotePhoneApp: App {
             PhoneRemoteView(model: model, connection: model.connection)
                 .tint(Farside.Palette.bone)
                 .preferredColorScheme(.dark)
-                .onAppear { model.sceneChanged(phase) }
+                .onAppear {
+                    FarsideSystemIntegrations.shared.attach(model)
+                    model.sceneChanged(phase)
+                }
                 .onChange(of: phase) { _, value in model.sceneChanged(value) }
         }
     }
