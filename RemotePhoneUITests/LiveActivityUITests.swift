@@ -72,9 +72,9 @@ final class LiveActivityUITests: XCTestCase {
     }
 
     /// The first Live Activity an app starts makes the system ask, on the Lock Screen, whether to allow
-    /// them. The answer is remembered for the app, so later runs on this simulator never see it.
+    /// them, and later asks again whether to always allow them. Both answers are remembered for the app.
     private func answerTheSystemQuestionIfAsked() {
-        let allow = springboard.buttons.matching(NSPredicate(format: "label == 'Allow'")).firstMatch
+        let allow = springboard.buttons.matching(NSPredicate(format: "label IN {'Allow', 'Always Allow'}")).firstMatch
         if allow.waitForExistence(timeout: 3) {
             allow.tap()
             Thread.sleep(forTimeInterval: 2.0)
@@ -144,7 +144,7 @@ final class LiveActivityUITests: XCTestCase {
         app.launch()
         Thread.sleep(forTimeInterval: 3)
         toHomeScreen(settle: 2.0)
-        let pill = springboard.otherElements["spotlight-pill"]
+        let pill = springboard.otherElements["spotlight-pill"].firstMatch
         XCTAssertTrue(pill.waitForExistence(timeout: 5), "The Home Screen has its search pill")
         pill.tap()
         let field = springboard.searchFields.firstMatch
