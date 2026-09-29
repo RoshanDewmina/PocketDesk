@@ -166,7 +166,7 @@ final class PhoneInstrumentsTests: XCTestCase {
         XCTAssertFalse(try XCTUnwrap(LinkSummary(report(level: "42e01f"), physicalDevice: false)).reducedLevel,
                        "the simulator always decodes at level 3.1")
         XCTAssertEqual(PhoneSessionNotice.reducedPicture(size: "832×538"),
-                       "Reduced picture: your Mac is sending 832×538. Quit and reopen Farside to retry.")
+                       "Reduced picture: this session runs at 832×538 (H.264 level 3.1). Quit and reopen Farside on both devices to retry.")
 
         XCTAssertEqual(LinkSummary(report(level: "640c28"), physicalDevice: true)?.codecLevel, "H.264 4")
         XCTAssertEqual(LinkSummary(report(level: nil), physicalDevice: true)?.codecLevel, "H.264")
