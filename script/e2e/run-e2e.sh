@@ -156,7 +156,10 @@ preflight() {
     local executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$HOST_APP/Contents/Info.plist")
     HOST_EXEC="$HOST_APP/Contents/MacOS/$executable"
     # A Release build has no E2E hooks and would start as a normal host with the real pairing.
-    grep -q -a -- "FARSIDE_E2E_SIGNAL_URL" "$HOST_EXEC" \
+    # Xcode's Debug builds keep the app's code in <executable>.debug.dylib beside a small stub.
+    local hook_binaries=("$HOST_EXEC")
+    [[ -f "$HOST_EXEC.debug.dylib" && ! -L "$HOST_EXEC.debug.dylib" ]] && hook_binaries+=("$HOST_EXEC.debug.dylib")
+    grep -q -a -- "FARSIDE_E2E_SIGNAL_URL" "${hook_binaries[@]}" \
       || die "$HOST_APP has no E2E hooks (not a Debug build of this branch); refusing to launch it"
     WATCHDOG_EXEC="$HOST_APP/Contents/MacOS/FarsideWatchdog"
     if [[ ! -x $WATCHDOG_EXEC ]] || ! grep -q -a -- "FARSIDE_E2E_LAUNCH_ID" "$WATCHDOG_EXEC"; then
