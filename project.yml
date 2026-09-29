@@ -234,7 +234,7 @@ targets:
     type: application
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [FarsideTestPad]
+    sources: [FarsideTestPad, RemoteShared/E2EWindowCover.swift]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.FarsideTestPad

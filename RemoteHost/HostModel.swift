@@ -53,8 +53,14 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var crashLoopStopped = false
     @Published private var autoStart = HostAutoStartGate()
     let events = HostEventLog()
+    #if DEBUG
+    // E2E mode: inert login/recovery items and an isolated watchdog record; see HostE2E.swift.
+    private let background = HostE2E.active?.backgroundServices ?? HostBackgroundServices.live()
+    private let watchdog = HostE2E.active.map { $0.makeWatchdogReporter() } ?? HostWatchdogReporter.live()
+    #else
     private let background = HostBackgroundServices.live()
     private let watchdog = HostWatchdogReporter.live()
+    #endif
     private var hangWatchdog: HostHangWatchdog?
     private let curtain = PrivacyCurtainController()
     private var curtainRaising = false
@@ -1553,7 +1559,11 @@ extension RemoteHostModel {
             "screenLocked": screenLocked,
             "autoStartSuppressed": autoStart.suppressed,
             "detail": detail as Any,
-            "pairingCodeActive": !pairingCode.isEmpty && !pairingExpired
+            "pairingCodeActive": !pairingCode.isEmpty && !pairingExpired,
+            "recoveredLaunch": ProcessInfo.processInfo.arguments.contains(WatchdogLaunchArgument.recovered),
+            "recoveredFromUnexpectedExit": watchdog?.assessment.recoveredFromUnexpectedExit ?? false,
+            "crashLoopStopped": crashLoopStopped,
+            "curtainPreference": curtainPreference
         ]
     }
 }

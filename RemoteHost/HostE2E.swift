@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import CoreGraphics
+import ServiceManagement
 
 /// Debug-only end-to-end harness mode for the Mac host (script/e2e/README.md).
 ///
@@ -9,6 +10,10 @@ import CoreGraphics
 /// running half-configured. In E2E mode the host:
 /// - keeps its own trust (Keychain account `host.e2e`) and preferences (suite
 ///   `com.roshan.PocketDesk.RemoteHost.e2e`), so the owner's real pairing is never read or replaced;
+/// - never registers, unregisters or re-registers the owner's login item or recovery helper, and
+///   keeps its watchdog run record under the harness directory, so killing an E2E instance can
+///   never make the owner's watchdog relaunch a normal instance or count toward its crash-loop guard;
+/// - keeps media on loopback (no local-network traffic, so no Local Network prompt);
 /// - approves a new phone only when its encrypted proof carries the harness's one-time token from a
 ///   0600 file, and deletes that file on use;
 /// - fences injected input to the Farside Test Pad window;
@@ -81,6 +86,9 @@ final class HostE2E {
         preferences.serviceAddress = signalURL
         // An unattended loop connects dozens of times; the Mac should not chime all night.
         preferences.chimeOnConnect = false
+        // The privacy curtain would cover the Test Pad; E2E keeps it off.
+        preferences.privacyCurtain = false
+        E2EMedia.loopbackOnly = true
         if options.has(E2E.resetArgument) {
             try? pairStore.delete()
             recorder.event("pairing.reset", ["reason": "reset argument"])
@@ -89,6 +97,22 @@ final class HostE2E {
             recorder.event("pairing.reset", ["reason": "stored pairing used another signaling URL"])
         }
         try? FileManager.default.removeItem(atPath: secretsDirectory + "/" + E2E.invitationFileName)
+    }
+
+    /// Login item and recovery helper are the owner's system registrations: inert in E2E mode.
+    private(set) lazy var backgroundServices = HostBackgroundServices(
+        loginItem: E2EInertBackgroundItem(), recoveryAgent: E2EInertBackgroundItem(),
+        defaults: defaults, installed: false, helperFingerprint: nil)
+
+    var watchdogDirectory: String { directory + "/host/watchdog" }
+
+    /// Run record, heartbeat and crash ledger live under the harness directory; an E2E watchdog
+    /// helper (script/e2e) supervises only this copy of the state.
+    func makeWatchdogReporter() -> HostWatchdogReporter? {
+        guard let executable = Bundle.main.executablePath,
+              (try? E2EFiles.ensurePrivateDirectory(watchdogDirectory)) != nil else { return nil }
+        return HostWatchdogReporter(files: WatchdogFiles(directory: URL(fileURLWithPath: watchdogDirectory, isDirectory: true)),
+                                    executablePath: executable)
     }
 
     func attach(_ model: RemoteHostModel) {
@@ -278,5 +302,12 @@ final class HostE2E {
         timer?.invalidate()
         recorder.flush()
     }
+}
+
+/// Stands in for SMAppService in E2E mode: nothing is ever registered or unregistered.
+final class E2EInertBackgroundItem: HostBackgroundService {
+    var status: SMAppService.Status { .notRegistered }
+    func register() throws {}
+    func unregisterAndWait() async throws {}
 }
 #endif

@@ -33,8 +33,9 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
         buildMenu()
         let screen = NSScreen.screens.first ?? NSScreen.main!
         let visible = screen.visibleFrame
-        let size = NSSize(width: min(1040, visible.width - 80), height: min(700, visible.height - 80))
-        let origin = NSPoint(x: visible.midX - size.width / 2, y: visible.midY - size.height / 2)
+        // Lower-left quadrant by default: system alerts and crash reports appear centred or top-right.
+        let size = NSSize(width: max(640, min(900, visible.width * 0.48)), height: max(440, min(620, visible.height * 0.52)))
+        let origin = Self.frame(corner: options.corner, size: size)?.origin ?? NSPoint(x: visible.minX + 16, y: visible.minY + 16)
         window = TestPadWindow(contentRect: NSRect(origin: origin, size: size),
                                styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                backing: .buffered, defer: false)
@@ -192,6 +193,30 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
 
     var isFullScreen: Bool { window.styleMask.contains(.fullScreen) }
 
+    /// A window frame (AppKit coordinates) in one corner of the primary screen's visible area.
+    static func frame(corner: String, size: NSSize) -> NSRect? {
+        guard let visible = NSScreen.screens.first?.visibleFrame else { return nil }
+        let margin: CGFloat = 16
+        let left = visible.minX + margin, right = visible.maxX - size.width - margin
+        let bottom = visible.minY + margin, top = visible.maxY - size.height - margin
+        switch corner {
+        case "lowerLeft": return NSRect(x: left, y: bottom, width: size.width, height: size.height)
+        case "lowerRight": return NSRect(x: right, y: bottom, width: size.width, height: size.height)
+        case "upperLeft": return NSRect(x: left, y: top, width: size.width, height: size.height)
+        case "upperRight": return NSRect(x: right, y: top, width: size.width, height: size.height)
+        default: return nil
+        }
+    }
+
+    /// Owners of real windows above this one that overlap it (system alerts, crash reports, other
+    /// apps). The harness refuses to click while this is non-empty.
+    private func coveredBy() -> [String] {
+        guard window.isOnActiveSpace, window.occlusionState.contains(.visible) || isFullScreen else { return [] }
+        let above = E2EWindowCover.onScreen(above: CGWindowID(window.windowNumber))
+        return E2EWindowCover.covering(TestPadGeometry.globalRect(window.frame), windows: above,
+                                       ownPID: getpid(), display: CGDisplayBounds(CGMainDisplayID()))
+    }
+
     @objc func toggleFullScreenFromButton(_ sender: Any?) {
         log.write("fullscreenButton", ["fullscreen": isFullScreen])
         window.toggleFullScreen(nil)
@@ -259,16 +284,16 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
         case "activate":
             window.makeKeyAndOrderFront(nil)
             NSApp.activate()
-        case "homePointer":
-            let element = command["element"] as? String ?? "home"
-            if let frame = pad.globalFrames()[element] {
-                let point = CGPoint(x: frame.midX, y: frame.midY)
-                let error = CGWarpMouseCursorPosition(point)
-                CGAssociateMouseAndMouseCursorPosition(1)
-                result["point"] = TestPadGeometry.json(point)
-                if error != .success { result["ok"] = false; result["error"] = "warp failed \(error.rawValue)" }
+        case "moveTo":
+            // Relocate away from a system dialog; never while in full screen.
+            let corner = command["corner"] as? String ?? "lowerLeft"
+            if isFullScreen {
+                result["ok"] = false; result["error"] = "in full screen"
+            } else if let frame = Self.frame(corner: corner, size: window.frame.size) {
+                window.setFrame(frame, display: true)
+                result["frame"] = TestPadGeometry.global(frame)
             } else {
-                result["ok"] = false; result["error"] = "unknown element \(element)"
+                result["ok"] = false; result["error"] = "unknown corner \(corner)"
             }
         case "mark":
             result["label"] = command["label"] as? String ?? ""
@@ -367,6 +392,7 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
             "onActiveSpace": window.isOnActiveSpace,
             "visible": window.occlusionState.contains(.visible),
             "elements": pad.globalFrames().mapValues { TestPadGeometry.json($0) },
+            "coveredBy": coveredBy(),
             "text": String(pad.textView.string.prefix(2048)),
             "selection": selectionInfo(),
             "scrollOffset": Double(pad.scroll.contentView.bounds.origin.y),
@@ -409,6 +435,7 @@ struct TestPadOptions {
     var statePath = "/private/tmp/farside-e2e/testpad-state.json"
     var commandsPath = "/private/tmp/farside-e2e/testpad-commands.jsonl"
     var runID = "manual"
+    var corner = "lowerLeft"
 
     init(arguments: [String]) {
         func value(_ flag: String) -> String? {
@@ -419,6 +446,7 @@ struct TestPadOptions {
         statePath = value("--state") ?? statePath
         commandsPath = value("--commands") ?? commandsPath
         runID = value("--run-id") ?? runID
+        corner = value("--corner") ?? corner
     }
 }
 

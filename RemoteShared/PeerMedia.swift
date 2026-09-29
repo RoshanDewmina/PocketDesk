@@ -74,15 +74,23 @@ final class PeerMedia: NSObject {
     private static let factory: RTCPeerConnectionFactory = {
         StreamTuning.prepareRuntime()
         RTCInitializeSSL()
-        return RTCPeerConnectionFactory(encoderFactory: PocketDeskVideoEncoderFactory(),
-                                        decoderFactory: PocketDeskVideoDecoderFactory())
+        let factory = RTCPeerConnectionFactory(encoderFactory: PocketDeskVideoEncoderFactory(),
+                                               decoderFactory: PocketDeskVideoDecoderFactory())
+        #if DEBUG
+        E2EMedia.restrictToLoopbackIfNeeded(factory)
+        #endif
+        return factory
     }()
     private static let compatibleFactory: RTCPeerConnectionFactory = {
         StreamTuning.prepareRuntime()
         RTCInitializeSSL()
         let encoder = RTCDefaultVideoEncoderFactory()
         if let h264 = encoder.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = h264 }
-        return RTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: RTCDefaultVideoDecoderFactory())
+        let factory = RTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: RTCDefaultVideoDecoderFactory())
+        #if DEBUG
+        E2EMedia.restrictToLoopbackIfNeeded(factory)
+        #endif
+        return factory
     }()
     private var connection: RTCPeerConnection?
     private var channel: RTCDataChannel?
@@ -204,6 +212,9 @@ final class PeerMedia: NSObject {
         guard !closed, let connection else { return }
         if signal.kind == "candidate" {
             guard let candidate = signal.candidate, candidate.utf8.count <= 8192, let line = signal.line, line >= 0, line < 16 else { onState?("failed"); return }
+            #if DEBUG
+            guard E2EMedia.allows(candidate: candidate) else { return }
+            #endif
             let value = RTCIceCandidate(sdp: candidate, sdpMLineIndex: line, sdpMid: signal.mid)
             if remoteDescriptionReady {
                 connection.add(value) { [weak self] error in
@@ -436,6 +447,9 @@ extension PeerMedia: RTCPeerConnectionDelegate {
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
+        #if DEBUG
+        guard E2EMedia.allows(candidate: candidate.sdp) else { return }
+        #endif
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.closed else { return }
             self.onSignal?(MediaSignal(kind: "candidate", candidate: candidate.sdp, mid: candidate.sdpMid, line: candidate.sdpMLineIndex))

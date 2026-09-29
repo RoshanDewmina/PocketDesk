@@ -14,7 +14,7 @@ struct HostE2EFenceEnvironment {
 
     /// Window-server snapshots are reused briefly so 60 Hz pointer moves stay cheap; clicks,
     /// drags and scrolls always take a fresh snapshot before deciding.
-    @MainActor private static var cached: (at: TimeInterval, pid: pid_t?, windows: [[String: Any]])?
+    @MainActor private static var cached: (at: TimeInterval, pid: pid_t?, windows: [E2EWindowCover.Window])?
 
     @MainActor
     static func live(testPad: E2ETestPadGeometry, fresh: Bool) -> Self {
@@ -22,36 +22,23 @@ struct HostE2EFenceEnvironment {
         let now = ProcessInfo.processInfo.systemUptime
         if fresh || cached == nil || now - cached!.at > 0.25 {
             let pid = NSRunningApplication.runningApplications(withBundleIdentifier: E2E.testPadBundleID).first?.processIdentifier
-            let windows = pid == nil ? [] : (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
-                                                                         kCGNullWindowID) as? [[String: Any]]) ?? []
-            cached = (now, pid, windows)
+            cached = (now, pid, pid == nil ? [] : E2EWindowCover.onScreen())
         }
         guard let pid = cached?.pid else {
             return Self(testPadRunning: false, testPadFrontmost: false, testPadContent: nil, pointer: pointer, coveringOwner: nil)
         }
         let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
         let windows = cached?.windows ?? []
-        func bounds(_ window: [String: Any]) -> CGRect? {
-            (window[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }
-        }
-        let padWindow = windows
-            .filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int) == 0 }
-            .compactMap(bounds)
+        let padWindow = windows.filter { $0.pid == pid && $0.layer == 0 }.map(\.bounds)
             .max { $0.width * $0.height < $1.width * $1.height }
         var content = padWindow
         if let padWindow, let published = testPad.snapshot()?.window {
             let intersection = padWindow.intersection(published)
             content = intersection.isNull || intersection.isEmpty ? nil : intersection
         }
-        var covering: String?
-        for window in windows {
-            guard let frame = bounds(window), frame.contains(pointer),
-                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0.01 else { continue }
-            if (window[kCGWindowOwnerPID as String] as? Int32) != pid {
-                covering = window[kCGWindowOwnerName as String] as? String ?? "another window"
-            }
-            break
-        }
+        let display = CGDisplayBounds(CGMainDisplayID())
+        let top = E2EWindowCover.topmost(at: pointer, in: windows, display: display)
+        let covering = top.flatMap { $0.pid == pid ? nil : $0.owner }
         return Self(testPadRunning: true, testPadFrontmost: frontmost, testPadContent: content,
                     pointer: pointer, coveringOwner: covering)
     }

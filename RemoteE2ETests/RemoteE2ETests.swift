@@ -80,6 +80,7 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.metrics["pointerAgreementPoints"] = agreement
         recorder.check("phone-drawn pointer matches the Mac pointer", agreement <= 3, String(format: "%.2f pt", agreement))
         var before = marks()
+        try ensureTestPadClear()
         tapCanvas()
         try expectClick(on: "A", since: before)
 
@@ -87,6 +88,7 @@ final class RemoteE2ETests: E2ETestCase {
         try steerPointer(to: CGPoint(x: b.midX, y: b.midY), label: "B")
         pause(0.8)
         before = marks()
+        try ensureTestPadClear()
         doubleTapCanvas()
         try expectClick(on: "B", clickCount: 2, since: before)
 
@@ -94,6 +96,7 @@ final class RemoteE2ETests: E2ETestCase {
         try steerPointer(to: CGPoint(x: c.midX, y: c.midY), label: "C")
         pause(0.8)
         before = marks()
+        try ensureTestPadClear()
         twoFingerTapCanvas()
         try expectClick(on: "C", button: "right", since: before)
 
@@ -102,6 +105,7 @@ final class RemoteE2ETests: E2ETestCase {
             try steerPointer(to: CGPoint(x: handle.midX, y: handle.midY), label: "dragHandle")
             pause(0.8)
             before = marks()
+            try ensureTestPadClear()
             try doubleTapHoldDrag(by: CGVector(dx: 150, dy: 60))
             try expectHostInput("dragDown", since: before, timeout: 6)
             try expectHostInput("dragUp", since: before, timeout: 6)
@@ -123,6 +127,7 @@ final class RemoteE2ETests: E2ETestCase {
             let offsetBefore = pad.state.double("scrollOffset") ?? 0
             before = marks()
             let region = strokeRegion
+            try ensureTestPadClear()
             try twoFingerScroll(center: CGPoint(x: region.midX, y: region.midY + 40), by: CGVector(dx: 0, dy: -140))
             try expectHostInput("scroll", since: before, timeout: 6) { $0.string("phase") == "began" }
             try expectHostInput("scroll", since: before, timeout: 6) { $0.string("phase") == "ended" }
@@ -189,6 +194,7 @@ final class RemoteE2ETests: E2ETestCase {
         let text = try element("text")
         try steerPointer(to: CGPoint(x: text.midX, y: text.midY), label: "text")
         var before = marks()
+        try ensureTestPadClear()
         tapCanvas()
         try expectHostInput("click", since: before) { $0.string("target") == "text" }
         recorder.check("click focused the Test Pad text view", true)
@@ -422,6 +428,7 @@ final class RemoteE2ETests: E2ETestCase {
         try steerPointer(to: CGPoint(x: frame.midX, y: frame.midY), tolerance: 4, label: "fullscreenButton")
         pause(0.8)
         let before = marks()
+        try ensureTestPadClear()
         tapCanvas()
         try expectHostInput("click", since: before) { $0.string("target") == "fullscreenButton" }
         try expectPadEvent("fullscreenButton", since: before, "Test Pad full-screen button pressed")

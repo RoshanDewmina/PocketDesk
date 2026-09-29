@@ -188,6 +188,31 @@ class E2ETestCase: XCTestCase {
         if !config.isStub {
             try waitFor("Farside Test Pad frontmost on the Mac", timeout: 10) { host.state.bool("testPadFrontmost") }
         }
+        try ensureTestPadClear()
+    }
+
+    /// Never click while a system alert, crash report or any other window covers the Test Pad:
+    /// move it to another corner, or stop the scenario with a clear reason.
+    func ensureTestPadClear() throws {
+        var covered = pad.state["coveredBy"] as? [String] ?? []
+        guard !covered.isEmpty else { return }
+        if config.isStub {
+            recorder.note("Test Pad partly covered by \(covered.joined(separator: ", ")) (stub mode sends no real clicks)")
+            return
+        }
+        if !pad.state.bool("fullscreen") {
+            for corner in ["lowerLeft", "lowerRight", "upperLeft", "upperRight"] {
+                _ = try? pad.command("moveTo", ["corner": corner])
+                pause(1.5)
+                covered = pad.state["coveredBy"] as? [String] ?? []
+                if covered.isEmpty {
+                    recorder.note("moved the Test Pad to \(corner), clear of other windows")
+                    return
+                }
+            }
+        }
+        attachScreenshot("test pad covered")
+        throw E2EFailure("Blocked by system dialog: the Farside Test Pad is covered by \(covered.joined(separator: ", ")); refusing to click anything.")
     }
 
     func element(_ name: String) throws -> CGRect {
@@ -464,6 +489,7 @@ class E2ETestCase: XCTestCase {
 
     /// Steers onto an element's centre, taps, and verifies the click landed there.
     func clickElement(_ name: String) throws {
+        try ensureTestPadClear()
         let frame = try element(name)
         try steerPointer(to: CGPoint(x: frame.midX, y: frame.midY), label: name)
         let before = marks()

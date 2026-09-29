@@ -101,6 +101,7 @@ final class PhoneE2E: ObservableObject {
         if let token, !E2EFiles.isToken(token) { refuse("--farside-e2e-token must be 64 lowercase hex characters") }
         let runID = options.environment[E2E.runVariable] ?? "unspecified"
         guard E2EFiles.isIdentifier(runID) else { refuse("FARSIDE_E2E_RUN_ID is malformed") }
+        E2EMedia.loopbackOnly = true
         // The simulator shares the Mac filesystem; if the harness directory is unavailable the
         // state is still published through the accessibility element.
         var recorder: E2ERecorder?

@@ -102,6 +102,8 @@ final class StubHost {
         store = E2EFilePairStore(path: directory + "/stubhost/pair.json")
         if options.has(E2E.resetArgument) { try? store.delete() }
         if let pair = try? store.read(HostPair.self), pair.invitation.server != signalURL { try? store.delete() }
+        // Loopback-only media: this unsigned app must never talk to local-network addresses.
+        E2EMedia.loopbackOnly = true
         coordinator = RemoteCoordinator(isHost: true, store: store)
         display = CGDisplayBounds(CGMainDisplayID())
         pointer = CGPoint(x: display.midX, y: display.midY)
