@@ -1707,13 +1707,15 @@ struct NativeSessionView: View {
     }
 
     private var sessionMiniMap: some View {
-        MiniMapPointerSource(model: model.pointerOverlay) { pointer in
-            MiniMapView(viewport: viewport, pointer: pointer, maxSize: miniMapSize, thumbnail: miniMapThumbnail,
+        MiniMapPointerSource(model: model.pointerOverlay, viewport: viewport) { pointer, current in
+            MiniMapView(viewport: current, pointer: pointer, maxSize: miniMapSize, thumbnail: miniMapThumbnail,
                         onPan: { translation in
                             model.pointerLocator.clear()
                             viewport.pan(by: translation)
                             #if DEBUG
-                            model.inputProbe?.note(String(format: "minimap pan %.1f %.1f", translation.width, translation.height))
+                            let visible = viewport.visibleSourceRect
+                            model.inputProbe?.note(String(format: "minimap pan %.1f %.1f to %.0f %.0f", translation.width,
+                                                          translation.height, visible.midX, visible.midY))
                             #endif
                         },
                         onJump: { point in
@@ -1729,6 +1731,12 @@ struct NativeSessionView: View {
                             if miniMap.touch(active, eligible: miniMapEligible) { miniMapToken &+= 1 }
                             #if DEBUG
                             model.inputProbe?.note("minimap touch \(active)")
+                            if !active, model.inputProbe != nil {
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                                    let visible = viewport.visibleSourceRect
+                                    model.inputProbe?.note(String(format: "minimap settled %.0f %.0f", visible.midX, visible.midY))
+                                }
+                            }
                             #endif
                         },
                         onShowAll: { setMode(.fit) })

@@ -93,6 +93,38 @@ final class CanvasKeyCommandTests: XCTestCase {
 }
 
 @MainActor
+final class MacShortcutMenuTests: XCTestCase {
+    func testMacShortcutsLeaveTheMenuBarButTheCommandsStay() throws {
+        let closeAction = NSSelectorFromString("performClose:")
+        let close = UIKeyCommand(title: "Close Window", action: closeAction, input: "w", modifierFlags: .command)
+        let closeAll = UIKeyCommand(title: "Close All", action: closeAction, input: "W", modifierFlags: [.command, .alternate])
+        let minimize = UIKeyCommand(title: "Minimize", action: NSSelectorFromString("performMiniaturize:"),
+                                    input: "m", modifierFlags: .command)
+        let copy = UIKeyCommand(title: "Copy", action: #selector(UIResponderStandardEditActions.copy(_:)),
+                                input: "c", modifierFlags: .command)
+        let other = UIKeyCommand(title: "Other", action: closeAction, input: "w", modifierFlags: [.command, .control])
+        let menu = UIMenu(title: "File", children: [
+            UIMenu(title: "", options: .displayInline, children: [close, closeAll]), minimize, copy, other
+        ])
+
+        let released = try XCTUnwrap(MacShortcutMenu.releasing(menu) as? UIMenu)
+        XCTAssertEqual(released.title, "File")
+        XCTAssertEqual(released.children.count, 4)
+        let inline = try XCTUnwrap(released.children.first as? UIMenu)
+        XCTAssertEqual(inline.options, .displayInline)
+        for (element, title) in zip(inline.children, ["Close Window", "Close All"]) {
+            let command = try XCTUnwrap(element as? UICommand)
+            XCTAssertFalse(command is UIKeyCommand, "\(title) keeps its menu item but not ⌘W")
+            XCTAssertEqual(command.title, title)
+            XCTAssertEqual(command.action, closeAction)
+        }
+        XCTAssertFalse(released.children[1] is UIKeyCommand, "⌘M goes to the Mac")
+        XCTAssertEqual((released.children[2] as? UIKeyCommand)?.input, "c", "Other shortcuts are untouched")
+        XCTAssertEqual((released.children[3] as? UIKeyCommand)?.modifierFlags, [.command, .control])
+    }
+}
+
+@MainActor
 final class DirectTouchModelTests: XCTestCase {
     func testDirectTouchNeedsAbsolutePointerFromTheMac() {
         let model = PhoneRemoteModel()

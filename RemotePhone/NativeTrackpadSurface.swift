@@ -60,7 +60,10 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     let pointer = HardwarePointerRouter(onCommand: { _ in false })
     let keyboard = HardwareKeyboardRouter()
     var hardwareKeys = false {
-        didSet { if !hardwareKeys { keyboard.releaseAll() } }
+        didSet {
+            if !hardwareKeys { keyboard.releaseAll() }
+            MacShortcutMenu.set(hardwareKeys && window != nil, for: self)
+        }
     }
     var keyDiagnostic: ((String) -> Void)?
     private struct Contact { let id: UInt64; var point: CGPoint }
@@ -129,6 +132,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        MacShortcutMenu.set(hardwareKeys && window != nil, for: self)
         if window == nil {
             interruptInput()
         } else {
@@ -167,10 +171,10 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         return super.resignFirstResponder()
     }
 
-    /// iOS gives Escape to the focus and dismissal systems, and iPadOS's window commands (⌘W close,
-    /// ⌘M minimize, ⌘Q quit, ⌘N new window) to itself, before any press handler. Key commands with
-    /// priority on the first responder get them first, so they reach the Mac instead of closing
-    /// Farside. Shortcuts iPadOS keeps even from these (⌘Tab, ⌘Space, ⌘H) use the ⌃⌥ stand-ins.
+    /// iOS gives Escape to the focus and dismissal systems before any press handler; key commands
+    /// with priority on the first responder get it first. The same goes for ⌘W, ⌘M, ⌘Q, ⌘N and ⌘,
+    /// once `MacShortcutMenu` has taken them off Farside's iPad menu bar, so they reach the Mac
+    /// instead of closing Farside. Shortcuts the system keeps (⌘Tab, ⌘Space, ⌘H) use the ⌃⌥ stand-ins.
     override var keyCommands: [UIKeyCommand]? {
         hardwareKeys ? Self.priorityCommands : nil
     }
