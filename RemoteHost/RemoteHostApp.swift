@@ -7,6 +7,9 @@ struct RemoteHostApp: App {
     @StateObject private var model: RemoteHostModel
 
     init() {
+        #if DEBUG
+        if CommandLine.arguments.contains(VirtualDisplaySpike.launchArgument) { VirtualDisplaySpike.run(); exit(0) }
+        #endif
         HostFonts.registerBundledFonts()
         let model = RemoteHostModel()
         _model = StateObject(wrappedValue: model)
