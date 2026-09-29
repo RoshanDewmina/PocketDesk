@@ -41,7 +41,11 @@ final class AgentAlertPushUITests: XCTestCase {
         let toggle = app.descendants(matching: .any)["agent.settings.alerts"].firstMatch
         XCTAssertTrue(toggle.waitForExistence(timeout: 5))
         toggle.tap()
-        app.tap()
+        // The first time, the phone explains before iOS asks: Continue, then answer iOS's question.
+        let continueButton = app.buttons["Continue"]
+        if continueButton.waitForExistence(timeout: 4) { continueButton.tap() }
+        let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow"]
+        if allow.waitForExistence(timeout: 6) { allow.tap() }
         let test = app.descendants(matching: .any)["agent.settings.test"].firstMatch
         let enabled = NSPredicate(format: "isEnabled == true")
         expectation(for: enabled, evaluatedWith: test)
