@@ -1,10 +1,30 @@
 import { runDurableObjectAlarm } from "cloudflare:test";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { RoomDO } from "../src/room";
 import { isPublicEnvironment, loadConfig } from "../src/config";
-import { connectClient, connectHost, pairing, sleep, testEnv } from "./helpers/client";
+import { randomHex } from "../src/util";
+import { parseChain, signCompactJws, transactionPayload, type TestChain } from "./helpers/apple-chain";
+import { connectClient, connectHost, pairing, postJson, sleep, testEnv } from "./helpers/client";
+import { installTurnMock } from "./helpers/turn-mock";
 
 const rooms = () => testEnv.ROOM as unknown as DurableObjectNamespace<RoomDO>;
+let chain: TestChain;
+beforeAll(() => {
+  chain = parseChain(testEnv.TEST_APPLE_CHAIN);
+  installTurnMock();
+});
+
+async function paidToken(): Promise<string> {
+  const now = Date.now();
+  const signedTransaction = await signCompactJws(transactionPayload({
+    originalTransactionId: `route-${randomHex(6)}`, expiresDate: now + 30 * 24 * 60 * 60_000,
+  }, now), chain);
+  const response = await postJson("/v1/entitlements/verify", { signedTransaction, deviceId: randomHex() },
+    { "cf-connecting-ip": `198.51.100.${Math.floor(Math.random() * 200) + 1}` });
+  const body = await response.json() as { entitled?: boolean; entitlementToken?: string };
+  if (!body.entitled || !body.entitlementToken) throw new Error(`paid fixture failed: ${response.status}`);
+  return body.entitlementToken;
+}
 
 describe("route.1 server policy", () => {
   it("requires route policy and refuses free relay on both public deployments", () => {
@@ -72,6 +92,37 @@ describe("route.1 server policy", () => {
       expect((await host.closed).reason).toBe("route_expired");
       expect((await phone.closed).reason).toBe("route_expired");
     } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ends a paid route when the second refresh lookup becomes unavailable", async () => {
+    const token = await paidToken();
+    const p = await pairing();
+    const host = await connectHost(p, { features: ["route.1", "renew.1"] });
+    const phone = await connectClient(p, { features: ["route.1", "renew.1", "remote.1"], entitlement: token });
+    expect((await host.next()).type).toBe("ice");
+    expect(await host.next()).toMatchObject({ type: "route", access: "remote" });
+    expect(await phone.next()).toMatchObject({ type: "route", access: "remote" });
+    await host.next(); await phone.next();
+
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 21 * 60_000);
+    const originalPrepare = testEnv.DB.prepare.bind(testEnv.DB);
+    let entitlementReads = 0;
+    const lookup = vi.spyOn(testEnv.DB, "prepare").mockImplementation(query => {
+      if (query.includes("SELECT e.*, d.last_room") && ++entitlementReads === 2) {
+        throw new Error("D1 unavailable on refresh");
+      }
+      return originalPrepare(query);
+    });
+    try {
+      phone.send({ type: "renew" });
+      expect((await host.closed).reason).toBe("entitlement_unavailable");
+      expect((await phone.closed).reason).toBe("entitlement_unavailable");
+      expect(entitlementReads).toBeGreaterThanOrEqual(2);
+    } finally {
+      lookup.mockRestore();
       vi.useRealTimers();
     }
   });
