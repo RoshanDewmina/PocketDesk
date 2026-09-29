@@ -109,6 +109,100 @@ final class NativeGestureEngineTests: XCTestCase {
         XCTAssertTrue(log.workspaceSwipes.isEmpty)
     }
 
+    func testStaggeredThreeFingerLandingWithDriftStillFiresEveryDirection() {
+        let paths: [(CGFloat, CGFloat, NativeSwipeDirection)] = [(-80,0,.left),(80,0,.right),(0,-80,.up),(0,80,.down)]
+        for secondAndThirdTogether in [true, false] {
+            for (dx, dy, direction) in paths {
+                let log = CommandLog(); let input = engine(log)
+                input.update([touch(1, 100, 300)], at: 1)
+                input.update([touch(1, 106, 300)], at: 1.03)
+                if !secondAndThirdTogether {
+                    input.update([touch(1, 106, 300), touch(2, 140, 290)], at: 1.06)
+                }
+                input.update([touch(1, 106, 300), touch(2, 140, 290), touch(3, 175, 305)], at: 1.1)
+                input.update([touch(1, 106+dx, 300+dy), touch(2, 140+dx, 290+dy), touch(3, 175+dx, 305+dy)], at: 1.25)
+                input.update([], at: 1.3)
+                XCTAssertEqual(log.workspaceSwipes, [direction],
+                               "first finger drifted 6 pt, then \(secondAndThirdTogether ? "two fingers landed together" : "one at a time")")
+                XCTAssertTrue(log.clicks.isEmpty)
+            }
+        }
+    }
+
+    func testTwoFingersThatBarelyStartedScrollingCanBecomeASwipe() {
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 100, 300), touch(2, 140, 300)], at: 1)
+        input.update([touch(1, 106, 300), touch(2, 146, 300)], at: 1.04)
+        input.update([touch(1, 106, 300), touch(2, 146, 300), touch(3, 180, 300)], at: 1.08)
+        input.update([touch(1, 186, 300), touch(2, 226, 300), touch(3, 260, 300)], at: 1.25)
+        input.update([], at: 1.3)
+        XCTAssertEqual(log.workspaceSwipes, [.right])
+        XCTAssertEqual(log.scrollPhases, ["began", "cancelled"], "The 6 pt scroll is closed, not left open")
+    }
+
+    func testThirdFingerAfterTheLandingWindowCannotSwitchSpaces() {
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 100, 300), touch(2, 140, 300)], at: 1)
+        input.update([touch(1, 100, 300), touch(2, 140, 300), touch(3, 180, 300)], at: 1.3)
+        input.update([touch(1, 180, 300), touch(2, 220, 300), touch(3, 260, 300)], at: 1.45)
+        input.update([], at: 1.5)
+        XCTAssertTrue(log.workspaceSwipes.isEmpty)
+    }
+
+    func testScrollThatStartsWithASmallSplayIsNotTakenForAPinch() {
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 0, 100), touch(2, 60, 100)], at: 1)
+        input.update([touch(1, 0, 92), touch(2, 64, 92)], at: 1.02)
+        input.update([touch(1, 0, 84), touch(2, 66, 84)], at: 1.04)
+        input.update([touch(1, 0, 70), touch(2, 66, 70)], at: 1.06)
+        input.update([], at: 1.1)
+        XCTAssertEqual(log.zooms, 0)
+        XCTAssertEqual(log.scrollPhases.first, "began")
+        XCTAssertEqual(log.scrollPhases.last, "ended")
+
+        let pinchLog = CommandLog(); let pinch = engine(pinchLog)
+        pinch.update([touch(1, 0, 100), touch(2, 60, 100)], at: 2)
+        pinch.update([touch(1, -6, 101), touch(2, 67, 99)], at: 2.02)
+        pinch.update([], at: 2.1)
+        XCTAssertEqual(pinchLog.zooms, 1, "Fingers moving apart still pinch")
+        XCTAssertTrue(pinchLog.scrollPhases.isEmpty)
+    }
+
+    func testCloseFingersCanScroll() {
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 0, 100), touch(2, 30, 100)], at: 1)
+        input.update([touch(1, 0, 94), touch(2, 33, 94)], at: 1.02)
+        input.update([touch(1, 0, 80), touch(2, 33, 80)], at: 1.04)
+        input.update([], at: 1.1)
+        XCTAssertEqual(log.zooms, 0, "A 3 pt splay on a 30 pt span is 10% but not a pinch")
+        XCTAssertEqual(log.scrollPhases, ["began", "changed", "ended"])
+    }
+
+    func testScrollDistanceIsInMacPointsAtTheCurrentZoom() {
+        let log = CommandLog(); let input = engine(log, scale: 0.5)
+        input.update([touch(1, 0, 100), touch(2, 40, 100)], at: 1)
+        input.update([touch(1, 0, 110), touch(2, 40, 110)], at: 1.02)
+        input.update([touch(1, 0, 120), touch(2, 40, 120)], at: 1.04)
+        input.update([], at: 1.1)
+        XCTAssertEqual(log.scrollDeltas.reduce(0) { $0 + $1.height }, 40, accuracy: 0.001,
+                       "20 pt of finger travel over a half-size picture scrolls 40 Mac points")
+    }
+
+    func testRestingFingersKeepTheScrollStreamAliveUntilTheyMoveAgain() {
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 0, 100), touch(2, 40, 100)], at: 1)
+        input.update([touch(1, 0, 110), touch(2, 40, 110)], at: 1.02)
+        input.tick(at: 1.2)
+        input.tick(at: 1.28)
+        input.tick(at: 1.4)
+        input.tick(at: 1.54)
+        input.update([touch(1, 0, 120), touch(2, 40, 120)], at: 1.6)
+        input.tick(at: 1.7)
+        input.update([], at: 1.72)
+        XCTAssertEqual(log.scrollPhases, ["began", "changed", "changed", "changed", "ended"])
+        XCTAssertEqual(log.scrollDeltas.map(\.height), [10, 0, 0, 10, 0], "Keep-alives carry no distance")
+    }
+
     private func touch(_ id: UInt64, _ x: CGFloat, _ y: CGFloat = 0) -> NativeGestureEngine.Touch {
         .init(id: id, point: CGPoint(x: x, y: y))
     }
@@ -293,6 +387,7 @@ final class CommandLog {
     var moves: [CGSize] = []
     var points: [CGPoint] = []
     var scrollPhases: [String] = []
+    var scrollDeltas: [CGSize] = []
     var zooms = 0
     var zoomEnds = 0
     var pans = 0
@@ -317,7 +412,7 @@ final class CommandLog {
         case .pointTo(let point):
             guard !rejectPoint(point) else { trace.append("pointTo-rejected"); return false }
             points.append(point); trace.append("pointTo")
-        case .scroll(_, let phase, _): scrollPhases.append(phase); trace.append("scroll-\(phase)")
+        case .scroll(let delta, let phase, _): scrollPhases.append(phase); scrollDeltas.append(delta); trace.append("scroll-\(phase)")
         case .zoom: zooms += 1; trace.append("zoom")
         case .zoomEnded: zoomEnds += 1; trace.append("zoomEnded")
         case .pan: pans += 1; trace.append("pan")

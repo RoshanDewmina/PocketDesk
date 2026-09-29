@@ -118,6 +118,12 @@ final class CanvasKeyCommandTests: XCTestCase {
         XCTAssertEqual(HardwareKeyMap.name(forHIDUsage: HardwareKeyMap.usage(forCharacter: "q")!), "q")
     }
 
+    func testCanvasOptsOutOfIOSThreeFingerEditingGestures() {
+        let view = NativeTrackpadInputView()
+        XCTAssertEqual(view.editingInteractionConfiguration, .none,
+                       "iOS undo/redo swipes and copy/paste pinches must not take the Mac's three-finger gestures")
+    }
+
     func testCloseWindowClosesTheMacWindowOnlyWhileKeysGoToTheMac() {
         let view = NativeTrackpadInputView()
         var sent: [String] = []

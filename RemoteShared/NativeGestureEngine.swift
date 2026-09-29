@@ -45,6 +45,14 @@ final class NativeGestureEngine {
     /// A three-finger tap: every finger lifts within this time and moves less than `tapTravel`.
     static let threeFingerTapDuration: TimeInterval = 0.45
     static let threeFingerTapTravel: CGFloat = 12
+    /// A third finger landing this soon after the first, with this little movement so far,
+    /// still starts a three-finger gesture.
+    static let workspaceLandingWindow: TimeInterval = 0.25
+    static let workspaceLandingSlop: CGFloat = 12
+    /// Two-finger movement after which the larger of travel and spread decides scroll or pinch.
+    static let multiDecisionTravel: CGFloat = 24
+    /// Well inside the Mac's 0.5 s expiry for a silent scroll stream.
+    static let scrollKeepAliveInterval: TimeInterval = 0.25
 
     var onCommand: (NativeGestureCommand) -> Bool
     var onPointerMotionEnded: () -> Void = {}
@@ -72,6 +80,8 @@ final class NativeGestureEngine {
     private var residual: CGSize = .zero
     private var lastTap: (time: TimeInterval, point: CGPoint)?
     private var secondTap = false
+    private var lastUpdateTime: TimeInterval = 0
+    private var lastScrollSent: TimeInterval = 0
     /// The canvas point a direct touch targets: where it landed, or the first tap of a double tap.
     private var directPoint: CGPoint = .zero
     private var workspaceTapEligible = false
@@ -121,6 +131,7 @@ final class NativeGestureEngine {
 
     func update(_ touches: [Touch], at time: TimeInterval, cancelled: Bool = false) {
         guard time.isFinite else { return }
+        lastUpdateTime = time
         if cancelled {
             cancel()
             active = Dictionary(uniqueKeysWithValues: touches.map { ($0.id, $0.point) })
@@ -197,8 +208,12 @@ final class NativeGestureEngine {
             return
         }
         if count >= 3 {
-            let eligible = count == 3 && enabled && !panMode &&
-                (mode == .candidate || mode == .multiCandidate) && time - startTime <= 0.2
+            // Fingers land tens of milliseconds apart and the first ones drift a few points
+            // meanwhile, so a barely started pointer move or scroll can still become a swipe.
+            let settling = mode == .candidate || mode == .multiCandidate ||
+                ((mode == .pointer || mode == .scroll) && maxDistance <= Self.workspaceLandingSlop)
+            let eligible = count == 3 && enabled && !panMode && settling &&
+                time - startTime <= Self.workspaceLandingWindow
             cancelOwnedCommand()
             beginWorkspace(next, eligible: eligible)
             active = next
@@ -277,7 +292,15 @@ final class NativeGestureEngine {
     /// Needed for a stationary second-tap hold (and a direct touch-and-hold); timestamps use
     /// UITouch/system uptime.
     func tick(at time: TimeInterval) {
-        guard time.isFinite, active.count == 1, mode == .candidate, enabled, !panMode else { return }
+        guard time.isFinite else { return }
+        if mode == .scroll, let id = scrollID, enabled, !panMode,
+           time - lastScrollSent >= Self.scrollKeepAliveInterval {
+            // Resting fingers send nothing, but the Mac retires a silent scroll after 0.5 s.
+            lastScrollSent = time
+            _ = onCommand(.scroll(delta: .zero, phase: "changed", stream: id))
+            return
+        }
+        guard active.count == 1, mode == .candidate, enabled, !panMode else { return }
         if secondTap {
             guard time - startTime >= 0.22 else { return }
             beginDrag(count: 2)
@@ -407,11 +430,19 @@ final class NativeGestureEngine {
         }
         var justRecognizedZoom = false
         if mode == .multiCandidate {
-            if scaleChange >= 0.055 && abs(span - multiStartDistance) >= 5 {
+            // Scrolling fingers move together and splay a little; pinching fingers move apart.
+            // Whichever motion clearly dominates wins, so a scroll that starts with a small
+            // splay is not taken for a pinch, and closely held fingers can still scroll.
+            let spanChange = abs(span - multiStartDistance)
+            let decisive = max(travel, spanChange) >= Self.multiDecisionTravel
+            let zooms = scaleChange >= 0.055 && spanChange >= 5 &&
+                (spanChange >= travel * 1.5 || (decisive && spanChange >= travel))
+            let scrolls = !zooms && travel >= 5 && (travel > spanChange || decisive)
+            if zooms {
                 mode = .zoom
                 zoomActive = true
                 justRecognizedZoom = true
-            } else if travel >= 5 && scaleChange < 0.055 {
+            } else if scrolls {
                 if panMode {
                     mode = .pan
                     _ = onCommand(.pan(CGSize(width: center.x - multiStartCenter.x,
@@ -425,9 +456,8 @@ final class NativeGestureEngine {
                     if direct { _ = onCommand(.pointTo(multiStartCenter)) }
                     let id = UUID().uuidString
                     scrollID = id
-                    _ = onCommand(.scroll(delta: CGSize(width: center.x - multiStartCenter.x,
-                                                       height: center.y - multiStartCenter.y),
-                                          phase: "began", stream: id))
+                    sendScroll(CGSize(width: center.x - multiStartCenter.x,
+                                      height: center.y - multiStartCenter.y), phase: "began", stream: id)
                 }
             }
         } else if mode == .zoom {
@@ -436,7 +466,7 @@ final class NativeGestureEngine {
         } else if mode == .scroll, let id = scrollID, enabled {
             let delta = CGSize(width: center.x - multiLastCenter.x,
                                height: center.y - multiLastCenter.y)
-            if delta != .zero { _ = onCommand(.scroll(delta: delta, phase: "changed", stream: id)) }
+            if delta != .zero { sendScroll(delta, phase: "changed", stream: id) }
         } else if mode == .pan && panMode {
             let delta = CGSize(width: center.x - multiLastCenter.x,
                                height: center.y - multiLastCenter.y)
@@ -449,6 +479,15 @@ final class NativeGestureEngine {
         }
         multiLastCenter = center
         multiLastDistance = span
+    }
+
+    /// Scroll in Mac points, so the content under the fingers moves as far as the fingers do
+    /// at any zoom, the way pointer motion is already scaled.
+    private func sendScroll(_ delta: CGSize, phase: String, stream: String) {
+        lastScrollSent = lastUpdateTime
+        _ = onCommand(.scroll(delta: CGSize(width: delta.width / gestureScale,
+                                            height: delta.height / gestureScale),
+                              phase: phase, stream: stream))
     }
 
     private func beginWorkspace(_ touches: [UInt64: CGPoint], eligible: Bool) {
