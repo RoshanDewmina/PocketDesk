@@ -58,7 +58,9 @@ final class SystemIntegrationsUITests: XCTestCase {
         let app = launch(["--ui-priming-notifications"])
         let priming = element(app, "priming.notifications")
         XCTAssertTrue(priming.waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["priming.continue"].exists, "One Continue, per the HIG pre-alert pattern")
+        XCTAssertTrue(app.buttons["priming.continue"].exists || app.buttons["Continue"].exists,
+                      "One Continue, per the HIG pre-alert pattern")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "label == 'Continue'")).count, 1)
         XCTAssertTrue(app.staticTexts["Farside works fine without notifications"].exists
                       || app.staticTexts["FARSIDE WORKS FINE WITHOUT NOTIFICATIONS"].exists)
         attach("Notification priming")

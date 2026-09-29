@@ -175,6 +175,6 @@ status=$(printf 'Authorization: Bearer %s\n' "$token" \
 
 case "$status" in
   2??) finish "Farside answered $status" ;;
-  "") finish "Farside did not answer" 4 ;;
+  ""|000) finish "Farside did not answer" 4 ;;
   *) finish "Farside answered $status" 5 ;;
 esac

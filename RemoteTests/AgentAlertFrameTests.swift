@@ -42,19 +42,25 @@ final class AgentAlertFrameTests: XCTestCase {
         XCTAssertLessThan(data.count, 160, "It rides on a status message that goes out every few seconds")
     }
 
+    /// A frame as a newer or different Mac would have written it, sent inside a status the phone decodes.
+    private func received(_ frameJSON: String) throws -> RemoteAction {
+        let frame = try JSONDecoder().decode(AgentAlertFrame.self, from: Data(frameJSON.utf8))
+        let sent = try JSONEncoder().encode(RemoteAction(action: "capture", x: 1, epoch: 1, agentAlert: frame))
+        return try JSONDecoder().decode(RemoteAction.self, from: sent)
+    }
+
     func testAnUnfamiliarKindIsWellFormedAndShownAsAnAgent() throws {
-        let json = #"{"action":"capture","x":1,"epoch":1,"agentAlert":{"version":1,"id":"h_ab12","kind":"aider","event":"needs_user","raisedAt":1790000000}}"#
-        let action = try JSONDecoder().decode(RemoteAction.self, from: Data(json.utf8))
+        let action = try received(#"{"version":1,"id":"h_ab12","kind":"aider","event":"needs_user","raisedAt":1790000000}"#)
         try action.validate()
         XCTAssertEqual(action.agentAlert?.agentKind, .other, "Never echoed: the name comes from the fixed list")
         XCTAssertEqual(action.agentAlert?.isUnderstood, true)
     }
 
     func testAnEventOrVersionTheMacKnowsAndThisPhoneDoesNotIsIgnoredNotFatal() throws {
-        let newEvent = #"{"action":"capture","x":1,"epoch":1,"agentAlert":{"version":1,"id":"h_ab12","kind":"codex","event":"finished","raisedAt":1790000000}}"#
-        let newVersion = #"{"action":"capture","x":1,"epoch":1,"agentAlert":{"version":2,"id":"h_ab12","kind":"codex","event":"needs_user","raisedAt":1790000000}}"#
+        let newEvent = #"{"version":1,"id":"h_ab12","kind":"codex","event":"finished","raisedAt":1790000000}"#
+        let newVersion = #"{"version":2,"id":"h_ab12","kind":"codex","event":"needs_user","raisedAt":1790000000}"#
         for json in [newEvent, newVersion] {
-            let action = try JSONDecoder().decode(RemoteAction.self, from: Data(json.utf8))
+            let action = try received(json)
             try action.validate()
             XCTAssertEqual(action.agentAlert?.isUnderstood, false, "A newer Mac must not be able to end an older phone's session")
         }
