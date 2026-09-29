@@ -36,7 +36,8 @@ if not mac:
     if entitlements.get('aps-environment') != 'production': errors.append('Distribution must use production APNs')
     if info.get('FarsideAPNSEnvironment') != entitlements.get('aps-environment'): errors.append('APNs configuration differs from signed entitlement')
     if entitlements.get('com.apple.developer.associated-domains') != ['applinks:getfarside.com']: errors.append('Associated domain differs from AASA')
-if entitlements.get('com.apple.security.get-task-allow'): errors.append('Distribution enables get-task-allow')
+if entitlements.get('com.apple.security.get-task-allow') or entitlements.get('get-task-allow'):
+    errors.append('Distribution enables get-task-allow')
 if entitlements.get('com.apple.security.cs.disable-library-validation'): errors.append('Distribution disables library validation')
 for error in errors: print(error)
 print('Archive metadata checks ' + ('FAILED' if errors else 'passed; signing and live acceptance remain separate'))
