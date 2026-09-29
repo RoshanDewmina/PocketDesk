@@ -1337,6 +1337,14 @@ final class RemoteHostModel: ObservableObject {
         ))
     }
 
+    /// A switched-off experiment is not advertised, so the phone never sends what the host would ignore.
+    private static var advertisedFeatures: [String] {
+        let tuning = StreamTuning.current
+        return SessionFeature.host.filter {
+            ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
+        }
+    }
+
     private func sendCaptureHealth(_ healthy: Bool, presence: HostPresence? = nil) {
         guard connection.connected else { return }
         let state = presence ?? (displayAsleep ? .displayAsleep : nil)
@@ -1351,7 +1359,7 @@ final class RemoteHostModel: ObservableObject {
             action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: true,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
-            features: SessionFeature.host, hostState: state?.rawValue,
+            features: Self.advertisedFeatures, hostState: state?.rawValue,
             hostStream: connection.media?.takeHostSummary(),
             curtain: curtainState.rawValue, hostEvent: event,
             display: capturedDisplayID, agentAlert: alert,
