@@ -32,6 +32,8 @@ Conventions: numbers are per-second stream statistics unless marked; **[M]** mea
 
 Run steps and the defaults keys for every switch: `Docs/perf/SESSION-PROTOCOL.md`.
 
+Instrument status (29 Sep, branch tip d3ffe4e): builds and unit suites pass (RemoteCoreTests 14 classes, phone 34 tests in 5 classes, host, Test Pad, stub host); nothing has run on the physical phone yet, so the first session is also the instruments' first field check.
+
 | # | Experiment | Instrument it needs | Status |
 |---|---|---|---|
 | 1 | Encoder latency: quiet-Mac repeat, Sharper 25 Mb/s vs Sharper capped at 12 Mb/s (`PocketDeskEncoderCeilingKbps`) vs Responsive; per-frame trace shows in-flight frames, bytes and rate updates | encoder trace (host summary fields) | built, awaiting install + session (protocol run A) |
