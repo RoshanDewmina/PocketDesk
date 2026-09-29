@@ -920,6 +920,13 @@ export class RoomDO extends DurableObject<Env> {
         Math.min(leaseEndsAt, client.entitled ? client.entitlementUntil ?? 0 : leaseEndsAt));
     }
     const renewalRevision = this.state().route_revision;
+    const currentForRenewal = (): boolean => {
+      const current = this.state();
+      return ws.readyState === WebSocket.OPEN && this.peer(attachment.role!) === ws &&
+        this.peer("client") === originalClient && current.lease_ends_at === leaseEndsAt &&
+        current.route_epoch === state.route_epoch && current.route_revision === renewalRevision &&
+        current.entitlement_id === state.entitlement_id;
+    };
     await this.scheduleAlarm();
 
     let servers: IceServer[] | undefined;
@@ -930,6 +937,11 @@ export class RoomDO extends DurableObject<Env> {
       this.renewalPending.add(ws);
       try {
         const authorization = await this.stillEntitled(attachment, now);
+        if (!currentForRenewal()) return;
+        if (state.route_expires_at !== null && authorization !== "valid") {
+          this.terminate(authorization === "invalid" ? "entitlement_revoked" : "entitlement_unavailable");
+          return;
+        }
         if (authorization === "invalid") code = "entitlement_required";
         else if (authorization === "unavailable") code = "relay_unavailable";
         else servers = await this.issueServers(attachment.role, attachment.entitlementId ?? state.entitlement_id ?? undefined);
@@ -939,10 +951,7 @@ export class RoomDO extends DurableObject<Env> {
         this.renewalPending.delete(ws);
       }
       if (servers) {
-        const afterIssue = this.state();
-        if (ws.readyState !== WebSocket.OPEN || this.peer(attachment.role) !== ws ||
-            afterIssue.lease_ends_at !== leaseEndsAt || afterIssue.route_epoch !== state.route_epoch ||
-            afterIssue.route_revision !== renewalRevision || afterIssue.entitlement_id !== state.entitlement_id) {
+        if (!currentForRenewal()) {
           this.revokeUsernames(servers.flatMap(s => s.username ? [s.username] : []));
           return;
         }
