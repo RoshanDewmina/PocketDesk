@@ -1,0 +1,911 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Farside — The Far Side</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Doto:wght@600;900&family=Geist+Mono:wght@400;500&family=Geist:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap">
+<style>
+:root{
+  --void:#07060B; --panel:#110E1C; --panel2:#181428; --uv:#5B34F2; --uvdeep:#24145E; --amber:#FFA51F; --bone:#F3ECDD; --dust:#9A93AE; --line:rgba(243,236,221,.12);
+  --serif:"Instrument Serif", "Iowan Old Style", Georgia, "Times New Roman", serif;
+  --sans:"Geist", -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --mono:"Geist Mono", ui-monospace, Menlo, Consolas, monospace;
+  --dot:"Doto", "Geist Mono", ui-monospace, monospace;
+  --ease:cubic-bezier(.16,1,.3,1); --ease2:cubic-bezier(.22,1,.36,1);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{overflow-x:clip}
+body{background:var(--void);color:var(--bone);font-family:var(--sans);font-size:16px;line-height:1.5;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-decoration:none}
+:focus-visible{outline:2px solid var(--amber);outline-offset:3px;border-radius:8px}
+.mono{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase}
+.wrap{max-width:1280px;margin:0 auto;padding-left:32px;padding-right:32px}
+@media (max-width:600px){.wrap{padding-left:16px;padding-right:16px}}
+em{font-style:italic}
+
+/* ================= HERO ================= */
+.hero{position:relative;height:100vh;height:100svh;min-height:640px;max-height:1000px;overflow:hidden;isolation:isolate}
+.bg{position:absolute;inset:0;z-index:-1}
+.bg canvas{width:100%;height:100%;display:block;image-rendering:pixelated}
+.bg::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(7,6,11,.55) 0%,rgba(7,6,11,0) 45%),linear-gradient(0deg,rgba(7,6,11,.7) 0%,rgba(7,6,11,0) 38%);pointer-events:none}
+.top{position:absolute;left:0;right:0;top:0;display:flex;justify-content:space-between;align-items:flex-start;padding:22px 28px;gap:16px}
+.tl{display:flex;align-items:center;gap:26px}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--serif);font-size:27px;line-height:1;letter-spacing:-.01em}
+.brand canvas{width:26px;height:26px;border-radius:50%;image-rendering:pixelated}
+.tl nav{display:flex;gap:20px;font-size:14px;color:rgba(243,236,221,.72)}
+.tl nav a:hover{color:var(--bone)}
+.tr{display:flex;gap:10px;align-items:center}
+.clock{display:flex;gap:14px;align-items:center;border:1px solid var(--line);border-radius:999px;padding:8px 14px;background:rgba(7,6,11,.35);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);font-family:var(--mono);font-size:11px;letter-spacing:.08em;white-space:nowrap}
+.clock b{font-weight:500;color:var(--bone)}
+.clock span{color:var(--dust)}
+.clock i{width:7px;height:7px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber);display:inline-block;margin-right:6px}
+.clock .sep{width:1px;height:14px;background:var(--line)}
+.pill{background:var(--bone);color:var(--void);font-weight:600;font-size:14px;border-radius:999px;padding:9px 16px;white-space:nowrap}
+@media (max-width:980px){.tl nav{display:none}}
+@media (max-width:640px){.clock .you,.clock .sep{display:none}.top{padding:16px}}
+.clock .lbl2{display:none}
+@media (max-width:480px){.clock{padding:7px 10px;gap:8px}.clock .lbl{display:none}.clock .lbl2{display:inline}.pill{padding:8px 13px}}
+
+.bl{position:absolute;left:0;bottom:64px;padding:0 28px;max-width:760px}
+.eyebrow{color:var(--amber);margin-bottom:18px}
+h1.hl{font-family:var(--serif);font-weight:400;font-size:clamp(52px,8.6vw,132px);line-height:.9;letter-spacing:-.025em}
+h1.hl em{color:var(--amber)}
+.rv{display:block;overflow:hidden;padding-bottom:.06em}
+.rv>span{display:block;transform:translateY(112%)}
+.sub{max-width:470px;font-size:17px;line-height:1.5;color:rgba(243,236,221,.78);margin:22px 0 26px}
+.ctas{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.cta{display:inline-flex;align-items:center;gap:14px;background:var(--bone);color:var(--void);border-radius:999px;padding:6px 6px 6px 22px;font-weight:600;font-size:16px;box-shadow:0 0 0 0 rgba(255,165,31,0);transition:box-shadow .4s var(--ease2), transform .4s var(--ease2)}
+.cta:hover{box-shadow:0 0 40px 2px rgba(255,165,31,.35);transform:translateY(-1px)}
+.cta b{width:40px;height:40px;border-radius:50%;background:var(--void);color:var(--bone);display:grid;place-items:center}
+.cta b svg{width:16px;height:16px}
+.ghost{font-size:15px;color:rgba(243,236,221,.8);border-bottom:1px solid rgba(243,236,221,.35);padding-bottom:2px}
+.ghost:hover{color:var(--bone);border-color:var(--bone)}
+.demo{position:absolute;right:28px;bottom:64px;width:290px;border-radius:20px;border:1px solid var(--line);background:rgba(17,14,28,.45);backdrop-filter:blur(18px) saturate(1.2);-webkit-backdrop-filter:blur(18px) saturate(1.2);padding:12px;display:flex;gap:12px;align-items:center}
+.demo>svg{width:118px;height:74px;flex:none;border-radius:12px;background:#0c0a14}
+.demo b{display:block;font-size:14px;font-weight:600;line-height:1.25}
+.demo span{display:block;color:var(--dust);font-size:12.5px;margin-top:3px}
+.demo .play{display:inline-flex;gap:6px;align-items:center;margin-top:8px;font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--bone)}
+.demo .play i{width:18px;height:18px;border-radius:50%;background:var(--bone);display:grid;place-items:center}
+@media (max-width:980px){.demo{display:none}}
+.corners{position:absolute;left:28px;right:28px;bottom:20px;display:flex;justify-content:space-between;color:rgba(243,236,221,.62);gap:12px}
+@media (max-width:640px){.bl{padding:0 16px;bottom:60px}.corners{left:16px;right:16px}.corners .mid{display:none}.sub{font-size:15.5px;margin:16px 0 20px}}
+.hint{position:absolute;right:28px;top:84px;color:rgba(243,236,221,.45);text-align:right}
+@media (max-width:980px){.hint{display:none}}
+
+.fade{opacity:0;transform:translateY(14px)}
+.go .rv>span{transform:none;transition:transform 1.05s var(--ease) var(--d,0s)}
+.go .fade{opacity:1;transform:none;transition:opacity .9s var(--ease2) var(--d,0s),transform .9s var(--ease2) var(--d,0s)}
+
+/* mini demo loop */
+.mini-ptr{animation:miniptr 4.8s var(--ease2) infinite}
+.mini-fing{animation:minifing 4.8s var(--ease2) infinite}
+.mini-rip{animation:minirip 4.8s ease-out infinite;transform-origin:92px 44px;transform-box:view-box}
+@keyframes miniptr{0%,8%{transform:translate(0,0)}40%,60%{transform:translate(-22px,-12px)}88%,100%{transform:translate(0,0)}}
+@keyframes minifing{0%,8%{transform:translate(0,0)}40%,60%{transform:translate(-5px,-4px)}88%,100%{transform:translate(0,0)}}
+@keyframes minirip{0%,44%{opacity:0;transform:scale(.3)}48%{opacity:1}64%,100%{opacity:0;transform:scale(1.8)}}
+
+/* ================= SECTIONS ================= */
+.sec{padding-top:110px}
+.lab{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:34px;color:var(--dust)}
+.lab b{font-weight:500;color:var(--bone)}
+h2.st{font-family:var(--serif);font-weight:400;font-size:clamp(40px,5.4vw,78px);line-height:.95;letter-spacing:-.02em}
+h2.st em{color:var(--amber)}
+.lede{color:rgba(243,236,221,.72);max-width:520px;font-size:17px;margin-top:14px}
+
+/* brand kit */
+.kit{display:grid;grid-template-columns:1.25fr 1fr;gap:22px;margin-top:36px}
+@media (max-width:980px){.kit{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:22px;padding:24px;position:relative;overflow:hidden}
+.card .mono{color:var(--dust)}
+.wm{display:flex;align-items:center;gap:18px;margin:28px 0 18px}
+.wm canvas{width:84px;height:84px;border-radius:50%;image-rendering:pixelated}
+.wm b{font-family:var(--serif);font-weight:400;font-size:clamp(64px,9vw,120px);line-height:.8;letter-spacing:-.03em}
+.wm b em{color:var(--amber)}
+.wm-sm{display:flex;gap:22px;flex-wrap:wrap;align-items:center;color:var(--dust);font-size:13px}
+.wm-sm span{display:flex;gap:8px;align-items:center;font-family:var(--serif);font-size:24px;color:var(--bone)}
+.wm-sm canvas{width:22px;height:22px;border-radius:50%;image-rendering:pixelated}
+.icons{display:flex;gap:26px;align-items:flex-end;flex-wrap:wrap;margin-top:22px}
+.icons figure{display:grid;gap:10px;justify-items:start}
+.icons canvas{display:block;border-radius:22.4%;image-rendering:pixelated;box-shadow:0 0 0 1px rgba(243,236,221,.1),0 20px 60px rgba(91,52,242,.18)}
+.icons figcaption{color:var(--dust)}
+.sw{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-top:20px}
+@media (max-width:600px){.sw{grid-template-columns:repeat(3,1fr)}}
+.sw div{border-radius:14px;overflow:hidden;border:1px solid var(--line)}
+.sw i{display:block;height:72px}
+.sw span{display:block;padding:8px 10px;font-size:12px;background:var(--panel2)}
+.sw em{display:block;font-style:normal;font-family:var(--mono);font-size:10.5px;color:var(--dust);letter-spacing:.04em}
+.type{display:grid;gap:16px;margin-top:20px}
+.type div{border-top:1px solid var(--line);padding-top:14px}
+.type .t1{font-family:var(--serif);font-size:44px;line-height:1}
+.type .t1 em{color:var(--amber)}
+.type .t2{font-family:var(--sans);font-size:20px;font-weight:600}
+.type .t3{font-family:var(--mono);font-size:13px;letter-spacing:.12em;text-transform:uppercase}
+.type .t4{font-family:var(--dot);font-weight:900;font-size:40px;line-height:1;color:var(--amber)}
+.type small{display:block;color:var(--dust);font-family:var(--mono);font-size:10.5px;letter-spacing:.08em;margin-top:6px}
+.bayer{display:grid;grid-template-columns:repeat(8,1fr);gap:2px;margin-top:20px;max-width:150px}
+.bayer i{aspect-ratio:1;border-radius:2px}
+
+.short{display:grid;grid-template-columns:repeat(3,1fr);gap:0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-top:30px}
+@media (max-width:860px){.short{grid-template-columns:1fr}}
+.short div{padding:26px 26px 30px 0}
+.short div+div{border-left:1px solid var(--line);padding-left:26px}
+@media (max-width:860px){.short div+div{border-left:0;border-top:1px solid var(--line);padding-left:0}}
+.short h4{font-family:var(--serif);font-weight:400;font-size:30px;line-height:1.05;margin:10px 0 8px}
+.short p{color:rgba(243,236,221,.72);font-size:15px}
+.price{display:grid;grid-template-columns:1fr 1fr;gap:22px;margin-top:22px}
+@media (max-width:760px){.price{grid-template-columns:1fr}}
+.price .card h4{font-family:var(--serif);font-weight:400;font-size:34px;line-height:1;margin:12px 0 6px}
+.price .amt{font-family:var(--serif);font-weight:400;font-size:60px;letter-spacing:-.01em;line-height:1;color:var(--bone);margin:14px 0 4px}
+.price .amt small{font-family:var(--mono);font-size:12px;font-weight:400;color:var(--dust);letter-spacing:.06em}
+.price p{color:rgba(243,236,221,.72);font-size:15px}
+.price .card.hot{border-color:rgba(255,165,31,.4);box-shadow:0 0 60px rgba(255,165,31,.08) inset}
+.price .card.hot .amt{color:var(--amber)}
+
+/* ================= DEVICES ================= */
+.devrow{--s:.6;display:flex;flex-wrap:wrap;justify-content:center;gap:40px 24px;max-width:1420px;margin:40px auto 0;padding:0 20px}
+.slot{width:calc(414px*var(--s));flex:none}
+.fbox{width:calc(414px*var(--s));height:calc(868px*var(--s));position:relative}
+.device{position:absolute;left:0;top:0;width:414px;height:868px;padding:12px;border-radius:66px;background:#1b1824;transform:scale(var(--s));transform-origin:0 0;box-shadow:inset 0 0 0 2px #2b2638,0 40px 80px rgba(0,0,0,.6),0 0 0 1px #000}
+.screen{position:relative;width:390px;height:844px;border-radius:54px;overflow:hidden;background:var(--void);isolation:isolate;color:var(--bone)}
+.island{position:absolute;top:11px;left:50%;width:122px;height:35px;margin-left:-61px;border-radius:20px;background:#000;z-index:60}
+.homebar{position:absolute;bottom:8px;left:50%;width:134px;height:5px;margin-left:-67px;border-radius:3px;background:var(--bone);opacity:.85;z-index:60}
+.slot figcaption{margin-top:16px;font-size:14px;line-height:1.45;color:rgba(243,236,221,.75)}
+.slot figcaption b{display:block;font-family:var(--mono);font-weight:500;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--bone);margin-bottom:6px}
+@media (max-width:760px){
+  .devrow{--s:.78;flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto;scroll-snap-type:x mandatory;padding:4px 16px 24px;gap:18px}
+  .slot{scroll-snap-align:center}
+}
+.sb{position:absolute;top:0;left:0;right:0;height:54px;display:flex;justify-content:space-between;align-items:center;padding:6px 34px 0 50px;font:600 17px/1 -apple-system,"SF Pro Text",var(--sans);z-index:55;color:var(--bone)}
+.sb-i{display:flex;gap:6px;align-items:center}
+.sb-i svg{fill:currentColor}
+.sb-bat{width:26px;height:13px;border:1.5px solid currentColor;border-radius:4px;padding:1.5px;position:relative;opacity:.9}
+.sb-bat::after{content:"";position:absolute;right:-4px;top:3.5px;width:2px;height:4px;border-radius:0 1px 1px 0;background:currentColor}
+.sb-bat i{display:block;height:100%;width:78%;background:currentColor;border-radius:1.5px}
+.app{position:absolute;inset:0;padding:62px 20px 30px;display:flex;flex-direction:column}
+.a-top{display:flex;justify-content:space-between;align-items:center}
+.a-brand{font-family:var(--serif);font-size:25px;display:flex;align-items:center;gap:8px}
+.a-brand canvas{width:22px;height:22px;border-radius:50%;image-rendering:pixelated}
+.ib{width:38px;height:38px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;background:rgba(243,236,221,.06);font-size:22px;font-weight:300}
+.a-cap{color:var(--dust);margin:22px 2px 10px}
+.maccard{border-radius:30px;background:var(--panel);border:1px solid var(--line);overflow:hidden}
+.mc-art{position:relative;height:250px}
+.mc-art canvas{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated}
+.mc-art .mono{position:absolute;color:rgba(243,236,221,.7);font-size:9.5px}
+.mc-b{padding:16px 20px 20px}
+.mc-b h5{font-size:22px;font-weight:600;letter-spacing:-.01em}
+.stat{display:flex;align-items:center;gap:8px;margin-top:6px;font-size:14.5px;color:rgba(243,236,221,.86)}
+.stat i{width:8px;height:8px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber)}
+.stat small{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--dust);letter-spacing:.04em}
+.connect{margin-top:18px;height:66px;border-radius:999px;background:var(--bone);color:var(--void);display:flex;align-items:center;justify-content:space-between;padding:0 8px 0 28px;font-size:20px;font-weight:600;box-shadow:0 0 50px rgba(255,165,31,.18)}
+.connect b{width:50px;height:50px;border-radius:50%;background:var(--void);color:var(--bone);display:grid;place-items:center}
+.quip{font-family:var(--serif);font-style:italic;font-size:18px;text-align:center;margin-top:14px;color:rgba(243,236,221,.7)}
+.list{margin-top:auto;border-radius:20px;background:var(--panel);border:1px solid var(--line)}
+.list div{display:flex;justify-content:space-between;padding:14px 18px;font-size:15.5px}
+.list div+div{border-top:1px solid var(--line)}
+.list div::after{content:"›";color:var(--dust);font-size:20px;line-height:1}
+
+/* desk */
+.cam{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+.desk{position:relative;width:1000px;height:625px;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;color:#1d1d1f;background:#07060B}
+.desk canvas.wall{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated}
+.d-bar{position:relative;height:24px;display:flex;align-items:center;gap:15px;padding:0 12px;font-size:12.5px;background:rgba(20,17,30,.6);color:#eee;backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px)}
+.d-bar b{font-weight:700}
+.d-glyph{width:12px;height:12px;border-radius:50%;border:2.5px solid #eee}
+.d-right{margin-left:auto;display:flex;gap:13px;align-items:center}
+.d-win{position:absolute;background:#fff;border-radius:11px;box-shadow:0 22px 50px rgba(0,0,0,.5),0 0 0 .5px rgba(0,0,0,.5);overflow:hidden}
+.d-tb{height:30px;display:flex;align-items:center;gap:7px;padding:0 11px;background:#ececec;border-bottom:1px solid #d6d6d6;font-size:12px;color:#555}
+.d-tb>i{width:12px;height:12px;border-radius:50%;background:#ff5f57;flex:none}
+.d-tb>i:nth-child(2){background:#febc2e}.d-tb>i:nth-child(3){background:#28c840}
+.d-tb span{margin-left:10px}
+.d-ed{left:24px;top:42px;width:600px;height:400px;background:#1e1f27}
+.d-ed .d-tb{background:#2a2b34;border-color:#15161b;color:#a9abbd}
+.d-run{margin-left:auto !important;background:#44465a;color:#fff;border-radius:6px;padding:3px 10px;font-size:11.5px;font-weight:600}
+.d-ed-b{display:flex;height:370px}
+.d-side{width:150px;background:#23242d;color:#9a9cb0;font-size:12px;padding:8px 0;flex:none}
+.d-side div{padding:3px 14px;height:20px;white-space:nowrap}
+.d-side .on{background:#3b3d4f;color:#fff}
+.d-side .hd{font-size:10px;letter-spacing:.08em;color:#6d6f86}
+.d-code{flex:1;padding:10px 0;font:12px/19px "Geist Mono",ui-monospace,Menlo,monospace;color:#d8dae8;counter-reset:ln;white-space:pre}
+.d-code>span{display:block;padding-left:46px;position:relative;height:19px}
+.d-code>span::before{counter-increment:ln;content:counter(ln);position:absolute;left:0;width:32px;text-align:right;color:#585b72}
+.d-code .kw{color:#ff7ab2}.d-code .ty{color:#6bdfff}.d-code .fn{color:#67c9a8}.d-code .nu{color:#e0cf80}.d-code .st{color:#ff8a78}.d-code .cm{color:#7f8b98;font-style:italic}
+.d-code .cur{display:inline-block;width:2px;height:15px;background:#fff;vertical-align:-3px;animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.d-br{left:520px;top:150px;width:450px;height:350px}
+.d-url{flex:1;margin-left:10px;height:21px;border-radius:7px;background:#fff;border:1px solid #d3d3d3;font-size:11.5px;display:flex;align-items:center;justify-content:center;color:#666}
+.d-page{padding:20px 26px;position:relative;height:320px}
+.d-page h4{font-size:21px;margin-bottom:4px;letter-spacing:-.01em}
+.d-page .sub2{font-size:12px;color:#888;margin-bottom:12px}
+.d-img{height:84px;border-radius:9px;margin:14px 0;background:linear-gradient(120deg,#2b1a6b,#5b34f2 55%,#ffa51f)}
+.d-chk{display:flex;gap:8px;align-items:center;font-size:12.5px;margin:6px 0;color:#333}
+.d-chk i{width:13px;height:13px;border-radius:4px;border:1.5px solid #aaa}
+.d-chk.done i{background:#34c759;border-color:#34c759}
+.d-pub{position:absolute;right:26px;bottom:22px;background:#0a84ff;color:#fff;border-radius:8px;padding:8px 18px;font-size:13px;font-weight:600}
+.d-dock{position:absolute;left:50%;bottom:8px;transform:translateX(-50%);display:flex;gap:8px;padding:7px 9px;border-radius:19px;background:rgba(40,34,60,.45);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.18)}
+.d-dock i{width:44px;height:44px;border-radius:11px;display:grid;place-items:center;font:700 16px/1 -apple-system,Arial,sans-serif;color:#fff;font-style:normal}
+.d-dock .sep{width:1px;background:rgba(255,255,255,.25);margin:4px 2px;border-radius:0}
+.ic1{background:linear-gradient(#6cc3ff,#1a7cf0)}.ic2{background:radial-gradient(circle,#fff 0 30%,transparent 31%),linear-gradient(#5ee0ff,#1e8bff)}.ic3{background:linear-gradient(#fff,#e9e9e9);color:#ff3b30 !important}.ic4{background:linear-gradient(#34364a,#1c1d27)}.ic5{background:linear-gradient(#fff3a8,#ffd84a);color:#8a6d00 !important}.ic6{background:linear-gradient(#ff8fb3,#ff2d6d)}.ic7{background:#111;color:#33d17a !important;font-family:Menlo,monospace !important;font-size:13px !important}.ic8{background:linear-gradient(#e6e6e6,#bdbdbd)}
+.icF{background:#07060B !important;border:1px solid rgba(255,255,255,.3);overflow:hidden}
+.icF canvas{width:100%;height:100%;image-rendering:pixelated}
+
+.ptr{position:absolute;left:0;top:0;width:40px;height:52px;margin:-3px 0 0 -4px;z-index:20;pointer-events:none;will-change:transform;filter:drop-shadow(0 0 10px rgba(255,165,31,.55)) drop-shadow(0 2px 3px rgba(0,0,0,.5))}
+.halo{position:absolute;left:0;top:0;width:84px;height:84px;margin:-42px 0 0 -42px;z-index:19;pointer-events:none;opacity:0;transform:scale(.4);transition:opacity .35s ease, transform .6s var(--ease)}
+.halo.on{opacity:1;transform:scale(1)}
+.halo svg{width:100%;height:100%;animation:spin 8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ripple{position:absolute;left:0;top:0;width:120px;height:120px;margin:-60px 0 0 -60px;border-radius:50%;border:2px dotted var(--amber);opacity:0;z-index:18;pointer-events:none}
+.ripple.go{animation:rip .7s var(--ease2)}
+@keyframes rip{0%{opacity:1;transform:scale(.2)}100%{opacity:0;transform:scale(1.3)}}
+.handle{position:absolute;left:50%;bottom:12px;width:58px;height:7px;margin-left:-29px;border-radius:6px;background:rgba(243,236,221,.8);box-shadow:0 0 0 1px rgba(0,0,0,.35),0 2px 10px rgba(0,0,0,.5);z-index:40}
+
+.shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(7,6,11,0) 30%,rgba(7,6,11,.65));z-index:30}
+.sheet{position:absolute;left:10px;right:10px;bottom:10px;z-index:41;border-radius:40px;background:rgba(20,16,32,.82);backdrop-filter:blur(24px) saturate(1.3);-webkit-backdrop-filter:blur(24px) saturate(1.3);border:1px solid rgba(243,236,221,.14);padding:10px 16px 22px;overflow:hidden}
+.sheet canvas.strip{position:absolute;left:0;right:0;top:0;width:100%;height:60px;image-rendering:pixelated;opacity:.55;-webkit-mask-image:linear-gradient(#000,transparent);mask-image:linear-gradient(#000,transparent)}
+.sheet .grab{position:relative;width:44px;height:5px;border-radius:3px;background:rgba(243,236,221,.5);margin:0 auto 12px}
+.sheet .live{position:relative;display:flex;align-items:center;gap:8px;font-size:15px;font-weight:600;padding:0 4px}
+.sheet .live i{width:8px;height:8px;border-radius:50%;background:var(--amber);box-shadow:0 0 10px var(--amber)}
+.sheet .live small{margin-left:auto;font-family:var(--mono);font-size:10px;letter-spacing:.1em;color:var(--dust);border:1px solid var(--line);border-radius:20px;padding:5px 9px}
+.tiles{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:14px 0 12px}
+.tile{border-radius:20px;background:rgba(243,236,221,.07);border:1px solid var(--line);padding:13px 4px 11px;text-align:center;font-size:12px;font-weight:500}
+.tile svg{width:26px;height:26px;display:block;margin:0 auto 7px;stroke:var(--bone)}
+.tile.on{background:var(--amber);color:var(--void);border-color:var(--amber)}
+.tile.on svg{stroke:var(--void)}
+.tile small{display:block;font-family:var(--mono);font-size:9px;letter-spacing:.06em;opacity:.7;margin-top:3px}
+.mictip{display:flex;align-items:center;gap:10px;border-radius:16px;border:1px dashed rgba(255,165,31,.55);padding:10px 12px;font-size:13px;margin-bottom:12px;color:rgba(243,236,221,.86)}
+.mictip .bars{display:flex;gap:2px;align-items:center;height:18px}
+.mictip .bars i{width:3px;background:var(--amber);border-radius:2px;animation:bar 1s ease-in-out infinite}
+.mictip .bars i:nth-child(2){animation-delay:.15s}.mictip .bars i:nth-child(3){animation-delay:.3s}.mictip .bars i:nth-child(4){animation-delay:.45s}
+@keyframes bar{0%,100%{height:5px}50%{height:17px}}
+.mictip b{margin-left:auto;background:var(--bone);color:var(--void);border-radius:999px;padding:6px 12px;font-size:12.5px}
+.row2{display:flex;gap:10px}
+.segc{flex:1;display:flex;border-radius:999px;background:rgba(243,236,221,.07);border:1px solid var(--line);padding:3px;font-size:14px;font-weight:500}
+.segc span{flex:1;text-align:center;padding:10px 0;border-radius:999px;color:rgba(243,236,221,.7)}
+.segc .on{background:var(--bone);color:var(--void)}
+.endb{border-radius:999px;padding:0 18px;font-weight:600;font-size:14px;display:flex;align-items:center;border:1px solid rgba(255,120,90,.4);color:#ffb3a1}
+
+/* tutorial */
+.coach{position:relative;z-index:3}
+.coach .k{color:var(--amber)}
+.coach h5{font-family:var(--serif);font-weight:400;font-size:40px;line-height:1;margin:10px 0 8px;letter-spacing:-.01em}
+.coach h5 em{color:var(--amber)}
+.coach p{font-size:15px;color:rgba(243,236,221,.8);line-height:1.4}
+.pad{margin-top:18px;flex:1;border-radius:30px;overflow:hidden;position:relative;border:1px solid var(--line)}
+.pad canvas{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated}
+.pad svg.ov{position:absolute;inset:0;width:100%;height:100%}
+.pad .tag{position:absolute;color:rgba(243,236,221,.8);font-size:9.5px}
+.fing{position:absolute;width:58px;height:58px;border-radius:50%;border:1.5px solid rgba(243,236,221,.7);background:radial-gradient(circle,rgba(243,236,221,.35),rgba(243,236,221,.05) 70%);animation:tapg 2.6s var(--ease2) infinite}
+@keyframes tapg{0%,30%{transform:translate(0,0) scale(1)}55%{transform:translate(-26px,-30px) scale(1)}62%{transform:translate(-26px,-30px) scale(.82)}70%,100%{transform:translate(-26px,-30px) scale(1);opacity:.3}}
+.dots5{display:flex;gap:7px;justify-content:center;margin:18px 0 6px}
+.dots5 i{width:7px;height:7px;border-radius:50%;background:rgba(243,236,221,.25)}
+.dots5 i.done{background:var(--bone)}
+.dots5 i.now{background:var(--amber);width:24px;border-radius:4px}
+.safe{text-align:center;color:var(--dust)}
+
+/* error */
+.errart{position:relative;height:300px;border-radius:30px;overflow:hidden;border:1px solid var(--line);margin-top:14px}
+.errart canvas{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated}
+.errart .zz{position:absolute;font-family:var(--dot);font-weight:900;color:var(--uv);letter-spacing:.05em}
+.errart .mono{position:absolute;color:rgba(243,236,221,.6);font-size:9.5px}
+.err h5{font-family:var(--serif);font-weight:400;font-size:46px;line-height:.95;margin:22px 0 10px;letter-spacing:-.015em}
+.err h5 em{color:var(--uv);filter:brightness(1.5)}
+.err p{font-size:15.5px;color:rgba(243,236,221,.8);line-height:1.45}
+.tipbox{margin-top:14px;border-radius:16px;border:1px solid var(--line);background:var(--panel);padding:11px 14px;font-size:13.5px;color:rgba(243,236,221,.8)}
+.tipbox b{color:var(--bone);font-weight:600}
+.bigbtn{margin-top:auto;height:62px;border-radius:999px;background:var(--bone);color:var(--void);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600}
+.link{text-align:center;font-size:14.5px;margin-top:14px;color:rgba(243,236,221,.75)}
+
+/* ================= MAC ================= */
+.macstage{margin-top:34px;border-radius:24px;overflow:hidden;position:relative;border:1px solid var(--line);min-height:560px;background:#07060B}
+.macstage > canvas{position:absolute;inset:0;width:100%;height:100%;image-rendering:pixelated;opacity:.9}
+.mbar{position:relative;height:30px;display:flex;align-items:center;gap:18px;padding:0 14px;background:rgba(18,15,28,.6);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);font:13px/1 -apple-system,BlinkMacSystemFont,"Helvetica Neue",Arial,sans-serif;color:#eee;z-index:2}
+.mbar b{font-weight:700}
+.mbar .r{margin-left:auto;display:flex;gap:16px;align-items:center}
+.mbar .fsi{width:28px;height:22px;border-radius:6px;display:grid;place-items:center;background:rgba(255,255,255,.18)}
+.mbar .fsi canvas{width:16px;height:16px;border-radius:50%;image-rendering:pixelated}
+@media (max-width:700px){.mbar .lm{display:none}}
+.popover{position:absolute;right:132px;top:40px;width:340px;border-radius:22px;background:rgba(22,18,34,.78);backdrop-filter:blur(30px) saturate(1.4);-webkit-backdrop-filter:blur(30px) saturate(1.4);border:1px solid rgba(243,236,221,.16);box-shadow:0 30px 80px rgba(0,0,0,.6);padding:14px;z-index:3;overflow:hidden}
+@media (max-width:700px){.popover{position:relative;right:auto;top:auto;width:auto;margin:14px 12px}}
+.pv-h{display:flex;align-items:center;gap:12px;padding:4px 4px 12px}
+.pv-h canvas{width:46px;height:46px;border-radius:50%;image-rendering:pixelated;flex:none}
+.pv-h b{display:block;font-size:16px;font-weight:600}
+.pv-h span{display:block;font-size:12.5px;color:var(--amber)}
+.pv-dev{display:flex;gap:12px;align-items:center;border-radius:16px;background:rgba(243,236,221,.06);border:1px solid var(--line);padding:12px}
+.pv-dev svg{width:24px;height:38px;flex:none}
+.pv-dev b{display:block;font-size:14.5px;font-weight:600}
+.pv-dev small{font-family:var(--mono);font-size:10.5px;color:var(--dust);letter-spacing:.04em}
+.pv-row{display:flex;justify-content:space-between;align-items:center;padding:12px 4px 4px;font-size:14px}
+.tog{width:40px;height:24px;border-radius:14px;background:rgba(243,236,221,.18);position:relative}
+.tog::after{content:"";position:absolute;left:2px;top:2px;width:20px;height:20px;border-radius:50%;background:var(--bone)}
+.pv-btns{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 8px}
+.pv-btns div{border-radius:999px;padding:10px 0;text-align:center;font-weight:600;font-size:14px;border:1px solid var(--line);background:rgba(243,236,221,.06)}
+.pv-btns .stop{background:var(--bone);color:var(--void);border-color:var(--bone)}
+.pv-menu{border-top:1px solid var(--line);padding-top:6px;font-size:13.5px}
+.pv-menu div{display:flex;justify-content:space-between;padding:6px 4px;color:rgba(243,236,221,.86)}
+.pv-menu kbd{font-family:var(--mono);font-size:11px;color:var(--dust)}
+.macnote{position:absolute;left:30px;bottom:30px;max-width:380px;z-index:2}
+.macnote h3{font-family:var(--serif);font-weight:400;font-size:40px;line-height:1}
+.macnote h3 em{color:var(--amber)}
+.macnote p{color:rgba(243,236,221,.75);margin-top:10px;font-size:15px}
+@media (max-width:700px){.macnote{position:relative;left:auto;bottom:auto;padding:14px 16px 24px;max-width:none;background:linear-gradient(rgba(7,6,11,.2),rgba(7,6,11,.85) 25%)}}
+
+.setup{max-width:900px;margin:40px auto 0;border-radius:18px;background:#15121f;border:1px solid rgba(243,236,221,.14);box-shadow:0 40px 100px rgba(0,0,0,.6);overflow:hidden}
+.st-tb{height:40px;display:flex;align-items:center;gap:8px;padding:0 14px;border-bottom:1px solid var(--line);font:600 13px/1 -apple-system,Arial,sans-serif;color:rgba(243,236,221,.8)}
+.st-tb i{width:12px;height:12px;border-radius:50%;background:#ff5f57}
+.st-tb i:nth-child(2){background:#febc2e}.st-tb i:nth-child(3){background:#28c840}
+.st-tb span{margin:0 auto;padding-right:60px}
+.st-body{display:grid;grid-template-columns:250px 1fr}
+@media (max-width:760px){.st-body{grid-template-columns:1fr}}
+.st-side{position:relative;border-right:1px solid var(--line);padding:24px 20px;overflow:hidden}
+@media (max-width:760px){.st-side{border-right:0;border-bottom:1px solid var(--line)}}
+.st-side .mono{color:var(--dust)}
+.phases{display:flex;gap:14px;margin:16px 0 22px}
+.phases figure{display:grid;justify-items:center;gap:6px}
+.phases canvas{width:40px;height:40px;border-radius:50%;image-rendering:pixelated}
+.phases figcaption{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;color:var(--dust)}
+.phases .now figcaption{color:var(--amber)}
+.bar{height:3px;border-radius:2px;background:rgba(243,236,221,.12);overflow:hidden;margin-bottom:20px}
+.bar i{display:block;height:100%;width:50%;background:var(--amber);box-shadow:0 0 10px var(--amber)}
+.st-steps{list-style:none;display:grid;gap:12px;font-size:15px}
+.st-steps li{display:flex;gap:10px;align-items:center;color:var(--dust)}
+.st-steps li.now{color:var(--bone);font-weight:600}
+.st-steps li span{font-family:var(--mono);font-size:11px;width:22px;height:22px;border-radius:50%;border:1px solid currentColor;display:grid;place-items:center}
+.st-steps li.now span{background:var(--amber);color:var(--void);border-color:var(--amber)}
+.st-main{padding:26px 30px 26px}
+.st-main h4{font-family:var(--serif);font-weight:400;font-size:46px;line-height:.95;letter-spacing:-.015em}
+.st-main h4 em{color:var(--amber)}
+.st-main>p{color:rgba(243,236,221,.75);margin:10px 0 20px;max-width:480px}
+.perm{display:flex;gap:14px;align-items:center;border-radius:16px;background:rgba(243,236,221,.05);border:1px solid var(--line);padding:14px;margin-bottom:10px}
+.perm .pi{width:44px;height:44px;border-radius:12px;background:#0c0a14;border:1px solid var(--line);display:grid;place-items:center;flex:none}
+.perm .pi svg{width:22px;height:22px}
+.perm>div:nth-child(2){flex:1;min-width:0}
+.perm b{display:block;font-size:16px;font-weight:600}
+.perm small{display:block;font-size:13.5px;color:rgba(243,236,221,.7);line-height:1.35}
+.perm .ok{display:flex;gap:6px;align-items:center;font-size:13.5px;color:var(--amber);white-space:nowrap}
+.perm .go{border-radius:999px;padding:8px 14px;background:var(--bone);color:var(--void);font-weight:600;font-size:13.5px;white-space:nowrap}
+@media (max-width:560px){.perm{flex-wrap:wrap}.perm>div:nth-child(2){min-width:170px}.perm .ok,.perm .go{margin-left:58px}}
+.st-foot{display:flex;justify-content:space-between;align-items:center;margin-top:18px;gap:12px;flex-wrap:wrap}
+.st-foot .skip{color:rgba(243,236,221,.75);font-size:14.5px;border-bottom:1px solid rgba(243,236,221,.3)}
+.st-foot .cont{border-radius:999px;padding:10px 20px;border:1px solid var(--line);color:rgba(243,236,221,.4);font-weight:600}
+.st-hint{font-family:var(--serif);font-style:italic;font-size:18px;color:rgba(243,236,221,.7);margin-top:16px}
+
+.notes{margin-top:110px;margin-bottom:60px;border-top:1px solid var(--line);padding-top:22px;display:grid;grid-template-columns:1fr 1fr;gap:28px;font-size:14.5px;color:rgba(243,236,221,.78)}
+@media (max-width:760px){.notes{grid-template-columns:1fr}}
+.notes h6{font-family:var(--mono);font-weight:500;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--bone);margin-bottom:10px}
+.notes ul{padding-left:18px;display:grid;gap:6px}
+.foot{font-family:var(--serif);font-size:clamp(90px,22vw,300px);line-height:.8;letter-spacing:-.04em;color:rgba(243,236,221,.92);padding-top:60px;white-space:nowrap}
+.foot em{color:var(--amber)}
+
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation:none !important;transition:none !important}
+  .rv>span,.fade{transform:none !important;opacity:1 !important}
+}
+</style>
+</head>
+<body>
+
+<!-- ================= 1. HERO ================= -->
+<section class="hero" id="hero" aria-label="Farside">
+  <div class="bg"><canvas id="moon" aria-hidden="true"></canvas><!-- a looping hero video can replace this canvas later --></div>
+  <header class="top">
+    <div class="tl fade" style="--d:.05s">
+      <a class="brand" href="#hero"><canvas class="mk" width="26" height="26"></canvas>Farside</a>
+      <nav><a href="#how">How it works</a><a href="#kit">Brand</a><a href="#app">The app</a><a href="#mac">For Mac</a></nav>
+    </div>
+    <div class="tr fade" style="--d:.12s">
+      <div class="clock" aria-label="Time where you are and where your Mac is">
+        <span class="you">YOU <b id="tYou">—</b></span><span class="sep"></span>
+        <span><i id="sigDot"></i><span class="lbl">YOUR MAC · TORONTO </span><span class="lbl2">MAC </span><b id="tMac">—</b></span>
+      </div>
+      <a class="pill" href="#how">Download</a>
+    </div>
+  </header>
+  <div class="hint mono fade" style="--d:.9s">Move your pointer<br>to light the far side</div>
+
+  <div class="bl">
+    <div class="eyebrow mono fade" style="--d:.2s">Fig. 1 — A MacBook, left on</div>
+    <h1 class="hl"><span class="rv"><span style="--d:.28s">Even the far side</span></span><span class="rv"><span style="--d:.4s">gets <em>signal</em>.</span></span></h1>
+    <p class="sub fade" style="--d:.62s">Farside puts your whole Mac on your iPhone. Slide to point, tap to click, from the couch or the other hemisphere. No account. Pair once with a QR code.</p>
+    <div class="ctas fade" style="--d:.76s">
+      <a class="cta" href="#how" id="ctaMain">Download for Mac <b><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg></b></a>
+      <a class="ghost" href="#app">Get the iPhone app ↗</a>
+    </div>
+  </div>
+
+  <a class="demo fade" style="--d:1s" href="#app" aria-label="Watch the demo">
+    <svg viewBox="0 0 118 74" aria-hidden="true">
+      <defs><pattern id="dp" width="3" height="3" patternUnits="userSpaceOnUse"><rect width="1" height="1" fill="#5B34F2" opacity=".6"/></pattern></defs>
+      <rect x="0" y="0" width="118" height="74" fill="url(#dp)"/>
+      <rect x="54" y="10" width="56" height="38" rx="4" fill="#0c0a14" stroke="#F3ECDD" stroke-opacity=".5"/>
+      <rect x="60" y="17" width="22" height="14" rx="2" fill="#F3ECDD" opacity=".25"/><rect x="78" y="24" width="26" height="18" rx="2" fill="#F3ECDD" opacity=".4"/>
+      <circle class="mini-rip" cx="92" cy="44" r="7" fill="none" stroke="#FFA51F" stroke-width="1.2" stroke-dasharray="1.5 2"/>
+      <g class="mini-ptr"><path d="M92 36 l0 10 l2.6 -2.4 l1.8 4 l1.8 -.8 l-1.8 -4 l3.4 0 Z" fill="#FFA51F" stroke="#07060B" stroke-width=".6"/></g>
+      <rect x="10" y="20" width="26" height="46" rx="6" fill="#0c0a14" stroke="#F3ECDD" stroke-opacity=".7"/>
+      <g class="mini-fing"><circle cx="25" cy="50" r="4.5" fill="#F3ECDD" opacity=".85"/></g>
+      <path d="M36 42 C 50 40, 60 44, 70 40" fill="none" stroke="#FFA51F" stroke-width=".8" stroke-dasharray="1.5 2.5" opacity=".8"/>
+    </svg>
+    <div><b>A Mac, clicked from a train.</b><span>The whole trick in 40 seconds.</span><span class="play"><i><svg width="8" height="8" viewBox="0 0 8 8"><path d="M1.5 1l5 3-5 3z" fill="#07060B"/></svg></i>Watch demo</span></div>
+  </a>
+
+  <div class="corners mono fade" style="--d:1.05s"><span>See your Mac.</span><span class="mid">farside.app</span><span>Click it from anywhere.</span></div>
+</section>
+
+<!-- ================= 2. SHORT VERSION ================= -->
+<section class="wrap sec" id="how">
+  <div class="lab mono"><span><b>01</b> — The short version</span><span>Three steps, once</span></div>
+  <h2 class="st">Set it up <em>once</em>.<br>Then just reach.</h2>
+  <div class="short">
+    <div><span class="mono" style="color:var(--amber)">Step 1 · on your Mac</span><h4>Install the menu-bar app.</h4><p>Two permissions: see the screen, move the pointer. It lives quietly in the menu bar after that.</p></div>
+    <div><span class="mono" style="color:var(--amber)">Step 2 · on your iPhone</span><h4>Scan the code.</h4><p>Your Mac asks “Let Mika's iPhone in?” You say yes. No account, no password, no inbox.</p></div>
+    <div><span class="mono" style="color:var(--amber)">Step 3 · anywhere</span><h4>Touch to control.</h4><p>The screen is a trackpad. Slide to point, tap to click, two fingers to scroll, pinch to zoom. The view follows your pointer.</p></div>
+  </div>
+  <div class="price">
+    <div class="card"><span class="mono">Free at home</span><h4>Same Wi-Fi, no charge.</h4><div class="amt">CA$0 <small>forever</small></div><p>Full control, keyboard, dictation and clipboard whenever your iPhone and Mac share Wi-Fi.</p></div>
+    <div class="card hot"><span class="mono">Anywhere</span><h4>Any network, any distance.</h4><div class="amt">CA$5.99 <small>/ month · or CA$49.99 / year</small></div><p>Cafés, trains, the other hemisphere. Encrypted between your iPhone and your Mac. Your Mac still needs to be awake.</p></div>
+  </div>
+</section>
+
+<!-- ================= 3. BRAND KIT ================= -->
+<section class="wrap sec" id="kit">
+  <div class="lab mono"><span><b>02</b> — Brand kit</span><span>Two inks, one moon</span></div>
+  <div class="kit">
+    <div class="card">
+      <span class="mono">Wordmark</span>
+      <div class="wm"><canvas class="mk" width="84" height="84"></canvas><b><em>F</em>arside</b></div>
+      <div class="wm-sm"><span><canvas class="mk" width="22" height="22"></canvas>Farside</span>Instrument Serif, italic capital in sodium amber. The mark is a Bayer-dithered moon with one lit laptop on its dark side.</div>
+      <div class="icons">
+        <figure><canvas id="ic1024" width="256" height="256" style="width:256px;height:256px"></canvas><figcaption class="mono">1024 master · shown at 25%</figcaption></figure>
+        <figure><canvas id="ic180" width="180" height="180" style="width:180px;height:180px"></canvas><figcaption class="mono">180 · iPhone</figcaption></figure>
+        <figure><canvas id="ic60" width="60" height="60" style="width:60px;height:60px"></canvas><figcaption class="mono">60 · Spotlight</figcaption></figure>
+      </div>
+    </div>
+    <div class="card">
+      <span class="mono">Palette · one duotone pair on black</span>
+      <div class="sw">
+        <div><i style="background:#07060B"></i><span>Void<em>#07060B</em></span></div>
+        <div><i style="background:#24145E"></i><span>Deep UV<em>#24145E</em></span></div>
+        <div><i style="background:#5B34F2"></i><span>UV violet<em>#5B34F2</em></span></div>
+        <div><i style="background:#FFA51F"></i><span>Sodium<em>#FFA51F</em></span></div>
+        <div><i style="background:#F3ECDD"></i><span>Bone<em>#F3ECDD</em></span></div>
+      </div>
+      <div class="type">
+        <div><div class="t1">Your Mac, <em>lit</em>.</div><small>Instrument Serif · display, one italic word per headline</small></div>
+        <div><div class="t2">Connect to Mika's MacBook Pro</div><small>Geist · every control and sentence in the app</small></div>
+        <div><div class="t3">In range · Wi-Fi direct</div><small>Geist Mono · corner captions, status</small></div>
+        <div><div class="t4">09:41</div><small>Doto · dot-matrix numerals, sparingly</small></div>
+      </div>
+      <div class="bayer" id="bayer" aria-label="Bayer 8 by 8 threshold matrix"></div>
+      <small class="mono" style="display:block;margin-top:8px;color:var(--dust)">Material: Bayer 8×8, five levels, live grain</small>
+    </div>
+  </div>
+</section>
+
+<!-- ================= 4. iPHONE ================= -->
+<section class="sec" id="app">
+  <div class="wrap">
+    <div class="lab mono"><span><b>03</b> — iPhone · 390 × 844</span><span>Dither behind, crisp in front</span></div>
+    <h2 class="st">The moon stays in the <em>background</em>.</h2>
+    <p class="lede">Dithered art carries the mood on Home, the coach and error states. Every control, label and number sits on top in crisp Geist, at full contrast. The live session is your Mac, untouched, plus one amber pointer.</p>
+  </div>
+  <div class="devrow">
+    <!-- 1 HOME -->
+    <figure class="slot"><div class="fbox"><div class="device"><div class="screen">
+      <div class="island"></div><div class="sb"></div>
+      <div class="app">
+        <div class="a-top"><div class="a-brand"><canvas class="mk" width="22" height="22"></canvas>Farside</div><div class="ib" aria-label="Pair a Mac">+</div></div>
+        <div class="a-cap mono">Your Mac · 1 paired</div>
+        <div class="maccard">
+          <div class="mc-art"><canvas id="homeMoon"></canvas><span class="mono" style="left:16px;top:14px">Toronto 09:41</span><span class="mono" style="right:16px;top:14px">Lid open</span><span class="mono" style="left:16px;bottom:12px">Signal ▮▮▮▯</span></div>
+          <div class="mc-b"><h5>Mika's MacBook Pro</h5><div class="stat"><i></i>Awake and in range<small>home Wi-Fi</small></div></div>
+        </div>
+        <div class="connect">Connect<b><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h10M9 4l4 4-4 4"/></svg></b></div>
+        <p class="quip">Lid open, lights on, waiting for you.</p>
+        <div class="list"><div>How to use Farside</div><div>Pair another Mac</div></div>
+      </div>
+      <div class="homebar"></div>
+    </div></div></div>
+    <figcaption><b>1 · Home</b>One Mac card, a status in words, one Connect. The moon turns; its laptop glows only when the Mac is really awake.</figcaption></figure>
+
+    <!-- 2 LIVE -->
+    <figure class="slot"><div class="fbox"><div class="device"><div class="screen" id="live1">
+      <div class="island"></div>
+      <div class="cam"></div>
+      <div class="ripple"></div>
+      <div class="halo"><svg viewBox="0 0 84 84"><circle cx="42" cy="42" r="36" fill="none" stroke="#FFA51F" stroke-width="3" stroke-dasharray="2 5" stroke-linecap="round"/><circle cx="42" cy="42" r="26" fill="rgba(255,165,31,.12)"/></svg></div>
+      <svg class="ptr" viewBox="-2 -2 22 30"><path d="M0 0 L0 22 L5.4 16.8 L9.2 25.2 L13.2 23.4 L9.5 15.2 L16.6 15.2 Z" fill="#FFA51F" stroke="#07060B" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      <div class="handle" aria-label="Controls"></div>
+    </div></div></div>
+    <figcaption><b>2 · Live session</b>Edge to edge, nothing else. Slide to move the amber pointer; the view eases after it. A dotted ring settles where it stops.</figcaption></figure>
+
+    <!-- 3 DOCK -->
+    <figure class="slot"><div class="fbox"><div class="device"><div class="screen" id="live2">
+      <div class="island"></div>
+      <div class="cam"></div>
+      <svg class="ptr" viewBox="-2 -2 22 30"><path d="M0 0 L0 22 L5.4 16.8 L9.2 25.2 L13.2 23.4 L9.5 15.2 L16.6 15.2 Z" fill="#FFA51F" stroke="#07060B" stroke-width="1.8" stroke-linejoin="round"/></svg>
+      <div class="shade"></div>
+      <div class="sheet">
+        <canvas class="strip" id="strip"></canvas>
+        <div class="grab"></div>
+        <div class="live"><i></i>Mika's MacBook Pro<small>WI-FI DIRECT</small></div>
+        <div class="tiles">
+          <div class="tile"><svg viewBox="0 0 26 26" fill="none" stroke-width="1.8" stroke-linecap="round"><rect x="2" y="6" width="22" height="15" rx="4"/><path d="M6.5 11h1M11 11h1M15 11h1M19.5 11h1M6.5 14.5h1M19.5 14.5h1M10 17.5h6"/></svg>Keyboard</div>
+          <div class="tile on"><svg viewBox="0 0 26 26" fill="none" stroke-width="1.9" stroke-linecap="round"><rect x="9" y="3" width="8" height="13" rx="4"/><path d="M5 12a8 8 0 0 0 16 0M13 20v3"/></svg>Dictate<small>LISTENING</small></div>
+          <div class="tile"><svg viewBox="0 0 26 26" fill="none" stroke-width="1.8" stroke-linejoin="round"><rect x="5" y="4.5" width="16" height="19" rx="3"/><rect x="9" y="2.5" width="8" height="4" rx="1.5"/><path d="M9 12h8M9 16h5" stroke-linecap="round"/></svg>Clipboard<small>“AC 857”</small></div>
+          <div class="tile"><svg viewBox="0 0 26 26" fill="none" stroke-width="1.8" stroke-linecap="round"><path d="M3 9V3h6M23 9V3h-6M3 17v6h6M23 17v6h-6"/><rect x="9" y="9" width="8" height="8" rx="2"/></svg>Fill<small>TAP: FIT</small></div>
+        </div>
+        <div class="mictip"><span class="bars"><i></i><i></i><i></i><i></i></span>Speak. It types on your Mac.<b>Done</b></div>
+        <div class="row2"><div class="segc"><span class="on">Control</span><span>View only</span></div><div class="endb">End</div></div>
+      </div>
+    </div></div></div>
+    <figcaption><b>3 · Dock, swiped up</b>Keyboard, dictation (Mic → speak → Done), clipboard, Fit/Fill, Control/View. End sits apart. Glass over your Mac, dithered only at the edge.</figcaption></figure>
+
+    <!-- 4 TUTORIAL -->
+    <figure class="slot"><div class="fbox"><div class="device"><div class="screen">
+      <div class="island"></div><div class="sb"></div>
+      <div class="app">
+        <div class="a-top"><span class="mono" style="color:var(--dust)">Practice · 2 of 5</span><span style="font-weight:600;font-size:15px">Skip</span></div>
+        <div class="coach" style="margin-top:18px">
+          <span class="k mono">Tap to click</span>
+          <h5>Land it <em>softly</em>.</h5>
+          <p>Slide one finger to steer the pointer onto the pad, then tap anywhere. The click lands at the pointer, not under your finger.</p>
+        </div>
+        <div class="pad">
+          <canvas id="padMoon"></canvas>
+          <svg class="ov" viewBox="0 0 350 420" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
+            <g transform="translate(118 64)">
+              <path d="M18 0 L34 0 L42 18 L10 18 Z" fill="#F3ECDD"/><rect x="6" y="18" width="40" height="14" rx="3" fill="#F3ECDD"/>
+              <path d="M10 32 L2 50 M42 32 L50 50 M0 50 h8 M46 50 h8" stroke="#F3ECDD" stroke-width="2.5" stroke-linecap="round"/>
+              <rect x="20" y="4" width="12" height="9" rx="2" fill="#07060B"/><rect x="22" y="6" width="8" height="5" rx="1" fill="#FFA51F"/>
+              <path d="M20 36 L26 48 L32 36" fill="#FFA51F" opacity=".9"/>
+            </g>
+            <g transform="translate(214 300)">
+              <ellipse cx="0" cy="0" rx="48" ry="10" fill="none" stroke="#FFA51F" stroke-width="2" stroke-dasharray="3 4"/>
+              <path d="M0 0 V-40" stroke="#F3ECDD" stroke-width="2"/><path d="M0 -40 L22 -33 L0 -26 Z" fill="#FFA51F"/>
+            </g>
+            <path d="M170 140 C 170 210, 200 250, 212 288" fill="none" stroke="#F3ECDD" stroke-width="1.5" stroke-dasharray="2 6" stroke-linecap="round" opacity=".7"/>
+            <g transform="translate(206 280)"><path d="M0 0 L0 22 L5.4 16.8 L9.2 25.2 L13.2 23.4 L9.5 15.2 L16.6 15.2 Z" transform="scale(1.5)" fill="#FFA51F" stroke="#07060B" stroke-width="1.4" stroke-linejoin="round"/></g>
+          </svg>
+          <span class="tag mono" style="left:16px;top:14px">Sea of Practice</span>
+          <span class="tag mono" style="right:16px;top:14px">Fuel 94%</span>
+          <span class="tag mono" style="left:16px;bottom:14px">Your finger can stay down here ↘</span>
+          <div class="fing" style="right:36px;bottom:40px"></div>
+        </div>
+        <div class="dots5"><i class="done"></i><i class="now"></i><i></i><i></i><i></i></div>
+        <div class="safe mono">Practice mode · nothing reaches your Mac</div>
+      </div>
+      <div class="homebar"></div>
+    </div></div></div>
+    <figcaption><b>4 · First-run coach</b>Runs while your Mac approves the pairing. Five beats: move, click, scroll, pinch, controls. Skip is always there; it never shows twice.</figcaption></figure>
+
+    <!-- 5 ERROR -->
+    <figure class="slot"><div class="fbox"><div class="device"><div class="screen">
+      <div class="island"></div><div class="sb"></div>
+      <div class="app err">
+        <div class="a-top"><span style="font-size:16px">‹ Macs</span><span class="mono" style="color:var(--dust)">Last seen 01:12</span></div>
+        <div class="errart"><canvas id="napMoon"></canvas><span class="zz" style="left:66px;top:84px;font-size:22px">z</span><span class="zz" style="left:84px;top:56px;font-size:30px">z</span><span class="zz" style="left:108px;top:22px;font-size:40px">Z</span><span class="mono" style="right:16px;bottom:14px">Laptop screen: off</span></div>
+        <h5>Your Mac is <em>napping</em>.</h5>
+        <p>Mika's MacBook Pro is asleep, so there's no signal from the far side. Open its lid or press any key on it, then try again.</p>
+        <div class="tipbox"><b>Next time:</b> on your Mac, turn on Farside › Keep this Mac awake.</div>
+        <div class="bigbtn">Try again</div>
+        <div class="link">Still stuck? Run a quick check</div>
+      </div>
+      <div class="homebar"></div>
+    </div></div></div>
+    <figcaption><b>5 · Friendly error</b>The moon goes dark and the laptop screen switches off. What happened, why, and one thing to do. No codes.</figcaption></figure>
+  </div>
+</section>
+
+<!-- ================= 5. MAC ================= -->
+<section class="wrap sec" id="mac">
+  <div class="lab mono"><span><b>04</b> — Mac companion</span><span>Menu bar + setup</span></div>
+  <div class="macstage">
+    <canvas id="macWall" aria-hidden="true"></canvas>
+    <div class="mbar">
+      <span class="d-glyph" style="display:inline-block"></span><b>Finder</b><span class="lm">File</span><span class="lm">Edit</span><span class="lm">View</span><span class="lm">Go</span><span class="lm">Window</span>
+      <span class="r"><span class="fsi" title="Farside"><canvas class="mk" width="16" height="16"></canvas></span><span>Tue 9:41 AM</span></span>
+    </div>
+    <div class="popover" role="dialog" aria-label="Farside menu">
+      <div class="pv-h"><canvas class="mk" width="46" height="46"></canvas><div><b>This Mac is lit</b><span>Sharing · controlled from afar</span></div></div>
+      <div class="pv-dev"><svg viewBox="0 0 24 38" aria-hidden="true"><rect x="1" y="1" width="22" height="36" rx="5" fill="none" stroke="#F3ECDD" stroke-width="1.5"/><path d="M9 7 L9 19 L12 16.4 L14 21 L16 20.2 L14 15.8 L17.8 15.8 Z" fill="#FFA51F"/></svg><div><b>Mika's iPhone is in control</b><small>12 MIN · WI-FI DIRECT</small></div></div>
+      <div class="pv-row">View only (pause the mouse)<span class="tog"></span></div>
+      <div class="pv-btns"><div>Pause 10 min</div><div class="stop">Stop Sharing</div></div>
+      <div class="pv-menu"><div>Pair Another Device…</div><div>Settings… <kbd>⌘,</kbd></div><div>Quit Farside <kbd>⌘Q</kbd></div></div>
+    </div>
+    <div class="macnote"><h3>The moon in your menu bar <em>glows</em> while someone's driving.</h3><p>Click it for everything in six lines: who, how long, which route, and the one button that ends it.</p></div>
+  </div>
+
+  <div class="setup" role="img" aria-label="Farside setup, step 1 of 3: allow access">
+    <div class="st-tb"><i></i><i></i><i></i><span>Set up Farside</span></div>
+    <div class="st-body">
+      <div class="st-side">
+        <span class="mono">Phase 1 of 3</span>
+        <div class="phases"><figure class="now"><canvas class="ph" data-p="0.25" width="40" height="40"></canvas><figcaption>ACCESS</figcaption></figure><figure><canvas class="ph" data-p="0.5" width="40" height="40"></canvas><figcaption>PAIR</figcaption></figure><figure><canvas class="ph" data-p="1" width="40" height="40"></canvas><figcaption>READY</figcaption></figure></div>
+        <div class="bar"><i></i></div>
+        <ol class="st-steps"><li class="now"><span>1</span>Allow access</li><li><span>2</span>Pair your iPhone</li><li><span>3</span>Ready check</li></ol>
+        <p class="st-hint">Waxing. One more yes and we're half full.</p>
+      </div>
+      <div class="st-main">
+        <h4>Two <em>quick</em> yeses.</h4>
+        <p>Farside needs to see this screen and move the pointer, only while you're connected. Nothing is recorded or stored.</p>
+        <div class="perm"><div class="pi"><svg viewBox="0 0 22 22" fill="none" stroke="#F3ECDD" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="18" height="12" rx="2.5"/><path d="M8 19h6M11 15v4"/></svg></div><div><b>Screen Recording</b><small>So your iPhone can see this screen.</small></div><div class="ok"><svg width="14" height="14" viewBox="0 0 14 14"><circle cx="7" cy="7" r="7" fill="#FFA51F"/><path d="M3.8 7.2l2.1 2.1 4.3-4.4" fill="none" stroke="#07060B" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>Allowed</div></div>
+        <div class="perm"><div class="pi"><svg viewBox="0 0 22 22"><path d="M6 3 L6 18 L9.8 14.4 L12.6 20.4 L15.4 19.2 L12.8 13.4 L17.8 13.4 Z" fill="#FFA51F"/></svg></div><div><b>Accessibility</b><small>So your iPhone can click and type. Skip it for view only.</small></div><div class="go">Open Settings</div></div>
+        <div class="st-foot"><span class="skip">Skip, use view only</span><span class="cont">Continue</span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div><h6>Signature motion</h6><ul><li>Hero: a live, Bayer-dithered moon (five levels, two inks, animated grain) turns slowly. At 1.2 s the tiny laptop on its dark side switches on, a ring of light ripples across the surface, and the status panel changes from Searching to In range. Clicking Download for Mac replays the ripple.</li><li>Your mouse is a torch: the far side lights up wherever you point. On phones the light drifts on its own.</li><li>Live session: the pointer glides on a curve, the view eases after it, a dotted amber ring settles where it stops, and a ripple marks each click.</li><li>Reduced motion: one still dithered frame, text shown without reveals.</li></ul></div>
+    <div><h6>Rules</h6><ul><li>Dither is material, never text: all words sit on solid or glass surfaces in Geist.</li><li>Sodium amber means live or lit (pointer, status, connected). UV violet is atmosphere only.</li><li>One italic serif word per headline.</li><li>The hero canvas is a stand-in: a Higgsfield video can drop into the same slot.</li></ul></div>
+  </div>
+  <div class="foot" aria-hidden="true"><em>F</em>arside</div>
+</section>
+
+<script>
+(function(){
+  var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var heroEl = document.getElementById('hero');
+  requestAnimationFrame(function(){ heroEl.classList.add('go'); });
+  setTimeout(function(){ heroEl.classList.add('go'); }, 60);
+
+  /* ---------- status bars ---------- */
+  var SB = '<span>9:41</span><span class="sb-i"><svg width="18" height="12" viewBox="0 0 18 12"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg><svg width="16" height="12" viewBox="0 0 16 12"><path d="M8 12 5.6 9.3a3.4 3.4 0 0 1 4.8 0Z"/><path d="M3.4 7.2a6.6 6.6 0 0 1 9.2 0l-1.3 1.4a4.7 4.7 0 0 0-6.6 0Z"/><path d="M1.2 4.9a9.8 9.8 0 0 1 13.6 0l-1.3 1.4a7.9 7.9 0 0 0-11 0Z"/></svg><span class="sb-bat"><i></i></span></span>';
+  document.querySelectorAll('.sb').forEach(function(el){ el.innerHTML = SB; });
+
+  /* ---------- dither engine ---------- */
+  var BAY = [0,32,8,40,2,34,10,42,48,16,56,24,50,18,58,26,12,44,4,36,14,46,6,38,60,28,52,20,62,30,54,22,3,35,11,43,1,33,9,41,51,19,59,27,49,17,57,25,15,47,7,39,13,45,5,37,63,31,55,23,61,29,53,21].map(function(v){ return (v + .5) / 64; });
+  function rgba(r,g,b){ return (255 << 24) | (b << 16) | (g << 8) | r; }
+  var PAL = [rgba(7,6,11), rgba(36,20,94), rgba(91,52,242), rgba(255,165,31), rgba(243,236,221)];
+  var GR = new Float32Array(65536); for (var gi = 0; gi < 65536; gi++) GR[gi] = Math.random() - .5;
+
+  function hash(x, y){ var h = (x * 374761393 + y * 668265263) | 0; h = Math.imul(h ^ (h >>> 13), 1274126177); h ^= h >>> 16; return (h >>> 0) / 4294967295; }
+  function vnoise(x, y, per){
+    var xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi, u = xf*xf*(3-2*xf), v = yf*yf*(3-2*yf);
+    var x0 = ((xi % per) + per) % per, x1 = (((xi + 1) % per) + per) % per;
+    var a = hash(x0, yi), b = hash(x1, yi), c = hash(x0, yi + 1), d = hash(x1, yi + 1);
+    return a + (b - a) * u + (c - a) * v + (a - b - c + d) * u * v;
+  }
+  var TW = 512, TH = 256, TEX = new Float32Array(TW * TH);
+  (function(){
+    for (var y = 0; y < TH; y++) for (var x = 0; x < TW; x++){
+      var f = 0, amp = .5, fr = 4;
+      for (var o = 0; o < 5; o++){ f += amp * vnoise(x / TW * fr, y / TH * fr * .5, fr); amp *= .5; fr *= 2; }
+      var m = vnoise(x / TW * 3, y / TH * 1.5 + 7, 3);
+      var alb = .74 + (f - .5) * .55;
+      if (m > .56) alb *= .58 + Math.max(0, 1 - (m - .56) * 7) * .42;
+      TEX[y * TW + x] = alb;
+    }
+    var seed = 11; function rnd(){ seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+    for (var k = 0; k < 110; k++){
+      var cx = rnd() * TW, cy = TH * .12 + rnd() * TH * .76, r = 2 + Math.pow(rnd(), 2.4) * 24;
+      for (var yy = Math.max(0, (cy - r * 1.3) | 0); yy < Math.min(TH, cy + r * 1.3); yy++)
+        for (var xx = (cx - r * 1.3) | 0; xx < cx + r * 1.3; xx++){
+          var X = ((xx % TW) + TW) % TW, d = Math.hypot(xx - cx, yy - cy) / r, i = yy * TW + X;
+          if (d < .85) TEX[i] *= .74 + .26 * d; else if (d < 1.18) TEX[i] = Math.min(1.1, TEX[i] + .13 * (1 - Math.abs(d - 1) / .18));
+        }
+    }
+  })();
+
+  function Moon(cv){ this.cv = cv; this.ctx = cv.getContext('2d'); }
+  Moon.prototype.layout = function(cw, ch, cx, cy, R, lx, ly, opts){
+    opts = opts || {};
+    cw = Math.floor(cw); ch = Math.floor(ch);
+    if (!(cw > 0 && ch > 0 && R > 0)){ this.ok = false; return; }
+    this.ok = true;
+    this.cv.width = cw; this.cv.height = ch;
+    this.cw = cw; this.ch = ch; this.R = R; this.lx = lx; this.ly = ly; this.opts = opts;
+    var N = cw * ch;
+    this.img = this.ctx.createImageData(cw, ch); this.buf = new Uint32Array(this.img.data.buffer);
+    var IN = this.IN = new Uint8Array(N), NX = this.NX = new Float32Array(N), NY = this.NY = new Float32Array(N), NZ = this.NZ = new Float32Array(N);
+    var LON = this.LON = new Float32Array(N), LAT = this.LAT = new Uint16Array(N), DL = this.DL = new Float32Array(N), BG = this.BG = new Float32Array(N), ST = this.ST = new Float32Array(N);
+    for (var y = 0, i = 0; y < ch; y++) for (var x = 0; x < cw; x++, i++){
+      var dx = (x + .5 - cx) / R, dy = (y + .5 - cy) / R, r2 = dx*dx + dy*dy;
+      if (r2 < 1){
+        var nz = Math.sqrt(1 - r2); IN[i] = 1; NX[i] = dx; NY[i] = -dy; NZ[i] = nz;
+        LON[i] = Math.atan2(dx, nz); LAT[i] = Math.min(TH - 1, ((Math.asin(-dy) / Math.PI + .5) * TH) | 0);
+        DL[i] = Math.hypot(x - lx, y - ly) / R;
+      } else {
+        var hz = 0;
+        if (opts.haze){ var hn = vnoise(x / cw * 3, y / ch * 3, 64); var edge = Math.max(0, (y / ch - .55) / .45); hz = Math.max(0, hn - .45) * .9 * edge; var rim = Math.max(0, 1 - (Math.sqrt(r2) - 1) * 3.2); hz += rim * rim * .06; }
+        BG[i] = hz;
+        if (opts.stars !== false && hash(x * 7 + 3, y * 13 + 1) < (opts.starDensity || .0035)) ST[i] = .45 + hash(x, y) * .7;
+      }
+    }
+  };
+  Moon.prototype.frame = function(t, s){
+    if (!this.ok) return;
+    var cw = this.cw, ch = this.ch, buf = this.buf, IN = this.IN, NX = this.NX, NY = this.NY, NZ = this.NZ, LON = this.LON, LAT = this.LAT, DL = this.DL, BG = this.BG, ST = this.ST;
+    var sx = s.sun[0], sy = s.sun[1], sz = s.sun[2], K = TW / (Math.PI * 2), rot = s.rot || 0, earth = s.earth == null ? .07 : s.earth;
+    var glow = s.glow || 0, ig2 = 1 / ((s.glowR || .16) * (s.glowR || .16));
+    var rr = s.ripR || 0, ramp = s.ripA || 0, iw = 1 / .07;
+    var tamp = s.torchA || 0, tmx = s.tx || 0, tmy = s.ty || 0, it2 = 1 / Math.pow((s.torchR || .2) * this.R, 2);
+    var go = (Math.random() * 65536) | 0, gr = s.grain == null ? .5 : s.grain, lift = s.lift == null ? 1 : s.lift;
+    for (var y = 0, i = 0; y < ch; y++){
+      var by = (y & 7) << 3;
+      for (var x = 0; x < cw; x++, i++){
+        var L;
+        if (IN[i]){
+          var u = (LON[i] + rot) * K; u = u - Math.floor(u / TW) * TW;
+          var a = TEX[LAT[i] * TW + (u | 0)];
+          var lam = NX[i] * sx + NY[i] * sy + NZ[i] * sz; if (lam < 0) lam = 0;
+          L = (a * Math.pow(lam, .8) * 1.42 + a * earth) * (.8 + .2 * NZ[i]);
+          var d = DL[i];
+          if (glow) L += glow * Math.exp(-d * d * ig2);
+          if (ramp){ var q = (d - rr) * iw; L += ramp * Math.exp(-q * q) * (1 - lam * .7); }
+          if (tamp){ var tx = x - tmx, ty = y - tmy; L += tamp * Math.exp(-(tx*tx + ty*ty) * it2) * (1 - lam); }
+          L *= lift;
+        } else {
+          L = BG[i];
+          var st = ST[i]; if (st) L += st * (.55 + .45 * Math.sin(t * (1.3 + st * 2) + i));
+        }
+        var v = L * 4 + BAY[by | (x & 7)] + GR[(i + go) & 65535] * gr;
+        var lv = v | 0; if (lv < 0) lv = 0; else if (lv > 4) lv = 4;
+        buf[i] = PAL[lv];
+      }
+    }
+    this.ctx.putImageData(this.img, 0, 0);
+    if (s.laptop){
+      var c = this.ctx, lx = Math.round(this.lx), ly = Math.round(this.ly), sc = s.lapScale || 1;
+      c.fillStyle = s.laptop === 'off' ? '#24145E' : (Math.random() < .04 ? '#F3ECDD' : '#FFA51F');
+      c.fillRect(lx - 3 * sc, ly - 4 * sc, 6 * sc, 4 * sc);
+      if (s.laptop !== 'off'){ c.fillStyle = '#F3ECDD'; c.fillRect(lx - 2 * sc, ly - 3 * sc, 2 * sc, 1 * sc); }
+      c.fillStyle = '#F3ECDD'; c.fillRect(lx - 4 * sc, ly, 8 * sc, 1 * sc);
+    }
+  };
+
+  function sunAt(a, y){ var x = Math.cos(a), z = Math.sin(a), n = Math.hypot(x, y, z); return [x / n, y / n, z / n]; }
+
+  /* ---------- small static moons ---------- */
+  function smallMoon(cv, cw, ch, cxf, cyf, Rf, lxf, lyf, st, opts){
+    var m = new Moon(cv); var R = Math.min(cw, ch) * Rf;
+    m.layout(cw, ch, cw * cxf, ch * cyf, R, cw * cxf + R * lxf, ch * cyf + R * lyf, opts || {});
+    m.frame(1, st); return m;
+  }
+  document.querySelectorAll('canvas.mk').forEach(function(cv){
+    var n = Math.max(12, Math.round(cv.width / 2));
+    smallMoon(cv, n, n, .5, .5, .47, -.45, .05, {sun:sunAt(-.05, .25), rot:.6, glow:.6, glowR:.3, grain:.2, laptop:'on', lapScale:Math.min(1, n / 34)}, {stars:false});
+    cv.style.background = '#07060B';
+  });
+  function icon(id, px, cell){
+    var cv = document.getElementById(id); var n = Math.round(px / cell);
+    var m = new Moon(cv); var R = n * .34;
+    m.layout(n, n, n * .56, n * .56, R, n * .56 - R * .5, n * .56 + R * .18, {stars:true, starDensity:.012, haze:false});
+    m.frame(2, {sun:sunAt(.05, .35), rot:1.2, glow:.55, glowR:.3, grain:.2, laptop:'on', lapScale:Math.max(1, Math.round(n / 64))});
+    cv.style.width = px + 'px'; cv.style.height = px + 'px';
+  }
+  icon('ic1024', 256, 2); icon('ic180', 180, 2); icon('ic60', 60, 1.5);
+
+  var bay = document.getElementById('bayer');
+  BAY.forEach(function(v){ var i = document.createElement('i'); var lv = Math.min(4, (v * 5) | 0); i.style.background = ['#07060B','#24145E','#5B34F2','#FFA51F','#F3ECDD'][lv]; i.style.outline = '1px solid rgba(243,236,221,.08)'; bay.appendChild(i); });
+
+  document.querySelectorAll('canvas.ph').forEach(function(cv){
+    var p = +cv.dataset.p; var a = p >= 1 ? Math.PI / 2 : (p >= .5 ? 0 : -.62);
+    smallMoon(cv, 26, 26, .5, .5, .46, 0, 0, {sun:sunAt(a, .05), rot:.3, earth:.1, grain:.15}, {stars:false});
+  });
+
+  /* ---------- the user's Mac desktop ---------- */
+  function desk(){
+    return '<div class="desk"><canvas class="wall"></canvas>'+
+    '<div class="d-bar"><span class="d-glyph"></span><b>Code</b><span>File</span><span>Edit</span><span>Selection</span><span>View</span><span>Go</span><span>Window</span><span>Help</span><span class="d-right"><span>100%</span><span>Tue 9:41 AM</span></span></div>'+
+    '<div class="d-win d-ed"><div class="d-tb"><i></i><i></i><i></i><span>follow.swift — farside</span><span class="d-run">▶ Run</span></div>'+
+      '<div class="d-ed-b"><div class="d-side"><div class="hd">FARSIDE</div><div>▾ Sources</div><div class="on">follow.swift</div><div>dock.swift</div><div>haptics.swift</div><div>pairing.swift</div><div>▸ Tests</div><div>README.md</div></div>'+
+      '<div class="d-code"><span><b class="kw">import</b> FarsideKit</span><span></span><span><i class="cm">// the view follows the pointer, gently</i></span><span><b class="kw">func</b> <b class="fn">follow</b>(_ p: <b class="ty">CGPoint</b>) {</span><span>  <b class="kw">let</b> ease = <b class="nu">0.18</b></span><span>  cam.x += (p.x - cam.x) * ease</span><span>  cam.y += (p.y - cam.y) * ease</span><span>}</span><span></span><span><b class="kw">struct</b> <b class="ty">Session</b> {</span><span>  <b class="kw">var</b> mode: <b class="ty">Mode</b> = .control</span><span>  <b class="kw">var</b> zoom = <b class="nu">1.35</b></span><span>  <b class="kw">var</b> side = <b class="st">"far"</b><i class="cur"></i></span><span>}</span><span></span><span><i class="cm">// TODO: wave at the moon</i></span></div></div></div>'+
+    '<div class="d-win d-br"><div class="d-tb"><i></i><i></i><i></i><div class="d-url">notes.farside.app/launch</div></div>'+
+      '<div class="d-page"><h4>Launch checklist</h4><div class="sub2">Edited 2 min ago · from an iPhone</div><div class="d-img"></div><div class="d-chk done"><i></i>Dither the moon</div><div class="d-chk done"><i></i>Light the laptop</div><div class="d-chk"><i></i>Ship it from the train</div><span class="d-pub">Publish</span></div></div>'+
+    '<div class="d-dock"><i class="ic1">▭</i><i class="ic2"></i><i class="ic3">✉</i><i class="ic4">&lt;/&gt;</i><i class="ic5">≡</i><i class="ic6">♪</i><i class="ic7">&gt;_</i><i class="sep"></i><i class="icF"><canvas class="mk" width="44" height="44"></canvas></i><i class="ic8">⌫</i></div>'+
+    '</div>';
+  }
+  ['live1','live2'].forEach(function(id){
+    var cam = document.querySelector('#' + id + ' .cam'); cam.innerHTML = desk();
+    smallMoon(cam.querySelector('canvas.wall'), 250, 156, .78, .42, .5, -.5, .15, {sun:sunAt(-.1, .25), rot:2, glow:.45, glowR:.22, grain:.3, laptop:'on'}, {stars:true, starDensity:.01, haze:true});
+    var mk = cam.querySelector('canvas.mk'); smallMoon(mk, 22, 22, .5, .5, .46, -.45, .1, {sun:sunAt(-.15, .2), rot:.6, glow:.5, glowR:.28, grain:.2, laptop:'on'}, {stars:false});
+  });
+  smallMoon(document.getElementById('strip'), 120, 20, .5, 2.2, 2.3, 0, 0, {sun:sunAt(.3, .6), rot:.4, grain:.35}, {stars:true, starDensity:.02});
+  var padCv = document.getElementById('padMoon');
+  (function(){ var m = new Moon(padCv); var cw = 116, ch = 140; m.layout(cw, ch, cw * .5, ch * 2.35, ch * 1.9, -999, -999, {stars:true, starDensity:.008}); m.frame(3, {sun:sunAt(.35, .55), rot:.9, grain:.3, earth:.05}); })();
+  smallMoon(document.getElementById('napMoon'), 116, 100, .62, .62, .52, -.55, .25, {sun:sunAt(-2.4, 0), rot:1.4, earth:.14, grain:.3, laptop:'off'}, {stars:true, starDensity:.01});
+  smallMoon(document.getElementById('macWall'), 300, 170, .7, .5, .55, -.45, .2, {sun:sunAt(-.2, .2), rot:3, glow:.4, glowR:.2, grain:.3, laptop:'on'}, {stars:true, starDensity:.006, haze:true});
+
+  /* home card moon, slowly turning */
+  var hm = new Moon(document.getElementById('homeMoon'));
+  (function(){ var cw = 116, ch = 75, R = ch * .62; hm.layout(cw, ch, cw * .64, ch * .62, R, cw * .64 - R * .52, ch * .62 + R * .1, {stars:true, starDensity:.012}); })();
+  function homeFrame(t){ hm.frame(t, {sun:sunAt(-.12, .22), rot:t * .05, glow:.5 + .06 * Math.sin(t * 2), glowR:.22, grain:.3, laptop:'on'}); }
+  homeFrame(0);
+
+  /* ---------- live session demo ---------- */
+  var S = 1.35, VW = 390, MAXX = 1000 - VW / S;
+  function place(root, p, camX){
+    root._cam.style.transform = 'translate(' + (-camX * S) + 'px,0) scale(' + S + ')';
+    var sx = (p.x - camX) * S, sy = p.y * S;
+    root._ptr.style.transform = 'translate(' + sx + 'px,' + sy + 'px)';
+    return [sx, sy];
+  }
+  function setupLive(root, animate, still){
+    root._cam = root.querySelector('.cam'); root._ptr = root.querySelector('.ptr');
+    var halo = root.querySelector('.halo'), rip = root.querySelector('.ripple');
+    if (!animate){ var s0 = place(root, still.p, still.cam); if (halo){ halo.style.left = s0[0] + 'px'; halo.style.top = s0[1] + 'px'; halo.classList.add('on'); } return null; }
+    var pts = [{x:596,y:58},{x:84,y:132},{x:910,y:474},{x:640,y:588},{x:360,y:252}];
+    var i = 0, p = {x:420,y:300}, from = {x:420,y:300}, to = pts[0], t0 = 0, dur = 1000, camX = 200, state = 'move', vis = true;
+    new IntersectionObserver(function(e){ vis = e[0].isIntersecting; }).observe(root);
+    function ease(k){ return k < .5 ? 4*k*k*k : 1 - Math.pow(-2*k + 2, 3) / 2; }
+    return function(now){
+      if (!vis) return;
+      if (!t0) t0 = now;
+      if (state === 'move'){
+        var k = Math.min(1, (now - t0) / dur), e = ease(k);
+        var dx = to.x - from.x, dy = to.y - from.y, len = Math.hypot(dx, dy) || 1, bow = Math.sin(Math.PI * e) * Math.min(60, len * .12);
+        p.x = from.x + dx * e + (-dy / len) * bow; p.y = from.y + dy * e + (dx / len) * bow;
+        if (k >= 1){ state = 'settle'; t0 = now; var s = place(root, p, camX);
+          halo.style.left = s[0] + 'px'; halo.style.top = s[1] + 'px'; halo.classList.add('on');
+          rip.style.left = s[0] + 'px'; rip.style.top = s[1] + 'px'; rip.classList.remove('go'); void rip.offsetWidth; rip.classList.add('go'); }
+      } else if (now - t0 > 1500){
+        halo.classList.remove('on'); from = {x:p.x, y:p.y}; i = (i + 1) % pts.length; to = pts[i];
+        dur = 700 + Math.hypot(to.x - from.x, to.y - from.y) * .9; t0 = now; state = 'move';
+      }
+      var want = Math.max(0, Math.min(MAXX, p.x - VW / S / 2)); camX += (want - camX) * .055;
+      var s2 = place(root, p, camX);
+      if (state === 'settle'){ halo.style.left = s2[0] + 'px'; halo.style.top = s2[1] + 'px'; }
+    };
+  }
+  var live1 = setupLive(document.getElementById('live1'), !reduce, {p:{x:596,y:58}, cam:430});
+  setupLive(document.getElementById('live2'), false, {p:{x:640,y:220}, cam:470});
+
+  /* ---------- clocks ---------- */
+  function two(n){ return (n < 10 ? '0' : '') + n; }
+  function tick(){
+    var d = new Date(); document.getElementById('tYou').textContent = two(d.getHours()) + ':' + two(d.getMinutes());
+    var tor = new Date(d.getTime() + d.getTimezoneOffset() * 60000 - 4 * 3600000);
+    document.getElementById('tMac').textContent = two(tor.getHours()) + ':' + two(tor.getMinutes());
+  }
+  tick(); setInterval(tick, 20000);
+
+  /* ---------- hero moon ---------- */
+  var hero = document.getElementById('hero'), cv = document.getElementById('moon'), moon = new Moon(cv);
+  var PX = 3, lay = {};
+  function layoutHero(){
+    var w = hero.clientWidth, h = hero.clientHeight;
+    if (!w || !h) return;
+    var cw = Math.ceil(w / PX), ch = Math.ceil(h / PX), mob = w < 760;
+    var R = mob ? cw * .56 : Math.min(ch * .47, cw * .34), cx = mob ? cw * .58 : cw * .63, cy = mob ? ch * .33 : ch * .47;
+    var lx = cx - R * (mob ? .6 : .62), ly = cy + R * (mob ? .16 : -.28);
+    moon.layout(cw, ch, cx, cy, R, lx, ly, {haze:true, starDensity:.0032});
+    lay = {cw:cw, ch:ch, w:w, h:h, R:R, cx:cx, cy:cy};
+  }
+  layoutHero();
+  var start = performance.now(), ripT = -10, torch = {x:-999, y:-999, a:0, want:0}, lapOn = false;
+  hero.addEventListener('pointermove', function(e){ var r = hero.getBoundingClientRect(); torch.x = (e.clientX - r.left) / PX; torch.y = (e.clientY - r.top) / PX; torch.want = .55; });
+  hero.addEventListener('pointerleave', function(){ torch.want = 0; });
+  document.getElementById('ctaMain').addEventListener('click', function(e){ e.preventDefault(); ripT = (performance.now() - start) / 1000; });
+  var sigDot = document.getElementById('sigDot');
+  function heroState(t){
+    var on = t > 1.2, since = t - Math.max(1.2, ripT), ripR = 0, ripA = 0;
+    if (on && since < 2.2){ ripR = since * .9; ripA = .55 * (1 - since / 2.2); }
+    if (reduce){ ripA = 0; }
+    var lift = Math.min(1, t / 1.1);
+    if (!torch.want && lay.w < 760 && !reduce){ torch.x = lay.cx - lay.R * .3 + Math.sin(t * .4) * lay.R * .25; torch.y = lay.cy + Math.cos(t * .3) * lay.R * .3; torch.a = .3; }
+    else torch.a += (torch.want - torch.a) * .08;
+    if (on !== lapOn){ lapOn = on; sigDot.style.opacity = on ? 1 : .2; }
+    return {sun:sunAt(.36 + .06 * Math.sin(t * .05), .22), rot:t * .018 + 2.1, glow:on ? .55 + .05 * Math.sin(t * 3) : 0, glowR:.17, ripR:ripR, ripA:ripA, torchA:torch.a, tx:torch.x, ty:torch.y, torchR:.26, grain:.55, lift:lift, laptop:on ? 'on' : 'off', lapScale:1};
+  }
+  var heroVis = true; new IntersectionObserver(function(e){ heroVis = e[0].isIntersecting; }).observe(hero);
+  var rt, lastW = hero.clientWidth, lastH2 = hero.clientHeight;
+  function relayout(){ clearTimeout(rt); rt = setTimeout(function(){ if (hero.clientWidth === lastW && hero.clientHeight === lastH2 && moon.ok) return; lastW = hero.clientWidth; lastH2 = hero.clientHeight; layoutHero(); if (reduce) moon.frame(4, heroState(4)); }, 120); }
+  window.addEventListener('resize', relayout);
+  if (window.ResizeObserver) new ResizeObserver(relayout).observe(hero);
+
+  if (reduce){ moon.frame(4, heroState(4)); sigDot.style.opacity = 1; }
+  else {
+    var last = 0, lastH = 0;
+    (function loop(now){
+      var t = (now - start) / 1000;
+      if (heroVis && now - last > 33){ last = now; moon.frame(t, heroState(t)); }
+      if (now - lastH > 90){ lastH = now; homeFrame(t); }
+      if (live1) live1(now);
+      requestAnimationFrame(loop);
+    })(start);
+  }
+})();
+</script>
+</body>
+</html>
