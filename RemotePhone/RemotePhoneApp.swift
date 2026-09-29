@@ -168,7 +168,9 @@ final class PhoneRemoteModel: ObservableObject {
     private var tokenReceivedAt: TimeInterval = 0
     private var activeHold: String?
     private var activeHoldCount = 1
-    private var explicitHoldDeadline: TimeInterval?
+    /// Set while a Hold click from Controls keeps the button down; the hold drops by itself then.
+    @Published private(set) var explicitHoldDeadline: TimeInterval?
+    static let explicitHoldLimit: TimeInterval = 10
     private let clickFeedback = UIImpactFeedbackGenerator(style: .heavy)
     private let secondaryClickFeedback = UIImpactFeedbackGenerator(style: .rigid)
 
@@ -426,6 +428,12 @@ final class PhoneRemoteModel: ObservableObject {
 
     #if DEBUG
     func previewEditableFocusForTesting() { autoKeyboardRevision &+= 1 }
+
+    /// Offline screenshots of the hold states: a finger drag, or a Hold click from Controls.
+    func previewHoldForTesting(explicit: Bool) {
+        dragging = true
+        explicitHoldDeadline = explicit ? ProcessInfo.processInfo.systemUptime + Self.explicitHoldLimit : nil
+    }
     #endif
 
     var clipboardSupported: Bool { hostFeatures.contains(SessionFeature.clipboardText) }
@@ -731,7 +739,7 @@ final class PhoneRemoteModel: ObservableObject {
         let id = UUID().uuidString
         guard sendInput("dragDown", count: 1, hold: id) else { return }
         activeHold = id; activeHoldCount = 1; dragging = true
-        explicitHoldDeadline = ProcessInfo.processInfo.systemUptime + 10
+        explicitHoldDeadline = ProcessInfo.processInfo.systemUptime + Self.explicitHoldLimit
     }
 
     func release() {

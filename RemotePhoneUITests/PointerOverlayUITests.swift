@@ -14,22 +14,22 @@ final class PointerOverlayUITests: XCTestCase {
         launch(app)
         attach("Pointer preview - Fit - default size")
         openControls(app)
+        openPointerSettings(app)
         let picker = app.buttons["remote.pointerSize"].exists ? app.buttons["remote.pointerSize"]
                                                              : app.descendants(matching: .any)["remote.pointerSize"].firstMatch
-        let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch
-        for _ in 0..<6 where !(picker.exists && picker.isHittable) { content.swipeUp() }
-        XCTAssertTrue(picker.exists && picker.isHittable, "Pointer size must be reachable in Controls")
+        XCTAssertTrue(picker.waitForExistence(timeout: 3) && picker.isHittable, "Pointer size must be on Controls › Settings › Pointer")
         picker.tap()
         let extraLarge = app.buttons["Extra Large"]
         XCTAssertTrue(extraLarge.waitForExistence(timeout: 3))
         extraLarge.tap()
-        app.buttons["Done"].tap()
+        app.buttons["Done"].firstMatch.tap()
         attach("Pointer preview - Fit - Extra Large")
 
         app.terminate()
         launch(app)
         openControls(app)
-        for _ in 0..<6 where !(picker.exists && picker.isHittable) { content.swipeUp() }
+        openPointerSettings(app)
+        XCTAssertTrue(picker.waitForExistence(timeout: 3))
         XCTAssertTrue(picker.label.contains("Extra Large") || (picker.value as? String)?.contains("Extra Large") == true,
                       "The chosen size survives relaunch")
         picker.tap()
@@ -71,6 +71,16 @@ final class PointerOverlayUITests: XCTestCase {
         XCTAssertTrue(controls.exists)
         controls.tap()
         XCTAssertTrue(app.descendants(matching: .any)["remote.controls.content"].firstMatch.waitForExistence(timeout: 3))
+    }
+
+    @MainActor
+    private func openPointerSettings(_ app: XCUIApplication) {
+        let settings = app.buttons["remote.controls.settings"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        let row = app.buttons["remote.settings.pointer"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.tap()
     }
 
     private func attach(_ name: String) {

@@ -1,0 +1,591 @@
+<title>Farside Controls Redesign</title>
+<meta name="description" content="Three alternatives for the in-session Controls sheet, plus clearer drag wording. Reach design system, iPhone 17 frames.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Doto:wght@800&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column for the argument, phone frames in wrapping rows beside their captions.
+   Tokens are Reach's (design/FARSIDE-DESIGN-SYSTEM.md). Dark only by design decision D32. */
+:root {
+  --void: #050505;
+  --void2: #0B0B0B;
+  --panel: #121212;
+  --panel2: #191919;
+  --ink: #0A0A0A;
+  --bone: #EDE8DF;
+  --ash: #8C877F;
+  --dim: #4A4742;
+  --line: rgba(237, 232, 223, .12);
+  --line2: rgba(237, 232, 223, .22);
+  --ember: #FF5B1F;
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Geist", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Geist Mono", Menlo, monospace;
+  --display: "Doto", var(--mono);
+  --z: .68;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--void);
+  color: var(--bone);
+  font: 16px/1.55 var(--ui);
+  -webkit-font-smoothing: antialiased;
+}
+.page { max-width: 1200px; margin: 0 auto; padding: 56px 24px 96px; }
+.prose { max-width: 66ch; }
+h1 {
+  font: 800 clamp(40px, 7vw, 64px)/1 var(--display);
+  letter-spacing: .01em;
+  margin: 0 0 20px;
+  text-wrap: balance;
+}
+h2 { font: 600 28px/1.2 var(--ui); margin: 0 0 10px; text-wrap: balance; }
+h3 { font: 600 19px/1.3 var(--ui); margin: 28px 0 8px; }
+p { margin: 0 0 14px; }
+.lede { font-size: 19px; line-height: 1.5; color: var(--bone); }
+.muted { color: var(--ash); }
+section { padding-top: 64px; margin-top: 64px; border-top: 1px solid var(--line); }
+ul.points { margin: 0 0 14px; padding-left: 20px; }
+ul.points li { margin-bottom: 6px; }
+.tag {
+  display: inline-block; font: 600 13px/1 var(--ui); padding: 6px 9px; border-radius: 6px;
+  background: var(--bone); color: var(--void); vertical-align: middle; margin-left: 10px;
+}
+.optname { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.optletter { font: 800 44px/1 var(--display); color: var(--bone); }
+
+/* Audit table */
+.tablewrap { overflow-x: auto; margin: 22px 0 8px; border: 1px solid var(--line); border-radius: 14px; }
+table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14.5px; }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; color: var(--ash); background: var(--panel); }
+tr:last-child td { border-bottom: 0; }
+td.home { color: var(--bone); font-weight: 500; }
+.freq { white-space: nowrap; }
+.freq i { font-style: normal; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 7px; background: var(--dim); }
+.freq.often i { background: var(--bone); }
+.freq.some i { background: var(--ash); }
+
+/* Frames */
+.row { display: flex; flex-wrap: wrap; gap: 36px 32px; margin-top: 28px; align-items: flex-start; }
+figure { margin: 0; display: flex; flex-direction: column; gap: 14px; }
+figcaption { max-width: calc(402px * var(--z) + 16px); font-size: 14px; line-height: 1.45; color: var(--ash); }
+figcaption b { color: var(--bone); font-weight: 600; }
+.land + figcaption { max-width: calc(874px * var(--z) + 16px); }
+.phone {
+  zoom: var(--z);
+  position: relative; width: 402px; height: 874px; overflow: hidden;
+  border-radius: 58px; margin: 8px;
+  box-shadow: 0 0 0 8px #141414, 0 0 0 9px var(--line2);
+  font-family: var(--ui); color: var(--bone); background: var(--void);
+  -webkit-text-size-adjust: none;
+}
+.phone.land { width: 874px; height: 402px; }
+@media (max-width: 560px) { :root { --z: .8; } .page { padding: 40px 16px 72px; } }
+@media (max-width: 380px) { :root { --z: .74; } }
+
+/* Mac picture */
+.mac { position: absolute; inset: 0; overflow: hidden; background: #22303b; }
+.mac .wallb { position: absolute; left: 0; right: 0; bottom: 0; height: 46%; background: #1a242d; }
+.mac .menubar { position: absolute; top: 0; left: 0; right: 0; height: 24px; background: rgba(24, 24, 26, .94);
+  display: flex; gap: 16px; align-items: center; padding: 0 14px; font-size: 12.5px; color: #e9e9ea; }
+.mac .menubar b { font-weight: 700; }
+.win { position: absolute; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,.09); }
+.win .bar { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px; }
+.win .bar span { width: 11px; height: 11px; border-radius: 50%; }
+.win .bar span:nth-child(1) { background: #ff5f57; } .win .bar span:nth-child(2) { background: #febc2e; } .win .bar span:nth-child(3) { background: #28c840; }
+.win .bar em { font-style: normal; font-size: 12px; margin-left: 10px; opacity: .75; }
+.code { left: -30px; top: 62px; width: 450px; height: 480px; background: #1b1d21; }
+.code .bar { background: #25272c; color: #cfd2d8; }
+.code .side { position: absolute; left: 0; top: 30px; bottom: 0; width: 96px; background: #16181b; padding: 14px 10px; display: grid; gap: 9px; align-content: start; }
+.code .side i { height: 6px; border-radius: 3px; background: #3a3e45; }
+.code .lines { position: absolute; left: 112px; top: 44px; right: 12px; display: grid; gap: 11px; }
+.code .lines i { height: 7px; border-radius: 3px; }
+.notes { left: 150px; top: 440px; width: 300px; height: 340px; background: #f4f3ef; }
+.notes .bar { background: #e5e3de; color: #333; }
+.notes .txt { padding: 16px; display: grid; gap: 10px; }
+.notes .txt i { height: 7px; border-radius: 3px; background: #c9c6bf; }
+.notes .txt i.h { height: 11px; width: 60%; background: #8f8b84; }
+.cursor { position: absolute; left: 214px; top: 258px; width: 20px; height: 28px; }
+.land .code { left: 60px; top: 40px; width: 430px; height: 360px; }
+.land .notes { left: 520px; top: 70px; width: 300px; height: 300px; }
+.land .cursor { left: 380px; top: 150px; }
+
+/* Sheet */
+.sheet { position: absolute; left: 8px; right: 8px; bottom: 8px; background: var(--void2);
+  border: 1px solid var(--line2); border-radius: 36px; padding: 0 16px 18px; }
+.sheet.tall { top: 54px; }
+.grab { width: 38px; height: 5px; border-radius: 3px; background: var(--dim); margin: 8px auto 10px; }
+.shead { display: flex; align-items: center; justify-content: space-between; min-height: 44px; margin-bottom: 12px; }
+.shead .t { font-size: 17px; font-weight: 600; }
+.shead .acts { display: flex; align-items: center; gap: 14px; }
+.textbtn { display: inline-flex; align-items: center; gap: 6px; font-size: 16px; font-weight: 500; color: var(--bone); }
+.textbtn svg { width: 20px; height: 20px; }
+.done { width: 38px; height: 38px; border-radius: 50%; background: var(--bone); color: var(--void); display: grid; place-items: center; }
+.done svg { width: 20px; height: 20px; }
+.keys { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.keys + .keys { margin-top: 8px; }
+.key { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; min-height: 80px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 8px 4px; text-align: center; }
+.key svg { width: 24px; height: 24px; color: var(--bone); }
+.key .l { font-size: 12px; line-height: 1.15; font-weight: 500; }
+.key kbd { font: 500 10.5px/1 var(--mono); color: var(--ash); }
+.key.sm { min-height: 64px; gap: 4px; }
+.key.sm svg { width: 21px; height: 21px; }
+.key.soon { border-style: dashed; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 20px; margin-top: 14px; }
+.rowi { display: flex; align-items: center; gap: 12px; min-height: 50px; padding: 0 14px; font-size: 16px; }
+.rowi + .rowi { border-top: 1px solid var(--line); }
+.rowi svg.ic { width: 22px; height: 22px; color: var(--ash); flex: none; }
+.rowi .v { margin-left: auto; color: var(--ash); font-size: 15px; display: flex; align-items: center; gap: 6px; }
+.rowi .v svg { width: 14px; height: 14px; }
+.sw { margin-left: auto; width: 50px; height: 30px; border-radius: 15px; background: var(--panel2); border: 1px solid var(--line2); position: relative; flex: none; }
+.sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 24px; height: 24px; border-radius: 50%; background: var(--ash); }
+.sw.on { background: var(--bone); border-color: transparent; }
+.sw.on::after { left: auto; right: 2px; background: var(--ink); }
+.seg { display: flex; padding: 3px; border-radius: 14px; background: var(--ink); border: 1px solid var(--line); }
+.seg span { flex: 1; min-height: 38px; display: grid; place-items: center; font-size: 15px; font-weight: 500; color: var(--ash); border-radius: 11px; }
+.seg span.on { background: var(--panel2); color: var(--bone); box-shadow: inset 0 0 0 1px var(--line2); }
+.gh { font-size: 13px; font-weight: 600; color: var(--ash); margin: 18px 4px 7px; }
+.foot { font-size: 13px; color: var(--ash); margin: 7px 4px 0; line-height: 1.4; }
+.slider { position: relative; height: 28px; margin: 4px 0 2px; }
+.slider::before { content: ""; position: absolute; left: 0; right: 0; top: 12px; height: 4px; border-radius: 2px; background: var(--dim); }
+.slider b { position: absolute; left: 0; top: 12px; height: 4px; border-radius: 2px; background: var(--bone); }
+.slider i { position: absolute; top: 0; width: 28px; height: 28px; border-radius: 14px; background: var(--bone); }
+.nav { display: flex; align-items: center; min-height: 44px; margin: 6px 0 4px; position: relative; }
+.nav .back { display: inline-flex; align-items: center; gap: 2px; font-size: 17px; color: var(--bone); }
+.nav .back svg { width: 20px; height: 20px; }
+.nav .t { position: absolute; left: 50%; transform: translateX(-50%); font-size: 17px; font-weight: 600; }
+.stackrow { display: grid; gap: 4px; padding: 12px 14px; }
+.stackrow .hd { display: flex; justify-content: space-between; font-size: 16px; }
+.stackrow .ends { display: flex; justify-content: space-between; font-size: 12px; color: var(--ash); }
+
+/* Today's sheet, reproduced */
+.old .cap { font: 500 12px/1 var(--mono); letter-spacing: .14em; color: var(--ash); margin: 16px 4px 10px; text-transform: uppercase; }
+.old .shead { justify-content: center; position: relative; }
+.old .shead .done { position: absolute; right: 0; width: 44px; height: 44px; }
+.old .tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.old .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 18px; min-height: 72px; display: grid; place-items: center; font-size: 13px; color: var(--bone); }
+
+/* Dock (unchanged) */
+.dock { position: absolute; left: 8px; right: 8px; bottom: 8px; background: rgba(18,18,18,.97); border: 1px solid var(--line2); border-radius: 30px; padding: 6px 16px 16px; }
+.dock .tiles5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px; justify-items: center; margin-top: 4px; }
+.dock .dt { display: grid; justify-items: center; gap: 8px; }
+.dock .dt div { width: 58px; height: 58px; border-radius: 19px; background: var(--panel2); border: 1px solid var(--line); display: grid; place-items: center; }
+.dock .dt svg { width: 22px; height: 22px; }
+.dock .dt span { font: 500 10.5px/1 var(--mono); letter-spacing: .14em; color: var(--ash); }
+.dock .segs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 14px; }
+.dock .seg span { min-height: 34px; font-size: 14px; }
+.dock .foot2 { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.dock .status { flex: 1; min-width: 0; }
+.dock .status .n { font: 500 11px/1.2 var(--mono); letter-spacing: .12em; display: flex; align-items: center; gap: 7px; }
+.dock .status .n i { width: 7px; height: 7px; border-radius: 50%; background: var(--ember); }
+.dock .status .s { font-size: 13px; color: var(--ash); margin-top: 3px; }
+.round { width: 40px; height: 40px; border-radius: 50%; border: 1px solid var(--line2); display: grid; place-items: center; flex: none; }
+.round.on { background: var(--bone); color: var(--void); border-color: transparent; }
+.round svg { width: 20px; height: 20px; }
+.endbtn { height: 40px; padding: 0 16px; border-radius: 20px; border: 1.5px solid var(--ember); color: var(--ember); font-size: 15px; font-weight: 600; display: grid; place-items: center; }
+.dots { position: absolute; inset: 0; background-color: rgba(5,5,5,.3);
+  background-image: radial-gradient(circle, rgba(5,5,5,.8) 1.4px, transparent 1.7px); background-size: 5px 5px; }
+.tray { position: absolute; left: 8px; right: 8px; background: rgba(18,18,18,.97); border: 1px solid var(--line2); border-radius: 26px; padding: 12px 12px 12px; }
+.tray .th { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: var(--ash); margin: 0 4px 10px; }
+.tray .th .textbtn { font-size: 14px; }
+.tray .th .textbtn svg { width: 17px; height: 17px; }
+
+/* Handle and drag chips */
+.handle { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; gap: 5px; padding: 7px 11px; border-radius: 20px; background: rgba(5,5,5,.72); border: 1px solid var(--line2); }
+.handle i { width: 5px; height: 5px; border-radius: 50%; background: var(--bone); }
+.handle i.live { background: var(--ember); }
+.chip { position: absolute; left: 50%; transform: translateX(-50%); bottom: 70px; display: flex; align-items: center; gap: 10px;
+  background: rgba(11,11,11,.94); border: 1px solid var(--line2); border-radius: 14px; padding: 10px 14px; white-space: nowrap; font-size: 15px; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ember); flex: none; }
+.chip .sub { color: var(--ash); }
+.chip.hold { left: 12px; right: 12px; transform: none; white-space: normal; padding: 12px 12px 12px 16px; gap: 12px; }
+.chip.hold .txt { flex: 1; min-width: 0; }
+.chip.hold .txt b { display: block; font-weight: 600; }
+.chip.hold .txt span { font-size: 13px; color: var(--ash); }
+.chip.hold .txt kbd { font: 500 12.5px var(--mono); color: var(--bone); }
+.dropbtn { flex: none; height: 42px; padding: 0 18px; border-radius: 12px; background: var(--bone); color: var(--void); font-weight: 600; font-size: 16px; display: grid; place-items: center; }
+.oldchip { position: absolute; left: 50%; transform: translateX(-50%); bottom: 70px; height: 40px; padding: 0 18px; border-radius: 20px; background: var(--bone); color: var(--void); display: flex; align-items: center; gap: 8px; font-size: 15px; font-weight: 600; }
+.oldchip svg { width: 18px; height: 18px; }
+.file { position: absolute; width: 34px; height: 42px; border-radius: 4px; background: #d9e4f2; border: 1px solid #9fb1c7; }
+.file::after { content: "brief.pdf"; position: absolute; top: 46px; left: 50%; transform: translateX(-50%); font-size: 10px; color: #fff; background: #2f6fd0; padding: 1px 4px; border-radius: 3px; white-space: nowrap; }
+.contact { position: absolute; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--ember); }
+
+.note { font-size: 14px; color: var(--ash); margin-top: 10px; }
+a { color: var(--bone); }
+:focus-visible { outline: 2px solid var(--bone); outline-offset: 3px; }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-mc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="2.5" y="4" width="8" height="6" rx="1.5"/><rect x="13.5" y="4" width="8" height="6" rx="1.5"/><rect x="5" y="13" width="14" height="7" rx="1.5"/></symbol>
+    <symbol id="i-expose" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="3" y="9" width="18" height="11" rx="2"/><path d="M6 6h12M8.5 3.5h7"/></symbol>
+    <symbol id="i-spl" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="10" y="5" width="11.5" height="14" rx="2"/><path d="M7 12H2.5M5 9.5 2.5 12 5 14.5"/></symbol>
+    <symbol id="i-spr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="11.5" height="14" rx="2"/><path d="M17 12h4.5M19 9.5l2.5 2.5-2.5 2.5"/></symbol>
+    <symbol id="i-rclick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M4 3l7 16 2-6.5L19.5 11z"/><path d="M14 16h7M14 19.5h7" stroke-linecap="round"/></symbol>
+    <symbol id="i-dclick" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><path d="M6 6l6 14 1.8-5.7L19.5 12.5z"/><path d="M4.5 2.8a5 5 0 0 1 6 0M2.5 5.2a8 8 0 0 1 10 -2"/></symbol>
+    <symbol id="i-hold" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><path d="M5 3l6 14 1.8-5.7L18.5 9.5z"/><path d="M15 18.5h6.5"/><circle cx="18.2" cy="15" r="1.3" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="i-desk" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="2.5" y="4" width="19" height="15" rx="2"/><path d="M2.5 8h4M17.5 8h4M2.5 15h4M17.5 15h4" stroke-linecap="round"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.5-6 9.5-6c2 0 3.7.6 5.1 1.5M21.5 12s-3.5 6-9.5 6c-2 0-3.7-.6-5.1-1.5"/><path d="M4 20 20 4"/></symbol>
+    <symbol id="i-display" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><rect x="2.5" y="4" width="19" height="12.5" rx="2"/><path d="M9 20.5h6M12 16.5v4"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.5 5.5l1.8 1.8M16.7 16.7l1.8 1.8M5.5 18.5l1.8-1.8M16.7 7.3l1.8-1.8"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5 10 17.5 19.5 7"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 4.5 7.5 12l7.5 7.5"/></symbol>
+    <symbol id="i-kbd" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M8 14h8"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="4.5" width="14" height="17" rx="2"/><rect x="9" y="2.5" width="6" height="4" rx="1"/><path d="M8.5 11h7M8.5 14.5h7M8.5 18h4"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l6 6M10 5v5H5M20 20l-6-6M14 19v-5h5"/></symbol>
+    <symbol id="i-hand" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 12V5.5a1.5 1.5 0 0 1 3 0V11M11.5 10V4a1.5 1.5 0 0 1 3 0v7M14.5 10.5V6a1.5 1.5 0 0 1 3 0v8.5a6.5 6.5 0 0 1-6.5 6.5c-2.4 0-4-1-5.4-3L3.5 14.5a1.5 1.5 0 0 1 2.4-1.8L8.5 15"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+    <symbol id="i-raise" viewBox="0 0 24 24" fill="currentColor"><path d="M8 11V5a1.5 1.5 0 0 1 3 0v5h.5V3.5a1.5 1.5 0 0 1 3 0V10h.5V5a1.5 1.5 0 0 1 3 0v9.5A6.5 6.5 0 0 1 11.5 21c-2.4 0-4-1-5.4-3L3 13.6a1.5 1.5 0 0 1 2.4-1.8L8 14.5z"/></symbol>
+  </defs>
+</svg>
+
+<template id="desk">
+  <div class="wallb"></div>
+  <div class="menubar"><b>Code</b><span>File</span><span>Edit</span><span>Selection</span><span>View</span></div>
+  <div class="win code">
+    <div class="bar"><span></span><span></span><span></span><em>farside — NativeGestureEngine.swift</em></div>
+    <div class="side"><i style="width:70%"></i><i style="width:55%"></i><i style="width:80%"></i><i style="width:60%"></i><i style="width:75%"></i><i style="width:50%"></i><i style="width:66%"></i></div>
+    <div class="lines">
+      <i style="width:42%;background:#6f8fb5"></i><i style="width:70%;background:#8c877f"></i><i style="width:58%;background:#c9895d"></i>
+      <i style="width:33%;background:#8c877f"></i><i style="width:78%;background:#6f8fb5"></i><i style="width:64%;background:#a5b08a"></i>
+      <i style="width:50%;background:#8c877f"></i><i style="width:84%;background:#c9895d"></i><i style="width:46%;background:#6f8fb5"></i>
+      <i style="width:72%;background:#8c877f"></i><i style="width:38%;background:#a5b08a"></i><i style="width:66%;background:#8c877f"></i>
+      <i style="width:54%;background:#6f8fb5"></i><i style="width:80%;background:#8c877f"></i><i style="width:44%;background:#c9895d"></i>
+      <i style="width:62%;background:#8c877f"></i><i style="width:36%;background:#6f8fb5"></i><i style="width:70%;background:#8c877f"></i>
+    </div>
+  </div>
+  <div class="win notes">
+    <div class="bar"><span></span><span></span><span></span><em>Notes</em></div>
+    <div class="txt"><i class="h"></i><i style="width:92%"></i><i style="width:86%"></i><i style="width:70%"></i><i style="width:90%"></i><i style="width:64%"></i><i style="width:80%"></i><i style="width:58%"></i></div>
+  </div>
+  <svg class="cursor" viewBox="0 0 20 28" aria-hidden="true"><path d="M2 2v21l5.2-5 3.6 8 3.2-1.4-3.5-7.8H17z" fill="#000" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>
+</template>
+
+<main class="page">
+  <header class="prose">
+    <h1>Rebuilding Controls</h1>
+    <p class="lede">The dock stays exactly as it is. This page is about the sheet behind its sliders button: what it holds today, three ways to rebuild it, and which one to pick.</p>
+    <p class="muted">Frames are an iPhone 17 in a live session (402 × 874 pt), drawn in Reach: void background, bone type, SF Pro, ember only where something touches the Mac. Nothing here is built yet.</p>
+  </header>
+
+  <section id="today">
+    <div class="prose">
+      <h2>What the sheet holds today</h2>
+      <p>Controls opens at half height and scrolls through eight groups on main. The phone-parity branch adds four more (Display, Touch, Mini map, Keyboard and pointer), so after that merge it is twelve. The first screen shows Fill/Fit, a zoom slider and half of the pointer buttons. Mission Control and the Space keys sit below the fold: fifth group on main, eighth after the merge.</p>
+      <p>Three groups repeat the dock: Fill/Fit, View/Control and the clipboard actions are all one tap away there already. While the sheet is open the trackpad is switched off, so you can't steer and look at the result at the same time.</p>
+    </div>
+    <div class="row">
+      <figure>
+        <div class="phone">
+          <div class="mac"></div>
+          <div class="sheet old" style="height:462px">
+            <div class="grab"></div>
+            <div class="shead"><span class="t">Controls</span><span class="done"><svg><use href="#i-check"/></svg></span></div>
+            <div class="cap">View</div>
+            <div class="seg"><span class="on">Fill</span><span>Fit</span></div>
+            <div class="card" style="margin-top:0;border-top-left-radius:0;border-top-right-radius:0">
+              <div class="stackrow"><div class="hd"><span>Zoom</span><span style="font-family:var(--mono)">Fill</span></div><div class="slider"><b style="width:30%"></b><i style="left:26%"></i></div></div>
+              <div class="rowi"><svg class="ic" style="color:var(--bone)"><use href="#i-hand"/></svg>Move view</div>
+            </div>
+            <p class="foot">Fill uses the whole screen; Fit shows all of it. In View, drag, pinch or double-tap to look around.</p>
+            <div class="cap">Pointer</div>
+            <div class="tiles"><div class="tile">Click</div><div class="tile">Right-click</div></div>
+          </div>
+        </div>
+        <figcaption><b>Today.</b> Half-height sheet, mono caps on every group, and a scroll to reach Mission Control. Trackpad is off while it is open.</figcaption>
+      </figure>
+    </div>
+
+    <h3>Where each control should live</h3>
+    <p class="prose muted">No usage data exists yet, so the middle column is a judgment from the product scenarios and from what the gestures and the dock already cover. The right column follows option A below.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Control</th><th>Today</th><th>In a session</th><th>Proposed home</th></tr></thead>
+        <tbody>
+          <tr><td>Previous / Next Space, Mission Control, App Exposé</td><td>Mac workspace, 5th group (8th after parity)</td><td class="freq often"><i></i>Often</td><td class="home">Sheet, first row</td></tr>
+          <tr><td>Right-click, Double-click</td><td>Pointer</td><td class="freq some"><i></i>Now and then (gesture fallback)</td><td class="home">Sheet, second row</td></tr>
+          <tr><td>Drag / Release</td><td>Pointer</td><td class="freq some"><i></i>Now and then</td><td class="home">Sheet key “Hold click”, with a Drop chip</td></tr>
+          <tr><td>Click</td><td>Pointer</td><td class="freq"><i></i>Rarely (a tap clicks)</td><td class="home">Remove; VoiceOver keeps its Activate action</td></tr>
+          <tr><td>Hide Mac screen</td><td>Mac privacy</td><td class="freq some"><i></i>Start of a session</td><td class="home">Sheet row</td></tr>
+          <tr><td>Display picker (parity)</td><td>Display</td><td class="freq some"><i></i>With a second display</td><td class="home">Sheet row, only with 2+ displays</td></tr>
+          <tr><td>Fill / Fit</td><td>View (also dock)</td><td class="freq often"><i></i>Often</td><td class="home">Dock only</td></tr>
+          <tr><td>Move view / Control</td><td>View (also dock)</td><td class="freq often"><i></i>Often</td><td class="home">Dock only</td></tr>
+          <tr><td>Send iPhone text, Copy selection, Get Mac clipboard</td><td>Clipboard (also dock)</td><td class="freq often"><i></i>Often</td><td class="home">Dock only</td></tr>
+          <tr><td>Zoom slider</td><td>View</td><td class="freq"><i></i>Rarely (pinch does it)</td><td class="home">Settings › View</td></tr>
+          <tr><td>Picture: Sharper / Responsive</td><td>Picture</td><td class="freq some"><i></i>Now and then</td><td class="home">Settings › Picture</td></tr>
+          <tr><td>Pointer speed, pointer size, click haptics</td><td>Feel</td><td class="freq"><i></i>Set once</td><td class="home">Settings › Pointer</td></tr>
+          <tr><td>Touch: Trackpad / Direct (parity)</td><td>Touch</td><td class="freq"><i></i>Set once</td><td class="home">Settings › Touch</td></tr>
+          <tr><td>Press ⌘V after sending</td><td>Clipboard</td><td class="freq"><i></i>Set once</td><td class="home">Settings › Clipboard</td></tr>
+          <tr><td>Mini map (parity)</td><td>Mini map</td><td class="freq"><i></i>Set once</td><td class="home">Settings › View</td></tr>
+          <tr><td>⌃⌥ stand-ins for iPadOS shortcuts (parity)</td><td>Keyboard and pointer</td><td class="freq"><i></i>Set once, iPad or hardware keyboard</td><td class="home">Settings, shown only when one is connected</td></tr>
+          <tr><td>Gesture help paragraph</td><td>Gestures</td><td class="freq"><i></i>First week</td><td class="home">Settings › How to steer (opens the coach)</td></tr>
+          <tr><td>Stream statistics, export log, previous tuning</td><td>Picture</td><td class="freq"><i></i>Testing only</td><td class="home">Settings › Diagnostics</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="a">
+    <div class="prose">
+      <div class="optname"><span class="optletter">A</span><h2>Mac keys, settings one tap deeper <span class="tag">Recommended</span></h2></div>
+      <p>The sheet becomes a short, fixed-height panel of keys for things you do to the Mac. Each key prints its Mac shortcut, so the phone teaches the keyboard as you use it. Settings you change once a month move to a native grouped page pushed inside the same sheet.</p>
+      <ul class="points">
+        <li>Everything used mid-session is in two rows the thumb reaches without shifting grip. Nothing scrolls.</li>
+        <li>The panel stops at about 40% of the screen and does not dim the Mac. The trackpad keeps working above it, so you can open Mission Control, then point at a window and click it with the panel still open.</li>
+        <li>Space keys keep the panel open, so three Space switches are three taps. Swipe down or tap Done to close.</li>
+        <li>Show Desktop is a new key. It sends F11, which the host can post once the parity branch's F-key map is merged.</li>
+      </ul>
+      <p class="muted">Costs: settings are one tap further away, and a stray touch on the picture above the panel now reaches the Mac, the same as when the panel is closed. Landscape needs its own one-row panel.</p>
+    </div>
+    <div class="row">
+      <figure>
+        <div class="phone">
+          <div class="mac"></div>
+          <div class="sheet" style="height:382px">
+            <div class="grab"></div>
+            <div class="shead"><span class="t">Controls</span><span class="acts"><span class="textbtn"><svg><use href="#i-gear"/></svg>Settings</span><span class="done"><svg><use href="#i-check"/></svg></span></span></div>
+            <div class="keys">
+              <div class="key"><svg><use href="#i-spl"/></svg><span class="l">Space left</span><kbd>⌃←</kbd></div>
+              <div class="key"><svg><use href="#i-mc"/></svg><span class="l">Mission Control</span><kbd>⌃↑</kbd></div>
+              <div class="key"><svg><use href="#i-expose"/></svg><span class="l">App windows</span><kbd>⌃↓</kbd></div>
+              <div class="key"><svg><use href="#i-spr"/></svg><span class="l">Space right</span><kbd>⌃→</kbd></div>
+            </div>
+            <div class="keys">
+              <div class="key"><svg><use href="#i-rclick"/></svg><span class="l">Right-click</span><kbd>2-finger tap</kbd></div>
+              <div class="key"><svg><use href="#i-dclick"/></svg><span class="l">Double-click</span><kbd>double tap</kbd></div>
+              <div class="key"><svg><use href="#i-hold"/></svg><span class="l">Hold click</span><kbd>tap, hold</kbd></div>
+              <div class="key"><svg><use href="#i-desk"/></svg><span class="l">Show Desktop</span><kbd>F11</kbd></div>
+            </div>
+            <div class="card">
+              <div class="rowi"><svg class="ic"><use href="#i-eye"/></svg>Hide Mac screen<span class="sw"></span></div>
+              <div class="rowi"><svg class="ic"><use href="#i-display"/></svg>Display<span class="v">Built-in <svg><use href="#i-chev"/></svg></span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>A · the panel.</b> About 40% of the screen, no dimming, trackpad live above it. The Display row appears only when the Mac has two or more displays.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone">
+          <div class="mac"></div>
+          <div class="dots" style="background-color:rgba(5,5,5,.55)"></div>
+          <div class="sheet tall">
+            <div class="grab"></div>
+            <div class="nav"><span class="back"><svg><use href="#i-back"/></svg>Controls</span><span class="t">Settings</span></div>
+            <div class="gh">Picture</div>
+            <div class="seg"><span class="on">Sharper</span><span>Responsive</span></div>
+            <p class="foot">Sharper text and detail. Uses more bandwidth.</p>
+            <div class="gh">Pointer</div>
+            <div class="card" style="margin-top:0">
+              <div class="stackrow"><div class="hd"><span>Speed</span></div><div class="slider"><b style="width:44%"></b><i style="left:40%"></i></div><div class="ends"><span>Slower</span><span>Faster</span></div></div>
+              <div class="rowi">Size<span class="v">Medium <svg><use href="#i-chev"/></svg></span></div>
+              <div class="rowi">Click haptics<span class="sw on"></span></div>
+            </div>
+            <div class="gh">Touch</div>
+            <div class="seg"><span class="on">Trackpad</span><span>Direct</span></div>
+            <div class="gh">View and clipboard</div>
+            <div class="card" style="margin-top:0">
+              <div class="rowi">Zoom<span class="v">Fill <svg><use href="#i-chev"/></svg></span></div>
+              <div class="rowi">Press ⌘V after sending<span class="sw on"></span></div>
+            </div>
+            <div class="card">
+              <div class="rowi">How to steer<span class="v">40 sec <svg><use href="#i-chev"/></svg></span></div>
+              <div class="rowi">Diagnostics<span class="v"><svg><use href="#i-chev"/></svg></span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>A · Settings.</b> A native grouped page pushed from the panel's Settings button. Statistics and the tuning A/B switch sit behind Diagnostics.</figcaption>
+      </figure>
+
+      <figure>
+        <div class="phone land">
+          <div class="mac"></div>
+          <div class="sheet" style="left:60px;right:60px;height:150px;padding:0 14px 14px">
+            <div class="grab" style="margin-bottom:8px"></div>
+            <div style="display:flex;gap:8px;align-items:stretch">
+              <div class="keys" style="grid-template-columns:repeat(7,1fr);flex:1">
+                <div class="key sm"><svg><use href="#i-spl"/></svg><span class="l">Space left</span></div>
+                <div class="key sm"><svg><use href="#i-mc"/></svg><span class="l">Mission Control</span></div>
+                <div class="key sm"><svg><use href="#i-expose"/></svg><span class="l">App windows</span></div>
+                <div class="key sm"><svg><use href="#i-spr"/></svg><span class="l">Space right</span></div>
+                <div class="key sm"><svg><use href="#i-rclick"/></svg><span class="l">Right-click</span></div>
+                <div class="key sm"><svg><use href="#i-dclick"/></svg><span class="l">Double-click</span></div>
+                <div class="key sm"><svg><use href="#i-hold"/></svg><span class="l">Hold click</span></div>
+              </div>
+              <div style="display:grid;gap:8px;align-content:center">
+                <span class="round"><svg><use href="#i-gear"/></svg></span>
+                <span class="done" style="width:40px;height:40px"><svg><use href="#i-check"/></svg></span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>A · landscape.</b> One row of keys; Settings and Done on the right. Today landscape always opens the sheet full height.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="b">
+    <div class="prose">
+      <div class="optname"><span class="optletter">B</span><h2>A tray on top of the dock</h2></div>
+      <p>No sheet. The sliders button in the dock raises a tray of the same keys directly above the dock panel, so the actions sit where the thumb already is. Settings open as a full page from the tray.</p>
+      <ul class="points">
+        <li>No change of context: the dock stays on screen and the keys are 60 pt from its buttons.</li>
+        <li>Fastest path for someone who already has the dock open.</li>
+      </ul>
+      <p class="muted">Costs: dock plus tray cover the lower 55% of the screen and the dot screen darkens the rest, so the Mac is hardest to see here. The open dock also looks different, which works against keeping the dock as it is. It is a custom container rather than a system sheet.</p>
+    </div>
+    <div class="row">
+      <figure>
+        <div class="phone">
+          <div class="mac"></div>
+          <div class="dots"></div>
+          <div class="tray" style="bottom:318px">
+            <div class="th"><span>Mac</span><span class="textbtn"><svg><use href="#i-gear"/></svg>Settings</span></div>
+            <div class="keys">
+              <div class="key sm"><svg><use href="#i-spl"/></svg><span class="l">Space left</span></div>
+              <div class="key sm"><svg><use href="#i-mc"/></svg><span class="l">Mission Control</span></div>
+              <div class="key sm"><svg><use href="#i-expose"/></svg><span class="l">App windows</span></div>
+              <div class="key sm"><svg><use href="#i-spr"/></svg><span class="l">Space right</span></div>
+            </div>
+            <div class="keys">
+              <div class="key sm"><svg><use href="#i-rclick"/></svg><span class="l">Right-click</span></div>
+              <div class="key sm"><svg><use href="#i-dclick"/></svg><span class="l">Double-click</span></div>
+              <div class="key sm"><svg><use href="#i-hold"/></svg><span class="l">Hold click</span></div>
+              <div class="key sm"><svg><use href="#i-eye"/></svg><span class="l">Hide screen</span></div>
+            </div>
+          </div>
+          <div class="dock">
+            <div class="grab" style="margin:4px auto 10px"></div>
+            <div class="tiles5">
+              <div class="dt"><div><svg><use href="#i-kbd"/></svg></div><span>KEYS</span></div>
+              <div class="dt"><div><svg><use href="#i-mic"/></svg></div><span>MIC</span></div>
+              <div class="dt"><div><svg><use href="#i-clip"/></svg></div><span>CLIP</span></div>
+              <div class="dt"><div><svg><use href="#i-fit"/></svg></div><span>FIT</span></div>
+              <div class="dt"><div><svg><use href="#i-hand"/></svg></div><span>MODE</span></div>
+            </div>
+            <div class="segs"><div class="seg"><span>Fit</span><span class="on">Fill</span></div><div class="seg"><span>View</span><span class="on">Control</span></div></div>
+            <div class="foot2">
+              <div class="status"><div class="n"><i></i>STUDIO MAC · 14 MS</div><div class="s">Controlling your Mac</div></div>
+              <span class="round on"><svg><use href="#i-sliders"/></svg></span>
+              <span class="endbtn">End session</span>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>B · tray open.</b> The dock below is today's dock, untouched; the sliders button shows it is on. The Mac above is behind the dot screen.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="c">
+    <div class="prose">
+      <div class="optname"><span class="optletter">C</span><h2>The same sheet, tidied</h2></div>
+      <p>Keep a half-height native sheet, but put eight small keys at the top and fold every other group into a one-line summary row that pushes its own page: Picture · Sharper, Pointer · Medium, Touch · Trackpad. Twelve groups become one grid and about eight rows.</p>
+      <ul class="points">
+        <li>Smallest change to the code and the most familiar pattern: it reads like the Settings app.</li>
+        <li>Every setting's current value is visible without opening it.</li>
+      </ul>
+      <p class="muted">Costs: it is still a modal sheet that turns the trackpad off and dims the Mac. The keys sit at the top of the sheet, the farthest point from the thumb, and the list still scrolls at half height.</p>
+    </div>
+    <div class="row">
+      <figure>
+        <div class="phone">
+          <div class="mac"></div>
+          <div class="dots" style="background-image:none;background-color:rgba(0,0,0,.35)"></div>
+          <div class="sheet" style="height:470px;overflow:hidden">
+            <div class="grab"></div>
+            <div class="shead"><span class="t">Controls</span><span class="done"><svg><use href="#i-check"/></svg></span></div>
+            <div class="keys">
+              <div class="key sm"><svg><use href="#i-spl"/></svg><span class="l">Space left</span></div>
+              <div class="key sm"><svg><use href="#i-mc"/></svg><span class="l">Mission Control</span></div>
+              <div class="key sm"><svg><use href="#i-expose"/></svg><span class="l">App windows</span></div>
+              <div class="key sm"><svg><use href="#i-spr"/></svg><span class="l">Space right</span></div>
+            </div>
+            <div class="keys">
+              <div class="key sm"><svg><use href="#i-rclick"/></svg><span class="l">Right-click</span></div>
+              <div class="key sm"><svg><use href="#i-dclick"/></svg><span class="l">Double-click</span></div>
+              <div class="key sm"><svg><use href="#i-hold"/></svg><span class="l">Hold click</span></div>
+              <div class="key sm"><svg><use href="#i-desk"/></svg><span class="l">Show Desktop</span></div>
+            </div>
+            <div class="card">
+              <div class="rowi"><svg class="ic"><use href="#i-eye"/></svg>Hide Mac screen<span class="sw"></span></div>
+              <div class="rowi">Picture<span class="v">Sharper <svg><use href="#i-chev"/></svg></span></div>
+              <div class="rowi">Pointer<span class="v">Medium · speed 1.0 <svg><use href="#i-chev"/></svg></span></div>
+              <div class="rowi">Touch<span class="v">Trackpad <svg><use href="#i-chev"/></svg></span></div>
+              <div class="rowi">Clipboard<span class="v">⌘V after sending <svg><use href="#i-chev"/></svg></span></div>
+            </div>
+          </div>
+        </div>
+        <figcaption><b>C · half height.</b> Keys on top, summary rows below. How to steer and Diagnostics continue below the fold.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="pick">
+    <div class="prose">
+      <h2>Recommendation: A</h2>
+      <p>A is the only option that keeps the Mac visible and steerable while the actions are open, and it puts the keys in the thumb's reach instead of at the top of a sheet. It also removes the three groups that duplicate the dock, which is most of why today's sheet feels long.</p>
+      <p>Take one idea from C: the Settings page in A should use C's summary rows, so each setting shows its current value before you open it.</p>
+      <p class="muted">What A changes in code, when approved: the sheet gets one fixed height with background interaction enabled (SwiftUI's <code>presentationBackgroundInteraction</code>, iOS 16.4+); the trackpad stays enabled while it is open; Settings becomes a pushed page in the sheet's existing navigation stack; landscape gets a one-row panel. The dock is not touched.</p>
+    </div>
+  </section>
+
+  <section id="drag">
+    <div class="prose">
+      <h2>Drag, with words that say what is happening</h2>
+      <p>After a double-tap-and-hold drag, a bone button reading “Release” with a raised hand appears over the dock handle, and the dock status says “Holding · tap Release to drop”. A raised hand reads as “stop”, and “Release” doesn't say what is being released or that lifting your finger already does it.</p>
+      <p>There are two different holds, and they need different words:</p>
+      <ul class="points">
+        <li><b>Finger drag</b> (double-tap, hold, slide). Lifting drops the item, so there is nothing to press. Show a status line, “Holding click · lift to drop”, with the ember contact dot. No button.</li>
+        <li><b>Hold click</b> from Controls. The button stays down after you lift, so the chip carries the action: “Mouse button held”, “Slide one finger to move it. Drops by itself in 8 s”, and a Drop button. The dock tile that replaces Mic during a hold says Drop too.</li>
+      </ul>
+    </div>
+    <div class="row">
+      <figure>
+        <div class="phone">
+          <div class="mac"></div>
+          <div class="file" style="left:222px;top:300px"></div>
+          <div class="oldchip"><svg><use href="#i-raise"/></svg>Release</div>
+          <div class="handle"><i></i><i></i><i class="live"></i><i></i><i></i></div>
+        </div>
+        <figcaption><b>Today.</b> Same button for both kinds of hold.</figcaption>
+      </figure>
+      <figure>
+        <div class="phone">
+          <div class="mac"></div>
+          <div class="file" style="left:222px;top:300px"></div>
+          <div class="contact" style="left:206px;top:250px"></div>
+          <div class="chip"><span class="dot"></span><span>Holding click <span class="sub">· lift to drop</span></span></div>
+          <div class="handle"><i></i><i></i><i class="live"></i><i></i><i></i></div>
+        </div>
+        <figcaption><b>Finger drag, proposed.</b> A status line, not a button. The ember ring at the pointer tip marks the held button.</figcaption>
+      </figure>
+      <figure>
+        <div class="phone">
+          <div class="mac"></div>
+          <div class="file" style="left:222px;top:300px"></div>
+          <div class="contact" style="left:206px;top:250px"></div>
+          <div class="chip hold">
+            <span class="dot"></span>
+            <span class="txt"><b>Mouse button held</b><span>Slide one finger to move it. Drops by itself in <kbd>8 s</kbd></span></span>
+            <span class="dropbtn">Drop</span>
+          </div>
+          <div class="handle"><i></i><i></i><i class="live"></i><i></i><i></i></div>
+        </div>
+        <figcaption><b>Hold click, proposed.</b> The countdown makes the existing 10-second limit visible instead of a surprise.</figcaption>
+      </figure>
+    </div>
+  </section>
+</main>
+
+<script>
+  (function () {
+    var tpl = document.getElementById('desk');
+    if (!tpl) return;
+    document.querySelectorAll('.mac').forEach(function (el) { el.appendChild(tpl.content.cloneNode(true)); });
+  })();
+</script>
