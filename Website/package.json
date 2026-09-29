@@ -1,0 +1,22 @@
+{
+  "name": "farside-website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun scripts/build.ts",
+    "build:strict": "bun scripts/build.ts --strict",
+    "serve": "bun scripts/serve.ts",
+    "dev": "bun scripts/serve.ts --watch",
+    "assets": "bun scripts/render-assets.ts",
+    "shots": "bun scripts/shots.ts",
+    "lighthouse": "bun scripts/lighthouse.ts",
+    "check": "bun scripts/check.ts",
+    "fonts": "bun scripts/font-metrics.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "puppeteer-core": "^25.12.0",
+    "typescript": "^7.0.2"
+  }
+}
