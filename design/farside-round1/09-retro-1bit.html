@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Farside — Retro 1-bit</title>
+<meta name="description" content="Farside design direction 09: a crisp 1-bit homage to early personal computers.">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,700;1,400&family=Pixelify+Sans:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap">
+<style>
+:root{
+  --ink:#141414;--paper:#EFECE2;
+  --d75:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Cpath d='M0 0h2v1H0zM1 1h1v1H1z' fill='%23141414'/%3E%3C/svg%3E");
+  --d50:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Cpath d='M0 0h1v1H0zM1 1h1v1H1z' fill='%23141414'/%3E%3C/svg%3E");
+  --d25:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Cpath d='M0 0h1v1H0z' fill='%23141414'/%3E%3C/svg%3E");
+  --d12:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='4' height='4'%3E%3Cpath d='M0 0h1v1H0zM2 2h1v1H2z' fill='%23141414'/%3E%3C/svg%3E");
+  --px:'Pixelify Sans','Silkscreen',ui-monospace,Menlo,monospace;
+  --pxs:'Silkscreen',ui-monospace,Menlo,monospace;
+  --mono:'IBM Plex Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace;
+  --ds:1;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--paper);color:var(--ink);font:15px/1.6 var(--mono);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+a{color:inherit}
+.w{max-width:1240px;margin:0 auto;padding:0 20px}
+.px svg{display:block}.px .i{fill:var(--ink)}.px .p{fill:var(--paper)}
+.inv .px .i{fill:var(--paper)}.inv .px .p{fill:var(--ink)}
+.dith{background-image:var(--d50);background-size:4px 4px;image-rendering:pixelated}
+.tag{display:inline-block;font:700 11px/1 var(--pxs);letter-spacing:.08em;background:var(--ink);color:var(--paper);padding:6px 8px 5px}
+.sec-h{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:0 0 28px}
+.sec-h h2{font:700 clamp(28px,4vw,44px)/1 var(--px);letter-spacing:-.01em}
+.sec-h p{max-width:520px;font-size:14px}
+.band{height:24px;background:
+  linear-gradient(var(--paper),var(--paper)) 0 0/100% 4px no-repeat,
+  var(--d12) 0 4px/4px 4px, var(--paper);
+  border-top:2px solid var(--ink);position:relative;image-rendering:pixelated}
+.band::after{content:"";position:absolute;left:0;right:0;bottom:0;height:12px;background:var(--d50);background-size:4px 4px}
+section{padding:72px 0}
+
+/* windows */
+.win{background:var(--paper);border:2px solid var(--ink);box-shadow:5px 5px 0 var(--ink)}
+.win-tb{height:28px;display:flex;align-items:center;gap:10px;padding:0 8px;border-bottom:2px solid var(--ink);
+  background:repeating-linear-gradient(to bottom,transparent 0 5px,var(--ink) 5px 7px) 0 4px/100% 18px no-repeat;}
+.win-tb .cb{width:16px;height:16px;border:2px solid var(--ink);background:var(--paper);flex:none;box-shadow:0 0 0 3px var(--paper)}
+.win-tb span{font:700 11px/1 var(--pxs);background:var(--paper);padding:3px 8px;margin:0 auto;letter-spacing:.06em;white-space:nowrap}
+.win-tb .cb+span{transform:translateX(-13px)}
+
+/* buttons */
+.btn{display:inline-flex;align-items:center;gap:10px;font:700 13px/1 var(--pxs);letter-spacing:.06em;padding:15px 18px 14px;border:2px solid var(--ink);text-decoration:none;position:relative;transition:transform .08s steps(1)}
+.btn.pri{background:var(--ink);color:var(--paper);box-shadow:5px 5px 0 0 var(--ink),5px 5px 0 2px var(--paper)}
+.btn.pri::after{content:"";position:absolute;inset:0;transform:translate(7px,7px);z-index:-1;background:var(--d50);background-size:4px 4px;border:2px solid var(--ink)}
+.btn.sec{background:var(--paper)}
+.btn:hover{transform:translate(2px,2px)}
+.btn:active{transform:translate(5px,5px)}
+.btn .px{flex:none}
+
+/* ============ A. direction header ============ */
+.dir{padding-top:28px;padding-bottom:56px}
+.dir-top{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:28px}
+.dir-top em{font:400 12px var(--pxs);font-style:normal}
+.dir-name{font:700 clamp(56px,10vw,128px)/.9 var(--px);letter-spacing:-.02em}
+.dir-name span{display:inline-block;background:var(--ink);color:var(--paper);padding:0 .12em;margin-left:.06em}
+.dir-mood{font-size:clamp(16px,2vw,19px);max-width:760px;margin:20px 0 36px}
+.dir-grid{display:grid;grid-template-columns:1fr 1.25fr;gap:28px}
+.panel{padding:18px}
+.panel h4{font:700 11px/1 var(--pxs);letter-spacing:.08em;margin-bottom:16px}
+.sw{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.sw div{border:2px solid var(--ink);height:86px;position:relative;image-rendering:pixelated}
+.sw b{position:absolute;left:-2px;bottom:-2px;right:-2px;font:700 10px/1.2 var(--pxs);background:var(--paper);border:2px solid var(--ink);padding:5px 6px}
+.sw b small{display:block;font:400 10px var(--mono)}
+.spec{display:grid;gap:14px}
+.spec div{border-top:2px dotted var(--ink);padding-top:10px}
+.spec label{font:400 10px var(--pxs);letter-spacing:.06em;display:block;margin-bottom:4px}
+.spec .s1{font:700 clamp(32px,4.4vw,52px)/1 var(--px)}
+.spec .s2{font:700 18px/1.2 var(--pxs);letter-spacing:.04em;word-spacing:.4em}
+.spec .s3{font:400 15px/1.55 var(--mono)}
+
+/* ============ B. site ============ */
+.site{border-top:2px solid var(--ink);padding-top:0}
+.nav{position:sticky;top:0;z-index:30;background:var(--paper);border-bottom:2px solid var(--ink)}
+.nav .w{display:flex;align-items:center;gap:26px;height:48px}
+.logo{display:flex;align-items:center;gap:9px;font:700 17px/1 var(--pxs);letter-spacing:.04em;text-decoration:none}
+.nav nav{display:flex;gap:22px;font:700 12px var(--mono)}
+.nav nav a{text-decoration:none}
+.nav nav a:hover{background:var(--ink);color:var(--paper)}
+.nav .btn{margin-left:auto;padding:9px 12px 8px;font-size:11px}
+.nav .btn.pri::after{display:none}
+.nav .btn.pri{box-shadow:3px 3px 0 var(--ink)}
+.hero{padding:56px 0 40px;background:var(--d25) 0 0/4px 4px;image-rendering:pixelated;border-bottom:2px solid var(--ink)}
+.hero-g{display:grid;grid-template-columns:.9fr 1.1fr;gap:40px;align-items:center}
+.hero-txt{padding:26px 26px 28px}
+.kick{display:inline-flex;align-items:center;gap:8px;font:700 11px/1 var(--pxs);letter-spacing:.06em;border:2px solid var(--ink);padding:6px 8px;margin-bottom:22px}
+.kick i{width:8px;height:8px;background:var(--ink);animation:blink 1s steps(1) infinite}
+@keyframes blink{50%{opacity:0}}
+.hero h1{font:700 clamp(40px,5.6vw,76px)/.95 var(--px);letter-spacing:-.02em;margin-bottom:22px}
+.hero h1 .nw{white-space:nowrap}
+.hero h1 .hl{background:var(--ink);color:var(--paper);padding:0 .1em;display:inline-block}
+.hero-sub{font-size:16px;max-width:470px;margin-bottom:28px}
+.ctas{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:22px}
+.micro{font:400 12px var(--mono)}
+.micro b{font-weight:700}
+.stage-card{padding:0}
+.fit{position:relative;width:100%;overflow:hidden}
+.fit>.stage{position:absolute;left:0;top:0;transform-origin:0 0}
+.e-note{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;padding:10px 12px;border-top:2px solid var(--ink);font-size:12px;line-height:1.45}
+.e-note b{font:700 10px var(--pxs);letter-spacing:.06em}
+.e-note button{font:700 10px/1 var(--pxs);border:2px solid var(--ink);padding:6px 8px;flex:none}
+
+/* hero stage objects */
+.mon{position:absolute;left:0;top:24px;width:512px;height:352px;border:4px solid var(--ink);border-radius:10px;background:var(--paper);padding:12px 12px 0}
+.mon-scr{width:480px;height:300px;border:2px solid var(--ink);position:relative;overflow:hidden;background:var(--paper)}
+.mon-scr>.desk{transform:scale(.375)}
+.mon::after{content:"";position:absolute;left:50%;bottom:10px;width:40px;height:8px;margin-left:-20px;background:var(--d50);background-size:4px 4px}
+.neck{position:absolute;left:216px;top:376px;width:80px;height:46px;background:var(--d50);background-size:4px 4px;border:4px solid var(--ink);border-top:0}
+.foot{position:absolute;left:150px;top:420px;width:212px;height:16px;border:4px solid var(--ink);background:var(--paper)}
+.ph{position:absolute;left:452px;top:148px;width:180px;height:370px;border:4px solid var(--ink);border-radius:28px;background:var(--paper);padding:6px;box-shadow:8px 8px 0 -2px var(--paper),8px 8px 0 2px var(--ink)}
+.ph-scr{position:relative;width:160px;height:350px;border-radius:21px;overflow:hidden;border:2px solid var(--ink);background:var(--paper)}
+.ph-scr .isl{position:absolute;left:50%;top:6px;width:44px;height:12px;margin-left:-22px;border-radius:8px;background:var(--ink);z-index:6}
+.ph-cam{position:absolute;left:0;top:0;will-change:transform}
+.ph-cam>.desk{transform:scale(.4375)}
+.p-ptr,.m-ptr{position:absolute;left:0;top:0;z-index:5;pointer-events:none;will-change:transform}
+.p-ptr .px{filter:drop-shadow(2px 0 0 var(--paper)) drop-shadow(-2px 0 0 var(--paper)) drop-shadow(0 2px 0 var(--paper)) drop-shadow(0 -2px 0 var(--paper))}
+.p-fin{position:absolute;left:0;top:0;z-index:4;width:34px;height:34px;margin:-17px 0 0 -17px;border-radius:50%;border:3px solid var(--ink);background:var(--d50);background-size:4px 4px;image-rendering:pixelated;will-change:transform;transition:width .1s steps(1),height .1s steps(1)}
+.p-fin.press{width:26px;height:26px;margin:-13px 0 0 -13px}
+.rip{position:absolute;z-index:4;width:8px;height:8px;margin:-4px 0 0 -4px;border:3px solid var(--ink);pointer-events:none;animation:rip .6s steps(5) forwards}
+.desk .rip{border-width:6px}
+@keyframes rip{to{width:64px;height:64px;margin:-32px 0 0 -32px;opacity:0}}
+.ph.buzz{animation:buzz .2s steps(2)}
+@keyframes buzz{25%{translate:-2px 0}75%{translate:2px 0}}
+.beep{position:absolute;z-index:8;font:700 14px/1 var(--pxs);background:var(--ink);color:var(--paper);padding:7px 9px 6px;opacity:0;pointer-events:none}
+.beep::after{content:"";position:absolute;left:10px;bottom:-8px;width:8px;height:8px;background:var(--ink);box-shadow:4px -4px 0 var(--ink)}
+.beep.on{animation:beep .9s steps(1) forwards}
+@keyframes beep{0%{opacity:1;transform:translateY(0)}20%{transform:translateY(-4px)}40%{transform:translateY(-8px)}85%{opacity:1}100%{opacity:0;transform:translateY(-8px)}}
+.sig{position:absolute;left:470px;top:110px;display:flex;gap:6px;transform:rotate(-28deg)}
+.sig i{width:8px;height:8px;background:var(--ink);animation:sig 1.2s steps(1) infinite}
+.sig i:nth-child(2){animation-delay:.2s}.sig i:nth-child(3){animation-delay:.4s}.sig i:nth-child(4){animation-delay:.6s}
+@keyframes sig{0%,100%{opacity:.15}30%{opacity:1}}
+.stamp{position:absolute;left:8px;top:388px;font:700 11px/1.3 var(--pxs);letter-spacing:.05em;max-width:130px}
+
+/* how */
+.how-g{display:grid;grid-template-columns:repeat(3,1fr);gap:28px}
+.step .body{padding:22px 20px 24px}
+.step .ill{height:120px;display:grid;place-items:center;border:2px solid var(--ink);margin-bottom:18px;background:var(--d12);background-size:4px 4px;image-rendering:pixelated}
+.step .ill>div{background:var(--paper);padding:10px;border:2px solid var(--ink)}
+.step h3{font:700 24px/1.1 var(--px);margin-bottom:8px}
+.step h3 small{display:block;font:700 10px var(--pxs);letter-spacing:.08em;margin-bottom:8px}
+.step p{font-size:14px}
+.dialog-hint{margin:34px auto 0;max-width:480px}
+.dialog-hint .body{display:flex;gap:16px;padding:18px;align-items:flex-start;font-size:14px}
+.dialog-hint .row{display:flex;gap:12px;justify-content:flex-end;padding:0 18px 18px}
+.dialog-hint .row .btn{padding:10px 14px 9px;font-size:11px}
+.dialog-hint .row .btn.pri::after{display:none}
+.dialog-hint .row .btn.pri{box-shadow:0 0 0 3px var(--paper),0 0 0 5px var(--ink)}
+
+/* pricing */
+.price{background:var(--d12) 0 0/4px 4px;image-rendering:pixelated;border-top:2px solid var(--ink);border-bottom:2px solid var(--ink)}
+.price-g{display:grid;grid-template-columns:1fr 1fr;gap:32px;max-width:920px;margin:0 auto}
+.plan .body{padding:24px 22px 26px}
+.plan h3{font:700 13px/1 var(--pxs);letter-spacing:.06em;margin-bottom:14px}
+.amt{font:700 56px/1 var(--px);letter-spacing:-.02em}
+.amt small{font:500 16px var(--mono);letter-spacing:0}
+.per{font-size:13px;margin:8px 0 18px;min-height:21px}
+.plan ul{list-style:none;margin:0 0 22px;font-size:14px}
+.plan li{padding:7px 0 7px 26px;border-top:2px dotted var(--ink);position:relative}
+.plan li::before{content:"";position:absolute;left:2px;top:12px;width:10px;height:10px;background:var(--ink);box-shadow:inset 0 0 0 2px var(--paper),0 0 0 2px var(--ink)}
+.plan.dark{background:var(--ink);color:var(--paper);box-shadow:5px 5px 0 var(--paper),5px 5px 0 2px var(--ink)}
+.plan.dark .win-tb{border-color:var(--paper);background:repeating-linear-gradient(to bottom,transparent 0 5px,var(--paper) 5px 7px) 0 4px/100% 18px no-repeat}
+.plan.dark .win-tb span{background:var(--ink)}
+.plan.dark .win-tb .cb{border-color:var(--paper);background:var(--ink);box-shadow:0 0 0 3px var(--ink)}
+.plan.dark li{border-color:var(--paper)}
+.plan.dark li::before{background:var(--paper);box-shadow:inset 0 0 0 2px var(--ink),0 0 0 2px var(--paper)}
+.plan.dark .btn{background:var(--paper);color:var(--ink);border-color:var(--paper)}
+.tog{display:inline-flex;border:2px solid currentColor;margin-bottom:16px}
+.tog button{font:700 10px/1 var(--pxs);padding:7px 9px;letter-spacing:.05em}
+.tog button[aria-pressed=true]{background:var(--paper);color:var(--ink)}
+.save{font:700 10px var(--pxs);border:2px solid currentColor;padding:2px 5px;margin-left:6px;letter-spacing:.04em}
+
+/* ============ C. devices ============ */
+.devs{display:flex;flex-wrap:wrap;justify-content:center;gap:44px 30px;max-width:1400px;margin:0 auto;padding:0 20px}
+.dev-slot{width:calc(414px*var(--ds))}
+.dev-box{position:relative;width:calc(414px*var(--ds));height:calc(868px*var(--ds))}
+.dev-box::before{content:"";position:absolute;inset:0;transform:translate(10px,10px);border-radius:calc(58px*var(--ds));background:var(--d50);background-size:4px 4px;image-rendering:pixelated}
+.dev{position:absolute;left:0;top:0;width:414px;height:868px;transform:scale(var(--ds));transform-origin:0 0;border:4px solid var(--ink);border-radius:58px;background:var(--paper);padding:8px}
+.dev::before,.dev::after{content:"";position:absolute;width:6px;background:var(--ink);left:-10px;top:170px;height:60px;border-radius:2px 0 0 2px}
+.dev::after{left:auto;right:-10px;top:220px;height:90px;border-radius:0 2px 2px 0}
+.scr{position:relative;width:390px;height:844px;border-radius:48px;overflow:hidden;border:2px solid var(--ink);background:var(--paper)}
+.dev-slot figcaption{margin-top:22px;font-size:13px;line-height:1.5;padding-right:8px}
+.dev-slot figcaption b{display:block;font:700 12px var(--pxs);letter-spacing:.06em;margin-bottom:4px}
+.isl{position:absolute;left:50%;top:11px;width:120px;height:34px;margin-left:-60px;border-radius:20px;background:var(--ink);z-index:20}
+.sb{position:absolute;left:0;right:0;top:0;height:54px;display:flex;align-items:center;justify-content:space-between;padding:6px 34px 0 42px;font:700 15px var(--mono);z-index:19}
+.sb-r{display:flex;gap:6px;align-items:center}
+.sb-r i{display:block;height:12px;background:var(--ink)}
+.sb-r .bars{width:18px;background:linear-gradient(90deg,var(--ink) 0 3px,transparent 3px 5px,var(--ink) 5px 8px,transparent 8px 10px,var(--ink) 10px 13px,transparent 13px 15px,var(--ink) 15px 18px);clip-path:polygon(0 100%,100% 0,100% 100%)}
+.sb-r .batt{width:26px;border:2px solid var(--ink);background:linear-gradient(90deg,var(--ink) 0 70%,var(--paper) 70%)}
+
+/* home */
+.s-home{padding:66px 22px 24px;display:flex;flex-direction:column}
+.h-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px}
+.h-top .logo{font-size:15px}
+.chip{font:700 10px/1 var(--pxs);border:2px solid var(--ink);padding:6px 8px;letter-spacing:.05em}
+.h-hi{font:700 30px/1.02 var(--px);letter-spacing:-.01em;margin-bottom:22px}
+.mc .mc-b{display:flex;gap:16px;padding:18px 16px 14px;align-items:center}
+.mc b{font:700 21px/1.1 var(--px);display:block}
+.mc small{font-size:12px;display:block;margin-bottom:8px}
+.live{display:inline-flex;gap:7px;align-items:center;font:700 10px/1 var(--pxs);letter-spacing:.04em;background:var(--ink);color:var(--paper);padding:5px 7px}
+.live i{width:7px;height:7px;background:var(--paper);animation:blink 1.2s steps(1) infinite}
+.mc-m{display:flex;justify-content:space-between;font-size:11px;padding:8px 16px;border-top:2px dotted var(--ink)}
+.connect{margin:26px 0 0;width:100%;height:128px;background:var(--ink);color:var(--paper);border:2px solid var(--ink);position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;box-shadow:0 0 0 4px var(--paper),0 0 0 6px var(--ink)}
+.connect::after{content:"";position:absolute;inset:-6px;transform:translate(10px,10px);z-index:-1;background:var(--d50);background-size:4px 4px}
+.connect span{font:700 34px/1 var(--pxs);letter-spacing:.06em}
+.connect small{font:400 12px var(--mono)}
+.connect{isolation:isolate}
+.h-list{margin-top:auto;display:grid;gap:0;border:2px solid var(--ink)}
+.h-list a{display:flex;justify-content:space-between;padding:13px 14px;text-decoration:none;font-size:13px;font-weight:500}
+.h-list a+a{border-top:2px solid var(--ink)}
+.h-list a span:last-child{font:700 12px var(--pxs)}
+.h-foot{text-align:center;font-size:11px;margin-top:12px}
+
+/* live */
+.cam{position:absolute;left:0;top:0}
+.ptr-big{position:absolute;z-index:8}
+.ptr-big .px{position:relative;z-index:2;filter:drop-shadow(3px 0 0 var(--paper)) drop-shadow(-3px 0 0 var(--paper)) drop-shadow(0 3px 0 var(--paper)) drop-shadow(0 -3px 0 var(--paper))}
+.halo{position:absolute;left:-26px;top:-26px;width:52px;height:52px;border-radius:50%;border:4px dashed var(--ink);box-shadow:0 0 0 3px var(--paper),inset 0 0 0 3px var(--paper);animation:halo 2.4s steps(6) infinite}
+@keyframes halo{0%{opacity:0;transform:scale(.6)}30%,70%{opacity:1;transform:scale(1)}100%{opacity:0;transform:scale(1)}}
+.handle{position:absolute;left:50%;bottom:10px;width:64px;height:8px;margin-left:-32px;background:var(--ink);box-shadow:0 0 0 3px var(--paper);z-index:9}
+.tiny-lbl{position:absolute;right:10px;top:54px;z-index:9;font:700 9px/1 var(--pxs);background:var(--paper);border:2px solid var(--ink);padding:4px 5px}
+
+/* dock sheet */
+.dim{position:absolute;inset:0;background:var(--d25);background-size:4px 4px;image-rendering:pixelated;z-index:7}
+.sheet{position:absolute;left:10px;right:10px;bottom:10px;z-index:10;padding:0 0 14px}
+.sheet .grab{width:64px;height:8px;background:var(--ink);margin:10px auto 14px}
+.dk-row{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;padding:0 12px}
+.dk{height:78px;border:2px solid var(--ink);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;font:700 9px/1 var(--pxs);letter-spacing:.04em}
+.dk.on{background:var(--ink);color:var(--paper)}
+.dk.on .px .i{fill:var(--paper)}.dk.on .px .p{fill:var(--ink)}
+.dict{margin:14px 12px 0;border:2px solid var(--ink);padding:12px;display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center}
+.eq{display:flex;gap:3px;align-items:flex-end;height:26px}
+.eq i{width:5px;background:var(--ink);animation:eq .8s steps(3) infinite alternate}
+.eq i:nth-child(1){height:10px}.eq i:nth-child(2){height:22px;animation-delay:.15s}.eq i:nth-child(3){height:14px;animation-delay:.3s}.eq i:nth-child(4){height:26px;animation-delay:.1s}.eq i:nth-child(5){height:8px;animation-delay:.25s}
+@keyframes eq{to{transform:scaleY(.35)}}
+.eq i{transform-origin:bottom}
+.dict p{font-size:13px;line-height:1.35}
+.dict p small{display:block;font:700 9px var(--pxs);letter-spacing:.06em;margin-bottom:3px}
+.done-btn{font:700 11px/1 var(--pxs);background:var(--ink);color:var(--paper);padding:10px 10px 9px}
+.dk-2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 12px 0}
+.seg{display:grid;grid-template-columns:1fr 1fr;border:2px solid var(--ink)}
+.seg span{font:700 10px/1 var(--pxs);padding:10px 4px 9px;text-align:center;letter-spacing:.04em}
+.seg span.on{background:var(--ink);color:var(--paper)}
+.dk-foot{display:flex;justify-content:space-between;align-items:center;margin:12px 12px 0;font-size:11px}
+.end{font:700 10px/1 var(--pxs);border:2px solid var(--ink);padding:8px 10px 7px;letter-spacing:.05em}
+
+/* coach */
+.s-coach{padding:62px 20px 22px;display:flex;flex-direction:column}
+.co-top{display:flex;justify-content:space-between;align-items:center}
+.co-top b{font:700 11px/1 var(--pxs);letter-spacing:.06em}
+.skip{font:700 11px/1 var(--pxs);border:2px solid var(--ink);padding:7px 9px 6px}
+.dots{display:flex;gap:6px;margin:12px 0 16px}
+.dots i{width:16px;height:10px;border:2px solid var(--ink)}
+.dots i.f{background:var(--ink)}
+.dots i.c{background:var(--d50);background-size:4px 4px}
+.pad{position:relative;height:392px;cursor:pointer;user-select:none;-webkit-user-select:none}
+.pad .pad-in{position:absolute;inset:30px 0 0;background:var(--d12);background-size:4px 4px;image-rendering:pixelated;overflow:hidden}
+.duck{position:absolute;left:176px;top:110px}
+.duck-ring{position:absolute;left:156px;top:94px;width:108px;height:100px;border:3px dashed var(--ink);background:var(--paper)}
+.coach-lbl{position:absolute;left:18px;top:26px;font:700 10px/1.25 var(--pxs);background:var(--ink);color:var(--paper);padding:6px 7px;letter-spacing:.04em;max-width:132px}
+.coach-lbl::after{content:"";position:absolute;right:-12px;top:10px;width:12px;height:4px;background:var(--ink);box-shadow:4px 4px 0 var(--ink)}
+.c-ptr{position:absolute;left:212px;top:150px;z-index:3}
+.c-ptr .px{filter:drop-shadow(2px 0 0 var(--paper)) drop-shadow(-2px 0 0 var(--paper)) drop-shadow(0 2px 0 var(--paper)) drop-shadow(0 -2px 0 var(--paper))}
+.ghost{position:absolute;left:250px;top:268px;width:52px;height:52px;border-radius:50%;border:3px solid var(--ink);background:var(--paper);z-index:2;animation:ghost 1.8s steps(4) infinite}
+.ghost::after{content:"";position:absolute;inset:9px;border-radius:50%;background:var(--d50);background-size:4px 4px}
+@keyframes ghost{0%,40%{transform:scale(1)}55%{transform:scale(.78)}75%,100%{transform:scale(1)}}
+.tap-lbl{position:absolute;left:222px;top:330px;font:700 10px/1 var(--pxs);letter-spacing:.05em;background:var(--paper);border:2px solid var(--ink);padding:5px 6px}
+.squeak{position:absolute;left:210px;top:60px;z-index:4;font:700 16px/1 var(--pxs);background:var(--ink);color:var(--paper);padding:8px 10px;display:none}
+.pad.won .squeak{display:block;animation:beep .9s steps(1) forwards}
+.pad.won .duck-ring{border-style:solid}
+.won-check{display:none}
+.co-h{font:700 28px/1.02 var(--px);margin:18px 0 8px}
+.co-p{font-size:13px;line-height:1.5}
+.next{margin-top:18px}.next p{padding:10px 12px;font-size:12px;line-height:1.45}.next b{font:700 10px var(--pxs);letter-spacing:.05em;margin-right:6px}
+.sandbox{margin-top:auto;display:flex;gap:10px;align-items:center;font-size:11px;border-top:2px dotted var(--ink);padding-top:12px}
+
+/* error */
+.s-err{padding:70px 24px 26px;display:flex;flex-direction:column;align-items:stretch}
+.err-art{position:relative;height:250px;display:grid;place-items:center;margin:10px 0 10px;background:var(--d12);background-size:4px 4px;image-rendering:pixelated;border:2px solid var(--ink)}
+.err-art .px{background:var(--paper);padding:10px;border:2px solid var(--ink)}
+.zz{position:absolute;font:700 22px/1 var(--pxs);animation:zz 3s steps(6) infinite}
+.zz.a{left:252px;top:48px}.zz.b{left:282px;top:24px;font-size:16px;animation-delay:1s}.zz.c{left:306px;top:8px;font-size:12px;animation-delay:2s}
+@keyframes zz{0%{opacity:0;transform:translateY(8px)}30%,70%{opacity:1}100%{opacity:0;transform:translateY(-12px)}}
+.err-h{font:700 36px/1 var(--px);letter-spacing:-.01em;margin:14px 0 10px}
+.err-p{font-size:14px;line-height:1.5}
+.tip{margin:18px 0 0}
+.tip p{padding:12px 14px;font-size:12px;line-height:1.45}
+.big-btn{margin-top:auto;height:64px;width:100%;background:var(--ink);color:var(--paper);font:700 18px/1 var(--pxs);letter-spacing:.06em;box-shadow:0 0 0 4px var(--paper),0 0 0 6px var(--ink)}
+.err-s{text-align:center;font-size:11px;margin-top:14px}
+
+/* ============ D. Mac ============ */
+.mac-g{display:grid;grid-template-columns:400px 1fr;gap:40px;align-items:start}
+.mb-strip{height:32px;border:2px solid var(--ink);display:flex;align-items:center;justify-content:flex-end;gap:14px;padding:0 12px;font:700 12px var(--mono);background:var(--paper)}
+.mb-strip .fs{background:var(--ink);padding:4px 6px;display:flex}
+.mb-strip i{width:14px;height:10px;border:2px solid var(--ink);display:block}
+.pop{margin:10px 0 0 auto;width:340px;position:relative}
+.pop::before{content:"";position:absolute;right:132px;top:-12px;width:12px;height:12px;background:var(--ink);clip-path:polygon(50% 0,100% 100%,0 100%)}
+.pop .body{padding:16px}
+.pop-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.pop-h b{font:700 12px var(--pxs);letter-spacing:.06em}
+.who{display:flex;gap:12px;align-items:center;border:2px solid var(--ink);padding:12px}
+.who strong{font:700 17px/1.1 var(--px);display:block}
+.who small{font-size:11px;display:block}
+.row-c{display:flex;align-items:center;gap:10px;padding:11px 2px;font-size:13px;border-bottom:2px dotted var(--ink)}
+.cbx{width:18px;height:18px;border:2px solid var(--ink);display:grid;place-items:center;flex:none}
+.cbx.on::after{content:"";width:8px;height:8px;background:var(--ink)}
+.row-c em{font-style:normal;font-size:11px;margin-left:auto}
+.pop-btns{display:grid;grid-template-columns:1fr 1.3fr;gap:10px;margin-top:14px}
+.pop-btns button{font:700 11px/1 var(--pxs);border:2px solid var(--ink);padding:12px 6px 11px;letter-spacing:.04em}
+.pop-btns .stop{background:var(--ink);color:var(--paper)}
+.pop-f{display:flex;justify-content:space-between;font-size:12px;margin-top:12px}
+.setup{width:760px;height:500px;display:grid;grid-template-rows:auto 1fr}
+.setup-b{display:grid;grid-template-columns:200px 1fr;min-height:0}
+.steps{border-right:2px solid var(--ink);padding:18px 14px;background:var(--d12);background-size:4px 4px;image-rendering:pixelated}
+.steps ol{list-style:none;display:grid;gap:8px}
+.steps li{display:flex;gap:10px;align-items:center;font:700 11px/1 var(--pxs);letter-spacing:.04em;background:var(--paper);border:2px solid var(--ink);padding:9px 8px}
+.steps li i{width:16px;height:16px;border:2px solid var(--ink);flex:none;display:grid;place-items:center;font-style:normal;font-size:9px}
+.steps li.ok i{background:var(--ink);color:var(--paper)}
+.steps li.cur{background:var(--ink);color:var(--paper)}
+.steps li.cur i{border-color:var(--paper)}
+.steps .ver{margin-top:18px;font-size:10px;background:var(--paper);padding:6px;border:2px solid var(--ink)}
+.set-main{padding:22px 26px;display:flex;flex-direction:column}
+.prog{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+.prog b{font:700 10px var(--pxs);letter-spacing:.06em;white-space:nowrap}
+.bar{flex:1;height:16px;border:2px solid var(--ink);position:relative}
+.bar::after{content:"";position:absolute;left:0;top:0;bottom:0;width:50%;background:var(--d50);background-size:4px 4px;border-right:2px solid var(--ink);animation:fill 2.4s steps(8) infinite alternate}
+@keyframes fill{from{width:38%}to{width:50%}}
+.set-main h3{font:700 32px/1 var(--px);margin-bottom:6px}
+.set-main>p{font-size:13px;margin-bottom:16px}
+.perm{display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;border:2px solid var(--ink);padding:12px 14px;margin-bottom:10px}
+.perm b{font:700 17px/1.1 var(--px);display:block}
+.perm small{font-size:12px}
+.granted{font:700 10px/1 var(--pxs);display:flex;gap:6px;align-items:center;letter-spacing:.04em}
+.perm .btn{padding:10px 12px 9px;font-size:10px}
+.perm .btn.pri::after{display:none}
+.perm .btn.pri{box-shadow:3px 3px 0 var(--ink);animation:nudge 1.6s steps(2) infinite}
+@keyframes nudge{50%{transform:translate(2px,0)}}
+.set-f{margin-top:auto;display:flex;justify-content:space-between;align-items:center;gap:12px;font-size:11px}
+.set-f .btns{display:flex;gap:10px}
+.set-f button{font:700 10px/1 var(--pxs);border:2px solid var(--ink);padding:10px 12px 9px}
+.set-f button[disabled]{border-style:dashed;cursor:not-allowed}
+
+footer{border-top:2px solid var(--ink);padding:40px 0 60px}
+.big-word{font:700 clamp(64px,17vw,230px)/.85 var(--pxs);letter-spacing:-.02em;overflow:hidden;white-space:nowrap}
+.notes{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:26px;font-size:13px}
+.notes h4{font:700 11px var(--pxs);letter-spacing:.06em;margin-bottom:8px}
+.notes ul{padding-left:18px}
+
+@media (max-width:1100px){
+  .mac-g{grid-template-columns:1fr}
+  .pop{margin:10px 0 0}
+}
+@media (max-width:980px){
+  .hero-g,.dir-grid{grid-template-columns:1fr}
+  .how-g{grid-template-columns:1fr;max-width:520px;margin:0 auto}
+  :root{--ds:.82}
+}
+@media (max-width:760px){
+  .price-g,.notes{grid-template-columns:1fr}
+  .nav nav{display:none}
+  section{padding:52px 0}
+}
+@media (max-width:440px){
+  :root{--ds:.8}
+  .w{padding:0 16px}
+  .devs{padding:0 16px;gap:40px}
+  .hero-txt{padding:20px 18px 22px}
+  .sw{grid-template-columns:repeat(2,1fr)}
+  .pop{width:100%}
+  .pop::before{right:120px}
+  .ctas .btn{width:100%;justify-content:center}
+  .hero h1{font-size:44px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ A. DIRECTION HEADER ============ -->
+<header class="dir w" id="a">
+  <div class="dir-top"><span class="tag">FARSIDE · ROUND 1 · 09</span><em>Bold &amp; expressive family</em></div>
+  <h1 class="dir-name">Retro <span>1-bit</span></h1>
+  <p class="dir-mood">Two colours, square pixels, polite beeps. An homage to the first personal computers that stays crisp and quick, and never gets dusty.</p>
+  <div class="dir-grid">
+    <div class="win panel-w">
+      <div class="win-tb"><i class="cb"></i><span>PALETTE.PAT</span></div>
+      <div class="panel">
+        <div class="sw">
+          <div style="background:var(--ink)"><b>INK<small>#141414</small></b></div>
+          <div style="background:var(--paper)"><b>PAPER<small>#EFECE2</small></b></div>
+          <div style="background:var(--d75) 0 0/4px 4px"><b>DITHER 75<small>shadows, pressed</small></b></div>
+          <div style="background:var(--d50) 0 0/4px 4px"><b>DITHER 50<small>depth, drop shadow</small></b></div>
+          <div style="background:var(--d25) 0 0/4px 4px"><b>DITHER 25<small>desktop, dimming</small></b></div>
+          <div style="background:var(--d12) 0 0/4px 4px"><b>DITHER 12<small>quiet fields</small></b></div>
+        </div>
+      </div>
+    </div>
+    <div class="win">
+      <div class="win-tb"><i class="cb"></i><span>TYPE.SPC</span></div>
+      <div class="panel spec">
+        <div><label>DISPLAY · PIXELIFY SANS 700</label><p class="s1">Point. Click. Beep.</p></div>
+        <div><label>LABELS &amp; BUTTONS · SILKSCREEN</label><p class="s2">CONNECT PAIR OK TRY AGAIN</p></div>
+        <div><label>BODY · IBM PLEX MONO</label><p class="s3">Body copy uses a sturdy mono so the pixels can do the showing off. Numbers line up, status lines stay legible at 11 px, and nothing is ever grey.</p></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ B. WEBSITE ============ -->
+<div class="site" id="b">
+  <div class="nav"><div class="w">
+    <a class="logo" href="#b"><span class="px" data-pix="moon" data-s="2"></span>FARSIDE</a>
+    <nav><a href="#how">How it works</a><a href="#price">Pricing</a><a href="#c">The app</a><a href="#d">Mac helper</a></nav>
+    <a class="btn pri" href="#price">DOWNLOAD</a>
+  </div></div>
+
+  <div class="hero"><div class="w hero-g">
+    <div class="win">
+      <div class="win-tb"><i class="cb"></i><span>WELCOME.TXT</span></div>
+      <div class="hero-txt">
+        <span class="kick"><i></i>NOW PLAYING: YOUR MAC, ON YOUR PHONE</span>
+        <h1>Your whole Mac. <span class="nw"><span class="hl">Pocket</span>-sized.</span></h1>
+        <p class="hero-sub">Farside streams your Mac to your iPhone and turns the whole screen into a trackpad. Slide to point, tap to click, and leave the desk exactly where it is.</p>
+        <div class="ctas">
+          <a class="btn pri" href="#price"><span class="px inv" data-pix="dl" data-s="2"></span>DOWNLOAD FOR MAC</a>
+          <a class="btn sec" href="#c"><span class="px" data-pix="phone" data-s="2"></span>GET THE IPHONE APP</a>
+        </div>
+        <p class="micro"><b>Free</b> on your own Wi-Fi. No account. No floppy disks were harmed.</p>
+      </div>
+    </div>
+
+    <div class="win stage-card" id="demo">
+      <div class="win-tb"><i class="cb"></i><span>LIVE DEMO · 1 CONNECTION</span></div>
+      <div class="fit" data-w="640" data-h="526" style="max-width:640px;margin:14px auto 6px">
+        <div class="stage" style="width:640px;height:526px">
+          <div class="mon"><div class="mon-scr"><div class="desk-slot" data-desk></div></div></div>
+          <div class="neck"></div><div class="foot"></div>
+          <div class="sig" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+          <div class="ph"><div class="ph-scr"><i class="isl"></i><div class="ph-cam"><div class="desk-slot" data-desk></div></div>
+            <div class="p-ptr"><span class="px" data-pix="arrow" data-s="2"></span></div>
+            <div class="p-fin"></div>
+          </div></div>
+          <div class="beep">BEEP!</div>
+          <p class="stamp">LEFT: YOUR MAC.<br>RIGHT: YOUR COUCH.</p>
+        </div>
+      </div>
+      <div class="e-note"><p><b>E · SIGNATURE MOTION</b><br>Finger slides, pointer glides after it, the phone view follows the pointer on its own. A tap clicks, the phone buzzes, the Mac says BEEP. Stepped animation keeps it 1-bit.</p><button type="button" id="pause">PAUSE</button></div>
+    </div>
+  </div></div>
+
+  <section id="how"><div class="w">
+    <div class="sec-h"><h2>How it works</h2><p>Three steps. Two apps. Zero accounts. Setup takes about as long as it took a floppy to format.</p></div>
+    <div class="how-g">
+      <div class="win step"><div class="win-tb"><i class="cb"></i><span>STEP_1.APP</span></div><div class="body">
+        <div class="ill"><div><span class="px" data-pix="monitor" data-s="4"></span></div></div>
+        <h3><small>STEP 1</small>Put the helper on your Mac</h3>
+        <p>It moves into your menu bar and stays quiet, like a good houseguest. Grant two permissions and it's ready. We point at exactly which switches to flip.</p>
+      </div></div>
+      <div class="win step"><div class="win-tb"><i class="cb"></i><span>STEP_2.APP</span></div><div class="body">
+        <div class="ill"><div><span class="px" data-pix="qr" data-s="6"></span></div></div>
+        <h3><small>STEP 2</small>Scan the square</h3>
+        <p>Point your iPhone at the QR code on your Mac, then approve it on the Mac. That's the pairing. No password, and no "please confirm your email".</p>
+      </div></div>
+      <div class="win step"><div class="win-tb"><i class="cb"></i><span>STEP_3.APP</span></div><div class="body">
+        <div class="ill"><div><span class="px" data-pix="arrow" data-s="4"></span></div></div>
+        <h3><small>STEP 3</small>Tap Connect. Steer.</h3>
+        <p>Your screen becomes a trackpad. One finger points, a tap clicks (you'll feel it), two fingers scroll, pinch zooms. Swipe up for the keyboard and mic.</p>
+      </div></div>
+    </div>
+    <div class="win dialog-hint" role="img" aria-label="A joke system dialog">
+      <div class="win-tb"><i class="cb"></i><span>ALERT</span></div>
+      <div class="body"><span class="px" data-pix="moon" data-s="4"></span><p><b>Farside wants to make your desk portable.</b><br>Your desk will stay exactly where it is. Only its contents are coming with you.</p></div>
+      <div class="row"><a class="btn sec" href="#how">CANCEL</a><a class="btn pri" href="#price">OBVIOUSLY</a></div>
+    </div>
+  </div></section>
+
+  <section class="price" id="price"><div class="w">
+    <div class="sec-h" style="background:var(--paper);border:2px solid var(--ink);padding:16px 18px"><h2>Pricing</h2><p>Home is free, forever. Pay only when your Mac is at home and you're not.</p></div>
+    <div class="price-g">
+      <div class="win plan"><div class="win-tb"><i class="cb"></i><span>FREE_AT_HOME</span></div><div class="body">
+        <h3>FREE AT HOME</h3>
+        <p class="amt">CA$0</p>
+        <p class="per">On your own Wi-Fi. Forever. Not a trial wearing a moustache.</p>
+        <ul><li>Unlimited sessions on your network</li><li>Full trackpad, keyboard and voice typing</li><li>Clipboard both ways</li><li>No account, ever</li></ul>
+        <a class="btn pri" href="#b"><span class="px inv" data-pix="dl" data-s="2"></span>DOWNLOAD FREE</a>
+      </div></div>
+      <div class="win plan dark"><div class="win-tb"><i class="cb"></i><span>ANYWHERE</span></div><div class="body">
+        <div class="tog" role="group" aria-label="Billing period"><button type="button" aria-pressed="false" data-bill="mo">MONTHLY</button><button type="button" aria-pressed="true" data-bill="yr">YEARLY</button></div>
+        <p class="amt" id="amt">CA$49.99<small>/yr</small></p>
+        <p class="per" id="per">That's CA$4.17 a month. <span class="save">SAVE 30%</span></p>
+        <ul><li>Everything in Free at Home</li><li>Reach your Mac from any network: café, train, the far side of the planet</li><li>No router settings, no port fiddling</li><li>Cancel any time in the App Store</li></ul>
+        <a class="btn" href="#b">GO ANYWHERE</a>
+      </div></div>
+    </div>
+  </div></section>
+</div>
+
+<!-- ============ C. iPHONE ============ -->
+<section id="c">
+  <div class="w"><div class="sec-h"><div><span class="tag">C · IPHONE · 390×844</span><h2 style="margin-top:12px">The app</h2></div><p>Five moments from the phone. The streamed desktop is drawn 1-bit here for the prototype; in the real app your Mac looks like your Mac.</p></div></div>
+  <div class="devs">
+    <!-- 1 Home -->
+    <figure class="dev-slot"><div class="dev-box"><div class="dev"><div class="scr s-home">
+      <div class="sb"><span>9:41</span><span class="sb-r"><i class="bars"></i><i class="batt"></i></span></div><i class="isl"></i>
+      <div class="h-top"><span class="logo"><span class="px" data-pix="moon" data-s="2"></span>FARSIDE</span><span class="chip">HELP</span></div>
+      <h2 class="h-hi">Morning. Your Mac is right where you left it.</h2>
+      <div class="win mc">
+        <div class="win-tb"><i class="cb"></i><span>STUDIO MAC</span></div>
+        <div class="mc-b"><span class="px" data-pix="monitor" data-s="4"></span><div><b>Studio Mac</b><small>MacBook Pro · home office</small><span class="live"><i></i>AWAKE · 12 MS</span></div></div>
+        <div class="mc-m"><span>Home Wi-Fi · last visit 11:48 PM</span><span>(we won't ask)</span></div>
+      </div>
+      <button class="connect" type="button"><span>CONNECT</span><small>It's the big one. You can't miss it.</small></button>
+      <div class="h-list" style="margin-top:34px"><a href="#c"><span>Pair another Mac</span><span>+</span></a><a href="#c"><span>How to steer (40 seconds)</span><span>?</span></a></div>
+      <p class="h-foot">Free on home Wi-Fi · Anywhere plan: off</p>
+    </div></div></div><figcaption><b>1 · HOME</b>One Mac card, one honest status line, one enormous button.</figcaption></figure>
+
+    <!-- 2 Live -->
+    <figure class="dev-slot"><div class="dev-box"><div class="dev"><div class="scr">
+      <div class="cam" style="transform:translateX(-575px)"><div data-desk="1.055"></div></div>
+      <i class="isl"></i>
+      <div class="ptr-big" style="left:166px;top:396px"><span class="halo"></span><span class="px" data-pix="arrow" data-s="3"></span></div>
+      <div class="handle"></div>
+    </div></div></div><figcaption><b>2 · LIVE SESSION</b>Your Mac, full-bleed. A big phone-drawn pointer with a settle-halo. Only the handle shows.</figcaption></figure>
+
+    <!-- 3 Dock -->
+    <figure class="dev-slot"><div class="dev-box"><div class="dev"><div class="scr">
+      <div class="cam" style="transform:translateX(-575px)"><div data-desk="1.055"></div></div>
+      <i class="isl"></i>
+      <div class="ptr-big" style="left:166px;top:300px"><span class="px" data-pix="arrow" data-s="3"></span></div>
+      <div class="dim"></div>
+      <div class="win sheet">
+        <div class="grab"></div>
+        <div class="dk-row">
+          <button class="dk" type="button"><span class="px" data-pix="kbd" data-s="2"></span>KEYS</button>
+          <button class="dk on" type="button"><span class="px" data-pix="mic" data-s="2"></span>MIC</button>
+          <button class="dk" type="button"><span class="px" data-pix="clip" data-s="2"></span>CLIP</button>
+          <button class="dk" type="button"><span class="px" data-pix="fit" data-s="2"></span>FIT</button>
+          <button class="dk" type="button"><span class="px" data-pix="eye" data-s="2"></span>VIEW</button>
+        </div>
+        <div class="dict"><span class="eq"><i></i><i></i><i></i><i></i><i></i></span><p><small>LISTENING…</small>"rename it final final v2"</p><button class="done-btn" type="button">DONE</button></div>
+        <div class="dk-2">
+          <div class="seg"><span>FIT</span><span class="on">FILL</span></div>
+          <div class="seg"><span>VIEW</span><span class="on">CONTROL</span></div>
+        </div>
+        <div class="dk-foot"><span>Studio Mac · 14 ms · crisp</span><button class="end" type="button">END SESSION</button></div>
+      </div>
+    </div></div></div><figcaption><b>3 · DOCK, SWIPED UP</b>Everything hides here: keys, Mic → speak → Done, clipboard, Fit/Fill, View/Control.</figcaption></figure>
+
+    <!-- 4 Coach -->
+    <figure class="dev-slot"><div class="dev-box"><div class="dev"><div class="scr s-coach">
+      <div class="sb"><span>9:41</span><span class="sb-r"><i class="bars"></i><i class="batt"></i></span></div><i class="isl"></i>
+      <div class="co-top"><b>LESSON 2 OF 5 · CLICK</b><button class="skip" type="button">SKIP</button></div>
+      <div class="dots"><i class="f"></i><i class="c"></i><i></i><i></i><i></i></div>
+      <div class="win pad" id="pad" role="button" tabindex="0" aria-label="Practice pad: tap to squeak the duck">
+        <div class="win-tb"><i class="cb"></i><span>SANDBOX.APP</span></div>
+        <div class="pad-in">
+          <div class="duck-ring"></div>
+          <span class="duck px" data-pix="duck" data-s="4"></span>
+          <p class="coach-lbl">THE POINTER IS ON THE DUCK</p>
+          <div class="c-ptr"><span class="px" data-pix="arrow" data-s="2"></span></div>
+          <div class="ghost"></div>
+          <span class="tap-lbl">TAP ANYWHERE</span>
+          <span class="squeak">SQUEAK!</span>
+        </div>
+      </div>
+      <h3 class="co-h">Tap anywhere to click.</h3>
+      <p class="co-p">You don't have to touch the duck. Nobody touches the duck. Tap the glass anywhere and Farside clicks wherever the pointer is. Go on, squeak it.</p>
+      <div class="win next"><div class="win-tb"><i class="cb"></i><span>UP NEXT</span></div><p><b>3 · SCROLL</b> Two fingers. Scroll a list of excuses for not going to the gym until you find a good one.</p></div>
+      <p class="sandbox"><span class="px" data-pix="check" data-s="2"></span>Sandbox: nothing here reaches your Mac.</p>
+    </div></div></div><figcaption><b>4 · GESTURE COACH</b>A real practice pad, not a slideshow. Lesson 2 of 5, skippable, and the duck is tappable here too.</figcaption></figure>
+
+    <!-- 5 Error -->
+    <figure class="dev-slot"><div class="dev-box"><div class="dev"><div class="scr s-err">
+      <div class="sb"><span>9:41</span><span class="sb-r"><i class="bars"></i><i class="batt"></i></span></div><i class="isl"></i>
+      <div class="err-art"><span class="px" data-pix="sleepy" data-s="6"></span><span class="zz a">Z</span><span class="zz b">Z</span><span class="zz c">Z</span></div>
+      <h2 class="err-h">Your Mac is napping.</h2>
+      <p class="err-p">It dozed off, so it can't hear your phone. Tap any key on the Mac or open its lid, then try again.</p>
+      <div class="win tip"><div class="win-tb"><i class="cb"></i><span>TIP.TXT</span></div><p>Want fewer naps? On the Mac, turn on <b>Wake for network access</b> in Battery settings. Once. Then forget we said anything.</p></div>
+      <button class="big-btn" type="button">TRY AGAIN</button>
+      <p class="err-s">We'll keep knocking, quietly, for 2 minutes.</p>
+    </div></div></div><figcaption><b>5 · FRIENDLY ERROR</b>Plain words, no error codes, one clear fix.</figcaption></figure>
+  </div>
+</section>
+
+<!-- ============ D. MAC ============ -->
+<section id="d" style="border-top:2px solid var(--ink)"><div class="w">
+  <div class="sec-h"><div><span class="tag">D · MAC COMPANION</span><h2 style="margin-top:12px">The Mac helper</h2></div><p>A menu-bar icon that inverts when a phone is connected, and a setup window that checks itself.</p></div>
+  <div class="mac-g">
+    <div>
+      <div class="mb-strip"><i></i><span class="fs inv"><span class="px" data-pix="moon" data-s="2"></span></span><span>Wi-Fi</span><span>Tue 9:41</span></div>
+      <div class="win pop">
+        <div class="win-tb"><i class="cb"></i><span>FARSIDE</span></div>
+        <div class="body">
+          <div class="pop-h"><b>SHARING THIS MAC</b><span class="live"><i></i>LIVE</span></div>
+          <div class="who"><span class="px" data-pix="phone" data-s="3"></span><div><strong>Sam's iPhone is steering</strong><small>Home Wi-Fi · 14 ms · 60 fps</small><small>Since 9:12 AM. Hands off the mouse. Or don't.</small></div></div>
+          <div class="row-c"><span class="cbx on"></span>Allow control<em>off = view only</em></div>
+          <div class="row-c"><span class="cbx on"></span>Beep when a phone connects</div>
+          <div class="pop-btns"><button type="button">PAUSE 10 MIN</button><button class="stop" type="button">STOP SHARING</button></div>
+          <div class="pop-f"><span>Settings…</span><span>Pair a phone…</span><span>Quit</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="fit" data-w="770" data-h="510" style="max-width:770px">
+      <div class="stage" style="width:770px;height:510px">
+        <div class="win setup">
+          <div class="win-tb"><i class="cb"></i><span>SET UP FARSIDE</span></div>
+          <div class="setup-b">
+            <div class="steps"><ol>
+              <li class="ok"><i>✓</i>HELLO</li>
+              <li class="cur"><i>2</i>PERMISSIONS</li>
+              <li><i>3</i>PAIR PHONE</li>
+              <li><i>4</i>READY CHECK</li>
+            </ol><p class="ver">Farside for Mac · 1.0<br>Lives in your menu bar.</p></div>
+            <div class="set-main">
+              <div class="prog"><b>STEP 2 OF 4</b><span class="bar"></span><b>1 OF 2 GRANTED</b></div>
+              <h3>Two quick permissions.</h3>
+              <p>Your Mac asks before letting anything see or steer it. Good Mac. Flip these two and we'll notice by ourselves.</p>
+              <div class="perm"><span class="px" data-pix="monitor" data-s="3"></span><div><b>Screen Recording</b><small>So your iPhone can see the screen.</small></div><span class="granted"><span class="px" data-pix="check" data-s="2"></span>GRANTED</span></div>
+              <div class="perm"><span class="px" data-pix="arrow" data-s="2"></span><div><b>Accessibility</b><small>So taps become clicks and typing becomes typing.</small></div><a class="btn pri" href="#d">OPEN SETTINGS</a></div>
+              <div class="set-f"><span>We only look while a phone you approved is connected.</span><span class="btns"><button type="button">BACK</button><button type="button" disabled>CONTINUE</button></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div></section>
+
+<footer><div class="w">
+  <div class="big-word" aria-hidden="true">FARSIDE</div>
+  <div class="notes">
+    <div><h4>WHY THIS DIRECTION</h4><p>1-bit makes Farside instantly recognisable in a sea of glass and gradients, and the constraint forces clarity: every state is black or white, on or off, awake or napping. Humour comes from system-dialog jokes and beeps rather than mascots.</p></div>
+    <div><h4>OPEN QUESTIONS</h4><ul><li>Real app should keep the stream in full colour; 1-bit is chrome only.</li><li>Check Dither patterns at 3× on device for moiré.</li><li>Needs a high-contrast and Dynamic Type pass (pixel type at large sizes).</li></ul></div>
+  </div>
+</div></footer>
+
+<template id="deskTpl">
+<div class="desk">
+  <div class="d-bar"><span class="d-logo"></span><b>Code</b><span>File</span><span>Edit</span><span>View</span><span>Go</span><span>Window</span><span class="d-right"><span>Wi-Fi</span><span>Tue 9:41</span></span></div>
+  <div class="d-win d-ed">
+    <div class="d-tb"><i></i><i></i><i></i><span class="d-tab on">Remote.swift</span><span class="d-tab">Pointer.swift</span></div>
+    <div class="d-edb">
+      <div class="d-tree"><b>FARSIDE</b><span>▾ Sources</span><span class="on">Remote.swift</span><span>Pointer.swift</span><span>Haptics.swift</span><span>Dock.swift</span><span>▸ Tests</span><span>README.md</span></div>
+<pre class="d-code"><span class="c">// Farside: your Mac, from wherever.</span>
+<span class="k">import</span> Foundation
+
+<span class="k">struct</span> <span class="t">Remote</span> {
+  <span class="k">var</span> pointer = <span class="t">Pointer</span>(easing: .<span class="f">silky</span>)
+  <span class="k">var</span> haptics = <span class="k">true</span>
+
+  <span class="k">func</span> <span class="f">tap</span>(at spot: <span class="t">CGPoint</span>) {
+    pointer.<span class="f">click</span>(spot)
+    <span class="k">if</span> haptics { <span class="t">Phone</span>.<span class="f">buzz</span>(.<span class="f">light</span>) }
+  }
+
+  <span class="k">func</span> <span class="f">wake</span>() <span class="k">async</span> {
+    <span class="c">// gently. it just woke up.</span>
+    <span class="k">await</span> mac.<span class="f">nudge</span>(<span class="s">"good morning"</span>)
+  }
+}
+
+<span class="k">let</span> distance = <span class="n">8_421</span> <span class="c">// km. no problem.</span></pre>
+    </div>
+  </div>
+  <div class="d-win d-br">
+    <div class="d-tb"><i></i><i></i><i></i><span class="d-url">localhost:3000/launch</span></div>
+    <div class="d-pg">
+      <div class="d-pg-h"><span class="d-pg-logo"></span><b>Launch day</b><em>v1.0</em></div>
+      <h3>Launch checklist</h3>
+      <ul class="d-chk"><li class="ok">Write the release notes</li><li class="ok">Blame the intern (there is no intern)</li><li data-act="tick">Check it on the phone</li><li>Go outside</li></ul>
+      <div class="d-cards"><i></i><i></i><i></i></div>
+      <button class="d-ship" data-act="ship" type="button"><span class="a">Ship it</span><span class="b">Shipped!</span></button>
+    </div>
+  </div>
+  <div class="d-note"><b>Stuff</b><br>• water plants<br>• ship Farside<br>• call mum back</div>
+  <div class="d-dock"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+  <div class="m-ptr"><span class="px" data-pix="arrow" data-s="3"></span></div>
+</div>
+</template>
+
+<style>
+/* 1-bit mock desktop, 1280x800 */
+.desk{position:absolute;left:0;top:0;width:1280px;height:800px;overflow:hidden;transform-origin:0 0;background:var(--paper) var(--d25);background-size:4px 4px;image-rendering:pixelated;font:15px/1.6 var(--mono);color:var(--ink)}
+.d-bar{position:absolute;left:0;right:0;top:0;height:32px;background:var(--paper);border-bottom:2px solid var(--ink);display:flex;align-items:center;gap:22px;padding:0 18px;font:500 15px var(--mono)}
+.d-bar b{font-weight:700}
+.d-logo{width:16px;height:16px;border:2px solid var(--ink);border-radius:50%;background:linear-gradient(90deg,var(--paper) 50%,var(--ink) 50%)}
+.d-right{margin-left:auto;display:flex;gap:20px}
+.d-win{position:absolute;background:var(--paper);border:2px solid var(--ink);box-shadow:8px 8px 0 var(--ink)}
+.d-tb{height:32px;border-bottom:2px solid var(--ink);display:flex;align-items:center;gap:10px;padding:0 12px;background:repeating-linear-gradient(to bottom,transparent 0 6px,var(--ink) 6px 8px) 0 5px/100% 22px no-repeat}
+.d-tb i{width:16px;height:16px;border:2px solid var(--ink);background:var(--paper);box-shadow:0 0 0 4px var(--paper)}
+.d-tb i+i{display:none}
+.d-tab,.d-url{font:700 13px/1 var(--mono);background:var(--paper);padding:5px 10px;border:2px solid var(--ink)}
+.d-tab.on{background:var(--ink);color:var(--paper)}
+.d-url{margin-left:auto;margin-right:auto;min-width:300px;text-align:center}
+.d-ed{left:30px;top:62px;width:640px;height:530px}
+.d-edb{display:grid;grid-template-columns:170px 1fr;height:calc(100% - 32px)}
+.d-tree{border-right:2px solid var(--ink);padding:14px 12px;display:flex;flex-direction:column;gap:4px;font-size:14px;background:var(--d12);background-size:4px 4px}
+.d-tree b,.d-tree span{background:var(--paper);padding:0 4px;width:max-content}
+.d-tree .on{background:var(--ink);color:var(--paper)}
+.d-code{padding:16px 18px;font:14px/24px var(--mono);white-space:pre;overflow:hidden}
+.d-code .k,.d-code .t{font-weight:700}
+.d-code .c{font-style:italic}
+.d-code .s{text-decoration:underline dotted}
+.d-code .f{text-decoration:underline}
+.d-code .n{background:var(--ink);color:var(--paper)}
+.d-br{left:560px;top:104px;width:680px;height:520px}
+.d-pg{padding:22px 26px}
+.d-pg-h{display:flex;align-items:center;gap:10px;padding-bottom:14px;border-bottom:2px solid var(--ink)}
+.d-pg-h em{margin-left:auto;font-style:normal;border:2px solid var(--ink);padding:0 6px;font-size:12px}
+.d-pg-logo{width:24px;height:24px;background:var(--d50);background-size:4px 4px;border:2px solid var(--ink)}
+.d-pg h3{font:700 34px/1.2 var(--px);margin:16px 0 8px}
+.d-chk{list-style:none;display:grid;gap:6px;font-size:15px}
+.d-chk li{display:flex;gap:12px;align-items:center}
+.d-chk li::before{content:"";width:18px;height:18px;border:2px solid var(--ink);flex:none}
+.d-chk li.ok::before,.d-chk li.done::before{background:var(--ink);box-shadow:inset 0 0 0 3px var(--paper)}
+.d-chk li.ok,.d-chk li.done{text-decoration:line-through}
+.d-cards{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0}
+.d-cards i{height:84px;border:2px solid var(--ink);background:var(--d50);background-size:4px 4px}
+.d-cards i:nth-child(2){background-image:var(--d25)}.d-cards i:nth-child(3){background-image:var(--d12)}
+.d-ship{font:700 16px/1 var(--pxs);background:var(--ink);color:var(--paper);padding:14px 22px;border:2px solid var(--ink);box-shadow:5px 5px 0 var(--ink)}
+.d-ship .b{display:none}.d-ship.done{background:var(--paper);color:var(--ink)}.d-ship.done .a{display:none}.d-ship.done .b{display:inline}
+.d-note{position:absolute;left:70px;top:612px;width:220px;padding:12px 14px;background:var(--paper);border:2px solid var(--ink);box-shadow:6px 6px 0 var(--ink);font-size:15px;line-height:1.5;transform:rotate(-2deg)}
+.d-dock{position:absolute;left:50%;bottom:10px;transform:translateX(-50%);display:flex;gap:10px;padding:9px;background:var(--paper);border:2px solid var(--ink);box-shadow:6px 6px 0 var(--ink)}
+.d-dock i{width:50px;height:50px;border:2px solid var(--ink);background:var(--d50);background-size:4px 4px}
+.d-dock i:nth-child(2n){background-image:var(--d25)}.d-dock i:nth-child(3n){background:var(--ink)}.d-dock i:nth-child(4){background-image:var(--d12)}
+.m-ptr{display:none}
+.mon-scr .m-ptr{display:block}
+</style>
+
+<script>
+(function(){
+  var RM = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var MAPS = {
+    arrow:["#","##","#w#","#ww#","#www#","#wwww#","#wwwww#","#wwwwww#","#wwwwwww#","#wwwwwwww#","#wwwww#####","#ww#ww#","#w# #ww#","##  #ww#","#    #ww#","     #ww#","      ##"],
+    moon:["    ####","  ##wwdd##"," #wwwwdddd#"," #wwwwdddd#","#wwwwwddddd#","#wwwwwddddd#","#wwwwwddddd#","#wwwwwddddd#"," #wwwwdddd#"," #wwwwdddd#","  ##wwdd##","    ####"],
+    monitor:["################","#wwwwwwwwwwwwww#","#w############w#","#w#dddddddddd#w#","#w#dddddddddd#w#","#w#dddddddddd#w#","#w#dddddddddd#w#","#w############w#","#wwwwwwwwwwwwww#","################","      ####","    ########"],
+    sleepy:["####################","#wwwwwwwwwwwwwwwwww#","#w################w#","#w#wwwwwwwwwwwwww#w#","#w#wwwwwwwwwwwwww#w#","#w#ww####ww####ww#w#","#w#wwwwwwwwwwwwww#w#","#w#wwwwwwwwwwwwww#w#","#w#wwwwww##wwwwww#w#","#w#wwwwwwwwwwwwww#w#","#w################w#","#wwwwwwwwwwwwwwwwww#","####################","        ####","      ########"],
+    duck:["    ####","   #wwww#","   #w#ww#","   #wwww####","   #wwww#####","    #www#","#    #www#","##   #wwww#","#w####wwwww#","#wwwwwwwwwww#"," #wwwwwwwwww#","  #wwwwwwww#","   ########"],
+    kbd:["#############","#wwwwwwwwwww#","#w#w#w#w#w#w#","#wwwwwwwwwww#","#w#w#w#w#w#w#","#wwwwwwwwwww#","#ww#######ww#","#wwwwwwwwwww#","#############"],
+    mic:["   ###","  #www#","  #www#","  #www#","  #www#","# #www# #","#  ###  #"," #     #","  #####","    #","    #","  #####"],
+    clip:["   ###","####w####","#ww###ww#","#wwwwwww#","#w#####w#","#wwwwwww#","#w####ww#","#wwwwwww#","#w#####w#","#wwwwwww#","#########"],
+    fit:["####   ####","#         #","#         #","","","","","","#         #","#         #","####   ####"],
+    eye:["    #####","  ##wwwww##"," #www###www#","#www#####www#"," #www###www#","  ##wwwww##","    #####"],
+    dl:["   ###","   ###","   ###","#########"," #######","  #####","   ###","    #","","#########"],
+    phone:["########","#wwwwww#","#w####w#","#w####w#","#w####w#","#w####w#","#w####w#","#w####w#","#w####w#","#wwwwww#","#www#ww#","#wwwwww#","########"],
+    qr:["####.#.####","#ww#..##ww#","#ww#.#.#ww#","####.#.####","..#.##.#.#.","#.##.#..##.",".#..###.#.#","####.#.#.##","#ww#..###..","#ww#.#.#.##","####.##.#.#"],
+    check:["      #","     ##","#   ##","## ##"," ###","  #"]
+  };
+  function pix(name, s){
+    var rows = MAPS[name]; if(!rows) return '';
+    var W = 0, r = '';
+    rows.forEach(function(row, y){
+      W = Math.max(W, row.length);
+      for(var x=0;x<row.length;x++){
+        var c=row[x], cl=null;
+        if(c==='#') cl='i'; else if(c==='w') cl='p'; else if(c==='d') cl=((x+y)%2?'p':'i');
+        if(cl) r+='<rect class="'+cl+'" x="'+x+'" y="'+y+'" width="1" height="1"/>';
+      }
+    });
+    return '<svg viewBox="0 0 '+W+' '+rows.length+'" width="'+(W*s)+'" height="'+(rows.length*s)+'" shape-rendering="crispEdges" aria-hidden="true">'+r+'</svg>';
+  }
+  function paint(scope){
+    scope.querySelectorAll('[data-pix]').forEach(function(el){ if(!el.firstChild) el.innerHTML = pix(el.dataset.pix, +(el.dataset.s||2)); if(!el.classList.contains('px')) el.classList.add('px'); });
+  }
+  var tpl = document.getElementById('deskTpl');
+  document.querySelectorAll('[data-desk]').forEach(function(slot){
+    slot.appendChild(tpl.content.cloneNode(true));
+    var sc = parseFloat(slot.dataset.desk);
+    if(sc) slot.querySelector('.desk').style.transform = 'scale('+sc+')';
+  });
+  paint(document);
+
+  var fits = document.querySelectorAll('.fit');
+  function fit(f){ var w=+f.dataset.w, h=+f.dataset.h, s=Math.min(1, f.clientWidth/w); f.style.height=(h*s)+'px'; f.firstElementChild.style.transform='scale('+s+')'; }
+  if('ResizeObserver' in window){ var ro=new ResizeObserver(function(es){ es.forEach(function(e){ fit(e.target); }); }); fits.forEach(function(f){ ro.observe(f); }); }
+  fits.forEach(fit); window.addEventListener('resize', function(){ fits.forEach(fit); });
+
+  /* pricing toggle */
+  var amt=document.getElementById('amt'), per=document.getElementById('per');
+  document.querySelectorAll('[data-bill]').forEach(function(b){ b.addEventListener('click', function(){
+    document.querySelectorAll('[data-bill]').forEach(function(x){ x.setAttribute('aria-pressed', x===b?'true':'false'); });
+    if(b.dataset.bill==='mo'){ amt.innerHTML='CA$5.99<small>/mo</small>'; per.innerHTML='Month to month. Leave whenever.'; }
+    else { amt.innerHTML='CA$49.99<small>/yr</small>'; per.innerHTML='That’s CA$4.17 a month. <span class="save">SAVE 30%</span>'; }
+  }); });
+
+  /* coach pad */
+  var pad=document.getElementById('pad');
+  function squeak(){ pad.classList.remove('won'); void pad.offsetWidth; pad.classList.add('won'); }
+  pad.addEventListener('click', squeak); pad.addEventListener('keydown', function(e){ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); squeak(); } });
+
+  /* signature demo */
+  var root=document.getElementById('demo');
+  var macDesk=root.querySelector('.mon-scr .desk'), cam=root.querySelector('.ph-cam'), pPtr=root.querySelector('.p-ptr'), fin=root.querySelector('.p-fin'), phone=root.querySelector('.ph'), phScr=root.querySelector('.ph-scr'), mPtr=macDesk.querySelector('.m-ptr'), beep=root.querySelector('.beep');
+  var PS=.4375, PW=160, MS=.375, MX=16, MY=40;
+  var path=[
+    {x:420,y:330,d:900,w:500},
+    {sel:'[data-act=tick]',ax:.03,ay:.5,d:1300,w:700,c:1,a:'tick'},
+    {sel:'[data-act=ship]',ax:.5,ay:.6,d:1100,w:1400,c:1,a:'ship'},
+    {sel:'.d-note',ax:.55,ay:.55,d:1400,w:900},
+    {x:300,y:220,d:1300,w:600}
+  ];
+  function pos(p){
+    if(!p.sel) return {x:p.x,y:p.y};
+    var el=macDesk.querySelector(p.sel), d=macDesk.getBoundingClientRect(), r=el.getBoundingClientRect(), s=d.width/1280;
+    if(s<.01) return {x:640,y:400};
+    return {x:(r.left-d.left+r.width*(p.ax==null?.5:p.ax))/s, y:(r.top-d.top+r.height*(p.ay==null?.5:p.ay))/s};
+  }
+  function ease(t){ return t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2; }
+  var cur={x:path[0].x,y:path[0].y}, from=cur, to=cur, i=0, t0=0, phase='wait', camX=0, last=0, running=true, visible=true, raf=null;
+  function camIdeal(){ return Math.max(0, Math.min(1280*PS-PW, cur.x*PS-PW/2)); }
+  function render(dt){
+    mPtr.style.transform='translate('+cur.x+'px,'+cur.y+'px)';
+    var k = dt==null ? 1 : 1-Math.pow(1-.075, dt/16.7);
+    camX += (camIdeal()-camX)*k;
+    cam.style.transform='translateX('+(-camX)+'px)';
+    var sx=cur.x*PS-camX, sy=cur.y*PS;
+    pPtr.style.transform='translate('+sx+'px,'+sy+'px)';
+    fin.style.transform='translate('+(sx+34)+'px,'+(sy+92)+'px)';
+  }
+  function ripple(parent,x,y){ var r=document.createElement('i'); r.className='rip'; r.style.left=x+'px'; r.style.top=y+'px'; parent.appendChild(r); setTimeout(function(){ r.remove(); },700); }
+  function click(a){
+    ripple(macDesk,cur.x,cur.y); ripple(phScr,cur.x*PS-camX,cur.y*PS);
+    fin.classList.add('press'); setTimeout(function(){ fin.classList.remove('press'); },160);
+    phone.classList.remove('buzz'); void phone.offsetWidth; phone.classList.add('buzz');
+    if(a) root.querySelectorAll('[data-act="'+a+'"]').forEach(function(e){ e.classList.add('done'); });
+    beep.style.left=(MX+cur.x*MS-6)+'px'; beep.style.top=(MY+cur.y*MS-46)+'px';
+    beep.textContent = a==='ship' ? 'BEEP BOOP!' : 'BEEP!';
+    beep.classList.remove('on'); void beep.offsetWidth; beep.classList.add('on');
+  }
+  function next(now){
+    i=(i+1)%path.length;
+    if(i===0) root.querySelectorAll('[data-act].done').forEach(function(e){ e.classList.remove('done'); });
+    from={x:cur.x,y:cur.y}; to=pos(path[i]); t0=now; phase='move';
+  }
+  function frame(now){
+    var dt = last ? Math.min(64, now-last) : 16.7; last=now;
+    var p=path[i];
+    if(phase==='move'){
+      var t=Math.min(1,(now-t0)/(p.d||1000)), e=ease(t), arc=Math.sin(Math.PI*t)*40;
+      var dx=to.x-from.x, dy=to.y-from.y, len=Math.hypot(dx,dy)||1;
+      cur={x:from.x+dx*e+(-dy/len)*arc, y:from.y+dy*e+(dx/len)*arc};
+      if(t>=1){ phase='wait'; t0=now; if(p.c) click(p.a); }
+    } else if(now-t0>(p.w||600)) next(now);
+    render(dt);
+    raf = (running&&visible) ? requestAnimationFrame(frame) : null;
+  }
+  function start(){ if(!raf && running && visible){ last=0; t0=performance.now()-((phase==='wait')?0:0); raf=requestAnimationFrame(frame); } }
+  if(RM){
+    cur=pos(path[2]); root.querySelector('[data-act=tick]') && root.querySelectorAll('[data-act=tick]').forEach(function(e){e.classList.add('done');});
+    camX=camIdeal(); render(); var pb=document.getElementById('pause'); pb.textContent='STILL (REDUCED MOTION)'; pb.disabled=true;
+  } else {
+    render(); t0=performance.now(); start();
+    if('IntersectionObserver' in window){ new IntersectionObserver(function(es){ visible=es[0].isIntersecting; start(); }).observe(root); }
+    document.getElementById('pause').addEventListener('click', function(){ running=!running; this.textContent=running?'PAUSE':'PLAY'; start(); });
+  }
+})();
+</script>
+</body>
+</html>

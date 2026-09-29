@@ -1,0 +1,818 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Farside — Glass</title>
+<meta name="description" content="Farside round 1, direction 01: Glass. Apple-native Liquid Glass; the humour lives in the copy.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --fog:#EEF1F5; --ink:#0E1116; --slate:#5A6472; --blue:#0A72F0; --sea:#8FE0CF; --apri:#FFC49B; --sky:#CFE0F7;
+  --line:rgba(14,17,22,.08); --ok:#1FB46A; --warn:#E5484D;
+  --display:-apple-system,BlinkMacSystemFont,"SF Pro Display","Geist",system-ui,"Helvetica Neue",Arial,sans-serif;
+  --sans:-apple-system,BlinkMacSystemFont,"SF Pro Text","Geist",system-ui,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono","Geist Mono",Menlo,monospace;
+  --r-card:28px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{background:var(--fog);color:var(--ink);font:400 17px/1.5 var(--sans);-webkit-font-smoothing:antialiased;overflow-x:clip;min-height:100vh}
+a{color:inherit;text-decoration:none}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+:focus-visible{outline:2.5px solid var(--blue);outline-offset:3px;border-radius:10px}
+.wrap{width:min(1160px,100% - 32px);margin-inline:auto}
+.aura{position:fixed;inset:0;z-index:-1;pointer-events:none;background:
+  radial-gradient(40vmax 34vmax at 12% 8%,rgba(143,224,207,.55),transparent 70%),
+  radial-gradient(36vmax 30vmax at 92% 22%,rgba(255,196,155,.5),transparent 70%),
+  radial-gradient(44vmax 36vmax at 60% 100%,rgba(207,224,247,.8),transparent 70%);
+  animation:breathe 14s ease-in-out infinite alternate}
+@keyframes breathe{to{filter:hue-rotate(-12deg) saturate(1.15);transform:scale(1.04)}}
+.glass{background:linear-gradient(160deg,rgba(255,255,255,.74),rgba(255,255,255,.36));-webkit-backdrop-filter:blur(24px) saturate(170%);backdrop-filter:blur(24px) saturate(170%);border:1px solid rgba(255,255,255,.75);box-shadow:inset 0 1px 0 rgba(255,255,255,.95),inset 0 -1px 0 rgba(255,255,255,.3),0 1px 2px rgba(16,24,40,.05),0 16px 40px -12px rgba(16,24,40,.16)}
+.tag{font:500 11.5px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--slate)}
+.part{display:flex;align-items:center;gap:12px;margin:0 0 22px}
+.part::after{content:"";flex:1;height:1px;background:var(--line)}
+section.block{padding:72px 0}
+
+/* ---------- A. Direction header ---------- */
+.dir{padding:28px 0 8px}
+.dir-card{border-radius:var(--r-card);padding:clamp(22px,4vw,40px);display:grid;grid-template-columns:1.1fr 1fr;gap:clamp(20px,4vw,48px)}
+.dir h1{font:600 clamp(48px,8vw,88px)/.95 var(--display);letter-spacing:-.035em;margin:14px 0 12px}
+.dir .mood{font-size:19px;color:var(--slate);max-width:32ch}
+.dir .motion{margin-top:18px;font:13px/1.5 var(--mono);color:var(--slate)}
+.sw{list-style:none;display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.sw li{border-radius:16px;padding:10px;background:rgba(255,255,255,.5);border:1px solid rgba(255,255,255,.8)}
+.sw i{display:block;height:44px;border-radius:11px;background:var(--c);box-shadow:inset 0 0 0 1px rgba(0,0,0,.06),inset 0 1px 0 rgba(255,255,255,.6)}
+.sw b{display:block;font-size:13px;margin-top:8px}
+.sw code{font:11.5px var(--mono);color:var(--slate)}
+.spec{margin-top:16px;display:grid;gap:10px}
+.spec div{display:flex;justify-content:space-between;align-items:baseline;gap:12px;border-top:1px solid var(--line);padding-top:10px}
+.spec .s1{font:600 30px/1.05 var(--display);letter-spacing:-.03em}
+.spec .s2{font:400 16px/1.4 var(--sans)}
+.spec .s3{font:500 13px var(--mono);color:var(--slate)}
+.spec small{font:11px var(--mono);color:var(--slate);white-space:nowrap}
+
+/* ---------- B. Website ---------- */
+.site{position:relative}
+.nav{position:sticky;top:12px;z-index:30;margin:0 auto;width:min(760px,100% - 32px);border-radius:999px;display:flex;align-items:center;gap:8px;padding:8px 8px 8px 18px}
+.brand{display:flex;align-items:center;gap:9px;font:600 18px/1 var(--display);letter-spacing:-.02em}
+.nav nav{display:flex;gap:4px;margin-left:auto}
+.nav nav a{font-size:14px;padding:8px 12px;border-radius:999px;color:#2a3140}
+.nav nav a:hover{background:rgba(255,255,255,.7)}
+.nav .dl{font-size:14px;font-weight:600;background:var(--ink);color:#fff;border-radius:999px;padding:9px 15px}
+.hero{text-align:center;padding:72px 0 40px}
+.pill{display:inline-flex;align-items:center;gap:8px;border-radius:999px;padding:7px 14px 7px 8px;font-size:14px;color:#2a3140}
+.pill b{font:600 11px/1 var(--mono);letter-spacing:.06em;background:var(--ink);color:#fff;border-radius:999px;padding:5px 8px}
+.h-hero{font:600 clamp(44px,8.4vw,104px)/.96 var(--display);letter-spacing:-.045em;margin:26px auto 22px;max-width:12ch}
+.h-hero em{font-style:normal;background:linear-gradient(100deg,#0A72F0 10%,#18A99A 60%,#F08A4B);-webkit-background-clip:text;background-clip:text;color:transparent}
+.h-hero .w{display:inline-block;opacity:0;transform:translateY(14px);animation:rise .9s cubic-bezier(.2,.8,.2,1) forwards;animation-delay:calc(var(--i)*90ms + 100ms)}
+@keyframes rise{to{opacity:1;transform:none}}
+.sub{font-size:clamp(18px,2vw,21px);line-height:1.45;color:#3a4352;max-width:36ch;margin:0 auto}
+.ctas{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:30px}
+.btn{display:inline-flex;align-items:center;gap:9px;border-radius:999px;padding:15px 24px;font-weight:600;font-size:16px;transition:transform .25s cubic-bezier(.2,.8,.2,1)}
+.btn:hover{transform:translateY(-1px)}
+.btn.primary{background:var(--blue);color:#fff;box-shadow:0 10px 24px -8px rgba(10,114,240,.6),inset 0 1px 0 rgba(255,255,255,.35)}
+.btn.ghost{color:var(--ink)}
+.btn svg{width:18px;height:18px}
+.fine{margin-top:16px;font-size:13.5px;color:var(--slate)}
+
+/* stage */
+.stage{position:relative;width:min(1000px,100%);margin:52px auto 0;aspect-ratio:100/63}
+.mb{position:absolute;left:0;top:0;width:80%}
+.mb-lid{background:#0c0d0f;border-radius:clamp(8px,1.6vw,20px);padding:1.5% 1.5% 2.2%;box-shadow:0 0 0 1.5px #c0c5cd,0 50px 90px -40px rgba(20,30,50,.5)}
+.mb-disp{position:relative;aspect-ratio:16/10;overflow:hidden;border-radius:clamp(3px,.5vw,6px);background:#dfe7ef}
+.mview,.pview{position:absolute;inset:0;overflow:hidden}
+.m-over,.p-over{position:absolute;inset:0;pointer-events:none}
+.mb-base{position:relative;height:clamp(7px,1.5vw,16px);margin:0 -6%;border-radius:0 0 50% 50%/0 0 100% 100%;background:linear-gradient(#e3e6ea,#a7adb6)}
+.mb-base::before{content:"";position:absolute;left:43%;right:43%;top:0;height:40%;border-radius:0 0 8px 8px;background:#b9bec6}
+.lens{position:absolute;left:0;top:0;border-radius:clamp(4px,.8vw,10px);box-shadow:0 0 0 1.5px rgba(255,255,255,.95),0 0 0 4px rgba(10,114,240,.25),0 0 0 9999px rgba(12,18,30,.22);will-change:transform}
+.lens::after{content:"iPhone view";position:absolute;left:0;top:-2.2em;font:600 clamp(7px,1vw,10px)/1 var(--mono);color:#fff;background:rgba(10,114,240,.9);padding:4px 6px;border-radius:6px;white-space:nowrap}
+.m-ptr{position:absolute;left:0;top:0;width:12px;margin:-1px 0 0 -1.5px;will-change:transform;filter:drop-shadow(0 1px 1px rgba(0,0,0,.3))}
+.ph{position:absolute;right:1%;bottom:0;width:23%;aspect-ratio:414/868;border-radius:15%/7.2%;background:#15171a;padding:2.4%;box-shadow:0 0 0 1.5px #c6cbd2,inset 0 0 0 1px #2b2e33,0 40px 70px -24px rgba(20,30,50,.55)}
+.ph-scr{position:relative;width:100%;height:100%;border-radius:12.5%/5.9%;overflow:hidden;background:#000}
+.ph .isl{position:absolute;z-index:5;top:2.2%;left:50%;width:31%;height:4.2%;transform:translateX(-50%);background:#000;border-radius:99px}
+.ph .hdl{position:absolute;z-index:5;bottom:2.4%;left:50%;width:22%;height:1%;min-height:3px;transform:translateX(-50%);border-radius:9px;background:rgba(255,255,255,.75);box-shadow:0 0 0 1px rgba(0,0,0,.15)}
+.p-ptr{position:absolute;left:0;top:0;width:clamp(12px,2vw,20px);margin:-2px 0 0 -2px;will-change:transform;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35));z-index:3}
+.p-halo{--hs:clamp(22px,4.4vw,44px);position:absolute;left:0;top:0;width:var(--hs);height:var(--hs);margin:calc(var(--hs)/-2) 0 0 calc(var(--hs)/-2);border-radius:50%;background:radial-gradient(circle,rgba(255,255,255,.1) 40%,rgba(255,255,255,.55) 62%,rgba(10,114,240,.35) 66%,transparent 72%);opacity:0;transition:opacity .35s;z-index:2}
+.stage.settled .p-halo{opacity:1}
+.finger{--fs:clamp(14px,3.4vw,34px);position:absolute;left:0;top:0;width:var(--fs);height:var(--fs);margin:calc(var(--fs)/-2) 0 0 calc(var(--fs)/-2);border-radius:50%;background:radial-gradient(circle at 40% 35%,rgba(255,255,255,.85),rgba(255,255,255,.35) 60%,rgba(255,255,255,.15));box-shadow:0 0 0 1px rgba(255,255,255,.7),0 6px 16px rgba(0,0,0,.25);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);opacity:0;transition:opacity .25s;z-index:4}
+.stage.moving .finger,.stage.settled .finger{opacity:1}
+.rip{--rs:clamp(20px,4vw,40px);position:absolute;width:var(--rs);height:var(--rs);margin:calc(var(--rs)/-2) 0 0 calc(var(--rs)/-2);border-radius:50%;border:2px solid #fff;box-shadow:0 0 0 1px rgba(10,114,240,.5);animation:rip .65s cubic-bezier(.2,.8,.2,1) forwards;pointer-events:none}
+.rip.sm{width:18px;height:18px;margin:-9px 0 0 -9px}
+@keyframes rip{from{transform:scale(.2);opacity:1}to{transform:scale(1.7);opacity:0}}
+.ph.tick{animation:tick .14s linear}
+@keyframes tick{25%{translate:-1px 0}75%{translate:1px 0}}
+.stage-cap{display:flex;justify-content:center;gap:10px 18px;flex-wrap:wrap;margin-top:22px;font-size:14px;color:var(--slate)}
+.stage-cap span{display:inline-flex;align-items:center;gap:7px}
+.stage-cap i{width:8px;height:8px;border-radius:50%;background:var(--blue)}
+
+/* how */
+.sec-h{font:600 clamp(34px,5vw,56px)/1 var(--display);letter-spacing:-.035em;max-width:16ch}
+.sec-p{color:#3a4352;font-size:19px;max-width:44ch;margin-top:14px}
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:40px;counter-reset:s}
+.step{border-radius:var(--r-card);padding:22px 22px 26px;position:relative}
+.step .ill{height:170px;border-radius:20px;background:rgba(255,255,255,.55);border:1px solid rgba(255,255,255,.8);position:relative;overflow:hidden;margin-bottom:20px}
+.step h3{font:600 22px/1.15 var(--display);letter-spacing:-.02em;display:flex;gap:10px;align-items:baseline}
+.step h3::before{counter-increment:s;content:counter(s);font:500 12px var(--mono);color:#fff;background:var(--ink);border-radius:99px;width:22px;height:22px;display:inline-grid;place-items:center;flex:none;transform:translateY(-3px)}
+.step p{color:#465063;font-size:16px;margin-top:8px}
+/* step illos */
+.ill-mb{position:absolute;inset:0;background:linear-gradient(160deg,#bfe9df,#ffe0cb)}
+.ill-mb .bar{position:absolute;left:0;right:0;top:0;height:30px;background:rgba(255,255,255,.7);display:flex;justify-content:flex-end;align-items:center;gap:14px;padding:0 14px;font:600 12px var(--sans)}
+.ill-mb .bar i{width:14px;height:10px;border:1.6px solid #333;border-radius:2px}
+.ill-mb .fs{width:22px;height:22px;border-radius:7px;display:grid;place-items:center;background:rgba(10,114,240,.15);box-shadow:0 0 0 2px rgba(10,114,240,.35);animation:blink 2.4s ease-in-out infinite}
+@keyframes blink{50%{box-shadow:0 0 0 6px rgba(10,114,240,.08)}}
+.ill-mb .pop{position:absolute;right:10px;top:38px;width:62%;border-radius:14px;padding:10px 12px;font-size:12px;line-height:1.35}
+.ill-mb .pop b{display:block;font-size:13px}
+.ill-mb .pop span{color:var(--ok);font-weight:600}
+.ill-qr{display:grid;place-items:center;background:linear-gradient(160deg,#e8f1ff,#fdeee2)}
+.ill-qr svg{width:112px;height:112px;border-radius:14px;background:#fff;padding:9px;box-shadow:0 8px 20px -8px rgba(0,0,0,.25)}
+.ill-qr .scan{position:absolute;left:50%;top:50%;width:140px;height:140px;margin:-70px;border-radius:26px;box-shadow:0 0 0 2px rgba(10,114,240,.8);animation:lock 2.6s cubic-bezier(.2,.8,.2,1) infinite}
+@keyframes lock{0%{transform:scale(1.25);opacity:0}40%,80%{transform:scale(1);opacity:1}100%{opacity:0}}
+.ill-pad{background:linear-gradient(160deg,#dff5ef,#e9eefc)}
+.ill-pad .pp{position:absolute;left:50%;top:26px;transform:translateX(-50%);width:210px;height:118px;border-radius:14px;background:rgba(255,255,255,.75);box-shadow:inset 0 0 0 1px rgba(0,0,0,.05)}
+.ill-pad .pp svg{position:absolute;width:15px;left:0;top:0;animation:pmove 3.2s cubic-bezier(.45,0,.2,1) infinite}
+.ill-pad .tf{position:absolute;width:26px;height:26px;border-radius:50%;background:rgba(10,114,240,.18);box-shadow:0 0 0 1.5px rgba(10,114,240,.5);left:0;top:0;animation:fmove 3.2s cubic-bezier(.45,0,.2,1) infinite}
+@keyframes pmove{0%{transform:translate(40px,80px)}45%,100%{transform:translate(150px,34px)}}
+@keyframes fmove{0%{transform:translate(70px,120px);opacity:0}8%{opacity:1}45%{transform:translate(120px,98px);opacity:1}55%,100%{transform:translate(120px,98px);opacity:0}}
+
+/* pricing */
+.price-top{display:flex;justify-content:space-between;align-items:end;gap:20px;flex-wrap:wrap}
+.toggle{display:inline-flex;border-radius:999px;padding:4px}
+.toggle button{padding:9px 16px;border-radius:999px;font-size:14px;font-weight:600;color:var(--slate)}
+.toggle button[aria-pressed="true"]{background:#fff;color:var(--ink);box-shadow:0 2px 8px -2px rgba(0,0,0,.15)}
+.toggle small{color:var(--ok);font-weight:600}
+.plans{display:grid;grid-template-columns:1fr 1.15fr;gap:18px;margin-top:34px}
+.plan{border-radius:var(--r-card);padding:30px}
+.plan h3{font:600 15px/1 var(--sans);color:var(--slate)}
+.plan .amt{font:600 58px/1 var(--display);letter-spacing:-.04em;margin:18px 0 6px;display:flex;align-items:baseline;gap:8px}
+.plan .amt small{font:500 16px var(--sans);letter-spacing:0;color:var(--slate)}
+.plan .desc{color:#3a4352}
+.plan ul{list-style:none;margin:22px 0 26px;display:grid;gap:10px;font-size:16px}
+.plan li{display:flex;gap:10px;align-items:flex-start}
+.plan li svg{width:18px;height:18px;flex:none;color:var(--blue);margin-top:3px}
+.plan.hot{background:linear-gradient(160deg,rgba(255,255,255,.85),rgba(255,255,255,.45)),linear-gradient(120deg,rgba(143,224,207,.5),rgba(255,196,155,.5))}
+.plan .btn{width:100%;justify-content:center}
+.plan .btn.soft{background:rgba(14,17,22,.06)}
+.foot{padding:40px 0 70px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap;color:var(--slate);font-size:14px;border-top:1px solid var(--line)}
+
+/* ---------- C. Phones ---------- */
+.row{display:flex;flex-wrap:wrap;justify-content:center;gap:40px 36px}
+.dev-wrap{display:flex;flex-direction:column;align-items:center;gap:14px;zoom:.86}
+.cap{max-width:380px;text-align:center}
+.cap b{display:block;font:600 18px var(--display);letter-spacing:-.01em}
+.cap span{color:var(--slate);font-size:15px}
+.device{width:414px;height:868px;border-radius:66px;padding:12px;background:#15171a;box-shadow:0 0 0 2px #c6cbd2,inset 0 0 0 1.5px #30343a,0 40px 80px -30px rgba(20,30,50,.45);flex:none}
+.scr{position:relative;width:390px;height:844px;border-radius:54px;overflow:hidden;background:#F2F4F7;isolation:isolate}
+.isl{position:absolute;top:11px;left:50%;width:124px;height:36px;transform:translateX(-50%);background:#000;border-radius:20px;z-index:60}
+.sbar{position:absolute;left:0;right:0;top:0;height:54px;padding:18px 30px 0 44px;display:flex;justify-content:space-between;font:600 16px/1 var(--sans);z-index:50;color:var(--ink)}
+.sbar.light{color:#fff}
+.sbar .r{display:flex;gap:6px;align-items:center}
+.sbar svg{height:12px;width:auto}
+.homebar{position:absolute;bottom:8px;left:50%;width:138px;height:5px;margin-left:-69px;border-radius:9px;background:var(--ink);z-index:60}
+.homebar.light{background:rgba(255,255,255,.85)}
+/* home */
+.home{background:linear-gradient(180deg,#e9f5f2 0,#F2F4F7 36%,#f8efe8 100%)}
+.hm{position:absolute;inset:54px 0 0;padding:14px 20px}
+.hm-top{display:flex;justify-content:space-between;align-items:center}
+.hm-top h3{font:700 34px/1 var(--display);letter-spacing:-.03em;display:flex;align-items:center;gap:10px}
+.circ{width:40px;height:40px;border-radius:50%;display:grid;place-items:center}
+.circ svg{width:20px;height:20px}
+.hm-hi{color:var(--slate);font-size:15px;margin:10px 0 18px}
+.mcard{border-radius:30px;padding:18px}
+.mcard .art{height:170px;border-radius:20px;background:linear-gradient(160deg,#cfeee6,#fde3d1);position:relative;overflow:hidden}
+.mini-mac{position:absolute;left:50%;top:26px;transform:translateX(-50%);width:190px}
+.mini-mac .lid{background:#111;border-radius:10px;padding:5px;box-shadow:0 0 0 1px #bbb}
+.mini-mac .lid i{display:block;aspect-ratio:16/10;border-radius:4px;background:radial-gradient(60% 70% at 20% 30%,#9fe5d6,transparent 60%),radial-gradient(50% 60% at 85% 70%,#ffcfae,transparent 60%),#e6edf4;position:relative}
+.mini-mac .lid i::after{content:"";position:absolute;left:18%;top:22%;width:48%;height:52%;border-radius:4px;background:#1e2230;box-shadow:14px -8px 0 -2px #fff}
+.mini-mac .base{height:8px;margin:0 -12px;border-radius:0 0 12px 12px;background:linear-gradient(#e5e8ec,#a9afb8)}
+.mcard .nm{display:flex;justify-content:space-between;align-items:center;margin-top:16px}
+.mcard .nm b{font:600 22px var(--display);letter-spacing:-.02em}
+.mcard .nm small{font-size:14px;color:var(--slate)}
+.status{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:15px;color:#2b3342}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 4px rgba(31,180,106,.18);animation:pulse 2.4s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 7px rgba(31,180,106,.05)}}
+.connect{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:62px;margin-top:18px;border-radius:999px;background:var(--blue);color:#fff;font:600 19px var(--sans);box-shadow:0 14px 30px -10px rgba(10,114,240,.65),inset 0 1px 0 rgba(255,255,255,.35)}
+.seg{display:flex;margin-top:14px;border-radius:999px;padding:4px;background:rgba(14,17,22,.06)}
+.seg span{flex:1;text-align:center;padding:9px;border-radius:999px;font-size:14px;font-weight:600;color:var(--slate)}
+.seg span.on{background:#fff;color:var(--ink);box-shadow:0 2px 8px -2px rgba(0,0,0,.15)}
+.facts{margin-top:14px;border-radius:22px;padding:4px 16px}
+.facts p{display:flex;justify-content:space-between;padding:11px 0;font-size:14.5px;border-bottom:1px solid var(--line)}
+.facts p:last-child{border:0}
+.facts span{color:var(--slate)}
+.hm-foot{position:absolute;left:20px;right:20px;bottom:34px;border-radius:22px;padding:14px 16px;font-size:14px;color:#3a4352;display:flex;gap:12px;align-items:center}
+.hm-foot svg{width:22px;height:22px;color:var(--blue);flex:none}
+.hm-foot a{color:var(--blue);font-weight:600}
+/* session */
+.pv .dsk{transform:translate(var(--tx),var(--ty)) scale(var(--s))}
+.bigptr{position:absolute;width:30px;margin:-3px 0 0 -3px;z-index:20;filter:drop-shadow(0 3px 5px rgba(0,0,0,.35))}
+.halo{position:absolute;width:64px;height:64px;margin:-32px 0 0 -32px;border-radius:50%;z-index:19;background:radial-gradient(circle,rgba(255,255,255,.05) 45%,rgba(255,255,255,.6) 64%,rgba(10,114,240,.45) 68%,transparent 74%);animation:settle 3s ease-in-out infinite}
+@keyframes settle{0%,15%{opacity:0;transform:scale(.8)}30%,70%{opacity:1;transform:scale(1)}90%,100%{opacity:0;transform:scale(1)}}
+.handle{position:absolute;left:50%;bottom:14px;width:64px;height:24px;margin-left:-32px;border-radius:99px;z-index:30;display:grid;place-items:center}
+.handle i{width:36px;height:5px;border-radius:9px;background:rgba(14,17,22,.75)}
+/* dock sheet */
+.dock{position:absolute;left:10px;right:10px;bottom:10px;border-radius:40px;padding:10px 16px 22px;z-index:30}
+.dock .grab{width:40px;height:5px;border-radius:9px;background:rgba(14,17,22,.25);margin:0 auto 12px}
+.dock-top{display:flex;justify-content:space-between;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:600;padding:8px 12px;border-radius:99px;background:rgba(255,255,255,.6)}
+.chip .dot{width:8px;height:8px}
+.end{color:#fff;background:var(--warn);font-weight:600;font-size:15px;padding:9px 18px;border-radius:99px}
+.tiles{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-top:14px}
+.tile{display:flex;flex-direction:column;align-items:center;gap:7px;font-size:11.5px;font-weight:600;color:#2b3342}
+.tile span{width:56px;height:56px;border-radius:20px;display:grid;place-items:center;background:rgba(255,255,255,.7);box-shadow:inset 0 1px 0 #fff,0 1px 3px rgba(0,0,0,.08)}
+.tile svg{width:24px;height:24px}
+.tile.on span{background:var(--blue);color:#fff;box-shadow:0 6px 16px -6px rgba(10,114,240,.7)}
+.toast{position:absolute;left:24px;right:24px;bottom:236px;border-radius:20px;padding:12px 14px;display:flex;gap:10px;align-items:center;font-size:14px;z-index:31}
+.toast svg{width:22px;height:22px;color:var(--blue);flex:none}
+.toast code{font:12.5px var(--mono);background:rgba(14,17,22,.06);padding:2px 6px;border-radius:6px}
+/* coach */
+.coach{background:linear-gradient(170deg,#dff4ee,#eef1f8 45%,#fbeadf)}
+.pad-label{position:absolute;left:0;right:0;top:64px;text-align:center;font:500 11px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--slate)}
+.skip{position:absolute;right:20px;top:58px;font-weight:600;font-size:15px;color:var(--blue);z-index:5;padding:6px 10px}
+.bubble{position:absolute;left:20px;right:20px;top:100px;border-radius:26px;padding:18px 20px}
+.bubble .dots{display:flex;gap:6px;margin-bottom:12px}
+.bubble .dots i{width:22px;height:5px;border-radius:9px;background:rgba(14,17,22,.12)}
+.bubble .dots i.on{background:var(--blue)}
+.bubble h4{font:600 23px/1.15 var(--display);letter-spacing:-.02em}
+.bubble p{font-size:15px;color:#3a4352;margin-top:6px}
+.cookie{position:absolute;left:252px;top:352px;width:78px;height:78px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#e9b577,#c98a45 70%,#b3743a);box-shadow:0 12px 24px -8px rgba(120,70,20,.45),inset 0 -3px 6px rgba(0,0,0,.15)}
+.cookie i{position:absolute;width:11px;height:9px;border-radius:40%;background:#4a2a14}
+.cookie::after{content:"";position:absolute;right:-12px;top:-10px;width:36px;height:36px;border-radius:50%;background:#eef1f8;transform:scale(0);animation:bite 4s infinite}
+@keyframes bite{0%,62%{transform:scale(0)}68%,100%{transform:scale(1)}}
+.cookie-ring{position:absolute;left:236px;top:336px;width:110px;height:110px;border-radius:50%;border:2px dashed rgba(10,114,240,.5);animation:spin 14s linear infinite}
+@keyframes spin{to{transform:rotate(1turn)}}
+.cookie-lbl{position:absolute;left:222px;top:452px;width:140px;text-align:center;font:500 11px var(--mono);color:var(--slate)}
+.trail{position:absolute;inset:0;z-index:2}
+.cptr{position:absolute;left:0;top:0;width:30px;z-index:6;offset-path:path("M96 560 C 130 470, 210 420, 290 392");offset-rotate:0deg;offset-anchor:3px 3px;animation:along 4s cubic-bezier(.45,0,.2,1) infinite;filter:drop-shadow(0 3px 5px rgba(0,0,0,.3))}
+.gfinger{position:absolute;left:0;top:0;width:58px;height:58px;border-radius:50%;z-index:7;background:radial-gradient(circle at 40% 35%,rgba(255,255,255,.95),rgba(255,255,255,.4) 60%,rgba(255,255,255,.2));box-shadow:0 0 0 1px rgba(255,255,255,.8),0 10px 24px rgba(20,30,50,.2);offset-path:path("M150 730 C 170 700, 200 680, 240 660");offset-anchor:50% 50%;animation:along 4s cubic-bezier(.45,0,.2,1) infinite}
+@keyframes along{0%{offset-distance:0%;opacity:0}8%{opacity:1}60%{offset-distance:100%;opacity:1}90%{offset-distance:100%;opacity:1}100%{offset-distance:100%;opacity:0}}
+.coach-hint{position:absolute;left:0;right:0;bottom:44px;text-align:center;font-size:14px;color:var(--slate)}
+/* error */
+.err{background:linear-gradient(180deg,#e8ecf4,#f4eef0)}
+.err-in{position:absolute;inset:54px 0 0;padding:20px 26px;display:flex;flex-direction:column;align-items:center;text-align:center}
+.sleep{margin-top:78px;position:relative;width:210px;height:170px}
+.sleep .lid{position:absolute;left:15px;right:15px;top:10px;height:120px;border-radius:16px;background:linear-gradient(160deg,rgba(255,255,255,.8),rgba(255,255,255,.35));box-shadow:inset 0 1px 0 #fff,0 0 0 1px rgba(255,255,255,.8),0 18px 30px -12px rgba(30,40,70,.3);display:grid;place-items:center}
+.sleep .face{width:110px;height:70px;border-radius:12px;background:linear-gradient(160deg,#2a3246,#161b27);position:relative}
+.sleep .face::before,.sleep .face::after{content:"";position:absolute;top:30px;width:22px;height:11px;border:3px solid #9fb3d9;border-top:0;border-radius:0 0 22px 22px}
+.sleep .face::before{left:22px}.sleep .face::after{right:22px}
+.sleep .base{position:absolute;left:0;right:0;top:130px;height:12px;border-radius:0 0 18px 18px;background:linear-gradient(#e7eaee,#b3b9c2)}
+.z{position:absolute;font:700 22px var(--display);color:#8aa1c9;animation:zz 3.6s ease-in-out infinite;opacity:0}
+.z1{right:6px;top:-6px}.z2{right:-12px;top:-30px;font-size:16px;animation-delay:1.2s}.z3{right:-26px;top:-52px;font-size:12px;animation-delay:2.4s}
+@keyframes zz{0%{opacity:0;transform:translate(0,8px)}30%,70%{opacity:1}100%{opacity:0;transform:translate(8px,-12px)}}
+.err h4{font:700 30px/1.1 var(--display);letter-spacing:-.03em;margin-top:34px}
+.err p{color:#3a4352;font-size:16.5px;margin-top:10px;max-width:30ch}
+.err .connect{margin-top:30px}
+.err .alt{margin-top:14px;font-weight:600;color:var(--blue);font-size:16px}
+.err .note{position:absolute;left:22px;right:22px;bottom:36px;border-radius:20px;padding:13px 16px;font-size:13.5px;color:#465063;text-align:left}
+
+/* ---------- D. Mac ---------- */
+.mac-row{display:grid;grid-template-columns:minmax(0,380px) minmax(0,1fr);gap:28px;align-items:start}
+.mbar-scene{border-radius:24px;overflow:hidden;background:radial-gradient(60% 70% at 20% 30%,#9fe5d6,transparent 60%),radial-gradient(50% 60% at 85% 70%,#ffcfae,transparent 60%),#dfe7ef;min-height:560px;position:relative}
+.menubar{height:30px;display:flex;align-items:center;justify-content:flex-end;gap:16px;padding:0 14px;background:rgba(255,255,255,.55);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);font:600 13px var(--sans)}
+.menubar .mi{width:26px;height:22px;border-radius:6px;display:grid;place-items:center;background:rgba(14,17,22,.12)}
+.menubar .bt{width:20px;height:10px;border:1.6px solid #222;border-radius:3px;position:relative}
+.menubar .bt::after{content:"";position:absolute;inset:1.5px 5px 1.5px 1.5px;background:#222;border-radius:1px}
+.pop{position:absolute;right:12px;top:38px;width:min(330px,100% - 24px);border-radius:22px;padding:14px}
+.pop-h{display:flex;align-items:center;gap:10px;padding:2px 4px 12px}
+.pop-h b{font:600 15px var(--sans)}
+.pop-h small{display:block;color:var(--slate);font-size:12.5px}
+.pop-h .live{margin-left:auto;font:600 11px var(--mono);color:#0f7a47;background:rgba(31,180,106,.15);padding:5px 8px;border-radius:99px}
+.pop-card{border-radius:16px;background:rgba(255,255,255,.6);padding:12px;display:flex;gap:12px;align-items:center}
+.pop-card .ic{width:40px;height:40px;border-radius:12px;display:grid;place-items:center;background:rgba(10,114,240,.12);color:var(--blue)}
+.pop-card .ic svg{width:22px;height:22px}
+.pop-card b{font-size:14.5px;display:block}
+.pop-card small{font-size:12.5px;color:var(--slate)}
+.pop-row{display:flex;justify-content:space-between;align-items:center;padding:12px 6px;font-size:14px;border-bottom:1px solid var(--line)}
+.sw-t{width:40px;height:24px;border-radius:99px;background:var(--ok);position:relative;flex:none}
+.sw-t::after{content:"";position:absolute;right:2px;top:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.25)}
+.sw-t.off{background:rgba(14,17,22,.15)}.sw-t.off::after{right:auto;left:2px}
+.pop-btns{display:grid;grid-template-columns:1fr 1.3fr;gap:8px;margin-top:12px}
+.pop-btns button{border-radius:12px;padding:10px;font-size:14px;font-weight:600;background:rgba(14,17,22,.07);display:flex;justify-content:center;align-items:center;gap:6px}
+.pop-btns button svg{width:16px;height:16px}
+.pop-btns .stop{background:var(--warn);color:#fff}
+.pop-list{margin-top:8px;font-size:13.5px}
+.pop-list p{display:flex;justify-content:space-between;padding:7px 6px;border-radius:8px}
+.pop-list kbd{font:12px var(--mono);color:var(--slate)}
+.pop-quip{font-size:12.5px;color:var(--slate);padding:10px 6px 2px;border-top:1px solid var(--line);margin-top:6px}
+.setup{border-radius:20px;overflow:hidden;background:rgba(250,251,253,.8);-webkit-backdrop-filter:blur(30px);backdrop-filter:blur(30px);box-shadow:0 0 0 1px rgba(0,0,0,.08),0 30px 70px -20px rgba(20,30,50,.35);display:grid;grid-template-columns:200px 1fr;min-height:560px}
+.setup-side{background:rgba(235,239,245,.7);padding:16px 14px;border-right:1px solid var(--line)}
+.lights{display:flex;gap:8px;margin-bottom:26px}
+.lights i{width:12px;height:12px;border-radius:50%;background:#ff5f57}.lights i:nth-child(2){background:#febc2e}.lights i:nth-child(3){background:#28c840}
+.steps-v{list-style:none;display:grid;gap:4px}
+.steps-v li{display:flex;align-items:center;gap:10px;padding:9px 10px;border-radius:10px;font-size:14px;color:var(--slate)}
+.steps-v li.on{background:rgba(10,114,240,.12);color:var(--ink);font-weight:600}
+.steps-v li i{width:20px;height:20px;border-radius:50%;border:1.6px solid currentColor;display:grid;place-items:center;font:600 10px var(--mono);font-style:normal}
+.setup-main{padding:28px 32px;display:flex;flex-direction:column}
+.prog{display:flex;align-items:center;gap:12px;font:500 12px var(--mono);color:var(--slate)}
+.prog .track{flex:1;height:6px;border-radius:9px;background:rgba(14,17,22,.08);overflow:hidden}
+.prog .track i{display:block;height:100%;width:50%;border-radius:9px;background:linear-gradient(90deg,var(--blue),#18A99A);animation:fill 1.6s cubic-bezier(.2,.8,.2,1) both}
+@keyframes fill{from{width:16%}}
+.setup h3{font:600 30px/1.1 var(--display);letter-spacing:-.03em;margin-top:22px}
+.setup .lead{color:#3a4352;margin-top:8px;max-width:48ch;font-size:15.5px}
+.perm{display:flex;gap:14px;align-items:center;padding:16px;border-radius:16px;background:#fff;box-shadow:0 0 0 1px var(--line);margin-top:14px}
+.perm:first-of-type{margin-top:24px}
+.perm .pi{width:44px;height:44px;border-radius:12px;display:grid;place-items:center;flex:none}
+.perm .pi svg{width:22px;height:22px}
+.perm b{display:block;font-size:15px}
+.perm small{font-size:13.5px;color:var(--slate)}
+.perm .st{margin-left:auto;flex:none}
+.granted{display:inline-flex;align-items:center;gap:6px;font-size:13.5px;font-weight:600;color:#0f7a47}
+.granted svg{width:18px;height:18px}
+.allow{background:var(--blue);color:#fff;font-weight:600;font-size:13.5px;padding:8px 14px;border-radius:9px}
+.waiting{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--slate);margin-top:6px}
+.spin{width:12px;height:12px;border-radius:50%;border:2px solid rgba(10,114,240,.25);border-top-color:var(--blue);animation:spin .9s linear infinite}
+.setup-foot{margin-top:auto;padding-top:22px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.setup-foot a{font-size:13.5px;color:var(--blue)}
+.setup-foot .bb{display:flex;gap:8px}
+.setup-foot button{padding:8px 16px;border-radius:9px;font-size:14px;font-weight:600;background:rgba(14,17,22,.07)}
+.setup-foot button.pri{background:var(--blue);color:#fff;opacity:.4}
+.quip{font-size:13px;color:var(--slate);margin-top:16px;font-style:italic}
+
+/* ---------- desktop template (1280x800) ---------- */
+.dsk{position:absolute;left:0;top:0;width:1280px;height:800px;transform-origin:0 0;overflow:hidden;font:13px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;color:#1d1d1f;text-align:left}
+.d-wall{position:absolute;inset:0;background:radial-gradient(55% 70% at 18% 25%,#9fe5d6,transparent 62%),radial-gradient(50% 60% at 88% 75%,#ffcfae,transparent 62%),linear-gradient(160deg,#dbe7f1,#f3e6dc)}
+.d-mb{position:absolute;left:0;right:0;top:0;height:26px;display:flex;align-items:center;gap:18px;padding:0 16px;background:rgba(255,255,255,.5);font-size:13px}
+.d-logo{width:12px;height:14px;border-radius:50% 50% 45% 45%;background:#1d1d1f}
+.d-mbr{margin-left:auto;display:flex;gap:14px;align-items:center}
+.d-fs{width:16px;height:16px;border-radius:50%;background:radial-gradient(circle at 35% 40%,#fff 0 30%,transparent 32%),#1d1d1f}
+.d-win{position:absolute;border-radius:12px;background:#fff;box-shadow:0 0 0 .5px rgba(0,0,0,.2),0 22px 50px rgba(0,0,0,.22);overflow:hidden}
+.d-bar{height:36px;display:flex;align-items:center;gap:8px;padding:0 14px;background:#f4f4f6;border-bottom:1px solid #e4e4e8;position:relative}
+.d-bar i{width:12px;height:12px;border-radius:50%;background:#ff5f57}
+.d-bar i:nth-child(2){background:#febc2e}.d-bar i:nth-child(3){background:#28c840}
+.d-url{margin-left:60px;flex:1;max-width:320px;height:24px;border-radius:7px;background:#e8e8ec;display:flex;align-items:center;padding:0 10px;color:#666;font-size:12px}
+.d-ttl{position:absolute;left:0;right:0;text-align:center;font-weight:600;font-size:13px;color:#555;pointer-events:none}
+.d-br{left:36px;top:52px;width:560px;height:420px}
+.d-pg{padding:22px 28px;position:relative;height:384px}
+.d-img{height:150px;border-radius:10px;background:linear-gradient(135deg,#f6d6b0,#e9a86a);position:relative;overflow:hidden}
+.d-img s{position:absolute;width:74px;height:74px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#e9b577,#b3743a);top:40px;left:60px;box-shadow:0 8px 14px rgba(90,50,10,.3)}
+.d-img s:nth-child(2){left:170px;top:30px;width:90px;height:90px}.d-img s:nth-child(3){left:300px;top:52px;width:64px;height:64px}
+.d-pg h5{font:700 22px/1.2 -apple-system,system-ui,sans-serif;margin:16px 0 12px}
+.d-ln{height:9px;border-radius:5px;background:#e6e6ea;margin-bottom:10px}
+.d-link{position:absolute;left:28px;top:330px;padding:4px 12px;border-radius:7px;color:#0a64d8;font-weight:600;font-size:14px;transition:background .3s}
+.d-link.on{background:rgba(10,100,216,.12)}
+.d-ed{left:470px;top:150px;width:740px;height:470px;background:#1f2230;color:#d6dae6}
+.d-ed .d-bar{background:#272a39;border-bottom-color:#15171f}
+.d-ed .d-ttl{color:#9aa1b6}
+.d-run{position:absolute;right:12px;top:7px;width:60px;height:22px;border-radius:6px;background:#3a3f55;color:#e6e9f2;font-size:12px;font-weight:600;display:grid;place-items:center;transition:background .2s}
+.d-side{position:absolute;left:0;top:36px;bottom:0;width:170px;background:#191b27;padding:12px 10px;font-size:12.5px;color:#8d94aa}
+.d-side p{padding:5px 8px;border-radius:6px}
+.d-side p.on{background:#2d3246;color:#e6e9f2}
+.d-gut{position:absolute;left:170px;top:36px;width:40px;padding:16px 0;text-align:right;font:12.5px/23px ui-monospace,"SF Mono",Menlo,monospace;color:#555c74;white-space:pre}
+.d-code{position:absolute;left:222px;top:36px;right:0;padding:16px 0;font:13.5px/23px ui-monospace,"SF Mono",Menlo,monospace;white-space:pre;color:#d6dae6}
+.d-code .k{color:#ff7ab2}.d-code .t{color:#6bdfff}.d-code .f{color:#67b7a4}.d-code .n{color:#d9c97c}.d-code .c{color:#7f8c98;font-style:italic}
+.d-toast{position:absolute;right:16px;bottom:16px;padding:8px 14px;border-radius:9px;background:#1fb46a;color:#fff;font-weight:600;opacity:0;transform:translateY(8px);transition:.35s cubic-bezier(.2,.8,.2,1)}
+.d-toast.on{opacity:1;transform:none}
+.d-nt{left:70px;top:520px;width:300px;height:180px;background:#fffdf3}
+.d-nt .d-bar{background:#f6f0d6;border-bottom-color:#ebe3c2}
+.d-td{position:absolute;left:18px;height:30px;display:flex;align-items:center;gap:10px;font-size:14px}
+.d-td:nth-of-type(1){top:48px}.d-td:nth-of-type(2){top:78px}.d-td:nth-of-type(3){top:108px}.d-td:nth-of-type(4){top:138px}
+.d-td b{width:16px;height:16px;border-radius:50%;border:1.5px solid #c9b76a;flex:none;display:grid;place-items:center;transition:.25s}
+.d-td.on b{background:#e2b93b;border-color:#e2b93b}
+.d-td.on b::after{content:"";width:6px;height:3px;border:2px solid #fff;border-top:0;border-right:0;transform:rotate(-45deg) translate(1px,-1px)}
+.d-td.on{color:#9a9480;text-decoration:line-through}
+.d-dock{position:absolute;left:392px;top:724px;height:64px;padding:8px;display:flex;gap:6px;border-radius:20px;background:rgba(255,255,255,.45);box-shadow:inset 0 0 0 1px rgba(255,255,255,.6),0 10px 30px rgba(0,0,0,.12)}
+.d-dock i{width:48px;height:48px;border-radius:12px;background:var(--g);box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 2px 4px rgba(0,0,0,.15);position:relative}
+.d-dock i::after{content:"";position:absolute;inset:14px;border-radius:50%;background:rgba(255,255,255,.75)}
+.d-dock i:nth-child(odd)::after{border-radius:4px;inset:15px 12px}
+.d-dock i.bounce{animation:hop .7s cubic-bezier(.3,1.6,.5,1)}
+@keyframes hop{40%{transform:translateY(-16px)}}
+
+@media (max-width:980px){
+  .dir-card{grid-template-columns:1fr}
+  .steps{grid-template-columns:1fr}
+  .plans{grid-template-columns:1fr}
+  .mac-row{grid-template-columns:1fr}
+  .nav nav a:not(.keep){display:none}
+}
+@media (max-width:760px){
+  .setup{grid-template-columns:1fr}
+  .setup-side{display:flex;align-items:center;gap:10px;border-right:0;border-bottom:1px solid var(--line);padding:12px 14px;overflow:hidden}
+  .setup-side .lights{margin:0}
+  .steps-v{display:flex;gap:2px}
+  .steps-v li{padding:6px 8px;font-size:12.5px;white-space:nowrap}
+  .steps-v li:not(.on) span{display:none}
+  .setup-main{padding:22px 18px}
+  .perm{flex-wrap:wrap}
+  .row{flex-wrap:nowrap;justify-content:flex-start;overflow-x:auto;scroll-snap-type:x mandatory;padding:0 16px 20px;margin:0 -16px;gap:18px;-webkit-overflow-scrolling:touch}
+  .dev-wrap{zoom:.78;scroll-snap-align:center}
+  .sw{grid-template-columns:repeat(3,1fr);gap:8px}.sw li{padding:8px}.sw i{height:30px}.sw code{font-size:10px}
+  .hero{padding-top:52px}
+  section.block{padding:52px 0}
+  .stage-cap{font-size:13px}
+}
+@media (prefers-reduced-motion:reduce){
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+  .h-hero .w{opacity:1;transform:none}
+  .cptr,.gfinger{offset-distance:100%}
+  .halo{opacity:1}
+}
+</style>
+</head>
+<body>
+<div class="aura" aria-hidden="true"></div>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="logo" viewBox="0 0 32 32"><defs><linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#9fe5d6"/><stop offset=".55" stop-color="#cfe0f7"/><stop offset="1" stop-color="#ffc49b"/></linearGradient></defs><circle cx="16" cy="16" r="14" fill="url(#lg1)"/><path d="M16 2a14 14 0 0 1 0 28 9 14 0 0 0 0-28z" fill="#0E1116" opacity=".88"/><path d="M19.2 11.2v9.6l2.3-2.2 1.6 3.6 1.5-.7-1.6-3.5h3.2z" fill="#fff"/><circle cx="16" cy="16" r="13.4" fill="none" stroke="#fff" stroke-opacity=".8" stroke-width="1.2"/></symbol>
+  <symbol id="i-kbd" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M6.5 10h1M10 10h1M13.5 10h1M17 10h.5M7.5 14h9" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><rect x="8" y="2.5" width="8" height="4" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M16 4.5h1.5A2.5 2.5 0 0 1 20 7v12a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 19V7a2.5 2.5 0 0 1 2.5-2.5H8" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+  <symbol id="i-fit" viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-ptr" viewBox="0 0 24 24"><path d="M5.5 3.5v15l4-3.8 2.7 6 2.6-1.1-2.6-5.9h5.6z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="3" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M10.5 5h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 6v12M15 6v12" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5" fill="currentColor"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+  <symbol id="i-screen" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M9 20h6M12 16.5V20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M8 13V6.5a1.5 1.5 0 0 1 3 0V12m0-1V4.5a1.5 1.5 0 0 1 3 0V12m0-5.5a1.5 1.5 0 0 1 3 0V14c0 4-2.5 7-6.5 7-2.6 0-4-1.2-5.6-3.6L4 14.6a1.6 1.6 0 0 1 2.6-1.8L8 14.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-apple" viewBox="0 0 24 24"><path d="M16.4 12.6c0-2.4 2-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.2-2.8.9-3.5.9s-1.8-.8-3-.8C6.9 7.3 5.4 8.2 4.6 9.6c-1.7 2.9-.4 7.2 1.2 9.6.8 1.2 1.7 2.4 3 2.4 1.2 0 1.6-.8 3.1-.8s1.8.8 3 .8c1.3 0 2.1-1.2 2.9-2.3.9-1.3 1.2-2.6 1.3-2.7-.1 0-2.6-1-2.7-4zM14.2 5.6c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.8 1.1.1 2.1-.5 2.7-1.2z" fill="currentColor"/></symbol>
+  <symbol id="sb" viewBox="0 0 76 14"><rect x="0" y="9" width="3.2" height="4.5" rx="1" fill="currentColor"/><rect x="5" y="6.5" width="3.2" height="7" rx="1" fill="currentColor"/><rect x="10" y="4" width="3.2" height="9.5" rx="1" fill="currentColor"/><rect x="15" y="1.5" width="3.2" height="12" rx="1" fill="currentColor"/><path d="M29.5 12.6l2-2.2a2.8 2.8 0 0 0-4 0zM25.6 8.4l1.3 1.3a4.3 4.3 0 0 1 5.2 0l1.3-1.3a6.2 6.2 0 0 0-7.8 0zM23 5.9l1.3 1.3a7.9 7.9 0 0 1 10.4 0L36 5.9a9.7 9.7 0 0 0-13 0z" fill="currentColor"/><rect x="45" y="1.5" width="25" height="12" rx="3.6" fill="none" stroke="currentColor" stroke-opacity=".45"/><rect x="47" y="3.5" width="18" height="8" rx="2" fill="currentColor"/><path d="M72 5.5v4a2 2 0 0 0 0-4z" fill="currentColor" fill-opacity=".45"/></symbol>
+  <symbol id="ptr" viewBox="0 0 20 28"><path d="M2.5 2v21.2l5.3-5.1 3.6 8.2 3.6-1.6-3.6-8.1h7.3z" fill="#0E1116" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+</svg>
+
+<!-- ============ A. DIRECTION ============ -->
+<header class="dir wrap">
+  <div class="part"><span class="tag">A · Direction</span></div>
+  <div class="dir-card glass">
+    <div>
+      <p class="tag">Farside · Round 1 · 01 of 04 · Apple-native family</p>
+      <h1>Glass</h1>
+      <p class="mood">Translucent, weightless, system-calm. It looks like Apple shipped it. The jokes are only in the words.</p>
+      <p class="motion">Motion: <b>settle</b> 0.45 s, no overshoot · <b>arrive</b> one small overshoot · <b>breathe</b> 14 s aura<br>Signature: the <b>lens</b>. A glass window on the Mac that shows exactly what your iPhone sees and eases after the pointer.</p>
+    </div>
+    <div>
+      <ul class="sw">
+        <li><i style="--c:#EEF1F5"></i><b>Fog</b><code>#EEF1F5</code></li>
+        <li><i style="--c:#0E1116"></i><b>Ink</b><code>#0E1116</code></li>
+        <li><i style="--c:#5A6472"></i><b>Slate</b><code>#5A6472</code></li>
+        <li><i style="--c:#0A72F0"></i><b>Farside Blue</b><code>#0A72F0 · actions only</code></li>
+        <li><i style="--c:#8FE0CF"></i><b>Seafoam</b><code>#8FE0CF · aura</code></li>
+        <li><i style="--c:#FFC49B"></i><b>Apricot</b><code>#FFC49B · aura</code></li>
+      </ul>
+      <div class="spec">
+        <div><span class="s1">Your Mac, from the far side.</span><small>SF Pro Display 600 · −4.5%</small></div>
+        <div><span class="s2">Slide one finger. The pointer follows.</span><small>SF Pro Text 400 · 17/25</small></div>
+        <div><span class="s3">WI-FI DIRECT · 12 MIN</span><small>SF Mono 500</small></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ============ B. WEBSITE ============ -->
+<main class="site">
+  <div class="wrap" style="margin-top:56px"><div class="part"><span class="tag">B · Website</span></div></div>
+  <div class="nav glass">
+    <a class="brand" href="#top"><svg width="26" height="26"><use href="#logo"/></svg>Farside</a>
+    <nav><a href="#how">How it works</a><a href="#pricing" class="keep">Pricing</a><a href="#help">Help</a></nav>
+    <a class="dl" href="#pricing">Download</a>
+  </div>
+
+  <section class="hero wrap" id="top">
+    <span class="pill glass"><b>NEW</b>Now with a pointer you can actually find</span>
+    <h2 class="h-hero" aria-label="Your Mac, from the far side."><span class="w" style="--i:0">Your</span> <span class="w" style="--i:1">Mac,</span> <span class="w" style="--i:2">from</span> <span class="w" style="--i:3">the</span> <em class="w" style="--i:4">far</em> <em class="w" style="--i:5">side.</em></h2>
+    <p class="sub">Farside puts your whole Mac on your iPhone and turns the screen into a trackpad. Slide to move, tap to click. Works from the couch, the café, or gate 34 during its third delay.</p>
+    <div class="ctas">
+      <a class="btn primary" href="#pricing"><svg><use href="#i-apple"/></svg>Download for Mac</a>
+      <a class="btn ghost glass" href="#pricing"><svg><use href="#i-phone"/></svg>Get the iPhone app</a>
+    </div>
+    <p class="fine">Free on your own Wi-Fi · No account, ever · macOS 14 and iOS 17 or later</p>
+
+    <div class="stage" id="stage" aria-label="Animation: a finger slides on an iPhone and the pointer moves on the Mac. The highlighted lens shows what the iPhone sees, and it follows the pointer." role="img">
+      <div class="mb">
+        <div class="mb-lid"><div class="mb-disp"><div class="mview" data-desk></div><div class="m-over"><div class="lens"></div><svg class="m-ptr" viewBox="0 0 20 28"><use href="#ptr"/></svg></div></div></div>
+        <div class="mb-base"></div>
+      </div>
+      <div class="ph"><div class="ph-scr"><div class="pview" data-desk></div><div class="p-over"><div class="p-halo"></div><svg class="p-ptr" viewBox="0 0 20 28"><use href="#ptr"/></svg><div class="finger"></div></div><div class="isl"></div><div class="hdl"></div></div></div>
+    </div>
+    <div class="stage-cap"><span><i></i>Your finger stays on the phone</span><span><i style="background:#18A99A"></i>The pointer moves on the Mac</span><span><i style="background:#F08A4B"></i>The view glides after it</span></div>
+  </section>
+
+  <section class="block wrap" id="how">
+    <p class="tag">How it works</p>
+    <h2 class="sec-h" style="margin-top:12px">Set up in about a minute. Mostly waiting for a toggle.</h2>
+    <p class="sec-p">Three steps, done once. After that it's one tap on Connect.</p>
+    <div class="steps">
+      <article class="step glass">
+        <div class="ill"><div class="ill-mb"><div class="bar"><span class="fs"><svg width="16" height="16"><use href="#logo"/></svg></span><i></i><span>9:41</span></div><div class="pop glass"><b>Farside is ready</b>Screen Recording <span>✓</span><br>Accessibility <span>✓</span></div></div></div>
+        <h3>Put Farside in your menu bar.</h3>
+        <p>Allow two permissions so your iPhone can see the screen and move the pointer. Then it sits up there quietly, like a very polite gargoyle.</p>
+      </article>
+      <article class="step glass">
+        <div class="ill ill-qr"><div class="scan"></div><svg id="qr1" viewBox="0 0 25 25" shape-rendering="crispEdges"></svg></div>
+        <h3>Scan the code with your iPhone.</h3>
+        <p>No account, no password, no email asking you to confirm your email. Your Mac asks "Allow Sam's iPhone?" and you say yes.</p>
+      </article>
+      <article class="step glass">
+        <div class="ill ill-pad"><div class="pp"><svg viewBox="0 0 20 28"><use href="#ptr"/></svg></div><span class="tf"></span></div>
+        <h3>Touch anywhere to drive.</h3>
+        <p>One finger moves the pointer, a tap clicks, two fingers scroll, pinch to zoom. The view follows the pointer, so you never lose it.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="block wrap" id="pricing">
+    <div class="price-top">
+      <div><p class="tag">Pricing</p><h2 class="sec-h" style="margin-top:12px">Free at home. A small fee for everywhere else.</h2></div>
+      <div class="toggle glass" role="group" aria-label="Billing period"><button aria-pressed="true" data-bill="m">Monthly</button><button aria-pressed="false" data-bill="y">Yearly <small>−30%</small></button></div>
+    </div>
+    <div class="plans">
+      <article class="plan glass">
+        <h3>Free at home</h3>
+        <p class="amt">CA$0 <small>forever</small></p>
+        <p class="desc">Everything Farside does, whenever your iPhone and Mac share a Wi-Fi network.</p>
+        <ul>
+          <li><svg><use href="#i-check"/></svg>Full control: trackpad, keyboard, dictation, clipboard</li>
+          <li><svg><use href="#i-check"/></svg>Pair by QR code. No account.</li>
+          <li><svg><use href="#i-check"/></svg>Your screen never leaves your home network</li>
+        </ul>
+        <a class="btn soft" href="#top">Download for Mac</a>
+      </article>
+      <article class="plan glass hot">
+        <h3>Anywhere</h3>
+        <p class="amt"><span id="amt">CA$5.99</span> <small id="per">per month</small></p>
+        <p class="desc">Same Farside on any network: hotel Wi-Fi, 5G, and the train that swears it has Wi-Fi.</p>
+        <ul>
+          <li><svg><use href="#i-check"/></svg>Everything in Free at home</li>
+          <li><svg><use href="#i-check"/></svg>Connects through an encrypted relay when a direct link isn't possible</li>
+          <li><svg><use href="#i-check"/></svg>Wake your Mac from afar, if it's set to allow it</li>
+          <li><svg><use href="#i-check"/></svg>Cancel in Settings in two taps. We'll miss you quietly.</li>
+        </ul>
+        <a class="btn primary" href="#top">Try Anywhere free for 7 days</a>
+      </article>
+    </div>
+  </section>
+  <footer class="foot wrap" id="help"><span>Farside · Made for Mac and iPhone · No cookie banner, because there are no cookies.</span><span>Help · Privacy · Changelog</span></footer>
+</main>
+
+<!-- ============ C. iPHONE ============ -->
+<section class="block wrap" style="padding-top:30px">
+  <div class="part"><span class="tag">C · iPhone app · 390 × 844</span></div>
+  <div class="row">
+
+    <div class="dev-wrap"><div class="device"><div class="scr home">
+      <div class="isl"></div><div class="sbar"><span>9:41</span><svg viewBox="0 0 76 14" width="76"><use href="#sb"/></svg></div>
+      <div class="hm">
+        <div class="hm-top"><h3><svg width="30" height="30"><use href="#logo"/></svg>Farside</h3><button class="circ glass" aria-label="Add a Mac"><svg><use href="#i-plus"/></svg></button></div>
+        <p class="hm-hi">Good evening. Your Mac is right where you left it.</p>
+        <div class="mcard glass">
+          <div class="art"><div class="mini-mac"><div class="lid"><i></i></div><div class="base"></div></div></div>
+          <div class="nm"><b>MacBook Pro</b><small>Home office</small></div>
+          <div class="status"><i class="dot"></i>Awake and ready · On your Wi-Fi</div>
+          <button class="connect">Connect</button>
+          <div class="seg"><span class="on">Control</span><span>View only</span></div>
+        </div>
+        <div class="facts glass"><p><span>Last session</span>Yesterday · 41 min</p><p><span>Opens at login</span>On</p></div>
+      </div>
+      <div class="hm-foot glass"><svg><use href="#i-globe"/></svg><span>Free on this Wi-Fi. Leaving the house? <a href="#pricing">Try Anywhere</a></span></div>
+      <div class="homebar"></div>
+    </div></div><p class="cap"><b>1 · Home</b><span>One Mac, one status line, one big Connect. Last seen and view-only are one glance away.</span></p></div>
+
+    <div class="dev-wrap"><div class="device"><div class="scr">
+      <div class="pv" data-desk style="--s:1.3;--tx:-832px;--ty:-130px;position:absolute;inset:0;overflow:hidden"></div>
+      <div class="isl"></div>
+      <div class="halo" style="left:266px;top:364px"></div>
+      <svg class="bigptr" viewBox="0 0 20 28" style="left:266px;top:364px"><use href="#ptr"/></svg>
+      <div class="handle glass"><i></i></div>
+    </div></div><p class="cap"><b>2 · Live session</b><span>Your Mac, edge to edge. The whole screen is a trackpad. A glass handle is the only chrome, and a halo shows where the pointer stopped.</span></p></div>
+
+    <div class="dev-wrap"><div class="device"><div class="scr">
+      <div class="pv" data-desk style="--s:1.3;--tx:-832px;--ty:-130px;position:absolute;inset:0;overflow:hidden"></div>
+      <div class="isl"></div>
+      <svg class="bigptr" viewBox="0 0 20 28" style="left:266px;top:364px"><use href="#ptr"/></svg>
+      <div class="toast glass"><svg><use href="#i-clip"/></svg><span>Copied <code>follow(_:)</code> from your Mac</span></div>
+      <div class="dock glass">
+        <div class="grab"></div>
+        <div class="dock-top"><span class="chip"><i class="dot"></i>Controlling · Wi-Fi direct</span><button class="end">End</button></div>
+        <div class="tiles">
+          <div class="tile"><span><svg><use href="#i-kbd"/></svg></span>Keyboard</div>
+          <div class="tile"><span><svg><use href="#i-mic"/></svg></span>Dictate</div>
+          <div class="tile on"><span><svg><use href="#i-clip"/></svg></span>Clipboard</div>
+          <div class="tile"><span><svg><use href="#i-fit"/></svg></span>Fill</div>
+          <div class="tile"><span><svg><use href="#i-ptr"/></svg></span>Control</div>
+        </div>
+      </div>
+      <div class="homebar"></div>
+    </div></div><p class="cap"><b>3 · Dock, swiped up</b><span>Everything else lives here: keyboard, Mic → speak → Done, clipboard both ways, Fit or Fill, View or Control.</span></p></div>
+
+    <div class="dev-wrap"><div class="device"><div class="scr coach">
+      <div class="isl"></div><div class="sbar"><span>9:41</span><svg viewBox="0 0 76 14" width="76"><use href="#sb"/></svg></div>
+      <button class="skip">Skip</button>
+      <div class="bubble glass">
+        <div class="dots"><i class="on"></i><i></i><i></i><i></i><i></i></div>
+        <h4>Nudge the pointer onto the cookie.</h4>
+        <p>Slide one finger anywhere. The pointer glides from where it is. It won't jump to your finger.</p>
+      </div>
+      <div class="cookie-ring"></div>
+      <div class="cookie"><i style="left:18px;top:20px"></i><i style="left:44px;top:16px"></i><i style="left:30px;top:44px"></i><i style="left:52px;top:46px"></i></div>
+      <p class="cookie-lbl">practice cookie · 0 kcal</p>
+      <svg class="trail" viewBox="0 0 390 844" aria-hidden="true"><path d="M96 560 C 130 470, 210 420, 290 392" fill="none" stroke="#0A72F0" stroke-opacity=".35" stroke-width="2" stroke-dasharray="2 8" stroke-linecap="round"/></svg>
+      <svg class="cptr" viewBox="0 0 20 28"><use href="#ptr"/></svg>
+      <div class="gfinger"></div>
+      <p class="coach-hint">Practice pad · nothing here touches your Mac</p>
+      <div class="homebar"></div>
+    </div></div><p class="cap"><b>4 · First-run coach, beat 1 of 5</b><span>A 20-second practice pad that runs while your Mac approves the pairing. Move, click, scroll, pinch, dock. Skip is always there.</span></p></div>
+
+    <div class="dev-wrap"><div class="device"><div class="scr err">
+      <div class="isl"></div><div class="sbar"><span>9:41</span><svg viewBox="0 0 76 14" width="76"><use href="#sb"/></svg></div>
+      <div class="err-in">
+        <div class="sleep"><div class="lid"><div class="face"></div></div><div class="base"></div><span class="z z1">z</span><span class="z z2">z</span><span class="z z3">z</span></div>
+        <h4>Your Mac is napping.</h4>
+        <p>MacBook Pro went to sleep at 2:14 PM, probably mid-dream about spreadsheets. Wake it and you'll be back where you left off.</p>
+        <button class="connect">Wake MacBook Pro</button>
+        <a class="alt" href="#help">It's awake. Help me connect</a>
+      </div>
+      <p class="note glass">Tip: on your Mac, turn on <b>Keep this Mac awake while Farside is on</b>, and naps won't happen.</p>
+      <div class="homebar"></div>
+    </div></div><p class="cap"><b>5 · Friendly error</b><span>What happened, why, and one clear fix. No codes, no blame. The second link opens the "Can't connect?" checklist.</span></p></div>
+
+  </div>
+</section>
+
+<!-- ============ D. MAC ============ -->
+<section class="block wrap" style="padding-top:20px">
+  <div class="part"><span class="tag">D · Mac companion</span></div>
+  <div class="mac-row">
+    <div class="mbar-scene">
+      <div class="menubar"><span class="mi"><svg width="17" height="17"><use href="#logo"/></svg></span><span class="bt"></span><span>Tue 9:41 PM</span></div>
+      <div class="pop glass">
+        <div class="pop-h"><svg width="30" height="30"><use href="#logo"/></svg><div><b>Farside</b><small>Sharing this Mac</small></div><span class="live">LIVE</span></div>
+        <div class="pop-card"><span class="ic"><svg><use href="#i-phone"/></svg></span><div><b>Sam's iPhone</b><small>Controlling · 12 min · Wi-Fi direct</small></div></div>
+        <div class="pop-row"><span>Allow mouse and keyboard</span><span class="sw-t"></span></div>
+        <div class="pop-row"><span>Keep this Mac awake</span><span class="sw-t"></span></div>
+        <div class="pop-btns"><button><svg><use href="#i-pause"/></svg>Pause</button><button class="stop"><svg><use href="#i-stop"/></svg>Stop Sharing</button></div>
+        <div class="pop-list"><p><span>Pair another device…</span></p><p><span>Settings…</span><kbd>⌘,</kbd></p><p><span>Quit Farside</span><kbd>⌘Q</kbd></p></div>
+        <p class="pop-quip">All good. Your iPhone is just borrowing the pointer.</p>
+      </div>
+    </div>
+
+    <div class="setup">
+      <aside class="setup-side"><div class="lights"><i></i><i></i><i></i></div>
+        <ol class="steps-v"><li class="on"><i>1</i><span>Allow access</span></li><li><i>2</i><span>Pair iPhone</span></li><li><i>3</i><span>Ready</span></li></ol>
+      </aside>
+      <div class="setup-main">
+        <div class="prog"><span>Step 1 of 3</span><span class="track"><i></i></span><span>1 more to go</span></div>
+        <h3>Two quick permissions.</h3>
+        <p class="lead">Farside needs to see your screen and move your pointer. It only does either while your iPhone is connected, and you'll always see it in the menu bar.</p>
+        <div class="perm"><span class="pi" style="background:rgba(31,180,106,.14);color:#0f7a47"><svg><use href="#i-screen"/></svg></span><div><b>Screen Recording</b><small>Lets your iPhone see this screen.</small></div><span class="st granted"><svg><use href="#i-check"/></svg>Allowed</span></div>
+        <div class="perm"><span class="pi" style="background:rgba(10,114,240,.12);color:var(--blue)"><svg><use href="#i-hand"/></svg></span><div><b>Accessibility</b><small>Lets your iPhone click and type.</small><div class="waiting"><span class="spin"></span>Waiting for the switch in System Settings…</div></div><button class="st allow">Open Settings</button></div>
+        <p class="quip">We can't read your diary. It's in a drawer, and we don't do drawers.</p>
+        <div class="setup-foot"><a href="#help">Still not detected? Quit and reopen Farside.</a><div class="bb"><button>Back</button><button class="pri" disabled>Continue</button></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<template id="deskTpl">
+<div class="dsk">
+  <div class="d-wall"></div>
+  <div class="d-mb"><i class="d-logo"></i><b>Xcode</b><span>File</span><span>Edit</span><span>View</span><span>Window</span><span>Help</span><div class="d-mbr"><i class="d-fs"></i><span>Tue 9:41 PM</span></div></div>
+  <div class="d-win d-br">
+    <div class="d-bar"><i></i><i></i><i></i><div class="d-url">recipes.example/midnight-cookies</div></div>
+    <div class="d-pg"><div class="d-img"><s></s><s></s><s></s></div><h5>Midnight cookies</h5><p class="d-ln" style="width:92%"></p><p class="d-ln" style="width:84%"></p><p class="d-ln" style="width:60%"></p><span class="d-link">Jump to recipe ↓</span></div>
+  </div>
+  <div class="d-win d-ed">
+    <div class="d-bar"><i></i><i></i><i></i><span class="d-ttl">Pointer.swift — Farside</span><span class="d-run">▶ Run</span></div>
+    <div class="d-side"><p class="on">Pointer.swift</p><p>Halo.swift</p><p>Dock.swift</p><p>Cookie.swift</p></div>
+<div class="d-gut">1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14</div><div class="d-code"><span class="k">import</span> Farside
+
+<span class="k">struct</span> <span class="t">Pointer</span> {
+    <span class="k">var</span> position: <span class="t">CGPoint</span>
+    <span class="k">var</span> halo = <span class="t">Halo</span>(size: <span class="n">28</span>)
+
+    <span class="c">// glide, never teleport</span>
+    <span class="k">mutating func</span> <span class="f">follow</span>(_ finger: <span class="t">CGPoint</span>) {
+        position += (finger - position) * <span class="n">0.18</span>
+        halo.<span class="f">settle</span>(at: position)
+    }
+}
+
+<span class="c">// TODO: stop replying to Slack from bed</span></div>
+    <div class="d-toast">✓ Build succeeded</div>
+  </div>
+  <div class="d-win d-nt">
+    <div class="d-bar"><i></i><i></i><i></i><span class="d-ttl">Tonight</span></div>
+    <p class="d-td on"><b></b>Buy oat milk</p>
+    <p class="d-td d-fern"><b></b>Water the fern</p>
+    <p class="d-td"><b></b>Ship the pointer fix</p>
+    <p class="d-td"><b></b>Go to bed (optional)</p>
+  </div>
+  <div class="d-dock"><i style="--g:linear-gradient(#6fc3ff,#1a7be0)"></i><i style="--g:linear-gradient(#8ee6ff,#2a9bf0)"></i><i style="--g:linear-gradient(#7ef08f,#22b04a)"></i><i style="--g:linear-gradient(#7fb6ff,#2d63e6)"></i><i style="--g:linear-gradient(#ffe27a,#f2b01e)"></i><i style="--g:linear-gradient(#4a4f5c,#1c1f26)"></i><i style="--g:linear-gradient(#8ab4ff,#3d4fe0)"></i><i style="--g:linear-gradient(#ff7a8c,#e8284a)"></i><i style="--g:linear-gradient(#e9edf2,#b9c0ca)"></i></div>
+</div>
+</template>
+
+<script>
+(function(){
+  var RM = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var DW=1280, DH=800;
+  var tpl=document.getElementById('deskTpl');
+  document.querySelectorAll('[data-desk]').forEach(function(el){ el.appendChild(tpl.content.cloneNode(true)); });
+
+  /* fake QR */
+  function qr(svg,seed){
+    var n=25,s=seed||7,out='';
+    function r(){ s=(s*9301+49297)%233280; return s/233280; }
+    function finder(x,y){ out+='<rect x="'+x+'" y="'+y+'" width="7" height="7" fill="#0E1116"/><rect x="'+(x+1)+'" y="'+(y+1)+'" width="5" height="5" fill="#fff"/><rect x="'+(x+2)+'" y="'+(y+2)+'" width="3" height="3" fill="#0E1116"/>'; }
+    for(var y=0;y<n;y++)for(var x=0;x<n;x++){
+      var inF=(x<8&&y<8)||(x>n-9&&y<8)||(x<8&&y>n-9);
+      if(!inF && r()>.52) out+='<rect x="'+x+'" y="'+y+'" width="1" height="1" fill="#0E1116"/>';
+    }
+    finder(0,0);finder(n-7,0);finder(0,n-7);
+    out+='<rect x="10" y="10" width="5" height="5" rx="1.2" fill="#0A72F0"/>';
+    svg.innerHTML=out;
+  }
+  var q=document.getElementById('qr1'); if(q) qr(q,11);
+
+  /* pricing toggle */
+  document.querySelectorAll('[data-bill]').forEach(function(b){
+    b.addEventListener('click',function(){
+      document.querySelectorAll('[data-bill]').forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false');});
+      var y=b.dataset.bill==='y';
+      document.getElementById('amt').textContent=y?'CA$49.99':'CA$5.99';
+      document.getElementById('per').textContent=y?'per year · about CA$4.17 a month':'per month';
+    });
+  });
+
+  /* hero stage: touch becomes pointer, lens follows */
+  var st=document.getElementById('stage'); if(!st) return;
+  var mv=st.querySelector('.mview'), pv=st.querySelector('.pview');
+  var mD=mv.querySelector('.dsk'), pD=pv.querySelector('.dsk');
+  var lens=st.querySelector('.lens'), mp=st.querySelector('.m-ptr'), pp=st.querySelector('.p-ptr'), halo=st.querySelector('.p-halo'), fg=st.querySelector('.finger'), phone=st.querySelector('.ph'), mo=st.querySelector('.m-over'), po=st.querySelector('.p-over');
+  var Z=1.45, sM=1,sP=1,vw=0,vh=0,pw=0,ph=0;
+  var WP=[{x:96,y:613,a:'fern'},{x:1168,y:168,a:'run'},{x:532,y:756,a:'dock'},{x:139,y:395,a:'link'},{x:760,y:380}];
+  var p={x:760,y:380}, c={x:760,y:380}, from={x:0,y:0}, to=WP[0], ctrl={x:0,y:0}, i=0, phase='move', tm=0, dur=1000, last=0, vis=false, running=false, f0={x:0,y:0}, f={x:-99,y:-99};
+  function clamp(v,a,b){return Math.max(a,Math.min(b,v));}
+  function measure(){ sM=mv.clientWidth/DW; pw=pv.clientWidth; ph=pv.clientHeight; sP=ph/DH*Z; vw=pw/sP; vh=ph/sP; mD.style.transform='scale('+sM+')'; lens.style.width=(vw*sM)+'px'; lens.style.height=(vh*sM)+'px'; }
+  function org(){ return [clamp(c.x-vw/2,0,DW-vw), clamp(c.y-vh/2,0,DH-vh)]; }
+  function render(){
+    var o=org(), x0=o[0], y0=o[1];
+    pD.style.transform='translate('+(-x0*sP)+'px,'+(-y0*sP)+'px) scale('+sP+')';
+    lens.style.transform='translate('+(x0*sM)+'px,'+(y0*sM)+'px)';
+    mp.style.transform='translate('+(p.x*sM)+'px,'+(p.y*sM)+'px)';
+    var px=(p.x-x0)*sP, py=(p.y-y0)*sP;
+    pp.style.transform='translate('+px+'px,'+py+'px)';
+    halo.style.transform='translate('+px+'px,'+py+'px)';
+    fg.style.transform='translate('+f.x+'px,'+f.y+'px)';
+  }
+  function each(sel,fn){ st.querySelectorAll(sel).forEach(fn); }
+  function act(a){
+    if(a==='fern') each('.d-fern',function(e){e.classList.add('on');});
+    if(a==='run') each('.d-toast',function(e){e.classList.add('on');});
+    if(a==='link') each('.d-link',function(e){e.classList.add('on');});
+    if(a==='dock') each('.d-dock i:nth-child(3)',function(e){e.classList.remove('bounce');void e.offsetWidth;e.classList.add('bounce');});
+  }
+  function reset(){ each('.d-fern,.d-toast,.d-link',function(e){e.classList.remove('on');}); }
+  function ripple(layer,x,y,cls){ var r=document.createElement('span'); r.className='rip '+(cls||''); r.style.left=x+'px'; r.style.top=y+'px'; layer.appendChild(r); setTimeout(function(){r.remove();},700); }
+  function begin(){
+    from={x:p.x,y:p.y}; to=WP[i];
+    var dx=to.x-from.x, dy=to.y-from.y, d=Math.hypot(dx,dy);
+    dur=700+d*.85; ctrl={x:from.x+dx/2-dy*.16, y:from.y+dy/2+dx*.16};
+    f0={x:pw*(.4+Math.random()*.2), y:ph*(.58+Math.random()*.12)}; f={x:f0.x,y:f0.y};
+    phase='move'; tm=0; st.classList.add('moving'); st.classList.remove('settled');
+  }
+  function click(){
+    var o=org();
+    ripple(mo,p.x*sM,p.y*sM,'sm');
+    ripple(po,(p.x-o[0])*sP,(p.y-o[1])*sP);
+    phone.classList.remove('tick'); void phone.offsetWidth; phone.classList.add('tick');
+    act(to.a);
+  }
+  function frame(now){
+    if(!vis){ running=false; last=0; return; }
+    var dt=last?Math.min(now-last,48):16; last=now; tm+=dt;
+    if(phase==='move'){
+      var k=Math.min(1,tm/dur), e=k<.5?4*k*k*k:1-Math.pow(-2*k+2,3)/2, u=1-e;
+      p.x=u*u*from.x+2*u*e*ctrl.x+e*e*to.x; p.y=u*u*from.y+2*u*e*ctrl.y+e*e*to.y;
+      f.x=clamp(f0.x+(p.x-from.x)*sP*.42,18,pw-18); f.y=clamp(f0.y+(p.y-from.y)*sP*.42,40,ph-30);
+      if(k>=1){ phase='pre'; tm=0; st.classList.remove('moving'); st.classList.add('settled'); }
+    } else if(phase==='pre' && tm>240){ if(to.a) click(); phase='post'; tm=0; }
+    else if(phase==='post' && tm>(to.a?950:500)){ i++; if(i>=WP.length){ i=0; reset(); } begin(); }
+    var kf=1-Math.exp(-dt/1000*2.4); c.x+=(p.x-c.x)*kf; c.y+=(p.y-c.y)*kf;
+    render(); requestAnimationFrame(frame);
+  }
+  function start(){ if(running||RM) return; running=true; last=0; requestAnimationFrame(frame); }
+  measure();
+  if(RM){ p={x:96,y:613}; c={x:300,y:520}; act('fern'); st.classList.add('settled'); f={x:-99,y:-99}; render(); }
+  else { begin(); render(); }
+  window.addEventListener('resize',function(){ measure(); render(); });
+  if('IntersectionObserver' in window){ new IntersectionObserver(function(en){ vis=en[0].isIntersecting; if(vis) start(); },{threshold:.05}).observe(st); }
+  else { vis=true; start(); }
+})();
+</script>
+</body>
+</html>
