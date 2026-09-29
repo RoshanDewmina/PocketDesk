@@ -49,6 +49,7 @@ private final class HostFixture {
         host = RemoteCoordinator(isHost: true, store: store, retryLimit: 2, retryBaseNanoseconds: 10_000_000,
                                  registrationStableNanoseconds: 50_000_000, signaling: signaling,
                                  renewalScheduler: scheduler, handshakeTimeoutNanoseconds: handshakeTimeoutNanoseconds)
+        host.allowLegacyPrivateRoute = true
         phone = try Counterpart(invitation: pair.invitation, plays: "client")
         host.restore()
     }
@@ -225,6 +226,7 @@ final class StaleSignalTests: XCTestCase {
         let signaling = ScriptedSignaling()
         let phone = RemoteCoordinator(isHost: false, store: store, retryLimit: 2, retryBaseNanoseconds: 10_000_000,
                                       signaling: signaling, renewalScheduler: ManualScheduler())
+        phone.allowLegacyPrivateRoute = true
         let mac = try Counterpart(invitation: pair.invitation, plays: "host")
         phone.restore()
         phone.start()
@@ -253,6 +255,7 @@ final class StaleSignalTests: XCTestCase {
         let signaling = ScriptedSignaling()
         let phone = RemoteCoordinator(isHost: false, store: store, retryLimit: 2, retryBaseNanoseconds: 10_000_000,
                                       signaling: signaling, renewalScheduler: ManualScheduler())
+        phone.allowLegacyPrivateRoute = true
         let mac = try Counterpart(invitation: pair.invitation, plays: "host")
         phone.restore()
         phone.start()

@@ -253,8 +253,10 @@ final class E2EHooksTests: XCTestCase {
         let token = String(repeating: "7a", count: 32)
         var presented: [Data?] = []
         let host = RemoteCoordinator(isHost: true, store: E2EMemoryTrust())
+        host.allowLegacyPrivateRoute = true
         host.e2eProofApprover = { body in presented.append(body); return body == Data(token.utf8) }
         let intruder = RemoteCoordinator(isHost: false, store: E2EMemoryTrust())
+        intruder.allowLegacyPrivateRoute = true
         intruder.e2eEnrollmentProof = Data(String(repeating: "00", count: 32).utf8)
         defer { host.stop(); intruder.stop() }
 
@@ -272,6 +274,7 @@ final class E2EHooksTests: XCTestCase {
         host.start()
         try await waitFor("host registered again") { host.hostRegistered }
         let phone = RemoteCoordinator(isHost: false, store: E2EMemoryTrust())
+        phone.allowLegacyPrivateRoute = true
         phone.e2eEnrollmentProof = Data(token.utf8)
         defer { phone.stop() }
         try phone.enroll(second.code())

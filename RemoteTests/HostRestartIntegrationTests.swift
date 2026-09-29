@@ -38,9 +38,11 @@ final class HostRestartIntegrationTests: XCTestCase {
         let (service, url) = try service(); defer { service.terminate() }
         let hostTrust = SharedTrust()
         let host = RemoteCoordinator(isHost: true, store: hostTrust)
+        host.allowLegacyPrivateRoute = true
         // Same shape as the app's phone coordinator, scaled down: default window 3.1 s, extended ~9 s.
         let phone = RemoteCoordinator(isHost: false, store: SharedTrust(), retryBaseNanoseconds: 100_000_000,
                                       sessionLossRetryLimit: 24, maximumRetryDelayNanoseconds: 400_000_000)
+        phone.allowLegacyPrivateRoute = true
         defer { host.stop(); phone.stop() }
         let invitation = try host.createPair(server: url, name: "Relaunch Mac")
         host.start()
@@ -58,6 +60,7 @@ final class HostRestartIntegrationTests: XCTestCase {
 
         // The watchdog relaunches a new process that restores the same pairing from the Keychain.
         let relaunched = RemoteCoordinator(isHost: true, store: hostTrust)
+        relaunched.allowLegacyPrivateRoute = true
         defer { relaunched.stop() }
         relaunched.restore()
         relaunched.start()
@@ -71,11 +74,13 @@ final class HostRestartIntegrationTests: XCTestCase {
     func testOrdinaryConnectFailuresKeepTheShortRetryWindow() async throws {
         let (service, url) = try service(); defer { service.terminate() }
         let host = RemoteCoordinator(isHost: true, store: SharedTrust())
+        host.allowLegacyPrivateRoute = true
         let invitation = try host.createPair(server: url, name: "Absent Mac")
         let phoneTrust = SharedTrust()
         try phoneTrust.save(invitation)
         let phone = RemoteCoordinator(isHost: false, store: phoneTrust, retryBaseNanoseconds: 50_000_000,
                                       sessionLossRetryLimit: 24, maximumRetryDelayNanoseconds: 400_000_000)
+        phone.allowLegacyPrivateRoute = true
         defer { phone.stop() }
         phone.restore()
         phone.start()
@@ -90,12 +95,14 @@ final class HostRestartIntegrationTests: XCTestCase {
         let (service, url) = try service(); defer { service.terminate() }
         let trust = SharedTrust()
         let predecessor = RemoteCoordinator(isHost: true, store: trust)
+        predecessor.allowLegacyPrivateRoute = true
         defer { predecessor.stop() }
         _ = try predecessor.createPair(server: url, name: "Predecessor")
         predecessor.start()
         try await waitFor("predecessor registered") { predecessor.hostRegistered }
 
         let relaunched = RemoteCoordinator(isHost: true, store: trust, retryBaseNanoseconds: 100_000_000)
+        relaunched.allowLegacyPrivateRoute = true
         defer { relaunched.stop() }
         relaunched.restore()
         relaunched.start()

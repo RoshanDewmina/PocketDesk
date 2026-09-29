@@ -226,6 +226,7 @@ final class RenewalRig {
                                         retryBaseNanoseconds: 10_000_000, registrationStableNanoseconds: 50_000_000,
                                         signaling: signaling, renewalScheduler: scheduler,
                                         advertisesRenewal: advertisesRenewal)
+        coordinator.allowLegacyPrivateRoute = true
         signaling.onConnect = { [weak self] connect in
             guard let self else { return }
             self.service.accept(role: connect.hostToken == nil ? "client" : "host", features: connect.features,
@@ -244,6 +245,7 @@ final class RenewalRig {
 
     func startPhone() async throws {
         let mac = RemoteCoordinator(isHost: true, store: MemoryPairStore())
+        mac.allowLegacyPrivateRoute = true
         let invitation = try mac.createPair(server: "ws://127.0.0.1:9/signal", name: "Test Mac")
         try coordinator.enroll(invitation.code())
         await scheduler.settle()

@@ -70,7 +70,9 @@ final class SessionIntegrationTests: XCTestCase {
         let (service, url) = try service(); defer { service.terminate() }
         let hostStore = MemoryTrust(), phoneStore = MemoryTrust()
         let host = RemoteCoordinator(isHost: true, store: hostStore)
+        host.allowLegacyPrivateRoute = true
         let phone = RemoteCoordinator(isHost: false, store: phoneStore)
+        phone.allowLegacyPrivateRoute = true
         var transitions: [String] = []
         let hostObserver = host.$status.sink { transitions.append("host: \($0)") }
         let phoneObserver = phone.$status.sink { transitions.append("phone: \($0)") }
@@ -156,7 +158,9 @@ final class SessionIntegrationTests: XCTestCase {
     func testHostKeepsRegisteredRoomWhenPhoneLeavesOrMediaDrops() async throws {
         let (service, url) = try service(); defer { service.terminate() }
         let host = RemoteCoordinator(isHost: true, store: MemoryTrust())
+        host.allowLegacyPrivateRoute = true
         let phone = RemoteCoordinator(isHost: false, store: MemoryTrust())
+        phone.allowLegacyPrivateRoute = true
         var hostStatuses: [String] = []
         let observer = host.$status.sink { hostStatuses.append($0) }
         defer {
@@ -209,6 +213,7 @@ final class SessionIntegrationTests: XCTestCase {
         let host = RemoteCoordinator(isHost: true, store: MemoryTrust(),
                                      retryLimit: 2, retryBaseNanoseconds: 200_000_000,
                                      registrationStableNanoseconds: 100_000_000)
+        host.allowLegacyPrivateRoute = true
         defer { host.stop() }
         _ = try host.createPair(server: url, name: "Retry Host")
         host.start()
@@ -235,7 +240,9 @@ final class SessionIntegrationTests: XCTestCase {
         let (service, url) = try service(); defer { service.terminate() }
         let hostStore = MemoryTrust(), phoneStore = MemoryTrust()
         let host = RemoteCoordinator(isHost: true, store: hostStore)
+        host.allowLegacyPrivateRoute = true
         let phone = RemoteCoordinator(isHost: false, store: phoneStore)
+        phone.allowLegacyPrivateRoute = true
         defer { host.stop(); phone.stop() }
 
         let original = try host.createPair(server: url, name: "Late Host")
@@ -272,7 +279,9 @@ final class SessionIntegrationTests: XCTestCase {
         let (service, url) = try service(); defer { service.terminate() }
         let hostStore = MemoryTrust(), phoneStore = MemoryTrust()
         let host = RemoteCoordinator(isHost: true, store: hostStore)
+        host.allowLegacyPrivateRoute = true
         let phone = RemoteCoordinator(isHost: false, store: phoneStore)
+        phone.allowLegacyPrivateRoute = true
         defer { host.stop(); phone.stop() }
         let invitation = try host.createPair(server: url, name: "Test")
         host.start(); try await waitFor("host registered") { host.status == "Ready for your paired phone" }
@@ -294,12 +303,14 @@ final class SessionIntegrationTests: XCTestCase {
         let hostStore = MemoryTrust(), phoneStore = MemoryTrust()
         phoneStore.refuseSave = true
         let host = RemoteCoordinator(isHost: true, store: hostStore)
+        host.allowLegacyPrivateRoute = true
         let phone = RemoteCoordinator(
             isHost: false,
             store: phoneStore,
             retryLimit: 3,
             retryBaseNanoseconds: 25_000_000
         )
+        phone.allowLegacyPrivateRoute = true
         defer { host.stop(); phone.stop() }
         let original = try host.createPair(server: url, name: "Test")
         host.start(); try await waitFor("host registered") { host.status == "Ready for your paired phone" }
@@ -326,7 +337,9 @@ final class SessionIntegrationTests: XCTestCase {
     @MainActor
     private func connectedPair(_ url: String, name: String) async throws -> (RemoteCoordinator, RemoteCoordinator) {
         let host = RemoteCoordinator(isHost: true, store: MemoryTrust())
+        host.allowLegacyPrivateRoute = true
         let phone = RemoteCoordinator(isHost: false, store: MemoryTrust())
+        phone.allowLegacyPrivateRoute = true
         let invitation = try host.createPair(server: url, name: name)
         host.start()
         try await waitFor("host registered") { host.hostRegistered }

@@ -34,7 +34,9 @@ final class AgentAlertSessionTests: XCTestCase {
         let (service, url) = try startService()
         defer { service.terminate() }
         let host = RemoteCoordinator(isHost: true, store: MemoryPairStore())
+        host.allowLegacyPrivateRoute = true
         let phone = RemoteCoordinator(isHost: false, store: MemoryPairStore())
+        phone.allowLegacyPrivateRoute = true
         defer { host.stop(); phone.stop() }
 
         let original = try host.createPair(server: url, name: "Alert Mac")
