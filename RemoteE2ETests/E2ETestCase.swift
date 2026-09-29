@@ -73,12 +73,19 @@ class E2ETestCase: XCTestCase {
         add(attachment)
     }
 
+    private var lastAlertCheck = Date.distantPast
+
     /// Accepts the local-network style prompts the simulator may show; never touches the Mac.
+    /// Checked at most every 3 s: each accessibility query is slow under load.
     func dismissSystemAlerts() {
+        guard Date().timeIntervalSince(lastAlertCheck) > 3 else { return }
+        lastAlertCheck = Date()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let alert = springboard.alerts.firstMatch
+        guard alert.exists else { return }
         for label in ["Allow", "Allow While Using App", "OK"] {
-            let button = springboard.alerts.buttons[label]
-            if button.exists { button.tap(); recorder?.note("dismissed simulator alert via \(label)") }
+            let button = alert.buttons[label]
+            if button.exists { button.tap(); recorder?.note("dismissed simulator alert via \(label)"); return }
         }
     }
 

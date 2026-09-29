@@ -84,7 +84,7 @@ final class StubHost {
     private var cpu = E2ECPUMeter()
     private var lastConnected = false
     private var lastStatus = ""
-    private var lastInvitation = ""
+    private var lastInvitation: PairInvitation?
     private var moveBatch = 0
 
     init(options: E2ELaunchOptions) throws {
@@ -154,14 +154,14 @@ final class StubHost {
             if pair.invitation.expires.timeIntervalSinceNow < 2, !coordinator.awaitingApproval, !coordinator.connected {
                 ensurePairingAndStart()
             }
-            let code = (try? coordinator.hostPair?.invitation.code()) ?? ""
-            if code != lastInvitation {
-                lastInvitation = code
+            // Compare the invitation itself: its encoded code need not be byte-stable.
+            if pair.invitation != lastInvitation, let code = try? pair.invitation.code() {
+                lastInvitation = pair.invitation
                 try? E2EFiles.writePrivate(Data(code.utf8), to: invitationPath)
                 recorder.event("pairing.codeIssued")
             }
-        } else if !lastInvitation.isEmpty {
-            lastInvitation = ""
+        } else if lastInvitation != nil {
+            lastInvitation = nil
             try? FileManager.default.removeItem(atPath: invitationPath)
         }
         // Like the real host, a coordinator that exhausted its retry budget stays stopped.
@@ -194,7 +194,7 @@ final class StubHost {
             "stats": lastStats ?? [:], "inputAccepted": accepted, "inputRejected": rejected,
             "footprintBytes": metrics.footprintBytes, "residentBytes": metrics.residentBytes,
             "cpuSeconds": metrics.cpuSeconds, "cpuPercent": cpu.percent(now: uptime, cpuSeconds: metrics.cpuSeconds) as Any,
-            "invitationAvailable": !lastInvitation.isEmpty
+            "invitationAvailable": lastInvitation != nil
         ])
     }
 

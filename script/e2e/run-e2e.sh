@@ -12,6 +12,7 @@ REPO=${SCRIPT_DIR:h:h}
 ROOT=/private/tmp/farside-e2e
 RUN_LOCK=/private/tmp/farside-e2e.run.lock
 XCB_LOCK=/tmp/farside-xcodebuild.lock
+STARTUP_LIMIT=900   # installing the app and launching the UI test runner, before the test starts
 HOST_BUNDLE_ID=com.roshan.PocketDesk.RemoteHost
 PHONE_BUNDLE_ID=com.roshan.PocketDesk.Remote
 
@@ -180,8 +181,11 @@ build() {
       -derivedDataPath "$DERIVED" build > "$REPORT_DIR/build/$scheme.log" 2>&1 \
       || die "building $scheme failed; see $REPORT_DIR/build/$scheme.log"
   done
+  # Ad-hoc signing for the simulator only: it embeds the simulated application-identifier the
+  # simulator Keychain needs to keep the phone's (E2E) trust. The project's signing is unchanged.
   /usr/bin/lockf -k "$XCB_LOCK" xcodebuild -project "$REPO/PocketDesktop.xcodeproj" -scheme FarsideE2E -configuration Debug \
-    -destination "id=$UDID" -derivedDataPath "$DERIVED" build-for-testing > "$REPORT_DIR/build/FarsideE2E.log" 2>&1 \
+    -destination "id=$UDID" -derivedDataPath "$DERIVED" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+    build-for-testing > "$REPORT_DIR/build/FarsideE2E.log" 2>&1 \
     || die "building the phone app and RemoteE2ETests failed; see $REPORT_DIR/build/FarsideE2E.log"
 }
 
@@ -508,12 +512,18 @@ run_scenario() {
     -only-testing:"RemoteE2ETests/RemoteE2ETests/$method" -resultBundlePath "$out/result.xcresult" \
     -collect-test-diagnostics never > "$out/xcodebuild.log" 2>&1 &
   XCB_PID=$!
+  # The limit counts from the test's own start: installing the app and launching the runner can
+  # take minutes on a busy Mac and has its own allowance.
+  local test_started=0
   while pid_alive $XCB_PID; do
     serve_requests
     sample_resources
-    if (( SECONDS - started > limit )); then
+    if (( ! test_started )) && grep -q "Test Case '.*' started" "$out/xcodebuild.log" 2>/dev/null; then
+      test_started=$SECONDS
+    fi
+    if (( test_started && SECONDS - test_started > limit )) || (( ! test_started && SECONDS - started > STARTUP_LIMIT )); then
       timed_out=1
-      log "Scenario $scenario exceeded ${limit}s; stopping the test run"
+      log "Scenario $scenario exceeded its time limit (${limit}s test, ${STARTUP_LIMIT}s startup); stopping the test run"
       stop_xcodebuild
       break
     fi
