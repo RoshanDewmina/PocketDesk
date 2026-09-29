@@ -1,4 +1,5 @@
 import { roomStatus } from "./entitlement/store";
+import { allowStrict } from "./ratelimit";
 import { BodyTooLarge, HEX64, base64Decode, base64UrlEncode, isRecord, json, readJsonBody, secureEqual, sha256Hex, utf8 } from "./util";
 
 export type PushEnv = Env & { APNS_TEAM_ID?: string; APNS_KEY_ID?: string; APNS_PRIVATE_KEY?: string };
@@ -64,6 +65,8 @@ export async function handlePushRegister(request: Request, env: Env): Promise<Re
   const value = registration(input.registration);
   if (!value || value.environment !== expectedEnvironment(env)) return json({ error: "invalid_registration" }, 400);
   if (!configured(env as PushEnv)) return json({ error: "push_unavailable" }, 503);
+  if (!(await allowStrict(env.RL_API_DEVICE, `push:${input.room}`, "RL_API_DEVICE")))
+    return json({ error: "rate_limited" }, 429, { "retry-after": "60" });
   if (!value.alertsEnabled) {
     await forgetAgentAlertsRoom(env.DB, input.room);
     return json({ state: "removed" }, 200);
@@ -77,6 +80,17 @@ export async function handlePushRegister(request: Request, env: Env): Promise<Re
       os_major=excluded.os_major, version=push_registrations.version+1, updated_at=excluded.updated_at`)
     .bind(input.room, value.deviceToken, value.environment, Number(value.alertsEnabled), Number(value.timeSensitive),
       Number(value.showAgentName), value.locale, value.appBuild, value.osMajor, Date.now()).run();
+  const saved = await env.DB.prepare("SELECT device_token AS deviceToken, version FROM push_registrations WHERE room=?1")
+    .bind(input.room).first<{ deviceToken: string; version: number }>();
+  // A host can replace its phone pairing while this D1 write is in flight. If that happened,
+  // remove only the address this request wrote; a newer phone's rotated token must survive.
+  if (!(await clientAllowed(env, input.room, input.token))) {
+    if (saved?.deviceToken === value.deviceToken) {
+      await env.DB.prepare("DELETE FROM push_registrations WHERE room=?1 AND device_token=?2 AND version=?3")
+        .bind(input.room, value.deviceToken, saved.version).run();
+    }
+    return json({ error: "unauthorized" }, 401);
+  }
   return json({ state: "registered" }, 200);
 }
 
@@ -85,10 +99,24 @@ export async function handlePushRemove(request: Request, env: Env): Promise<Resp
   if (!input || typeof input.room !== "string" || typeof input.token !== "string" ||
       typeof input.deviceToken !== "string" || !DEVICE_TOKEN.test(input.deviceToken)) return json({ error: "invalid_request" }, 400);
   if (!(await clientAllowed(env, input.room, input.token))) return json({ error: "unauthorized" }, 401);
+  if (!(await allowStrict(env.RL_API_DEVICE, `push:${input.room}`, "RL_API_DEVICE")))
+    return json({ error: "rate_limited" }, 429, { "retry-after": "60" });
   // A delayed opt-out for an old APNs token cannot erase a newer rotated registration.
   await env.DB.prepare("DELETE FROM push_registrations WHERE room = ?1 AND device_token = ?2")
     .bind(input.room, input.deviceToken).run();
   return new Response(null, { status: 204 });
+}
+
+/** A paired phone may disable agent alerts after relaunch even before APNs returns a new token. */
+export async function handlePushPreferences(request: Request, env: Env): Promise<Response> {
+  const input = await body(request);
+  if (!input || typeof input.room !== "string" || typeof input.token !== "string" ||
+      input.alertsEnabled !== false) return json({ error: "invalid_request" }, 400);
+  if (!(await clientAllowed(env, input.room, input.token))) return json({ error: "unauthorized" }, 401);
+  if (!(await allowStrict(env.RL_API_DEVICE, `push:${input.room}`, "RL_API_DEVICE")))
+    return json({ error: "rate_limited" }, 429, { "retry-after": "60" });
+  await forgetAgentAlertsRoom(env.DB, input.room);
+  return json({ state: "removed" }, 200);
 }
 
 export async function apnsToken(env: PushEnv): Promise<string> {

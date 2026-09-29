@@ -13,6 +13,17 @@ export async function allow(limiter: Limiter | undefined, key: string, name: str
   }
 }
 
+/** New push-address writes fail closed when their quota binding is absent or unavailable. */
+export async function allowStrict(limiter: Limiter | undefined, key: string, name: string): Promise<boolean> {
+  if (!limiter) return false;
+  try {
+    return (await limiter.limit({ key })).success;
+  } catch (error) {
+    logError("ratelimit_binding_failed", error, { limiter: name });
+    return false;
+  }
+}
+
 /** Rate-limit key for a client address: IPv4 as is, IPv6 by its /64 so one host cannot rotate through its prefix. */
 export function addressKey(ip: string | null | undefined): string {
   if (!ip) return "unknown";
