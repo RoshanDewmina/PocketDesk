@@ -74,12 +74,14 @@ No private API, no global pointer-size change, no new permission.
 | Level | Result |
 |---|---|
 | Build | Mac host (`PocketDeskRemoteHost`, unsigned), iPhone app for simulator, `RemoteCoreTests`: all succeed without new warnings |
-| macOS core tests | 19 new (encoding/validation, legacy decoding, negotiation, simulated handshake, sampling, prediction incl. driver-exact clamping, blending/snap, classifier incl. enlarged/recoloured/foreign images, glyph rendering). After rebasing on `a805290`: 178 executed, 0 failures, 1 pre-existing skip |
-| iPhone unit tests | 5 new overlay-model tests (legacy host, draw-after-hide, instant local move, restore grace, epoch reset, hot-spot placement at every size). After rebase: 30 executed, 0 failures (iPhone 17 simulator, iOS 27.0) |
-| iPhone UI tests | 2 new (size setting reachable and persistent; glyph gallery), both passing. Existing layout suite: see "UI suite under load" below |
+| macOS core tests | 20 new (encoding/validation, legacy decoding, negotiation, simulated handshake, sampling, capture cursor-intent contract, prediction incl. driver-exact clamping, blending/snap, classifier incl. enlarged/recoloured/foreign images, glyph rendering). After rebasing on `a805290`: 179 executed, 0 failures, 1 pre-existing skip |
+| iPhone unit tests | 5 new overlay-model tests covering a legacy host, drawing only after the host hides its cursor, instant local moves, the restore grace, epoch reset and hot-spot placement at every size. After rebase: 30 executed, 0 failures (iPhone 17 simulator, iOS 27.0) |
+| iPhone UI tests | 2 new (size setting reachable and persistent across relaunch; glyph gallery), both passing. Existing layout suite: see below |
 | Visual | Simulator screenshots confirm crisp glyphs and exact hot-spot placement at Medium and Extra Large in Fit |
 | Local API probe | `currentSystem` non-nil on macOS 27.0 and pixel-identical to `NSCursor.arrow`; 0.44 ms per classified sample |
 | **Not verified** | Live `showsCursor` switching mid-stream, real shape changes across apps, feel of prediction over Wi-Fi/cellular, host timer cost during a real session, duplicate/gap duration at transitions, physical readability |
+
+**UI suite under load.** One sequential run of all 12 UI tests at load averages of 200–500: 8 passed. The 4 failures were then re-run one at a time: `testLandscapeControlsKeepZoomReachable` and `testKeyboardKeepsDeliberatelyTypedMultilineDraft` pass alone (the latter had dropped synthesized keystrokes, e.g. "PocDsk" for "PocketDesk", only under load); the pointer size test passes after its helper retries a dropped dock-reveal swipe; `testOfflineControlsPortraitLandscapeAndKeyboard` fails at `SessionLayoutTests.swift:159` (landscape "Double-click" tile not found) identically on the untouched upstream base build, so it is pre-existing. `testPictureQualityCanSwitchWithoutOpeningKeyboard`, which scrolls the Controls sheet past the new Pointer size row, passes.
 
 **Flaky pre-existing test.** `SessionIntegrationTests.testHostKeepsRegisteredRoomWhenPhoneLeavesOrMediaDrops` (real WebRTC loopback + bun service, only `RemoteCoordinator`, untouched here) failed several times while the Mac's load average was 300–800. Alternating runs of the upstream base build and this branch's build failed once each out of three, so it is load-sensitive, not a regression. It passed in the final full run.
 
@@ -96,7 +98,7 @@ Debug-only launch arguments for offline checks: `--ui-layout-check --ui-pointer-
 
 ## Two-minute physical check
 
-Install the host and phone from this branch the usual way (`script/build_and_run.sh` for the Mac; do not bypass the identity guard), connect, control enabled, Medium size.
+After this branch is integrated into the main checkout, install from there through `script/build_and_run.sh` (never from a worktree; do not bypass the identity guard) and the usual phone install, connect with control enabled, Medium size.
 
 1. **Fit, idle (15 s).** Tap Fit. One large black arrow is visible; there is no second small arrow in the video. Move the real Mac mouse: the phone pointer follows smoothly.
 2. **Finger feel (30 s).** Drag one finger slowly, then fast, across the whole desktop and into each edge. The pointer moves with the finger, stops at the edges without bouncing, and never jumps backward when you stop. Note any rubber-banding.
