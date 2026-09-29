@@ -7,6 +7,7 @@ struct RemoteHostApp: App {
     @StateObject private var model: RemoteHostModel
 
     init() {
+        HostFonts.registerBundledFonts()
         let model = RemoteHostModel()
         _model = StateObject(wrappedValue: model)
         appDelegate.configure { model.stopForTermination() }
@@ -23,6 +24,7 @@ struct RemoteHostApp: App {
         Window(HostWindowID.setupTitle, id: HostWindowID.setup) {
             HostSetupContainer(model: model)
         }
+        .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
         .defaultLaunchBehavior(model.needsSetup ? .presented : .suppressed)
         .restorationBehavior(.disabled)
@@ -33,12 +35,13 @@ struct RemoteHostApp: App {
         .windowResizability(.contentSize)
 
         MenuBarExtra {
-            HostMenuContainer(model: model)
+            HostPopoverContainer(model: model)
         } label: {
-            Image(systemName: model.status.menuBarSymbol)
-                .accessibilityLabel("PocketDesk, \(model.status.title)")
+            Image(nsImage: HostMenuBarIcon.image(for: HostMarkState(status: model.status),
+                                                 accessibilityDescription: "Farside, \(model.status.title)"))
+                .accessibilityLabel("Farside, \(model.status.title)")
         }
-        .menuBarExtraStyle(.menu)
+        .menuBarExtraStyle(.window)
     }
 }
 
@@ -68,13 +71,13 @@ private struct HostSettingsContainer: View {
     }
 }
 
-private struct HostMenuContainer: View {
+private struct HostPopoverContainer: View {
     @ObservedObject var model: RemoteHostModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        HostMenuContent(state: model.viewState, actions: HostActions.live(
+        HostPopoverView(state: model.viewState, actions: HostActions.live(
             model,
             openSetup: showSetup,
             openSettings: {
@@ -119,9 +122,11 @@ extension HostActions {
             },
             removePhone: model.revoke,
             stopSharing: model.stopSharing,
+            pauseSharing: { model.pauseSharing() },
             resumeSharing: model.resumeSharing,
             setAllowControl: model.setControl,
             setKeepAwake: model.setKeepAwake,
+            setChimeOnConnect: model.setChimeOnConnect,
             setOpenAtLogin: model.setOpenAtLogin,
             selectDisplay: model.selectDisplay,
             openSetup: openSetup,

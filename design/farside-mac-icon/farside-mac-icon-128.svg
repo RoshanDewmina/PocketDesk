@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/></filter>
+    <radialGradient id="ground" cx="0.42" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#101010"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#FF5B1F" stop-opacity="0.6"/>
+      <stop offset="0.4" stop-color="#FF5B1F" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FF5B1F" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="body"><rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4" fill="url(#ground)" filter="url(#shadow)"/>
+  <g clip-path="url(#body)">
+    <g fill="#EDE8DF">
+      <circle cx="325.0" cy="125.0" r="12.3"/>
+      <circle cx="175.0" cy="175.0" r="15.8"/>
+      <circle cx="225.0" cy="175.0" r="18.8"/>
+      <circle cx="275.0" cy="175.0" r="21.6"/>
+      <circle cx="325.0" cy="175.0" r="20.8"/>
+      <circle cx="375.0" cy="175.0" r="13.3"/>
+      <circle cx="175.0" cy="225.0" r="16.2"/>
+      <circle cx="225.0" cy="225.0" r="21.6"/>
+      <circle cx="275.0" cy="225.0" r="22.6"/>
+      <circle cx="325.0" cy="225.0" r="19.9"/>
+      <circle cx="375.0" cy="225.0" r="17.0"/>
+      <circle cx="425.0" cy="225.0" r="13.6"/>
+      <circle cx="125.0" cy="275.0" r="10.4"/>
+      <circle cx="175.0" cy="275.0" r="17.6"/>
+      <circle cx="225.0" cy="275.0" r="20.9"/>
+      <circle cx="275.0" cy="275.0" r="22.7"/>
+      <circle cx="325.0" cy="275.0" r="17.6"/>
+      <circle cx="375.0" cy="275.0" r="25.5"/>
+      <circle cx="425.0" cy="275.0" r="21.1"/>
+      <circle cx="475.0" cy="275.0" r="13.1"/>
+      <circle cx="175.0" cy="325.0" r="13.0"/>
+      <circle cx="225.0" cy="325.0" r="18.5"/>
+      <circle cx="275.0" cy="325.0" r="21.6"/>
+      <circle cx="325.0" cy="325.0" r="22.2"/>
+      <circle cx="375.0" cy="325.0" r="22.4"/>
+      <circle cx="425.0" cy="325.0" r="26.0"/>
+      <circle cx="475.0" cy="325.0" r="21.5"/>
+      <circle cx="525.0" cy="325.0" r="13.3"/>
+      <circle cx="225.0" cy="375.0" r="11.9"/>
+      <circle cx="275.0" cy="375.0" r="18.5"/>
+      <circle cx="325.0" cy="375.0" r="22.2"/>
+      <circle cx="375.0" cy="375.0" r="22.5"/>
+      <circle cx="425.0" cy="375.0" r="22.0"/>
+      <circle cx="475.0" cy="375.0" r="24.9"/>
+      <circle cx="525.0" cy="375.0" r="13.3"/>
+      <circle cx="275.0" cy="425.0" r="10.6"/>
+      <circle cx="325.0" cy="425.0" r="18.1"/>
+      <circle cx="375.0" cy="425.0" r="22.6"/>
+      <circle cx="425.0" cy="425.0" r="24.4"/>
+      <circle cx="475.0" cy="425.0" r="21.1"/>
+      <circle cx="525.0" cy="425.0" r="16.9"/>
+      <circle cx="375.0" cy="475.0" r="17.0"/>
+      <circle cx="425.0" cy="475.0" r="22.3"/>
+    </g>
+    <circle cx="512.0" cy="468.0" r="130" fill="url(#glow)"/>
+    <path d="M512.0 468.0 L536.1 812.2 L613.5 732.0 L674.2 849.5 L722.3 824.0 L661.5 706.6 L771.6 698.9 Z" fill="#EDE8DF" stroke="#050505" stroke-width="22"
+          stroke-linejoin="round" paint-order="stroke"/>
+    <circle cx="512.0" cy="468.0" r="40" fill="#FF5B1F"/>
+  </g>
+  <rect x="101" y="101" width="822" height="822" rx="184.4" ry="184.4"
+        fill="none" stroke="#EDE8DF" stroke-opacity="0.1" stroke-width="2"/>
+</svg>

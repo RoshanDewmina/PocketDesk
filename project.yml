@@ -133,7 +133,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: PocketDesk Host
+        INFOPLIST_KEY_CFBundleDisplayName: Farside
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         INFOPLIST_KEY_NSScreenCaptureUsageDescription: Share a selected display with your paired phone.
         INFOPLIST_KEY_LSUIElement: YES
         CODE_SIGNING_ALLOWED: YES
@@ -146,7 +147,7 @@ targets:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [RemoteTests, RemoteShared, RemoteHost/HostTextFocusProbe.swift, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift]
+    sources: [RemoteTests, RemoteShared, RemoteHost/HostPresentation.swift, RemoteHost/HostViewState.swift, RemoteHost/HostTextFocusProbe.swift, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift]
     dependencies:
       - package: WebRTC
     settings:
@@ -163,12 +164,16 @@ targets:
     sources:
       - HostUITests
       - RemoteShared/Pairing.swift
+      - RemoteShared/FarsideTheme.swift
       - RemoteHost/HostReadiness.swift
       - RemoteHost/HostViewState.swift
+      - RemoteHost/HostPresentation.swift
       - RemoteHost/HostPermissionState.swift
       - RemoteHost/HostStyle.swift
+      - RemoteHost/HostMark.swift
+      - RemoteHost/HostHalftoneArt.swift
       - RemoteHost/HostSettingsSection.swift
-      - RemoteHost/HostMenuContent.swift
+      - RemoteHost/HostPopoverView.swift
       - RemoteHost/HostSetupView.swift
       - RemoteHost/HostSettingsView.swift
     settings:

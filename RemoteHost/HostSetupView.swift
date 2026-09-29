@@ -1,267 +1,466 @@
 import SwiftUI
 
+/// The setup window: a halftone rail with the four steps on the left, the current step on the
+/// right. The model decides how far setup may go; Back and Continue move within that.
 struct HostSetupView: View {
     let state: HostViewState
     let actions: HostActions
+    @State private var page: HostSetupPage
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(state: HostViewState, actions: HostActions, page: HostSetupPage? = nil) {
+        self.state = state
+        self.actions = actions
+        _page = State(initialValue: page ?? HostSetupFlow.initialPage(for: state))
+    }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HostSetupProgress(current: state.setupStep)
-                .padding(.top, 18)
-                .padding(.horizontal, 28)
-
-            Group {
-                switch state.setupStep {
-                case .screenRecording: screenRecordingStep
-                case .accessibility: accessibilityStep
-                case .pairPhone: HostPairingStep(state: state, actions: actions)
-                case .done: doneStep
-                }
+        HStack(spacing: 0) {
+            HostSetupRail(page: page, state: state)
+                .frame(width: HostTheme.railWidth)
+            VStack(alignment: .leading, spacing: 0) {
+                HostDotProgress(page: page,
+                                filled: HostSetupFlow.progressDots(page: page, state: state),
+                                caption: HostSetupFlow.progressCaption(page: page, state: state))
+                    .padding(.bottom, 22)
+                pageContent
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .id(page)
+                    .transition(.opacity)
+                footer
+                    .padding(.top, 12)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .padding(.horizontal, 40)
-            .padding(.top, 26)
-            .padding(.bottom, 18)
-
-            Divider()
-            footer
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+            .padding(.top, 28)
+            .padding(.horizontal, 30)
+            .padding(.bottom, 22)
         }
-        .frame(width: 540, height: 450)
-        .animation(.smooth, value: state.setupStep)
-    }
-
-    private var screenRecordingStep: some View {
-        HostSetupPage(
-            systemImage: "rectangle.dashed.badge.record", tone: .sand,
-            title: "Allow Screen Recording",
-            message: "PocketDesk streams this Mac’s screen to your phone. macOS asks you to allow this once, in System Settings."
-        ) {
-            if state.screenRecording.isGranted {
-                HostStatusLine(kind: .done, text: "Screen Recording is allowed")
-            } else if state.screenRecordingSettingsOpened {
-                HostStatusLine(kind: .waiting, text: "Turn on PocketDesk Host in the list. This page updates by itself.")
-                recoveryNote(relaunchHint: true)
-            }
+        .frame(width: HostTheme.setupSize.width, height: HostTheme.setupSize.height)
+        .background(HostTheme.windowBackground)
+        .preferredColorScheme(.dark)
+        .animation(reduceMotion ? nil : Farside.Motion.easeOut(), value: page)
+        .onChange(of: state.setupStep) { old, new in
+            page = HostSetupFlow.page(afterStepChangeFrom: old, to: new, current: page)
         }
-    }
-
-    private var accessibilityStep: some View {
-        HostSetupPage(
-            systemImage: "cursorarrow.rays", tone: .blue,
-            title: "Allow mouse and keyboard",
-            message: "So your phone can click, scroll and type on this Mac, turn on PocketDesk Host under Accessibility. You can turn control off in Settings or stop sharing from the menu bar."
-        ) {
-            if state.accessibility.isGranted {
-                HostStatusLine(kind: .done, text: "Accessibility is allowed")
-            } else if state.accessibilitySettingsOpened {
-                HostStatusLine(kind: .waiting, text: "Turn on PocketDesk Host in the list. This page updates by itself.")
-                recoveryNote(relaunchHint: false)
-            }
-        }
-    }
-
-    private var doneStep: some View {
-        HostSetupPage(
-            systemImage: "checkmark", tone: .sage,
-            title: "PocketDesk is ready",
-            message: "Open PocketDesk on your phone to see and use this Mac. While PocketDesk is running, you’ll find it in the menu bar."
-        ) {
-            VStack(alignment: .leading, spacing: 10) {
-                hint("macbook.and.iphone", "The menu bar icon changes whenever your phone is viewing or controlling this Mac.")
-                hint("pause.circle", "Choose Stop Sharing in that menu to end a session at once.")
-                Toggle("Open PocketDesk when you log in",
-                       isOn: Binding(get: { state.openAtLogin }, set: actions.setOpenAtLogin))
-                    .toggleStyle(.checkbox)
-                    .padding(.top, 4)
-            }
-            .font(.callout)
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private func hint(_ systemImage: String, _ text: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: systemImage)
-                .frame(width: 22)
-                .accessibilityHidden(true)
-            Text(text).fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private func recoveryNote(relaunchHint: Bool) -> some View {
-        Text(relaunchHint
-             ? "Already on? Quit and reopen PocketDesk. If it still isn’t detected, select PocketDesk Host in the list, remove it with the – button, add it again with +, then reopen PocketDesk."
-             : "Already on? Select PocketDesk Host in the list, remove it with the – button, then add it again with +.")
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.top, 2)
     }
 
     @ViewBuilder
+    private var pageContent: some View {
+        switch page {
+        case .hello: HostHelloPage()
+        case .permissions: HostPermissionsPage(state: state, actions: actions)
+        case .pair: HostPairingPage(state: state, actions: actions)
+        case .ready: HostReadyPage(state: state, actions: actions)
+        }
+    }
+
     private var footer: some View {
-        HStack {
-            switch state.setupStep {
-            case .screenRecording:
-                if state.screenRecordingSettingsOpened && !state.screenRecording.isGranted {
-                    Button("Quit & Reopen", action: actions.relaunch)
-                }
-                Spacer()
-                Button("Open System Settings") { actions.openSystemSettings(.screenRecording) }
-                    .keyboardShortcut(.defaultAction)
-            case .accessibility:
-                Button("Skip — View Only", action: actions.skipAccessibility)
-                Spacer()
-                Button("Open System Settings") { actions.openSystemSettings(.accessibility) }
-                    .keyboardShortcut(.defaultAction)
-            case .pairPhone:
-                if state.pairing == .confirmReplace {
-                    Button("Cancel", action: actions.cancelPairing)
-                }
-                Spacer()
-                if state.pairing == .confirmReplace {
-                    Button("Replace Phone", action: actions.beginPairing).keyboardShortcut(.defaultAction)
-                }
-                if case .expired = state.pairing {
-                    Button("New Code", action: actions.beginPairing).keyboardShortcut(.defaultAction)
-                }
-            case .done:
-                Spacer()
-                Button("Done", action: actions.finishSetup)
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .controlSize(.large)
-    }
-}
-
-struct HostSetupPage<Content: View>: View {
-    let systemImage: String
-    let tone: HostTone
-    let title: String
-    let message: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HostIconTile(systemImage: systemImage, tone: tone)
-            Text(title)
-                .font(.hostTitle)
-                .accessibilityAddTraits(.isHeader)
-            Text(message)
-                .font(.body)
-                .foregroundStyle(.secondary)
+        HStack(alignment: .center, spacing: 12) {
+            Text(page == .ready
+                 ? "Stay on, awake and logged in. After a restart, log in once."
+                 : "We only look while a phone you approved is connected.")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Farside.Palette.ash)
                 .fixedSize(horizontal: false, vertical: true)
-            VStack(alignment: .leading, spacing: 8) { content }
-                .padding(.top, 6)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct HostSetupProgress: View {
-    @Environment(\.colorScheme) private var scheme
-    let current: HostSetupStep
-
-    private let steps: [(HostSetupStep, String)] = [
-        (.screenRecording, "Screen"),
-        (.accessibility, "Control"),
-        (.pairPhone, "Phone"),
-        (.done, "Ready")
-    ]
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ForEach(Array(steps.enumerated()), id: \.offset) { index, item in
-                if index > 0 {
-                    Rectangle()
-                        .fill(item.0 <= current ? HostTone.sage.ink(scheme).opacity(0.5) : Color.primary.opacity(0.12))
-                        .frame(height: 1)
-                        .frame(maxWidth: 36)
+            Spacer(minLength: 12)
+            if let previous = HostSetupPage(rawValue: page.rawValue - 1) {
+                Button("Back") { page = previous }
+                    .buttonStyle(HostButtonStyle(kind: .plate, height: 34))
+                    .accessibilityIdentifier("farside.setup.back")
+            }
+            if page == .ready {
+                Button("Done", action: actions.finishSetup)
+                    .buttonStyle(HostButtonStyle(kind: .primary, height: 34))
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("farside.setup.done")
+            } else {
+                let enabled = HostSetupFlow.canContinue(from: page, state: state)
+                Button("Continue") {
+                    guard let next = HostSetupPage(rawValue: page.rawValue + 1) else { return }
+                    page = min(next, HostSetupFlow.furthestPage(for: state.setupStep))
                 }
-                HStack(spacing: 5) {
-                    Image(systemName: symbol(for: item.0))
-                        .foregroundStyle(item.0 < current || current == .done ? HostTone.sage.ink(scheme)
-                                         : item.0 == current ? Color.accentColor : Color.secondary)
-                    Text(item.1)
-                        .foregroundStyle(item.0 == current ? .primary : .secondary)
-                }
-                .font(.caption.weight(item.0 == current ? .semibold : .regular))
+                .buttonStyle(HostButtonStyle(kind: enabled ? .primary : .plate, height: 34))
+                .disabled(!enabled)
+                .hostDefaultAction(enabled)
+                .accessibilityIdentifier("farside.setup.continue")
             }
         }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Setup step \(current.rawValue + 1) of \(HostSetupStep.allCases.count)")
-    }
-
-    private func symbol(for step: HostSetupStep) -> String {
-        if step < current || current == .done { return "checkmark.circle.fill" }
-        return step == current ? "circle.inset.filled" : "circle"
     }
 }
 
-struct HostPairingStep: View {
+// MARK: Rail and progress
+
+struct HostSetupRail: View {
+    let page: HostSetupPage
+    let state: HostViewState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let scene = HostHalftoneScene.setupRail(reach: page.rawValue,
+                                                contact: page == .ready && state.status.isSessionLive)
+        ZStack(alignment: .bottomLeading) {
+            HostHalftoneArt(scene: scene)
+                .id(scene)
+                .transition(.opacity)
+            VStack(spacing: 6) {
+                ForEach(HostSetupPage.allCases) { step in
+                    HostRailStep(step: step, isCurrent: step == page,
+                                 isComplete: HostSetupFlow.isComplete(step, state: state, current: page))
+                }
+            }
+            .padding(18)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(HostTheme.railBackground)
+        .overlay(alignment: .trailing) {
+            Rectangle().fill(Farside.Palette.line).frame(width: 1)
+        }
+        .animation(reduceMotion ? nil : Farside.Motion.reveal(0.6), value: scene)
+    }
+}
+
+struct HostRailStep: View {
+    let step: HostSetupPage
+    let isCurrent: Bool
+    let isComplete: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ZStack {
+                if isCurrent || isComplete {
+                    Circle().fill(Farside.Palette.bone)
+                } else {
+                    Circle().strokeBorder(Farside.Palette.line2, lineWidth: 1)
+                }
+                if isComplete && !isCurrent {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(HostTheme.ink)
+                } else {
+                    Text(verbatim: "\(step.rawValue + 1)")
+                        .font(HostType.caption(10))
+                        .foregroundStyle(isCurrent ? HostTheme.ink : Farside.Palette.ash)
+                }
+            }
+            .frame(width: 22, height: 22)
+            if isComplete && !isCurrent {
+                Text(step.title).hostCaption(12)
+            } else {
+                Text(step.title)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(isCurrent ? Farside.Palette.bone : Farside.Palette.ash)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 9)
+        .background(Farside.Palette.void2, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay {
+            if isCurrent {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Farside.Palette.line2, lineWidth: 1)
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(step.title), \(isCurrent ? "current step" : isComplete ? "done" : "not done yet")")
+    }
+}
+
+struct HostDotProgress: View {
+    let page: HostSetupPage
+    let filled: Int
+    let caption: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var pulse = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Text(verbatim: "Step \(page.rawValue + 1) of \(HostSetupPage.allCases.count)")
+                .hostCaption()
+                .fixedSize()
+            HStack(spacing: 4) {
+                ForEach(0..<16, id: \.self) { index in
+                    Circle()
+                        .fill(color(index))
+                        .frame(width: 6, height: 6)
+                }
+            }
+            Text(caption)
+                .hostCaption()
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Step \(page.rawValue + 1) of \(HostSetupPage.allCases.count). \(caption)")
+        .onAppear {
+            guard !reduceMotion else { return }
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) { pulse = true }
+        }
+    }
+
+    private func color(_ index: Int) -> Color {
+        if index < filled { return Farside.Palette.bone }
+        if index == filled { return Farside.Palette.bone.opacity(pulse ? 0.3 : 0.85) }
+        return Farside.Palette.dim
+    }
+}
+
+// MARK: Pages
+
+private enum HostSetupText {
+    static func body(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 14))
+            .foregroundStyle(Farside.Palette.ash)
+            .lineSpacing(2)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+private struct HostPlate: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .background(Farside.Palette.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Farside.Palette.line, lineWidth: 1))
+    }
+}
+
+struct HostHelloPage: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HostHeading(parts: [.display("Your Mac is far"), .plain(".\n"), .display("Your reach "),
+                                .accent("isn’t"), .plain(".")])
+            HostSetupText.body("Farside lets your iPhone see and steer this Mac from wherever you are. Setup takes about a minute.")
+                .padding(.top, 12)
+            VStack(spacing: 10) {
+                item("01", "Two permissions", "One to see the screen, one to steer it.")
+                item("02", "One code", "Scan it with Farside on your iPhone. No accounts.")
+                item("03", "A ready check", "Farside checks this Mac before you head out.")
+            }
+            .padding(.top, 22)
+        }
+    }
+
+    private func item(_ number: String, _ title: String, _ detail: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 14) {
+            Text(verbatim: number)
+                .font(HostType.caption(12))
+                .foregroundStyle(Farside.Palette.ash)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(Farside.Palette.bone)
+                Text(detail)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Farside.Palette.ash)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .modifier(HostPlate())
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct HostPermissionsPage: View {
+    let state: HostViewState
+    let actions: HostActions
+    @State private var showsRecoveryLink = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HostHeading(parts: [.display("Two permissions"), .plain(". "), .accent("Then"),
+                                .display(" we stop asking"), .plain(".")], size: 30)
+            HostSetupText.body("Your Mac checks before anything can see or steer it. Good Mac. Switch both on and this window notices by itself.")
+                .padding(.top, 10)
+                .padding(.bottom, 18)
+            VStack(spacing: 10) {
+                HostPermissionRow(
+                    title: "Screen Recording", reason: "So your iPhone can see the screen.",
+                    symbol: "display", status: state.screenRecording,
+                    waiting: state.screenRecordingSettingsOpened, listName: state.appListName,
+                    showsRecoveryLink: showsRecoveryLink,
+                    recovery: "Switched on already? Quit and reopen Farside. Still nothing: select \(state.appListName) in the list, remove it with –, add it again with +, then reopen Farside.",
+                    open: { actions.openSystemSettings(.screenRecording) },
+                    relaunch: actions.relaunch
+                )
+                .accessibilityIdentifier("farside.setup.screenRecording")
+                HostPermissionRow(
+                    title: "Accessibility", reason: "So taps become clicks and typing becomes typing.",
+                    symbol: "hand.point.up.left", status: state.accessibility,
+                    waiting: state.accessibilitySettingsOpened, skipped: state.accessibilitySkipped,
+                    listName: state.appListName, showsRecoveryLink: showsRecoveryLink,
+                    recovery: "Select \(state.appListName) in the list, remove it with –, then add it again with +.",
+                    open: { actions.openSystemSettings(.accessibility) }
+                )
+                .accessibilityIdentifier("farside.setup.accessibility")
+            }
+            if !state.accessibility.isGranted && !state.accessibilitySkipped {
+                HStack(spacing: 6) {
+                    Text("Not now?")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Farside.Palette.ash)
+                    Button("Skip, and your iPhone can only watch", action: actions.skipAccessibility)
+                        .buttonStyle(HostButtonStyle(kind: .inline))
+                        .accessibilityIdentifier("farside.setup.skipAccessibility")
+                }
+                .padding(.top, 12)
+            }
+        }
+        .task(id: waiting) {
+            showsRecoveryLink = false
+            guard waiting else { return }
+            try? await Task.sleep(for: .seconds(20))
+            if !Task.isCancelled { showsRecoveryLink = true }
+        }
+    }
+
+    private var waiting: Bool {
+        (state.screenRecordingSettingsOpened && !state.screenRecording.isGranted)
+            || (state.accessibilitySettingsOpened && !state.accessibility.isGranted)
+    }
+}
+
+struct HostPermissionRow: View {
+    let title: String
+    let reason: String
+    let symbol: String
+    let status: HostPermissionStatus
+    var waiting = false
+    var skipped = false
+    let listName: String
+    var showsRecoveryLink = false
+    let recovery: String
+    let open: () -> Void
+    var relaunch: (() -> Void)?
+    @State private var showingRecovery = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 14) {
+                HostIconTile(systemImage: symbol)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Farside.Palette.bone)
+                    Text(reason)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Farside.Palette.ash)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                Spacer(minLength: 8)
+                if status.isGranted {
+                    HostGrantedBadge()
+                } else {
+                    Button("Open Settings", action: open)
+                        .buttonStyle(HostArrowButtonStyle())
+                        .accessibilityLabel("Open System Settings for \(title)")
+                }
+            }
+            if !status.isGranted && (waiting || skipped) {
+                statusLine
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .modifier(HostPlate())
+    }
+
+    private var statusLine: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                if waiting {
+                    ProgressView().controlSize(.mini)
+                    Text("Watching for the switch").hostCaption(10.5, color: Farside.Palette.bone)
+                } else {
+                    Text("Skipped · view only for now").hostCaption(10.5)
+                }
+                Spacer(minLength: 8)
+                if waiting, let relaunch {
+                    Button("Quit & Reopen", action: relaunch)
+                        .buttonStyle(HostButtonStyle(kind: .inline))
+                }
+                if waiting && showsRecoveryLink {
+                    Button("Still not detected?") { showingRecovery = true }
+                        .buttonStyle(HostButtonStyle(kind: .inline))
+                        .popover(isPresented: $showingRecovery, arrowEdge: .bottom) {
+                            Text(recovery)
+                                .font(.system(size: 13))
+                                .foregroundStyle(Farside.Palette.bone)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(width: 280)
+                                .padding(16)
+                                .preferredColorScheme(.dark)
+                        }
+                }
+            }
+            if waiting && listName != "Farside" {
+                Text("Switch on Farside. It may be listed as “\(listName)”.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Farside.Palette.ash)
+            }
+        }
+        .padding(.leading, 54)
+    }
+}
+
+struct HostPairingPage: View {
     let state: HostViewState
     let actions: HostActions
     @State private var serviceDraft = ""
 
     var body: some View {
         switch state.pairing {
-        case .awaitingApproval:
-            approval
-        case .confirmReplace:
-            HostSetupPage(systemImage: "iphone.gen3", tone: .clay, title: "Pair a new phone?",
-                          message: "Your current iPhone will stop working with this Mac. You can pair it again later.") {
-                EmptyView()
-            }
-        case .needsService:
-            HostSetupPage(systemImage: "network", tone: .clay, title: "Connection service needed",
-                          message: "This test build doesn’t include a connection service yet. Enter the private service address you were given.") {
-                HStack {
-                    TextField("wss://example.com/signal", text: $serviceDraft)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { actions.setServiceAddress(serviceDraft) }
-                    Button("Continue") { actions.setServiceAddress(serviceDraft) }
-                        .disabled(!PairInvitation.validServer(serviceDraft.trimmingCharacters(in: .whitespaces)))
-                }
-            }
+        case .awaitingApproval: approval
+        case .confirmReplace: replace
+        case .needsService: service
         default:
-            code
+            if state.hasPairedPhone && !state.pairingRequested { paired } else { code }
         }
     }
 
     private var code: some View {
-        HStack(alignment: .top, spacing: 26) {
-            VStack(alignment: .leading, spacing: 12) {
-                HostIconTile(systemImage: "iphone.gen3", tone: .sage)
-                Text("Pair your phone")
-                    .font(.hostTitle)
-                    .accessibilityAddTraits(.isHeader)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("1. Open PocketDesk on your iPhone.")
-                    Text("2. Scan this code with it.")
-                    Text("3. Allow the phone here on your Mac.")
+        VStack(alignment: .leading, spacing: 0) {
+            HostHeading(parts: [.display("One code"), .plain(". "), .accent("No"), .display(" accounts"), .plain(".")])
+            HostSetupText.body("Open Farside on your iPhone, scan this, then approve the phone here. That’s the whole pairing.")
+                .padding(.top, 10)
+                .padding(.bottom, 20)
+            HStack(alignment: .top, spacing: 22) {
+                qr
+                VStack(alignment: .leading, spacing: 12) {
+                    step("1", "Open Farside on your iPhone")
+                    step("2", "Scan this code")
+                    step("3", "Allow the phone here")
+                    expiry
+                        .padding(.top, 4)
                 }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                expiry
-                    .padding(.top, 6)
             }
-            qr
         }
         .onChange(of: state.canBeginPairing, initial: true) { _, ready in
             if ready && state.pairing == .idle && !state.hasPairedPhone { actions.beginPairing() }
         }
     }
 
-    @ViewBuilder
+    private func step(_ number: String, _ text: String) -> some View {
+        HStack(spacing: 10) {
+            Text(verbatim: number)
+                .font(HostType.caption(10))
+                .foregroundStyle(Farside.Palette.ash)
+                .frame(width: 22, height: 22)
+                .overlay(Circle().strokeBorder(Farside.Palette.line2, lineWidth: 1))
+            Text(text)
+                .font(.system(size: 14))
+                .foregroundStyle(Farside.Palette.bone)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     private var qr: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.white)
-                .shadow(color: .black.opacity(0.08), radius: 6, y: 2)
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Farside.Palette.bone)
             switch state.pairing {
             case .showingCode(let value, _):
                 if let image = HostQRCode.image(for: value) {
@@ -273,15 +472,17 @@ struct HostPairingStep: View {
                 }
             case .expired:
                 VStack(spacing: 6) {
-                    Image(systemName: "clock.arrow.circlepath").font(.title)
-                    Text("Code expired").font(.callout)
+                    Image(systemName: "clock.arrow.circlepath").font(.system(size: 22))
+                    Text("Code expired").font(.system(size: 13, weight: .semibold))
                 }
-                .foregroundStyle(.black.opacity(0.55))
+                .foregroundStyle(HostTheme.ink.opacity(0.7))
             default:
-                ProgressView().controlSize(.regular)
+                ProgressView()
+                    .controlSize(.regular)
+                    .environment(\.colorScheme, .light)
             }
         }
-        .frame(width: 196, height: 196)
+        .frame(width: 176, height: 176)
         .contextMenu {
             if case .showingCode = state.pairing {
                 Button("Copy Pairing Code", action: actions.copyPairingCode)
@@ -293,37 +494,209 @@ struct HostPairingStep: View {
     private var expiry: some View {
         switch state.pairing {
         case .showingCode(_, let expires):
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                let remaining = max(0, Int(expires.timeIntervalSince(context.date)))
-                Label("Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60)) · Keep it private",
-                      systemImage: "lock")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+            VStack(alignment: .leading, spacing: 8) {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    let remaining = max(0, Int(expires.timeIntervalSince(context.date)))
+                    Text(verbatim: "Expires in \(remaining / 60):\(String(format: "%02d", remaining % 60)) · keep it private")
+                        .hostCaption(10.5)
+                }
+                Button("Copy code instead", action: actions.copyPairingCode)
+                    .buttonStyle(HostButtonStyle(kind: .inline))
+                    .accessibilityIdentifier("farside.setup.copyCode")
             }
         case .expired:
-            Text("Codes last two minutes. Make a new one when your phone is ready.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Codes last two minutes. Make a new one when your iPhone is ready.")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Farside.Palette.ash)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("New Code", action: actions.beginPairing)
+                    .buttonStyle(HostButtonStyle(kind: .primary, height: 34))
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("farside.setup.newCode")
+            }
         default:
-            EmptyView()
+            Text("Getting a fresh code").hostCaption(10.5)
         }
     }
 
     private var approval: some View {
-        HostSetupPage(
-            systemImage: "person.crop.circle.badge.questionmark", tone: .clay,
-            title: "Allow this phone?",
-            message: state.allowControl
-                ? "A phone scanned your code. Once allowed, it can see this Mac’s screen and use its mouse and keyboard. Allow it only if it’s the phone in your hand."
-                : "A phone scanned your code. Once allowed, it can see this Mac’s screen. Allow it only if it’s the phone in your hand."
-        ) {
+        VStack(alignment: .leading, spacing: 0) {
+            HostHeading(parts: [.display("Is this"), .accent(" your "), .display("phone"), .plain("?")])
+            HostSetupText.body(state.allowControl
+                ? "A phone just scanned your code. Once allowed, it can see this screen and use the mouse and keyboard. Allow it only if it’s the phone in your hand."
+                : "A phone just scanned your code. Once allowed, it can see this screen. Allow it only if it’s the phone in your hand.")
+                .padding(.top, 10)
             HStack(spacing: 10) {
                 Button("Decline", action: actions.declinePhone)
+                    .buttonStyle(HostButtonStyle(kind: .plate))
+                    .accessibilityIdentifier("farside.setup.declinePhone")
                 Button("Allow", action: actions.approvePhone)
+                    .buttonStyle(HostButtonStyle(kind: .primary))
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("farside.setup.allowPhone")
             }
-            .controlSize(.large)
+            .padding(.top, 22)
+            Text("Don’t recognize it? Decline, then make a new code.")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Farside.Palette.ash)
+                .padding(.top, 14)
+        }
+    }
+
+    private var replace: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HostHeading(parts: [.display("Pair a"), .accent(" new "), .display("phone"), .plain("?")])
+            HostSetupText.body("Your current iPhone will stop working with this Mac. You can pair it again later.")
+                .padding(.top, 10)
+            HStack(spacing: 10) {
+                Button("Cancel", action: actions.cancelPairing)
+                    .buttonStyle(HostButtonStyle(kind: .plate))
+                    .accessibilityIdentifier("farside.setup.cancelPairing")
+                Button("Replace Phone", action: actions.beginPairing)
+                    .buttonStyle(HostButtonStyle(kind: .primary))
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("farside.setup.replacePhone")
+            }
+            .padding(.top, 22)
+        }
+    }
+
+    private var service: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HostHeading(parts: [.display("One address"), .plain(", "), .accent("please"), .plain(".")])
+            HostSetupText.body("This test build doesn’t include a connection service yet. Enter the private service address you were given.")
+                .padding(.top, 10)
+            HStack(spacing: 10) {
+                TextField("wss://example.com/signal", text: $serviceDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { actions.setServiceAddress(serviceDraft) }
+                Button("Continue") { actions.setServiceAddress(serviceDraft) }
+                    .buttonStyle(HostButtonStyle(kind: .primary, height: 30))
+                    .disabled(!PairInvitation.validServer(serviceDraft.trimmingCharacters(in: .whitespaces)))
+            }
+            .padding(.top, 20)
+        }
+    }
+
+    private var paired: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HostHeading(parts: [.display("Your iPhone is"), .accent(" paired"), .plain(".")])
+            HostSetupText.body("It can connect whenever sharing is on. Pairing a different phone replaces this one.")
+                .padding(.top, 10)
+            Button("Pair a Different Phone…", action: actions.pairNewPhone)
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 34))
+                .padding(.top, 20)
+        }
+    }
+}
+
+struct HostReadyPage: View {
+    let state: HostViewState
+    let actions: HostActions
+
+    var body: some View {
+        let checks = HostReadyCheck.checks(for: state)
+        VStack(alignment: .leading, spacing: 0) {
+            HostHeading(parts: HostReadyCheck.isReady(checks)
+                ? [.display("Ready when"), .accent(" you "), .display("are"), .plain(".")]
+                : [.display("Almost"), .accent(" there"), .plain(".")])
+            HostSetupText.body("Checked just now, on this Mac. Each row updates by itself.")
+                .padding(.top, 8)
+                .padding(.bottom, 14)
+            VStack(spacing: 0) {
+                ForEach(Array(checks.enumerated()), id: \.element.id) { index, check in
+                    if index > 0 {
+                        Rectangle().fill(Farside.Palette.line).frame(height: 1).padding(.leading, 44)
+                    }
+                    HostCheckRow(check: check, state: state, actions: actions)
+                }
+            }
+            .modifier(HostPlate())
+        }
+    }
+}
+
+struct HostCheckRow: View {
+    let check: HostReadyCheck
+    let state: HostViewState
+    let actions: HostActions
+
+    var body: some View {
+        HStack(spacing: 12) {
+            glyph
+                .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(check.title)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(Farside.Palette.bone)
+                Text(check.detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Farside.Palette.ash)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityValue(resultLabel)
+            Spacer(minLength: 8)
+            fix
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var resultLabel: String {
+        switch check.result {
+        case .pass: "Passed"
+        case .waiting: "Checking"
+        case .optional: "Optional"
+        case .fail: "Needs attention"
+        }
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch check.result {
+        case .pass:
+            Image(systemName: "checkmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(HostTheme.ink)
+                .frame(width: 18, height: 18)
+                .background(Farside.Palette.bone, in: Circle())
+        case .waiting:
+            ProgressView().controlSize(.mini)
+        case .optional:
+            Circle().strokeBorder(Farside.Palette.line2, lineWidth: 1.2)
+        case .fail:
+            Image(systemName: "exclamationmark")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(Farside.Palette.bone)
+                .frame(width: 18, height: 18)
+                .overlay(Circle().strokeBorder(Farside.Palette.bone, lineWidth: 1.2))
+        }
+    }
+
+    @ViewBuilder
+    private var fix: some View {
+        switch check.fix {
+        case .openSettings(let pane):
+            Button("Open Settings") { actions.openSystemSettings(pane) }
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 28))
+        case .allowControl:
+            HostSwitch(label: "Allow control", isOn: state.allowControl, set: actions.setAllowControl)
+        case .openAtLogin:
+            HostSwitch(label: "Open at login", isOn: state.openAtLogin, set: actions.setOpenAtLogin)
+        case .resumeSharing:
+            Button("Resume", action: actions.resumeSharing)
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 28))
+        case .tryAgain:
+            Button("Try Again", action: actions.resumeSharing)
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 28))
+        case .pairPhone:
+            Button("Pair", action: actions.pairNewPhone)
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 28))
+        case nil:
+            EmptyView()
         }
     }
 }
