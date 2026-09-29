@@ -14,6 +14,7 @@ ROOT=/private/tmp/farside-e2e
 RUN_LOCK=/private/tmp/farside-e2e.run.lock
 XCB_LOCK=/tmp/farside-xcodebuild.lock
 STARTUP_LIMIT=900   # installing the app and launching the UI test runner, before the test starts
+LOCK_WAIT_LIMIT=3600  # waiting for other xcodebuild runs to release the shared lock
 HOST_BUNDLE_ID=com.roshan.PocketDesk.RemoteHost
 PHONE_BUNDLE_ID=com.roshan.PocketDesk.Remote
 
@@ -647,18 +648,28 @@ run_scenario() {
     -only-testing:"RemoteE2ETests/RemoteE2ETests/$method" -resultBundlePath "$out/result.xcresult" \
     -collect-test-diagnostics never > "$out/xcodebuild.log" 2>&1 &
   XCB_PID=$!
-  # The limit counts from the test's own start: installing the app and launching the runner can
-  # take minutes on a busy Mac and has its own allowance.
-  local test_started=0
+  # The limit counts from the test's own start: waiting for the shared xcodebuild lock (other
+  # builds on this Mac), then installing the app and launching the runner, have their own allowances.
+  local test_started=0 xcodebuild_started=0 lock_noted=0
   while pid_alive $XCB_PID; do
     serve_requests
     sample_resources
+    if (( ! xcodebuild_started )) && [[ -s $out/xcodebuild.log ]]; then
+      xcodebuild_started=$SECONDS
+      (( lock_noted )) && log "Shared xcodebuild lock acquired after $(( SECONDS - started ))s"
+    fi
+    if (( ! xcodebuild_started && ! lock_noted && SECONDS - started > 60 )); then
+      lock_noted=1
+      log "Waiting for the shared xcodebuild lock (another build or test run is using it)"
+    fi
     if (( ! test_started )) && grep -q "Test Case '.*' started" "$out/xcodebuild.log" 2>/dev/null; then
       test_started=$SECONDS
     fi
-    if (( test_started && SECONDS - test_started > limit )) || (( ! test_started && SECONDS - started > STARTUP_LIMIT )); then
+    if (( test_started && SECONDS - test_started > limit )) \
+       || (( xcodebuild_started && ! test_started && SECONDS - xcodebuild_started > STARTUP_LIMIT )) \
+       || (( ! xcodebuild_started && SECONDS - started > LOCK_WAIT_LIMIT )); then
       timed_out=1
-      log "Scenario $scenario exceeded its time limit (${limit}s test, ${STARTUP_LIMIT}s startup); stopping the test run"
+      log "Scenario $scenario exceeded its time limit (${limit}s test, ${STARTUP_LIMIT}s startup, ${LOCK_WAIT_LIMIT}s lock wait); stopping the test run"
       stop_xcodebuild
       break
     fi
