@@ -116,6 +116,10 @@ final class AnywhereAccess: ObservableObject {
     func attach(_ connection: RemoteCoordinator, store: AnywhereStore) {
         connection.advertisesRemoteAccess = true
         connection.startAllowed = { [weak self] in self?.phoneConnectionAllowed ?? false }
+        connection.prepareForEnrollment = { [weak self] in
+            guard let self else { throw ServerDataRemovalError.unavailable }
+            try self.resumeAfterCompletedRemoval()
+        }
         connection.entitlementToken = { [weak self, weak connection] in
             guard let server = connection?.invitation?.server else { return nil }
             return self?.currentToken(forSignalingServer: server)

@@ -20,6 +20,9 @@ final class RemoteCoordinator: ObservableObject {
     var entitlementToken: (() -> String?)?
     /// Phone owner may suspend new sessions while server-data removal is pending.
     var startAllowed: (() -> Bool)?
+    /// An explicit pairing action may resume after fully completed server removal.
+    /// Pending cleanup must throw before the invitation or connection changes.
+    var prepareForEnrollment: (() throws -> Void)?
     /// Phone only: list `remote.1`, so the service reports `access` and answers a missing or refused
     /// token with a non-closing `entitlement_required` (Backend/ENTITLEMENT-CONTRACT.md §4).
     var advertisesRemoteAccess = false
@@ -148,8 +151,10 @@ final class RemoteCoordinator: ObservableObject {
         return pair.invitation
     }
     func enroll(_ code: String) throws {
+        let parsed = try PairInvitation.parse(code)
+        try prepareForEnrollment?()
         stop()
-        invitation = try PairInvitation.parse(code)
+        invitation = parsed
         #if DEBUG
         e2eEnrolling = true
         #endif

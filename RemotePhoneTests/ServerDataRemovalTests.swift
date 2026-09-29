@@ -227,6 +227,32 @@ final class ServerDataRemovalTests: XCTestCase {
         XCTAssertNotNil(try tokens.read(EntitlementGrant.self))
     }
 
+    func testExplicitEnrollmentResumesOnlyCompletedRemovalBeforeChangingPairing() throws {
+        let trust = MemoryStore(), pending = MemoryStore(), tokens = MemoryStore()
+        let original = pairing()
+        var replacement = pairing(token: String(repeating: "d", count: 64))
+        replacement.expires = Date().addingTimeInterval(60)
+        try trust.save(original)
+        try pending.save(AnywhereAccess.RemovalState(pending: nil, cleanup: .init(original)))
+        let blocked = make(tokens, pending, Verifier())
+        let connection = RemoteCoordinator(isHost: false, store: trust)
+        connection.restore()
+        connection.startAllowed = { false } // This test never opens a network connection.
+        connection.prepareForEnrollment = { try blocked.resumeAfterCompletedRemoval() }
+        XCTAssertThrowsError(try connection.enroll(replacement.code()))
+        XCTAssertEqual(connection.invitation, original)
+
+        try pending.save(AnywhereAccess.RemovalState(pending: nil, cleanup: nil))
+        let completed = make(tokens, pending, Verifier())
+        connection.prepareForEnrollment = { try completed.resumeAfterCompletedRemoval() }
+        XCTAssertThrowsError(try connection.enroll("invalid pairing"))
+        XCTAssertFalse(completed.phoneConnectionAllowed, "Invalid input cannot resume background verification")
+        try connection.enroll(replacement.code())
+        XCTAssertTrue(completed.phoneConnectionAllowed)
+        XCTAssertEqual(connection.invitation, replacement)
+        XCTAssertNil(try pending.read(AnywhereAccess.RemovalState.self))
+    }
+
     func testWireRestrictsOriginAndContainsNoScreenKey() throws {
         let request = ServerDataRemovalRequest(kind: .room, serviceOrigin: "https://signal.example",
                                               identifier: String(repeating: "a", count: 64), proof: String(repeating: "b", count: 64))
