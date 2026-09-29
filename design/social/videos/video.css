@@ -1,0 +1,18 @@
+body{overflow:hidden}
+.v{position:absolute;z-index:5;will-change:transform,opacity}
+.vh1{font:800 120px/1.0 var(--dot);letter-spacing:-.015em}
+.vh2{font:800 92px/1.02 var(--dot);letter-spacing:-.01em}
+.vh3{font:800 72px/1.04 var(--dot);letter-spacing:-.01em}
+.vser{font:400 italic 96px/1.02 var(--serif);letter-spacing:-.012em}
+.vsub{font:400 44px/1.28 var(--ui);color:var(--ash);letter-spacing:-.01em}
+.vsub b{color:var(--bone);font-weight:500}
+.vcap{font:500 26px/1.35 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ash)}
+.vcap b{color:var(--bone);font-weight:500}
+.ln{display:block;overflow:hidden;padding:.05em 0 .06em;margin:-.05em 0 -.06em}
+.ln>span{display:inline-block;will-change:transform}
+.readout{font:500 26px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ash);white-space:nowrap}
+.readout b{color:var(--bone);font-weight:500}
+.readout b.hit{color:var(--ember)}
+.endwm{font:900 150px/1 var(--dot);letter-spacing:-.01em}
+.center{text-align:center}
+.nowrap{white-space:nowrap}
