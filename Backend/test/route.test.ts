@@ -67,6 +67,26 @@ describe("route.1 server policy", () => {
     expect(await host.next()).toEqual({ type: "peer", online: false });
   });
 
+  it("rotates the session epoch when another phone joins the same registered host", async () => {
+    const p = await pairing();
+    const host = await connectHost(p, { features: ["route.1"] });
+    const firstPhone = await connectClient(p, { features: ["route.1"] });
+    const firstRoute = await host.next();
+    expect(await firstPhone.next()).toEqual(firstRoute);
+    await host.next(); await firstPhone.next();
+
+    firstPhone.close();
+    expect(await host.next()).toEqual({ type: "peer", online: false });
+    const secondPhone = await connectClient(p, { features: ["route.1"] });
+    const secondRoute = await host.next();
+    expect(await secondPhone.next()).toEqual(secondRoute);
+    expect(secondRoute).toMatchObject({ type: "route", revision: 1, room: p.room });
+    expect(secondRoute.epoch).toMatch(/^[0-9a-f]{32}$/);
+    expect(secondRoute.epoch).not.toBe(firstRoute.epoch);
+    expect(await host.next()).toEqual({ type: "peer", online: true });
+    expect(await secondPhone.next()).toEqual({ type: "peer", online: true });
+  });
+
   it("rejects a peer-originated route policy frame", async () => {
     const p = await pairing();
     const host = await connectHost(p, { features: ["route.1"] });

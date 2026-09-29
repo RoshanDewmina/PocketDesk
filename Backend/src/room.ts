@@ -850,7 +850,8 @@ export class RoomDO extends DurableObject<Env> {
       entitlement = { entitled: false };
       if (remoteAware && ws.readyState === WebSocket.OPEN) this.error(ws, "entitlement_required", false);
     }
-    const sameHost = ws.readyState === WebSocket.OPEN && this.peer("host") === host && this.state().client_token_hash === clientTokenHash;
+    const sameHost = ws.readyState === WebSocket.OPEN && this.peer("host") === host &&
+      this.state().client_token_hash === clientTokenHash && !this.slotTaken("client", ws);
     if (!sameHost) {
       this.revokeRole("client");
       if (hostServers) this.revokeRole("host");
@@ -871,6 +872,11 @@ export class RoomDO extends DurableObject<Env> {
       entitled_device: entitlement.deviceId ?? null,
       recheck_at: entitlement.entitlementId ? issuedAt + ENTITLEMENT_RECHECK_MS : null,
       last_activity: issuedAt,
+      // A room can admit another phone without reconnecting its host. Each admission is a new
+      // session boundary, so a late Activity registration for the previous phone cannot revive.
+      route_epoch: randomHex(16),
+      route_revision: 0,
+      route_expires_at: null,
     });
     if (hostServers) {
       const hostAttachment = this.attachment(host);

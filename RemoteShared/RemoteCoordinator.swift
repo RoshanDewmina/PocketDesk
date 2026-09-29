@@ -58,6 +58,8 @@ final class RemoteCoordinator: ObservableObject {
     private var relayPolicy: String?
     private var routePolicy: ServerRoutePolicy?
     private var routeArmed = false
+    /// Epochs retired on this signaling connection cannot be replayed after a peer leaves.
+    private var routeEpochsSeen: Set<String> = []
     /// Current server-authenticated room epoch for ActivityKit registration; nil before policy
     /// admission, after peer departure, or after its deadline.
     var routePolicyEpoch: String? {
@@ -175,6 +177,7 @@ final class RemoteCoordinator: ObservableObject {
             registeredInvitation = invitation
             routeExpiry?.cancel(); routeExpiry = nil
             routePolicy = nil; routeArmed = false
+            routeEpochsSeen.removeAll()
             serviceAccess = nil
             entitlementRequired = false
             var features = advertisesRenewal ? [SignalingFeature.renewal] : []
@@ -222,6 +225,7 @@ final class RemoteCoordinator: ObservableObject {
     func stop() {
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
         routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
+        routeEpochsSeen.removeAll()
         cancelRenewal()
         relay.close(); registeredInvitation = nil; resetSession(); status = "Disconnected"
     }
@@ -249,6 +253,9 @@ final class RemoteCoordinator: ObservableObject {
         do {
             switch message.type {
             case "route":
+                if routePolicy == nil, routeEpochsSeen.contains(message.epoch ?? "") {
+                    throw RemoteError.stale
+                }
                 guard let room = invitation?.room,
                       let policy = ServerRoutePolicy.accept(message, room: room, previous: routePolicy) else {
                     throw RemoteError.invalidMessage
@@ -257,7 +264,8 @@ final class RemoteCoordinator: ObservableObject {
                     fail("Route access changed. Reconnect to verify the new route.")
                     return
                 }
-                routePolicy = policy; routeArmed = true; serviceAccess = policy.access.rawValue
+                routePolicy = policy; routeArmed = true; routeEpochsSeen.insert(policy.epoch)
+                serviceAccess = policy.access.rawValue
                 routeExpiry?.cancel()
                 routeExpiry = Task { [weak self] in
                     let delay = max(0, policy.expiresAt.timeIntervalSinceNow)
@@ -293,10 +301,7 @@ final class RemoteCoordinator: ObservableObject {
                         resetSession(); request = try SecureRandom.token()
                         send(kind: "request", handshake: true); status = "Authenticating your Mac…"; setTimeout()
                     }
-                } else {
-                    routeArmed = false
-                    peerDisconnected()
-                }
+                } else { peerDisconnected() }
             case "signal":
                 guard let cipher, let payload = message.payload else { throw RemoteError.invalidMessage }
                 let opened: ProtectedMessage
@@ -529,6 +534,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func peerDisconnected() {
+        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
         // The relay keeps the host's registered room open when its phone leaves.
         // Keep listening there; tearing down the host socket can exhaust its retry
         // budget while the phone independently reconnects.
@@ -564,6 +570,7 @@ final class RemoteCoordinator: ObservableObject {
         if connected && sessionLossRetryLimit != nil { recoveringLiveSession = true }
         cancelRenewal()
         routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
+        routeEpochsSeen.removeAll()
         relay.close(); registeredInvitation = nil; resetSession()
         let limit = recoveringLiveSession ? max(retryLimit, sessionLossRetryLimit ?? retryLimit) : retryLimit
         guard retryCount < limit else {
@@ -587,6 +594,7 @@ final class RemoteCoordinator: ObservableObject {
         stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false
         cancelRenewal()
         routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
+        routeEpochsSeen.removeAll()
         relay.close(); registeredInvitation = nil; resetSession(); status = message
     }
 
