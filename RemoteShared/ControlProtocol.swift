@@ -28,6 +28,8 @@ struct RemoteAction: Codable {
     /// Display selection (`displays`, `display`); validated in DisplaySelection.swift.
     var displays: [DisplayDescriptor]? = nil
     var display: UInt32? = nil
+    /// A "needs you" alert from an agent on the Mac, sent once on a `capture` status. Older phones ignore it.
+    var agentAlert: AgentAlertFrame? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.

@@ -53,6 +53,10 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var crashLoopStopped = false
     @Published private var autoStart = HostAutoStartGate()
     let events = HostEventLog()
+    /// Agent alerts (beta): a hook on this Mac says an agent needs a person, and this tells the phone.
+    let agentAlerts = HostAgentAlerts()
+    /// Alerts waiting for the next `capture` status; each rides one message, once.
+    private var agentAlertOutbox: [AgentAlertFrame] = []
     #if DEBUG
     // E2E mode: inert login/recovery items and an isolated watchdog record; see HostE2E.swift.
     private let background = HostE2E.active?.backgroundServices ?? HostBackgroundServices.live()
@@ -94,6 +98,7 @@ final class RemoteHostModel: ObservableObject {
     private var inputLease = RemoteInputLease()
     private var observers: [NSObjectProtocol] = []
     private var connectionObserver: AnyCancellable?
+    private var agentAlertObservers: Set<AnyCancellable> = []
     private var captureTask: Task<Void, Never>?
     private var captureAttempt: UInt64 = 0
     private var inputEpoch = RemoteInputEpoch()
@@ -192,6 +197,8 @@ final class RemoteHostModel: ObservableObject {
             automaticRecovery: recoveryState,
             privacyCurtain: curtainPreference,
             curtainStatus: Self.curtainStatus(curtainState, displays: NSScreen.screens.count),
+            agentAlerts: agentAlerts.isOn,
+            agentAlertsStatus: agentAlerts.statusLine(),
             crashLoopStopped: crashLoopStopped,
             displays: displays.map { HostDisplayOption(id: $0.displayID, name: Self.displayName(for: $0.displayID)) },
             selectedDisplayID: selected,
@@ -239,6 +246,7 @@ final class RemoteHostModel: ObservableObject {
             self?.objectWillChange.send()
             Task { @MainActor [weak self] in self?.connectionDidChange() }
         }
+        wireAgentAlerts()
         capture.onFailure = { [weak self] in self?.captureFailed() }
         capture.onHealth = { [weak self] healthy in self?.captureHealthChanged(healthy) }
         capture.onExclusionLost = { [weak self] in
@@ -549,6 +557,50 @@ final class RemoteHostModel: ObservableObject {
         events.record(.settings, "Diagnostics copied")
     }
 
+    // MARK: Agent alerts (beta)
+
+    private func wireAgentAlerts() {
+        agentAlerts.isPhoneLive = { [weak self] in self?.connection.connected == true && self?.active == true }
+        agentAlerts.hasPairedPhone = { [weak self] in self?.hasPairedPhone == true }
+        agentAlerts.deliverToPhone = { [weak self] frame in self?.deliverAgentAlert(frame) ?? false }
+        agentAlerts.record = { [weak self] text in self?.events.record(.session, text) }
+        agentAlerts.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &agentAlertObservers)
+        Task { @MainActor [weak self] in await self?.agentAlerts.startIfEnabled() }
+    }
+
+    func setAgentAlerts(_ enabled: Bool) {
+        events.record(.settings, "Agent alerts \(enabled ? "on" : "off")")
+        Task { @MainActor [weak self] in await self?.agentAlerts.setEnabled(enabled) }
+    }
+
+    func resetAgentAlertLink() {
+        agentAlerts.resetLink()
+    }
+
+    func copyAgentHookSetup() {
+        let bundled = Bundle.main.url(forResource: HostAgentAlerts.scriptName, withExtension: nil, subdirectory: "agent-hooks")
+        let path = agentAlerts.installScript(from: bundled)?.path ?? "/path/to/\(HostAgentAlerts.scriptName)"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(HostAgentAlerts.hookSetup(scriptPath: path), forType: .string)
+        events.record(.settings, "Agent hook setup copied")
+    }
+
+    /// Sends the alert on the control channel now, behind any earlier ones still queued. False when no
+    /// phone is in a session or the channel would not take it, so the caller can fall back to a push.
+    private func deliverAgentAlert(_ frame: AgentAlertFrame) -> Bool {
+        guard connection.connected, active else { return false }
+        agentAlertOutbox.append(frame)
+        if agentAlertOutbox.count > 4 { agentAlertOutbox.removeFirst(agentAlertOutbox.count - 4) }
+        var attempts = 0
+        while agentAlertOutbox.contains(where: { $0.id == frame.id }), attempts < 4, connection.connected {
+            attempts += 1
+            sendCaptureHealth(captureHealthy)
+        }
+        let delivered = !agentAlertOutbox.contains { $0.id == frame.id }
+        agentAlertOutbox.removeAll { $0.id == frame.id }
+        return delivered
+    }
+
     func diagnosticsReport() -> String {
         let info = Bundle.main.infoDictionary ?? [:]
         let ledger = watchdog?.ledger
@@ -760,6 +812,7 @@ final class RemoteHostModel: ObservableObject {
         #endif
         invalidateTextFocus()
         browserSession.stop()
+        agentAlerts.shutDown()
         terminating = true
         permissionTimer?.invalidate()
         input.enabled = false
@@ -1250,6 +1303,7 @@ final class RemoteHostModel: ObservableObject {
             doubleClickInterval: min(2, max(0.1, NSEvent.doubleClickInterval))
         )
         let event = recoveryEventForPhone
+        let alert = agentAlertOutbox.first
         let sent = connection.sendControl(RemoteAction(
             action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: true,
@@ -1257,9 +1311,10 @@ final class RemoteHostModel: ObservableObject {
             features: SessionFeature.host, hostState: state?.rawValue,
             hostStream: connection.media?.takeHostSummary(),
             curtain: curtainState.rawValue, hostEvent: event,
-            display: capturedDisplayID
+            display: capturedDisplayID, agentAlert: alert
         ))
         if sent && event != nil { recoveryNoticeDelivered = true }
+        if sent && alert != nil { agentAlertOutbox.removeFirst() }
     }
 
     // MARK: Session extensions

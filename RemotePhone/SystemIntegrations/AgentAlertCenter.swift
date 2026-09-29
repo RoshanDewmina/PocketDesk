@@ -68,12 +68,15 @@ final class AgentAlertCenter: ObservableObject {
     var reports: AgentAlertReports
     /// Whether a session with the Mac is live right now. The app installs it.
     var isSessionLive: () -> Bool = { false }
+    /// Whether the app is in front. False while it holds a session in the background.
+    var isForeground: () -> Bool = { UIApplication.shared.applicationState == .active }
     var now: () -> Date = { Date() }
     var registerForRemoteNotifications: () -> Void = {}
     var unregisterForRemoteNotifications: () -> Void = {}
 
     private let defaults: UserDefaults
     private var bannerTask: Task<Void, Never>?
+    private var seenFromMac: [String] = []
     static let bannerSeconds: Double = 12
     private static let snoozedKey = "agentAlerts.snoozedIDs"
     private static let declinedKey = "agentAlerts.declinedIDs"
@@ -208,6 +211,27 @@ final class AgentAlertCenter: ObservableObject {
     /// From a link that names only the request. The link carries no agent name, so it says "An agent".
     func open(linkedRequest id: String) {
         open(AgentAlertPayload(helpRequestID: id, kind: .other), deliveredAt: now())
+    }
+
+    /// An alert the Mac sent over the control channel, which only exists while a session is live. With the
+    /// app in front it is one quiet banner over the picture; while the app holds the session in the
+    /// background it becomes the notification a push would have been. Alerts must be on, a request is
+    /// announced once, and a declined one never again.
+    func receive(fromMac frame: AgentAlertFrame) {
+        guard frame.isUnderstood, preferences.alertsEnabled, !wasDeclined(frame.id),
+              !seenFromMac.contains(frame.id) else { return }
+        seenFromMac.append(frame.id)
+        if seenFromMac.count > 32 { seenFromMac.removeFirst(seenFromMac.count - 32) }
+        let payload = AgentAlertPayload(helpRequestID: frame.id, kind: frame.agentKind)
+        if isForeground() {
+            showBanner(AgentAlertPresentation(payload: payload, receivedAt: frame.raisedDate))
+        } else {
+            let request = UNNotificationRequest(
+                identifier: "agent-mac-\(frame.id)",
+                content: AgentNotification.alertContent(for: payload, preferences: preferences),
+                trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false))
+            Task { _ = await center.add(request) }
+        }
     }
 
     func showBanner(_ item: AgentAlertPresentation) {

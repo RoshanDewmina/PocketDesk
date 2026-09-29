@@ -104,6 +104,24 @@ enum AgentNotification {
         return content
     }
 
+    /// A "needs you" the Mac reported over the control channel while this app held the session in the
+    /// background: the local twin of the push the service would send. Same words, same routing.
+    static func alertContent(for payload: AgentAlertPayload, preferences: AgentAlertPreferences) -> UNMutableNotificationContent {
+        var shown = payload
+        shown.interruption = preferences.breakThroughFocus ? .timeSensitive : .active
+        let content = UNMutableNotificationContent()
+        let name = preferences.showAgentName ? payload.kind.displayName : AgentKind.genericName
+        content.title = String(format: NSLocalizedString(titleKey, comment: ""), name)
+        content.body = NSLocalizedString(bodyKey, comment: "")
+        content.categoryIdentifier = AgentAlertPayload.categoryIdentifier
+        content.threadIdentifier = payload.threadID ?? "mac-agent"
+        content.userInfo = shown.userInfo
+        content.sound = .default
+        content.relevanceScore = 1
+        content.interruptionLevel = preferences.breakThroughFocus ? .timeSensitive : .active
+        return content
+    }
+
     /// The single quiet reminder after Snooze. Passive: no light, no sound, no Focus break-through.
     static func reminderContent(for payload: AgentAlertPayload, showAgentName: Bool) -> UNMutableNotificationContent {
         var reminder = payload

@@ -987,6 +987,7 @@ final class PhoneRemoteModel: ObservableObject {
                 recoveryNoticeShown = true
                 showSessionNotice(PhoneSessionNotice.hostRecovered)
             }
+            if let alert = action.agentAlert { AgentAlertCenter.shared.receive(fromMac: alert) }
             if let hostPresence, hostPresence != .displayAsleep { departureReason = hostPresence }
             if let hostStream = action.hostStream { connection.media?.remoteHostSummary = hostStream }
             appliedStreamQuality = action.streamQuality

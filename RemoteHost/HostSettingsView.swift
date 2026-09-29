@@ -54,6 +54,28 @@ struct HostSettingsView: View {
                               status: state.accessibility, pane: .accessibility)
             }
 
+            HostSettingsSection("Agent alerts (beta)",
+                                footer: "An agent’s hook sends Farside only its kind and a hash of its session id. Never a prompt, a file name or its own words.") {
+                HostSettingsRow("Tell my iPhone when an agent needs me",
+                                subtitle: state.agentAlertsStatus ?? "Off: nothing on this Mac listens for an agent") {
+                    HostSwitch(label: "Tell my iPhone when an agent needs me", isOn: state.agentAlerts,
+                               set: actions.setAgentAlerts)
+                        .accessibilityIdentifier("farside.settings.agentAlerts")
+                }
+                if state.agentAlerts {
+                    HostSettingsRow("Agent hooks", subtitle: "Claude Code and Codex, from one small script") {
+                        Button("Copy Hook Setup", action: actions.copyAgentHookSetup)
+                            .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+                            .accessibilityIdentifier("farside.settings.copyAgentHookSetup")
+                    }
+                    HostSettingsRow("Agent link", subtitle: "A private key that stays on this Mac") {
+                        Button("Reset", action: actions.resetAgentAlertLink)
+                            .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+                            .accessibilityIdentifier("farside.settings.resetAgentAlertLink")
+                    }
+                }
+            }
+
             HostSettingsSection("General", footer: generalFooter) {
                 HostSettingsRow("Open at login", subtitle: HostBackgroundItemCopy.loginSubtitle(state.loginItem)) {
                     backgroundItemAccessory(state.loginItem) {
