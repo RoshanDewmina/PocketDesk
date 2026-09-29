@@ -182,7 +182,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         var commands = combinations.map { flags in
             UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: flags, action: #selector(priorityKeyCommand(_:)))
         }
-        for input in Self.windowCommandInputs {
+        for input in NativeTrackpadInputView.windowCommandInputs {
             commands.append(UIKeyCommand(input: input, modifierFlags: .command, action: #selector(priorityKeyCommand(_:))))
             commands.append(UIKeyCommand(input: input, modifierFlags: [.command, .shift], action: #selector(priorityKeyCommand(_:))))
             commands.append(UIKeyCommand(input: input, modifierFlags: [.command, .alternate], action: #selector(priorityKeyCommand(_:))))
