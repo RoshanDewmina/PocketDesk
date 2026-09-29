@@ -50,11 +50,13 @@
 		29CA6EFF90D466EE4C3284BB /* HostViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F688011A8DDECAEAAE11132 /* HostViewState.swift */; };
 		2BE937D76E56C1FCD24F2388 /* NativeInputFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06983976A15578FF281A602 /* NativeInputFreshness.swift */; };
 		2CA0F71925ECAAA6D3BF905E /* StreamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDB43E9A47D0C0BFAB1B5988 /* StreamWire.swift */; };
+		2D3749B5BF7F8FFEF2DE07C4 /* FarsideTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */; };
 		2D575C034018C9F9C42D631B /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = A9928512A787E2FC5250A155 /* WebRTC */; };
 		2F3363724CEA1E409B7E83CA /* PocketDeskStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E3A80162075BC6B8C142A82 /* PocketDeskStyle.swift */; };
 		30C0A1E23D89935E9502F8E0 /* RemoteInputDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BA581AB036A468F69A1BE38 /* RemoteInputDriver.swift */; };
 		314AAE99E511F7A92CA675C5 /* HostPermissionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147A5E06CF33E961BEBB437B /* HostPermissionState.swift */; };
 		326E7C209D3B279481835545 /* StreamWireTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C81ED752BB30213C1E58EBF4 /* StreamWireTests.swift */; };
+		334ABA9B7C8740E62AC92B14 /* FarsideTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */; };
 		34B0D6BABFC0B2ABDD34D6DB /* StreamQualityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B1A621E30D5EBB91E5AF5AC /* StreamQualityTests.swift */; };
 		38C2D63BDD52FFD6313C5463 /* NativeTrackpadSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CD8798C3462294A16F7DE09 /* NativeTrackpadSurface.swift */; };
 		39FB2DF172B4D842A666431A /* RemoteCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 924606EF7002CFDE239145B3 /* RemoteCapture.swift */; };
@@ -118,6 +120,7 @@
 		7E8E378D895E8E87F485F6A7 /* BrowserHostSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EDD7CA3CE35BDCE44D60455E /* BrowserHostSettingsView.swift */; };
 		7ED8F83E12B96E23BC636B56 /* PointerPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550A78C530973E8E5387A23C /* PointerPrediction.swift */; };
 		7FE9D7CAB6AC566C8E3EB77E /* HostSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC5305205008EFB73744EAF /* HostSetupView.swift */; };
+		80F6D5347AFCABCBCF257CDE /* FarsideTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */; };
 		819A3FE58149294139BAB614 /* HostInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0E9A460F4C70492B4EFA2FC /* HostInput.swift */; };
 		86329B4BD4C616D1C2C9ACBB /* StreamStatistics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C40ABFFA6F1CBB2F7E05DC6 /* StreamStatistics.swift */; };
 		8672EBCAC4C5AF0B6CA7B2A7 /* NativeGestureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EBEF9617A31797FAF4B8D81 /* NativeGestureEngine.swift */; };
@@ -157,6 +160,7 @@
 		A978B93E1328B10B4D2E04EB /* ControlProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2DA9B236B9DBE30DD8FF063 /* ControlProtocol.swift */; };
 		AA805402F78286185E94FD73 /* BrowserCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */; };
 		ABDB435608503C3232F5CAAC /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412B04FA6976C7A9157CAECE /* SignalingClient.swift */; };
+		AC5901E1FDA23AE44A914E7D /* FarsideTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */; };
 		AD35B813137EA466010F9BFB /* HostSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DD59E38BEC24B7621592F49 /* HostSettingsSection.swift */; };
 		AE6BECE3F440FB7A1907AACD /* PocketDesktopView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F1C8755CC317F4BC39E271A1 /* PocketDesktopView.swift */; };
 		AE9AC143ECFF68174B9561FF /* PeerMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A9CB4348526C909CF253F1 /* PeerMedia.swift */; };
@@ -276,6 +280,7 @@
 		4441AE7C836A65295CD44389 /* PocketDeskBrowserFixture.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketDeskBrowserFixture.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		4A5C9E326152AE8499CB924A /* ViewportPreference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportPreference.swift; sourceTree = "<group>"; };
 		4EBEF9617A31797FAF4B8D81 /* NativeGestureEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeGestureEngine.swift; sourceTree = "<group>"; };
+		4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideTheme.swift; sourceTree = "<group>"; };
 		5142AFDB1530E8B98F5E3902 /* AppInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInteractionTests.swift; sourceTree = "<group>"; };
 		544DA8C08F3FFFF0D77B11B7 /* PocketDesktop.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = PocketDesktop.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		550A78C530973E8E5387A23C /* PointerPrediction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointerPrediction.swift; sourceTree = "<group>"; };
@@ -413,6 +418,7 @@
 				BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */,
 				F73AE673E6754C476D3A34C5 /* ClipboardTransfer.swift */,
 				F2DA9B236B9DBE30DD8FF063 /* ControlProtocol.swift */,
+				4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */,
 				FB7E6B1B2D48610494416341 /* NativeCodecCapability.swift */,
 				4EBEF9617A31797FAF4B8D81 /* NativeGestureEngine.swift */,
 				F06983976A15578FF281A602 /* NativeInputFreshness.swift */,
@@ -944,6 +950,7 @@
 				5326476F87B6F52DD4CAFD52 /* BrowserPeerStore.swift in Sources */,
 				164768FCC1B233F3C03CFF65 /* ClipboardTransfer.swift in Sources */,
 				1B8A28D7AB486D77FA70DDDE /* ControlProtocol.swift in Sources */,
+				AC5901E1FDA23AE44A914E7D /* FarsideTheme.swift in Sources */,
 				274AB3019D901C3E379273DF /* NativeCodecCapability.swift in Sources */,
 				879D9B4A1C733528F72127A6 /* NativeGestureEngine.swift in Sources */,
 				8D19BC0A8D8EC2D34E37443E /* NativeInputFreshness.swift in Sources */,
@@ -1004,6 +1011,7 @@
 				ED6A4108B6256C6B156556E1 /* BrowserPeerStore.swift in Sources */,
 				E6748F759B5616552F7A1816 /* ClipboardTransfer.swift in Sources */,
 				FF0AF50F0FCDF33B23BF14F6 /* ControlProtocol.swift in Sources */,
+				80F6D5347AFCABCBCF257CDE /* FarsideTheme.swift in Sources */,
 				0294E4CBC7A3396E6DFF2FA6 /* HostAppActivation.swift in Sources */,
 				DD035669DE7EC8A9DC08CD22 /* HostClipboard.swift in Sources */,
 				7AC72DF301CEDCA7FE08214E /* HostCursorShape.swift in Sources */,
@@ -1072,6 +1080,7 @@
 				890832638ED9E892E72ED894 /* ClipboardTransfer.swift in Sources */,
 				52F237103173A65310D1DA73 /* ClipboardTransferTests.swift in Sources */,
 				A978B93E1328B10B4D2E04EB /* ControlProtocol.swift in Sources */,
+				2D3749B5BF7F8FFEF2DE07C4 /* FarsideTheme.swift in Sources */,
 				9B136D5E8B26F80F97CA3E67 /* HostClipboard.swift in Sources */,
 				6EC1506536F0384C3394712C /* HostClipboardServiceTests.swift in Sources */,
 				65A044AB0614AAF7B4E52802 /* HostCursorShape.swift in Sources */,
@@ -1134,6 +1143,7 @@
 				BB2DA682D207BD16F08C55CF /* CommittedTextField.swift in Sources */,
 				D8DA2E56BEB9616410A3007A /* ControlProtocol.swift in Sources */,
 				78B8A5A364FC79E9A79B864B /* DesktopPreview.swift in Sources */,
+				334ABA9B7C8740E62AC92B14 /* FarsideTheme.swift in Sources */,
 				21ECC029B255A43B4BC90633 /* HomeView.swift in Sources */,
 				5444E7FAC68D2B6219D122B9 /* NativeCodecCapability.swift in Sources */,
 				8672EBCAC4C5AF0B6CA7B2A7 /* NativeGestureEngine.swift in Sources */,

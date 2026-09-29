@@ -94,6 +94,8 @@ The primary user is the owner of the Mac. Helping someone else, team administrat
 | D29 | Ship "agent needs you" alerts in 1.0 as a beta | 28 Sep, confirmed by Roshan. Requires push notifications and Associated Domains; scope per `Docs/research/2026-09-28-round2/PHONE-AND-AGENT-GAPS.md`; embedded chat viewer and Picture-in-Picture stay post-launch |
 | D30 | Mac companion ships outside the Mac App Store (Developer ID, notarized, auto-update); iPhone/iPad app on the App Store | Required by Accessibility input and screen capture; see `Docs/launch/MAC-DISTRIBUTION.md` |
 | D31 | New visual direction: dithered, dystopian, cinematic brand; Paperwash no longer the app's style | 28 Sep. Concepts in `design/farside-round1/` per `DITHER-BRIEF.md`; dither is the brand layer and UI text/controls stay crisp and legible. Higgsfield generation only after a concept is chosen |
+| D32 | Concept **21 · Reach** is the Farside brand and product design; redesign the iPhone/iPad app, Mac companion and website to it | 28 Sep, chosen by Roshan. Dark only for 1.0; SF Pro/SF Mono for everyday UI with Doto and Instrument Serif accents; static website on Cloudflare Pages (deploy after the domain is bought). Design source of truth: `design/FARSIDE-DESIGN-SYSTEM.md`; tokens in `RemoteShared/FarsideTheme.swift` |
+| D33 | Run the Higgsfield hero look test (≈21–45 credits) before the credit reset around 6 Oct | 28 Sep, approved by Roshan. Follow the cheapest-first-test in `Docs/launch/VIDEO-PLAYBOOK.md`; hard cap 45 credits; anything more needs a new approval |
 
 ### Work scenarios that guide the designs
 
