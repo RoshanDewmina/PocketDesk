@@ -15,6 +15,17 @@ final class RemoteCoordinator: ObservableObject {
     var onAuthenticated: (() -> Void)?
     var onControl: ((Data) -> Void)?
     var onEnded: (() -> Void)?
+    /// Phone only: the current Farside Anywhere token, read at each registration. Nil (no plan, or
+    /// not verified) still registers; the service decides what the room may use.
+    var entitlementToken: (() -> String?)?
+    /// Phone only: list `remote.1`, so the service reports `access` and answers a missing or refused
+    /// token with a non-closing `entitlement_required` (Backend/ENTITLEMENT-CONTRACT.md §4).
+    var advertisesRemoteAccess = false
+    /// Phone: what the service allowed this registration, "remote" or "local"; nil when it did not say.
+    @Published private(set) var serviceAccess: String?
+    /// Phone: the service asked for Farside Anywhere during this attempt. The session continues on
+    /// the same network only.
+    @Published private(set) var entitlementRequired = false
     var media: PeerMedia?
     private(set) var hostPair: HostPair?
     private(set) var invitation: PairInvitation?
@@ -142,8 +153,12 @@ final class RemoteCoordinator: ObservableObject {
             cipher = try SignalCipher(key: invitation.key, room: invitation.room)
             status = "Connecting securely…"
             registeredInvitation = invitation
-            try relay.connect(invitation: invitation, hostToken: hostPair?.hostToken,
-                              features: advertisesRenewal ? [SignalingFeature.renewal] : [])
+            serviceAccess = nil
+            entitlementRequired = false
+            var features = advertisesRenewal ? [SignalingFeature.renewal] : []
+            if !isHost && advertisesRemoteAccess { features.append(SignalingFeature.remoteAccess) }
+            try relay.connect(invitation: invitation, hostToken: hostPair?.hostToken, features: features,
+                              entitlement: isHost ? nil : entitlementToken?())
             setTimeout()
         } catch { fail(error.localizedDescription) }
     }
@@ -188,8 +203,11 @@ final class RemoteCoordinator: ObservableObject {
                     hostRegistered = true; timeout?.cancel(); status = "Ready for your paired phone"
                     resetRetryBudgetAfterStableRegistration()
                 }
+                if !isHost, let access = message.access { serviceAccess = access }
                 beginRenewal(message.renew)
             case "renewed":
+                // The lease is still extended; without fresh servers the relay ends when its credentials do.
+                if !isHost, message.code == "entitlement_required" { entitlementRequired = true }
                 receiveRenewal(message)
             case "ice":
                 servers = message.servers ?? []
@@ -221,6 +239,8 @@ final class RemoteCoordinator: ObservableObject {
                 // The service answers a signal for a peer that already left with a non-closing
                 // error. It is a late message from a session that is over, not a service failure.
                 if code == "peer_unavailable" { staleMessagesIgnored += 1; return }
+                // Non-closing: `registered` (access "local") and an empty `ice` follow.
+                if !isHost, code == "entitlement_required" { entitlementRequired = true; return }
                 let serviceError = "Connection service: \(code). Check the Mac and retry."
                 // A freshly stopped phone may still occupy the server's client slot
                 // for a moment. Retry within the existing bound; never evict it.
