@@ -256,6 +256,7 @@ final class PushRegistrar: ObservableObject {
             volatileRemovals.removeAll { $0.target == target }
         }
         var removalFailed = false
+        var removalFailureMessage: String?
         let removals = Array(Set(saved + volatileRemovals))
         for pending in removals {
             let result = await sinkForTarget(pending.target).disableAlerts()
@@ -267,12 +268,15 @@ final class PushRegistrar: ObservableObject {
                     if current.isEmpty { try removalStore.delete() } else { try removalStore.save(current) }
                     volatileRemovals.removeAll { $0 == pending }
                 } catch {
-                    status = .failed("Alert opt-out was confirmed, but local cleanup needs Keychain.")
+                    removalFailureMessage = "Alert opt-out was confirmed, but local cleanup needs Keychain."
                     removalFailed = true
                 }
-            } else { removalFailed = true }
+            } else {
+                removalFailureMessage = "Alert opt-out is pending. Retry when the service is available."
+                removalFailed = true
+            }
         }
-        if removalFailed { status = .failed("Alert opt-out is pending. Unlock this iPhone and retry when the service is available.") }
+        if let removalFailureMessage { status = .failed(removalFailureMessage) }
         else if !removals.isEmpty { status = .idle }
         guard let deviceToken else { return }
         guard AgentAlertPreferences(defaults: defaults).alertsEnabled else {
