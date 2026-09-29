@@ -58,6 +58,15 @@ enum MediaRoute {
     }
 }
 
+enum LocalMediaRoute {
+    static func matches(_ link: ProvenLocalLink, localType: String?, remoteType: String?,
+                        localAddress: String?, remoteAddress: String?, adapterType: String?) -> Bool {
+        (adapterType == "wifi" || adapterType == "ethernet") &&
+        localType == "host" && remoteType == "host" &&
+        localAddress == link.localAddress && remoteAddress == link.peerAddress
+    }
+}
+
 /// The video sender's rate settings (G5). `maxFramerate` follows the session rate, lowered by the
 /// ladder's rung; above 60 fps `highRefreshNoAdaptation` turns WebRTC's own degradation off
 /// (`maintainFramerateAndResolution`, the header's successor to `disabled`) so the app's ladder
@@ -159,6 +168,34 @@ final class PeerMedia: NSObject {
     private var remoteDescriptionReady = false
     private var candidates: [RTCIceCandidate] = []
     private let forceRelay: Bool
+    private let localLink: ProvenLocalLink?
+    private let localRouteLock = NSLock()
+    private var localPathAuthorized = false
+    private var localPathEverAuthorized = false
+    private var localPathStartedAt: TimeInterval?
+
+    private func localGateOpen() -> Bool {
+        guard localLink != nil else { return true }
+        localRouteLock.lock(); defer { localRouteLock.unlock() }
+        return localPathAuthorized
+    }
+
+    private func authorizeLocalPath() -> Bool {
+        localRouteLock.lock(); defer { localRouteLock.unlock() }
+        guard !localPathEverAuthorized || localPathAuthorized else { return false }
+        localPathAuthorized = true
+        localPathEverAuthorized = true
+        return true
+    }
+
+    /// Runs on the WebRTC callback thread before any main-actor status notification.
+    private func cutLocalPath() -> Bool {
+        localRouteLock.lock(); defer { localRouteLock.unlock() }
+        let hadAuthorized = localPathEverAuthorized
+        localPathAuthorized = false
+        return hadAuthorized
+    }
+    private var connectedPublished = false
     private var lastRoute = "Route pending"
     private var restartPending = false
     private var restartGraceUntil: TimeInterval = 0
@@ -195,9 +232,11 @@ final class PeerMedia: NSObject {
         captureLock.lock(); defer { captureLock.unlock() }; frameTransform = transform
     }
 
-    init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true) {
+    init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true,
+         localLink: ProvenLocalLink? = nil) {
         self.isHost = isHost
         self.forceRelay = forceRelay
+        self.localLink = localLink
         self.nativeDesktopCodecs = nativeDesktopCodecs
         tuning = nativeDesktopCodecs ? StreamTuning.current : .legacy
         super.init()
@@ -304,6 +343,8 @@ final class PeerMedia: NSObject {
         guard ["offer", "answer"].contains(signal.kind), let sdp = signal.sdp, sdp.utf8.count <= 96 * 1024,
               sdp.contains("a=fingerprint:sha-256 ") else { onState?("failed"); return }
         if signal.kind == "offer", remoteDescriptionReady {
+            // Local proof is bound to the current ICE generation. A new offer needs a new proof.
+            if localLink != nil { onState?("failed"); return }
             iceRestarts += 1
             restartGraceUntil = ProcessInfo.processInfo.systemUptime + Self.restartGrace
         }
@@ -328,7 +369,7 @@ final class PeerMedia: NSObject {
                 }
                 if let track = self.connection?.receivers.compactMap({ $0.track as? RTCVideoTrack }).first {
                     self.observeRemoteVideo(track)
-                    self.onRemoteVideo?(track)
+                    if self.localGateOpen() { self.onRemoteVideo?(track) }
                 }
             }
         }
@@ -460,7 +501,8 @@ final class PeerMedia: NSObject {
     }
 
     func sendControl(_ data: Data) -> Bool {
-        guard !closed, data.count <= 16384, let channel, channel.readyState == .open, channel.bufferedAmount < 64 * 1024 else { return false }
+        guard !closed, localGateOpen(), data.count <= 16384,
+              let channel, channel.readyState == .open, channel.bufferedAmount < 64 * 1024 else { return false }
         let sent = channel.sendData(RTCDataBuffer(data: data, isBinary: true))
         counters.inputBuffered(channel.bufferedAmount)
         return sent
@@ -473,7 +515,7 @@ final class PeerMedia: NSObject {
     func pushFrame(_ buffer: CVPixelBuffer, timeStampNs: Int64) {
         guard captureLock.try() else { counters.pushSkipped(); return }
         defer { captureLock.unlock() }
-        guard !closed, let source, let capturer else { return }
+        guard !closed, localGateOpen(), let source, let capturer else { return }
         let output: CVPixelBuffer
         if let frameTransform { guard let transformed = frameTransform(buffer, timeStampNs) else { return }; output = transformed }
         else { output = buffer }
@@ -485,6 +527,7 @@ final class PeerMedia: NSObject {
             source.adaptOutputFormat(toWidth: Int32(format.width), height: Int32(format.height), fps: Int32(format.fps))
             adaptedFormat = format
         }
+        guard localGateOpen() else { return }
         source.capturer(capturer, didCapture: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: output), rotation: ._0, timeStampNs: timeStampNs))
         counters.pushed()
     }
@@ -507,6 +550,23 @@ final class PeerMedia: NSObject {
                 let remote = (pair?.values["remoteCandidateId"] as? String).flatMap { stats[$0] }
                 let localType = local?.values["candidateType"] as? String
                 let remoteType = remote?.values["candidateType"] as? String
+                if let link = self.localLink {
+                    let localAddress = (local?.values["address"] as? String) ?? (local?.values["ip"] as? String)
+                    let remoteAddress = (remote?.values["address"] as? String) ?? (remote?.values["ip"] as? String)
+                    let adapterType = (local?.values["networkAdapterType"] as? String) ??
+                                      (local?.values["networkType"] as? String)
+                    let matches = LocalMediaRoute.matches(link, localType: localType, remoteType: remoteType,
+                                                           localAddress: localAddress, remoteAddress: remoteAddress,
+                                                           adapterType: adapterType)
+                    if pair != nil && !matches { self.onState?("failed"); return }
+                    if matches {
+                        guard self.authorizeLocalPath() else { self.onState?("failed"); return }
+                        self.publishConnectedIfReady()
+                    } else if let started = self.localPathStartedAt,
+                              ProcessInfo.processInfo.systemUptime - started > 6 {
+                        self.onState?("failed"); return
+                    }
+                }
                 let route = MediaRoute.classify(selected: pair != nil, local: localType, remote: remoteType)
                 self.lastRoute = route
                 let rtp = stats.values.first { ($0.type == "inbound-rtp" || $0.type == "outbound-rtp") && ($0.values["kind"] as? String == "video" || $0.values["mediaType"] as? String == "video") }
@@ -561,6 +621,14 @@ final class PeerMedia: NSObject {
         track.add(renderer)
     }
 
+    private func publishConnectedIfReady() {
+        guard !closed, !connectedPublished, localGateOpen(),
+              channel?.readyState == .open else { return }
+        connectedPublished = true
+        if let track = observedTrack { onRemoteVideo?(track) }
+        onState?("connected")
+    }
+
     func close() {
         statisticsTimer?.invalidate(); statisticsTimer = nil
         if let cadenceRenderer { observedTrack?.remove(cadenceRenderer) }
@@ -581,19 +649,44 @@ extension PeerMedia: RTCPeerConnectionDelegate {
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
         if let track = stream.videoTracks.first {
-            DispatchQueue.main.async { [weak self] in self?.observeRemoteVideo(track); self?.onRemoteVideo?(track) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.observeRemoteVideo(track)
+                if self.localGateOpen() { self.onRemoteVideo?(track) }
+            }
         }
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        if localLink != nil && newState == .checking {
+            let wasAuthorized = cutLocalPath()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.closed else { return }
+                if wasAuthorized { self.onState?("failed") }
+            }
+        }
         if [.failed, .disconnected, .closed].contains(newState) {
+            if localLink != nil { _ = cutLocalPath() }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 // An ICE restart can report a passing `disconnected` while the new pair is checked;
                 // a real failure still ends the session through `failed`.
                 if newState == .disconnected, ProcessInfo.processInfo.systemUptime < self.restartGraceUntil { return }
                 self.onState?(newState == .failed ? "failed" : newState == .closed ? "closed" : "disconnected")
+            }
+        }
+    }
+    @objc(peerConnection:didChangeLocalCandidate:remoteCandidate:lastReceivedMs:changeReason:)
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChangeLocalCandidate local: RTCIceCandidate,
+                        remoteCandidate remote: RTCIceCandidate, lastReceivedMs: Int32,
+                        changeReason reason: String) {
+        guard localLink != nil else { return }
+        let wasAuthorized = cutLocalPath()
+        if wasAuthorized {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.closed else { return }
+                self.onState?("failed")
             }
         }
     }
@@ -618,7 +711,10 @@ extension PeerMedia: RTCPeerConnectionDelegate {
                 dataChannel.delegate = nil; dataChannel.close(); return
             }
             self.channel = dataChannel
-            if dataChannel.readyState == .open { self.startDiagnostics(); self.onState?("connected") }
+            if dataChannel.readyState == .open {
+                self.localPathStartedAt = ProcessInfo.processInfo.systemUptime
+                self.startDiagnostics(); self.publishConnectedIfReady()
+            }
         }
     }
 }
@@ -626,7 +722,10 @@ extension PeerMedia: RTCDataChannelDelegate {
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.closed, self.channel === dataChannel else { return }
-            if dataChannel.readyState == .open { self.startDiagnostics(); self.onState?("connected") }
+            if dataChannel.readyState == .open {
+                self.localPathStartedAt = ProcessInfo.processInfo.systemUptime
+                self.startDiagnostics(); self.publishConnectedIfReady()
+            }
             else if dataChannel.readyState == .closed { self.onState?("closed") }
         }
     }
@@ -641,6 +740,7 @@ extension PeerMedia: RTCDataChannelDelegate {
         }
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.closed, self.channel === dataChannel else { return }
+            guard self.localGateOpen() else { return }
             self.onControl?(buffer.data)
         }
     }

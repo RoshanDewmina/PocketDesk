@@ -18,9 +18,13 @@ final class RemoteCoordinator: ObservableObject {
     /// Phone only: the current Farside Anywhere token, read at each registration. Nil (no plan, or
     /// not verified) still registers; the service decides what the room may use.
     var entitlementToken: (() -> String?)?
+    /// Phone owner may suspend new sessions while server-data removal is pending.
+    var startAllowed: (() -> Bool)?
     /// Phone only: list `remote.1`, so the service reports `access` and answers a missing or refused
     /// token with a non-closing `entitlement_required` (Backend/ENTITLEMENT-CONTRACT.md §4).
     var advertisesRemoteAccess = false
+    /// Set only for an explicitly allowlisted private legacy service. Public services must send route.1.
+    var allowLegacyPrivateRoute = false
     /// Phone: what the service allowed this registration, "remote" or "local"; nil when it did not say.
     @Published private(set) var serviceAccess: String?
     /// Phone: the service asked for Farside Anywhere during this attempt. The session continues on
@@ -52,6 +56,18 @@ final class RemoteCoordinator: ObservableObject {
     private var guardState: SessionReplayGuard?
     private var servers: [ICEServerConfiguration] = []
     private var relayPolicy: String?
+    private var routePolicy: ServerRoutePolicy?
+    private var routeArmed = false
+    /// Current server-authenticated room epoch for ActivityKit registration; nil before policy
+    /// admission, after peer departure, or after its deadline.
+    var routePolicyEpoch: String? {
+        guard routeArmed, let routePolicy, routePolicy.expiresAt > Date() else { return nil }
+        return routePolicy.epoch
+    }
+    private var routeExpiry: Task<Void, Never>?
+    private var localLinkProof: LocalLinkProof?
+    private var pendingLocalEndpoint: LocalProbeEndpoint?
+    private var localProofTimeout: Task<Void, Never>?
     private var timeout: Task<Void, Never>?
     private var retry: Task<Void, Never>?
     private var retryCount = 0
@@ -141,6 +157,10 @@ final class RemoteCoordinator: ObservableObject {
         start(resetRetryBudget: true)
     }
     private func start(resetRetryBudget: Bool) {
+        guard startAllowed?() != false else {
+            status = "Server removal is pending. Retry or cancel removal first."
+            return
+        }
         guard let invitation else { status = "Pair with your Mac first"; return }
         do {
             if isHost, let pair = hostPair, !pair.paired { try invitation.validate() }
@@ -153,9 +173,12 @@ final class RemoteCoordinator: ObservableObject {
             cipher = try SignalCipher(key: invitation.key, room: invitation.room)
             status = "Connecting securely…"
             registeredInvitation = invitation
+            routeExpiry?.cancel(); routeExpiry = nil
+            routePolicy = nil; routeArmed = false
             serviceAccess = nil
             entitlementRequired = false
             var features = advertisesRenewal ? [SignalingFeature.renewal] : []
+            features.append(SignalingFeature.route)
             if !isHost && advertisesRemoteAccess { features.append(SignalingFeature.remoteAccess) }
             try relay.connect(invitation: invitation, hostToken: hostPair?.hostToken, features: features,
                               entitlement: isHost ? nil : entitlementToken?())
@@ -175,6 +198,7 @@ final class RemoteCoordinator: ObservableObject {
     }
     func stop() {
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
+        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
         cancelRenewal()
         relay.close(); registeredInvitation = nil; resetSession(); status = "Disconnected"
     }
@@ -187,6 +211,9 @@ final class RemoteCoordinator: ObservableObject {
     }
     private func resetSession() {
         timeout?.cancel(); timeout = nil
+        localProofTimeout?.cancel(); localProofTimeout = nil
+        localLinkProof?.close(); localLinkProof = nil
+        pendingLocalEndpoint = nil
         registrationStability?.cancel(); registrationStability = nil
         media?.close(); media = nil
         remoteVideo = nil; connected = false; awaitingApproval = false; hostRegistered = false
@@ -198,12 +225,30 @@ final class RemoteCoordinator: ObservableObject {
     private func receive(_ message: RelayMessage) {
         do {
             switch message.type {
+            case "route":
+                guard let room = invitation?.room,
+                      let policy = ServerRoutePolicy.accept(message, room: room, previous: routePolicy) else {
+                    throw RemoteError.invalidMessage
+                }
+                if let old = routePolicy, old.access != policy.access, media != nil {
+                    fail("Route access changed. Reconnect to verify the new route.")
+                    return
+                }
+                routePolicy = policy; routeArmed = true; serviceAccess = policy.access.rawValue
+                routeExpiry?.cancel()
+                routeExpiry = Task { [weak self] in
+                    let delay = max(0, policy.expiresAt.timeIntervalSinceNow)
+                    try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    guard !Task.isCancelled, let self, self.routePolicy == policy else { return }
+                    self.fail("Route authorization expired. Reconnect to renew access.")
+                }
             case "registered":
                 if isHost {
                     hostRegistered = true; timeout?.cancel(); status = "Ready for your paired phone"
                     resetRetryBudgetAfterStableRegistration()
                 }
-                if !isHost, let access = message.access { serviceAccess = access }
+                // The legacy access hint is advisory; only `route` authorizes media.
+                if allowLegacyPrivateRoute, !isHost, let access = message.access { serviceAccess = access }
                 beginRenewal(message.renew)
             case "renewed":
                 // The lease is still extended; without fresh servers the relay ends when its credentials do.
@@ -217,11 +262,16 @@ final class RemoteCoordinator: ObservableObject {
                 hasRelay = NativeRelayPolicy.hasRelay(servers)
             case "peer":
                 if message.online == true {
+                    guard (routeArmed && (routePolicy?.expiresAt ?? .distantPast) > Date()) || allowLegacyPrivateRoute else {
+                        fail("The connection service did not authorize this route. Update Farside and retry.")
+                        return
+                    }
                     if !isHost {
                         resetSession(); request = try SecureRandom.token()
                         send(kind: "request", handshake: true); status = "Authenticating your Mac…"; setTimeout()
                     }
                 } else {
+                    routeArmed = false
                     peerDisconnected()
                 }
             case "signal":
@@ -299,6 +349,12 @@ final class RemoteCoordinator: ObservableObject {
         guard guardState != nil else { throw RemoteError.stale }
         try guardState?.accept(message)
         switch message.kind {
+        case "localEndpoint":
+            guard routePolicy?.access == .local, let body = message.body else { throw RemoteError.invalidMessage }
+            let endpoint = try JSONDecoder().decode(LocalProbeEndpoint.self, from: body)
+            guard pendingLocalEndpoint == nil else { throw RemoteError.stale }
+            pendingLocalEndpoint = endpoint
+            localLinkProof?.setPeer(endpoint)
         case "accepted" where !isHost:
             guard media == nil else { throw RemoteError.stale }
             if let body = message.body {
@@ -314,7 +370,7 @@ final class RemoteCoordinator: ObservableObject {
             send(kind: "acceptedAck")
         case "acceptedAck" where isHost:
             guard proofReceived, media == nil, !awaitingApproval else { throw RemoteError.stale }
-            prepareMedia(); media?.offer()
+            prepareMedia()
         case "media":
             guard let body = message.body, let media else { throw RemoteError.invalidMessage }
             media.receive(try JSONDecoder().decode(MediaSignal.self, from: body))
@@ -336,6 +392,53 @@ final class RemoteCoordinator: ObservableObject {
         } catch { fail(error.localizedDescription) }
     }
     private func prepareMedia() {
+        guard (routeArmed && (routePolicy?.expiresAt ?? .distantPast) > Date()) || allowLegacyPrivateRoute else {
+            fail("The connection route is no longer authorized.")
+            return
+        }
+        if let routePolicy, routePolicy.access == .local {
+            beginLocalProof(routePolicy)
+            return
+        }
+        finishMedia(localLink: nil)
+    }
+
+    private func beginLocalProof(_ policy: ServerRoutePolicy) {
+        guard let key = invitation?.key, !session.isEmpty else { fail("Local link proof could not start."); return }
+        let room = policy.room, epoch = policy.epoch, session = self.session
+        Task { [weak self] in
+            let proof = await Task.detached(priority: .userInitiated) {
+                LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key)
+            }.value
+            guard let self, !self.stopped, self.session == session,
+                  self.routePolicy?.epoch == policy.epoch, self.routePolicy?.access == .local else {
+                proof?.close(); return
+            }
+            guard let proof else { self.fail("No directly attached Wi-Fi or Ethernet link is available."); return }
+            self.localLinkProof = proof
+            proof.onInvalidated = { [weak self, weak proof] in
+                guard let self, let proof, self.localLinkProof === proof else { return }
+                self.fail("The local network changed. Reconnect to verify the route again.")
+            }
+            proof.onProven = { [weak self, weak proof] link in
+                guard let self, let proof, self.localLinkProof === proof,
+                      self.routePolicy?.epoch == policy.epoch, self.routePolicy?.access == .local,
+                      (self.routePolicy?.expiresAt ?? .distantPast) > Date() else { return }
+                self.localProofTimeout?.cancel(); self.localProofTimeout = nil
+                self.finishMedia(localLink: link)
+            }
+            self.localProofTimeout = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                guard !Task.isCancelled else { return }
+                self?.fail("The devices could not verify a directly attached local link.")
+            }
+            if let pending = self.pendingLocalEndpoint { proof.setPeer(pending) }
+            guard let data = try? JSONEncoder().encode(proof.endpoint) else { self.fail("Local link proof could not start."); return }
+            self.send(kind: "localEndpoint", body: data)
+        }
+    }
+
+    private func finishMedia(localLink: ProvenLocalLink?) {
         let relayOnly: Bool
         switch NativeRelayPolicy.decide(servers: servers, policy: relayPolicy, localForce: forceRelay) {
         case .proceed(let force):
@@ -344,8 +447,9 @@ final class RemoteCoordinator: ObservableObject {
             fail(serverRequired ? "The connection service requires a relay, but none was provided." : "Relay-only test requires a configured TURN service.")
             return
         }
-        let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly)
+        let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink)
         media = peer
+        if isHost { peer.offer() }
         peer.onDiagnostics = { [weak self, weak peer] value in
             Task { @MainActor in if let self, let peer, self.media === peer { self.diagnostics = value } }
         }
@@ -436,6 +540,7 @@ final class RemoteCoordinator: ObservableObject {
         guard retry == nil else { return }
         if connected && sessionLossRetryLimit != nil { recoveringLiveSession = true }
         cancelRenewal()
+        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
         relay.close(); registeredInvitation = nil; resetSession()
         let limit = recoveringLiveSession ? max(retryLimit, sessionLossRetryLimit ?? retryLimit) : retryLimit
         guard retryCount < limit else {
@@ -458,6 +563,7 @@ final class RemoteCoordinator: ObservableObject {
     private func fail(_ message: String) {
         stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false
         cancelRenewal()
+        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
         relay.close(); registeredInvitation = nil; resetSession(); status = message
     }
 

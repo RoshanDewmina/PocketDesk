@@ -1,15 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
-import { loadConfig, type Config } from "./config";
+import { isPublicEnvironment, loadConfig, type Config } from "./config";
 import { claimDeviceRoom, entitlementForDevice, hasAccess, restoreDeviceRoom, roomStatus, touchRoom } from "./entitlement/store";
 import { environmentLetter, verifyEntitlementToken } from "./entitlement/token";
 import { fingerprint, log, logError } from "./log";
 import {
-  AUTH_TIMEOUT_MS, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, REMOTE_FEATURE, RENEWAL_FEATURE, iceWithinClientLimits,
+  AUTH_TIMEOUT_MS, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, REMOTE_FEATURE, RENEWAL_FEATURE, ROUTE_FEATURE, iceWithinClientLimits,
   parseAuthenticatedFrame, parseJsonFrame, parseRegister, type ErrorCode, type IceServer, type PeerRole, type RegisterMessage,
 } from "./protocol";
 import { WindowCounter, addressKey, allow, withTimeout } from "./ratelimit";
 import { turnProviderFromEnv, type TurnProvider } from "./turn";
-import { secureEqual, sha256Hex } from "./util";
+import { randomHex, secureEqual, sha256Hex } from "./util";
 
 type Attachment = {
   role?: PeerRole;
@@ -19,6 +19,7 @@ type Attachment = {
   ip?: string;
   renewable: boolean;
   remoteAware: boolean;
+  routeAware?: boolean;
   entitled: boolean;
   /** The Mac received relay servers for the current phone; reset with `servers: []` when that phone leaves. */
   servedRelay?: boolean;
@@ -40,6 +41,9 @@ type RoomState = {
   ice_client: string | null;
   last_keepalive: number;
   recheck_at: number | null;
+  route_epoch: string | null;
+  route_revision: number;
+  route_expires_at: number | null;
 };
 
 type Entitlement = { entitled: boolean; entitlementId?: string; deviceId?: string; until?: number };
@@ -94,7 +98,10 @@ export class RoomDO extends DurableObject<Env> {
         ice_host TEXT,
         ice_client TEXT,
         last_keepalive INTEGER NOT NULL DEFAULT 0,
-        recheck_at INTEGER
+        recheck_at INTEGER,
+        route_epoch TEXT,
+        route_revision INTEGER NOT NULL DEFAULT 0,
+        route_expires_at INTEGER
       );
       INSERT OR IGNORE INTO room (id) VALUES (1);
       CREATE TABLE IF NOT EXISTS credentials (
@@ -107,6 +114,11 @@ export class RoomDO extends DurableObject<Env> {
         next_revoke_at INTEGER
       );
     `);
+    // Existing Durable Objects have the v1 table. Additive migration leaves pairings intact.
+    const columns = new Set(this.ctx.storage.sql.exec<{ name: string }>("PRAGMA table_info(room)").toArray().map(row => row.name));
+    if (!columns.has("route_epoch")) this.ctx.storage.sql.exec("ALTER TABLE room ADD COLUMN route_epoch TEXT");
+    if (!columns.has("route_revision")) this.ctx.storage.sql.exec("ALTER TABLE room ADD COLUMN route_revision INTEGER NOT NULL DEFAULT 0");
+    if (!columns.has("route_expires_at")) this.ctx.storage.sql.exec("ALTER TABLE room ADD COLUMN route_expires_at INTEGER");
   }
 
   /** Removes room data. Pending TURN usernames survive until revocation is confirmed or their TTL expires. */
@@ -126,7 +138,7 @@ export class RoomDO extends DurableObject<Env> {
 
   private state(): RoomState {
     return this.ctx.storage.sql.exec<RoomState>(
-      "SELECT room, client_token_hash, lease_ends_at, blocked, entitlement_id, entitled_device, last_activity, ice_host, ice_client, last_keepalive, recheck_at FROM room WHERE id = 1",
+      "SELECT room, client_token_hash, lease_ends_at, blocked, entitlement_id, entitled_device, last_activity, ice_host, ice_client, last_keepalive, recheck_at, route_epoch, route_revision, route_expires_at FROM room WHERE id = 1",
     ).one();
   }
 
@@ -204,6 +216,20 @@ export class RoomDO extends DurableObject<Env> {
     this.sendText(ws, message);
   }
 
+  /** Server-originated policy only; it is never accepted as a peer frame or relayed. */
+  private publishRoute(access: "local" | "remote", expiresAt: number): void {
+    const state = this.state();
+    if (!state.room || !state.route_epoch || !Number.isSafeInteger(expiresAt) || expiresAt <= Date.now()) return;
+    const revision = state.route_revision + 1;
+    this.update({ route_revision: revision, route_expires_at: expiresAt });
+    const frame = { type: "route", version: 1, room: state.room, epoch: state.route_epoch,
+      revision, access, expiresAt };
+    for (const role of ["host", "client"] as const) {
+      const ws = this.peer(role);
+      if (ws && this.attachment(ws).routeAware) this.send(ws, frame);
+    }
+  }
+
   private close(ws: WebSocket, code: number, reason: string): void {
     try {
       ws.close(code, reason);
@@ -232,6 +258,7 @@ export class RoomDO extends DurableObject<Env> {
     }
     const state = this.state();
     if (state.lease_ends_at && this.peer("host")) next = Math.min(next ?? Infinity, state.lease_ends_at);
+    if (state.route_expires_at && this.peer("client")) next = Math.min(next ?? Infinity, state.route_expires_at);
     if (state.recheck_at && state.entitlement_id) next = Math.min(next ?? Infinity, state.recheck_at);
     if (this.config.keepaliveMs > 0 && authenticatedOpen) {
       next = Math.min(next ?? Infinity, Math.max(state.last_keepalive, state.last_activity) + this.config.keepaliveMs);
@@ -256,7 +283,10 @@ export class RoomDO extends DurableObject<Env> {
     }
     let state = this.state();
     const host = this.peer("host");
-    if (host && state.lease_ends_at !== null && state.lease_ends_at <= now) {
+    if (host && this.peer("client") && state.route_expires_at !== null && state.route_expires_at <= now) {
+      this.terminate("route_expired");
+      state = this.state();
+    } else if (host && state.lease_ends_at !== null && state.lease_ends_at <= now) {
       this.expireRoom(host);
       state = this.state();
     } else if (state.entitlement_id && state.recheck_at !== null && state.recheck_at <= now) {
@@ -291,14 +321,27 @@ export class RoomDO extends DurableObject<Env> {
   private async recheckEntitlement(state: RoomState, now: number): Promise<void> {
     this.update({ recheck_at: now + ENTITLEMENT_RECHECK_MS });
     if (!state.entitlement_id || !state.entitled_device) return;
+    const originalHost = this.peer("host");
+    const originalClient = this.peer("client");
+    const stillCurrent = (): boolean => {
+      const latest = this.state();
+      return this.peer("host") === originalHost && this.peer("client") === originalClient &&
+        latest.room === state.room && latest.route_epoch === state.route_epoch &&
+        latest.route_revision === state.route_revision &&
+        latest.entitlement_id === state.entitlement_id && latest.entitled_device === state.entitled_device;
+    };
     try {
       const row = await withTimeout(entitlementForDevice(this.env.DB, state.entitlement_id, state.entitled_device), STORAGE_TIMEOUT_MS, "entitlement recheck");
+      if (!stillCurrent()) return;
       if (!row || !hasAccess(row, now) || row.device_room !== state.room) {
         log("entitlement_lapsed_live", { room: fingerprint(state.room ?? undefined) });
         this.terminate("entitlement_revoked");
       }
     } catch (error) {
+      if (!stillCurrent()) return;
       logError("entitlement_recheck_failed", error);
+      // Once the paid policy is in use, an unverifiable renewal cannot keep internet access alive.
+      if (this.peer("client") && this.state().route_expires_at !== null) this.terminate("entitlement_unavailable");
     }
   }
 
@@ -551,7 +594,7 @@ export class RoomDO extends DurableObject<Env> {
     if (!attachment.authenticated || !attachment.role) return;
     this.revokeRole(attachment.role);
     if (attachment.role === "host") {
-      this.update({ client_token_hash: null, lease_ends_at: null, entitlement_id: null, entitled_device: null, recheck_at: null, ice_host: null, ice_client: null });
+      this.update({ client_token_hash: null, lease_ends_at: null, entitlement_id: null, entitled_device: null, recheck_at: null, ice_host: null, ice_client: null, route_epoch: null, route_expires_at: null });
       const client = this.peer("client");
       if (client) {
         this.detach(client);
@@ -571,14 +614,14 @@ export class RoomDO extends DurableObject<Env> {
         this.sendIce(host, "host", []);
       }
     }
-    this.update({ entitlement_id: null, entitled_device: null, recheck_at: null, ice_client: null });
+    this.update({ entitlement_id: null, entitled_device: null, recheck_at: null, ice_client: null, route_expires_at: null });
   }
 
   /** The lease ended: the host goes with `room_lifetime_reached` and its client with `host_disconnected`, as before. */
   private expireRoom(host: WebSocket): void {
     const client = this.peer("client");
     this.revokeAll();
-    this.update({ client_token_hash: null, lease_ends_at: null, entitlement_id: null, entitled_device: null, recheck_at: null, ice_host: null, ice_client: null });
+    this.update({ client_token_hash: null, lease_ends_at: null, entitlement_id: null, entitled_device: null, recheck_at: null, ice_host: null, ice_client: null, route_epoch: null, route_expires_at: null });
     this.detach(host);
     this.close(host, 1001, "room_lifetime_reached");
     if (client) {
@@ -623,6 +666,10 @@ export class RoomDO extends DurableObject<Env> {
     if (state.room && state.room !== room) { this.error(ws, "invalid_registration"); return; }
     const remoteAware = msg.features.has(REMOTE_FEATURE) || msg.entitlement !== undefined;
     const renewable = msg.features.has(RENEWAL_FEATURE);
+    const routeAware = msg.features.has(ROUTE_FEATURE);
+    if (isPublicEnvironment(this.config.environmentName) && !routeAware) {
+      this.error(ws, "upgrade_required"); return;
+    }
 
     if (msg.role === "host") {
       // Authenticate before revealing anything about the room, including whether a host is present.
@@ -650,8 +697,9 @@ export class RoomDO extends DurableObject<Env> {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (this.slotTaken("host", ws)) { this.error(ws, "already_connected"); return; }
       const leaseEndsAt = now + this.config.leaseMs;
-      this.update({ room, client_token_hash: msg.clientTokenHash, lease_ends_at: leaseEndsAt, entitlement_id: null, entitled_device: null, recheck_at: null, last_activity: now });
-      const next: Attachment = { ...attachment, role: "host", authenticated: true, pending: false, renewable, remoteAware, entitled: false, servedRelay: false };
+      this.update({ room, client_token_hash: msg.clientTokenHash, lease_ends_at: leaseEndsAt, entitlement_id: null, entitled_device: null, recheck_at: null, last_activity: now,
+        route_epoch: randomHex(16), route_revision: 0, route_expires_at: null });
+      const next: Attachment = { ...attachment, role: "host", authenticated: true, pending: false, renewable, remoteAware, routeAware, entitled: false, servedRelay: false };
       this.save(ws, next);
       this.send(ws, {
         type: "registered",
@@ -673,6 +721,9 @@ export class RoomDO extends DurableObject<Env> {
       return;
     }
     if (this.slotTaken("client", ws)) { this.error(ws, "already_connected"); return; }
+    if (isPublicEnvironment(this.config.environmentName) && !this.attachment(host).routeAware) {
+      this.error(ws, "upgrade_required"); return;
+    }
 
     let entitlement = await this.checkEntitlement(msg.entitlement);
     if (entitlement.entitled && entitlement.entitlementId && entitlement.deviceId) {
@@ -748,7 +799,7 @@ export class RoomDO extends DurableObject<Env> {
     const issuedAt = Date.now();
     const leaseEndsAt = this.state().lease_ends_at ?? issuedAt + this.config.leaseMs;
     const next: Attachment = {
-      ...attachment, role: "client", authenticated: true, pending: false, renewable, remoteAware,
+      ...attachment, role: "client", authenticated: true, pending: false, renewable, remoteAware, routeAware,
       entitled: entitlement.entitled, entitlementId: entitlement.entitlementId, deviceId: entitlement.deviceId,
       entitlementUntil: entitlement.until, issuedAt: entitlement.entitled ? issuedAt : undefined,
     };
@@ -771,6 +822,10 @@ export class RoomDO extends DurableObject<Env> {
       ...(remoteAware ? { access: entitlement.entitled ? "remote" : "local" } : {}),
     });
     this.sendIce(ws, "client", clientServers);
+    if (routeAware && this.attachment(host).routeAware) {
+      this.publishRoute(entitlement.entitled ? "remote" : "local",
+        Math.min(leaseEndsAt, entitlement.entitled ? entitlement.until ?? 0 : leaseEndsAt));
+    }
     this.send(host, { type: "peer", online: true });
     this.send(ws, { type: "peer", online: true });
     log("client_registered", { room: fingerprint(room), entitled: entitlement.entitled, renewable });
@@ -790,12 +845,35 @@ export class RoomDO extends DurableObject<Env> {
     }
     if (state.lease_ends_at === null || now >= state.lease_ends_at) { this.expireRoom(host); return; }
     if (state.blocked) { this.terminate("room_not_approved"); return; }
+    if (state.route_expires_at !== null && now >= state.route_expires_at) { this.terminate("route_expired"); return; }
     if (this.renewalPending.has(ws)) {
       this.send(ws, { type: "renewed", leaseSeconds: this.config.leaseMs / 1000, renewAfterSeconds: MIN_RENEW_AFTER_MS / 1000, code: "renewal_pending" });
       return;
     }
+    // A paid route cannot silently outlive the verified transaction/grace deadline.
+    const originalClient = this.peer("client");
+    let routeAuthorization: "valid" | "invalid" | "unavailable" = "valid";
+    if (state.route_expires_at !== null && state.entitlement_id && originalClient) {
+      routeAuthorization = await this.stillEntitled(this.attachment(originalClient), now);
+    }
+    // An entitlement lookup yields to other room events. Never let a stale renewal publish a
+    // policy for a replacement host, phone, or route epoch.
+    const latest = this.state();
+    if (ws.readyState !== WebSocket.OPEN || this.peer(attachment.role) !== ws || this.peer("client") !== originalClient ||
+        latest.route_epoch !== state.route_epoch || latest.route_revision !== state.route_revision ||
+        latest.entitlement_id !== state.entitlement_id || latest.lease_ends_at !== state.lease_ends_at) return;
+    if (routeAuthorization !== "valid") {
+      this.terminate(routeAuthorization === "invalid" ? "entitlement_revoked" : "entitlement_unavailable");
+      return;
+    }
     const leaseEndsAt = now + this.config.leaseMs;
     this.update({ lease_ends_at: leaseEndsAt, last_activity: now });
+    if (this.peer("client") && state.route_expires_at !== null) {
+      const client = this.attachment(this.peer("client")!);
+      this.publishRoute(client.entitled ? "remote" : "local",
+        Math.min(leaseEndsAt, client.entitled ? client.entitlementUntil ?? 0 : leaseEndsAt));
+    }
+    const renewalRevision = this.state().route_revision;
     await this.scheduleAlarm();
 
     let servers: IceServer[] | undefined;
@@ -815,7 +893,10 @@ export class RoomDO extends DurableObject<Env> {
         this.renewalPending.delete(ws);
       }
       if (servers) {
-        if (ws.readyState !== WebSocket.OPEN || this.state().lease_ends_at !== leaseEndsAt && this.peer(attachment.role) !== ws) {
+        const afterIssue = this.state();
+        if (ws.readyState !== WebSocket.OPEN || this.peer(attachment.role) !== ws ||
+            afterIssue.lease_ends_at !== leaseEndsAt || afterIssue.route_epoch !== state.route_epoch ||
+            afterIssue.route_revision !== renewalRevision || afterIssue.entitlement_id !== state.entitlement_id) {
           this.revokeUsernames(servers.flatMap(s => s.username ? [s.username] : []));
           return;
         }
@@ -846,7 +927,7 @@ export class RoomDO extends DurableObject<Env> {
       this.detach(ws);
       this.close(ws, 1008, reason);
     }
-    this.update({ client_token_hash: null, lease_ends_at: null, entitlement_id: null, entitled_device: null, recheck_at: null, ice_host: null, ice_client: null });
+    this.update({ client_token_hash: null, lease_ends_at: null, entitlement_id: null, entitled_device: null, recheck_at: null, ice_host: null, ice_client: null, route_epoch: null, route_expires_at: null });
   }
 
   async revokeEntitlement(entitlementId: string, deviceId: string, onlyIfInactive = false): Promise<boolean> {

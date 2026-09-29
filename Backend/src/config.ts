@@ -14,7 +14,7 @@ export type Config = {
   leaseMs: number;
   maxDevices: number;
   testForceRelay: boolean;
-  /** Dev/staging migration switch: peers that do not list `remote.1` still receive STUN and TURN. Refused in production. */
+  /** Local dev/test migration switch: legacy peers may receive STUN and TURN. Refused on public deployments. */
   allowUnentitledRelay: boolean;
   /** 0 disables; otherwise each peer's last `ice` message is re-sent unchanged every N seconds so quiet sockets stay open. */
   keepaliveMs: number;
@@ -23,6 +23,8 @@ export type Config = {
 };
 
 const cache = new WeakMap<object, Config>();
+
+export const isPublicEnvironment = (name: string): boolean => name !== "dev" && name !== "test";
 
 export function loadConfig(env: Env): Config {
   const cached = cache.get(env);
@@ -35,7 +37,9 @@ export function loadConfig(env: Env): Config {
   if (allowXcode && environmentName !== "dev" && environmentName !== "test") throw new Error("ALLOW_XCODE_TRANSACTIONS is allowed only in dev or test");
   if (isProduction && testForceRelay) throw new Error("TEST_FORCE_RELAY is refused in production");
   const allowUnentitledRelay = flagVar(env.ALLOW_UNENTITLED_RELAY);
-  if (isProduction && allowUnentitledRelay) throw new Error("ALLOW_UNENTITLED_RELAY is refused in production");
+  if (isPublicEnvironment(environmentName) && allowUnentitledRelay) {
+    throw new Error("ALLOW_UNENTITLED_RELAY is refused on public deployments");
+  }
   const keepaliveSeconds = parseIntegerVar(env.KEEPALIVE_SECONDS, 0, 0, 600);
   if (keepaliveSeconds !== 0 && keepaliveSeconds < 15) throw new Error("KEEPALIVE_SECONDS must be 0 or at least 15");
   const stunUrls = listVar(env.STUN_URLS);
