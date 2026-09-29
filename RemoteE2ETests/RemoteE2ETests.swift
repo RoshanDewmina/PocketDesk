@@ -80,7 +80,7 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.metrics["pointerAgreementPoints"] = agreement
         recorder.check("phone-drawn pointer matches the Mac pointer", agreement <= 3, String(format: "%.2f pt", agreement))
         var before = marks()
-        try ensureTestPadClear()
+        try ensureTestPadClear(relocate: false)
         tapCanvas()
         try expectClick(on: "A", since: before)
 
@@ -88,7 +88,7 @@ final class RemoteE2ETests: E2ETestCase {
         try steerPointer(to: CGPoint(x: b.midX, y: b.midY), label: "B")
         pause(0.8)
         before = marks()
-        try ensureTestPadClear()
+        try ensureTestPadClear(relocate: false)
         doubleTapCanvas()
         try expectClick(on: "B", clickCount: 2, since: before)
 
@@ -96,7 +96,7 @@ final class RemoteE2ETests: E2ETestCase {
         try steerPointer(to: CGPoint(x: c.midX, y: c.midY), label: "C")
         pause(0.8)
         before = marks()
-        try ensureTestPadClear()
+        try ensureTestPadClear(relocate: false)
         twoFingerTapCanvas()
         try expectClick(on: "C", button: "right", since: before)
 
@@ -105,7 +105,7 @@ final class RemoteE2ETests: E2ETestCase {
             try steerPointer(to: CGPoint(x: handle.midX, y: handle.midY), label: "dragHandle")
             pause(0.8)
             before = marks()
-            try ensureTestPadClear()
+            try ensureTestPadClear(relocate: false)
             try doubleTapHoldDrag(by: CGVector(dx: 150, dy: 60))
             try expectHostInput("dragDown", since: before, timeout: 6)
             try expectHostInput("dragUp", since: before, timeout: 6)
@@ -127,7 +127,7 @@ final class RemoteE2ETests: E2ETestCase {
             let offsetBefore = pad.state.double("scrollOffset") ?? 0
             before = marks()
             let region = strokeRegion
-            try ensureTestPadClear()
+            try ensureTestPadClear(relocate: false)
             try twoFingerScroll(center: CGPoint(x: region.midX, y: region.midY + 40), by: CGVector(dx: 0, dy: -140))
             try expectHostInput("scroll", since: before, timeout: 6) { $0.string("phase") == "began" }
             try expectHostInput("scroll", since: before, timeout: 6) { $0.string("phase") == "ended" }
@@ -194,7 +194,7 @@ final class RemoteE2ETests: E2ETestCase {
         let text = try element("text")
         try steerPointer(to: CGPoint(x: text.midX, y: text.midY), label: "text")
         var before = marks()
-        try ensureTestPadClear()
+        try ensureTestPadClear(relocate: false)
         tapCanvas()
         try expectHostInput("click", since: before) { $0.string("target") == "text" }
         recorder.check("click focused the Test Pad text view", true)
@@ -254,7 +254,7 @@ final class RemoteE2ETests: E2ETestCase {
             guard copy.waitForExistence(timeout: 3) else { throw E2EFailure("Copy from Mac not found in the Clip row") }
             let padText = pad.state.string("text") ?? ""
             before = marks()
-            try ensureTestPadClear()
+            try ensureTestPadClear(relocate: false)
             copy.tap()
             try expectHostInput("key", since: before) { $0.string("key") == "c" }
             try waitFor("Mac clipboard to arrive on the phone", timeout: 15) {
@@ -267,7 +267,7 @@ final class RemoteE2ETests: E2ETestCase {
             before = marks()
             let paste = app.buttons["remote.clipboard.paste"].firstMatch
             guard paste.waitForExistence(timeout: 3) else { throw E2EFailure("Paste to Mac control not found") }
-            try ensureTestPadClear()
+            try ensureTestPadClear(relocate: false)
             paste.tap()
             try expectHostInput("key", since: before, timeout: 15) { $0.string("key") == "v" }
             try waitFor("pasted text in the Test Pad", timeout: 10) { (pad.state.string("text") ?? "").contains(marker) }
@@ -479,7 +479,7 @@ final class RemoteE2ETests: E2ETestCase {
         try steerPointer(to: CGPoint(x: frame.midX, y: frame.midY), tolerance: 4, label: "fullscreenButton")
         pause(0.8)
         let before = marks()
-        try ensureTestPadClear()
+        try ensureTestPadClear(relocate: false)
         tapCanvas()
         try expectHostInput("click", since: before) { $0.string("target") == "fullscreenButton" }
         try expectPadEvent("fullscreenButton", since: before, "Test Pad full-screen button pressed")
@@ -592,8 +592,12 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.metrics["maxRenderGapMs"] = endPhone.double("maxRenderGapMs") as Any
         recorder.check("soak ran the full duration", elapsed >= duration * 0.98 && endPhone.bool("connected"),
                        String(format: "%.0f of %.0f s", elapsed, duration))
-        recorder.check("no disconnects during the soak", unexpectedOutages == 0,
-                       unexpectedOutages == 0 ? "none" : "\(unexpectedOutages): " + outages.map { "at \(Int($0.double("at") ?? 0)) s" }.joined(separator: ", "))
+        // The phone counts every drop of its session at 10 Hz, including blips between 5 s samples.
+        let phoneDisconnects = (endPhone.int("disconnects") ?? 0) - (startPhone.int("disconnects") ?? 0)
+        recorder.metrics["phoneDisconnects"] = phoneDisconnects
+        recorder.check("no disconnects during the soak", unexpectedOutages == 0 && phoneDisconnects == 0,
+                       unexpectedOutages == 0 && phoneDisconnects == 0 ? "none"
+                           : "\(phoneDisconnects) session drops; outages " + outages.map { "at \(Int($0.double("at") ?? 0)) s" }.joined(separator: ", "))
         if crossesBoundary {
             let boundaryOutages = outages.filter { $0.bool("nearRoomBoundary") }
             let survived = boundaryOutages.isEmpty && elapsed > boundary + 30

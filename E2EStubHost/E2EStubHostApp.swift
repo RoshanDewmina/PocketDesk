@@ -84,6 +84,7 @@ final class StubHost {
     private var cpu = E2ECPUMeter()
     private var lastConnected = false
     private var lastStatus = ""
+    private var lastRegistered = false
     private var lastInvitation: PairInvitation?
     private var moveBatch = 0
 
@@ -174,6 +175,10 @@ final class StubHost {
         if coordinator.status != lastStatus {
             lastStatus = coordinator.status
             recorder.event("coordinator.status", ["status": coordinator.status])
+        }
+        if coordinator.hostRegistered != lastRegistered {
+            lastRegistered = coordinator.hostRegistered
+            recorder.event(lastRegistered ? "service.registered" : "service.unregistered")
         }
         if moveBatch > 0 {
             recorder.event("input", ["action": "move", "count": moveBatch, "accepted": true, "pointer": pointer,

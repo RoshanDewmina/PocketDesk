@@ -167,6 +167,10 @@ if (soaks.length) {
   md.push("## Soak", "", "| Iteration | Length | Clicks | Max frame age | Max render gap | Outages | Survived the room lease | Lease renewals | Phone / host memory growth |", "|---|---|---|---|---|---|---|---|---|");
   for (const s of soaks) {
     const m = s.metrics;
+    if (typeof m.soakSeconds !== "number") {
+      md.push(`| ${s.iteration} | did not start (${s.status}) | – | – | – | – | – | – | – |`);
+      continue;
+    }
     md.push(`| ${s.iteration} | ${round(m.soakSeconds, 0)} s | ${m.clicks ?? "–"} (${(m.clickFailures ?? []).length} missed) | ${round(m.maxFrameAgeMs, 0)} ms | ${round(m.maxRenderGapMs, 0)} ms | ${(m.outages ?? []).length} | ${m.survivedRoomBoundary === undefined ? "not reached" : m.survivedRoomBoundary ? "yes" : "**no**"} (lease ${round((m.roomLifetimeSeconds ?? 1800) / 60, 0)} min) | ${m.sessionRenewalEnabled === false ? "off" : m.serviceRenewals ?? "–"} | ${round(m.phoneFootprintGrowthMB)} / ${round(m.hostFootprintGrowthMB)} MB |`);
   }
   md.push("");

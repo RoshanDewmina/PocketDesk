@@ -118,9 +118,11 @@ as a normal app. In E2E mode:
 - **Never clicks system dialogs.** Before every click-producing gesture the test checks, from
   `CGWindowListCopyWindowInfo`, that no other window (alerts, crash reports, CoreServicesUIAgent,
   System Settings, banners, other apps) overlaps the Test Pad; full-screen system containers (Dock,
-  Notification Centre, Screenshot, menu bar, cursor) are recognised as backdrops. If something is on
-  top, the Test Pad moves to another quadrant; if every quadrant is covered the scenario fails with
-  "blocked by system dialog". The host's input fence applies the same rule to every injected click.
+  Notification Centre, Screenshot, menu bar, cursor) are recognised as backdrops. The Test Pad starts
+  at the clear spot nearest the lower-left corner; if something covers it before a scenario or a
+  steered click, it moves (shrinking to 640×440 if needed) to the nearest clear spot. If no spot is
+  clear, or a dialog appears after the pointer was steered, the scenario fails with "Blocked by system
+  dialog". The host's input fence applies the same rule to every injected click.
 - **Loopback only.** The signaling URL must be `ws://127.0.0.1|localhost:<port>/signal`; the
   harness directory must be exactly `/private/tmp/farside-e2e`, owned by the user, not group/world
   writable. The host never presents setup UI or takes focus in E2E mode.
@@ -149,12 +151,15 @@ Unit tests: `RemoteTests/E2EHooksTests.swift` (launch gating, loopback URL, toke
 file checks, every fence rule, and real token auto-approval through the Bun service) and
 `RemoteTests/E2EWindowCoverTests.swift` (which windows count as covering the Test Pad).
 
-## Known product issue the harness catches
+## Product issue found by the harness
 
-`PeerMedia.peerConnection(_:didOpen:)` assigns the data channel's delegate asynchronously, so the
-host's one-time geometry/viewing message can arrive before the phone listens; the session then stays
-view-only (geometry epoch 0) until a reconnect. The tests fail fast with that diagnosis instead of
-timing out. Seen intermittently in scenarios c and d4 of the self-test.
+`PeerMedia.peerConnection(_:didOpen:)` used to assign the phone's control-channel delegate on a later
+main-queue turn. The WebRTC wrapper drops messages that arrive while a channel has no delegate, so
+the Mac's one-time geometry/viewing messages could be lost and the session stayed view-only
+(geometry epoch 0) until a reconnect. Over loopback this hit most connects of the self-test; on real
+networks it needs a busy phone main thread at connect time. This branch attaches the delegate
+synchronously (separate commit). If it regresses, the tests fail fast with that diagnosis instead of
+timing out.
 
 ## Self-test mode
 

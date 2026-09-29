@@ -47,6 +47,7 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
         pad = TestPadView(frame: NSRect(origin: .zero, size: size), app: self)
         window.contentView = pad
         pad.textView.delegate = self
+        if options.corner == "lowerLeft", let clear = clearFrame() { window.setFrame(clear, display: false) }
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(pad.textView)
         NSApp.activate()
@@ -208,6 +209,38 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
         }
     }
 
+    /// The frame (AppKit coordinates) nearest the lower-left corner of the primary screen that no
+    /// alert, banner or floating window overlaps: at the current size, else at the minimum size.
+    /// Ordinary app windows do not count; activating the Test Pad puts it above them.
+    func clearFrame() -> NSRect? {
+        guard let visible = NSScreen.screens.first?.visibleFrame else { return nil }
+        let display = CGDisplayBounds(CGMainDisplayID())
+        let obstacles = E2EWindowCover.onScreen()
+            .filter { $0.pid != getpid() && $0.layer > 0 && !E2EWindowCover.isBackdrop($0, display: display) }
+            .map { $0.bounds.insetBy(dx: -8, dy: -8) }
+        let minimum = window.frameRect(forContentRect: NSRect(origin: .zero, size: Self.minimumContentSize)).size
+        let margin: CGFloat = 16, step: CGFloat = 24
+        for size in [window.frame.size, minimum] {
+            var best: NSRect?
+            var y = visible.minY + margin
+            while y + size.height <= visible.maxY - margin + 0.5 {
+                var x = visible.minX + margin
+                while x + size.width <= visible.maxX - margin + 0.5 {
+                    let frame = NSRect(x: x, y: y, width: size.width, height: size.height)
+                    let global = TestPadGeometry.globalRect(frame)
+                    let clear = !obstacles.contains { $0.intersects(global) }
+                    if clear, best.map({ x + y < $0.minX + $0.minY }) ?? true { best = frame }
+                    x += step
+                }
+                y += step
+            }
+            if let best { return best }
+        }
+        return nil
+    }
+
+    static let minimumContentSize = NSSize(width: 640, height: 440)
+
     /// Owners of real windows above this one that overlap it (system alerts, crash reports, other
     /// apps). The harness refuses to click while this is non-empty.
     private func coveredBy() -> [String] {
@@ -294,6 +327,18 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
                 result["frame"] = TestPadGeometry.global(frame)
             } else {
                 result["ok"] = false; result["error"] = "unknown corner \(corner)"
+            }
+        case "avoidCover":
+            // Move (and if needed shrink) the window clear of system dialogs; never while full screen.
+            if isFullScreen {
+                result["ok"] = false; result["error"] = "in full screen"
+            } else if let frame = clearFrame() {
+                window.setFrame(frame, display: true)
+                window.makeKeyAndOrderFront(nil)
+                NSApp.activate()
+                result["frame"] = TestPadGeometry.global(frame)
+            } else {
+                result["ok"] = false; result["error"] = "no area of the screen is clear of other windows"
             }
         case "mark":
             result["label"] = command["label"] as? String ?? ""

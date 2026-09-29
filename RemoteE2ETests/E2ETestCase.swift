@@ -193,22 +193,28 @@ class E2ETestCase: XCTestCase {
 
     /// Never click while a system alert, crash report or any other window covers the Test Pad:
     /// move it to another corner, or stop the scenario with a clear reason.
-    func ensureTestPadClear() throws {
+    /// Refuses to click while another window overlaps the Test Pad. With `relocate`, first moves (and
+    /// if needed shrinks) the Test Pad clear of it; pass false once the pointer has been steered, since
+    /// moving the window then would leave the pointer off its target.
+    func ensureTestPadClear(relocate: Bool = true) throws {
         var covered = pad.state["coveredBy"] as? [String] ?? []
         guard !covered.isEmpty else { return }
         if config.isStub {
             recorder.note("Test Pad partly covered by \(covered.joined(separator: ", ")) (stub mode sends no real clicks)")
             return
         }
-        if !pad.state.bool("fullscreen") {
-            for corner in ["lowerLeft", "lowerRight", "upperLeft", "upperRight"] {
-                _ = try? pad.command("moveTo", ["corner": corner])
-                pause(1.5)
-                covered = pad.state["coveredBy"] as? [String] ?? []
-                if covered.isEmpty {
-                    recorder.note("moved the Test Pad to \(corner), clear of other windows")
-                    return
+        if relocate && !pad.state.bool("fullscreen") {
+            let blockers = covered.joined(separator: ", ")
+            let moved = (try? pad.command("avoidCover"))?.bool("ok") ?? false
+            if moved {
+                _ = try? waitFor("Test Pad clear of \(blockers)", timeout: 4) {
+                    (pad.state["coveredBy"] as? [String] ?? []).isEmpty
                 }
+            }
+            covered = pad.state["coveredBy"] as? [String] ?? []
+            if covered.isEmpty {
+                recorder.note("moved the Test Pad clear of \(blockers)")
+                return
             }
         }
         attachScreenshot("test pad covered")
