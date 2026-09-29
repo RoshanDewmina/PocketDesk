@@ -73,6 +73,50 @@ class E2ETestCase: XCTestCase {
         add(attachment)
     }
 
+    // MARK: Picture
+
+    /// Frames arriving is not enough: a Metal view can receive every frame and draw none (build
+    /// 20260929.2 showed a black stage with a working session). The stage between the top pills and
+    /// the dock must show the Mac's picture rather than the empty Farside void (about 5 of 255).
+    func checkPictureVisible(_ moment: String) {
+        var share = 0.0
+        for attempt in 0..<5 {
+            share = litShareOfStage()
+            if share >= 0.1 { break }
+            if attempt < 4 { pause(0.5) }
+        }
+        recorder.metrics["stageLitShare.\(moment)"] = share
+        recorder.check("Mac picture visible on the phone (\(moment))", share >= 0.1,
+                       String(format: "%.0f%% of the stage is lit (an empty stage is 0%%, pointer included)", share * 100))
+        if share < 0.1 { attachScreenshot("black stage \(moment)") }
+    }
+
+    /// Share of the stage brighter than the void, downsampled to 48 x 48. The band stops above where
+    /// the open dock starts: its lighter panel alone lit 20% of a taller band on the black build.
+    private func litShareOfStage() -> Double {
+        guard let image = XCUIScreen.main.screenshot().image.cgImage else { return 0 }
+        let height = CGFloat(image.height)
+        let band = CGRect(x: 0, y: height * 0.1, width: CGFloat(image.width), height: height * 0.5).integral
+        guard let stage = image.cropping(to: band) else { return 0 }
+        let side = 48
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
+            guard let context = CGContext(data: buffer.baseAddress, width: side, height: side, bitsPerComponent: 8,
+                                          bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return false }
+            context.interpolationQuality = .medium
+            context.draw(stage, in: CGRect(x: 0, y: 0, width: side, height: side))
+            return true
+        }
+        guard drawn else { return 0 }
+        var lit = 0
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            let luma = 0.2126 * Double(pixels[index]) + 0.7152 * Double(pixels[index + 1]) + 0.0722 * Double(pixels[index + 2])
+            if luma > 15 { lit += 1 }
+        }
+        return Double(lit) / Double(side * side)
+    }
+
     private var lastAlertCheck = Date.distantPast
 
     /// Accepts the local-network style prompts the simulator may show; never touches the Mac.

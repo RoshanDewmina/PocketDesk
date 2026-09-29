@@ -59,6 +59,7 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.metrics["resolutionSamples"] = samples
         recorder.metrics["settleSeconds"] = Date().timeIntervalSince(settleStart)
         recorder.check("resolution and quality settled", settled, samples.last ?? "no samples")
+        checkPictureVisible("after pairing")
         try waitFor("phone drawing the Mac pointer from telemetry", timeout: 10) {
             let pointer = phone.state.object("pointer")
             return pointer.bool("hostSupported") && pointer.bool("drawn")
@@ -320,6 +321,7 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.check("phone reconnected automatically after the host quit and reopened", automatic,
                        automatic ? String(format: "%.1f s", Date().timeIntervalSince(relaunched)) : "needed a user tap: \(phone.summary())")
         if !automatic { try ensureConnected() }
+        checkPictureVisible("after the host restarted")
         try prepareTestPad()
         try clickElement("B")
     }
@@ -355,6 +357,7 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.check("phone reconnected automatically after the watchdog relaunch", automatic,
                        automatic ? "" : "needed a user tap: \(phone.summary())")
         if !automatic { try ensureConnected() }
+        checkPictureVisible("after the watchdog relaunch")
         try waitFor("the one-time restart notice", timeout: 10) {
             (phone.state.object("noticesSeen").int(recoveredNotice) ?? 0) > noticesBefore
         }
@@ -382,6 +385,7 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.check("phone and host reconnected automatically after the signaling restart", automatic,
                        automatic ? "" : "\(phone.summary()) \(host.summary())")
         if !automatic { try ensureConnected() }
+        checkPictureVisible("after the signaling restart")
         try prepareTestPad()
         try clickElement("B")
     }
@@ -415,6 +419,7 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.check("session resumed after \(Int(seconds)) s in the background without re-pairing",
                        phone.state.bool("paired") && resume < 30,
                        String(format: "%.1f s, %@", resume, reconnected ? "reconnected" : "held session resumed"))
+        checkPictureVisible("after \(Int(seconds)) s in the background")
         try prepareTestPad()
         try clickElement("B")
     }
