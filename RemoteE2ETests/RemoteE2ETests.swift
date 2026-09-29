@@ -203,8 +203,8 @@ final class RemoteE2ETests: E2ETestCase {
 
         before = marks()
         for _ in 0..<3 {
-            app.buttons["Shift"].tap()
-            app.buttons["Left arrow"].tap()
+            try tapKey("Shift")
+            try tapKey("Left arrow")
             pause(0.25)
         }
         try waitFor("three Shift+Left keys accepted", timeout: 5) {
@@ -215,7 +215,7 @@ final class RemoteE2ETests: E2ETestCase {
             try waitFor("three characters selected", timeout: 5) { pad.state.object("selection").int("length") == 3 }
         }
         before = marks()
-        app.buttons["Delete"].tap()
+        try tapKey("Delete")
         try expectHostInput("key", since: before) { $0.string("key") == "delete" }
         if !config.isStub {
             try waitFor("selection deleted", timeout: 5) { pad.state.string("text") == String(typed.dropLast(3)) }
@@ -235,7 +235,7 @@ final class RemoteE2ETests: E2ETestCase {
         if phone.state["hostFeatures"].flatMap({ $0 as? [String] })?.contains("clipboard.text.1") == true {
             let padText = pad.state.string("text") ?? ""
             before = marks()
-            app.buttons["Copy from Mac"].tap()
+            try tapKey("Copy from Mac")
             try expectHostInput("key", since: before) { $0.string("key") == "c" }
             try waitFor("Mac clipboard to arrive on the phone", timeout: 15) {
                 phone.state.object("clipboard").object("fromMac").string("sha256") == E2EDigest.sha256(padText)
@@ -552,6 +552,20 @@ final class RemoteE2ETests: E2ETestCase {
         try revealDock()
         app.buttons["Keyboard"].tap()
         guard app.textViews["remote.text"].waitForExistence(timeout: 5) else { throw E2EFailure("Phone keyboard bar did not open") }
+    }
+
+    /// Keyboard-bar keys sit in a horizontal scroll row; bring one on screen before tapping it.
+    func tapKey(_ label: String) throws {
+        let button = app.buttons[label].firstMatch
+        guard button.waitForExistence(timeout: 3) else { throw E2EFailure("Keyboard key \(label) not found") }
+        let row = app.descendants(matching: .any)["remote.keys"].firstMatch
+        var attempts = 0
+        while !button.isHittable && attempts < 6 {
+            if attempts < 3 { row.swipeLeft() } else { row.swipeRight() }
+            attempts += 1
+        }
+        guard button.isHittable else { throw E2EFailure("Keyboard key \(label) never came on screen") }
+        button.tap()
     }
 
     func closePhoneKeyboard() {

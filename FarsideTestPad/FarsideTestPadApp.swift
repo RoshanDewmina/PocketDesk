@@ -267,6 +267,9 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
             }
         case "mark":
             result["label"] = command["label"] as? String ?? ""
+        case "selfCheck":
+            result["checks"] = selfCheck()
+            result["ok"] = (result["checks"] as? [String: Bool])?.values.allSatisfy { $0 } ?? false
         case "quit":
             log.write("command", result)
             NSApp.terminate(nil)
@@ -277,6 +280,64 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
         }
         log.write("command", result)
         markDirty()
+    }
+
+    // MARK: Self-check (in-window synthetic events only; no global input, no cursor movement)
+
+    /// Proves the fixture's own handlers and log without any injection permission: events are
+    /// handed straight to this window, so nothing outside the Test Pad can receive them.
+    private func selfCheck() -> [String: Bool] {
+        let before = log.sequence
+        pad.reset()
+        window.makeFirstResponder(pad.textView)
+        let frames = pad.localFrames()
+        func point(_ name: String, dx: CGFloat = 0, dy: CGFloat = 0) -> NSPoint {
+            let frame = frames[name] ?? .zero
+            return NSPoint(x: frame.midX + dx, y: frame.midY + dy)
+        }
+        func mouse(_ type: NSEvent.EventType, _ location: NSPoint, clicks: Int = 1) {
+            guard let event = NSEvent.mouseEvent(with: type, location: location, modifierFlags: [],
+                                                 timestamp: ProcessInfo.processInfo.systemUptime,
+                                                 windowNumber: window.windowNumber, context: nil,
+                                                 eventNumber: 0, clickCount: clicks, pressure: 1) else { return }
+            window.sendEvent(event)
+        }
+        func key(_ characters: String, code: UInt16, modifiers: NSEvent.ModifierFlags = []) {
+            for type in [NSEvent.EventType.keyDown, .keyUp] {
+                guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers,
+                                                   timestamp: ProcessInfo.processInfo.systemUptime,
+                                                   windowNumber: window.windowNumber, context: nil,
+                                                   characters: characters, charactersIgnoringModifiers: characters,
+                                                   isARepeat: false, keyCode: code) else { continue }
+                if type == .keyDown, modifiers.contains(.command), NSApp.mainMenu?.performKeyEquivalent(with: event) == true { continue }
+                window.sendEvent(event)
+            }
+        }
+        mouse(.leftMouseDown, point("A")); mouse(.leftMouseUp, point("A"))
+        mouse(.rightMouseDown, point("B")); mouse(.rightMouseUp, point("B"))
+        mouse(.leftMouseDown, point("C")); mouse(.leftMouseUp, point("C"))
+        mouse(.leftMouseDown, point("C"), clicks: 2); mouse(.leftMouseUp, point("C"), clicks: 2)
+        let handle = point("dragHandle")
+        mouse(.leftMouseDown, handle)
+        mouse(.leftMouseDragged, NSPoint(x: handle.x + 40, y: handle.y + 10))
+        mouse(.leftMouseDragged, NSPoint(x: handle.x + 80, y: handle.y + 20))
+        mouse(.leftMouseUp, NSPoint(x: handle.x + 80, y: handle.y + 20))
+        window.makeFirstResponder(pad.textView)
+        key("h", code: 4); key("i", code: 34)
+        key("a", code: 0, modifiers: .command)
+        let events = Array(log.recent.drop { ($0["seq"] as? UInt64 ?? 0) <= before })
+        func has(_ type: String, _ test: ([String: Any]) -> Bool = { _ in true }) -> Bool {
+            events.contains { $0["type"] as? String == type && test($0) }
+        }
+        return [
+            "click": has("click") { $0["element"] as? String == "A" && $0["button"] as? String == "left" },
+            "rightClick": has("click") { $0["element"] as? String == "B" && $0["button"] as? String == "right" },
+            "doubleClick": has("click") { $0["element"] as? String == "C" && ($0["clickCount"] as? Int) == 2 },
+            "drag": has("dragEnd") { (($0["delta"] as? [String: Double])?["x"] ?? 0) > 30 },
+            "typing": pad.textView.string == "hi",
+            "selectAll": pad.textView.selectedRange().length == 2,
+            "state": FileManager.default.fileExists(atPath: options.statePath)
+        ]
     }
 
     // MARK: Published geometry
@@ -361,6 +422,8 @@ final class TestPadLog {
     let path: String
     let runID: String
     private(set) var sequence: UInt64 = 0
+    /// Last few hundred events, for the self-check.
+    private(set) var recent: [[String: Any]] = []
     private var handle: FileHandle?
     private let start = ProcessInfo.processInfo.systemUptime
 
@@ -385,6 +448,8 @@ final class TestPadLog {
         line["t"] = Date().timeIntervalSince1970
         line["mono"] = ProcessInfo.processInfo.systemUptime
         line["run"] = runID
+        recent.append(line)
+        if recent.count > 400 { recent.removeFirst(recent.count - 400) }
         guard JSONSerialization.isValidJSONObject(line),
               var data = try? JSONSerialization.data(withJSONObject: line, options: [.sortedKeys, .withoutEscapingSlashes])
         else { return }
@@ -551,6 +616,16 @@ final class TestPadView: NSView {
         frames["fullscreenButton"] = frame(fullScreenButton)
         frames["home"] = frame(home)
         frames["clock"] = frame(clock)
+        return frames
+    }
+
+    /// Element frames in window coordinates, for in-window synthetic events.
+    func localFrames() -> [String: NSRect] {
+        var frames: [String: NSRect] = [:]
+        for target in targets { frames[target.id] = target.convert(target.bounds, to: nil) }
+        frames["dragHandle"] = dragField.convert(dragField.handleRect, to: nil)
+        frames["text"] = textScroll.convert(textScroll.bounds, to: nil)
+        frames["scroll"] = scroll.convert(scroll.bounds, to: nil)
         return frames
     }
 

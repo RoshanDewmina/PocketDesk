@@ -363,6 +363,24 @@ launch_testpad() {
 
 ensure_testpad() { testpad_alive || launch_testpad }
 
+# In-window synthetic events only (no global input): proves the fixture logs clicks, drags and typing.
+testpad_self_check() {
+  local id="selfcheck$RANDOM$RANDOM" line="" tries=150
+  print -r -- "$(json_line --arg id "$id" '{id: $id, cmd: "selfCheck"}')" >> "$ROOT/testpad-commands.jsonl"
+  while (( tries-- > 0 )); do
+    line=$(grep -F "\"id\":\"$id\"" "$ROOT/testpad.jsonl" 2>/dev/null | tail -1)
+    [[ -n $line ]] && break
+    sleep 0.1
+  done
+  [[ -n $line ]] || { log "Farside Test Pad self-check did not answer"; return 1 }
+  print -r -- "$line" > "$REPORT_DIR/testpad-selfcheck-$RUN_ID.json"
+  if [[ $(print -r -- "$line" | /usr/bin/jq -r .ok) != true ]]; then
+    log "Farside Test Pad self-check failed: $(print -r -- "$line" | /usr/bin/jq -c .checks)"
+    return 1
+  fi
+  log "Farside Test Pad self-check passed (click, right-click, double-click, drag, typing, ⌘A, state)"
+}
+
 activate_testpad() { /usr/bin/open -a "$TESTPAD_APP" }
 
 testpad_restore_window() {
@@ -614,6 +632,7 @@ for (( iteration = 1; iteration <= REPEAT; iteration++ )); do
   write_config
   start_service || die "signaling service did not start"
   launch_testpad || die "Farside Test Pad did not start"
+  testpad_self_check || die "Farside Test Pad self-check failed; see $ROOT/testpad.jsonl"
   for scenario in $SCENARIOS; do
     run_scenario $iteration $scenario
   done
