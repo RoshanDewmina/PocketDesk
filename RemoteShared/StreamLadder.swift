@@ -8,7 +8,8 @@ struct LadderState: Codable, Equatable {
     var rung: Int
     var fps: Int
     var sizeFraction: Double
-    /// Why the ladder moved here: "encode", "capture", "bandwidth", "phone", "thermal", or nil at rung 0.
+    /// Why the ladder moved here (`LadderReason`): "encoding", "capture", "network", "phone", "thermal",
+    /// "power", or nil at rung 0.
     var reason: String?
 
     static let sizeFractions: [Double] = [1.0, 0.75, 0.5]
@@ -40,6 +41,8 @@ struct LadderState: Codable, Equatable {
 struct LadderInputs: Equatable {
     var targetFPS: Int
     var captureFPS: Double?
+    /// Display to capture callback, p90: a still screen delivers few frames but on time.
+    var captureLatencyP90Ms: Double?
     var encodedFPS: Double?
     var encodeLatencyP90Ms: Double?
     var encodeInFlightMax: Int?
@@ -49,6 +52,7 @@ struct LadderInputs: Equatable {
     var availableKbps: Double?
     var qualityLimitation: String?
     var hostThermalState: String?
+    var hostLowPowerMode: Bool?
     var phoneSupersededPerSecond: Int?
     var phoneDecodeMs: Double?
     var phonePresentedFPS: Double?

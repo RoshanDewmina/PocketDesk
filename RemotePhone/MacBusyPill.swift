@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// "Your Mac is busy · 30 fps at 1440 px": a quiet capsule for the top of the session while the
-/// Mac's ladder holds the stream below its best (`BusyState`). It never takes touches, and it
-/// fades rather than pulses, so it informs without pulling the eye off the Mac.
+/// "Your Mac is busy · 30 fps at 1440 px": a quiet capsule for the top of the session for a few
+/// seconds after the Mac steps the stream down, and for as long as it is busy (`BusyState`). It
+/// never takes touches, and it fades rather than pulses, so it informs without pulling the eye off the Mac.
 struct MacBusyPill: View {
     let state: BusyState
     var isVisible: Bool

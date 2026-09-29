@@ -24,6 +24,8 @@ final class BusyPresentationTests: XCTestCase {
             (.strained, "network", "The connection is a little slow", "wifi"),
             (.busy, "phone", "Your iPhone is busy", "iphone"),
             (.strained, "phone", "Your iPhone is working hard", "iphone"),
+            (.busy, "power", "Your Mac is saving power", "battery.25percent"),
+            (.strained, "power", "Your Mac is saving power", "battery.25percent"),
             (.busy, "", "Your Mac is busy", "laptopcomputer"),
             (.strained, "something new", "Your Mac is working hard", "laptopcomputer"),
         ]
@@ -43,6 +45,8 @@ final class BusyPresentationTests: XCTestCase {
                        "the title already names the connection")
         XCTAssertEqual(words(.busy, fps: 60, longEdge: 1920, reason: "phone")?.detail, "60 fps at 1920 px")
         XCTAssertEqual(words(.busy, longEdge: 1280, reason: "thermal")?.detail, "30 fps at 1280 px")
+        XCTAssertEqual(words(.strained, fps: 60, longEdge: 2560, reason: "power")?.detail, "60 fps at 2560 px",
+                       "the title already says it is saving power")
         XCTAssertEqual(words(.busy, longEdge: 0, reason: "encoding")?.detail, "30 fps · encoding",
                        "an unknown size is left out")
         XCTAssertEqual(words(.busy, fps: 0, reason: "network")?.detail, "1440 px")
@@ -57,6 +61,8 @@ final class BusyPresentationTests: XCTestCase {
                        "The connection is a little slow. 60 frames per second at 1920 pixels.")
         XCTAssertEqual(words(.busy, fps: 0, longEdge: 0, reason: "network")?.accessibilityLabel,
                        "The connection is slow.")
+        XCTAssertEqual(words(.strained, fps: 60, longEdge: 2560, reason: "power")?.accessibilityLabel,
+                       "Your Mac is saving power. 60 frames per second at 2560 pixels.")
         XCTAssertEqual(words(.busy, fps: 0, longEdge: 0, reason: "capture")?.accessibilityLabel,
                        "Your Mac is busy. Limited by screen capture.")
     }
