@@ -1666,13 +1666,13 @@ final class RestampingRenderer: NSObject, RTCVideoRenderer {
     /// must remain lightweight because WebRTC invokes this method on its decode thread.
     @discardableResult
     func renderFrame(_ frame: RTCVideoFrame?, marker: BenchMarker?,
-                     beforeForward: (ForwardedFrame) -> Void) -> Int64? {
+                     beforeForward: @escaping (ForwardedFrame) -> Void) -> Int64? {
         forward(frame, remember: true, marker: marker, beforeForward: beforeForward)
     }
 
     /// Registers an unmarked frame before handing it to RTCMTLVideoView.
     @discardableResult
-    func renderFrame(_ frame: RTCVideoFrame?, beforeForward: (ForwardedFrame) -> Void) -> Int64? {
+    func renderFrame(_ frame: RTCVideoFrame?, beforeForward: @escaping (ForwardedFrame) -> Void) -> Int64? {
         forward(frame, remember: false, marker: nil, beforeForward: beforeForward)
     }
 
