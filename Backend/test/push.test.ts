@@ -57,8 +57,14 @@ describe("pairing-scoped generic APNs alerts", () => {
     const missing = Object.assign({ ...testEnv }, { APNS_TEAM_ID: "", APNS_KEY_ID: "", APNS_PRIVATE_KEY: "" });
     expect((await register(missing, p, registration())).status).toBe(503);
     const env = await configuredEnv();
+    await testEnv.DB.prepare(`INSERT INTO activity_registrations
+      (room,route_epoch,activity_id,push_token,environment,updated_at)
+      VALUES (?1,?2,'active-session','ab','sandbox',?3)`)
+      .bind(p.room, "a".repeat(32), Date.now()).run();
     expect((await register(env, p, registration(randomHex(), false))).status).toBe(200);
     expect((await event(env, p)).status).toBe(409);
+    expect(await testEnv.DB.prepare("SELECT activity_id AS id FROM activity_registrations WHERE room=?1")
+      .bind(p.room).first<{ id: string }>()).toEqual({ id: "active-session" });
   });
 
   it("sends only generic fields, reports actions, and holds duplicates", async () => {

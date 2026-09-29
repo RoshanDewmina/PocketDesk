@@ -65,7 +65,7 @@ export async function handlePushRegister(request: Request, env: Env): Promise<Re
   if (!value || value.environment !== expectedEnvironment(env)) return json({ error: "invalid_registration" }, 400);
   if (!configured(env as PushEnv)) return json({ error: "push_unavailable" }, 503);
   if (!value.alertsEnabled) {
-    await forgetPushRoom(env.DB, input.room);
+    await forgetAgentAlertsRoom(env.DB, input.room);
     return json({ state: "removed" }, 200);
   }
   await env.DB.prepare(`INSERT INTO push_registrations
@@ -178,6 +178,14 @@ export async function handlePushReport(request: Request, env: Env): Promise<Resp
   await env.DB.prepare("INSERT OR IGNORE INTO push_reports (room,id,action,reported_at) VALUES (?1,?2,?3,?4)")
     .bind(input.room, input.helpRequestID, input.action, Date.now()).run();
   return json({ state: "recorded" }, 200);
+}
+
+export async function forgetAgentAlertsRoom(db: D1Database, room: string): Promise<void> {
+  await db.batch([
+    db.prepare("DELETE FROM push_registrations WHERE room=?1").bind(room),
+    db.prepare("DELETE FROM push_events WHERE room=?1").bind(room),
+    db.prepare("DELETE FROM push_reports WHERE room=?1").bind(room),
+  ]);
 }
 
 export async function forgetPushRoom(db: D1Database, room: string): Promise<void> {
