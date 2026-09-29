@@ -1,6 +1,6 @@
 # Farside entitlement contract (server ↔ phone)
 
-**Status: v1, frozen 29 September 2026.** This is the interface the StoreKit work in the phone app implements against and the backend in `Backend/` serves. Changes are announced in the commit message and in this file's changelog (bottom). Subordinate to `PRODUCT.md` (D28: internet access requires the paid plan, enforced on the server; D5 in `Docs/launch/SUBSCRIPTION-SETUP.md`: sandbox accepted in production, flagged and rate-limited).
+**Status: v1.4, updated 29 September 2026.** This is the interface the StoreKit work in the phone app implements against and the backend in `Backend/` serves. Changes are announced in the commit message and in this file's changelog (bottom). Subordinate to `PRODUCT.md` (D28: internet access requires the paid plan, enforced on the server; D5 in `Docs/launch/SUBSCRIPTION-SETUP.md`: sandbox accepted in production, flagged and rate-limited).
 
 Base URL: `https://<service host>` — the same host as the `wss://<service host>/signal` address baked into the apps. Staging and production are different hosts (`Backend/DESIGN.md` §8). All bodies are JSON, UTF-8, `Content-Type: application/json`. Requests larger than 32 KiB are rejected.
 
@@ -29,7 +29,7 @@ Server checks, in order:
 3. `bundleId == com.roshan.PocketDesk.Remote`.
 4. `productId ∈ { com.roshan.PocketDesk.remote.monthly, com.roshan.PocketDesk.remote.yearly }` and `type == "Auto-Renewable Subscription"`.
 5. `environment`: `Production` always; `Sandbox` when the deployment allows it (production does, flagged, with tighter rate limits); `Xcode` / `LocalTesting` only on a developer's local `wrangler dev` (never staging or production).
-6. In production, `appAppleId` must equal the configured app Apple ID once it is configured (it is unknown until the App Store Connect record exists).
+6. The signed purchase transaction identifies the app through `bundleId`; Apple's `JWSTransactionDecodedPayload` has no `appAppleId` field. The numeric app-ID check applies to the outer production notification (§6), not this transaction. The verified Farside App Store Connect ID is `6817532560`.
 7. `revocationDate` absent; `expiresDate` (plus billing-grace allowance already known from notifications) in the future.
 8. Device cap: at most 3 distinct `deviceId`s per subscription (per `originalTransactionId`); sandbox purchases get 1. A further device is refused with `device_limit`; unlinking (§5) frees a slot, and a slot whose device has not verified for 30 days is reclaimed automatically.
 
@@ -85,7 +85,7 @@ Privacy path ("Remove this Mac and delete server data", `Docs/launch/PRIVACY-POL
 
 ## 6. `POST /v1/appstore/notifications` (Apple → server)
 
-App Store Server Notifications V2. Body `{"signedPayload": "<JWS>"}`. Both the production and the sandbox notification URLs in App Store Connect point at the production service; the payload's `data.environment` distinguishes them. Not called by the phone. Verification and handling: DESIGN.md §6.
+App Store Server Notifications V2. Body `{"signedPayload": "<JWS>"}`. For production notification data, `data.appAppleId` must be a number matching the configured app ID; wrong, missing or nonnumeric values are ignored before any entitlement or notification record is written. Both the production and the sandbox notification URLs in App Store Connect point at the production service; the payload's `data.environment` distinguishes them. Not called by the phone. Verification and handling: DESIGN.md §6.
 
 ## 7. Test hooks
 
@@ -99,3 +99,4 @@ App Store Server Notifications V2. Body `{"signedPayload": "<JWS>"}`. Both the p
 - 2026-09-29 v1.1 (same day, before any client implementation): token also bound to the deployment and to a live device link; `forget` invalidates immediately; one live room per device; sandbox purchases get one device; stale device slots reclaimed after 30 days; Mac receives `ice{servers:[]}` when its entitled phone leaves; keepalive `ice` repeats; bare 1013 closes for transient failures. Request and response shapes of §2 are unchanged.
 - 2026-09-29 v1.2: `/forget` revokes the specific device's live room before unlinking and may return 503 for a retryable failure; a stale verifier cannot clear a newer refund; an entitlement lookup outage does not authorize replacement TURN credentials. Empty ICE alone does not enforce same-LAN routes. Existing verification wire shapes remain unchanged.
 - 2026-09-29 v1.3: `route.1` adds one server policy per authenticated room, shared epoch and revision, bounded deadline, and public-deployment upgrade enforcement. Native free sessions require a physical one-hop proof and selected-ICE match. An unverifiable paid renewal/recheck ends the live room.
+- 2026-09-29 v1.4: correct Apple purchase-transaction schema: numeric `appAppleId` is checked on outer production notifications, not StoreKit purchase JWS. The real App Store Connect ID is configured in source. Request/response shapes and all signature, bundle, product, environment and access checks remain unchanged. Sources: [Apple transaction schema](https://developer.apple.com/documentation/appstoreserverapi/jwstransactiondecodedpayload), [Apple signed-data verifier](https://github.com/apple/app-store-server-library-python/blob/main/appstoreserverlibrary/signed_data_verifier.py).

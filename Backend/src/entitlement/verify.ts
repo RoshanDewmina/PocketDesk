@@ -21,7 +21,6 @@ export type TransactionInfo = {
   revocationDate?: number;
   signedDate?: number;
   purchaseDate?: number;
-  appAppleId?: number;
 };
 
 const optionalNumber = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
@@ -39,15 +38,15 @@ export function parseTransactionPayload(payload: Record<string, unknown>): Trans
     revocationDate: optionalNumber(payload.revocationDate),
     signedDate: optionalNumber(payload.signedDate),
     purchaseDate: optionalNumber(payload.purchaseDate),
-    appAppleId: optionalNumber(payload.appAppleId),
   };
 }
 
 export type PolicyFailure = "wrong_app" | "wrong_product" | "environment_not_accepted" | "not_subscription";
 
 export function checkTransactionPolicy(tx: TransactionInfo, config: Config): PolicyFailure | undefined {
+  // JWSTransactionDecodedPayload identifies the app by bundleId; appAppleId belongs
+  // to the outer production notification and is checked there, not on transactions.
   if (tx.bundleId !== config.bundleId) return "wrong_app";
-  if (tx.environment === "Production" && config.appAppleId !== undefined && tx.appAppleId !== config.appAppleId) return "wrong_app";
   if (tx.environment === "Sandbox" && !config.acceptSandbox) return "environment_not_accepted";
   if ((tx.environment === "Xcode" || tx.environment === "LocalTesting") && !config.allowXcode) return "environment_not_accepted";
   if (!config.allowedProductIds.has(tx.productId)) return "wrong_product";

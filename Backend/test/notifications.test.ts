@@ -54,6 +54,19 @@ beforeAll(() => {
 });
 
 describe("POST /v1/appstore/notifications", () => {
+  it("ignores production notifications with a wrong, missing or nonnumeric outer app ID without storing them", async () => {
+    expect(testEnv.APP_APPLE_ID).toBe("1234567890");
+    for (const appAppleId of [1234567891, undefined, "1234567890", null]) {
+      const otid = `wrong-id-${randomHex(6)}`;
+      const uuid = crypto.randomUUID();
+      const rejected = await notification("DID_RENEW", { uuid, tx: { originalTransactionId: otid }, data: { appAppleId } });
+      expect(rejected.status).toBe(200);
+      expect(rejected.body).toEqual({ ok: true, outcome: "ignored_other_app" });
+      expect(await row(otid)).toBeNull();
+      expect(await testEnv.DB.prepare("SELECT uuid FROM notifications WHERE uuid = ?1").bind(uuid).first()).toBeNull();
+    }
+  });
+
   it("records a renewal for a subscription it has not seen and extends a known one", async () => {
     const otid = `n-${randomHex(6)}`;
     const first = await notification("DID_RENEW", { tx: { originalTransactionId: otid, expiresDate: now + 30 * day } });

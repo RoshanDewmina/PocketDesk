@@ -20,6 +20,19 @@ async function verify(overrides: Record<string, unknown> = {}, deviceId = random
 beforeAll(() => { chain = parseChain(testEnv.TEST_APPLE_CHAIN); });
 
 describe("POST /v1/entitlements/verify", () => {
+  it("accepts an Apple-shaped production transaction without appAppleId while an app ID is configured", async () => {
+    expect(testEnv.APP_APPLE_ID).toBe("1234567890");
+    const payload = transactionPayload({ originalTransactionId: `schema-${randomHex(6)}` }, now);
+    expect(payload.environment).toBe("Production");
+    expect(payload).not.toHaveProperty("appAppleId");
+    const signedTransaction = await signCompactJws(payload, chain);
+    const response = await postJson("/v1/entitlements/verify", { signedTransaction, deviceId: randomHex() }, freshIp());
+    const body = await response.json() as Record<string, unknown>;
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ entitled: true, environment: "Production" });
+    expect(String(body.entitlementToken)).toMatch(/^fe1\./);
+  });
+
   it("a stale verifier write cannot clear a refund committed after its earlier read", async () => {
     const id = await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY, `cas-${randomHex(6)}`);
     const expiresAt = now + 30 * 24 * 60 * 60 * 1000;

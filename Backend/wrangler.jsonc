@@ -28,7 +28,7 @@
   "vars": {
     "ENVIRONMENT_NAME": "dev",
     "APP_BUNDLE_ID": "com.roshan.PocketDesk.Remote",
-    "APP_APPLE_ID": "",
+    "APP_APPLE_ID": "6817532560",
     "ALLOWED_PRODUCT_IDS": "com.roshan.PocketDesk.remote.monthly,com.roshan.PocketDesk.remote.yearly",
     "ACCEPT_SANDBOX": "1",
     "ALLOW_XCODE_TRANSACTIONS": "1",
@@ -69,7 +69,7 @@
       "vars": {
         "ENVIRONMENT_NAME": "staging",
         "APP_BUNDLE_ID": "com.roshan.PocketDesk.Remote",
-        "APP_APPLE_ID": "",
+        "APP_APPLE_ID": "6817532560",
         "ALLOWED_PRODUCT_IDS": "com.roshan.PocketDesk.remote.monthly,com.roshan.PocketDesk.remote.yearly",
         "ACCEPT_SANDBOX": "1",
         "ALLOW_XCODE_TRANSACTIONS": "0",
@@ -110,7 +110,7 @@
       "vars": {
         "ENVIRONMENT_NAME": "production",
         "APP_BUNDLE_ID": "com.roshan.PocketDesk.Remote",
-        "APP_APPLE_ID": "",
+        "APP_APPLE_ID": "6817532560",
         "ALLOWED_PRODUCT_IDS": "com.roshan.PocketDesk.remote.monthly,com.roshan.PocketDesk.remote.yearly",
         "ACCEPT_SANDBOX": "1",
         "ALLOW_XCODE_TRANSACTIONS": "0",

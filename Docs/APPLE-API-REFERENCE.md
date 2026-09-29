@@ -2,6 +2,12 @@
 
 Latest focused refresh **29 September 2026**; original capture/transport snapshot **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.
 
+## Configured app-ID transaction schema refresh — 29 September 2026
+
+Rechecked Apple's [signed purchase transaction schema](https://developer.apple.com/documentation/appstoreserverapi/jwstransactiondecodedpayload), [app transaction schema](https://developer.apple.com/documentation/appstoreserverapi/jwsapptransactiondecodedpayload), and [official signed-data verifier](https://github.com/apple/app-store-server-library-python/blob/main/appstoreserverlibrary/signed_data_verifier.py). A StoreKit purchase `JWSTransactionDecodedPayload` identifies the app with `bundleId` and has no `appAppleId`; the app-transaction payload and outer production notification data use the numeric app ID. Apple's purchase verifier checks the signed transaction's bundle/environment, while its production notification verifier also checks numeric app identity.
+
+Configuring the human-approved Farside app record (`6817532560`) exposed a dormant backend policy mismatch. The correction removes the fictitious purchase field, retains signed-chain/bundle/product/environment/access checks, and keeps wrong/missing/nonnumeric production notification IDs denied. Configured-ID tests use a fabricated numeric app ID and throwaway Apple-shaped certificate chain; they do not establish real purchase, production deployment or sandbox acceptance.
+
 ## Input timer scheduling refresh — 29 September 2026
 
 Rechecked Apple's [Timer documentation](https://developer.apple.com/documentation/foundation/timer) and [RunLoop timer registration](https://developer.apple.com/documentation/foundation/runloop). The scheduled timer convenience API registers in the current run loop's default mode; explicit registration selects the modes in which a timer can run. The host capability timer and phone heartbeat/pointer timers now use common modes so UI tracking does not exclude them solely by mode. Intervals, the one-second input capability lifetime, and fail-closed admission remain unchanged. Common modes cannot guarantee timely execution during main-actor starvation; the observed physical disconnect is not causally attributed to this change without a new trace.
