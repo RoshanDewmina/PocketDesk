@@ -35,7 +35,7 @@ final class PhoneParityUITests: XCTestCase {
         let footer = app.staticTexts["remote.touchMode.footer"]
         XCTAssertTrue(footer.label.contains("tap exactly where you want to click"), footer.label)
         attachScreenshot("Touch setting - Direct")
-        app.buttons["Done"].firstMatch.tap()
+        tapDone(app)
         XCTAssertEqual(canvas.label, "Remote desktop, direct touch")
         app.terminate()
 
@@ -346,7 +346,7 @@ final class PhoneParityUITests: XCTestCase {
         attachScreenshot("Mini map setting")
         if !iPad {
             setting.tap()
-            app.buttons["Done"].firstMatch.tap()
+            tapDone(app)
             collapseDock(app)
             let map = app.descendants(matching: .any)["remote.minimap"].firstMatch
             XCTAssertFalse(map.waitForExistence(timeout: 2), "iPhone shows it in landscape only")
@@ -405,12 +405,12 @@ final class PhoneParityUITests: XCTestCase {
         openDisplayPicker(app)
         scrollControls(app, to: app.buttons["remote.display.2"])
         attachScreenshot("\(prefix)display-picker")
-        app.buttons["Done"].firstMatch.tap()
+        tapDone(app)
         openControls(app)
         openSettingsPage(app, "touch")
         scrollControls(app, to: app.buttons["Direct"])
         attachScreenshot("\(prefix)touch-direct")
-        app.buttons["Done"].firstMatch.tap()
+        tapDone(app)
         openControls(app)
         openSettingsPage(app, "keyboard")
         let shortcuts = app.buttons["Shortcuts"].firstMatch
@@ -418,7 +418,7 @@ final class PhoneParityUITests: XCTestCase {
         shortcuts.tap()
         app.descendants(matching: .any)["remote.controls.page"].firstMatch.swipeUp()
         attachScreenshot("\(prefix)keyboard-shortcuts")
-        app.buttons["Done"].firstMatch.tap()
+        tapDone(app)
         collapseDock(app)
 
         if iPad {
@@ -586,6 +586,15 @@ final class PhoneParityUITests: XCTestCase {
         }
     }
 
+    /// In landscape the key overlay's Done sits under the Settings sheet; tap the one on top.
+    @MainActor
+    private func tapDone(_ app: XCUIApplication) {
+        let done = app.buttons.matching(NSPredicate(format: "label == 'Done'"))
+        XCTAssertTrue(done.firstMatch.waitForExistence(timeout: 3))
+        let visible = done.allElementsBoundByIndex.first { $0.isHittable } ?? done.firstMatch
+        visible.tap()
+    }
+
     @MainActor
     private func setZoom(_ app: XCUIApplication, sliderPosition: CGFloat) {
         openControls(app)
@@ -593,7 +602,7 @@ final class PhoneParityUITests: XCTestCase {
         let zoom = app.sliders["Zoom level"]
         XCTAssertTrue(zoom.waitForExistence(timeout: 3))
         zoom.adjust(toNormalizedSliderPosition: sliderPosition)
-        app.buttons["Done"].firstMatch.tap()
+        tapDone(app)
         collapseDock(app)
     }
 

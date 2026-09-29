@@ -216,7 +216,9 @@ struct NativeSessionView: View {
                 }
             }
             if offlineLayoutCheck, let hold = LaunchOptions.value("--ui-hold-preview=") {
-                model.previewHoldForTesting(explicit: hold == "explicit")
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    model.previewHoldForTesting(explicit: hold == "explicit")
+                }
             }
             if offlineLayoutCheck && LaunchOptions.has("--ui-dock-open") { controlsCollapsed = false }
             if offlineLayoutCheck && LaunchOptions.has("--ui-clipboard-row") {
@@ -1181,7 +1183,7 @@ struct NativeSessionView: View {
 
     /// Header, two rows of keys and up to two session rows. Nothing in the panel scrolls.
     private var panelHeight: CGFloat {
-        var height: CGFloat = 272
+        var height: CGFloat = 288
         if showsCurtainRow || showsDisplayRow { height += 14 }
         if showsCurtainRow { height += 61 }
         if showsDisplayRow { height += showsCurtainRow ? 53 : 52 }
@@ -1211,6 +1213,7 @@ struct NativeSessionView: View {
         .onChange(of: panelHeight) { _, _ in
             if controlsPath.isEmpty { controlsDetent = panelDetent }
         }
+        .onAppear { controlsDetent = controlsPath.isEmpty ? panelDetent : .large }
     }
 
     private var controlsPanel: some View {
@@ -1320,10 +1323,11 @@ struct NativeSessionView: View {
                     .font(.system(size: compact ? 19 : 21, weight: .medium))
                     .frame(height: 24)
                 Text(title)
-                    .font(.caption.weight(.medium))
+                    .font(compact ? .caption2.weight(.medium) : .caption.weight(.medium))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
-                    .minimumScaleFactor(0.85)
+                    .minimumScaleFactor(0.8)
+                    .frame(height: compact ? 26 : 30)
                 if !compact {
                     Text(hint)
                         .font(.system(size: 10.5, weight: .medium, design: .monospaced))
@@ -1375,11 +1379,11 @@ struct NativeSessionView: View {
                 }
             }
             Spacer(minLength: 8)
-            Toggle("Hide Mac screen", isOn: Binding(get: { !curtainPreview && state.preferenceOn },
-                                                    set: { model.setMacCurtain($0) }))
+            Toggle(isOn: Binding(get: { !curtainPreview && state.preferenceOn },
+                                 set: { model.setMacCurtain($0) })) { EmptyView() }
                 .toggleStyle(FarsideSwitchStyle())
-                .labelsHidden()
                 .fixedSize()
+                .accessibilityLabel("Hide Mac screen")
                 .disabled(!model.canChangeCurtain)
                 .opacity(model.canChangeCurtain || curtainPreview ? 1 : 0.45)
                 .accessibilityIdentifier("remote.macCurtain")
@@ -1391,7 +1395,7 @@ struct NativeSessionView: View {
 
     private func curtainCaption(_ state: PrivacyCurtainState) -> String {
         switch state {
-        case .off: "Covers your Mac’s displays while you’re here"
+        case .off: "Covers your Mac’s displays"
         case .pending: "Covers once the picture is live"
         case .up: "Covered · Esc three times at the Mac lifts it"
         case .liftedLocally: "Lifted at your Mac"
@@ -1433,6 +1437,7 @@ struct NativeSessionView: View {
     private var overlayControls: some View {
         HStack(alignment: .center, spacing: 10) {
             macKeys(compact: true)
+                .frame(maxWidth: .infinity)
             VStack(spacing: 6) {
                 Button { showOverlaySettings = true } label: { Image(systemName: "gearshape") }
                     .buttonStyle(FarsideRoundButtonStyle(diameter: 40))
@@ -1450,6 +1455,8 @@ struct NativeSessionView: View {
         .onAppear { if model.displays.isEmpty { model.requestDisplays() } }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.controls.content")
+        // Under the Settings sheet the keys are covered; VoiceOver should not reach them either.
+        .accessibilityHidden(showOverlaySettings)
         .sheet(isPresented: $showOverlaySettings, onDismiss: { controlsPath = [] }) {
             NavigationStack(path: $controlsPath) {
                 settingsPage(session: true)
@@ -2313,7 +2320,7 @@ private struct ControlsKeyStyle: ButtonStyle {
 
         var body: some View {
             configuration.label
-                .frame(maxWidth: .infinity, minHeight: compact ? 64 : 80)
+                .frame(maxWidth: .infinity, minHeight: compact ? 66 : 92)
                 .background(configuration.isPressed ? Farside.Palette.panel2 : Farside.Palette.panel,
                             in: .rect(cornerRadius: 14, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
