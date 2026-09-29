@@ -402,6 +402,7 @@
 		C4324CC42C0F48FEC5F2C5A7 /* NativeCodecCapabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 317BFB7BF5716BA9625EA3CF /* NativeCodecCapabilityTests.swift */; };
 		C54F8B2BCBD4C0D351541E61 /* BrowserCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */; };
 		C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */ = {isa = PBXBuildFile; fileRef = 7439197E639B36A019C5898C /* farside-notify */; };
+		C56805AC778123537E51D8E5 /* HostOnboardingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FE53ED98843F5A8A096B176 /* HostOnboardingTests.swift */; };
 		C59521464BDF9427AE32E7E0 /* PrivacyCurtainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20DEAFF126EDB5CF5CAB164 /* PrivacyCurtainTests.swift */; };
 		C5FDF5C52EBC263D0224DBE7 /* E2ESupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B88956D18BC4F22E09C83F /* E2ESupport.swift */; };
 		C6845830BCD7524063546C0B /* PhoneClipboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDCB2DCE29C9A401C6C942C5 /* PhoneClipboardTests.swift */; };
@@ -768,6 +769,7 @@
 		8E4539B888291F193DD3C21E /* CommittedTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommittedTextField.swift; sourceTree = "<group>"; };
 		8E609125CE2A4A1E42653D11 /* E2EMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EMedia.swift; sourceTree = "<group>"; };
 		8F28D4E17D1028952D0B9733 /* RemoteE2ETests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RemoteE2ETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8FE53ED98843F5A8A096B176 /* HostOnboardingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostOnboardingTests.swift; sourceTree = "<group>"; };
 		90D90505BF498BF2C1FA801F /* HostReadiness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostReadiness.swift; sourceTree = "<group>"; };
 		917FB586A4DE316E3B4BDB97 /* AgentBridgeHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentBridgeHTTP.swift; sourceTree = "<group>"; };
 		9211D8B9DD746165FF31BB31 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
@@ -1176,6 +1178,7 @@
 				24C25284073BC44C2F7E6CD2 /* HostDiagnosticsTests.swift */,
 				7BAE263EFD30201EEE4A3578 /* HostKeepAwakeTests.swift */,
 				EFA249DD77BBAA809239D8E3 /* HostLifecycleTests.swift */,
+				8FE53ED98843F5A8A096B176 /* HostOnboardingTests.swift */,
 				DE8D633F7518C97C14277D3B /* HostPairingPreflightTests.swift */,
 				DF3D9BC731A6956F31889D35 /* HostPermissionStateTests.swift */,
 				14A1D74AFB97B3703E07FED7 /* HostPresentationTests.swift */,
@@ -2202,6 +2205,7 @@
 				51572A558D1FAA93C70B8BCC /* HostKeepAwakeTests.swift in Sources */,
 				A85E1959B638402A4CF9F1B3 /* HostLifecycleTests.swift in Sources */,
 				49E3923D8E742425EC7106B0 /* HostLoginItem.swift in Sources */,
+				C56805AC778123537E51D8E5 /* HostOnboardingTests.swift in Sources */,
 				78748F326831A5D95E98A193 /* HostPairingPreflight.swift in Sources */,
 				264C7933FB1D7DE6D0845473 /* HostPairingPreflightTests.swift in Sources */,
 				E54C536369AFC7F020B692F7 /* HostPermissionState.swift in Sources */,

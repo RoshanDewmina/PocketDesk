@@ -123,6 +123,7 @@ final class HostUISnapshotTests: XCTestCase {
     func testSetupSteps() throws {
         var fresh = HostViewState()
         fresh.appListName = "PocketDesk Host"
+        fresh.macOSMajor = 26
         fresh.screenRecording = .denied
         fresh.accessibility = .denied
         fresh.setupStep = .screenRecording
@@ -135,6 +136,14 @@ final class HostUISnapshotTests: XCTestCase {
         waiting.setupStep = .accessibility
         waiting.accessibilitySettingsOpened = true
         try render("setup-2b-permissions-waiting", HostSetupView(state: waiting, actions: .preview, page: .permissions))
+        var waitingOn27 = waiting
+        waitingOn27.macOSMajor = 27
+        try render("setup-2b-permissions-waiting-macos27", HostSetupView(state: waitingOn27, actions: .preview,
+                                                                         page: .permissions))
+        var waitingForScreen = fresh
+        waitingForScreen.screenRecordingSettingsOpened = true
+        try render("setup-2e-permissions-waiting-screen", HostSetupView(state: waitingForScreen, actions: .preview,
+                                                                        page: .permissions))
 
         var granted = waiting
         granted.accessibility = .granted
@@ -155,6 +164,12 @@ final class HostUISnapshotTests: XCTestCase {
             $0.pairing = .confirmReplace
         }
         try render("setup-3d-replace", HostSetupView(state: replace, actions: .preview))
+
+        var skipped = granted
+        skipped.pairingDeferred = true
+        skipped.status = .needsPhone
+        XCTAssertEqual(HostSetupFlow.initialPage(for: skipped), .ready, "Skip for now lands on the ready check")
+        try render("setup-3e-pair-skipped-ready", HostSetupView(state: skipped, actions: .preview))
 
         try render("setup-4-ready-check", HostSetupView(state: ready(.ready) { $0.openAtLogin = false }, actions: .preview))
         try render("setup-4b-ready-live", HostSetupView(state: ready(.controlling) { $0.session = Self.measured },

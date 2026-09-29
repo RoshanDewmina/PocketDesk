@@ -288,17 +288,17 @@ enum HostSetupPage: Int, CaseIterable, Comparable, Identifiable {
 }
 
 enum HostSetupFlow {
-    static func furthestPage(for step: HostSetupStep) -> HostSetupPage {
+    static func furthestPage(for step: HostSetupStep, pairingDeferred: Bool = false) -> HostSetupPage {
         switch step {
         case .screenRecording, .accessibility: .permissions
-        case .pairPhone: .pair
+        case .pairPhone: pairingDeferred ? .ready : .pair
         case .done: .ready
         }
     }
 
     /// A first run starts with Hello; anything else opens where setup needs attention.
     static func initialPage(for state: HostViewState) -> HostSetupPage {
-        let furthest = furthestPage(for: state.setupStep)
+        let furthest = furthestPage(for: state.setupStep, pairingDeferred: state.pairingDeferred)
         if furthest == .permissions, !state.screenRecording.isGranted, !state.accessibility.isGranted,
            !state.hasPairedPhone {
             return .hello
@@ -310,7 +310,7 @@ enum HostSetupFlow {
         switch page {
         case .hello: true
         case .permissions: state.setupStep > .accessibility
-        case .pair: state.setupStep == .done
+        case .pair: state.setupStep == .done || (state.setupStep == .pairPhone && state.pairingDeferred)
         case .ready: false
         }
     }
@@ -460,8 +460,12 @@ struct HostReadyCheck: Equatable, Identifiable {
     }
 
     private static func phone(_ state: HostViewState) -> Self {
-        state.hasPairedPhone
-            ? Self(id: .phone, title: "iPhone paired", detail: "Only your approved phone can connect", result: .pass)
+        if state.hasPairedPhone {
+            return Self(id: .phone, title: "iPhone paired", detail: "Only your approved phone can connect", result: .pass)
+        }
+        return state.pairingDeferred
+            ? Self(id: .phone, title: "iPhone paired", detail: "Skipped for now · pair from the menu bar",
+                   result: .optional, fix: .pairPhone)
             : Self(id: .phone, title: "iPhone paired", detail: "No phone paired yet", result: .fail, fix: .pairPhone)
     }
 

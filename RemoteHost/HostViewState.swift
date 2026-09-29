@@ -29,7 +29,7 @@ enum HostBackgroundItemState: Equatable {
 
 struct HostViewState: Equatable {
     var macName = "This Mac"
-    /// How this app appears in Finder and, possibly, System Settings lists.
+    /// How this app appears in Finder and in System Settings' permission lists.
     var appListName = "Farside"
     var screenRecording: HostPermissionStatus = .unchecked
     var accessibility: HostPermissionStatus = .unchecked
@@ -62,6 +62,9 @@ struct HostViewState: Equatable {
     var displays: [HostDisplayOption] = []
     var selectedDisplayID: UInt32 = 0
     var detail: String?
+    /// Setup's Pair step was skipped; pairing happens later from the menu bar.
+    var pairingDeferred = false
+    var macOSMajor = HostSystemSettingsPane.currentMacOSMajor
 
     var controlNeedsAccessibility: Bool { allowControl && !accessibility.isGranted }
     var selectedDisplayName: String? { displays.first { $0.id == selectedDisplayID }?.name }
@@ -73,6 +76,7 @@ struct HostActions {
     var openSystemSettings: (HostSystemSettingsPane) -> Void = { _ in }
     var relaunch: () -> Void = {}
     var skipAccessibility: () -> Void = {}
+    var skipPairing: () -> Void = {}
     var beginPairing: () -> Void = {}
     var setServiceAddress: (String) -> Void = { _ in }
     var approvePhone: () -> Void = {}
