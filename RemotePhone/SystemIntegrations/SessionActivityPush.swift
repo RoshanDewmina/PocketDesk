@@ -239,6 +239,8 @@ actor SessionActivityPushLifecycle {
         guard request.scope == scope, request != current, mine == revision else { return }
         // Finish every older conditional remove before writing a replacement. This also protects a
         // rare A -> B -> A token sequence: an old remove(A) can never run after the new register(A).
+        // The backend may still reject reused A because its explicit-remove tombstone is terminal;
+        // serialization prevents a race, but does not promise that a removed tuple can be revived.
         let priorCleanup = cleanupTail
         await priorCleanup?.value
         guard request.scope == scope, mine == revision else { return }
