@@ -41,6 +41,9 @@ struct StreamTuning: Equatable {
     var restartKeyFrameBudgetMs: Double?
     /// Encoder A/B: replaces the picture mode's encoder ceiling (Sharper 25 Mb/s, Responsive 12 Mb/s).
     var encoderCeilingKbps: Int?
+    /// G13: warm the level-5.2 decode probe up at launch and cache a positive result across launches.
+    /// Off, the probe runs at the first factory as before and nothing is cached.
+    var cacheLevel52Probe = true
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -59,6 +62,10 @@ struct StreamTuning: Equatable {
     static let restartFloorKey = "PocketDeskRestartFloorKbps"
     static let restartKeyFrameBudgetKey = "PocketDeskRestartKeyFrameBudgetMs"
     static let encoderCeilingKey = "PocketDeskEncoderCeilingKbps"
+    static let level52ProbeCacheKey = "PocketDeskLevel52ProbeCache"
+    /// Every experiment key, for the session protocol's cleanup step.
+    static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
+                                 restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -94,6 +101,9 @@ struct StreamTuning: Equatable {
             let ceiling = defaults.integer(forKey: encoderCeilingKey)
             tuning.encoderCeilingKbps = (1_000...60_000).contains(ceiling) ? ceiling : nil
         }
+        if defaults.object(forKey: level52ProbeCacheKey) != nil {
+            tuning.cacheLevel52Probe = defaults.bool(forKey: level52ProbeCacheKey)
+        }
         return tuning
     }
 
@@ -128,6 +138,7 @@ struct StreamTuning: Equatable {
         if restartFloorKbps != Self.tuned.restartFloorKbps { parts.append("restart floor \(Int(restartFloorKbps))") }
         if let restartKeyFrameBudgetMs { parts.append("IDR budget \(Int(restartKeyFrameBudgetMs))ms") }
         if let encoderCeilingKbps { parts.append("ceiling \(encoderCeilingKbps)") }
+        if !cacheLevel52Probe { parts.append("no probe cache") }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
 
@@ -192,9 +203,12 @@ enum SeedRoute: String, Equatable {
     /// A host↔host pair with a LAN round trip is `lan`; the same pair over a VPN or tunnel counts as `p2p`.
     static let lanRoundTripLimitMs = 15.0
 
+    /// A host pair without a round-trip figure yet is unknown, not LAN.
     static func classify(detail: String?, rttMs: Double?) -> SeedRoute? {
         switch detail {
-        case "lan": return (rttMs ?? 0) < lanRoundTripLimitMs ? .lan : .p2p
+        case "lan":
+            guard let rttMs else { return nil }
+            return rttMs < lanRoundTripLimitMs ? .lan : .p2p
         case "p2p": return .p2p
         case "relay": return .relay
         default: return nil

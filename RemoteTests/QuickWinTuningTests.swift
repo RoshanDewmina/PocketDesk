@@ -48,6 +48,13 @@ final class QuickWinTuningTests: XCTestCase {
         defaults.set(100, forKey: StreamTuning.encoderCeilingKey)
         XCTAssertNil(StreamTuning.resolve(defaults: defaults).encoderCeilingKbps, "an absurd ceiling is ignored")
 
+        defaults.set(false, forKey: StreamTuning.level52ProbeCacheKey)
+        let uncached = StreamTuning.resolve(defaults: defaults)
+        XCTAssertFalse(uncached.cacheLevel52Probe)
+        XCTAssertTrue(uncached.summary.contains("no probe cache"), uncached.summary)
+        XCTAssertTrue(StreamTuning.tuned.cacheLevel52Probe)
+        XCTAssertEqual(Set(StreamTuning.experimentKeys).count, 7, "every experiment key is listed for the cleanup step")
+
         defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)
         XCTAssertEqual(StreamTuning.resolve(defaults: defaults), .legacy, "the legacy switch wins")
     }
@@ -72,7 +79,7 @@ final class QuickWinTuningTests: XCTestCase {
     func testSeedRouteAndStartRates() {
         XCTAssertEqual(SeedRoute.classify(detail: "lan", rttMs: 7), .lan)
         XCTAssertEqual(SeedRoute.classify(detail: "lan", rttMs: 40), .p2p, "a host pair over a tunnel is not a LAN")
-        XCTAssertEqual(SeedRoute.classify(detail: "lan", rttMs: nil), .lan)
+        XCTAssertNil(SeedRoute.classify(detail: "lan", rttMs: nil), "no round trip yet: unknown, not LAN")
         XCTAssertEqual(SeedRoute.classify(detail: "p2p", rttMs: 5), .p2p)
         XCTAssertEqual(SeedRoute.classify(detail: "relay", rttMs: 5), .relay)
         XCTAssertNil(SeedRoute.classify(detail: nil, rttMs: 5))

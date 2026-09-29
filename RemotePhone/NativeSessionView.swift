@@ -39,6 +39,7 @@ struct NativeSessionView: View {
     @ObservedObject private var peripherals = HardwarePeripherals.shared
     @AppStorage(PointerSizePreference.key) private var pointerSize: PointerSizePreference = .medium
     @AppStorage(StreamDebug.defaultsKey) private var streamStatsEnabled = false
+    @AppStorage(StreamDebug.markerReadingKey) private var markerReadingEnabled = true
     @AppStorage(StreamTuning.legacyDefaultsKey) private var legacyStreamTuning = false
     @AppStorage("dockHintSessions") private var dockHintSessions = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -292,7 +293,8 @@ struct NativeSessionView: View {
             Farside.Palette.void
             let rect = viewport.contentRect
             if let track = connection.remoteVideo, !model.contentConcealed {
-                RemoteVideoSurface(track: track, counters: connection.media?.counters, statistics: streamStatsEnabled,
+                RemoteVideoSurface(track: track, counters: connection.media?.counters,
+                                   statistics: streamStatsEnabled && markerReadingEnabled,
                                    sourceSize: streamStatsEnabled ? model.sourceSize : .zero,
                                    displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
                                    onFrame: model.frameReceived)
@@ -1514,6 +1516,12 @@ struct NativeSessionView: View {
                 .listRowBackground(Farside.Palette.panel)
             if streamStatsEnabled {
                 Text("Shows per-stage timing over the picture and records it on this iPhone for export.")
+                    .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                    .listRowBackground(Farside.Palette.panel)
+                Toggle("Read bench marker", isOn: $markerReadingEnabled)
+                    .toggleStyle(FarsideSwitchStyle())
+                    .listRowBackground(Farside.Palette.panel)
+                Text("Per-frame latency and legibility from the Mac's bench window. Off keeps the statistics without touching the frame path.")
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .listRowBackground(Farside.Palette.panel)
                 if let log = StreamDebug.logFileURL {

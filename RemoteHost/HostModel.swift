@@ -644,6 +644,7 @@ final class RemoteHostModel: ObservableObject {
         snapshot.route = connection.connected ? connection.diagnostics : nil
         snapshot.streamQuality = capture.appliedQuality?.title
         snapshot.stream = latestSenderStatistics.map(Self.streamDescription)
+        snapshot.tuning = StreamTuning.current.summary
         snapshot.events = events.entries
         return HostDiagnosticsReport.render(snapshot)
     }

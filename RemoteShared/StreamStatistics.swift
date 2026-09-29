@@ -388,10 +388,13 @@ struct StreamStatsReport: Codable, Equatable {
                           encoder: encoderImplementation.map { String($0.prefix(48)) },
                           hardwareEncoder: powerEfficientEncoder,
                           qualityLimitation: qualityLimitation.map { String($0.prefix(24)) },
-                          encodeLatencyMs: encodeLatencyMs, encodeLatencyP90Ms: encodeLatencyP90Ms,
-                          encodeInFlightMax: encodeInFlightMax, encodeBytesP50: encodeBytesP50,
-                          keyFrameBytesMax: keyFrameBytesMax, rateUpdates: rateUpdates,
-                          encoderSessionAgeS: encoderSessionAgeS)
+                          encodeLatencyMs: encodeLatencyMs.map { min($0, 10_000_000) },
+                          encodeLatencyP90Ms: encodeLatencyP90Ms.map { min($0, 10_000_000) },
+                          encodeInFlightMax: encodeInFlightMax.map { min($0, 100_000) },
+                          encodeBytesP50: encodeBytesP50.map { min($0, 50_000_000) },
+                          keyFrameBytesMax: keyFrameBytesMax.map { min($0, 50_000_000) },
+                          rateUpdates: rateUpdates.map { min($0, 100_000) },
+                          encoderSessionAgeS: encoderSessionAgeS.map { min($0, 10_000_000) })
     }
 
     /// Sum of the average stage delays from the Mac's display to the phone's draw call.
@@ -779,6 +782,12 @@ final class StreamCounters: @unchecked Sendable {
 enum StreamDebug {
     static let defaultsKey = "PocketDeskStreamStats"
     static var enabled: Bool { UserDefaults.standard.bool(forKey: defaultsKey) }
+    /// Phone: read the bench marker and score the chart while statistics are on (default on); off
+    /// leaves the statistics but removes the instruments' own touch on the frame path.
+    static let markerReadingKey = "PocketDeskMarkerReading"
+    static var markerReading: Bool {
+        UserDefaults.standard.object(forKey: markerReadingKey) == nil || UserDefaults.standard.bool(forKey: markerReadingKey)
+    }
 
     private static let logger = Logger(subsystem: "com.roshan.PocketDesk", category: "stream-stats")
     private static let fileQueue = DispatchQueue(label: "PocketDesk.stream-stats-log")

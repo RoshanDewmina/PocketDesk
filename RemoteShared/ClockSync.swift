@@ -30,14 +30,24 @@ struct ClockSyncEstimate: Equatable {
 struct ClockSyncEstimator {
     var windowMs: Double = 30_000
     var maximumRoundTripMs: Double = 2_000
+    static let outstandingLimit = 8
     private var samples: [(at: Double, offset: Double, rtt: Double)] = []
+    private var outstanding: [Double] = []
+
+    /// The phone sent a probe stamped `phoneMs`; only an echo of an outstanding probe is recorded.
+    mutating func sent(phoneMs: Double) {
+        outstanding.append(phoneMs)
+        if outstanding.count > Self.outstandingLimit { outstanding.removeFirst(outstanding.count - Self.outstandingLimit) }
+    }
 
     /// Records an echoed probe received by the phone at `t3` (phone ms). False when it is not an
-    /// echo or its timing is impossible.
+    /// echo, matches no probe this estimator sent, or its timing is impossible.
     @discardableResult
     mutating func record(_ echo: ClockProbe, receivedAtPhoneMs t3: Double) -> Bool {
         guard let t1 = echo.hostReceivedMs, let t2 = echo.hostSentMs else { return false }
         let t0 = echo.phoneMs
+        guard let index = outstanding.firstIndex(of: t0) else { return false }
+        outstanding.remove(at: index)
         let rtt = (t3 - t0) - (t2 - t1)
         guard t3 >= t0, rtt >= 0, rtt <= maximumRoundTripMs else { return false }
         samples.append((at: t3, offset: ((t1 - t0) + (t2 - t3)) / 2, rtt: rtt))
@@ -51,5 +61,8 @@ struct ClockSyncEstimator {
         return ClockSyncEstimate(offsetMs: best.offset, uncertaintyMs: best.rtt / 2, samples: live.count)
     }
 
-    mutating func reset() { samples.removeAll() }
+    mutating func reset() {
+        samples.removeAll()
+        outstanding.removeAll()
+    }
 }

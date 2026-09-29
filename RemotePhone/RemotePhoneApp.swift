@@ -1087,6 +1087,12 @@ final class PhoneRemoteModel: ObservableObject {
         }
     }
 
+    /// Stream statistics: a new clock probe, remembered so only its echo counts.
+    func registerClockProbe(phoneMs: Double = MachClock.nowMs()) -> ClockProbe {
+        clockSync.sent(phoneMs: phoneMs)
+        return ClockProbe(phoneMs: phoneMs)
+    }
+
     /// Stream statistics: the Mac's echo of a clock probe from `tick()`.
     private func receiveClockEcho(_ echo: ClockProbe) {
         guard echo.isEcho, StreamDebug.enabled else { return }
@@ -1122,10 +1128,11 @@ final class PhoneRemoteModel: ObservableObject {
         if connection.connected {
             heartbeatsSent &+= 1
             let probesClock = heartbeatsSent % 2 == 0 && StreamDebug.enabled
+            let probe = probesClock ? registerClockProbe() : nil
             _ = connection.sendControl(RemoteAction(action: "heartbeat", epoch: geometryEpoch,
                 pointerSync: pointerOverlay.advertisement(),
                 streamQuality: appliedStreamQuality == nil ? nil : streamQuality,
-                clock: probesClock ? ClockProbe(phoneMs: MachClock.nowMs()) : nil))
+                clock: probe))
         }
         pointerOverlay.refresh()
         if !rememberedDisplayApplied && !displays.isEmpty && canControl { applyRememberedDisplay() }
@@ -1278,7 +1285,7 @@ struct LinkSummary: Equatable {
 
 extension PhoneSessionNotice {
     static func reducedPicture(size: String) -> String {
-        "Reduced picture: your Mac is sending \(size). Quit and reopen Farside to retry."
+        "Reduced picture: this session runs at \(size) (H.264 level 3.1). Quit and reopen Farside on both devices to retry."
     }
 }
 

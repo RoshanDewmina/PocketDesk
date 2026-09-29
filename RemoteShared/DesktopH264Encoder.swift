@@ -117,8 +117,13 @@ struct EncoderLatencyTrace {
 final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     /// Benchmark-only trace of rate updates, restarts and key frames; nil in the apps.
     nonisolated(unsafe) static var trace: ((String) -> Void)?
-    /// The native host's stream counters; set by `PeerMedia` when it owns the desktop track.
-    nonisolated(unsafe) static weak var sharedCounters: StreamCounters?
+    /// The native host's stream counters; set by `PeerMedia` on the main queue while an earlier
+    /// encoder may still report from VideoToolbox's thread, hence the lock.
+    static var sharedCounters: StreamCounters? {
+        get { countersBox.value }
+        set { countersBox.value = newValue }
+    }
+    private static let countersBox = CountersBox()
     private let inner: RTCVideoEncoderH264
     private let lock = NSLock()
     private var policy = EncoderRestartPolicy()
@@ -220,4 +225,13 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     var resolutionAlignment: Int { inner.resolutionAlignment }
     var applyAlignmentToAllSimulcastLayers: Bool { inner.applyAlignmentToAllSimulcastLayers }
     var supportsNativeHandle: Bool { inner.supportsNativeHandle }
+}
+
+private final class CountersBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var stored: StreamCounters?
+    var value: StreamCounters? {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
+    }
 }

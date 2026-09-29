@@ -47,7 +47,7 @@ Undo any switch with `defaults delete com.roshan.PocketDesk.RemoteHost <key>` an
 
 ## Run D: observer effect (2 × 60 s, motion on)
 
-The instruments themselves touch the frame path: with Stream statistics on, the phone reads the marker strip on the decode thread and takes the drawable before WebRTC's draw. Compare the same 60 s of motion with statistics **on** and **off**; the Mac's own log (`~/Library/Caches/PocketDeskStreamStats.jsonl`, `bench/stats_summary.py --last=60`) records encoded/sent fps and RTT in both cases, and a 30 s phone screen recording run through `bench/analyze.py` gives the delivered cadence in both. If the stats-on run shows lower cadence or more superseded frames, the marker reading is the suspect (a phone-side "marker off while stats on" switch is a code follow-up).
+The instruments themselves touch the frame path: with Stream statistics on, the phone reads the marker strip on the decode thread and takes the drawable before WebRTC's draw. Compare the same 60 s of motion with statistics **on** and **off**; the Mac's own log (`~/Library/Caches/PocketDeskStreamStats.jsonl`, `bench/stats_summary.py --last=60`) records encoded/sent fps and RTT in both cases, and a 30 s phone screen recording run through `bench/analyze.py` gives the delivered cadence in both. If the stats-on run shows lower cadence or more superseded frames, the marker reading is the suspect. With the follow-up branch installed, the cleaner A/B is Stream statistics on with **Read bench marker** on vs off (Controls → Picture): both runs then record every field except the marker-derived ones.
 
 ## Mandatory last step: clear every experiment key
 
@@ -55,11 +55,14 @@ Experiment switches live in the host's user defaults and would silently change R
 
 ```
 for key in PocketDeskLegacyStreamTuning PocketDeskCaptureNativeRate PocketDeskRouteAwareSeed \
-           PocketDeskRestartFloorKbps PocketDeskRestartKeyFrameBudgetMs PocketDeskEncoderCeilingKbps; do
+           PocketDeskRestartFloorKbps PocketDeskRestartKeyFrameBudgetMs PocketDeskEncoderCeilingKbps \
+           PocketDeskLevel52ProbeCache; do
   defaults delete com.roshan.PocketDesk.RemoteHost "$key" 2>/dev/null
 done
-defaults read com.roshan.PocketDesk.RemoteHost | grep -c "PocketDeskCaptureNativeRate\|PocketDeskRouteAwareSeed\|PocketDeskRestart\|PocketDeskEncoderCeiling\|PocketDeskLegacyStreamTuning"
+defaults read com.roshan.PocketDesk.RemoteHost | grep -c "PocketDeskCaptureNativeRate\|PocketDeskRouteAwareSeed\|PocketDeskRestart\|PocketDeskEncoderCeiling\|PocketDeskLegacyStreamTuning\|PocketDeskLevel52ProbeCache"
 ```
+
+(The list is `StreamTuning.experimentKeys` in code; the host's diagnostics report also shows the active `Stream tuning` line once the follow-up branch is in.)
 
 The count must print `0`. Relaunch the host, connect once, and check that the `tuning` field of the next stats sample (phone overlay first lines, or the Mac log's last line) reads exactly `playout 0-0ms · mode bitrates · keep resolution · encoder restart · max refresh`: nothing after "max refresh". On the phone, switch Stream statistics off and leave "Previous stream tuning" off. Prefer launch arguments (`-PocketDeskEncoderCeilingKbps 12000` on the host's command line) over `defaults write` for future A/Bs; they cannot outlive the process.
 

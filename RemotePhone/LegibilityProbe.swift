@@ -165,7 +165,16 @@ final class LegibilityProbe: @unchecked Sendable {
     }
 
     /// Bilinear, like the Metal view's texture sampling.
+    /// The resampled crop never exceeds `maximumPixels` (the on-screen crop grows with zoom²).
+    static let maximumPixels = 4_000_000.0
+
+    static func boundedZoom(_ zoom: Double, cropSize: CGSize) -> Double {
+        let pixels = Double(max(1, cropSize.width * cropSize.height))
+        return max(0.1, min(zoom, (maximumPixels / pixels).squareRoot()))
+    }
+
     private static func resampled(_ image: CIImage, by zoom: Double) -> CIImage {
+        let zoom = boundedZoom(zoom, cropSize: image.extent.size)
         guard zoom != 1 else { return image }
         let size = CGSize(width: (image.extent.width * zoom).rounded(.down), height: (image.extent.height * zoom).rounded(.down))
         return image.clampedToExtent().samplingLinear()

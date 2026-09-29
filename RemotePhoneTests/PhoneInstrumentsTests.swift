@@ -30,6 +30,7 @@ final class PhoneInstrumentsTests: XCTestCase {
             defer { model.connection.media = nil; peer.close() }
             // The Mac's clock reads about 1_000_000 ms ahead; the Mac held the probe for 1 ms.
             let sent = MachClock.nowMs() - 4
+            _ = model.registerClockProbe(phoneMs: sent)
             let echo = ClockProbe(phoneMs: sent, hostReceivedMs: sent + 1_000_002, hostSentMs: sent + 1_000_003)
             try deliver(RemoteAction(action: "heartbeat", epoch: 0, clock: echo), to: model)
             let snapshot = peer.counters.drain(inputBufferedBytes: nil)
@@ -39,6 +40,9 @@ final class PhoneInstrumentsTests: XCTestCase {
 
             try deliver(RemoteAction(action: "heartbeat", epoch: 0, clock: ClockProbe(phoneMs: sent)), to: model)
             XCTAssertEqual(peer.counters.drain(inputBufferedBytes: nil).clockSamples, 1, "only echoes are recorded")
+            let stranger = ClockProbe(phoneMs: sent - 100, hostReceivedMs: sent + 1_000_002, hostSentMs: sent + 1_000_003)
+            try deliver(RemoteAction(action: "heartbeat", epoch: 0, clock: stranger), to: model)
+            XCTAssertEqual(peer.counters.drain(inputBufferedBytes: nil).clockSamples, 1, "an echo of a probe never sent is ignored")
         }
     }
 
@@ -49,6 +53,7 @@ final class PhoneInstrumentsTests: XCTestCase {
             model.connection.media = peer
             defer { model.connection.media = nil; peer.close() }
             let sent = MachClock.nowMs() - 4
+            _ = model.registerClockProbe(phoneMs: sent)
             let echo = ClockProbe(phoneMs: sent, hostReceivedMs: sent + 2, hostSentMs: sent + 3)
             try deliver(RemoteAction(action: "heartbeat", epoch: 0, clock: echo), to: model)
             let snapshot = peer.counters.drain(inputBufferedBytes: nil)

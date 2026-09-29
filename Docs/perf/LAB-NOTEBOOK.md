@@ -47,7 +47,7 @@ Instrument status (29 Sep, branch tip d3ffe4e): builds and unit suites pass (Rem
 | 9 | G8 restart-on-idle: after 300–500 ms without a complete SCK frame, if the screen changed since the last clean key frame and the IDR fits the link budget (G9's gate), reuse the encoder restart once per idle period; suppressed while input is active | CER at +0.3/+1/+3 s after a chart change, key-frame bytes, pacer max | batch 2, design only |
 | 10 | G17 pointer channel transport half (second data channel, unordered, no retransmits, latest-wins `sendPointer`), payload owned by the pointer agent | control-channel buffered/dropped counters, pointer gap histogram | batch 2, starts on the orchestrator's go |
 
-## Code follow-ups from the landing review of 4ca2a30 (small branch after .4)
+## Code follow-ups from the landing review of 4ca2a30 (branch `perf-followups-1`, written, unbuilt until the lock is free)
 
 1. Switch for the level-5.2 probe warm-up and its positive cache (the batch's only default-behaviour change); fix the cache-key comment (major.minor.patch, and `utsname.machine` is "arm64" on macOS, so the key needs `hw.model` there).
 2. Show `StreamTuning.current.summary` in host diagnostics; prefer launch-argument defaults for A/Bs.
