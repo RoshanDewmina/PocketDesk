@@ -13,9 +13,14 @@ enum H264LevelPolicy {
     }
 
     static func fitsAt60FPS(width: Int, height: Int) -> Bool {
-        guard width > 0, height > 0, width <= 4096, height <= 4096 else { return false }
+        fits(width: width, height: height, fps: 60)
+    }
+
+    /// H.264 level 5.2: at most 36,864 macroblocks per frame and 2,073,600 per second.
+    static func fits(width: Int, height: Int, fps: Int) -> Bool {
+        guard width > 0, height > 0, width <= 4096, height <= 4096, fps > 0 else { return false }
         let macroblocks = ((width + 15) / 16) * ((height + 15) / 16)
-        return macroblocks <= 36_864 && macroblocks * 60 <= 2_073_600
+        return macroblocks <= 36_864 && macroblocks * fps <= 2_073_600
     }
 
     static func codecs(_ values: [RTCVideoCodecInfo]) -> [RTCVideoCodecInfo] {

@@ -44,6 +44,16 @@ struct StreamTuning: Equatable {
     /// G13: warm the level-5.2 decode probe up at launch and cache a positive result across launches.
     /// Off, the probe runs at the first factory as before and nothing is cached.
     var cacheLevel52Probe = true
+    /// G5: stream a source of 100 Hz or more at 120 fps (capture at its native cadence, level fit
+    /// and pixel budget at 120, sender at 120). Inert on a 60 Hz display.
+    var highRefreshCapture = true
+    /// G5 test override for the target rate (30…120), regardless of the display.
+    var targetFPSOverride: Int?
+    /// G5: in 120 mode, turn WebRTC's degradation off so its 8.3 ms interval cannot cut the rate on
+    /// VideoToolbox's latency; the app's own ladder decides instead.
+    var highRefreshNoAdaptation = false
+    /// Cap the capture long edge to the client's advertised screen pixels (reduction only).
+    var capToClientPixels = true
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -63,9 +73,14 @@ struct StreamTuning: Equatable {
     static let restartKeyFrameBudgetKey = "PocketDeskRestartKeyFrameBudgetMs"
     static let encoderCeilingKey = "PocketDeskEncoderCeilingKbps"
     static let level52ProbeCacheKey = "PocketDeskLevel52ProbeCache"
+    static let highRefreshCaptureKey = "PocketDeskHighRefreshCapture"
+    static let targetFPSKey = "PocketDeskTargetFPS"
+    static let highRefreshNoAdaptationKey = "PocketDeskHighRefreshNoAdaptation"
+    static let capToClientPixelsKey = "PocketDeskCapToClientPixels"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
-                                 restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey]
+                                 restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
+                                 highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -104,6 +119,19 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: level52ProbeCacheKey) != nil {
             tuning.cacheLevel52Probe = defaults.bool(forKey: level52ProbeCacheKey)
         }
+        if defaults.object(forKey: highRefreshCaptureKey) != nil {
+            tuning.highRefreshCapture = defaults.bool(forKey: highRefreshCaptureKey)
+        }
+        if defaults.object(forKey: targetFPSKey) != nil {
+            let fps = defaults.integer(forKey: targetFPSKey)
+            tuning.targetFPSOverride = CaptureRatePolicy.overrideRange.contains(fps) ? fps : nil
+        }
+        if defaults.object(forKey: highRefreshNoAdaptationKey) != nil {
+            tuning.highRefreshNoAdaptation = defaults.bool(forKey: highRefreshNoAdaptationKey)
+        }
+        if defaults.object(forKey: capToClientPixelsKey) != nil {
+            tuning.capToClientPixels = defaults.bool(forKey: capToClientPixelsKey)
+        }
         return tuning
     }
 
@@ -139,6 +167,10 @@ struct StreamTuning: Equatable {
         if let restartKeyFrameBudgetMs { parts.append("IDR budget \(Int(restartKeyFrameBudgetMs))ms") }
         if let encoderCeilingKbps { parts.append("ceiling \(encoderCeilingKbps)") }
         if !cacheLevel52Probe { parts.append("no probe cache") }
+        if !highRefreshCapture { parts.append("60 fps only") }
+        if let targetFPSOverride { parts.append("target \(targetFPSOverride) fps") }
+        if highRefreshNoAdaptation { parts.append("no adaptation at 120") }
+        if !capToClientPixels { parts.append("no client cap") }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
 

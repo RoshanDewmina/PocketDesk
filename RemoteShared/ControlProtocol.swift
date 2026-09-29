@@ -32,6 +32,8 @@ struct RemoteAction: Codable {
     var agentAlert: AgentAlertFrame? = nil
     /// Clock-sync probe on a heartbeat: the phone sends it, the host echoes it (see `ClockProbe`).
     var clock: ClockProbe? = nil
+    /// The client's screen in device pixels, on heartbeats, so the host caps the capture to it.
+    var screenPixels: PixelSize? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
@@ -39,6 +41,8 @@ struct RemoteAction: Codable {
         guard hostStream == nil || action == "capture" else { throw RemoteError.invalidMessage }
         try clock?.validate()
         guard clock == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
+        try screenPixels?.validate()
+        guard screenPixels == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
         // Also before the early returns, so no other action can carry a display list.
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }
