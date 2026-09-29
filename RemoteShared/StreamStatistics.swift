@@ -170,9 +170,9 @@ struct HostStreamSummary: Codable, Equatable {
               integers.allSatisfy({ $0 >= 0 && $0 <= 100_000 }),
               bytes.allSatisfy({ $0 >= 0 && $0 <= 50_000_000 }),
               (encoder?.utf8.count ?? 0) <= 48, (qualityLimitation?.utf8.count ?? 0) <= 24,
-              targetFPS.map { Self.fpsRange.contains($0) } ?? true,
-              displayRefreshHz.map { Self.refreshRange.contains($0) } ?? true,
-              thermalState.map { Self.thermalRange.contains($0) } ?? true,
+              targetFPS.map({ Self.fpsRange.contains($0) }) ?? true,
+              displayRefreshHz.map({ Self.refreshRange.contains($0) }) ?? true,
+              thermalState.map({ Self.thermalRange.contains($0) }) ?? true,
               (captureDisplay?.utf8.count ?? 0) <= Self.displayDescriptionBytes else {
             throw RemoteError.invalidMessage
         }
