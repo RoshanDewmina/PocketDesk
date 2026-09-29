@@ -195,13 +195,14 @@ targets:
       - RemotePhone/Fonts
       - RemoteShared/Pairing.swift
       - RemoteShared/FarsideTheme.swift
+      - RemoteShared/FarsideHalftone.swift
       - RemoteHost/HostReadiness.swift
       - RemoteHost/HostViewState.swift
       - RemoteHost/HostPresentation.swift
       - RemoteHost/HostPermissionState.swift
       - RemoteHost/HostStyle.swift
       - RemoteHost/HostMark.swift
-      - RemoteHost/HostHalftoneArt.swift
+      - RemoteHost/HostArt.swift
       - RemoteHost/HostSettingsSection.swift
       - RemoteHost/HostPopoverView.swift
       - RemoteHost/HostSetupView.swift
