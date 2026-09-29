@@ -120,6 +120,13 @@ final class RemoteCoordinator: ObservableObject {
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0
         relay.close(); registeredInvitation = nil; resetSession(); status = "Disconnected"
     }
+    /// Connected, connecting, or waiting to retry.
+    var isRunning: Bool { !stopped }
+    /// Ends only the current phone session. A registered host keeps listening for its paired phone.
+    func dropPeerSession() {
+        guard isHost, connected || media != nil else { return }
+        peerDisconnected()
+    }
     private func resetSession() {
         timeout?.cancel(); timeout = nil
         registrationStability?.cancel(); registrationStability = nil

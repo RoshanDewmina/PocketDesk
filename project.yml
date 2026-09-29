@@ -145,7 +145,7 @@ targets:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [RemoteTests, RemoteShared, RemoteHost/HostTextFocusProbe.swift, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift]
+    sources: [RemoteTests, RemoteShared, RemoteHost/HostTextFocusProbe.swift, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift]
     dependencies:
       - package: WebRTC
     settings:

@@ -6,10 +6,14 @@ struct PhoneRemoteView: View {
 
     var body: some View {
         Group {
-            if model.contentConcealed {
-                ConcealedRemoteView(model: model, canReconnect: connection.invitation != nil)
-            } else if connection.connected || connection.remoteVideo != nil {
+            if connection.connected || connection.remoteVideo != nil {
+                // A held background session keeps its viewport; the overlay hides every remote pixel.
                 NativeSessionView(model: model, connection: connection, offlineLayoutCheck: false)
+                    .overlay {
+                        if model.contentConcealed { ConcealedRemoteView(model: model, connection: connection) }
+                    }
+            } else if model.contentConcealed {
+                ConcealedRemoteView(model: model, connection: connection)
             } else if LaunchOptions.layoutCheck {
                 NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true)
             } else {
@@ -54,6 +58,12 @@ struct HomeView: View {
                                 connect: { connection.start() }, cancel: model.disconnect)
                     } else {
                         addMacCard
+                    }
+                    if let notice = model.macNotice {
+                        Label(notice, systemImage: "moon.zzz")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                     if !model.error.isEmpty {
                         Label(model.error, systemImage: "exclamationmark.triangle.fill")
@@ -299,39 +309,88 @@ private struct ConnectionDetailsSheet: View {
 
 struct ConcealedRemoteView: View {
     @ObservedObject var model: PhoneRemoteModel
-    let canReconnect: Bool
+    @ObservedObject var connection: RemoteCoordinator
+
+    private enum Presentation { case hidden, reconnecting, reconnectFailed, ended }
+
+    private var presentation: Presentation {
+        switch model.resumeState {
+        case .backgrounded: return .hidden
+        case .reconnecting:
+            return connection.connected || MacStatus(connection.status).tone == .busy ? .reconnecting : .reconnectFailed
+        case .none, .needsChoice: return .ended
+        }
+    }
+
+    private var canReconnect: Bool { connection.invitation != nil && !LaunchOptions.layoutCheck }
+    private var macName: String { connection.invitation?.name ?? "your Mac" }
+
+    private var title: String {
+        switch presentation {
+        case .hidden: "Screen hidden"
+        case .reconnecting: "Reconnecting…"
+        case .reconnectFailed: "Couldn’t reconnect"
+        case .ended: "Session ended"
+        }
+    }
+
+    private var message: String {
+        switch presentation {
+        case .hidden: "PocketDesk hides your Mac’s screen while it’s in the background."
+        case .reconnecting: "Resuming your session with \(macName). Your pairing is kept."
+        case .reconnectFailed: model.macNotice ?? MacStatus(connection.status).text
+        case .ended: "PocketDesk hid your Mac’s screen while it was in the background. Reconnect to continue."
+        }
+    }
 
     var body: some View {
         VStack(spacing: 20) {
             Spacer(minLength: 0)
-            Image(systemName: "eye.slash")
-                .font(.system(size: 34, weight: .medium))
-                .foregroundStyle(PhoneTheme.tint)
-                .frame(width: 76, height: 76)
-                .background(PhoneTheme.tint.opacity(0.12), in: .circle)
-                .accessibilityHidden(true)
+            Group {
+                if presentation == .reconnecting {
+                    ProgressView().controlSize(.large)
+                } else {
+                    Image(systemName: "eye.slash")
+                        .font(.system(size: 34, weight: .medium))
+                        .foregroundStyle(PhoneTheme.tint)
+                }
+            }
+            .frame(width: 76, height: 76)
+            .background(PhoneTheme.tint.opacity(0.12), in: .circle)
+            .accessibilityHidden(true)
             VStack(spacing: 8) {
-                Text("Session ended")
+                Text(title)
                     .font(.title2.weight(.semibold))
-                Text("PocketDesk hides your Mac’s screen and ends the session when it moves to the background.")
+                Text(message)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
             VStack(spacing: 8) {
-                if canReconnect {
-                    Button(action: model.reconnect) {
-                        Text("Reconnect").frame(maxWidth: .infinity)
+                switch presentation {
+                case .hidden:
+                    EmptyView()
+                case .reconnecting:
+                    Button(action: model.dismissConcealment) {
+                        Text("Cancel").frame(maxWidth: .infinity)
                     }
-                    .buttonStyle(.glassProminent)
+                    .buttonStyle(.glass)
+                    .controlSize(.large)
+                case .reconnectFailed, .ended:
+                    if canReconnect {
+                        Button(action: model.reconnect) {
+                            Text("Reconnect").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.glassProminent)
+                        .controlSize(.large)
+                    }
+                    Button(action: model.dismissConcealment) {
+                        Text("Return to PocketDesk").frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.glass)
                     .controlSize(.large)
                 }
-                Button(action: model.dismissConcealment) {
-                    Text("Return to PocketDesk").frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.glass)
-                .controlSize(.large)
             }
         }
         .padding(24)
