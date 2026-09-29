@@ -1,6 +1,41 @@
 import XCTest
 
 final class SessionLayoutTests: XCTestCase {
+    /// Opt-in only: uses the owner's existing pairing without typing or clicking on the Mac.
+    /// Simulator fixture tests cannot catch the physical-device Swift metadata stack limit.
+    @MainActor
+    func testPairedDeviceConnectSurvivesSessionConstruction() throws {
+        guard ProcessInfo.processInfo.environment["FARSIDE_PAIRED_DEVICE_SMOKE"] == "1" else {
+            throw XCTSkip("Requires an explicitly available paired physical phone and Mac")
+        }
+        let app = XCUIApplication()
+        app.launch()
+        for _ in 0..<2 {
+            let connect = app.buttons["home.connect"]
+            XCTAssertTrue(connect.waitForExistence(timeout: 10), "Use an existing pairing; do not create or reset one")
+            connect.tap()
+            let handle = app.buttons["Show controls"]
+            XCTAssertTrue(handle.waitForExistence(timeout: 20), "Connect must construct the session on hardware")
+            XCTAssertEqual(app.state, .runningForeground)
+            handle.swipeUp()
+            let controls = app.buttons["Controls"].firstMatch
+            XCTAssertTrue(controls.waitForExistence(timeout: 10))
+            controls.tap()
+            let click = app.buttons["Double-click"].firstMatch
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND enabled == true"), object: click)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed,
+                           "The real stream must become fresh and admit controls; no Mac click is sent")
+            app.buttons["remote.controls.settings"].firstMatch.tap()
+            XCTAssertTrue(app.buttons["remote.settings.picture"].firstMatch.waitForExistence(timeout: 5))
+            app.buttons["Done"].firstMatch.tap()
+            let end = app.buttons["End session"].firstMatch
+            if !end.exists { app.buttons["Show controls"].swipeUp() }
+            XCTAssertTrue(end.waitForExistence(timeout: 5))
+            end.tap()
+            XCTAssertTrue(connect.waitForExistence(timeout: 10), "End must return to the same saved pairing")
+        }
+    }
+
     @MainActor
     func testEditableFocusPreviewOpensExistingKeyboardWithoutSending() {
         let app = XCUIApplication()

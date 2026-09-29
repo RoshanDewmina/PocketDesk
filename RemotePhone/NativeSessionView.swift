@@ -54,8 +54,12 @@ struct NativeSessionView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.displayScale) private var displayScale
 
-    var body: some View {
-        ZStack {
+    // Keep the session's large SwiftUI type behind stable erasure boundaries. On a physical
+    // iPhone the combined chrome + presentation + lifecycle modifier type exhausted the main
+    // thread stack while Swift instantiated its metadata (Connect, build 20260929.6).
+    // State stays on this view and modifier order is unchanged.
+    private var sessionChrome: AnyView {
+        AnyView(ZStack {
             stage.ignoresSafeArea()
             Color.clear
                 .allowsHitTesting(false)
@@ -108,7 +112,11 @@ struct NativeSessionView: View {
         .background(Farside.Palette.void.ignoresSafeArea())
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
-        .defersSystemGestures(on: .vertical)
+        .defersSystemGestures(on: .vertical))
+    }
+
+    private var sessionPresentation: AnyView {
+        AnyView(sessionChrome
         .sheet(isPresented: controlsSheetPresented) { controlsSheet }
         .onChange(of: controlsAsOverlay) { _, _ in if showControls { closeControls() } }
         .onChange(of: controlsBlockInput) { _, blocked in
@@ -158,6 +166,11 @@ struct NativeSessionView: View {
         .onChange(of: model.voiceDeliveryStatus) { _, status in
             if status == .accepted { showVoiceInput = false }
         }
+        )
+    }
+
+    private var sessionInteraction: AnyView {
+        AnyView(sessionPresentation
         .sensoryFeedback(.selection, trigger: viewport.mode)
         .sensoryFeedback(.selection, trigger: touchMode)
         .sensoryFeedback(.selection, trigger: model.currentDisplayID) { old, new in old != nil && new != nil }
@@ -194,6 +207,11 @@ struct NativeSessionView: View {
             do { try await Task.sleep(for: .seconds(linger)) } catch { return }
             withAnimation(miniMapMotion) { miniMap.lingerExpired() }
         }
+        )
+    }
+
+    var body: some View {
+        sessionInteraction
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
         .onAppear {
             if !offlineLayoutCheck && !model.fresh { lockVisible = true }
