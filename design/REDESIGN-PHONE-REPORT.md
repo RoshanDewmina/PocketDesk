@@ -1,6 +1,6 @@
 # Farside phone redesign — report
 
-29 Sep 2026. The iPhone/iPad app (`PocketDeskRemote` target, `RemotePhone/`) is redesigned to concept **21 · Reach** per `design/FARSIDE-DESIGN-SYSTEM.md`, with the owner's motion and haptics priority from the overnight run. Branch `worktree-agent-a1134b635e22564b6`, rebased onto `pocketdesk-remote-chat` at `d602b1b` (after the stream-tuning merge). Evidence levels: simulator build, unit and UI tests, simulator screenshots. Nothing here is a physical-device result.
+29 Sep 2026. The iPhone/iPad app (`PocketDeskRemote` target, `RemotePhone/`) is redesigned to concept **21 · Reach** per `design/FARSIDE-DESIGN-SYSTEM.md`, with the owner's motion and haptics priority from the overnight run. Branch `worktree-agent-a1134b635e22564b6`, rebased onto `pocketdesk-remote-chat` at `a0c3738` (after the stream-tuning, Mac redesign and Mac parity merges). Evidence levels: simulator build, unit and UI tests, simulator screenshots. Nothing here is a physical-device result.
 
 ## What changed
 
@@ -23,7 +23,7 @@
 - **Keyboard bar**: ⌘ ⌥ ⌃ ⇧ first, then Esc/Tab, arrows, Delete/Return, clipboard last; ⌘ is fully on screen in portrait (UI test).
 - **Gesture coach**: five lessons on a local practice pad driven by the real `NativeGestureEngine` with a local sink (nothing is sent): move (find the one crisp pixel, which is shy), click ("Are you sure you're sure? This dialog has been open since 2019." → "Thank you. It needed that."), scroll (terms nobody read), drag (file into "Definitely final"), zoom (the fine print). Skip always visible; shown once (after a new pairing, or on first Home visit for an existing pairing); replayable from Home and the help menu; VoiceOver gets a summary screen; Reduce Motion gets fades.
 - **Friendly errors**: full-screen halftone art, Doto headline, what happened + one fix, one button, optional tip and quip. Kinds mapped from real coordinator statuses and Mac-reported departures only: napping (only when the Mac said it slept), out of reach, still closing, locked, another user, anywhere needs a plan (server code reserved; not emitted yet), code went stale, Mac said no, nobody approved, could not verify, pairing locked (Keychain), relay resting, line went quiet, ended to be safe, relay needs a nod. In-session "Your Mac stopped sharing" card (no Retry: only someone at the Mac can fix it). "Trouble connecting?" checklist sheet.
-- **Controls sheet, connection details, concealed/background screen**: restyled on the void/plate system; the stream branch's Stream statistics toggle, export and Previous stream tuning switch are kept and restyled.
+- **Controls sheet, connection details, concealed/background screen**: restyled on the void/plate system. Merged work from other branches is kept and restyled: Stream statistics toggle, export and Previous stream tuning switch (stream tuning); Mac privacy curtain toggle, "Hide it again" and its footer states, the one-time "Your Mac's Farside restarted" notice and the ~90 s session-loss retry window (Mac parity). The View section is compact so the pointer action tiles also fit in a landscape sheet.
 
 **Motion and haptics** (all with Reduce Motion alternatives): connect sequence (gap art closes as the connection advances, Doto count-down readout, ember ripple and medium tap when the Mac answers); resolution lock before the first frame (noise → coarse → fine placeholder built from abstract art, rigid ticks with rising intensity, success on crisp; it goes straight to crisp when the first frame lands and is never applied to the stream); click heavy impact (existing), right-click two rigid taps 70 ms apart; lift/drop haptics for drags; dictation start/stop; pairing success burst (code dissolves into the mark, success haptic, "Now choose Allow on your Mac"); coach success pop and heavy practice click; springy dock with a light tap; Reconnecting pill that keeps the session view (zoom and pan survive a blip) during the coordinator's own retries.
 
@@ -35,11 +35,26 @@ Unchanged: streaming, encoding/decoding, renderer, capture config, `StreamStatis
 
 ## Verification
 
-See the final section, updated after the last run.
+All on a dedicated iPhone 17 simulator (iOS 27.0, Xcode 27.0 27A266a), every `xcodebuild` wrapped in `lockf -k /tmp/farside-xcodebuild.lock`, suites run one at a time, final runs on the rebased branch:
+
+| Check | Result |
+|---|---|
+| `xcodegen generate` | project in sync with `project.yml` |
+| `PocketDeskRemote` build-for-testing | succeeded |
+| `RemoteCoreTests` (macOS) build-for-testing | succeeded: `FarsideHalftone.swift` and the `FarsideTheme` change compile for the Mac targets |
+| `RemotePhoneTests` | 53/53 passed (8 new in `FarsideDesignTests`: bundled font names, Doto punctuation split, error mapping, honest contact state, scan feedback, priming, coach lessons) |
+| `RemotePhoneUITests/SessionLayoutTests` | 10/10 passed, including `testOfflineControlsPortraitLandscapeAndKeyboard`, which failed at line 159 on the base; it now passes because the compact View section brings the pointer tiles into the landscape sheet |
+| `RemotePhoneUITests/PointerOverlayUITests` | 2/2 passed |
+| `RemotePhoneUITests/FarsideRedesignUITests` (new) | 5/5 passed: ⌘ first and fully on screen in portrait; dock tiles, segments, Controls and End; coach runs locally and skips; friendly error closes; expired-code feedback |
+| `FarsideScreenshotTour` (new) | skipped by default; with `TEST_RUNNER_FARSIDE_SCREENSHOTS=1` it captured 31 screens on iPhone 17 and on an iPad Pro 11-inch (M5) |
+
+Flake seen under heavy machine load: one run of `testKeyboardKeepsDeliberatelyTypedMultilineDraft` lost characters while XCTest typed ("layouceck"); the rerun and the final run passed, matching the earlier receipt's note on high-speed simulated typing. Updated test strings: "Return to PocketDesk" → "Return to Farside".
 
 ## Screenshots
 
-See the final section.
+In `~/Downloads/`: `farside-phone-<screen>.png` (iPhone 17 portrait), `farside-phone-landscape-<screen>.png` (iPhone landscape: session, dock, dictation, keyboard, Home, coach), `farside-phone-ipad-<screen>.png` and `farside-phone-ipad-landscape-<screen>.png` (iPad Pro 11-inch), plus `farside-phone-app-icon.png`. Screens: home-empty, home, home-connecting, pairing-camera-priming, pairing-expired-code, pairing-success, priming-local-network, priming-microphone, coach-move, coach-click, coach-drag, error-napping, error-unreachable, error-needs-plan, troubleshoot, session (pointer with contact dot and settle-halo), session-resolution-lock, session-reconnecting, session-sharing-stopped, dock, dock-dictation, dock-clipboard, keyboard, controls, concealed. Session screens use the offline desktop fixture; no real Mac picture is shown or dithered.
+
+Re-capture: `TEST_RUNNER_FARSIDE_SCREENSHOTS=1 xcodebuild … test-without-building -only-testing:RemotePhoneUITests/FarsideScreenshotTour -resultBundlePath <path>` then `xcrun xcresulttool export attachments`. Landscape attachments come out in portrait pixel orientation and need a 90° rotation.
 
 ## Known gaps
 
@@ -50,3 +65,6 @@ See the final section.
 - The Mac companion must verify Doto's CoreText name on macOS before using `Farside.Typeface.dotMatrix` there, and can adopt `FarsideHalftone`/`FarsideDotScreen`/`FarsideArt` as is.
 - The app icon is a single 1024 px asset; optical small sizes (fewer, larger dots) would need an all-sizes icon set.
 - Haptics, 120 Hz smoothness of the halftone art and the gesture coach need a physical iPhone and iPad; the Canvas halftone renders on the main thread at up to 30 fps and has not been profiled on hardware.
+- The Mac companion ships its own `HostHalftoneArt` and says it will swap to `RemoteShared/FarsideHalftone` after this merges; it currently has no bundled Doto, and its `NSFont(name: Farside.Typeface.dotMatrix)` check now looks for `Doto-Black_ExtraBold` (the same TTF under `RemotePhone/Fonts` can be reused there).
+- Not done in this pass: the "portal" connect alternative, the shy-pointer easter egg on the Home art, splash from dust, speed trail, TipKit follow-up tips, a Live Activity. The session view keeps `stage`, `inputSurface` and the chrome overlays separate so direct-touch mode, hardware keyboard/pointer passthrough and a mini map can slot in.
+- PRODUCT.md is not edited here; the integrator records the merge.
