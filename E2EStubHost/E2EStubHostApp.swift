@@ -275,6 +275,11 @@ final class StubHost {
         let now = ProcessInfo.processInfo.systemUptime
         switch action.action {
         case "heartbeat":
+            if let probe = action.clock, !probe.isEcho, (try? probe.validate()) != nil {
+                let received = min(MachClock.nowMs(), coordinator.media?.controlArrivalMs ?? .infinity)
+                send(RemoteAction(action: "heartbeat", epoch: action.epoch,
+                                  clock: ClockProbe(phoneMs: probe.phoneMs, hostReceivedMs: received, hostSentMs: MachClock.nowMs())))
+            }
             if action.epoch == epoch, let quality = action.streamQuality { appliedQuality = quality }
             if action.pointerProbe == nil && action.textFocusProbe == nil, action.epoch == epoch {
                 telemetry.phoneHeartbeat(action.pointerSync, at: now)
@@ -383,6 +388,8 @@ final class StubHost {
         let barX = CGFloat(frameIndex % 120) / 120 * CGFloat(width - 40)
         context.setFillColor(CGColor(red: 0.2, green: 0.8, blue: 0.8, alpha: 1))
         context.fill(CGRect(x: barX, y: 0, width: 40, height: 24))
+        BenchMarkerRenderer.draw(BenchMarker(hostTimeMs: MachClock.nowMs(), chartSeed: 0, flash: false, motion: true),
+                                 layout: BenchMarker.layout(width: Double(width), height: Double(height)), in: context)
         media.pushFrame(buffer, timeStampNs: Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000))
     }
 

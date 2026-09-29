@@ -178,9 +178,14 @@ final class PhoneRemoteModel: ObservableObject {
     private var textFocusProbe = TextFocusProbeGate()
     private var sceneIsActive = false
     private var timer: Timer?
+    /// Stream statistics: Mac ↔ phone clock offset from probes on every other heartbeat.
+    private var clockSync = ClockSyncEstimator()
+    private var heartbeatsSent = 0
+    private var reducedPictureNoticeShown = false
 
     init(background: BackgroundExecution? = nil) {
         self.background = background ?? SystemBackgroundExecution()
+        NativeCodecCapability.warmUp()
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
         if contentConcealed { resumeState = .needsChoice }
@@ -213,6 +218,7 @@ final class PhoneRemoteModel: ObservableObject {
                         guard let self, let peer, self.connection.media === peer else { return }
                         self.streamSummaryLines = report.summaryLines
                         self.link = LinkSummary(report)
+                        self.noticeReducedPicture()
                         #if DEBUG
                         PhoneE2E.active?.record(report)
                         #endif
@@ -504,6 +510,14 @@ final class PhoneRemoteModel: ObservableObject {
         }
     }
 
+    /// Once per session, when a physical iPhone ends up below level 5.2 (the capability probe
+    /// failed or timed out this launch), so the Mac is capping the picture it sends.
+    private func noticeReducedPicture() {
+        guard !reducedPictureNoticeShown, let link, link.reducedLevel, let size = link.pictureSize else { return }
+        reducedPictureNoticeShown = true
+        showSessionNotice(PhoneSessionNotice.reducedPicture(size: size))
+    }
+
     @discardableResult
     func commandShortcut(_ key: String) -> Bool {
         guard canControl else { return false }
@@ -552,6 +566,7 @@ final class PhoneRemoteModel: ObservableObject {
                                 phase: phase, stream: stream) : nil
         let isClick = ["click", "right", "double", "middle"].contains(name)
         if isClick && hapticsEnabled { (name == "click" || name == "double" ? clickFeedback : secondaryClickFeedback).prepare() }
+        let clickSentMs = isClick && StreamDebug.enabled ? MachClock.nowMs() : nil
         // A Mac that places the pointer absolutely also applies held hardware modifiers to it.
         let pointerModifiers = modifiers.isEmpty && absolutePointerSupported && Self.pointerActions.contains(name)
             ? hardwareModifiers : modifiers
@@ -559,6 +574,7 @@ final class PhoneRemoteModel: ObservableObject {
             text: text, key: key, modifiers: pointerModifiers, epoch: geometryEpoch, interaction: envelope,
             pointerSync: pointerSync, textFocusProbe: focusProbe))
         if !accepted { textFocusProbe.invalidate() }
+        if accepted, let clickSentMs { connection.media?.counters.clickSent(atMs: clickSentMs) }
         if accepted && isClick {
             lastAcceptedClick = name == "click" && (count ?? 1) >= 2 ? "double" : name
             acceptedClicks &+= 1
@@ -962,6 +978,7 @@ final class PhoneRemoteModel: ObservableObject {
             controlAllowed = action.x == 1
             if !controlAllowed { pointerLocator.clear(); release() }
         case "heartbeat":
+            if let clock = action.clock { receiveClockEcho(clock) }
             if textFocusProbe.consume(probe: action.textFocusProbe, editable: action.textFocusEditable,
                                       responseEpoch: action.epoch, currentEpoch: geometryEpoch,
                                       at: ProcessInfo.processInfo.systemUptime,
@@ -1070,7 +1087,18 @@ final class PhoneRemoteModel: ObservableObject {
         }
     }
 
+    /// Stream statistics: the Mac's echo of a clock probe from `tick()`.
+    private func receiveClockEcho(_ echo: ClockProbe) {
+        guard echo.isEcho, StreamDebug.enabled else { return }
+        let now = MachClock.nowMs()
+        let arrived = connection.media?.controlArrivalMs ?? now
+        guard clockSync.record(echo, receivedAtPhoneMs: min(now, arrived)) else { return }
+        connection.media?.counters.clockUpdated(clockSync.estimate(now: now))
+    }
+
     private func beginHeartbeat() {
+        clockSync.reset()
+        heartbeatsSent = 0
         pointerTimer?.invalidate()
         pointerLocator.clear()
         pointerTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
@@ -1092,9 +1120,12 @@ final class PhoneRemoteModel: ObservableObject {
     private func tick() {
         let now = ProcessInfo.processInfo.systemUptime
         if connection.connected {
+            heartbeatsSent &+= 1
+            let probesClock = heartbeatsSent % 2 == 0 && StreamDebug.enabled
             _ = connection.sendControl(RemoteAction(action: "heartbeat", epoch: geometryEpoch,
                 pointerSync: pointerOverlay.advertisement(),
-                streamQuality: appliedStreamQuality == nil ? nil : streamQuality))
+                streamQuality: appliedStreamQuality == nil ? nil : streamQuality,
+                clock: probesClock ? ClockProbe(phoneMs: MachClock.nowMs()) : nil))
         }
         pointerOverlay.refresh()
         if !rememberedDisplayApplied && !displays.isEmpty && canControl { applyRememberedDisplay() }
@@ -1165,6 +1196,9 @@ final class PhoneRemoteModel: ObservableObject {
         hostPresence = nil
         curtainState = nil
         recoveryNoticeShown = false
+        reducedPictureNoticeShown = false
+        clockSync.reset()
+        heartbeatsSent = 0
         if let departureReason {
             macNotice = Self.notice(for: departureReason)
             if sessionEndReason == nil { sessionEndReason = .macStopped }
@@ -1175,21 +1209,88 @@ final class PhoneRemoteModel: ObservableObject {
     }
 }
 
-/// Route and round trip for the dock caption. Network RTT, not end-to-end latency.
+/// Route, round trip and received picture for the dock caption, and the negotiated codec level
+/// for the Picture settings. Network RTT, not end-to-end latency.
 struct LinkSummary: Equatable {
     var route: String?
     var roundTripMs: Int?
+    /// Decoded picture size, e.g. "2560×1656".
+    var pictureSize: String?
+    /// Negotiated codec and H.264 level, e.g. "H.264 5.2".
+    var codecLevel: String?
+    /// "hardware decode" or "software decode" when WebRTC reports which.
+    var decoder: String?
+    /// A physical iPhone negotiated an H.264 level below 5.2, which caps the picture the Mac sends.
+    var reducedLevel = false
 
-    init?(_ report: StreamStatsReport) {
+    /// H.264 level 5.2, the level the phone offers when its decoder passed the capability probe.
+    static let fullLevel = 0x34
+
+    static let runsOnDevice: Bool = {
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return true
+        #endif
+    }()
+
+    init?(_ report: StreamStatsReport, physicalDevice: Bool = LinkSummary.runsOnDevice) {
         route = report.route.flatMap { $0 == "Direct" || $0 == "Relay" ? $0 : nil }
         roundTripMs = report.rttMs.map { Int($0.rounded()) }
-        guard route != nil || roundTripMs != nil else { return nil }
+        if let width = report.receivedWidth, let height = report.receivedHeight, width > 0, height > 0 {
+            pictureSize = "\(width)×\(height)"
+        }
+        let codec = report.codec.map { Self.codecName(mimeType: $0) }
+        let level = codec == "H.264" ? Self.levelByte(profileLevelID: report.h264ProfileLevel) : nil
+        codecLevel = codec.map { name in level.map { "\(name) \(Self.levelName($0))" } ?? name }
+        decoder = Self.decoderDescription(implementation: report.decoderImplementation,
+                                          powerEfficient: report.powerEfficientDecoder)
+        reducedLevel = physicalDevice && level.map { $0 < Self.fullLevel } == true
+        guard route != nil || roundTripMs != nil || pictureSize != nil || codecLevel != nil else { return nil }
+    }
+
+    /// "video/H264" → "H.264"; other codecs keep their MIME subtype.
+    static func codecName(mimeType: String) -> String {
+        let name = mimeType.split(separator: "/").last.map(String.init) ?? mimeType
+        return name.caseInsensitiveCompare("H264") == .orderedSame ? "H.264" : name
+    }
+
+    /// The level_idc byte: the last two hex digits of an H.264 profile-level-id ("640c34" → 0x34).
+    static func levelByte(profileLevelID: String?) -> Int? {
+        guard let id = profileLevelID, id.count == 6 else { return nil }
+        return Int(id.suffix(2), radix: 16)
+    }
+
+    /// level_idc is ten times the level: 0x34 (52) → "5.2", 0x1f (31) → "3.1", 0x28 (40) → "4".
+    static func levelName(_ levelByte: Int) -> String {
+        levelByte % 10 == 0 ? "\(levelByte / 10)" : "\(levelByte / 10).\(levelByte % 10)"
+    }
+
+    static func decoderDescription(implementation: String?, powerEfficient: Bool?) -> String? {
+        switch powerEfficient {
+        case true?: return "hardware decode"
+        case false?: return "software decode"
+        case nil:
+            return implementation?.localizedCaseInsensitiveContains("VideoToolbox") == true ? "hardware decode" : nil
+        }
+    }
+}
+
+extension PhoneSessionNotice {
+    static func reducedPicture(size: String) -> String {
+        "Reduced picture: your Mac is sending \(size). Quit and reopen Farside to retry."
     }
 }
 
 struct RemoteVideoSurface: UIViewRepresentable {
     let track: RTCVideoTrack
     var counters: StreamCounters?
+    /// Stream statistics: read the bench marker from each frame and score the legibility chart.
+    var statistics = false
+    /// The Mac display in points, which the chart layout is defined in.
+    var sourceSize: CGSize = .zero
+    /// Width of the picture on screen in device pixels, for the "displayed" legibility score.
+    var displayedPixelWidth: CGFloat = 0
     let onFrame: () -> Void
 
     func makeCoordinator() -> FrameObserver { FrameObserver(onFrame: onFrame) }
@@ -1201,12 +1302,14 @@ struct RemoteVideoSurface: UIViewRepresentable {
         context.coordinator.view = view
         context.coordinator.presentation = VideoPresentationProbe.install(on: view)
         context.coordinator.presentation?.counters = counters
+        configureStatistics(context.coordinator)
         track.add(context.coordinator)
         return view
     }
 
     func updateUIView(_ view: RTCMTLVideoView, context: Context) {
         context.coordinator.presentation?.counters = counters
+        configureStatistics(context.coordinator)
         if context.coordinator.track !== track {
             context.coordinator.track?.remove(context.coordinator)
             context.coordinator.track = track
@@ -1217,8 +1320,16 @@ struct RemoteVideoSurface: UIViewRepresentable {
     static func dismantleUIView(_ view: RTCMTLVideoView, coordinator: FrameObserver) {
         coordinator.track?.remove(coordinator)
         coordinator.track = nil
+        coordinator.readsMarkers = false
+        coordinator.legibility.configure(enabled: false, counters: nil, sourceSize: .zero, displayedPixelWidth: 0)
         coordinator.presentation?.uninstall()
         coordinator.presentation = nil
+    }
+
+    private func configureStatistics(_ coordinator: FrameObserver) {
+        coordinator.readsMarkers = statistics
+        coordinator.legibility.configure(enabled: statistics, counters: counters, sourceSize: sourceSize,
+                                         displayedPixelWidth: displayedPixelWidth)
     }
 }
 
@@ -1230,13 +1341,32 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
         didSet { forward.target = view }
     }
     var presentation: VideoPresentationProbe? {
-        didSet { lock.lock(); tracker = presentation?.tracker; lock.unlock() }
+        didSet {
+            lock.lock(); tracker = presentation?.tracker; lock.unlock()
+            connectMarkers()
+        }
     }
+    /// Stream statistics: read the bench marker from every decoded frame (one strip read on the
+    /// decode thread) and hand it through to presentation and the legibility probe.
+    var readsMarkers: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return markerReading }
+        set {
+            lock.lock()
+            let changed = markerReading != newValue
+            markerReading = newValue
+            lock.unlock()
+            guard changed else { return }
+            if !newValue { forward.forgetMarkers() }
+            connectMarkers()
+        }
+    }
+    let legibility = LegibilityProbe()
     let onFrame: () -> Void
-    private let forward = RestampingRenderer()
+    let forward = RestampingRenderer()
     private let lock = NSLock()
     private var last = 0.0
     private var tracker: PresentationTracker?
+    private var markerReading = false
 
     init(onFrame: @escaping () -> Void) {
         self.onFrame = onFrame
@@ -1247,8 +1377,18 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
     }
 
     func renderFrame(_ frame: RTCVideoFrame?) {
-        guard frame != nil else { return }
-        forward.renderFrame(frame)
+        guard let frame else { return }
+        lock.lock()
+        let reading = markerReading
+        lock.unlock()
+        if reading {
+            let decoded = (frame.buffer as? RTCCVPixelBuffer).flatMap { DecodedLuma($0) }
+            let marker = decoded?.readMarker()
+            forward.renderFrame(frame, marker: marker)
+            if let decoded { legibility.frameArrived(decoded.pixelBuffer, visible: decoded.visible, marker: marker) }
+        } else {
+            forward.renderFrame(frame)
+        }
         lock.lock()
         let now = ProcessInfo.processInfo.systemUptime
         let notify = now - last > 0.25
@@ -1260,19 +1400,80 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
             DispatchQueue.main.async { [weak self] in self?.onFrame() }
         }
     }
+
+    private func connectMarkers() {
+        guard let presentation else { return }
+        if readsMarkers {
+            presentation.markerForStamp = { [forward] in forward.marker(forStamp: $0) }
+            presentation.newestMarker = { [forward] in forward.newestMarker }
+        } else {
+            presentation.markerForStamp = nil
+            presentation.newestMarker = nil
+        }
+    }
+}
+
+/// The visible luma plane of a decoded 8-bit NV12 frame, where the bench marker strip is read.
+struct DecodedLuma {
+    let pixelBuffer: CVPixelBuffer
+    /// WebRTC's crop of the buffer, in luma pixels with a top-left origin.
+    let visible: CGRect
+
+    static let formats: Set<OSType> = [kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                                       kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
+
+    init?(_ buffer: RTCCVPixelBuffer) {
+        self.init(pixelBuffer: buffer.pixelBuffer,
+                  crop: CGRect(x: Int(buffer.cropX), y: Int(buffer.cropY),
+                               width: Int(buffer.cropWidth), height: Int(buffer.cropHeight)))
+    }
+
+    init?(pixelBuffer: CVPixelBuffer, crop: CGRect) {
+        guard Self.formats.contains(CVPixelBufferGetPixelFormatType(pixelBuffer)) else { return nil }
+        let plane = CGRect(x: 0, y: 0, width: CVPixelBufferGetWidthOfPlane(pixelBuffer, 0),
+                           height: CVPixelBufferGetHeightOfPlane(pixelBuffer, 0))
+        let visible = crop.isEmpty ? plane : crop.intersection(plane)
+        guard !visible.isNull, !visible.isEmpty else { return nil }
+        self.pixelBuffer = pixelBuffer
+        self.visible = visible
+    }
+
+    func readMarker() -> BenchMarker? {
+        guard CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly) == kCVReturnSuccess else { return nil }
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else { return nil }
+        let bytesPerRow = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+        let origin = base.advanced(by: Int(visible.minY) * bytesPerRow + Int(visible.minX))
+        return BenchMarker.read(luma: origin.assumingMemoryBound(to: UInt8.self), width: Int(visible.width),
+                                height: Int(visible.height), bytesPerRow: bytesPerRow)
+    }
 }
 
 /// Every RTCMTLVideoView must get its frames through this instead of straight from the track.
 /// With the tuned zero playout delay, libwebrtc stamps every decoded frame with render time 0,
 /// and RTCMTLVideoView skips a frame whose timestamp equals the last one it drew, so it would
 /// never draw at all. Frames are passed on with a strictly increasing timestamp.
+///
+/// With Stream statistics on, it also remembers which bench marker the last few forwarded frames
+/// carried, so presentation can match the frame the view drew (by its stamp) to its marker.
 final class RestampingRenderer: NSObject, RTCVideoRenderer {
+    struct ForwardedFrame: Equatable {
+        let stampNs: Int64
+        let marker: BenchMarker?
+        /// Phone mach ms when the frame was handed to the view.
+        let arrivalMs: Double
+    }
+
+    static let rememberedFrames = 16
+
     weak var target: RTCMTLVideoView?
     private let lock = NSLock()
     private var lastStampNs: Int64 = 0
+    private var forwarded: [ForwardedFrame] = []
 
     init(target: RTCMTLVideoView? = nil) {
         self.target = target
+        forwarded.reserveCapacity(Self.rememberedFrames)
     }
 
     func setSize(_ size: CGSize) {
@@ -1280,11 +1481,46 @@ final class RestampingRenderer: NSObject, RTCVideoRenderer {
     }
 
     func renderFrame(_ frame: RTCVideoFrame?) {
-        guard let frame, let target else { return }
+        forward(frame, remember: false, marker: nil)
+    }
+
+    /// Forwards the frame and remembers its marker; a frame without a readable marker is kept as nil.
+    /// Returns the stamp the frame was forwarded with.
+    @discardableResult
+    func renderFrame(_ frame: RTCVideoFrame?, marker: BenchMarker?) -> Int64? {
+        forward(frame, remember: true, marker: marker)
+    }
+
+    func forwardedFrame(forStamp stampNs: Int64) -> ForwardedFrame? {
+        lock.lock(); defer { lock.unlock() }
+        return forwarded.last { $0.stampNs == stampNs }
+    }
+
+    func marker(forStamp stampNs: Int64) -> BenchMarker? {
+        forwardedFrame(forStamp: stampNs)?.marker
+    }
+
+    var newestMarker: BenchMarker? {
+        lock.lock(); defer { lock.unlock() }
+        return forwarded.last?.marker
+    }
+
+    func forgetMarkers() {
+        lock.lock(); forwarded.removeAll(keepingCapacity: true); lock.unlock()
+    }
+
+    @discardableResult
+    private func forward(_ frame: RTCVideoFrame?, remember: Bool, marker: BenchMarker?) -> Int64? {
+        guard let frame, let target else { return nil }
         lock.lock()
         let stampNs = max(Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000), lastStampNs + 1)
         lastStampNs = stampNs
+        if remember {
+            if forwarded.count == Self.rememberedFrames { forwarded.removeFirst() }
+            forwarded.append(ForwardedFrame(stampNs: stampNs, marker: marker, arrivalMs: MachClock.nowMs()))
+        }
         lock.unlock()
         target.renderFrame(RTCVideoFrame(buffer: frame.buffer, rotation: frame.rotation, timeStampNs: stampNs))
+        return stampNs
     }
 }

@@ -30,11 +30,15 @@ struct RemoteAction: Codable {
     var display: UInt32? = nil
     /// A "needs you" alert from an agent on the Mac, sent once on a `capture` status. Older phones ignore it.
     var agentAlert: AgentAlertFrame? = nil
+    /// Clock-sync probe on a heartbeat: the phone sends it, the host echoes it (see `ClockProbe`).
+    var clock: ClockProbe? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
         try hostStream?.validate()
         guard hostStream == nil || action == "capture" else { throw RemoteError.invalidMessage }
+        try clock?.validate()
+        guard clock == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
         // Also before the early returns, so no other action can carry a display list.
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }

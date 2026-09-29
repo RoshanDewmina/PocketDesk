@@ -30,6 +30,7 @@ struct StreamStatsSample {
     var codec: StreamStatsEntry?
     var pair: StreamStatsEntry?
     var route = "Route pending"
+    var routeDetail: String?
 
     init(entries: [StreamStatsEntry]) {
         var byID: [String: StreamStatsEntry] = [:]
@@ -46,6 +47,7 @@ struct StreamStatsSample {
         let local = selected?.string("localCandidateId").flatMap { byID[$0] }?.string("candidateType")
         let remote = selected?.string("remoteCandidateId").flatMap { byID[$0] }?.string("candidateType")
         route = MediaRoute.classify(selected: selected != nil, local: local, remote: remote)
+        routeDetail = MediaRoute.detail(selected: selected != nil, local: local, remote: remote)
         timestamp = (outbound ?? inbound ?? selected ?? entries.first)?.timestamp ?? 0
     }
 }
@@ -74,6 +76,35 @@ struct StreamCounterSnapshot {
     var presentLatencyP90Ms: Double?
     var presentGapP90Ms: Double?
     var displayMaxFPS: Int?
+
+    // Bench marker (G28): per presented frame, Mac display time → phone display time.
+    var markerFrames = 0
+    var markerDistinct = 0
+    var glassP50Ms: Double?
+    var glassP95Ms: Double?
+    var glassP99Ms: Double?
+    var glassMaxMs: Double?
+    var clockOffsetMs: Double?
+    var clockUncertaintyMs: Double?
+    var clockSamples = 0
+    // True presentation cadence from MTLDrawable presented handlers.
+    var presentedIntervalP50Ms: Double?
+    var presentedIntervalP90Ms: Double?
+    var presentedIntervalMinMs: Double?
+    var presentedAt120Share: Double?
+    var inputToPhotonP50Ms: Double?
+    var inputToPhotonP95Ms: Double?
+    var inputToPhotonSamples = 0
+    var legibility: LegibilitySummary?
+    // Host encoder trace: VideoToolbox submit → callback per frame.
+    var encodeLatencyP50Ms: Double?
+    var encodeLatencyP90Ms: Double?
+    var encodeLatencyMaxMs: Double?
+    var encodeInFlightMax: Int?
+    var encodeBytesP50: Int?
+    var keyFrameBytesMax: Int?
+    var rateUpdates: Int?
+    var encoderSessionAgeS: Double?
 }
 
 /// Compact sender-side stages the Mac forwards to the phone overlay once per statistics sample.
@@ -96,13 +127,24 @@ struct HostStreamSummary: Codable, Equatable {
     var encoder: String?
     var hardwareEncoder: Bool?
     var qualityLimitation: String?
+    // Encoder trace (older phones ignore these).
+    var encodeLatencyMs: Double?
+    var encodeLatencyP90Ms: Double?
+    var encodeInFlightMax: Int?
+    var encodeBytesP50: Int?
+    var keyFrameBytesMax: Int?
+    var rateUpdates: Int?
+    var encoderSessionAgeS: Double?
 
     func validate() throws {
         let numbers = [captureFPS, captureLatencyMs, captureGapP90Ms, encodedFPS, encodeMs, pacerDelayMs,
-                       sentFPS, sentKbps, targetKbps, maxKbps, qpAverage].compactMap { $0 }
-        let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight].compactMap { $0 }
+                       sentFPS, sentKbps, targetKbps, maxKbps, qpAverage,
+                       encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS].compactMap { $0 }
+        let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates].compactMap { $0 }
+        let bytes = [encodeBytesP50, keyFrameBytesMax].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 10_000_000 }),
               integers.allSatisfy({ $0 >= 0 && $0 <= 100_000 }),
+              bytes.allSatisfy({ $0 >= 0 && $0 <= 50_000_000 }),
               (encoder?.utf8.count ?? 0) <= 48, (qualityLimitation?.utf8.count ?? 0) <= 24 else {
             throw RemoteError.invalidMessage
         }
@@ -112,6 +154,7 @@ struct HostStreamSummary: Codable, Equatable {
 struct StreamStatsReport: Codable, Equatable {
     var role: String
     var route: String?
+    var routeDetail: String?
     var codec: String?
     var h264ProfileLevel: String?
     var captureMaximumDimension: Int?
@@ -181,11 +224,42 @@ struct StreamStatsReport: Codable, Equatable {
     var presentGapP90Ms: Double?
     var displayMaxFPS: Int?
     var host: HostStreamSummary?
+    /// Age of `host` when this report was made: the summary rides the Mac's 1 s heartbeat.
+    var hostSummaryAgeMs: Double?
+
+    // Bench marker: per presented frame, Mac display time → phone display time on the synced clock.
+    var markerFrames: Int?
+    var markerDistinctFPS: Double?
+    var glassP50Ms: Double?
+    var glassP95Ms: Double?
+    var glassP99Ms: Double?
+    var glassMaxMs: Double?
+    var clockOffsetMs: Double?
+    var clockUncertaintyMs: Double?
+    var clockSamples: Int?
+    var presentedIntervalP50Ms: Double?
+    var presentedIntervalP90Ms: Double?
+    var presentedIntervalMinMs: Double?
+    var presentedAt120Share: Double?
+    var inputToPhotonP50Ms: Double?
+    var inputToPhotonP95Ms: Double?
+    var inputToPhotonSamples: Int?
+    var legibility: LegibilitySummary?
+    // Host encoder trace.
+    var encodeLatencyMs: Double?
+    var encodeLatencyP90Ms: Double?
+    var encodeLatencyMaxMs: Double?
+    var encodeInFlightMax: Int?
+    var encodeBytesP50: Int?
+    var keyFrameBytesMax: Int?
+    var rateUpdates: Int?
+    var encoderSessionAgeS: Double?
 
     init(role: String, previous: StreamStatsSample?, current: StreamStatsSample,
          counters: StreamCounterSnapshot?) {
         self.role = role
         route = current.route
+        routeDetail = current.routeDetail
         codec = current.codec?.string("mimeType")
         h264ProfileLevel = current.codec?.string("sdpFmtpLine").flatMap(Self.profileLevel)
         rttMs = Self.round((current.pair?.number("currentRoundTripTime")
@@ -254,6 +328,14 @@ struct StreamStatsReport: Codable, Equatable {
                 captureLatencyP90Ms = Self.round(counters.captureLatencyP90Ms)
                 captureGapP90Ms = Self.round(counters.captureGapP90Ms)
                 captureGapMaxMs = Self.round(counters.captureGapMaxMs)
+                encodeLatencyMs = Self.round(counters.encodeLatencyP50Ms)
+                encodeLatencyP90Ms = Self.round(counters.encodeLatencyP90Ms)
+                encodeLatencyMaxMs = Self.round(counters.encodeLatencyMaxMs)
+                encodeInFlightMax = counters.encodeInFlightMax
+                encodeBytesP50 = counters.encodeBytesP50
+                keyFrameBytesMax = counters.keyFrameBytesMax
+                rateUpdates = counters.rateUpdates
+                encoderSessionAgeS = Self.round(counters.encoderSessionAgeS)
             } else {
                 renderedFPS = Self.round(Double(counters.renderedFrames) / seconds)
                 renderGapMedianMs = Self.round(counters.renderGapMedianMs)
@@ -268,6 +350,29 @@ struct StreamStatsReport: Codable, Equatable {
                     presentLatencyP90Ms = Self.round(counters.presentLatencyP90Ms)
                     presentGapP90Ms = Self.round(counters.presentGapP90Ms)
                 }
+                if counters.markerFrames > 0 {
+                    markerFrames = counters.markerFrames
+                    markerDistinctFPS = Self.round(Double(counters.markerDistinct) / seconds)
+                    glassP50Ms = Self.round(counters.glassP50Ms)
+                    glassP95Ms = Self.round(counters.glassP95Ms)
+                    glassP99Ms = Self.round(counters.glassP99Ms)
+                    glassMaxMs = Self.round(counters.glassMaxMs)
+                }
+                if counters.clockSamples > 0 {
+                    clockOffsetMs = Self.round(counters.clockOffsetMs)
+                    clockUncertaintyMs = Self.round(counters.clockUncertaintyMs)
+                    clockSamples = counters.clockSamples
+                }
+                presentedIntervalP50Ms = Self.round(counters.presentedIntervalP50Ms)
+                presentedIntervalP90Ms = Self.round(counters.presentedIntervalP90Ms)
+                presentedIntervalMinMs = Self.round(counters.presentedIntervalMinMs)
+                presentedAt120Share = counters.presentedAt120Share.map { ($0 * 100).rounded() / 100 }
+                if counters.inputToPhotonSamples > 0 {
+                    inputToPhotonP50Ms = Self.round(counters.inputToPhotonP50Ms)
+                    inputToPhotonP95Ms = Self.round(counters.inputToPhotonP95Ms)
+                    inputToPhotonSamples = counters.inputToPhotonSamples
+                }
+                legibility = counters.legibility
             }
             inputBufferedBytes = counters.inputBufferedBytes
             inputBufferedPeakBytes = counters.inputBufferedPeakBytes
@@ -282,7 +387,11 @@ struct StreamStatsReport: Codable, Equatable {
                           qpAverage: qpAverage, sentWidth: sentWidth, sentHeight: sentHeight,
                           encoder: encoderImplementation.map { String($0.prefix(48)) },
                           hardwareEncoder: powerEfficientEncoder,
-                          qualityLimitation: qualityLimitation.map { String($0.prefix(24)) })
+                          qualityLimitation: qualityLimitation.map { String($0.prefix(24)) },
+                          encodeLatencyMs: encodeLatencyMs, encodeLatencyP90Ms: encodeLatencyP90Ms,
+                          encodeInFlightMax: encodeInFlightMax, encodeBytesP50: encodeBytesP50,
+                          keyFrameBytesMax: keyFrameBytesMax, rateUpdates: rateUpdates,
+                          encoderSessionAgeS: encoderSessionAgeS)
     }
 
     /// Sum of the average stage delays from the Mac's display to the phone's draw call.
@@ -315,12 +424,18 @@ struct StreamStatsReport: Codable, Equatable {
             lines.append("encode \(value(encodedFPS))fps \(value(encodeMs, "ms")) · pacer \(value(pacerDelayMs, "ms")) · sent \(value(sentFPS))fps \(sentWidth ?? 0)×\(sentHeight ?? 0)")
             lines.append("\(value(sentKbps, "kbps")) · target \(value(targetKbps, "kbps")) · max \(value(maxKbps, "kbps")) · BWE \(value(availableOutgoingKbps, "kbps"))")
             lines.append("\(encoderImplementation ?? "encoder?") \(hardware(powerEfficientEncoder)) · limit \(qualityLimitation ?? "?") · QP \(value(qpAverage)) · rtx \(retransmittedPackets ?? 0)")
+            if encodeLatencyMs != nil {
+                lines.append("VT lat p50 \(value(encodeLatencyMs, "ms")) p90 \(value(encodeLatencyP90Ms, "ms")) max \(value(encodeLatencyMaxMs, "ms")) · in-flight ≤\(encodeInFlightMax ?? 0) · bytes p50 \(encodeBytesP50 ?? 0) · key ≤\((keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(rateUpdates ?? 0) · session \(value(encoderSessionAgeS, "s"))")
+            }
         } else {
             if let host {
                 lines.append("Mac capture \(value(host.captureFPS))fps lag \(value(host.captureLatencyMs, "ms")) gap90 \(value(host.captureGapP90Ms, "ms")) · lost \((host.pushSkipped ?? 0) + (host.droppedBeforeEncode ?? 0))")
                 // No QP here: skip-only screen frames report QP 51 whatever the visible quality.
                 lines.append("Mac encode \(value(host.encodedFPS))fps \(value(host.encodeMs, "ms")) · pacer \(value(host.pacerDelayMs, "ms")) · kbps sent \(value(host.sentKbps)) target \(value(host.targetKbps)) max \(value(host.maxKbps))")
-                lines.append("Mac \(host.encoder ?? "encoder?") \(hardware(host.hardwareEncoder)) \(host.sentWidth ?? 0)×\(host.sentHeight ?? 0) · limit \(host.qualityLimitation ?? "?")")
+                lines.append("Mac \(host.encoder ?? "encoder?") \(hardware(host.hardwareEncoder)) \(host.sentWidth ?? 0)×\(host.sentHeight ?? 0) · limit \(host.qualityLimitation ?? "?") · age \(value(hostSummaryAgeMs, "ms"))")
+                if host.encodeLatencyMs != nil {
+                    lines.append("Mac VT lat p50 \(value(host.encodeLatencyMs, "ms")) p90 \(value(host.encodeLatencyP90Ms, "ms")) · in-flight ≤\(host.encodeInFlightMax ?? 0) · bytes p50 \(host.encodeBytesP50 ?? 0) · key ≤\((host.keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(host.rateUpdates ?? 0) · session \(value(host.encoderSessionAgeS, "s"))")
+                }
             }
             lines.append("recv \(value(receivedFPS)) · decoded \(value(decodedFPS)) · shown \(value(presentedFPS)) (replaced \(supersededFrames ?? 0)) · dropped \(framesDropped ?? 0)")
             lines.append("assemble \(value(assemblyMs, "ms")) · jitter \(value(jitterBufferMs, "ms")) · decode \(value(decodeMs, "ms")) · to-screen \(value(presentLatencyMs, "ms")) p90 \(value(presentLatencyP90Ms, "ms"))")
@@ -328,6 +443,28 @@ struct StreamStatsReport: Codable, Equatable {
             lines.append("\(receivedWidth ?? 0)×\(receivedHeight ?? 0) · \(value(receivedKbps, "kbps")) · loss \(value(packetLossPercent, "%")) · freezes \(freezes ?? 0) · \(decoderImplementation ?? "decoder?")")
             if let estimate = estimatedDisplayToDrawMs {
                 lines.append("≈ Mac display → phone draw \(value(estimate, "ms")) (stage sum)")
+            }
+            if let markerFrames, markerFrames > 0 {
+                lines.append("glass p50 \(value(glassP50Ms, "ms")) p95 \(value(glassP95Ms, "ms")) max \(value(glassMaxMs, "ms")) ±\(value(clockUncertaintyMs, "ms")) · n \(markerFrames) · distinct \(value(markerDistinctFPS))/s")
+            } else if clockSamples != nil {
+                lines.append("clock offset \(value(clockOffsetMs, "ms")) ±\(value(clockUncertaintyMs, "ms")) (\(clockSamples ?? 0) probes) · no bench marker in view")
+            }
+            if presentedIntervalP50Ms != nil {
+                let share = presentedAt120Share.map { "\(Int(($0 * 100).rounded()))%" } ?? "–"
+                lines.append("shownΔ p50 \(value(presentedIntervalP50Ms, "ms")) p90 \(value(presentedIntervalP90Ms, "ms")) min \(value(presentedIntervalMinMs, "ms")) · at 120Hz \(share)")
+            }
+            if (inputToPhotonSamples ?? 0) > 0 || legibility != nil {
+                var parts: [String] = []
+                if let samples = inputToPhotonSamples, samples > 0 {
+                    parts.append("click→photon p50 \(value(inputToPhotonP50Ms, "ms")) p95 \(value(inputToPhotonP95Ms, "ms")) n \(samples)")
+                }
+                if let legibility {
+                    let sizes = ["9pt", "11pt", "13pt", "15pt", "coloured11pt"].compactMap { key in
+                        legibility.cer[key].map { "\(key) \(Int($0.rounded()))%" }
+                    }
+                    parts.append("CER " + sizes.joined(separator: " ") + String(format: " (+%.1fs %@)", legibility.ageMs / 1000, legibility.surface))
+                }
+                lines.append(parts.joined(separator: " · "))
             }
         }
         lines.append("input queue \(inputBufferedBytes ?? 0)B peak \(inputBufferedPeakBytes ?? 0)B · moves merged \(coalescedMoves ?? 0)")
@@ -419,6 +556,24 @@ struct LatencyWindow {
         return (Self.rank(sorted, 0.5), Self.rank(sorted, 0.9), sorted.count)
     }
 
+    struct Percentiles {
+        var p50: Double?
+        var p90: Double?
+        var p95: Double?
+        var p99: Double?
+        var min: Double?
+        var max: Double?
+        var count = 0
+    }
+
+    mutating func drainPercentiles() -> Percentiles {
+        defer { samples.removeAll(keepingCapacity: true) }
+        guard !samples.isEmpty else { return Percentiles() }
+        let sorted = samples.sorted()
+        return Percentiles(p50: Self.rank(sorted, 0.5), p90: Self.rank(sorted, 0.9), p95: Self.rank(sorted, 0.95),
+                           p99: Self.rank(sorted, 0.99), min: sorted.first, max: sorted.last, count: sorted.count)
+    }
+
     static func rank(_ sorted: [Double], _ fraction: Double) -> Double {
         sorted[max(0, min(sorted.count - 1, Int((fraction * Double(sorted.count)).rounded(.up)) - 1))]
     }
@@ -435,6 +590,23 @@ final class StreamCounters: @unchecked Sendable {
     private var presentLatency = LatencyWindow()
     private var presentCadence = FrameCadenceWindow()
     private var displayMaxFPS: Int?
+    private var glassLatency = LatencyWindow()
+    private var presentedIntervals = LatencyWindow()
+    private var inputToPhoton = LatencyWindow()
+    private var encodeLatency = LatencyWindow()
+    private var encodeBytes = LatencyWindow()
+    private var lastPresentedMs: Double?
+    private var lastMarkerTime: UInt32?
+    private var lastFlash: Bool?
+    private var lastClickSentMs: Double?
+    private var clock: ClockSyncEstimate?
+    private var legibility: LegibilitySummary?
+    private var presentedAt120 = 0
+    private var presentedIntervalCount = 0
+    private var encodeInFlightMax = 0
+    private var keyFrameBytesMax = 0
+    private var rateUpdates = 0
+    private var encoderSessionStartedMs: Double?
 
     /// The refresh rate the video view presents at, fixed once the view is on screen.
     func setDisplayMaxFPS(_ fps: Int) { lock.lock(); displayMaxFPS = fps; lock.unlock() }
@@ -478,6 +650,68 @@ final class StreamCounters: @unchecked Sendable {
         snapshot.inputBufferedPeakBytes = max(snapshot.inputBufferedPeakBytes ?? 0, bytes)
     }
 
+    // MARK: Bench marker, presentation cadence and input-to-photon (phone)
+
+    func clockUpdated(_ estimate: ClockSyncEstimate?) {
+        lock.lock(); clock = estimate; lock.unlock()
+    }
+
+    /// The phone sent a click at `ms` (phone mach ms); the next flash-bit flip is timed against it.
+    func clickSent(atMs ms: Double) {
+        lock.lock(); lastClickSentMs = ms; lock.unlock()
+    }
+
+    /// A frame reached the display at `presentedMs` (phone mach ms, `MTLDrawable.presentedTime`).
+    /// `marker` is the bench strip it carried, if any.
+    func presentedFrame(atMs presentedMs: Double, marker: BenchMarker?) {
+        lock.lock(); defer { lock.unlock() }
+        if let last = lastPresentedMs, presentedMs > last {
+            let interval = presentedMs - last
+            presentedIntervals.record(interval)
+            presentedIntervalCount += 1
+            if interval <= 9 { presentedAt120 += 1 }
+        }
+        lastPresentedMs = presentedMs
+        guard let marker else { return }
+        snapshot.markerFrames += 1
+        if marker.timeMs != lastMarkerTime {
+            snapshot.markerDistinct += 1
+            lastMarkerTime = marker.timeMs
+        }
+        if let clock {
+            let hostNow = presentedMs + clock.offsetMs
+            glassLatency.record(hostNow - marker.unwrappedTimeMs(near: hostNow))
+        }
+        if let lastFlash, marker.flash != lastFlash, let click = lastClickSentMs,
+           presentedMs >= click, presentedMs - click <= 1_000 {
+            inputToPhoton.record(presentedMs - click)
+            lastClickSentMs = nil
+        }
+        lastFlash = marker.flash
+    }
+
+    func legibilityScored(_ summary: LegibilitySummary) {
+        lock.lock(); legibility = summary; lock.unlock()
+    }
+
+    // MARK: Encoder trace (host)
+
+    func encoded(latencyMs: Double, bytes: Int, isKeyFrame: Bool, inFlight: Int) {
+        lock.lock(); defer { lock.unlock() }
+        encodeLatency.record(latencyMs)
+        encodeBytes.record(Double(bytes))
+        encodeInFlightMax = max(encodeInFlightMax, inFlight)
+        if isKeyFrame { keyFrameBytesMax = max(keyFrameBytesMax, bytes) }
+    }
+
+    func encoderRateUpdated() {
+        lock.lock(); rateUpdates += 1; lock.unlock()
+    }
+
+    func encoderSessionStarted(atMs ms: Double = MachClock.nowMs()) {
+        lock.lock(); encoderSessionStartedMs = ms; lock.unlock()
+    }
+
     func drain(inputBufferedBytes: UInt64?, at time: TimeInterval = ProcessInfo.processInfo.systemUptime) -> StreamCounterSnapshot {
         lock.lock(); defer { lock.unlock() }
         var result = snapshot
@@ -501,6 +735,38 @@ final class StreamCounters: @unchecked Sendable {
         result.presentLatencyP90Ms = present.p90
         result.presentGapP90Ms = presentCadence.drain().p90GapMs
         result.displayMaxFPS = displayMaxFPS
+        let glass = glassLatency.drainPercentiles()
+        result.glassP50Ms = glass.p50
+        result.glassP95Ms = glass.p95
+        result.glassP99Ms = glass.p99
+        result.glassMaxMs = glass.max
+        result.clockOffsetMs = clock?.offsetMs
+        result.clockUncertaintyMs = clock?.uncertaintyMs
+        result.clockSamples = clock?.samples ?? 0
+        let intervals = presentedIntervals.drainPercentiles()
+        result.presentedIntervalP50Ms = intervals.p50
+        result.presentedIntervalP90Ms = intervals.p90
+        result.presentedIntervalMinMs = intervals.min
+        result.presentedAt120Share = presentedIntervalCount > 0 ? Double(presentedAt120) / Double(presentedIntervalCount) : nil
+        presentedAt120 = 0
+        presentedIntervalCount = 0
+        let input = inputToPhoton.drainPercentiles()
+        result.inputToPhotonP50Ms = input.p50
+        result.inputToPhotonP95Ms = input.p95
+        result.inputToPhotonSamples = input.count
+        result.legibility = legibility
+        let encode = encodeLatency.drainPercentiles()
+        result.encodeLatencyP50Ms = encode.p50
+        result.encodeLatencyP90Ms = encode.p90
+        result.encodeLatencyMaxMs = encode.max
+        result.encodeInFlightMax = encode.count > 0 ? encodeInFlightMax : nil
+        result.encodeBytesP50 = encodeBytes.drainPercentiles().p50.map { Int($0) }
+        result.keyFrameBytesMax = keyFrameBytesMax > 0 ? keyFrameBytesMax : nil
+        result.rateUpdates = encode.count > 0 || rateUpdates > 0 ? rateUpdates : nil
+        result.encoderSessionAgeS = encoderSessionStartedMs.map { max(0, (MachClock.nowMs() - $0) / 1000) }
+        encodeInFlightMax = 0
+        keyFrameBytesMax = 0
+        rateUpdates = 0
         snapshot = StreamCounterSnapshot(interval: 0)
         startedAt = time
         return result

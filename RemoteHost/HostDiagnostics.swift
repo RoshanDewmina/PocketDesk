@@ -97,6 +97,8 @@ struct HostDiagnosticsSnapshot {
     var lastSessionDuration: TimeInterval?
     var route: String?
     var streamQuality: String?
+    /// Sent size, negotiated codec level, encoder and decoder-probe outcome of the last session.
+    var stream: String?
 
     var events: [HostEventLog.Entry] = []
 }
@@ -150,6 +152,7 @@ enum HostDiagnosticsReport {
         row("Last session length", s.lastSessionDuration.map(duration) ?? "none")
         row("Route", s.route ?? "not measured")
         row("Picture quality", s.streamQuality ?? "not applied")
+        row("Stream", s.stream ?? "not measured")
         section("Recent events")
         if s.events.isEmpty { lines.append("none") }
         for entry in s.events.suffix(40) {

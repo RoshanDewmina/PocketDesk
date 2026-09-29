@@ -8,12 +8,15 @@ final class VideoPresentationProbeTests: XCTestCase {
     func testTrackerReportsNewestFrameLatencyAndReplacedFrames() throws {
         let tracker = PresentationTracker()
         XCTAssertNil(tracker.drew(at: 1), "no new frame, nothing presented")
+        XCTAssertFalse(tracker.hasPending)
         tracker.frameArrived(at: 1.000)
         tracker.frameArrived(at: 1.004)
         tracker.frameArrived(at: 1.010)
+        XCTAssertTrue(tracker.hasPending)
         let presented = try XCTUnwrap(tracker.drew(at: 1.015))
         XCTAssertEqual(presented.latencyMs, 5, accuracy: 0.001)
         XCTAssertEqual(presented.superseded, 2)
+        XCTAssertFalse(tracker.hasPending)
         XCTAssertNil(tracker.drew(at: 1.020), "the same frame is not counted twice")
     }
 
@@ -28,10 +31,19 @@ final class VideoPresentationProbeTests: XCTestCase {
         }
         let counters = StreamCounters()
         probe.counters = counters
+        var fetches = 0
+        probe.drawableProvider = { _ in fetches += 1; return nil }
         probe.tracker.frameArrived()
         probe.draw(in: metal)
         let snapshot = counters.drain(inputBufferedBytes: nil)
         XCTAssertEqual(snapshot.presentedFrames, 1)
+        XCTAssertEqual(fetches, 0, "without Stream statistics the probe never asks for a drawable")
+        probe.markerForStamp = { _ in nil }
+        probe.draw(in: metal)
+        XCTAssertEqual(fetches, 0, "nothing pending, no drawable")
+        probe.tracker.frameArrived()
+        probe.draw(in: metal)
+        XCTAssertEqual(fetches, 1, "a pending frame gets one drawable")
         probe.uninstall()
         XCTAssertTrue(metal.delegate === original)
     }

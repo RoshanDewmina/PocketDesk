@@ -28,8 +28,13 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
     private var pasteboardChangeCount = NSPasteboard.general.changeCount
     private var keyMonitor: Any?
     private var lastEventSeq: UInt64 { log.sequence }
+    private(set) var bench: BenchPad?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if options.bench {
+            launchBench()
+            return
+        }
         buildMenu()
         let screen = NSScreen.screens.first ?? NSScreen.main!
         let visible = screen.visibleFrame
@@ -68,6 +73,37 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
         log.write("launched", ["pid": Int(getpid()), "logPath": options.logPath, "statePath": options.statePath,
                                "commandsPath": options.commandsPath, "screen": TestPadGeometry.global(screen.frame)])
         markDirty()
+    }
+
+    /// `--bench`: the kiosk stimulus replaces the E2E window; only the command file, log and state
+    /// file are shared with E2E mode.
+    private func launchBench() {
+        buildMenu()
+        let bench = MainActor.assumeIsolated { BenchPad(app: self, requestedDisplay: options.benchDisplay) }
+        self.bench = bench
+        if let size = (try? FileManager.default.attributesOfItem(atPath: options.commandsPath))?[.size] as? UInt64 {
+            commandOffset = size
+        }
+        schedule(0.1) { [weak self] in self?.pollCommands() }
+        schedule(0.2) { [weak self] in self?.writeBenchStateIfNeeded() }
+        log.write("launched", ["pid": Int(getpid()), "mode": "bench", "logPath": options.logPath,
+                               "statePath": options.statePath, "commandsPath": options.commandsPath])
+        MainActor.assumeIsolated { bench.start() }
+        markDirty()
+    }
+
+    private func writeBenchStateIfNeeded() {
+        guard let bench else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        guard stateDirty || now - lastStateWrite >= 1 else { return }
+        stateDirty = false
+        lastStateWrite = now
+        var state = MainActor.assumeIsolated { bench.stateFields() }
+        state["pid"] = Int(getpid())
+        state["run"] = options.runID
+        state["t"] = Date().timeIntervalSince1970
+        state["lastSeq"] = lastEventSeq
+        TestPadLog.writeAtomically(state, to: options.statePath)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -294,6 +330,12 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
         let id = command["id"] as? String ?? ""
         let name = command["cmd"] as? String ?? ""
         var result: [String: Any] = ["id": id, "cmd": name, "ok": true]
+        if bench != nil, !name.hasPrefix("bench."), !["mark", "quit"].contains(name) {
+            result["ok"] = false
+            result["error"] = "not available in bench mode"
+            log.write("command", result)
+            return
+        }
         switch name {
         case "reset":
             pad.reset()
@@ -349,6 +391,8 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
             log.write("command", result)
             NSApp.terminate(nil)
             return
+        case let benchCommand where benchCommand.hasPrefix("bench.") && bench != nil:
+            MainActor.assumeIsolated { bench?.perform(benchCommand, command, result: &result) }
         default:
             result["ok"] = false
             result["error"] = "unknown command"
@@ -481,6 +525,8 @@ struct TestPadOptions {
     var commandsPath = "/private/tmp/farside-e2e/testpad-commands.jsonl"
     var runID = "manual"
     var corner = "lowerLeft"
+    var bench = false
+    var benchDisplay: Int?
 
     init(arguments: [String]) {
         func value(_ flag: String) -> String? {
@@ -492,6 +538,8 @@ struct TestPadOptions {
         commandsPath = value("--commands") ?? commandsPath
         runID = value("--run-id") ?? runID
         corner = value("--corner") ?? corner
+        bench = arguments.contains("--bench")
+        benchDisplay = value("--bench-display").flatMap { Int($0) }
     }
 }
 
