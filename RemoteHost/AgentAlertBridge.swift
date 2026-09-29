@@ -205,6 +205,8 @@ final class AgentAlertBridge: @unchecked Sendable {
         private unowned let bridge: AgentAlertBridge
         private var buffer = Data()
         private var finished = false
+        /// The request has been read and handed to the handler, so the read deadline no longer applies.
+        private var handling = false
 
         init(connection: NWConnection, bridge: AgentAlertBridge) {
             self.connection = connection
@@ -227,7 +229,7 @@ final class AgentAlertBridge: @unchecked Sendable {
         }
 
         func timeOut() {
-            guard !finished else { return }
+            guard !finished, !handling else { return }
             finish(.requestTimeout)
         }
 
@@ -288,6 +290,7 @@ final class AgentAlertBridge: @unchecked Sendable {
             let alert = AgentAlert(id: AgentAlert.makeID(), kind: AgentKind(wire: body.agent?.kind), event: event,
                                    sessionHash: hash, raisedAt: Date())
             let handler = bridge.handler
+            handling = true
             Task { [self] in
                 let disposition = await handler(alert)
                 bridge.queue.async { [self] in

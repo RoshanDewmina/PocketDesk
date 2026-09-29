@@ -2,7 +2,7 @@ import XCTest
 
 /// A real push, delivered by `xcrun simctl push`, tapped on the real notification banner, must open the
 /// alert sheet for the right agent. A UI test cannot run `simctl`, so `script/push-samples/verify-routing.sh`
-/// starts this test, waits for it to write its ready file, pushes the sample, and reads the result.
+/// starts a test, waits for it to write its ready file, pushes the sample, and reads the result.
 /// Skipped in ordinary runs.
 ///
 /// Environment (all passed as `TEST_RUNNER_FARSIDE_PUSH_*`):
@@ -20,11 +20,9 @@ final class AgentAlertPushUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    /// Launches with a paired Mac, turns alerts on (the moment iOS is asked) and tells the harness to push.
     @MainActor
-    func testAPushedAlertRoutesToTheRightSheetOrNowhere() throws {
-        let tapText = try XCTUnwrap(environment["FARSIDE_PUSH_TAP_TEXT"])
-        let expectSheet = environment["FARSIDE_PUSH_EXPECT_SHEET"] == "yes"
-
+    private func launchWithAlertsOnAndSignalReady() throws -> XCUIApplication {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-seed-pairing=Studio Mac", "--ui-x",
                                 "-agentAlerts.enabled", "NO", "-agentAlerts.declinedIDs", "()", "-agentAlerts.snoozedIDs", "()"]
@@ -37,7 +35,6 @@ final class AgentAlertPushUITests: XCTestCase {
         }
         app.launch()
 
-        // Turn alerts on, which is the moment iOS is asked. The sim remembers an earlier Allow.
         let row = app.buttons["home.agentAlerts"]
         XCTAssertTrue(row.waitForExistence(timeout: 10))
         row.tap()
@@ -51,9 +48,16 @@ final class AgentAlertPushUITests: XCTestCase {
         waitForExpectations(timeout: 15)
         app.buttons["Done"].tap()
 
-        // Ready: the harness pushes the sample now.
         let ready = environment["FARSIDE_PUSH_READY_FILE"] ?? "/tmp/farside-push-ready"
         try "ready".write(toFile: ready, atomically: true, encoding: .utf8)
+        return app
+    }
+
+    @MainActor
+    func testAPushedAlertRoutesToTheRightSheetOrNowhere() throws {
+        let tapText = try XCTUnwrap(environment["FARSIDE_PUSH_TAP_TEXT"])
+        let expectSheet = environment["FARSIDE_PUSH_EXPECT_SHEET"] == "yes"
+        let app = try launchWithAlertsOnAndSignalReady()
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let banner = springboard.staticTexts[tapText]
@@ -72,6 +76,32 @@ final class AgentAlertPushUITests: XCTestCase {
             XCTAssertFalse(sheet.exists, "A payload that is not a valid agent alert must not route")
             attach("Nothing routed")
         }
+    }
+
+    /// The category the phone registers is what the system shows: Snooze and Not now under the banner,
+    /// and choosing one never opens the alert sheet.
+    @MainActor
+    func testTheBannerOffersSnoozeAndNotNowWithoutOpeningTheAlert() throws {
+        let tapText = try XCTUnwrap(environment["FARSIDE_PUSH_TAP_TEXT"])
+        let app = try launchWithAlertsOnAndSignalReady()
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let banner = springboard.staticTexts[tapText]
+        XCTAssertTrue(banner.waitForExistence(timeout: 60), "The pushed notification did not arrive")
+        banner.press(forDuration: 1.2)
+
+        let snooze = springboard.buttons["Snooze 15 min"]
+        let notNow = springboard.buttons["Not now"]
+        XCTAssertTrue(snooze.waitForExistence(timeout: 10), "The category offers Snooze 15 min")
+        XCTAssertTrue(notNow.exists, "The category offers Not now")
+        attach("Actions under the notification")
+
+        notNow.tap()
+        Thread.sleep(forTimeInterval: 3)
+        let sheet = app.descendants(matching: .any)["agent.alert.sheet"].firstMatch
+        XCTAssertFalse(sheet.exists, "An action button is not a tap on the notification")
+        XCTAssertFalse(springboard.staticTexts[tapText].exists, "Not now takes the notification away")
+        attach("After Not now")
     }
 
     private func attach(_ name: String) {
