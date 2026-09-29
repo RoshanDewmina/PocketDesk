@@ -35,6 +35,7 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
     private weak var metalView: MTKView?
     var counters: StreamCounters?
     private var reportedRate = false
+    private var chosenFramesPerSecond: Int?
 
     /// Returns nil when the view hierarchy is not the expected RTCMTLVideoView → MTKView shape.
     static func install(on videoView: UIView) -> VideoPresentationProbe? {
@@ -45,6 +46,7 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
         probe.metalView = metalView
         if StreamTuning.current.presentAtDisplayMaximum {
             metalView.preferredFramesPerSecond = preferredFramesPerSecond
+            probe.chosenFramesPerSecond = preferredFramesPerSecond
             // Two drawables instead of three: one fewer frame waiting between draw and scan-out.
             (metalView.layer as? CAMetalLayer)?.maximumDrawableCount = 2
         }
@@ -70,6 +72,10 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
 
     func draw(in view: MTKView) {
         renderer?.draw(in: view)
+        // WebRTC's Metal renderer sets 30 fps on the view when it starts on the first frame.
+        if let chosen = chosenFramesPerSecond, view.preferredFramesPerSecond != chosen {
+            view.preferredFramesPerSecond = chosen
+        }
         if !reportedRate, let screen = view.window?.windowScene?.screen {
             reportedRate = true
             counters?.setDisplayMaxFPS(min(screen.maximumFramesPerSecond, view.preferredFramesPerSecond))

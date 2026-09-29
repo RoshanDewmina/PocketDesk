@@ -928,7 +928,6 @@ struct RemoteVideoSurface: UIViewRepresentable {
         context.coordinator.view = view
         context.coordinator.presentation = VideoPresentationProbe.install(on: view)
         context.coordinator.presentation?.counters = counters
-        track.add(view)
         track.add(context.coordinator)
         return view
     }
@@ -936,16 +935,13 @@ struct RemoteVideoSurface: UIViewRepresentable {
     func updateUIView(_ view: RTCMTLVideoView, context: Context) {
         context.coordinator.presentation?.counters = counters
         if context.coordinator.track !== track {
-            context.coordinator.track?.remove(view)
             context.coordinator.track?.remove(context.coordinator)
             context.coordinator.track = track
-            track.add(view)
             track.add(context.coordinator)
         }
     }
 
     static func dismantleUIView(_ view: RTCMTLVideoView, coordinator: FrameObserver) {
-        coordinator.track?.remove(view)
         coordinator.track?.remove(coordinator)
         coordinator.track = nil
         coordinator.presentation?.uninstall()
@@ -953,13 +949,18 @@ struct RemoteVideoSurface: UIViewRepresentable {
     }
 }
 
+/// The track's only renderer for the main picture: it reports arrivals and passes frames on to
+/// the Metal view through `RestampingRenderer`.
 final class FrameObserver: NSObject, RTCVideoRenderer {
     var track: RTCVideoTrack?
-    weak var view: RTCMTLVideoView?
+    weak var view: RTCMTLVideoView? {
+        didSet { forward.target = view }
+    }
     var presentation: VideoPresentationProbe? {
         didSet { lock.lock(); tracker = presentation?.tracker; lock.unlock() }
     }
     let onFrame: () -> Void
+    private let forward = RestampingRenderer()
     private let lock = NSLock()
     private var last = 0.0
     private var tracker: PresentationTracker?
@@ -968,10 +969,13 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
         self.onFrame = onFrame
     }
 
-    func setSize(_ size: CGSize) {}
+    func setSize(_ size: CGSize) {
+        forward.setSize(size)
+    }
 
     func renderFrame(_ frame: RTCVideoFrame?) {
         guard frame != nil else { return }
+        forward.renderFrame(frame)
         lock.lock()
         let now = ProcessInfo.processInfo.systemUptime
         let notify = now - last > 0.25
@@ -982,5 +986,32 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
         if notify {
             DispatchQueue.main.async { [weak self] in self?.onFrame() }
         }
+    }
+}
+
+/// Every RTCMTLVideoView must get its frames through this instead of straight from the track.
+/// With the tuned zero playout delay, libwebrtc stamps every decoded frame with render time 0,
+/// and RTCMTLVideoView skips a frame whose timestamp equals the last one it drew, so it would
+/// never draw at all. Frames are passed on with a strictly increasing timestamp.
+final class RestampingRenderer: NSObject, RTCVideoRenderer {
+    weak var target: RTCMTLVideoView?
+    private let lock = NSLock()
+    private var lastStampNs: Int64 = 0
+
+    init(target: RTCMTLVideoView? = nil) {
+        self.target = target
+    }
+
+    func setSize(_ size: CGSize) {
+        target?.setSize(size)
+    }
+
+    func renderFrame(_ frame: RTCVideoFrame?) {
+        guard let frame, let target else { return }
+        lock.lock()
+        let stampNs = max(Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000), lastStampNs + 1)
+        lastStampNs = stampNs
+        lock.unlock()
+        target.renderFrame(RTCVideoFrame(buffer: frame.buffer, rotation: frame.rotation, timeStampNs: stampNs))
     }
 }
