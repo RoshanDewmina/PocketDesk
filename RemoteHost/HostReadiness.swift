@@ -135,6 +135,50 @@ enum HostSystemSettingsPane: String {
     var url: URL {
         URL(string: "x-apple.systempreferences:com.apple.preference.security?\(rawValue)")!
     }
+
+    /// The pane's title in Privacy & Security, as that macOS names it. macOS 27's Privacy &
+    /// Security extension titles the Accessibility pane "Device Control and Data Access".
+    func title(macOSMajor: Int) -> String {
+        switch self {
+        case .screenRecording: "Screen & System Audio Recording"
+        case .accessibility: macOSMajor >= 27 ? "Device Control and Data Access" : "Accessibility"
+        }
+    }
+
+    static var currentMacOSMajor: Int { ProcessInfo.processInfo.operatingSystemVersion.majorVersion }
+}
+
+/// Permission instructions that name what System Settings shows: the pane and this app's entry.
+enum HostPermissionCopy {
+    /// System Settings lists an app under its Finder name, which follows the installed bundle's
+    /// file name ("PocketDesk Host.app" keeps its old name so existing permission grants survive).
+    static func listName(fromDisplayName name: String) -> String {
+        name.hasSuffix(".app") ? String(name.dropLast(4)) : name
+    }
+
+    static func switchOn(_ pane: HostSystemSettingsPane, listName: String, macOSMajor: Int) -> String {
+        "In \(pane.title(macOSMajor: macOSMajor)), switch on “\(listName)”."
+    }
+
+    static func recovery(_ pane: HostSystemSettingsPane, listName: String, macOSMajor: Int) -> String {
+        let title = pane.title(macOSMajor: macOSMajor)
+        switch pane {
+        case .screenRecording:
+            return "Switched on already? Quit and reopen Farside. Still nothing: in \(title), select “\(listName)”, "
+                + "remove it with –, add it again with +, then reopen Farside."
+        case .accessibility:
+            return "In \(title), select “\(listName)”, remove it with –, then add it again with +."
+        }
+    }
+}
+
+enum HostPairingRefresh {
+    /// A code shown on screen that runs out is replaced by a fresh one. A code that ended any other
+    /// way (a declined phone) stays ended, and so does one whose refresh failed.
+    static func shouldRefresh(from old: HostPairingState, to new: HostPairingState) -> Bool {
+        if case .showingCode = old, new == .expired { return true }
+        return false
+    }
 }
 
 struct HostAutoStartGate: Equatable {
@@ -163,6 +207,7 @@ struct HostPreferences {
         static let keepAwake = "keepAwakeWhileSharing"
         static let sharingEnabled = "sharingEnabled"
         static let accessibilitySkipped = "setupAccessibilitySkipped"
+        static let pairingDeferred = "setupPairingDeferred"
         static let serviceAddress = "PocketDeskServiceURL"
         static let chimeOnConnect = "chimeOnConnect"
         static let privacyCurtain = "privacyCurtainWhileSharing"
@@ -201,6 +246,12 @@ struct HostPreferences {
     var accessibilitySkipped: Bool {
         get { defaults.bool(forKey: Key.accessibilitySkipped) }
         nonmutating set { defaults.set(newValue, forKey: Key.accessibilitySkipped) }
+    }
+
+    /// Setup's "Skip for now" on the Pair step: pair later from the menu bar.
+    var pairingDeferred: Bool {
+        get { defaults.bool(forKey: Key.pairingDeferred) }
+        nonmutating set { defaults.set(newValue, forKey: Key.pairingDeferred) }
     }
 
     /// Off unless the person turns it on; covering the Mac's screen is never a surprise.

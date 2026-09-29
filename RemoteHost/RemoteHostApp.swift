@@ -13,7 +13,7 @@ struct RemoteHostApp: App {
         appDelegate.configure { model.stopForTermination() }
         appDelegate.onLaunch = {
             HostAppActivation.shared.start()
-            if model.needsSetup && !Self.e2eActive { HostAppActivation.shared.bringForward() }
+            if model.presentsSetupAtLaunch && !Self.e2eActive { HostAppActivation.shared.bringForward() }
         }
         appDelegate.onReopen = {
             HostAppActivation.shared.showSetupOrSettings(needsSetup: model.needsSetup)
@@ -26,7 +26,7 @@ struct RemoteHostApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        .defaultLaunchBehavior(model.needsSetup && !Self.e2eActive ? .presented : .suppressed)
+        .defaultLaunchBehavior(model.presentsSetupAtLaunch && !Self.e2eActive ? .presented : .suppressed)
         .restorationBehavior(.disabled)
 
         Settings {
@@ -118,6 +118,7 @@ extension HostActions {
             openSystemSettings: model.openSystemSettings,
             relaunch: model.relaunch,
             skipAccessibility: model.skipAccessibility,
+            skipPairing: model.deferPairing,
             beginPairing: model.beginPairing,
             setServiceAddress: model.setServiceAddress,
             approvePhone: model.approvePhone,

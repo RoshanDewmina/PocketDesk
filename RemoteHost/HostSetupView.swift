@@ -41,6 +41,11 @@ struct HostSetupView: View {
         .onChange(of: state.setupStep) { old, new in
             page = HostSetupFlow.page(afterStepChangeFrom: old, to: new, current: page)
         }
+        .onChange(of: state.pairingDeferred) { _, deferred in
+            // Skip moves on to the ready check; Pair there (or in the menu bar) comes back.
+            if deferred && page == .pair { page = .ready }
+            if !deferred && page == .ready && state.setupStep == .pairPhone { page = .pair }
+        }
     }
 
     @ViewBuilder
@@ -76,7 +81,8 @@ struct HostSetupView: View {
                 let enabled = HostSetupFlow.canContinue(from: page, state: state)
                 Button("Continue") {
                     guard let next = HostSetupPage(rawValue: page.rawValue + 1) else { return }
-                    page = min(next, HostSetupFlow.furthestPage(for: state.setupStep))
+                    page = min(next, HostSetupFlow.furthestPage(for: state.setupStep,
+                                                                pairingDeferred: state.pairingDeferred))
                 }
                 .buttonStyle(HostButtonStyle(kind: enabled ? .primary : .plate, height: 34))
                 .disabled(!enabled)
@@ -279,9 +285,12 @@ struct HostPermissionsPage: View {
                 HostPermissionRow(
                     title: "Screen Recording", reason: "So your iPhone can see the screen.",
                     symbol: "display", status: state.screenRecording,
-                    waiting: state.screenRecordingSettingsOpened, listName: state.appListName,
+                    waiting: state.screenRecordingSettingsOpened,
+                    instruction: HostPermissionCopy.switchOn(.screenRecording, listName: state.appListName,
+                                                             macOSMajor: state.macOSMajor),
                     showsRecoveryLink: showsRecoveryLink,
-                    recovery: "Switched on already? Quit and reopen Farside. Still nothing: select \(state.appListName) in the list, remove it with –, add it again with +, then reopen Farside.",
+                    recovery: HostPermissionCopy.recovery(.screenRecording, listName: state.appListName,
+                                                          macOSMajor: state.macOSMajor),
                     open: { actions.openSystemSettings(.screenRecording) },
                     relaunch: actions.relaunch
                 )
@@ -290,8 +299,11 @@ struct HostPermissionsPage: View {
                     title: "Accessibility", reason: "So taps become clicks and typing becomes typing.",
                     symbol: "hand.point.up.left", status: state.accessibility,
                     waiting: state.accessibilitySettingsOpened, skipped: state.accessibilitySkipped,
-                    listName: state.appListName, showsRecoveryLink: showsRecoveryLink,
-                    recovery: "Select \(state.appListName) in the list, remove it with –, then add it again with +.",
+                    instruction: HostPermissionCopy.switchOn(.accessibility, listName: state.appListName,
+                                                             macOSMajor: state.macOSMajor),
+                    showsRecoveryLink: showsRecoveryLink,
+                    recovery: HostPermissionCopy.recovery(.accessibility, listName: state.appListName,
+                                                          macOSMajor: state.macOSMajor),
                     open: { actions.openSystemSettings(.accessibility) }
                 )
                 .accessibilityIdentifier("farside.setup.accessibility")
@@ -329,7 +341,8 @@ struct HostPermissionRow: View {
     let status: HostPermissionStatus
     var waiting = false
     var skipped = false
-    let listName: String
+    /// Where to look in System Settings, named as it appears there.
+    let instruction: String
     var showsRecoveryLink = false
     let recovery: String
     let open: () -> Void
@@ -396,10 +409,11 @@ struct HostPermissionRow: View {
                         }
                 }
             }
-            if waiting && listName != "Farside" {
-                Text("Switch on Farside. It may be listed as “\(listName)”.")
+            if waiting {
+                Text(instruction)
                     .font(.system(size: 12))
                     .foregroundStyle(Farside.Palette.ash)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.leading, 54)
@@ -437,9 +451,23 @@ struct HostPairingPage: View {
                         .padding(.top, 4)
                 }
             }
+            if !state.hasPairedPhone {
+                HStack(spacing: 6) {
+                    Text("No iPhone to hand?")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Farside.Palette.ash)
+                    Button("Skip for now, and pair later from the menu bar", action: actions.skipPairing)
+                        .buttonStyle(HostButtonStyle(kind: .inline))
+                        .accessibilityIdentifier("farside.setup.skipPairing")
+                }
+                .padding(.top, 18)
+            }
         }
         .onChange(of: state.canBeginPairing, initial: true) { _, ready in
             if ready && state.pairing == .idle && !state.hasPairedPhone { actions.beginPairing() }
+        }
+        .onChange(of: state.pairing) { old, new in
+            if HostPairingRefresh.shouldRefresh(from: old, to: new) { actions.beginPairing() }
         }
     }
 
@@ -506,7 +534,7 @@ struct HostPairingPage: View {
             }
         case .expired:
             VStack(alignment: .leading, spacing: 10) {
-                Text("Codes last two minutes. Make a new one when your iPhone is ready.")
+                Text("This code no longer works. Make a new one when your iPhone is ready.")
                     .font(.system(size: 12.5))
                     .foregroundStyle(Farside.Palette.ash)
                     .fixedSize(horizontal: false, vertical: true)

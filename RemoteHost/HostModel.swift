@@ -38,6 +38,8 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var screenRecordingSettingsOpened = false
     @Published private(set) var accessibilitySettingsOpened = false
     @Published private(set) var accessibilitySkipped: Bool
+    /// Setup's Pair step was skipped: pairing waits for the menu bar, and setup stops presenting itself.
+    @Published private(set) var pairingDeferred: Bool
     @Published private(set) var displayRefreshStatus: HostDisplayRefreshStatus = .notChecked
     @Published private(set) var keepAwakeEnabled: Bool
     @Published private(set) var keepAwakeActive = false
@@ -129,6 +131,8 @@ final class RemoteHostModel: ObservableObject {
         )
     }
     var needsSetup: Bool { setupStep != .done }
+    /// Setup opens by itself at launch unless only pairing is left and the person chose to do it later.
+    var presentsSetupAtLaunch: Bool { needsSetup && !(setupStep == .pairPhone && pairingDeferred) }
 
     var setupStep: HostSetupStep {
         .current(
@@ -202,7 +206,8 @@ final class RemoteHostModel: ObservableObject {
             crashLoopStopped: crashLoopStopped,
             displays: displays.map { HostDisplayOption(id: $0.displayID, name: Self.displayName(for: $0.displayID)) },
             selectedDisplayID: selected,
-            detail: detail
+            detail: detail,
+            pairingDeferred: pairingDeferred
         )
     }
 
@@ -214,10 +219,8 @@ final class RemoteHostModel: ObservableObject {
 
     /// The installed bundle keeps its original file name so macOS permission grants survive the
     /// rename; setup mentions it because System Settings may list the app under that name.
-    private static let appListName: String = {
-        let name = FileManager.default.displayName(atPath: Bundle.main.bundlePath)
-        return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
-    }()
+    private static let appListName: String =
+        HostPermissionCopy.listName(fromDisplayName: FileManager.default.displayName(atPath: Bundle.main.bundlePath))
 
     private var latestSenderStatistics: StreamStatsReport?
 
@@ -227,6 +230,7 @@ final class RemoteHostModel: ObservableObject {
         chimeOnConnect = preferences.chimeOnConnect
         wantsSharing = preferences.sharingEnabled
         accessibilitySkipped = preferences.accessibilitySkipped
+        pairingDeferred = preferences.pairingDeferred
         curtainPreference = preferences.privacyCurtain
         refreshBackgroundStates()
         background.onChange = { [weak self] in self?.refreshBackgroundStates() }
@@ -335,6 +339,17 @@ final class RemoteHostModel: ObservableObject {
         preferences.accessibilitySkipped = true
     }
 
+    func deferPairing() {
+        pairingDeferred = true
+        preferences.pairingDeferred = true
+    }
+
+    private func clearDeferredPairing() {
+        guard pairingDeferred else { return }
+        pairingDeferred = false
+        preferences.pairingDeferred = false
+    }
+
     func relaunch() {
         let path = Bundle.main.bundleURL.path
         let pid = ProcessInfo.processInfo.processIdentifier
@@ -353,6 +368,7 @@ final class RemoteHostModel: ObservableObject {
 
     func requestPairing() {
         pairingRequested = true
+        clearDeferredPairing()
     }
 
     func cancelPairing() {
@@ -426,6 +442,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func connectionDidChange() {
+        if hasPairedPhone { clearDeferredPairing() }
         guard !pairingCode.isEmpty, hasPairedPhone else { return }
         clearPairingCode()
         pairingRequested = false
