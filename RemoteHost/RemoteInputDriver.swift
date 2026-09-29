@@ -249,7 +249,7 @@ final class RemoteInputDriver {
         windowID = nil
     }
 
-    func handle(_ input: RemoteAction, upgraded: Bool = false, now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> RemoteInputOutcome {
+    func handle(_ input: RemoteAction, upgraded: Bool = false, now: TimeInterval = ProcessInfo.processInfo.systemUptime, pointerSnapshot: CGPoint? = nil) -> RemoteInputOutcome {
         let requestID = input.action == "text" ? input.key : nil
         if input.action == "release" {
             let hadHold = held
@@ -270,6 +270,21 @@ final class RemoteInputDriver {
 
         var outcome = RemoteInputOutcome(textRequestID: requestID)
         let flags = Self.flags(for: input.modifiers)
+        // A synchronous safety check may have already resolved this event's pointer base.
+        // Reuse that exact point: WindowServer can advance between the check and injection.
+        var resolvedPoint: CGPoint?
+        func eventPoint(in bounds: CGRect) -> CGPoint {
+            if let resolvedPoint { return resolvedPoint }
+            let point: CGPoint
+            if let pointerSnapshot {
+                point = clamped(pointerSnapshot, to: bounds)
+                remember(point)
+            } else {
+                point = pointerBase(now: now, in: bounds)
+            }
+            resolvedPoint = point
+            return point
+        }
         switch input.action {
         case "move", "moveTo":
             if upgraded && held && (input.interaction?.hold != externalHoldID || input.interaction?.clickCount != Int(heldClickCount)) { break }
@@ -280,7 +295,7 @@ final class RemoteInputDriver {
                 guard input.x >= 0, input.y >= 0 else { break }
                 target = CGPoint(x: bounds.minX + input.x, y: bounds.minY + input.y)
             } else {
-                let current = pointerBase(now: now, in: bounds)
+                let current = eventPoint(in: bounds)
                 target = CGPoint(x: current.x + input.x, y: current.y + input.y)
             }
             let point = clamped(target, to: bounds)
@@ -302,7 +317,7 @@ final class RemoteInputDriver {
         case "middle":
             guard !held, let bounds = validBounds else { break }
             if upgraded { guard input.interaction?.clickCount == 1 else { break } }
-            let point = pointerBase(now: now, in: bounds)
+            let point = eventPoint(in: bounds)
             let events: [RemoteInputEventSink.MouseEvent] = [
                 .init(type: .otherMouseDown, point: point, button: .center, count: 1, flags: flags),
                 .init(type: .otherMouseUp, point: point, button: .center, count: 1, flags: flags)
@@ -315,7 +330,7 @@ final class RemoteInputDriver {
 
         case "click", "right", "double":
             guard !held, let bounds = validBounds else { break }
-            let point = pointerBase(now: now, in: bounds)
+            let point = eventPoint(in: bounds)
             let right = input.action == "right"
             let button: CGMouseButton = right ? .right : .left
             let down: CGEventType = right ? .rightMouseDown : .leftMouseDown
@@ -366,12 +381,12 @@ final class RemoteInputDriver {
                       !identity.isEmpty, !retiredHolds.contains(identity),
                       let count = input.interaction?.clickCount, count == 1 || count == 2
                 else { break }
-                let point = pointerBase(now: now, in: bounds)
+                let point = eventPoint(in: bounds)
                 guard count == 1 || (clicks == 1 && lastButton == .left &&
                     lastSemanticPoint.map { hypot($0.x - point.x, $0.y - point.y) <= 5 } == true)
                 else { break }
             }
-            let point = pointerBase(now: now, in: bounds)
+            let point = eventPoint(in: bounds)
             let count = upgraded ? Int64(input.interaction!.clickCount!) : 1
             let event = RemoteInputEventSink.MouseEvent(type: .leftMouseDown, point: point, button: .left,
                                                         count: count, flags: flags)
@@ -425,7 +440,7 @@ final class RemoteInputDriver {
                     break
                 }
             }
-            let point = pointerBase(now: now, in: bounds)
+            let point = eventPoint(in: bounds)
             lastPoint = point
             if upgraded, let detailed = eventSink.scrollDetailed {
                 outcome.accepted = detailed(point, input.x, input.y, input.interaction!.phase!)
@@ -554,7 +569,7 @@ final class RemoteInputDriver {
     }
 
     /// The point the next pointer event at `now` would start from, without recording anything.
-    /// The E2E input fence decides and clamps from this, so it judges exactly what will be posted.
+    /// Pass the returned snapshot to `handle` after fencing; rereading the cursor can race WindowServer.
     func nextPointerBase(now: TimeInterval) -> CGPoint? {
         guard let bounds = validBounds else { return nil }
         return resolvedBase(now: now, in: bounds).point

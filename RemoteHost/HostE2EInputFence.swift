@@ -80,8 +80,14 @@ enum HostE2EInputFence {
         case "move":
             let pointer = environment.pointer
             let target = CGPoint(x: pointer.x + action.x, y: pointer.y + action.y)
-            let clamped = CGPoint(x: min(content.maxX, max(content.minX, target.x)),
-                                  y: min(content.maxY, max(content.minY, target.y)))
+            // Keep a representable interior margin: nextDown is lost when converting a
+            // distant pointer to a relative delta and adding that delta back at injection.
+            let minX = min(content.midX, content.minX + 0.5)
+            let minY = min(content.midY, content.minY + 0.5)
+            let maxX = max(content.midX, content.maxX - 0.5)
+            let maxY = max(content.midY, content.maxY - 0.5)
+            let clamped = CGPoint(x: min(maxX, max(minX, target.x)),
+                                  y: min(maxY, max(minY, target.y)))
             if clamped == target { return .allow }
             return .adjust(dx: Double(clamped.x - pointer.x), dy: Double(clamped.y - pointer.y))
         case "click", "right", "double", "dragDown", "scroll":

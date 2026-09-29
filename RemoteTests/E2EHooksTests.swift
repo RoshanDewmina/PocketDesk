@@ -147,9 +147,24 @@ final class E2EHooksTests: XCTestCase {
     func testMovesStayInsideTheTestPad() {
         XCTAssertEqual(decide(RemoteAction(action: "move", x: 10, y: -20), environment()), .allow)
         let clamped = decide(RemoteAction(action: "move", x: 5000, y: 0), environment())
-        XCTAssertEqual(clamped, .adjust(dx: Double(window.maxX - HostE2EInputFence.edgeInset - 600), dy: 0))
+        XCTAssertEqual(clamped, .adjust(dx: Double(window.maxX - HostE2EInputFence.edgeInset - 0.5 - 600), dy: 0))
         guard case .reject = decide(RemoteAction(action: "move", x: 1, y: 1), environment(frontmost: false)) else {
             return XCTFail("No motion while another app is frontmost")
+        }
+    }
+
+    func testClampedRelativeMoveFromFarAwayStillAllowsClickAtAllEdges() {
+        for coordinate in [20_000.125, -20_000.125] {
+            var state = environment(pointer: CGPoint(x: coordinate, y: coordinate))
+            guard case .adjust(let dx, let dy) = decide(RemoteAction(action: "move", x: 1, y: 1), state) else {
+                return XCTFail("A distant pointer must be pulled into the pad")
+            }
+            // Exercise the same subtraction/addition round trip as actual relative injection.
+            state.pointer.x += dx
+            state.pointer.y += dy
+            XCTAssertTrue(window.insetBy(dx: HostE2EInputFence.edgeInset, dy: HostE2EInputFence.edgeInset)
+                .contains(state.pointer))
+            XCTAssertEqual(decide(RemoteAction(action: "click"), state), .allow)
         }
     }
 
@@ -158,8 +173,8 @@ final class E2EHooksTests: XCTestCase {
         guard case .adjust(let dx, let dy) = decide(RemoteAction(action: "move", x: 1, y: 1), outside) else {
             return XCTFail("The first move from outside must land inside the Test Pad")
         }
-        XCTAssertEqual(20 + dx, Double(window.minX + HostE2EInputFence.edgeInset), accuracy: 0.001)
-        XCTAssertEqual(20 + dy, Double(window.minY + HostE2EInputFence.edgeInset), accuracy: 0.001)
+        XCTAssertEqual(20 + dx, Double(window.minX + HostE2EInputFence.edgeInset + 0.5), accuracy: 0.001)
+        XCTAssertEqual(20 + dy, Double(window.minY + HostE2EInputFence.edgeInset + 0.5), accuracy: 0.001)
     }
 
     func testClicksNeedTheTestPadUnderAnUncoveredPointer() {

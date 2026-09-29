@@ -251,7 +251,7 @@ final class NativeInputSafetyTests: XCTestCase {
             case .adjust(let dx, let dy): move.x = dx; move.y = dy
             case .reject(let reason): XCTFail(reason); return
             }
-            XCTAssertTrue(driver.handle(move, upgraded: true, now: now).accepted)
+            XCTAssertTrue(driver.handle(move, upgraded: true, now: now, pointerSnapshot: base).accepted)
             XCTAssertTrue(pad.insetBy(dx: HostE2EInputFence.edgeInset, dy: HostE2EInputFence.edgeInset)
                 .contains(driver.lastPoint), "Posted \(driver.lastPoint) stays in the pad")
         }
@@ -261,8 +261,29 @@ final class NativeInputSafetyTests: XCTestCase {
                                                   pointer: base, coveringOwner: nil)
         XCTAssertEqual(HostE2EInputFence.decide(action("click", count: 1), held: false, allowSpaceKeys: false,
                                                 environment: environment), .allow)
-        XCTAssertTrue(driver.handle(action("click", count: 1), upgraded: true, now: now).accepted)
+        XCTAssertTrue(driver.handle(action("click", count: 1), upgraded: true, now: now, pointerSnapshot: base).accepted)
         XCTAssertTrue(pad.contains(recorder.mouseEvents.last!.point), "The click lands where the fence judged it")
+    }
+
+    func testFencedPointerSnapshotSurvivesWindowServerMovementBeforeInjection() throws {
+        for name in ["move", "click", "dragDown"] {
+            let recorder = NativeInputRecorder()
+            let driver = configuredDriver(recorder)
+            let pad = CGRect(x: 60, y: 60, width: 70, height: 80)
+            let base = try XCTUnwrap(driver.nextPointerBase(now: 10))
+            let environment = HostE2EFenceEnvironment(testPadRunning: true, testPadFrontmost: true,
+                testPadContent: pad, pointer: base, coveringOwner: nil)
+            let input = action(name, count: 1, hold: name == "dragDown" ? "snapshot-hold" : nil,
+                               x: name == "move" ? 5 : 0)
+            XCTAssertEqual(HostE2EInputFence.decide(input, held: false, allowSpaceKeys: false,
+                                                   environment: environment), .allow)
+            // A physical move or delayed WindowServer event lands outside the pad after admission.
+            recorder.pointer = CGPoint(x: 190, y: 190)
+            XCTAssertTrue(driver.handle(input, upgraded: true, now: 10, pointerSnapshot: base).accepted)
+            let expected = CGPoint(x: name == "move" ? 105 : 100, y: 100)
+            XCTAssertEqual(recorder.mouseEvents.last?.point, expected)
+            XCTAssertTrue(pad.contains(try XCTUnwrap(recorder.mouseEvents.last?.point)))
+        }
     }
 
     func testRetiredIdentityWindowDoesNotExhaustLongSession() {
