@@ -251,7 +251,8 @@ final class PhoneClient {
         let s = state
         return "phone[connected=\(s.bool("connected")) canControl=\(s.bool("canControl")) fresh=\(s.bool("fresh")) "
             + "capture=\(s.bool("captureHealthy")) control=\(s.bool("controlAllowed")) epoch=\(s.int("geometryEpoch") ?? 0) "
-            + "resume=\(s.string("resumeState") ?? "?") status=\(s.string("coordinatorStatus") ?? "?")]"
+            + "frames=\(s.int("frames") ?? 0) frameAge=\(Int(s.double("lastFrameAgeMs") ?? -1))ms "
+            + "concealed=\(s.bool("contentConcealed")) resume=\(s.string("resumeState") ?? "?") status=\(s.string("coordinatorStatus") ?? "?")]"
     }
 
     /// Sends a keyboard shortcut the phone UI has no button for through the admitted input path.

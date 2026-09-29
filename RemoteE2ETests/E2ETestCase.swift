@@ -403,7 +403,9 @@ class E2ETestCase: XCTestCase {
                 gain = gain.map { $0 * 0.4 + observed * 0.6 } ?? observed
             }
         }
-        throw E2EFailure("Pointer did not reach \(label) at \(target) after \(maxStrokes) strokes; last \(host.pointer.map { "\($0)" } ?? "unknown"). \(host.summary())")
+        let canvases = app.descendants(matching: .any).matching(identifier: "remote.canvas").allElementsBoundByIndex.map { "\($0.frame)" }
+        recorder.note("steering diagnostics: canvas elements \(canvases), stroke region \(strokeRegion), phone viewport \(phone.state.object("viewport"))")
+        throw E2EFailure("Pointer did not reach \(label) at \(target) after \(maxStrokes) strokes; last \(host.pointer.map { "\($0)" } ?? "unknown"). \(phone.summary()) \(host.summary())")
     }
 
     /// Host pointer once it stops changing across two separate state publications (every 100 ms);
