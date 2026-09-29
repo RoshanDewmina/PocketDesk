@@ -1,5 +1,6 @@
 import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import { forgetPushRoom, handlePushEvent, handlePushPreferences, handlePushRegister, handlePushRemove, handlePushReport, purgePushRetention } from "../src/push";
+import { purgeRetention } from "../src/entitlement/store";
 import { randomHex, sha256Hex } from "../src/util";
 import { connectHost, pairing, postJson, sleep, testEnv, type Pairing } from "./helpers/client";
 import { installTurnMock } from "./helpers/turn-mock";
@@ -205,5 +206,41 @@ describe("pairing-scoped generic APNs alerts", () => {
     expect((await handlePushPreferences(req("preferences", {
       room: p.room, token: p.clientToken, alertsEnabled: true,
     }), env)).status).toBe(400);
+  });
+
+  it("bounds APNs registrations by room retention without deleting pending Activity ends or tombstones", async () => {
+    const now = Date.now();
+    const year = 365 * 24 * 60 * 60_000;
+    const freshRoom = randomHex(32);
+    const oldAddressRoom = randomHex(32);
+    const expiredRoom = randomHex(32);
+    const missingRoom = randomHex(32);
+    for (const [room, lastSeen] of [[freshRoom, now], [oldAddressRoom, now], [expiredRoom, now - year - 1]] as const) {
+      await testEnv.DB.prepare("INSERT INTO rooms (id,first_seen,last_seen,status) VALUES (?1,?2,?3,'active')")
+        .bind(room, lastSeen, lastSeen).run();
+    }
+    for (const [room, updatedAt] of [[freshRoom, now], [oldAddressRoom, now - year - 1],
+      [expiredRoom, now], [missingRoom, now]] as const) {
+      await testEnv.DB.prepare(`INSERT INTO push_registrations
+        (room,device_token,environment,alerts_enabled,time_sensitive,show_agent_name,locale,app_build,os_major,updated_at)
+        VALUES (?1,?2,'sandbox',1,0,0,'en_CA','test',18,?3)`)
+        .bind(room, randomHex(), updatedAt).run();
+    }
+    for (const [room, activityID, nextRetryAt] of [[expiredRoom, "pending-end", now + 60_000],
+      [missingRoom, "ended-tombstone", null]] as const) {
+      await testEnv.DB.prepare(`INSERT INTO activity_registrations
+        (room,route_epoch,activity_id,push_token,environment,updated_at,end_reason,end_at,next_retry_at)
+        VALUES (?1,?2,?3,'ab','sandbox',?4,'expired',?4,?5)`)
+        .bind(room, randomHex(16), activityID, now, nextRetryAt).run();
+    }
+    expect((await purgeRetention(testEnv.DB, now)).rooms).toBeGreaterThanOrEqual(1);
+    await purgePushRetention(testEnv.DB, now);
+    const remaining = await testEnv.DB.prepare("SELECT room FROM push_registrations WHERE room IN (?1,?2,?3,?4)")
+      .bind(freshRoom, oldAddressRoom, expiredRoom, missingRoom).all<{ room: string }>();
+    expect(remaining.results).toEqual([{ room: freshRoom }]);
+    expect(await testEnv.DB.prepare("SELECT activity_id FROM activity_registrations WHERE room IN (?1,?2) ORDER BY activity_id")
+      .bind(expiredRoom, missingRoom).all()).toMatchObject({ results: [
+        { activity_id: "ended-tombstone" }, { activity_id: "pending-end" },
+      ] });
   });
 });
