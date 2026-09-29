@@ -34,6 +34,7 @@ final class ActivityKitSessionClient: SessionActivityClient {
             activity = try Activity.request(attributes: attributes,
                                             content: ActivityContent(state: state, staleDate: staleDate),
                                             pushType: nil)
+            log.info("Live Activity started in phase \(state.phase.rawValue, privacy: .public), preview: \(attributes.isPreview)")
             return true
         } catch {
             log.error("Live Activity was not started: \(error.localizedDescription, privacy: .public)")
@@ -185,6 +186,7 @@ final class SessionActivityController {
     /// A labelled sample for the Settings "Preview Live Activity" button: it walks through every state
     /// and connects to nothing. A real session replaces it.
     func startPreview(hold phase: FarsideSessionAttributes.Phase? = nil) {
+        log.info("Live Activity preview requested: enabled \(self.client.isEnabled), running \(self.machine.hasActivity)")
         guard !machine.hasActivity, client.isEnabled else { return }
         cancelPreview()
         let preferences = preferences()
