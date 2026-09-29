@@ -443,9 +443,15 @@ extension PeerMedia: RTCPeerConnectionDelegate {
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
+        // Attach before returning: the Mac sends its one-time geometry and viewing messages as soon
+        // as the channel opens, and the WebRTC wrapper drops any message that arrives while the
+        // channel has no delegate. Main-queue order still adopts the channel before its messages.
+        dataChannel.delegate = self
         DispatchQueue.main.async { [weak self] in
-            guard let self, !self.closed, dataChannel.label == "control", self.channel == nil else { dataChannel.close(); return }
-            self.channel = dataChannel; dataChannel.delegate = self
+            guard let self, !self.closed, dataChannel.label == "control", self.channel == nil else {
+                dataChannel.delegate = nil; dataChannel.close(); return
+            }
+            self.channel = dataChannel
             if dataChannel.readyState == .open { self.startDiagnostics(); self.onState?("connected") }
         }
     }
@@ -453,14 +459,23 @@ extension PeerMedia: RTCPeerConnectionDelegate {
 extension PeerMedia: RTCDataChannelDelegate {
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
         DispatchQueue.main.async { [weak self] in
-            guard let self, !self.closed else { return }
+            guard let self, !self.closed, self.channel === dataChannel else { return }
             if dataChannel.readyState == .open { self.startDiagnostics(); self.onState?("connected") }
             else if dataChannel.readyState == .closed { self.onState?("closed") }
         }
     }
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
-        guard buffer.isBinary, buffer.data.count <= 16384 else { DispatchQueue.main.async { [weak self] in self?.onState?("failed") }; return }
-        DispatchQueue.main.async { [weak self] in guard let self, !self.closed else { return }; self.onControl?(buffer.data) }
+        guard buffer.isBinary, buffer.data.count <= 16384 else {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.channel === dataChannel else { return }
+                self.onState?("failed")
+            }
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.closed, self.channel === dataChannel else { return }
+            self.onControl?(buffer.data)
+        }
     }
 }
 
