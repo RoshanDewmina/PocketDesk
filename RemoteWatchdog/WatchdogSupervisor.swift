@@ -8,7 +8,12 @@ import os
 /// reads screen content or pairing secrets; it only reads the host's small run record.
 @MainActor
 final class WatchdogSupervisor {
-    static let pollInterval: TimeInterval = 1
+    /// Close watching only while a curtain is up; otherwise the process-exit source reacts at once
+    /// and polling just catches a stalled heartbeat.
+    static func pollInterval(hostAlive: Bool, curtainUp: Bool) -> TimeInterval {
+        guard hostAlive else { return 2 }
+        return curtainUp ? 1 : 3
+    }
     static let launchRetries = 3
     static let launchRetryDelay: TimeInterval = 5
 
@@ -51,10 +56,14 @@ final class WatchdogSupervisor {
         })
         logger.notice("Watching \(self.bundlePath, privacy: .public)")
         tick()
-        let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+    }
+
+    private func schedule(after interval: TimeInterval) {
+        timer?.invalidate()
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
-        timer.tolerance = 0.25
+        timer.tolerance = interval * 0.25
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
     }
@@ -85,6 +94,7 @@ final class WatchdogSupervisor {
         let decision = policy.decide(observation, ledger: &ledger)
         if ledger != before { WatchdogStore.write(ledger, to: files.ledger) }
         execute(decision, record: record)
+        schedule(after: Self.pollInterval(hostAlive: alive, curtainUp: record?.curtainUp == true))
     }
 
     private func execute(_ decision: WatchdogDecision, record: HostRunRecord?) {
