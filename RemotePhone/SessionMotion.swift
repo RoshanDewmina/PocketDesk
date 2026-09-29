@@ -86,8 +86,11 @@ struct ResolutionLockView: View {
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-        .sensoryFeedback(.impact(weight: .light, intensity: 0.8), trigger: stage,
-                         condition: { old, new in new > old && !reduceMotion })
+        .sensoryFeedback(trigger: stage) { old, new in
+            guard new > old else { return nil }
+            if new >= 3 { return .success }
+            return reduceMotion ? nil : .impact(flexibility: .rigid, intensity: 0.45 + 0.25 * Double(new))
+        }
         .task(id: connected) { await run() }
         .onChange(of: pictureReady) { _, ready in if ready { finish() } }
     }
@@ -118,7 +121,8 @@ struct ResolutionLockView: View {
         }
         connectedAt = Date()
         for next in 1...2 {
-            do { try await Task.sleep(for: .milliseconds(pictureReady ? 90 : 300)) } catch { return }
+            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+            guard !finishing else { return }
             withAnimation(.easeOut(duration: 0.18)) { stage = max(stage, next) }
         }
         if pictureReady { finish(); return }
@@ -126,18 +130,13 @@ struct ResolutionLockView: View {
         withAnimation(.easeOut(duration: 0.3)) { slow = true }
     }
 
+    /// Steps follow the connection, so the lock never adds a wait: the first frame goes straight to crisp.
     private func finish() {
         guard fixedStage == nil, !finishing else { return }
         finishing = true
         Task { @MainActor in
-            if !reduceMotion {
-                while stage < 2 {
-                    withAnimation(.easeOut(duration: 0.1)) { stage += 1 }
-                    try? await Task.sleep(for: .milliseconds(90))
-                }
-            }
-            withAnimation(.easeOut(duration: reduceMotion ? 0.25 : 0.35)) { stage = 3 }
-            try? await Task.sleep(for: .milliseconds(380))
+            withAnimation(.easeOut(duration: reduceMotion ? 0.25 : 0.3)) { stage = 3 }
+            try? await Task.sleep(for: .milliseconds(330))
             onFinished()
         }
     }

@@ -364,6 +364,7 @@ struct GestureCoachView: View {
         .background(FarsideBackground())
         .onAppear { coach.start() }
         .sensoryFeedback(.selection, trigger: coach.passed, condition: { _, passed in passed })
+        .sensoryFeedback(.impact(weight: .heavy), trigger: coach.ripple?.serial)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("coach")
     }
@@ -494,7 +495,7 @@ struct GestureCoachView: View {
                         .allowsHitTesting(false)
                 }
                 if coach.passed {
-                    successCard.transition(reduceMotion ? .opacity : .scale(scale: 0.86).combined(with: .opacity))
+                    successCard.transition(reduceMotion ? AnyTransition.opacity : AnyTransition(.blurReplace).combined(with: .scale(scale: 0.9)))
                 }
                 NativeTrackpadSurface(enabled: !coach.passed, panMode: false, revision: UInt64(coach.lesson.rawValue),
                                       sensitivity: CGFloat(sensitivity), pointerScale: 1, doubleClickInterval: 0.5,

@@ -87,7 +87,7 @@ struct PointerAccentView: View {
     /// Timing kept outside view state so pointer motion does not re-render anything.
     @MainActor
     final class SettleClock {
-        static let restDelay: TimeInterval = 0.22
+        static let restDelay: TimeInterval = 0.12
         var lastMove: TimeInterval = 0
         var generation: UInt64 = 0
         var waiting = false
@@ -177,6 +177,6 @@ struct ContactRipple: View {
         let motion = reduceMotion ? Animation.easeOut(duration: 0.45) : Farside.Motion.easeOut(0.7)
         withAnimation(motion) { first = true }
         guard kind != .click else { return }
-        withAnimation(motion.delay(kind == .secondary ? 0.06 : 0.16)) { second = true }
+        withAnimation(motion.delay(kind == .secondary ? 0.07 : 0.16)) { second = true }
     }
 }

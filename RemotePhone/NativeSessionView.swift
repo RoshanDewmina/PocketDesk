@@ -117,7 +117,13 @@ struct NativeSessionView: View {
         }
         .sensoryFeedback(.selection, trigger: viewport.mode)
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: controlsCollapsed)
-        .sensoryFeedback(.success, trigger: connection.connected, condition: { _, connected in connected })
+        .sensoryFeedback(trigger: model.dragging) { _, holding in
+            holding ? .impact(weight: .medium) : .impact(weight: .light)
+        }
+        .sensoryFeedback(trigger: voiceInput.phase) { old, new in
+            if new == .listening { return .start }
+            return old == .listening && new != .listening ? .stop : nil
+        }
         .onChange(of: viewport.mode) { _, mode in ViewportPreference.store(mode) }
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
         .onAppear {
@@ -1043,8 +1049,8 @@ struct NativeSessionView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 Form {
-                    viewSection
                     pointerSection
+                    viewSection
                     clipboardSection
                     gesturesSection
                     workspaceSection

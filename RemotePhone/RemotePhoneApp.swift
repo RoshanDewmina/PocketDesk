@@ -155,6 +155,7 @@ final class PhoneRemoteModel: ObservableObject {
     private var activeHoldCount = 1
     private var explicitHoldDeadline: TimeInterval?
     private let clickFeedback = UIImpactFeedbackGenerator(style: .heavy)
+    private let secondaryClickFeedback = UIImpactFeedbackGenerator(style: .rigid)
 
     private var lastFrame = 0.0
     private var lastCaptureHealth = 0.0
@@ -344,7 +345,7 @@ final class PhoneRemoteModel: ObservableObject {
                                 clickCount: count ?? (activeHold == nil ? nil : activeHoldCount),
                                 phase: phase, stream: stream) : nil
         let isClick = ["click", "right", "double"].contains(name)
-        if isClick && hapticsEnabled { clickFeedback.prepare() }
+        if isClick && hapticsEnabled { (name == "right" ? secondaryClickFeedback : clickFeedback).prepare() }
         let accepted = connection.sendControl(RemoteAction(action: name, x: x, y: y,
             text: text, key: key, modifiers: modifiers, epoch: geometryEpoch, interaction: envelope,
             pointerSync: pointerSync, textFocusProbe: focusProbe))
@@ -352,9 +353,18 @@ final class PhoneRemoteModel: ObservableObject {
         if accepted && isClick {
             lastAcceptedClick = name == "click" && (count ?? 1) >= 2 ? "double" : name
             acceptedClicks &+= 1
-            if hapticsEnabled { clickFeedback.impactOccurred(intensity: 1.0) }
+            if hapticsEnabled { playClickHaptic(secondary: name == "right") }
         }
         return accepted
+    }
+
+    /// A click is one heavy tap; a right-click is two lighter rigid taps 70 ms apart.
+    private func playClickHaptic(secondary: Bool) {
+        guard secondary else { clickFeedback.impactOccurred(intensity: 1.0); return }
+        secondaryClickFeedback.impactOccurred(intensity: 0.75)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.07) { [secondaryClickFeedback] in
+            secondaryClickFeedback.impactOccurred(intensity: 0.75)
+        }
     }
 
     @discardableResult
