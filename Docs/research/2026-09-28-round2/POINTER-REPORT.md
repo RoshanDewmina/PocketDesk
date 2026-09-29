@@ -25,7 +25,7 @@ One optional envelope, `RemoteAction.pointerSync: PointerSync?` (`RemoteShared/P
 | Phone → host · `move` | `move` (ordinal, per epoch) | Lets the host acknowledge exactly which deltas it has applied |
 | Host → phone · `pointer` (≤ 60 Hz, keep-alive 4 Hz) | `x`, `y` (capture-display logical points), `visible`, `shape`, `applied`, `sample`, `videoCursor` | Authoritative sample |
 
-Validation is strict per direction (letters-only shape ≤ 32 bytes, finite coordinates 0…20000, positive ordinals, no stray fields); an unknown shape name decodes as `.unknown` rather than failing, so a newer host can never end an older phone's session. A 64-character-session `pointer` packet is under 400 bytes (≈ 23 KB/s at the 60 Hz ceiling, only while the pointer moves). `ControlProtocol.swift` has exactly two added lines (the property and one early-return in `validate()`); everything else lives in new files to keep merges small.
+Validation is strict per direction (letters-only shape ≤ 32 bytes, finite coordinates 0…20000, positive ordinals, no stray fields); an unknown shape name decodes as `.unknown` rather than failing, so a newer host can never end an older phone's session. A 64-character-session `pointer` packet is under 400 bytes (below 24 KB/s at the 60 Hz ceiling, reached only while the pointer moves; 4 keep-alives a second otherwise). `ControlProtocol.swift` has exactly two added lines (the property and one early-return in `validate()`); everything else lives in new files to keep merges small.
 
 ### Negotiation and the "never missing" rule
 
@@ -74,12 +74,14 @@ No private API, no global pointer-size change, no new permission.
 | Level | Result |
 |---|---|
 | Build | Mac host (`PocketDeskRemoteHost`, unsigned), iPhone app for simulator, `RemoteCoreTests`: all succeed without new warnings |
-| macOS core tests | 19 new (encoding/validation, legacy decoding, negotiation, simulated handshake, sampling, prediction incl. driver-exact clamping, blending/snap, classifier incl. enlarged/recoloured/foreign images, glyph rendering). Full suite passes |
-| iPhone unit tests | 5 new overlay-model tests (legacy host, draw-after-hide, instant local move, restore grace, epoch reset, hot-spot placement at every size). Full suite passes |
-| iPhone UI tests | 2 new (size setting reachable and persistent; glyph gallery). Existing layout suite re-run (see final report for the post-rebase run) |
+| macOS core tests | 19 new (encoding/validation, legacy decoding, negotiation, simulated handshake, sampling, prediction incl. driver-exact clamping, blending/snap, classifier incl. enlarged/recoloured/foreign images, glyph rendering). After rebasing on `a805290`: 178 executed, 0 failures, 1 pre-existing skip |
+| iPhone unit tests | 5 new overlay-model tests (legacy host, draw-after-hide, instant local move, restore grace, epoch reset, hot-spot placement at every size). After rebase: 30 executed, 0 failures (iPhone 17 simulator, iOS 27.0) |
+| iPhone UI tests | 2 new (size setting reachable and persistent; glyph gallery), both passing. Existing layout suite: see "UI suite under load" below |
 | Visual | Simulator screenshots confirm crisp glyphs and exact hot-spot placement at Medium and Extra Large in Fit |
 | Local API probe | `currentSystem` non-nil on macOS 27.0 and pixel-identical to `NSCursor.arrow`; 0.44 ms per classified sample |
 | **Not verified** | Live `showsCursor` switching mid-stream, real shape changes across apps, feel of prediction over Wi-Fi/cellular, host timer cost during a real session, duplicate/gap duration at transitions, physical readability |
+
+**Flaky pre-existing test.** `SessionIntegrationTests.testHostKeepsRegisteredRoomWhenPhoneLeavesOrMediaDrops` (real WebRTC loopback + bun service, only `RemoteCoordinator`, untouched here) failed several times while the Mac's load average was 300–800. Alternating runs of the upstream base build and this branch's build failed once each out of three, so it is load-sensitive, not a regression. It passed in the final full run.
 
 Debug-only launch arguments for offline checks: `--ui-layout-check --ui-pointer-preview` (one arrow) and `--ui-pointer-gallery` (every glyph).
 

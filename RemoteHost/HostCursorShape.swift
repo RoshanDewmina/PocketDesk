@@ -6,9 +6,10 @@ import ApplicationServices
 /// Primary: `NSCursor.currentSystem` (soft-deprecated in the macOS 27 SDK, documented to
 /// return nil "in a future version"). Its image is matched against AppKit's standard cursors
 /// by aspect, normalized hot spot and a 64×64 alpha mask, so enlarged or recoloured
-/// accessibility pointers still match; a three-level tone mask only breaks ties between shapes with
-/// the same silhouette (for example the copy and not-allowed badges). Fallback when it returns nil: the Accessibility role
-/// under the pointer (text → I-beam, link → pointing hand). Otherwise the arrow.
+/// accessibility pointers still match; a three-level tone mask only breaks ties between
+/// shapes with the same silhouette (for example the copy and not-allowed badges).
+/// Fallback when it returns nil: the Accessibility role under the pointer
+/// (text → I-beam, link → pointing hand). Otherwise the arrow.
 struct CursorFingerprint: Equatable {
     static let side = 64
     let aspect: CGFloat

@@ -207,6 +207,24 @@ final class PointerNegotiationTests: XCTestCase {
         XCTAssertFalse(captureShows, "Telemetry recovered, so the overlay resumed after the cooldown")
     }
 
+    @MainActor
+    func testCaptureReportsHideIntentImmediatelyAndResetsToShownOnStop() {
+        let capture = RemoteCapture()
+        var reported: [Bool] = []
+        capture.onCursorVisibility = { reported.append($0) }
+        XCTAssertTrue(capture.cursorInVideo, "Every capture starts with the cursor in the video")
+        capture.setShowsCursor(false)
+        XCTAssertFalse(capture.cursorInVideo, "The phone must start drawing before frames lose the cursor")
+        XCTAssertTrue(capture.appliedShowsCursor, "Nothing is applied before capture starts")
+        capture.setShowsCursor(false)
+        capture.setShowsCursor(true)
+        XCTAssertTrue(capture.cursorInVideo)
+        capture.setShowsCursor(false)
+        _ = capture.stop()
+        XCTAssertTrue(capture.cursorInVideo, "Stopping restores the default for the next session")
+        XCTAssertEqual(reported, [false, true, false, true])
+    }
+
     private func sample(_ number: UInt64, videoCursor: Bool, visible: Bool = true) -> PointerSync {
         PointerSync(videoCursor: videoCursor, x: 10, y: 10, visible: visible, shape: "arrow", sample: number)
     }

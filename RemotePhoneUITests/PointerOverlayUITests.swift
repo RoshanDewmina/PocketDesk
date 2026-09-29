@@ -61,9 +61,15 @@ final class PointerOverlayUITests: XCTestCase {
     private func openControls(_ app: XCUIApplication) {
         let handle = app.buttons["Show controls"]
         XCTAssertTrue(handle.waitForExistence(timeout: 5))
-        handle.swipeUp()
-        XCTAssertTrue(app.buttons["Controls"].waitForExistence(timeout: 5))
-        app.buttons["Controls"].tap()
+        // The synthesized swipe is occasionally dropped on a heavily loaded host; the
+        // dock itself is not under test here, so retry the reveal before asserting.
+        let controls = app.buttons["Controls"]
+        for _ in 0..<3 where !controls.exists {
+            if handle.exists { handle.swipeUp() }
+            _ = controls.waitForExistence(timeout: 5)
+        }
+        XCTAssertTrue(controls.exists)
+        controls.tap()
         XCTAssertTrue(app.descendants(matching: .any)["remote.controls.content"].firstMatch.waitForExistence(timeout: 3))
     }
 
