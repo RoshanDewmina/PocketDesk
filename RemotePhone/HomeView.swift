@@ -372,14 +372,18 @@ struct HomeView: View {
     // MARK: Behaviour
 
     private func connect() {
-        guard !AnywhereAccess.shared.removalPending else { showServerData = true; return }
+        let access = AnywhereAccess.shared
+        guard !access.removalPending, !access.localCleanupPending, !access.removalRecoveryRequired else {
+            showServerData = true
+            return
+        }
         lastFailure = nil
         model.error = ""
         onboarding.beforeConnect {
             Task { @MainActor in
                 // Only waits when this phone has Anywhere and its token is due; never more than a few seconds.
                 await AnywhereAccess.shared.prepareForConnection()
-                guard !AnywhereAccess.shared.removalPending else { return }
+                guard AnywhereAccess.shared.phoneConnectionAllowed else { showServerData = true; return }
                 connection.start()
             }
         }
