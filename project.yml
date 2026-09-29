@@ -108,8 +108,14 @@ targets:
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Use your microphone to dictate text for your Mac.
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Turn your speech into text on this iPhone for the active field on your Mac.
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
+        # Farside Anywhere (Docs/launch/STOREKIT-IMPLEMENTATION.md). Release builds send a signed
+        # transaction only to FARSIDE_SERVICE_BASE_URL (https); empty keeps Anywhere unverifiable.
+        FARSIDE_SERVICE_BASE_URL: ''
+        FARSIDE_TERMS_URL: https://getfarside.com/terms
+        FARSIDE_PRIVACY_URL: https://getfarside.com/privacy
     scheme:
       testTargets: [RemotePhoneTests, RemotePhoneUITests]
+      storeKitConfiguration: StoreKitTesting/FarsideAnywhere.storekit
   FarsideWidgets:
     type: app-extension
     platform: iOS
@@ -133,7 +139,10 @@ targets:
     type: bundle.unit-test
     platform: iOS
     deploymentTarget: '26.0'
-    sources: [RemotePhoneTests]
+    sources:
+      - RemotePhoneTests
+      - path: StoreKitTesting/FarsideAnywhere.storekit
+        buildPhase: resources
     dependencies:
       - target: PocketDeskRemote
     settings:

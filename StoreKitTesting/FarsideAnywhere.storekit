@@ -1,0 +1,96 @@
+{
+  "identifier" : "6F1D3C52-2B7E-4B8C-9E54-0D5A4E3B9A10",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_CA",
+    "_storefront" : "CAN",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21571A9E-5C1B-4E6F-A7D2-3B8E0F4C6D21",
+      "localizations" : [
+        {
+          "description" : "Reach your Mac from anywhere.",
+          "displayName" : "Farside Anywhere",
+          "locale" : "en_CA"
+        }
+      ],
+      "name" : "Farside Anywhere",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "49.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "7A2E9B14-3C5D-4F60-8E71-92A3B4C5D6E1",
+          "introductoryOffer" : {
+            "internalID" : "8B3F0C25-4D6E-4071-9F82-A3B4C5D6E7F2",
+            "numberOfPeriods" : 1,
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1W"
+          },
+          "localizations" : [
+            {
+              "description" : "Reach your Mac from anywhere.",
+              "displayName" : "Farside Anywhere - Yearly",
+              "locale" : "en_CA"
+            }
+          ],
+          "productID" : "com.roshan.PocketDesk.remote.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Farside Anywhere Yearly",
+          "subscriptionGroupID" : "21571A9E-5C1B-4E6F-A7D2-3B8E0F4C6D21",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "5.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "9C4A1D36-5E7F-4182-A093-B4C5D6E7F803",
+          "introductoryOffer" : {
+            "internalID" : "AD5B2E47-6F80-4293-B1A4-C5D6E7F80914",
+            "numberOfPeriods" : 1,
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P1W"
+          },
+          "localizations" : [
+            {
+              "description" : "Reach your Mac from anywhere.",
+              "displayName" : "Farside Anywhere - Monthly",
+              "locale" : "en_CA"
+            }
+          ],
+          "productID" : "com.roshan.PocketDesk.remote.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Farside Anywhere Monthly",
+          "subscriptionGroupID" : "21571A9E-5C1B-4E6F-A7D2-3B8E0F4C6D21",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

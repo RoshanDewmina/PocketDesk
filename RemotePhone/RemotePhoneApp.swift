@@ -9,6 +9,12 @@ struct RemotePhoneApp: App {
     @StateObject private var model = PhoneRemoteModel()
     @Environment(\.scenePhase) private var phase
 
+    init() {
+        // Transaction.updates must be heard from launch: renewals, refunds, Ask to Buy, other devices.
+        // Unit tests host this app and drive their own store against a StoreKit test session.
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil { AnywhereStore.shared.start() }
+    }
+
     var body: some Scene {
         WindowGroup {
             PhoneRemoteView(model: model, connection: model.connection)
@@ -16,6 +22,7 @@ struct RemotePhoneApp: App {
                 .preferredColorScheme(.dark)
                 .onAppear {
                     FarsideSystemIntegrations.shared.attach(model)
+                    AnywhereAccess.shared.attach(model.connection, store: .shared)
                     model.sceneChanged(phase)
                 }
                 .onChange(of: phase) { _, value in model.sceneChanged(value) }

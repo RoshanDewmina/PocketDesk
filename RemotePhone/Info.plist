@@ -15,6 +15,12 @@
 			</array>
 		</dict>
 	</array>
+	<key>FarsidePrivacyURL</key>
+	<string>$(FARSIDE_PRIVACY_URL)</string>
+	<key>FarsideServiceBaseURL</key>
+	<string>$(FARSIDE_SERVICE_BASE_URL)</string>
+	<key>FarsideTermsURL</key>
+	<string>$(FARSIDE_TERMS_URL)</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
 	<key>UIAppFonts</key>
