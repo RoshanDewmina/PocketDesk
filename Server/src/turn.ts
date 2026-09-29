@@ -13,7 +13,8 @@ export type TurnCredentialProvider = {
   /** How long each issued credential stays valid. The signaling service schedules refreshes from it. */
   readonly ttlSeconds?: number;
   issue(context: { room: string; role: PeerRole }): Promise<IceServer[]>;
-  revoke?(servers: IceServer[]): Promise<void>;
+  /** `ageMs`: how long ago the set was issued, when known (Cloudflare needs it to read a 404). */
+  revoke?(servers: IceServer[], context?: { ageMs?: number }): Promise<void>;
 };
 
 const allowedIceURL = /^(?:stun|stuns|turn|turns):[^\s]{1,500}$/;
@@ -114,6 +115,13 @@ export type RevocationRetry = {
 
 export const defaultRevocationRetry: RevocationRetry = { attempts: 4, baseDelayMs: 250, maxDelayMs: 2000 };
 
+/**
+ * Cloudflare's revoke is eventually consistent: right after issue it can answer 404 for a
+ * credential it has not propagated yet. A 404 this soon is retried; later, a 404 means the
+ * credential is already revoked or expired.
+ */
+export const revocationPropagationMs = 30_000;
+
 /** Exponential backoff with jitter: between half and all of min(max, base * 2^(attempt-1)). */
 export function revocationDelayMs(attempt: number, retry: RevocationRetry, random: () => number = Math.random): number {
   const ceiling = Math.min(retry.maxDelayMs, retry.baseDelayMs * 2 ** (attempt - 1));
@@ -159,7 +167,8 @@ export function createCloudflareTurnProvider(config: {
   revocationRetry?: RevocationRetry;
   sleep?: (ms: number) => Promise<void>;
   random?: () => number;
-  /** One line per event, never containing the API token, key ID or a credential username. */
+  now?: () => number;
+  /** One line per event, never containing the API token, key ID or a credential username. Defaults to stderr. */
   log?: (line: string) => void;
 }): TurnCredentialProvider {
   if (!/^[A-Za-z0-9]{32}$/.test(config.keyId)) throw new Error('invalid Cloudflare TURN key ID');
@@ -179,10 +188,14 @@ export function createCloudflareTurnProvider(config: {
   }
   const sleep = config.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const random = config.random ?? Math.random;
-  const log = config.log ?? ((line: string) => console.error(line));
+  const now = config.now ?? Date.now;
+  // stderr only: scripts print their JSON report on stdout.
+  const log = config.log ?? ((line: string) => { process.stderr.write(`${line}\n`); });
 
-  /** One revocation call. Resolves to undefined on success, or a secret-free reason. */
-  const attemptRevocation = async (username: string): Promise<string | undefined> => {
+  type Attempt = { outcome: 'revoked' } | { outcome: 'not_found' | 'failed'; reason: string };
+
+  /** One revocation call, with a secret-free reason when it did not succeed. */
+  const attemptRevocation = async (username: string): Promise<Attempt> => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), config.timeoutMs);
     try {
@@ -194,24 +207,42 @@ export function createCloudflareTurnProvider(config: {
         headers: { authorization: `Bearer ${config.apiToken}` },
         signal: controller.signal,
       });
-      if (response.status === 204) return undefined;
+      if (response.status === 204) return { outcome: 'revoked' };
       const body = await readLogBody(response, [config.apiToken, config.keyId, username, encodeURIComponent(username)]);
-      return `status ${response.status}${body ? ` body "${body}"` : ''}`;
+      return {
+        outcome: response.status === 404 ? 'not_found' : 'failed',
+        reason: `status ${response.status}${body ? ` body "${body}"` : ''}`,
+      };
     } catch (error) {
-      return controller.signal.aborted ? `timed out after ${config.timeoutMs} ms` : `request failed (${(error as Error)?.name ?? 'error'})`;
+      return {
+        outcome: 'failed',
+        reason: controller.signal.aborted ? `timed out after ${config.timeoutMs} ms` : `request failed (${(error as Error)?.name ?? 'error'})`,
+      };
     } finally {
       clearTimeout(timer);
     }
   };
 
-  /** Retries with backoff; true once Cloudflare confirms. Never logs the username. */
-  const revokeWithRetry = async (username: string, index: number, count: number): Promise<boolean> => {
+  /**
+   * Retries with backoff; true once Cloudflare confirms, or once a 404 comes long enough after
+   * issue to mean the credential is already gone. A 404 with no known age is never taken as done.
+   * Never logs the username.
+   */
+  const revokeWithRetry = async (username: string, index: number, count: number, ageMs?: number): Promise<boolean> => {
+    const startedAt = now();
     for (let attempt = 1; attempt <= retry.attempts; attempt += 1) {
-      const failure = await attemptRevocation(username);
-      if (!failure) {
+      const result = await attemptRevocation(username);
+      if (result.outcome === 'revoked') {
         if (attempt > 1) log(`TURN revocation: credential ${index} of ${count} revoked on attempt ${attempt}`);
         return true;
       }
+      const age = ageMs === undefined ? undefined : ageMs + Math.max(0, now() - startedAt);
+      if (result.outcome === 'not_found' && age !== undefined && age >= revocationPropagationMs) {
+        log(`TURN revocation: credential ${index} of ${count} not found ${Math.round(age / 1000)} s after issue; ` +
+          'already revoked or expired');
+        return true;
+      }
+      const failure = result.reason;
       log(`TURN revocation: credential ${index} of ${count}, attempt ${attempt} of ${retry.attempts} failed: ${failure}`);
       if (attempt < retry.attempts) await sleep(revocationDelayMs(attempt, retry, random));
     }
@@ -248,11 +279,12 @@ export function createCloudflareTurnProvider(config: {
     },
     // Every credential gets its own attempts: one that keeps failing never stops the others from
     // being revoked, and the call still rejects so the caller counts it.
-    async revoke(servers) {
+    async revoke(servers, context) {
       const usernames = [...new Set(servers.flatMap(server => server.username ? [server.username] : []))];
+      const ageMs = context?.ageMs !== undefined && Number.isFinite(context.ageMs) ? Math.max(0, context.ageMs) : undefined;
       let failed = 0;
       for (const [index, username] of usernames.entries()) {
-        if (!(await revokeWithRetry(username, index + 1, usernames.length))) failed += 1;
+        if (!(await revokeWithRetry(username, index + 1, usernames.length, ageMs))) failed += 1;
       }
       if (failed > 0) throw new Error('TURN credential revocation rejected');
     },

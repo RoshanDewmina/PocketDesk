@@ -1,7 +1,7 @@
 import { afterEach, expect, setSystemTime, test } from 'bun:test';
 import { loadServiceConfig } from '../src/config';
 import { createService, digest } from '../src/server';
-import { createCloudflareTurnProvider, defaultRevocationRetry, revocationDelayMs } from '../src/turn';
+import { createCloudflareTurnProvider, defaultRevocationRetry, revocationDelayMs, revocationPropagationMs } from '../src/turn';
 
 const keyId = 'k'.repeat(32);
 const apiToken = 't'.repeat(64);
@@ -346,6 +346,77 @@ test('the backoff doubles up to its ceiling and jitters between half and all of 
   const noFetch = (async () => { throw new Error('must not be called'); }) as unknown as typeof globalThis.fetch;
   expect(() => createCloudflareTurnProvider({ keyId, apiToken, ttlSeconds: 3600, timeoutMs: 100, fetch: noFetch,
     revocationRetry: { attempts: 0, baseDelayMs: 1, maxDelayMs: 1 } })).toThrow('invalid Cloudflare revocation retry policy');
+});
+
+const notFound = { status: 404, body: '{"error":"cannot find specified username"}' };
+const credential = { urls: ['turn:turn.cloudflare.com:3478'], username: 'u-1', credential: 'c-1' };
+
+test('a 404 right after issue is the credential not having propagated yet: retried until it revokes', async () => {
+  const script = revokeScript([notFound, 204]);
+  const lines: string[] = [];
+  await provider(script.fetch, { log: line => lines.push(line) }).revoke!([credential], { ageMs: 400 });
+  expect(script.calls).toEqual(['u-1/revoke', 'u-1/revoke']);
+  expect(lines.join('\n')).toContain('attempt 1 of 4 failed: status 404 body "{"error":"cannot find specified username"}"');
+  expect(lines.join('\n')).toContain('revoked on attempt 2');
+});
+
+test('a 404 that persists while the credential is still new counts as a failure', async () => {
+  const script = revokeScript([notFound]);
+  await expect(provider(script.fetch).revoke!([credential], { ageMs: 1_000 })).rejects.toThrow('TURN credential revocation rejected');
+  expect(script.calls).toHaveLength(defaultRevocationRetry.attempts);
+});
+
+test('a 404 long after issue means already revoked or expired: done at once, not a failure', async () => {
+  const script = revokeScript([notFound]);
+  const lines: string[] = [];
+  await provider(script.fetch, { log: line => lines.push(line) })
+    .revoke!([credential], { ageMs: revocationPropagationMs + 5_000 });
+  expect(script.calls).toEqual(['u-1/revoke']);
+  expect(lines.join('\n')).toContain('not found 35 s after issue; already revoked or expired');
+  expect(lines.join('\n')).not.toContain('u-1');
+});
+
+test('a 404 with no known issue time is never taken as done', async () => {
+  const script = revokeScript([notFound]);
+  await expect(provider(script.fetch).revoke!([credential])).rejects.toThrow('TURN credential revocation rejected');
+  expect(script.calls).toHaveLength(defaultRevocationRetry.attempts);
+});
+
+test('a set revoked more than 30 s after issue does not count a 404 in readiness; a new set does', async () => {
+  const mock = cloudflareMock({ revoke: () => new Response('{"error":"cannot find specified username"}', { status: 404 }) });
+  const app = createService({ port: 0, turnProvider: provider(mock.fetch) });
+  instances.push(app);
+  const old = await registerHost(app, 'a');
+  await old.host.next();
+  setSystemTime(new Date(Date.now() + revocationPropagationMs + 1_000));
+  old.host.ws.close();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(mock.calls.filter(call => call.url.endsWith('/revoke'))).toHaveLength(1);
+  expect(JSON.parse((await ready(app)).text).relay.revocationFailures).toBe(0);
+
+  const fresh = await registerHost(app, 'c');
+  await fresh.host.next();
+  fresh.host.ws.close();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(JSON.parse((await ready(app)).text).relay.revocationFailures).toBe(1);
+});
+
+test('retry lines go to stderr, never stdout, by default', async () => {
+  const script = revokeScript([notFound, 204]);
+  const written: { stream: string; text: string }[] = [];
+  const stdoutWrite = process.stdout.write.bind(process.stdout);
+  const stderrWrite = process.stderr.write.bind(process.stderr);
+  process.stdout.write = ((chunk: any) => { written.push({ stream: 'stdout', text: String(chunk) }); return true; }) as typeof process.stdout.write;
+  process.stderr.write = ((chunk: any) => { written.push({ stream: 'stderr', text: String(chunk) }); return true; }) as typeof process.stderr.write;
+  try {
+    await createCloudflareTurnProvider({ keyId, apiToken, ttlSeconds: 3600, timeoutMs: 100, fetch: script.fetch, sleep: async () => {} })
+      .revoke!([credential], { ageMs: 0 });
+  } finally {
+    process.stdout.write = stdoutWrite;
+    process.stderr.write = stderrWrite;
+  }
+  expect(written.filter(item => item.stream === 'stdout')).toEqual([]);
+  expect(written.some(item => item.stream === 'stderr' && item.text.includes('TURN revocation'))).toBe(true);
 });
 
 test('readiness counts revocations that failed after their retries', async () => {

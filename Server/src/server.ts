@@ -29,7 +29,7 @@ const featurePattern = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const maxFeatures = 8;
 const maxIssuedSets = 8;
 
-type IssuedCredentials = { servers: IceServer[]; expiresAt: number };
+type IssuedCredentials = { servers: IceServer[]; issuedAt: number; expiresAt: number };
 
 type PeerData = {
   role?: PeerRole;
@@ -136,9 +136,11 @@ export function createService(config: ServiceConfig = {}) {
   let stopping: Promise<void> | undefined;
   let approvalAudit: ClockHandle | undefined;
 
-  const scheduleRevocation = (servers: IceServer[]) => {
+  /** `issuedAt` on this service's clock; the provider gets the set's age, so clocks never mix. */
+  const scheduleRevocation = (servers: IceServer[], issuedAt: number) => {
     if (!config.turnProvider?.revoke || servers.length === 0) return;
-    const task = Promise.resolve().then(() => config.turnProvider!.revoke!(servers));
+    const ageMs = Math.max(0, clock.now() - issuedAt);
+    const task = Promise.resolve().then(() => config.turnProvider!.revoke!(servers, { ageMs }));
     pendingRevocations.add(task);
     void task.then(
       () => pendingRevocations.delete(task),
@@ -156,14 +158,16 @@ export function createService(config: ServiceConfig = {}) {
   const revokePeer = (ws: Peer) => {
     if (ws.data.revocationStarted) return;
     ws.data.revocationStarted = true;
-    for (const item of ws.data.issued) scheduleRevocation(item.servers);
+    for (const item of ws.data.issued) scheduleRevocation(item.servers, item.issuedAt);
   };
   const rememberIssued = (ws: Peer, servers: IceServer[], at: number) => {
     if (!config.turnProvider) return;
     ws.data.issuedAt = at;
     const live = ws.data.issued.filter(item => item.expiresAt > at);
-    live.push({ servers, expiresAt: at + credentialTTLSeconds * 1000 });
-    for (const dropped of live.splice(0, Math.max(0, live.length - maxIssuedSets))) scheduleRevocation(dropped.servers);
+    live.push({ servers, issuedAt: at, expiresAt: at + credentialTTLSeconds * 1000 });
+    for (const dropped of live.splice(0, Math.max(0, live.length - maxIssuedSets))) {
+      scheduleRevocation(dropped.servers, dropped.issuedAt);
+    }
     ws.data.issued = live;
   };
 
@@ -218,7 +222,7 @@ export function createService(config: ServiceConfig = {}) {
         const issuance = config.turnProvider.issue({ room, role });
         pendingIssuances.add(issuance);
         void issuance.then(
-          issued => { pendingIssuances.delete(issuance); if (timedOut) scheduleRevocation(issued); },
+          issued => { pendingIssuances.delete(issuance); if (timedOut) scheduleRevocation(issued, clock.now()); },
           () => pendingIssuances.delete(issuance),
         );
         const issued = await Promise.race([
@@ -239,7 +243,7 @@ export function createService(config: ServiceConfig = {}) {
         clock.clearTimeout(timer);
       }
       if (servers.length > 8 || servers.some(server => server.urls.length > 8)) {
-        if (issuedByProvider) scheduleRevocation(issuedByProvider);
+        if (issuedByProvider) scheduleRevocation(issuedByProvider, clock.now());
         throw new Error('relay configuration exceeds client limits');
       }
     }
@@ -301,10 +305,10 @@ export function createService(config: ServiceConfig = {}) {
       if (ws.readyState === WebSocket.OPEN) error(ws, 'relay_unavailable');
       return;
     }
-    if (ws.readyState !== WebSocket.OPEN) { scheduleRevocation(servers); return; }
+    if (ws.readyState !== WebSocket.OPEN) { scheduleRevocation(servers, clock.now()); return; }
     if (role === 'host' && !isRoomApproved(msg.room)) {
       ws.data.registrationPending = false;
-      scheduleRevocation(servers);
+      scheduleRevocation(servers, clock.now());
       error(ws, 'room_not_approved');
       return;
     }
@@ -370,9 +374,9 @@ export function createService(config: ServiceConfig = {}) {
       catch (failure) { code = failure instanceof IssuanceRateLimited ? 'rate_limited' : 'relay_unavailable'; }
       finally { ws.data.renewalPending = false; }
       if (servers) {
-        if (ws.readyState !== WebSocket.OPEN || rooms.get(roomID) !== room) { scheduleRevocation(servers); return; }
+        if (ws.readyState !== WebSocket.OPEN || rooms.get(roomID) !== room) { scheduleRevocation(servers, clock.now()); return; }
         if (!isRoomApproved(roomID)) {
-          scheduleRevocation(servers);
+          scheduleRevocation(servers, clock.now());
           terminateRoom(roomID, room, 'room_approval_revoked');
           return;
         }
