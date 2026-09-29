@@ -38,6 +38,8 @@ Three instruments, in the order the brief asks for them. Everything runs on Rosh
 
 Overlay line: `glass p50 31 p95 44 max 61 ms ±2 · n 58 · distinct 59/s · shownΔ p50 8.3`. The stage-sum line stays for comparison.
 
+**Simulator caveat.** The iOS Simulator SDK's `MTLDrawable` has no `addPresentedHandler` or `presentedTime` (the device SDK has both), so on the simulator the probe reports the frame at its draw call instead. Simulator (T1) glass numbers are therefore "draw" numbers, a few ms early; only a device produces display times.
+
 **Calibration.** One 240 fps camera session (§7 step 3 of STREAM-FIX-REPORT) against the same seconds of marker data; the residual (panel response on both ends) becomes a stated constant in the notebook. The E2E stub host also draws the marker and echoes clock probes, so the simulator self-test exercises the whole reader path without ScreenCaptureKit.
 
 ## 2. Legibility score (G29)

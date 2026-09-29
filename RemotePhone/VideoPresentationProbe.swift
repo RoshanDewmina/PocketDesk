@@ -35,6 +35,8 @@ final class PresentationTracker: @unchecked Sendable {
 final class PresentedFrameMarker: @unchecked Sendable {
     private let lock = NSLock()
     private var stored: BenchMarker?
+    /// Simulator only: reports the frame at draw time, since no presented handler exists there.
+    var reportOnDrawn: ((BenchMarker?) -> Void)?
 
     var marker: BenchMarker? {
         get { lock.lock(); defer { lock.unlock() }; return stored }
@@ -109,7 +111,10 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         let presentation = observePresentation(in: view)
         renderer?.draw(in: view)
-        if let presentation { presentation.marker = drawnMarker() }
+        if let presentation {
+            presentation.marker = drawnMarker()
+            presentation.reportOnDrawn?(presentation.marker)
+        }
         // WebRTC's Metal renderer sets 30 fps on the view when it starts on the first frame.
         if let chosen = chosenFramesPerSecond, view.preferredFramesPerSecond != chosen {
             view.preferredFramesPerSecond = chosen
@@ -129,11 +134,17 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
         guard markerForStamp != nil, let counters, tracker.hasPending,
               let drawable = drawableProvider(view) else { return nil }
         let frame = PresentedFrameMarker()
+        #if targetEnvironment(simulator)
+        // The simulator's Metal has no presented handler; the draw call stands in for the display time.
+        _ = drawable
+        frame.reportOnDrawn = { marker in counters.presentedFrame(atMs: MachClock.nowMs(), marker: marker) }
+        #else
         drawable.addPresentedHandler { presented in
             guard presented.presentedTime > 0 else { return }
             counters.presentedFrame(atMs: MachClock.milliseconds(fromMediaTime: presented.presentedTime),
                                     marker: frame.marker)
         }
+        #endif
         return frame
     }
 

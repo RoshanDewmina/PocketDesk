@@ -118,13 +118,10 @@ final class RemoteVideoSurfaceTests: XCTestCase {
         defer { probe.uninstall() }
         let counters = StreamCounters()
         probe.counters = counters
-        let presented = PresentedTimes()
         var fetches = 0
         probe.drawableProvider = { metalView in
             fetches += 1
-            let drawable = metalView.currentDrawable
-            drawable?.addPresentedHandler { presented.record($0.presentedTime) }
-            return drawable
+            return metalView.currentDrawable
         }
         let observer = FrameObserver(onFrame: {})
         observer.view = view
@@ -151,17 +148,16 @@ final class RemoteVideoSurfaceTests: XCTestCase {
         metal.draw()
         XCTAssertEqual(fetches, 1, "Redrawing the same frame fetches nothing")
 
+        #if !targetEnvironment(simulator)
+        // On a device the frame is reported from the drawable's presented handler, asynchronously.
         let deadline = Date().addingTimeInterval(2)
-        while presented.times.isEmpty, Date() < deadline {
+        while counters.drain(inputBufferedBytes: nil).markerFrames == 0, Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.02))
         }
-        guard let time = presented.times.first, time > 0 else {
-            throw XCTSkip("No presented time for the drawable here (\(presented.times)); the handler path ran without a crash")
-        }
-        // The probe's handler was added right after the test's, on the same drawable.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        #endif
+        // The simulator's Metal has no presented handler, so the probe reports the frame at draw time.
         let snapshot = counters.drain(inputBufferedBytes: nil)
-        XCTAssertEqual(snapshot.markerFrames, 1, "The presented frame reached the counters with its marker")
+        XCTAssertEqual(snapshot.markerFrames, 1, "The drawn frame reached the counters with its marker")
         XCTAssertEqual(snapshot.markerDistinct, 1)
         XCTAssertEqual(snapshot.presentedFrames, 2, "Draw-call accounting is unchanged")
     }
@@ -221,20 +217,5 @@ final class RemoteVideoSurfaceTests: XCTestCase {
         context.scaleBy(x: 1, y: -1)
         BenchMarkerRenderer.draw(marker, layout: BenchMarker.layout(width: Double(width), height: Double(height)), in: context)
         return buffer
-    }
-}
-
-/// Presented times reported to a drawable's handlers, which run off the main thread.
-private final class PresentedTimes: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: [CFTimeInterval] = []
-
-    var times: [CFTimeInterval] {
-        lock.lock(); defer { lock.unlock() }
-        return stored
-    }
-
-    func record(_ time: CFTimeInterval) {
-        lock.lock(); stored.append(time); lock.unlock()
     }
 }
