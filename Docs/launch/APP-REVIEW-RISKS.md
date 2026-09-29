@@ -124,7 +124,7 @@ Apple states that over 40% of unresolved issues fall under 2.1 and advises demo 
 Provide all of the following:
 
 1. **Notes for Review (up to 4000 bytes):** template below.
-2. **Public, notarized Mac download link** that works without an account, with stated minimum macOS and Apple-silicon requirement.
+2. **Public, notarized Mac download link** that works without an account, with the stated requirement: macOS 26 or later on a Mac with Apple silicon (M1 or later) (D35).
 3. **Demo video** (two to three minutes, unlisted link and, if ASC allows, an attachment) showing: first launch, Mac install, permissions, QR pairing, approval on the Mac, live view, click, scroll, keyboard, voice, Stop Sharing, paywall, sandbox purchase, relay connection.
 4. **Backend live** and monitored for the whole review window. Rate limits must not lock out a reviewer who reconnects a dozen times; the current 12 credential issues per minute and 30-connection-per-minute limits in `Server/.env.private.example` are too tight for a shared review window and for a public launch.
 5. **Sandbox purchase support on the server.** App Review and TestFlight transactions are sandbox transactions; the entitlement service must accept sandbox-signed transactions from those builds (see SUBSCRIPTION-SETUP.md).
@@ -138,8 +138,8 @@ Farside lets you see and control your own Mac from your iPhone or iPad.
 It is a generic remote desktop for the user's own computer. It does not mirror
 or launch any particular app or service, and there are no accounts.
 
-REQUIREMENTS: a Mac on macOS [26.0] or later running the free Farside
-companion: [https://<download URL>] (notarized; open the DMG, drag to
+REQUIREMENTS: a Mac with Apple silicon (M1 or later) on macOS [26.0] or later
+running the free Farside companion: [https://<download URL>] (notarized; open the DMG, drag to
 Applications). Phone and Mac on the same Wi-Fi for the free path.
 
 TEST STEPS (about 5 minutes)

@@ -1,5 +1,7 @@
 # PocketDesk
 
+**Requirements (1.0):** the Farside Mac companion needs macOS 26 or later on a Mac with Apple silicon (M1 or later); the phone app needs iOS or iPadOS 26 or later (PRODUCT D35).
+
 **Start here: [Product and design source of truth](PRODUCT.md), then [implementation record](Docs/IMPLEMENTATION-PLAN.md).** MVP implementation is active. The current pass completes work that does not require the physical phone; real capture/control, cellular, and forced-relay acceptance remain unproven.
 
 The next delivery is a small private feasibility MVP. The handoff uses swarm-orchestrator with efficient GPT workers, no Astra workers/reviewers, and parent-led integration and verification. Broader beta and commercial features remain follow-up scope.

@@ -87,6 +87,7 @@ Every host that does its own capture and input is distributed directly.
 - `NSLocalNetworkUsageDescription` is set on the legacy host target but **missing from `PocketDeskRemoteHost`** in `project.yml`. Add it and test the LAN path on a clean Mac; recent macOS applies Local Network privacy to Mac apps too. [I on exact behaviour; R on the gap]
 - `PocketDeskServiceURL` (custom key read by `HostModel.swift` line 69 via `Bundle.main.object(forInfoDictionaryKey:)`): set to the production `wss://…/signal` so first run never shows the "enter the private service address" screen (`RemoteHost/HostSetupView.swift`, `.needsService`). [R]
 - `SUFeedURL`, `SUPublicEDKey` (Sparkle, section 8).
+- Architecture: **Apple silicon only (D35, 29 Sep 2026).** The host and `FarsideWatchdog` build `ARCHS = arm64` in every configuration (`project.yml`), so the DMG carries no Intel slice. State the requirement everywhere as "macOS 26 or later on a Mac with Apple silicon (M1 or later)".
 - `LSMinimumSystemVersion`: currently 26.0. Workbench requires macOS 15, Screens 14.0, Remote Mac Desktop Control 14.6 (listings). A 26.0 floor is a real market cut; decide deliberately whether ScreenCaptureKit features you use need 26. [V competitor floors; O decision]
 - `ITSAppUsesNonExemptEncryption` is an App Store Connect upload key and is not needed for a Developer ID app, but US export rules still apply to a website download of software containing encryption; see PRIVACY-POLICY.md section 4.
 - `NSAppleEventsUsageDescription`, camera and microphone strings: not needed (no audio capture, no Apple events). Keep `capturesAudio = false`.
@@ -154,7 +155,7 @@ Current release: **Sparkle 2.10.0, 13 Sep 2026; requires macOS 12 or later.** [V
 
 ## 10. How the iOS listing points users to the Mac download
 
-- **App Store description, first paragraph:** "Requires the free Farside companion for your Mac (macOS 26 or later): get it at [short URL]." Plain URL text; do not depend on it being tappable.
+- **App Store description, first paragraph:** "Requires the free Farside companion for your Mac (macOS 26 or later on a Mac with Apple silicon (M1 or later)): get it at [short URL]." Plain URL text; do not depend on it being tappable.
 - **Marketing URL field:** the site home page, whose primary button is "Download for Mac".
 - **First-run onboarding on the phone:** screen 1 "Install Farside on your Mac" with the URL, a Copy button and a Share button (system share sheet: AirDrop, Messages, Mail). Screen 2 "Scan the code on your Mac".
 - **Site logic:** the download page shows a Mac download button on Mac browsers, and an App Store button plus a smart app banner (`apple-itunes-app` meta tag) on iPhone Safari.

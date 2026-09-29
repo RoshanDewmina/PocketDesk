@@ -82,7 +82,7 @@ WHAT'S INSIDE
 - No account required
 
 REQUIREMENTS
-iPhone with iOS 26 or later, or iPad with iPadOS 26 or later. A Mac with macOS 26 or later running the free Farside companion (download: [SHORT URL]). Screen Recording and Accessibility access are needed on the Mac. Using Farside away from your network requires the Farside Remote subscription.
+iPhone with iOS 26 or later, or iPad with iPadOS 26 or later. A Mac with Apple silicon (M1 or later) on macOS 26 or later, running the free Farside companion (download: [SHORT URL]). Screen Recording and Accessibility access are needed on the Mac. Using Farside away from your network requires the Farside Remote subscription.
 
 SUBSCRIPTION TERMS
 Farside Remote renews automatically each month or year unless canceled at least 24 hours before the end of the current period. Payment is charged to your Apple Account at confirmation of purchase. Manage or cancel anytime in Settings > your name > Subscriptions. Any unused part of a free trial is forfeited when you subscribe.
@@ -169,7 +169,7 @@ Tone: plain, calm, no superlatives. Structure mirrors the listing. Web domain pr
 | Page | Purpose | Must contain |
 |---|---|---|
 | Home `/` | Explain in one screen | Headline "Your Mac, from your phone."; the iPhone hero video; two buttons, Download for Mac and App Store; one line each on free local use and Farside Remote; footer links to Privacy, Terms, Support |
-| Download `/mac` | Install the companion | Notarized DMG link, version, system requirements (macOS 26 or later), SHA-256, release notes, a 3-step first-run guide with the two permissions (Screen Recording, Accessibility) and why each is needed |
+| Download `/mac` | Install the companion | Notarized DMG link, version, system requirements (macOS 26 or later on a Mac with Apple silicon (M1 or later)), SHA-256, release notes, a 3-step first-run guide with the two permissions (Screen Recording, Accessibility) and why each is needed |
 | How it works `/how-it-works` | Trust | Pairing flow, what is encrypted, what the service can and cannot see (a short version of the policy), Stop Sharing |
 | Remote `/remote` | Subscription clarity | What Farside Remote adds (relay and network traversal), 7-day free trial, buy in the app, how to manage or cancel in Apple Account settings, refunds handled by Apple. No web checkout. |
 | Support `/support` | Required by Apple | Email, phone and legal address (real contact information is required on the Support URL [V]), troubleshooting (permissions, Local Network, firewall, cellular), "Report a problem" instructions, response-time expectation |
