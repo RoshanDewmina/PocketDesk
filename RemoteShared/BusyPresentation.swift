@@ -17,6 +17,9 @@ struct BusyPresentation: Equatable {
         case .thermal:
             title = "Your Mac is running warm"
             symbol = "thermometer.medium"
+        case .power:
+            title = "Your Mac is saving power"
+            symbol = "battery.25percent"
         case .network:
             title = busy ? "The connection is slow" : "The connection is a little slow"
             symbol = "wifi"

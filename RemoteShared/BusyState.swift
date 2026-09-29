@@ -2,10 +2,11 @@ import Foundation
 
 /// The Mac's honest account of its own load, sent on `capture` status and shown by the phone as a
 /// pill ("Mac is busy · 30 fps at 1440 px"). It is derived from the same signals the ladder uses,
-/// so it cannot disagree with what the user sees: `busy` when the ladder sits at its floor, or
-/// capture stays under 80 % of the target rate for 5 s, or encoder latency exceeds twice the frame
-/// interval; `strained` while any rung below the top holds for more than 5 s; `ok` after 10 s of
-/// headroom. Old phones ignore the field.
+/// so it cannot disagree with what the user sees: `busy` while the ladder sits at its floor, or
+/// capture stays under 80 % of the rung's rate and late for 5 s, or encoder latency exceeds twice
+/// the frame interval for 5 s, and until 10 s of headroom; `strained` for 8 s after each downward
+/// step, then `ok` even below the top (the `ladder` field still carries the rung). Old phones
+/// ignore the field.
 struct BusyState: Codable, Equatable {
     enum Level: String, Codable {
         case ok, strained, busy
@@ -14,7 +15,7 @@ struct BusyState: Codable, Equatable {
     var level: Level
     var fps: Int
     var longEdge: Int
-    /// Short, user-facing cause: "encoding", "capture", "network", "phone", "thermal".
+    /// Short, user-facing cause (`LadderReason`): "encoding", "capture", "network", "phone", "thermal", "power".
     var reason: String
 
     static let ok = BusyState(level: .ok, fps: 0, longEdge: 0, reason: "")

@@ -47,21 +47,22 @@ struct HostLoadMonitor {
     }
 
     static func inputs(from sample: HostLoadSample) -> LadderInputs {
-        LadderInputs(targetFPS: sample.targetFPS, captureFPS: sample.captureFPS, encodedFPS: sample.encodedFPS,
+        LadderInputs(targetFPS: sample.targetFPS, captureFPS: sample.captureFPS,
+                     captureLatencyP90Ms: sample.captureLatencyP90Ms, encodedFPS: sample.encodedFPS,
                      encodeLatencyP90Ms: sample.encodeLatencyP90Ms, encodeInFlightMax: sample.encodeInFlightMax,
                      droppedBeforeEncode: sample.droppedBeforeEncode, pacerDelayMs: sample.pacerDelayMs,
                      targetKbps: sample.targetKbps, availableKbps: sample.availableKbps,
                      qualityLimitation: sample.qualityLimitation, hostThermalState: sample.hostThermalState,
-                     phoneSupersededPerSecond: nil, phoneDecodeMs: nil, phonePresentedFPS: nil, phoneThermalState: nil)
+                     hostLowPowerMode: sample.lowPowerMode, phoneSupersededPerSecond: nil, phoneDecodeMs: nil,
+                     phonePresentedFPS: nil, phoneThermalState: nil)
     }
 
     /// The new rung to apply and the new busy state to send, each nil when unchanged.
     mutating func tick(sample: HostLoadSample, at time: TimeInterval) -> (ladder: LadderState?, busy: BusyState?) {
         if let edge = sample.longEdge, edge > 0 { longEdge = edge }
         let inputs = Self.inputs(from: sample)
-        let ladderChange = ladder.evaluate(inputs, captureLatencyP90Ms: sample.captureLatencyP90Ms, at: time)
-        let busyChange = busy.evaluate(ladder: ladder.state, inputs: inputs, longEdge: longEdge,
-                                       captureLatencyP90Ms: sample.captureLatencyP90Ms, at: time)
+        let ladderChange = ladder.evaluate(inputs, at: time)
+        let busyChange = busy.evaluate(ladder: ladder.state, inputs: inputs, longEdge: longEdge, at: time)
         return (ladderChange, busyChange)
     }
 
