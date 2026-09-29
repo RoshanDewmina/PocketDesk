@@ -119,7 +119,7 @@ struct SessionTextColumn: View {
             Text(content.line)
                 .font(.subheadline)
                 .foregroundStyle(Farside.Palette.ash)
-                .lineLimit(2)
+                .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
                 .privacySensitive()
         }
@@ -150,10 +150,10 @@ struct SessionLockScreenView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
                 SessionGlyphTile(look: content.look, size: 42)
                 SessionTextColumn(content: content)
-                Spacer(minLength: 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 if content.hasClock {
                     SessionClock(content: content, size: 19)
                         .lineLimit(1)
