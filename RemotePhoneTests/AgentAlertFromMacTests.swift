@@ -18,6 +18,7 @@ final class AgentAlertFromMacTests: XCTestCase {
         defaults = makeTestDefaults("AgentAlertFromMacTests")
         center = AgentAlertCenter(center: fake, defaults: defaults, reports: AgentAlertReports())
         center.now = { [clock] in clock }
+        center.currentPairingIdentity = { String(repeating: "a", count: 64) }
         center.isForeground = { [unowned self] in appInFront }
         center.preferences.alertsEnabled = true
         appInFront = true
@@ -62,6 +63,8 @@ final class AgentAlertFromMacTests: XCTestCase {
                                     "It routes exactly like a push: the same payload comes back out of the tap")
         XCTAssertEqual(payload.helpRequestID, "h_0a1b2c3d4e5f")
         XCTAssertEqual(payload.kind, .claudeCode)
+        XCTAssertEqual(payload.pairingIdentity, String(repeating: "a", count: 64),
+                       "A local control-channel notification keeps its exact pairing through a reminder")
     }
 
     func testTheNotificationNamesAnAgentOnlyWhenThePersonAllowsIt() async throws {
@@ -111,7 +114,8 @@ final class AgentAlertFromMacTests: XCTestCase {
     }
 
     func testARequestThePersonDeclinedIsNeverAnnouncedAgain() async {
-        let payload = AgentAlertPayload(helpRequestID: "h_declined", kind: .claudeCode)
+        let payload = AgentAlertPayload(helpRequestID: "h_declined", kind: .claudeCode,
+                                        pairingIdentity: String(repeating: "a", count: 64))
         await center.respond(.notNow, to: payload, deliveredAt: clock, notificationIdentifier: nil)
         center.receive(fromMac: frame("h_declined"))
         XCTAssertNil(center.banner)

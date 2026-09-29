@@ -20,6 +20,7 @@ final class AgentAlertPayloadTests: XCTestCase {
     func testTheSpecPayloadRoutesToItsHelpRequest() throws {
         let payload = try XCTUnwrap(AgentAlertPayload(userInfo: Self.sample("agent-needs-you.apns")))
         XCTAssertEqual(payload.helpRequestID, "h_20af")
+        XCTAssertEqual(payload.pairingIdentity, "bb4e6754bace2ee18161742a1bfbab72ac3865454f5f00951e7523912d1e7122")
         XCTAssertEqual(payload.kind, .claudeCode)
         XCTAssertEqual(payload.threadID, "mac-7f3a")
         XCTAssertEqual(payload.interruption, .timeSensitive)
@@ -39,6 +40,8 @@ final class AgentAlertPayloadTests: XCTestCase {
         for (file, expected) in routed {
             let payload = try XCTUnwrap(AgentAlertPayload(userInfo: Self.sample(file)), file)
             XCTAssertEqual(payload.helpRequestID, expected.id, file)
+            XCTAssertEqual(payload.pairingIdentity,
+                           "bb4e6754bace2ee18161742a1bfbab72ac3865454f5f00951e7523912d1e7122", file)
             XCTAssertEqual(payload.kind, expected.kind, file)
             XCTAssertEqual(payload.interruption, expected.interruption, file)
             XCTAssertEqual(payload.isReminder, expected.reminder, file)
@@ -117,7 +120,9 @@ final class AgentAlertPayloadTests: XCTestCase {
     }
 
     func testALocalTwinParsesBackToTheSamePayload() throws {
-        let payload = AgentAlertPayload(helpRequestID: "h_abc9", kind: .cursor, threadID: "mac-1", interruption: .timeSensitive)
+        let payload = AgentAlertPayload(helpRequestID: "h_abc9", kind: .cursor,
+                                        pairingIdentity: String(repeating: "a", count: 64),
+                                        threadID: "mac-1", interruption: .timeSensitive)
         XCTAssertEqual(AgentAlertPayload(userInfo: payload.userInfo), payload)
         var test = payload
         test.isTest = true

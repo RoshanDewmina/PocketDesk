@@ -256,7 +256,8 @@ final class PushRegistrar: ObservableObject {
             volatileRemovals.removeAll { $0.target == target }
         }
         var removalFailed = false
-        for pending in Array(Set(saved + volatileRemovals)) {
+        let removals = Array(Set(saved + volatileRemovals))
+        for pending in removals {
             let result = await sinkForTarget(pending.target).disableAlerts()
             lastSubmission = result
             if result == .sent {
@@ -271,6 +272,8 @@ final class PushRegistrar: ObservableObject {
                 }
             } else { removalFailed = true }
         }
+        if removalFailed { status = .failed("Alert opt-out is pending. Unlock this iPhone and retry when the service is available.") }
+        else if !removals.isEmpty { status = .idle }
         guard let deviceToken else { return }
         guard AgentAlertPreferences(defaults: defaults).alertsEnabled else {
             forget()
@@ -305,6 +308,14 @@ final class AgentPushIntegration {
     func attach(_ model: PhoneRemoteModel) {
         guard self.model !== model else { return }
         self.model = model
+        AgentAlertCenter.shared.currentPairingIdentity = { [weak model] in
+            #if DEBUG
+            if let preview = DebugLaunchSeeds.alertPreviewIdentity { return preview }
+            #endif
+            guard AnywhereAccess.shared.phoneConnectionAllowed,
+                  model?.connection.startAllowed?() != false else { return nil }
+            return model?.connection.invitation?.notificationIdentity
+        }
         observers.removeAll()
         model.connection.objectWillChange
             .receive(on: DispatchQueue.main)

@@ -8,7 +8,7 @@ import Foundation
 ///                        "loc-key": "AGENT_NEEDS_YOU_BODY"},
 ///              "category": "AGENT_HELP", "thread-id": "mac-7f3a",
 ///              "interruption-level": "time-sensitive", "relevance-score": 1.0, "sound": "default"},
-///      "hid": "h_20af"}
+///      "hid": "h_20af", "pairing": "<opaque pairing identity>"}
 ///
 /// Parsing is strict about what routes and lenient about what is merely extra. It never returns
 /// text from the payload except a name from the fixed agent list.
@@ -21,6 +21,9 @@ struct AgentAlertPayload: Equatable {
     }
 
     var helpRequestID: String
+    /// Full opaque identity of the pairing that produced this alert. Missing legacy alerts cannot
+    /// report an answer or open the currently paired Mac.
+    var pairingIdentity: String?
     var kind: AgentKind
     var threadID: String?
     var interruption: Interruption?
@@ -29,9 +32,11 @@ struct AgentAlertPayload: Equatable {
     /// The Settings "Send test alert" notification. It exercises the whole path with no agent.
     var isTest: Bool
 
-    init(helpRequestID: String, kind: AgentKind, threadID: String? = nil, interruption: Interruption? = nil,
+    init(helpRequestID: String, kind: AgentKind, pairingIdentity: String? = nil,
+         threadID: String? = nil, interruption: Interruption? = nil,
          isReminder: Bool = false, isTest: Bool = false) {
         self.helpRequestID = helpRequestID
+        self.pairingIdentity = pairingIdentity
         self.kind = kind
         self.threadID = threadID
         self.interruption = interruption
@@ -45,6 +50,7 @@ struct AgentAlertPayload: Equatable {
               category == Self.categoryIdentifier || category == Self.reminderCategoryIdentifier,
               let id = userInfo["hid"] as? String, FarsideRoute.isValidID(id) else { return nil }
         helpRequestID = id
+        pairingIdentity = (userInfo["pairing"] as? String).flatMap { SecureRandom.isToken($0) ? $0 : nil }
         isReminder = category == Self.reminderCategoryIdentifier
         isTest = userInfo["test"] as? Bool == true
 
@@ -69,6 +75,7 @@ struct AgentAlertPayload: Equatable {
         if let threadID { aps["thread-id"] = threadID }
         if let interruption { aps["interruption-level"] = interruption.rawValue }
         var result: [AnyHashable: Any] = ["aps": aps, "hid": helpRequestID]
+        if let pairingIdentity { result["pairing"] = pairingIdentity }
         if isTest { result["test"] = true }
         return result
     }
