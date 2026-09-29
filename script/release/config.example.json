@@ -1,0 +1,14 @@
+{
+  "serviceOrigin": "https://signal.getfarside.com",
+  "appAppleId": "",
+  "productionD1Id": "",
+  "developerIdIdentity": "",
+  "sparklePublicKey": "",
+  "notaryKeychainProfile": "",
+  "supportURL": "https://getfarside.com/support",
+  "privacyURL": "https://getfarside.com/privacy",
+  "termsURL": "https://getfarside.com/terms",
+  "exportComplianceReviewed": false,
+  "serviceAcceptancePassed": false,
+  "physicalAcceptancePassed": false
+}

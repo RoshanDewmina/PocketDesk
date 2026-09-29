@@ -64,6 +64,9 @@ struct HostViewState: Equatable {
     var detail: String?
     /// Setup's Pair step was skipped; pairing happens later from the menu bar.
     var pairingDeferred = false
+    var serverRemovalBusy = false
+    var serverRemovalPending = false
+    var serverRemovalMessage: String?
     var macOSMajor = HostSystemSettingsPane.currentMacOSMajor
 
     var controlNeedsAccessibility: Bool { allowControl && !accessibility.isGranted }
@@ -86,6 +89,7 @@ struct HostActions {
     var finishSetup: () -> Void = {}
     var pairNewPhone: () -> Void = {}
     var removePhone: () -> Void = {}
+    var removeServerRoom: () -> Void = {}
     var stopSharing: () -> Void = {}
     var pauseSharing: () -> Void = {}
     var resumeSharing: () -> Void = {}

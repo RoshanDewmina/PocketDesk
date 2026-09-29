@@ -1,3 +1,26 @@
+# Mac Settings horizontal layout — 29 September 2026
+
+User requested a wider Settings layout and a TODO to match the website/mobile design. Settings now uses a 960 × 720 window, a horizontal connection/action strip, and two columns with scrollable settings. All existing controls and confirmation flows remain. The visual-alignment TODO is tracked in PRODUCT. Six Settings snapshots passed (one test, zero failures), including live/two displays and expanded agent hooks; visually checked. Independent source review found no layout blocker. Installation pending removal-flow repairs and the current physical phone test window.
+
+# Public launch preparation — 29 September 2026
+
+User approved the five-package implementation plan in this chat. Baseline `1b8597a`, clean and synchronized. Native app/backend/billing/notifications/distribution preparation only; website/social redesign excluded. Production spending/deployment and portal submissions remain explicit final gates. Free access requires proven directly attached Wi-Fi/Ethernet; VPN/routed/unknown requires Anywhere. No acceptance claim without exact-build receipts.
+
+| Package | Owner / isolated checkout | State |
+|---|---|---|
+| Subscription expiry | Sol/high; storekit worktree | Independently reviewed c2f8e50 integrated as f504ee7; 49 passed / 1 optional skip; strict natural expiry and missed-update timer pass |
+| Service and native route admission | Sol/high; existing backend-workers worktree, fast-forwarded | route.1 authoritative session policy plus authenticated local-path proof; fail closed |
+| Removal/privacy UI | Parent + Sol/high host repair; main | Persistent deletion suppression and retry, origin-bound proof, local-cleanup verification; source reviewed, host build passes; phone 54 passed / 1 optional skip (runner finalization rerun pending) |
+| Integration/release preparation | Parent; main | Production readiness purchase gate, Sparkle disabled without valid key, privacy/dependency artifacts, archive scripts, domain/APNs config prepared; external signing/resource/physical gates open |
+| Agent notification beta | Sol/high; landing-backend worktree | Authenticated registry, APNs alerts and exact-epoch Live Activity end endpoints in progress; independent review pending |
+| Physical/input/system tests | Coordinated other Farside chat; farside-input-acceptance worktree | Owns iPad/input, native Live Activity adapter and tests, performance tooling and physical .8 checks; no simultaneous install |
+
+Current validation receipts: `work/launch-preparation/`. Root host build with horizontal Settings, dependency notices and persistent host-removal repair passed. Phone selection: 55 executed, 54 passed, 1 optional screenshot skip, no test failures after isolating legacy access fixtures from the real Keychain. The first run retained 37 fixture failures; the corrected run finished assertions but Xcode hung during diagnostic finalization and was interrupted. Same-binary rerun with the established `-collect-test-diagnostics never` workaround is queued. No deletion request was made against an actual room/device. Settings six-state snapshots passed and were visually inspected before the added Legal row; final snapshot refresh pending.
+
+Live release inventory: authenticated Cloudflare D1 lists staging and waitlist databases, no production entitlement database. Staging `/health` responds `ok`; deployment history is readable. Installed certificate inventory contains Apple Development only, not Developer ID. No production database, Apple record, certificate, deployment, submission or publication was created. The release preflight remains intentionally failing for missing real inputs. Purchases remain disabled even with a production URL until explicit service readiness.
+
+Author tests → fresh independent review → bounded repair → main integration. One Xcode-heavy runner under `lockf -k /tmp/farside-xcodebuild.lock`; no installs from worktrees. Root alone owns generated project, PRODUCT/ledger and final sign-off. Historical receipts below remain unchanged.
+
 # Remaining app recovery — 29 September 2026, after Connect crash fix .7
 
 Roshan explicitly requested continuing the remaining Farside work with subagents. Baseline `4860999` is clean and both native apps are installed. Scope now includes completing and independently reviewing the existing backend and StoreKit branches, integrated verification, and available native acceptance. Public deployment, purchases, store submission, website and social work remain separate.

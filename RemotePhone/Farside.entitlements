@@ -7,18 +7,16 @@
 	     fails to sign with any of them. Turn them all on together with FARSIDE_ENABLE_PUSH=YES, after
 	     the steps in design/SYSTEM-INTEGRATIONS-REPORT.md ("Turning push on"). -->
 
-	<!-- Push Notifications. Xcode swaps "development" for "production" when signing for distribution. -->
+	<!-- Shared with Info.plist; archive validation checks the signed APNs environment. -->
 	<key>aps-environment</key>
-	<string>development</string>
+	<string>$(FARSIDE_APNS_ENVIRONMENT)</string>
 	<!-- Time Sensitive Notifications: agent alerts that light the screen through Focus. -->
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>
-	<!-- Universal links for /open/<id>. The public domain is not chosen yet: farside.example is a
-	     reserved placeholder that never resolves. Replace it here, in FarsideRoute.associatedHosts and
-	     in the site's apple-app-site-association file together. -->
+	<!-- Keep aligned with FarsideRoute and the launch AASA artifact. -->
 	<key>com.apple.developer.associated-domains</key>
 	<array>
-		<string>applinks:farside.example</string>
+		<string>applinks:getfarside.com</string>
 	</array>
 </dict>
 </plist>

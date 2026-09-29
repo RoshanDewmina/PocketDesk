@@ -217,7 +217,7 @@ final class AnywhereStoreKitTests: XCTestCase {
 
     func testRestoreWithNothingToRestoreSaysSo() async {
         await store.restore()
-        XCTAssertEqual(store.restoreMessage, "No Farside Anywhere subscription was found for this Apple Account.")
+        XCTAssertEqual(store.restoreMessage, "Couldn’t confirm an active Farside Anywhere subscription yet. Check your Apple Account and try Restore Purchases again.")
     }
 
     func testListenerSeesPurchasesMadeOutsideTheApp() async throws {
@@ -241,7 +241,7 @@ final class AnywhereStoreKitTests: XCTestCase {
         }
         let directory = URL(fileURLWithPath: path)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let access = AnywhereAccess(source: store)
+        let access = AnywhereAccess(source: store, persistence: MemoryStore(), removalPersistence: MemoryStore())
         await store.refresh()
         try await capture(AnywherePaywallView(store: store, access: access), "paywall", to: directory)
         try await capture(FriendlyErrorView(error: .needsPlan, primaryTitle: "See the 7-day free trial", primary: {}, close: {}),

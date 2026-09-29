@@ -36,6 +36,7 @@ struct RemoteHostApp: App {
             HostSettingsContainer(model: model)
         }
         .windowResizability(.contentSize)
+        .commands { CommandGroup(after: .appInfo) { HostUpdateButton() } }
 
         MenuBarExtra {
             HostPopoverContainer(model: model)
@@ -134,6 +135,7 @@ extension HostActions {
                 openSetup()
             },
             removePhone: model.revoke,
+            removeServerRoom: model.removeServerRoom,
             stopSharing: model.stopSharing,
             pauseSharing: { model.pauseSharing() },
             resumeSharing: model.resumeSharing,

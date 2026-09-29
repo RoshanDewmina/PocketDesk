@@ -19,6 +19,10 @@
 	<string>$(FARSIDE_PRIVACY_URL)</string>
 	<key>FarsideServiceBaseURL</key>
 	<string>$(FARSIDE_SERVICE_BASE_URL)</string>
+	<key>FarsideAPNSEnvironment</key>
+	<string>$(FARSIDE_APNS_ENVIRONMENT)</string>
+	<key>FarsideServiceReady</key>
+	<string>$(FARSIDE_SERVICE_READY)</string>
 	<key>FarsideTermsURL</key>
 	<string>$(FARSIDE_TERMS_URL)</string>
 	<key>NSSupportsLiveActivities</key>

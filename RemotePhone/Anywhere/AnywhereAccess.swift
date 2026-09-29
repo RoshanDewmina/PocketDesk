@@ -34,6 +34,13 @@ final class AnywhereAccess: ObservableObject {
     private(set) var grant: EntitlementGrant?
     var serviceURL: () -> URL? = { nil }
 
+    struct RemovalState: Codable { var pending: ServerDataRemovalRequest? }
+    @Published private(set) var removalPending = false
+    private let removalPersistence: (any PairPersistence)?
+    private var removalState: RemovalState?
+    private var removing = false
+    @Published private(set) var removalRecoveryRequired = false
+
     private let source: AnywhereEntitlementSource
     private let makeClient: (URL) -> EntitlementVerifying
     private let deviceID: () -> String?
@@ -52,7 +59,18 @@ final class AnywhereAccess: ObservableObject {
          makeClient: @escaping (URL) -> EntitlementVerifying = { HTTPEntitlementClient(baseURL: $0) },
          deviceID: @escaping () -> String? = { InstallIdentity.current()?.deviceID },
          now: @escaping () -> Date = Date.init,
-         persistence: (any PairPersistence)? = PairStore(account: "anywhere.token")) {
+         persistence: (any PairPersistence)? = PairStore(account: "anywhere.token"),
+         removalPersistence: (any PairPersistence)? = PairStore(account: "anywhere.removal")) {
+        self.removalPersistence = removalPersistence
+        do {
+            removalState = try removalPersistence?.read(RemovalState.self)
+            removalPending = removalState?.pending != nil
+        } catch {
+            // An unreadable marker may represent a confirmed unlink. Never relink silently.
+            removalState = RemovalState(pending: nil)
+            removalPending = true
+            removalRecoveryRequired = true
+        }
         self.source = source
         self.makeClient = makeClient
         self.deviceID = deviceID
@@ -96,6 +114,7 @@ final class AnywhereAccess: ObservableObject {
     func currentToken(forSignalingServer server: String? = nil) -> String? {
         // Right after launch StoreKit has not answered yet; a saved token may still be presented, and
         // the service, which knows about refunds, stays the judge.
+        guard removalState == nil else { return nil }
         let phase = source.entitlement.phase
         guard source.entitlement.hasAccess || phase == .unknown,
               let grant, grant.tokenValid(at: now()),
@@ -112,6 +131,7 @@ final class AnywhereAccess: ObservableObject {
     /// after a purchase, restore or transaction update. Concurrent callers share one request.
     @discardableResult
     func refresh(force: Bool = false) async -> Bool {
+        guard removalState == nil else { return false }
         guard source.entitlement.hasAccess else {
             if source.entitlement.phase != .unknown { clear() }
             return false
@@ -148,6 +168,9 @@ final class AnywhereAccess: ObservableObject {
     /// Before a person-started connection: gets a token if none is held, but never holds the
     /// connection back longer than `timeout`. A late answer still lands for the next attempt.
     func prepareForConnection(timeout: TimeInterval = 4) async {
+        guard !removalPending else { return }
+        // Only an explicit new Connect resumes verification after a completed unlink.
+        if removalState != nil { removalState = nil; try? removalPersistence?.delete() }
         guard source.entitlement.hasAccess else { return }
         guard currentToken() == nil else {
             if grant?.needsRefresh(at: now()) == true { Task { await refresh() } }
@@ -186,6 +209,7 @@ final class AnywhereAccess: ObservableObject {
     }
 
     func entitlementChanged() {
+        guard removalState == nil else { return }
         if source.entitlement.hasAccess { Task { await refresh() } }
         else if source.entitlement.phase != .unknown { clear() }
     }
@@ -194,6 +218,51 @@ final class AnywhereAccess: ObservableObject {
         dropGrant()
         refreshTimer?.cancel(); refreshTimer = nil
         if verification != .idle { verification = .idle }
+    }
+
+    /// Keeps removal proof in the Keychain before stopping verification. A lost response is retryable.
+    func unlinkDevice(using remover: any ServerDataRemoving = HTTPServerDataRemover()) async throws {
+        guard !removing else { return }
+        if removalRecoveryRequired {
+            let recovered = try removalPersistence?.read(RemovalState.self)
+            removalState = recovered
+            removalPending = recovered?.pending != nil
+            removalRecoveryRequired = false
+            if recovered != nil && recovered?.pending == nil { clear(); return }
+        }
+        let request: ServerDataRemovalRequest
+        if let pending = removalState?.pending { request = pending }
+        else {
+            guard let grant, let token = grant.token, let serviceOrigin = grant.serviceOrigin,
+                  let device = deviceID(), let base = serviceURL(), origin(base) == serviceOrigin else {
+                throw ServerDataRemovalError.invalidProof
+            }
+            request = ServerDataRemovalRequest(kind: .device, serviceOrigin: serviceOrigin, identifier: device, proof: token)
+            _ = try request.httpRequest()
+            let pending = RemovalState(pending: request)
+            try removalPersistence?.save(pending)
+            removalState = pending
+            removalPending = true
+        }
+        grantGeneration &+= 1
+        inFlight?.cancel(); refreshTimer?.cancel(); refreshAfterFlight = false
+        removing = true
+        defer { removing = false }
+        try await remover.remove(request)
+        // Persist suppression before clearing the grant: a restart must not re-link through listeners.
+        let completed = RemovalState(pending: nil)
+        try removalPersistence?.save(completed)
+        removalState = completed
+        removalPending = false
+        clear()
+    }
+
+    func cancelRemoval() throws {
+        guard !removing else { return }
+        try removalPersistence?.delete()
+        removalState = nil
+        removalPending = false
+        removalRecoveryRequired = false
     }
 
     private func dropGrant() {
@@ -260,7 +329,7 @@ final class AnywhereAccess: ObservableObject {
     }
 
     private func contextIsCurrent(generation: Int, origin serviceOrigin: String, device: String) -> Bool {
-        generation == grantGeneration && source.entitlement.hasAccess &&
+        removalState == nil && generation == grantGeneration && source.entitlement.hasAccess &&
             serviceURL().flatMap(origin) == serviceOrigin && deviceID() == device
     }
 

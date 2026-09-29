@@ -104,6 +104,8 @@ struct HomeView: View {
     @State private var contactRipples: [HalftoneRipple] = []
     @State private var artSize: CGSize = .zero
     @State private var showPaywall = false
+    @State private var showServerData = false
+    @State private var showLegal = false
     @ObservedObject private var anywhere = AnywhereStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
@@ -113,7 +115,7 @@ struct HomeView: View {
 
     private var macName: String? { connection.invitation?.name ?? LaunchOptions.demoMacName }
     private var status: MacStatus { MacStatus(connection.status) }
-    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall }
+    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall || showServerData || showLegal }
 
     var body: some View {
         GeometryReader { proxy in
@@ -171,14 +173,18 @@ struct HomeView: View {
             AnywherePaywallView(store: anywhere, access: AnywhereAccess.shared)
                 .farsideSheet()
         }
-        .confirmationDialog("Forget this Mac?", isPresented: $confirmForget, titleVisibility: .visible) {
+        .sheet(isPresented: $showLegal) { LegalNoticesView() }
+        .sheet(isPresented: $showServerData) {
+            ServerDataRemovalView(connection: connection, access: AnywhereAccess.shared).farsideSheet()
+        }
+        .confirmationDialog("Forget this Mac locally?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget Mac", role: .destructive) {
                 connection.revoke()
                 lastReachedAt = 0
                 lastFailure = nil
             }
         } message: {
-            Text("You’ll need to scan a new pairing code on your Mac to connect again.")
+            Text("This removes local pairing only. Server Data removes your Anywhere device link. You’ll need to scan a new pairing code to connect again.")
         }
         .onChange(of: connection.status) { old, new in statusChanged(from: old, to: new) }
         .onChange(of: model.macNotice) { _, _ in showDepartureIfNeeded() }
@@ -203,6 +209,8 @@ struct HomeView: View {
                 Button { model.pairingEntry = .paste } label: { Label("Paste Pairing Code", systemImage: "doc.on.clipboard") }
                 Button { showDetails = true } label: { Label("Connection Details", systemImage: "network") }
                 Button { showPaywall = true } label: { Label("Farside Anywhere", systemImage: "globe") }
+                Button { showLegal = true } label: { Label("Third-Party Notices", systemImage: "doc.text") }
+                Button { showServerData = true } label: { Label("Server Data", systemImage: "externaldrive") }
                 if connection.invitation != nil {
                     Divider()
                     Button(role: .destructive) { confirmForget = true } label: {
@@ -364,12 +372,14 @@ struct HomeView: View {
     // MARK: Behaviour
 
     private func connect() {
+        guard !AnywhereAccess.shared.removalPending else { showServerData = true; return }
         lastFailure = nil
         model.error = ""
         onboarding.beforeConnect {
             Task { @MainActor in
                 // Only waits when this phone has Anywhere and its token is due; never more than a few seconds.
                 await AnywhereAccess.shared.prepareForConnection()
+                guard !AnywhereAccess.shared.removalPending else { return }
                 connection.start()
             }
         }

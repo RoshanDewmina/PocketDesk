@@ -31,7 +31,7 @@ final class AnywhereStore: ObservableObject {
 
     init(productIDs: [String] = AnywherePlan.productIDs,
          accountToken: @escaping () -> UUID? = { InstallIdentity.current()?.accountToken },
-         serviceAvailable: @escaping () -> Bool = { AnywhereService.canSell(configured: AnywhereService.configured) },
+         serviceAvailable: @escaping () -> Bool = { AnywhereService.canSell(configured: AnywhereService.configured, ready: AnywhereService.isReady) },
          sync: @escaping () async throws -> Void = { try await AppStore.sync() }) {
         self.productIDs = productIDs
         self.accountToken = accountToken
@@ -166,7 +166,7 @@ final class AnywhereStore: ObservableObject {
             }
             restoreMessage = entitlement.hasAccess
                 ? "Farside Anywhere is back on."
-                : "No Farside Anywhere subscription was found for this Apple Account."
+                : "Couldn’t confirm an active Farside Anywhere subscription yet. Check your Apple Account and try Restore Purchases again."
         } catch StoreKitError.userCancelled {
             return
         } catch {

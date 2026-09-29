@@ -256,8 +256,8 @@ enum AnywhereCopy {
 enum AnywhereService {
     /// Never start a paid checkout unless the build names the service that can verify it.
     /// A debug pairing-derived endpoint is useful for development, but is not a purchase target.
-    static func canSell(configured: String?) -> Bool {
-        baseURL(configured: configured, pairingServer: nil, allowDerived: false) != nil
+    static func canSell(configured: String?, ready: Bool = false) -> Bool {
+        ready && baseURL(configured: configured, pairingServer: nil, allowDerived: false) != nil
     }
 
     /// The configured production address wins. Without one, debug builds use the paired Mac's own
@@ -273,6 +273,12 @@ enum AnywhereService {
         components.scheme = components.scheme == "wss" ? "https" : "http"
         components.path = ""
         return components.url
+    }
+
+    /// Set only in a build whose verification service has passed acceptance.
+    static var isReady: Bool {
+        let value = Bundle.main.object(forInfoDictionaryKey: "FarsideServiceReady")
+        return (value as? Bool) == true || (value as? String) == "YES"
     }
 
     static var configured: String? { Bundle.main.object(forInfoDictionaryKey: "FarsideServiceBaseURL") as? String }

@@ -8,7 +8,8 @@ enum HostTheme {
     static let popoverWidth: CGFloat = 360
     static let setupSize = CGSize(width: 800, height: 520)
     static let railWidth: CGFloat = 280
-    static let settingsWidth: CGFloat = 480
+    static let settingsWidth: CGFloat = 960
+    static let settingsHeight: CGFloat = 720
 
     /// Reach's popover and setup-window grounds; one step up from the void so the dots read.
     static let popoverBackground = gray(0x16)

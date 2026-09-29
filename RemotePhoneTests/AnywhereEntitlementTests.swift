@@ -96,7 +96,8 @@ final class AnywhereEntitlementTests: XCTestCase {
     func testServiceAddress() {
         XCTAssertFalse(AnywhereService.canSell(configured: nil), "An unconfigured app cannot initiate a charge")
         XCTAssertFalse(AnywhereService.canSell(configured: "http://plain.example"))
-        XCTAssertTrue(AnywhereService.canSell(configured: "https://api.example"))
+        XCTAssertFalse(AnywhereService.canSell(configured: "https://api.example"), "A URL alone does not mean the service is ready")
+        XCTAssertTrue(AnywhereService.canSell(configured: "https://api.example", ready: true))
         XCTAssertEqual(AnywhereService.baseURL(configured: "https://api.getfarside.com/", pairingServer: "wss://other.example/signal",
                                                allowDerived: true)?.absoluteString, "https://api.getfarside.com")
         XCTAssertEqual(AnywhereService.baseURL(configured: "", pairingServer: "wss://relay.example/signal", allowDerived: true)?.absoluteString,
@@ -353,7 +354,7 @@ final class AnywhereAccessTests: XCTestCase {
         let verifier = self.verifier
         let device = self.device
         let access = AnywhereAccess(source: source, makeClient: { _ in verifier }, deviceID: { device },
-                                    now: { [unowned self] in self.clock }, persistence: keychain)
+                                    now: { [unowned self] in self.clock }, persistence: keychain, removalPersistence: MemoryStore())
         access.serviceURL = { [unowned self] in self.serviceURL }
         return access
     }

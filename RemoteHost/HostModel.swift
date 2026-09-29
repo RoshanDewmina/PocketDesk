@@ -4,6 +4,23 @@ import Combine
 import ScreenCaptureKit
 import ServiceManagement
 
+/// Kept until both the server deletion and local Keychain cleanup have completed.
+private struct PendingHostRoomRemoval: Codable {
+    var request: ServerDataRemovalRequest
+    var serverConfirmed: Bool
+}
+
+private enum HostRoomRemovalCleanupError: LocalizedError {
+    case pairingChanged, localPairingRetained
+
+    var errorDescription: String? {
+        switch self {
+        case .pairingChanged: "The saved pairing changed. Local cleanup needs attention before sharing can resume."
+        case .localPairingRetained: "The local pairing could not be removed from Keychain. Unlock this Mac and retry."
+        }
+    }
+}
+
 @MainActor
 final class RemoteHostModel: ObservableObject {
     #if DEBUG
@@ -31,6 +48,9 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var pairingRequested = false
     @Published private var controlConsent: HostControlConsentState
     @Published private(set) var detail: String?
+    @Published private(set) var serverRemovalBusy = false
+    @Published private(set) var serverRemovalPending = false
+    @Published private(set) var serverRemovalMessage: String?
     @Published private(set) var active = false
     @Published private(set) var wantsSharing: Bool
     @Published private(set) var screenRecordingPermission: HostPermissionStatus = .unchecked
@@ -82,9 +102,16 @@ final class RemoteHostModel: ObservableObject {
     private var lastSessionDuration: TimeInterval?
     #if DEBUG
     private let preferences = HostPreferences(defaults: HostE2E.active?.defaults ?? .standard)
+    private let hostPairStore = HostE2E.active?.pairStore ?? PairStore(account: "host")
+    // The E2E harness must never read or overwrite the owner's removal proof.
+    private let serverRemovalStore = PairStore(account: HostE2E.active.map { "host.e2e.room-removal.\($0.runID)" } ?? "host.room-removal.v1")
     #else
     private let preferences = HostPreferences()
+    private let hostPairStore = PairStore(account: "host")
+    private let serverRemovalStore = PairStore(account: "host.room-removal.v1")
     #endif
+    private var pendingServerRemoval: PendingHostRoomRemoval?
+    private var serverRemovalReadFailed = false
     private let input = RemoteInputDriver()
     private let capture = RemoteCapture()
     /// G12: one per capture session while the ladder switch is on.
@@ -195,7 +222,7 @@ final class RemoteHostModel: ObservableObject {
             hasPairedPhone: hasPairedPhone,
             pairingRequested: pairingRequested,
             pairing: pairingState,
-            canBeginPairing: canPair && serviceAddress != nil,
+            canBeginPairing: canPair && serviceAddress != nil && !serverRemovalPending,
             allowControl: allowControl,
             keepAwake: keepAwakeEnabled,
             openAtLogin: openAtLogin,
@@ -213,7 +240,10 @@ final class RemoteHostModel: ObservableObject {
             displays: displays.map { HostDisplayOption(id: $0.displayID, name: Self.displayName(for: $0.displayID)) },
             selectedDisplayID: selected,
             detail: detail,
-            pairingDeferred: pairingDeferred
+            pairingDeferred: pairingDeferred,
+            serverRemovalBusy: serverRemovalBusy,
+            serverRemovalPending: serverRemovalPending,
+            serverRemovalMessage: serverRemovalMessage
         )
     }
 
@@ -238,6 +268,7 @@ final class RemoteHostModel: ObservableObject {
         accessibilitySkipped = preferences.accessibilitySkipped
         pairingDeferred = preferences.pairingDeferred
         curtainPreference = preferences.privacyCurtain
+        loadPendingServerRemoval()
         refreshBackgroundStates()
         background.onChange = { [weak self] in self?.refreshBackgroundStates() }
         NativeCodecCapability.warmUp()
@@ -378,6 +409,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Pairing
 
     func requestPairing() {
+        guard removalAllowsSharing else { return }
         pairingRequested = true
         clearDeferredPairing()
     }
@@ -387,6 +419,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func setServiceAddress(_ value: String) {
+        guard removalAllowsSharing else { return }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard PairInvitation.validServer(trimmed) else { return }
         preferences.serviceAddress = trimmed
@@ -395,6 +428,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func beginPairing() {
+        guard removalAllowsSharing else { return }
         guard let serviceAddress else { objectWillChange.send(); return }
         guard !browserSession.controller.running else { detail = "Browser access is on. Stop it before pairing a phone."; return }
         guard canPair, let display = validatedSelectedDisplay() else {
@@ -438,7 +472,116 @@ final class RemoteHostModel: ObservableObject {
         pairingExpired = true
     }
 
+    func removeServerRoom() {
+        guard !serverRemovalBusy else { return }
+        if serverRemovalReadFailed { loadPendingServerRemoval() }
+        guard !serverRemovalReadFailed else { return }
+
+        let pending: PendingHostRoomRemoval
+        if let saved = pendingServerRemoval {
+            pending = saved
+        } else {
+            guard let pair = connection.hostPair,
+                  let base = ServerDataRemovalRequest.service(for: pair.invitation.server),
+                  let origin = ServerDataRemovalRequest.origin(base) else {
+                serverRemovalMessage = "No HTTPS service room is available. Remove Phone only forgets local pairing."
+                return
+            }
+            let request = ServerDataRemovalRequest(kind: .room, serviceOrigin: origin,
+                                                  identifier: pair.invitation.room, proof: pair.hostToken)
+            do {
+                _ = try request.httpRequest()
+                pending = PendingHostRoomRemoval(request: request, serverConfirmed: false)
+                try serverRemovalStore.save(pending)
+                pendingServerRemoval = pending
+                serverRemovalPending = true
+            } catch {
+                serverRemovalMessage = "Couldn’t save the removal proof on this Mac. Unlock it and try again; sharing was not changed."
+                return
+            }
+        }
+        stopSharing()
+        serverRemovalBusy = true
+        serverRemovalMessage = pending.serverConfirmed ? "Finishing local pairing cleanup…" : "Waiting for server confirmation…"
+        Task { @MainActor in
+            defer { serverRemovalBusy = false }
+            do {
+                if !pending.serverConfirmed {
+                    try await HTTPServerDataRemover().remove(pending.request)
+                    // A relaunch after server confirmation must retry local cleanup without
+                    // depending on the removed room's server record still being present.
+                    let confirmed = PendingHostRoomRemoval(request: pending.request, serverConfirmed: true)
+                    try serverRemovalStore.save(confirmed)
+                    pendingServerRemoval = confirmed
+                }
+                try finishConfirmedServerRemoval(pending.request)
+                serverRemovalMessage = "Room removal confirmed. Purchase records and security blocks are retained under the privacy policy."
+            } catch {
+                serverRemovalMessage = "Room removal is still pending: \(error.localizedDescription) Sharing stays off; retry from Server Data."
+            }
+        }
+    }
+
+    private func finishConfirmedServerRemoval(_ request: ServerDataRemovalRequest) throws {
+        // `connection.restore()` may have failed while Keychain was locked at launch. Read the
+        // persistent pairing itself before deciding that an absent in-memory pair is cleaned up.
+        if let persisted = try hostPairStore.read(HostPair.self) {
+            guard persisted.hostToken == request.proof, persisted.invitation.room == request.identifier else {
+                throw HostRoomRemovalCleanupError.pairingChanged
+            }
+            if connection.hostPair == nil { connection.restore() }
+        }
+        if let pair = connection.hostPair {
+            guard pair.hostToken == request.proof, pair.invitation.room == request.identifier else {
+                throw HostRoomRemovalCleanupError.pairingChanged
+            }
+            connection.revoke()
+            guard connection.hostPair == nil else { throw HostRoomRemovalCleanupError.localPairingRetained }
+        }
+        if let _ = try hostPairStore.read(HostPair.self) {
+            throw HostRoomRemovalCleanupError.localPairingRetained
+        }
+        // If this delete fails, keep the confirmed record and retry cleanup on the next tap.
+        try serverRemovalStore.delete()
+        pendingServerRemoval = nil
+        serverRemovalPending = false
+        clearPairingCode()
+        pairingRequested = false
+    }
+
+    private func loadPendingServerRemoval() {
+        do {
+            pendingServerRemoval = try serverRemovalStore.read(PendingHostRoomRemoval.self)
+            serverRemovalReadFailed = false
+            serverRemovalPending = pendingServerRemoval != nil
+            if let pendingServerRemoval {
+                wantsSharing = false
+                preferences.sharingEnabled = false
+                serverRemovalMessage = pendingServerRemoval.serverConfirmed
+                    ? "Server removal was confirmed. Retry to finish local pairing cleanup."
+                    : "Room removal is pending. Sharing is off; retry from Server Data."
+            }
+        } catch {
+            // A locked Keychain is an unknown state, not evidence that there is no pending removal.
+            serverRemovalReadFailed = true
+            serverRemovalPending = true
+            wantsSharing = false
+            preferences.sharingEnabled = false
+            serverRemovalMessage = "Couldn’t read the saved room removal. Unlock this Mac and retry; sharing stays off."
+        }
+    }
+
+    private var removalAllowsSharing: Bool {
+        if serverRemovalReadFailed { loadPendingServerRemoval() }
+        guard !serverRemovalPending else {
+            detail = "Finish the pending server room removal before pairing or sharing again."
+            return false
+        }
+        return true
+    }
+
     func revoke() {
+        guard removalAllowsSharing else { return }
         if browserSession.controller.running { connection.revoke(); clearPairingCode(); return }
         stop()
         connection.revoke()
@@ -471,6 +614,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func resumeSharing() {
+        guard removalAllowsSharing else { return }
         cancelTimedPause()
         if crashLoopStopped {
             crashLoopStopped = false
@@ -515,6 +659,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func reconcileSharing() {
+        guard removalAllowsSharing else { return }
         guard autoStart.shouldStart(
             wantsSharing: wantsSharing,
             sharingActive: active,
@@ -836,6 +981,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func start(display: SCDisplay) {
+        guard removalAllowsSharing else { return }
         releaseRemoteInput(notifyPhone: true)
         input.configure(SCContentFilter(display: display, excludingWindows: []))
         input.enabled = false
@@ -881,6 +1027,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Permissions and displays
 
     private func pollPermissions() {
+        if serverRemovalReadFailed { loadPendingServerRemoval() }
         let screen: HostPermissionStatus = CGPreflightScreenCaptureAccess() ? .granted : .denied
         let trusted: HostPermissionStatus = AXIsProcessTrusted() ? .granted : .denied
         if screen != screenRecordingPermission {

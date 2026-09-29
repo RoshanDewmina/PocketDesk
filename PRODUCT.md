@@ -599,6 +599,10 @@ Lost-device handling is unresolved for a user away from the Mac. Retain revoke-a
 
 Payment, if introduced, needs localized prices, verified entitlement, restore, pending/canceled/refunded states, clear companion-app requirements, and a clean session shutdown at any usage limit. No billing implementation should precede the product/value decision.
 
+### Mac Settings design follow-up — 29 September 2026
+
+- [ ] Align Mac Settings more closely with the Farside website and mobile app: compare typography, spacing, surfaces, buttons and status treatments against the current Reach design system (`design/FARSIDE-DESIGN-SYSTEM.md`). Preserve native Mac accessibility and clear destructive-action confirmation. Requested by Roshan alongside the wider two-column Settings layout; the broader visual redesign is a follow-up task.
+
 ### Phone interaction improvement backlog — 28 September 2026
 
 **Latest exploration direction:** Roshan proposes eliminating the separate trackpad overlay and using the streamed desktop itself as a relative trackpad, plus a strong iPhone haptic on click (strength increased at Roshan’s request on 28 September). Make this the default direction for the next native implementation discussion. Finger movement moves the existing cursor; a tap clicks at that cursor, not at the finger location. Define scrolling, pinch, double-click, drag and cancellation semantics explicitly. Local haptics acknowledge accepted gestures, not remote completion. A small dockable pad is now an optional comparison only. The web interaction lab has a visual click pulse; native haptics and the revised native controls are not implemented by this planning update.

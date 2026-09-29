@@ -13,10 +13,8 @@ enum FarsideRoute: Equatable {
 
     static let scheme = "farside"
 
-    /// Hosts whose `/open/...` universal links Farside accepts. The public domain is not chosen yet;
-    /// this must change together with the Associated Domains entitlement and the site's
-    /// apple-app-site-association file.
-    static var associatedHosts: Set<String> = ["farside.example"]
+    /// Keep aligned with the Associated Domains entitlement and the site’s AASA file.
+    static var associatedHosts: Set<String> = ["getfarside.com"]
 
     /// Help request ids are `h_` plus a short token. Anything else is refused before it reaches UI.
     static func isValidID(_ id: String) -> Bool {
