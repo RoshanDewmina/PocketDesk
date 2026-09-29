@@ -8,6 +8,8 @@ private final class MockPairSecurity {
     var reference = Data([0x11, 0x22])
     var lookupStatus: OSStatus?
     var malformedLookup = false
+    var nilLookup = false
+    var verificationStatus: OSStatus?
     var deleteStatus = errSecSuccess
     var afterDelete: (() -> Void)?
     private(set) var copyQueries: [[String: Any]] = []
@@ -21,8 +23,10 @@ private final class MockPairSecurity {
                     if let lookupStatus { return (lookupStatus, nil) }
                     if !present { return (errSecItemNotFound, nil) }
                     if malformedLookup { return (errSecSuccess, "not a reference") }
+                    if nilLookup { return (errSecSuccess, nil) }
                     return (errSecSuccess, reference)
                 }
+                if let verificationStatus { return (verificationStatus, nil) }
                 return (present ? errSecSuccess : errSecItemNotFound, nil)
             },
             delete: { [self] search in
@@ -95,6 +99,20 @@ final class PairStoreDeletionTests: XCTestCase {
         }
         XCTAssertTrue(malformed.deleteQueries.isEmpty)
 
+        let nilOutput = MockPairSecurity()
+        nilOutput.nilLookup = true
+        XCTAssertThrowsError(try nilOutput.store().delete()) { error in
+            XCTAssertEqual(error as? PairStoreDeletionError, .invalidPersistentReference)
+        }
+        XCTAssertTrue(nilOutput.deleteQueries.isEmpty)
+
+        let empty = MockPairSecurity()
+        empty.reference = Data()
+        XCTAssertThrowsError(try empty.store().delete()) { error in
+            XCTAssertEqual(error as? PairStoreDeletionError, .invalidPersistentReference)
+        }
+        XCTAssertTrue(empty.deleteQueries.isEmpty)
+
         let oversized = MockPairSecurity()
         oversized.reference = Data(repeating: 0x11, count: 4_097)
         XCTAssertThrowsError(try oversized.store().delete()) { error in
@@ -108,6 +126,15 @@ final class PairStoreDeletionTests: XCTestCase {
         mock.deleteStatus = -25244
         assertKeychainStatus(-25244) { try mock.store().delete() }
         XCTAssertTrue(mock.present)
+    }
+
+    func testSuccessfulDeleteCannotMaskVerificationError() {
+        let mock = MockPairSecurity()
+        mock.verificationStatus = -25308
+        assertKeychainStatus(-25308) { try mock.store().delete() }
+        XCTAssertEqual(mock.deleteQueries.count, 1)
+        XCTAssertEqual(mock.copyQueries.count, 2)
+        XCTAssertFalse(mock.present)
     }
 
     func testStaleReferenceOnlySucceedsWhenOriginalRecordIsGone() throws {
