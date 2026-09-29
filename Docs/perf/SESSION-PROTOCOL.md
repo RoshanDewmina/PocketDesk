@@ -10,7 +10,7 @@ For the orchestrator to schedule Roshan's time. Every run needs a quiet Mac: no 
 4. Mac: launch the bench window: `open -n "<DerivedData>/Build/Products/Debug/Farside Test Pad.app" --args --bench`. It covers the whole display; `q` quits it. From the phone's keyboard (through Farside): `c` new chart, `m` motion on/off, `s` scroll on/off, `j` page jump, space = flash target.
 5. Connect the phone, Fill view. The overlay's first lines should show `640c34`, `2560×1656`, `120Hz`, then `glass p50 … ±u` (marker seen) and `Mac VT lat …`.
 
-Each run below is 60–90 s: 20 s static (chart visible, motion off), 30 s motion (`m`), 20 s clicks on the flash target (space or tap it), then Controls → Picture → Export statistics log (AirDrop) and note the time. Do not record the phone's screen during encoder runs.
+Each run below is 60–90 s: 20 s static (chart visible, motion off), 30 s motion (`m`), 20 s clicks on the flash target (space or tap it), then Controls → Picture → Export statistics log (AirDrop) and note the time. Do not record the phone's screen during encoder runs. Lessons from the 29 Sep session: keys from the phone reach the bench only while the Test Pad is the frontmost Mac app (build .5 activates it on launch and again after 1 s; before that, check the menu bar says "Farside Test Pad" or press `m` on the Mac); note each run's start and end as seconds since the phone connected, or as Mac log line numbers, because samples carry no wall-clock time (follow-up 11); the phone export is cumulative for the day, so one export at the very end is enough if the run boundaries are noted; keep every other agent's tests and load generators off the Mac for the whole window, not only builds.
 
 ## Run A: encoder latency (3 runs, ~6 min)
 
