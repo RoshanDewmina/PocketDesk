@@ -35,6 +35,49 @@ struct PairInvitation: Codable, Equatable {
     }
 }
 
+/// The HTTPS origin and proof for one exact pairing. A later pairing never reuses this target.
+struct PushPairingTarget: Codable, Hashable {
+    let room: String
+    let token: String
+    let origin: URL
+
+    init?(invitation: PairInvitation) {
+        guard SecureRandom.isToken(invitation.room), SecureRandom.isToken(invitation.token),
+              let origin = Self.origin(for: invitation.server) else { return nil }
+        room = invitation.room
+        token = invitation.token
+        self.origin = origin
+    }
+
+    private enum CodingKeys: String, CodingKey { case room, token, origin }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        let room = try values.decode(String.self, forKey: .room)
+        let token = try values.decode(String.self, forKey: .token)
+        let origin = try values.decode(URL.self, forKey: .origin)
+        guard SecureRandom.isToken(room), SecureRandom.isToken(token),
+              let parts = URLComponents(url: origin, resolvingAgainstBaseURL: false),
+              parts.scheme == "https", parts.host != nil, parts.user == nil, parts.password == nil,
+              parts.query == nil, parts.fragment == nil, parts.path.isEmpty || parts.path == "/" else {
+            throw DecodingError.dataCorruptedError(forKey: .origin, in: values, debugDescription: "Invalid push target")
+        }
+        self.room = room
+        self.token = token
+        self.origin = origin
+    }
+
+    static func origin(for server: String) -> URL? {
+        guard PairInvitation.validServer(server),
+              var parts = URLComponents(string: server), parts.scheme == "wss",
+              parts.host != nil, parts.user == nil, parts.password == nil,
+              parts.path == "/signal", parts.query == nil, parts.fragment == nil else { return nil }
+        parts.scheme = "https"
+        parts.path = ""
+        return parts.url
+    }
+}
+
 struct HostPair: Codable {
     var hostToken: String
     var invitation: PairInvitation

@@ -23,6 +23,8 @@ final class HostAgentAlerts: ObservableObject {
     /// Hands the alert to the live control channel. False when it could not be sent.
     var deliverToPhone: (AgentAlertFrame) -> Bool = { _ in false }
     var push: any AgentPushRelay = UnconfiguredAgentPushRelay()
+    var canUsePush: () -> Bool = { false }
+    var pushIdentity: () -> String? = { nil }
     var record: (String) -> Void = { _ in }
 
     private var gate = AgentAlertGate()
@@ -110,7 +112,10 @@ final class HostAgentAlerts: ObservableObject {
             record("Told your iPhone that \(alert.kind.displayName) needs you")
             return .forwarded
         }
-        switch await push.deliver(alert) {
+        guard canUsePush(), let identity = pushIdentity() else { return .pushUnavailable }
+        let outcome = await push.deliver(alert)
+        guard canUsePush(), pushIdentity() == identity else { return .pushUnavailable }
+        switch outcome {
         case .sent:
             record("Notification accepted for your iPhone: \(alert.kind.displayName) needs you")
             return .pushed
@@ -225,15 +230,13 @@ actor HTTPAgentPushRelay: AgentPushRelay {
     private let hostToken: String
     private let session: URLSession
 
-    init?(baseURL: URL, room: String, hostToken: String) {
-        guard baseURL.scheme == "https", baseURL.host != nil, baseURL.user == nil,
-              baseURL.password == nil, baseURL.query == nil, baseURL.fragment == nil,
-              baseURL.path.isEmpty || baseURL.path == "/",
-              SecureRandom.isToken(room), SecureRandom.isToken(hostToken),
-              SecureRandom.digest(hostToken) == room else { return nil }
-        url = baseURL.appendingPathComponent("v1/push/event")
-        self.room = room
-        self.hostToken = hostToken
+    init?(pair: HostPair) {
+        guard pair.paired, let origin = PushPairingTarget.origin(for: pair.invitation.server),
+              SecureRandom.isToken(pair.invitation.room), SecureRandom.isToken(pair.hostToken),
+              SecureRandom.digest(pair.hostToken) == pair.invitation.room else { return nil }
+        url = origin.appendingPathComponent("v1/push/event")
+        room = pair.invitation.room
+        hostToken = pair.hostToken
         session = URLSession(configuration: .ephemeral, delegate: AgentPushNoRedirect(), delegateQueue: nil)
     }
 

@@ -77,6 +77,7 @@ final class RemoteHostModel: ObservableObject {
     let events = HostEventLog()
     /// Agent alerts (beta): a hook on this Mac says an agent needs a person, and this tells the phone.
     let agentAlerts = HostAgentAlerts()
+    private var agentPushPair: HostPair?
     /// Alerts waiting for the next `capture` status; each rides one message, once.
     private var agentAlertOutbox: [AgentAlertFrame] = []
     #if DEBUG
@@ -597,6 +598,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func connectionDidChange() {
+        refreshAgentPushRelay()
         if hasPairedPhone { clearDeferredPairing() }
         guard !pairingCode.isEmpty, hasPairedPhone else { return }
         clearPairingCode()
@@ -740,9 +742,29 @@ final class RemoteHostModel: ObservableObject {
         agentAlerts.isPhoneLive = { [weak self] in self?.connection.connected == true && self?.active == true }
         agentAlerts.hasPairedPhone = { [weak self] in self?.hasPairedPhone == true }
         agentAlerts.deliverToPhone = { [weak self] frame in self?.deliverAgentAlert(frame) ?? false }
+        agentAlerts.canUsePush = { [weak self] in
+            guard let self else { return false }
+            return self.hasPairedPhone && !self.serverRemovalPending && !self.serverRemovalReadFailed && !self.serverRemovalBusy
+        }
+        agentAlerts.pushIdentity = { [weak self] in
+            guard let self, let pair = self.connection.hostPair, pair.paired,
+                  !self.serverRemovalPending, !self.serverRemovalReadFailed, !self.serverRemovalBusy else { return nil }
+            return SecureRandom.digest(pair.hostToken + "|" + pair.invitation.token + "|" + pair.invitation.server)
+        }
         agentAlerts.record = { [weak self] text in self?.events.record(.session, text) }
+        refreshAgentPushRelay()
         agentAlerts.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }.store(in: &agentAlertObservers)
         Task { @MainActor [weak self] in await self?.agentAlerts.startIfEnabled() }
+    }
+
+    private func refreshAgentPushRelay() {
+        let pair = connection.hostPair?.paired == true && !serverRemovalPending && !serverRemovalReadFailed && !serverRemovalBusy
+            ? connection.hostPair : nil
+        if pair?.hostToken == agentPushPair?.hostToken &&
+            pair?.invitation == agentPushPair?.invitation && pair?.paired == agentPushPair?.paired { return }
+        agentPushPair = pair
+        if let pair, let relay = HTTPAgentPushRelay(pair: pair) { agentAlerts.push = relay }
+        else { agentAlerts.push = UnconfiguredAgentPushRelay() }
     }
 
     func setAgentAlerts(_ enabled: Bool) {

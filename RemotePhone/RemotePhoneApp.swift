@@ -23,6 +23,7 @@ struct RemotePhoneApp: App {
                 .onAppear {
                     FarsideSystemIntegrations.shared.attach(model)
                     AnywhereAccess.shared.attach(model.connection, store: .shared)
+                    AgentPushIntegration.shared.attach(model)
                     model.sceneChanged(phase)
                 }
                 .onChange(of: phase) { _, value in model.sceneChanged(value) }

@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import UIKit
 
@@ -42,16 +43,11 @@ final class UnconfiguredPushSink: PushRegistrationSink {
 /// An HTTPS, pairing-scoped push registry. Its proof is only the phone token, never the screen key.
 @MainActor
 final class HTTPPushRegistrationSink: PushRegistrationSink {
-    private let baseURL: URL
-    private let invitation: () -> PairInvitation?
+    let target: PushPairingTarget
     private let session: URLSession
 
-    init?(baseURL: URL, invitation: @escaping () -> PairInvitation?) {
-        guard baseURL.scheme == "https", baseURL.host != nil, baseURL.user == nil,
-              baseURL.password == nil, baseURL.query == nil, baseURL.fragment == nil,
-              baseURL.path.isEmpty || baseURL.path == "/" else { return nil }
-        self.baseURL = baseURL
-        self.invitation = invitation
+    init(target: PushPairingTarget) {
+        self.target = target
         session = URLSession(configuration: .ephemeral, delegate: PushNoRedirect(), delegateQueue: nil)
     }
 
@@ -68,15 +64,12 @@ final class HTTPPushRegistrationSink: PushRegistrationSink {
     }
 
     private func request(_ path: String, payload: [String: Any]) async -> PushSubmission {
-        guard let pair = invitation(), SecureRandom.isToken(pair.room), SecureRandom.isToken(pair.token) else {
-            return .notSent("Pair your phone before using agent alerts.")
-        }
-        var value: [String: Any] = ["room": pair.room, "token": pair.token]
+        var value: [String: Any] = ["room": target.room, "token": target.token]
         value.merge(payload) { _, new in new }
         guard let data = try? JSONSerialization.data(withJSONObject: value) else {
             return .notSent("Push registration could not be prepared.")
         }
-        var request = URLRequest(url: baseURL.appendingPathComponent("v1/push/\(path)"), timeoutInterval: 12)
+        var request = URLRequest(url: target.origin.appendingPathComponent("v1/push/\(path)"), timeoutInterval: 12)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = data
@@ -98,8 +91,13 @@ private final class PushNoRedirect: NSObject, URLSessionTaskDelegate {
     }
 }
 
-/// Collects the APNs address, stores it on this phone, and syncs explicit preferences with the
-/// pairing-scoped service. A failed removal remains pending for the next launch.
+/// Retains the current APNs address only in memory and syncs explicit preferences with the
+/// pairing-scoped service. A failed removal remains in Keychain for the next launch.
+struct PendingPushRemoval: Codable, Hashable {
+    let target: PushPairingTarget
+    let deviceToken: String
+}
+
 @MainActor
 final class PushRegistrar: ObservableObject {
     static let shared = PushRegistrar()
@@ -112,27 +110,27 @@ final class PushRegistrar: ObservableObject {
 
     @Published private(set) var status: Status = .idle
     @Published private(set) var lastSubmission: PushSubmission?
-    var sink: any PushRegistrationSink = UnconfiguredPushSink() {
-        didSet { Task { await submit() } }
-    }
+    var sinkForTarget: (PushPairingTarget) -> any PushRegistrationSink = { HTTPPushRegistrationSink(target: $0) }
+    private(set) var target: PushPairingTarget?
 
     private let defaults: UserDefaults
+    private let removalStore: any PairPersistence
     private let environmentOverride: String?
     private static let tokenKey = "push.deviceToken"
     private static let pendingRemovalKey = "push.pendingRemoval"
     private var currentToken: String?
+    private var volatileRemovals: [PendingPushRemoval] = []
     private var inFlight: Task<Void, Never>?
+    private var submissionSequence = 0
 
-    init(defaults: UserDefaults = .standard, environmentOverride: String? = nil) {
+    init(defaults: UserDefaults = .standard, environmentOverride: String? = nil,
+         removalStore: any PairPersistence = PairStore(account: "phone.push-removal.v1")) {
         self.defaults = defaults
         self.environmentOverride = environmentOverride
-        // Earlier builds cached the token. It is only retained now for one authenticated removal.
-        if let old = defaults.string(forKey: Self.tokenKey) {
-            if defaults.string(forKey: Self.pendingRemovalKey) == nil {
-                defaults.set(old, forKey: Self.pendingRemovalKey)
-            }
-            defaults.removeObject(forKey: Self.tokenKey)
-        }
+        self.removalStore = removalStore
+        // Legacy unbound cached addresses cannot safely be sent under an arbitrary new pairing.
+        defaults.removeObject(forKey: Self.tokenKey)
+        defaults.removeObject(forKey: Self.pendingRemovalKey)
     }
 
     var deviceToken: String? { currentToken }
@@ -159,18 +157,40 @@ final class PushRegistrar: ObservableObject {
         Task { await submit() }
     }
 
+    func configure(invitation: PairInvitation?) {
+        let next = invitation.flatMap(PushPairingTarget.init)
+        guard next != target else { return }
+        let hadPair = target != nil
+        status = .idle
+        if hadPair { stageCurrentRemoval() }
+        target = next
+        if hadPair { currentToken = nil }
+        Task { await submit() }
+    }
+
     func failed(_ error: Error) {
         status = .failed(error.localizedDescription)
     }
 
     func forget() {
-        if let deviceToken {
-            defaults.set(deviceToken, forKey: Self.pendingRemovalKey)
-            currentToken = nil
-        }
         status = .idle
+        stageCurrentRemoval()
         lastSubmission = nil
         Task { await submit() }
+    }
+
+    private func stageCurrentRemoval() {
+        guard let target, let deviceToken = currentToken else { currentToken = nil; return }
+        let pending = PendingPushRemoval(target: target, deviceToken: deviceToken)
+        currentToken = nil
+        do {
+            var saved = try removalStore.read([PendingPushRemoval].self) ?? []
+            if !saved.contains(pending) { saved.append(pending) }
+            try removalStore.save(saved)
+        } catch {
+            if !volatileRemovals.contains(pending) { volatileRemovals.append(pending) }
+            status = .failed("Push removal could not be saved. Unlock this iPhone and retry.")
+        }
     }
 
     /// The registration a service would store for this phone, or nil when there is no address yet.
@@ -193,21 +213,39 @@ final class PushRegistrar: ObservableObject {
 
     func submit() async {
         let previous = inFlight
+        submissionSequence += 1
+        let sequence = submissionSequence
         let next = Task { @MainActor in
             await previous?.value
             await self.syncOnce()
+            if self.submissionSequence == sequence { self.inFlight = nil }
         }
         inFlight = next
         await next.value
     }
 
     private func syncOnce() async {
-        if let pending = defaults.string(forKey: Self.pendingRemovalKey) {
-            let result = await sink.remove(deviceToken: pending)
+        let saved: [PendingPushRemoval]
+        do { saved = try removalStore.read([PendingPushRemoval].self) ?? [] }
+        catch {
+            status = .failed("Push removal is waiting for Keychain. Unlock this iPhone and retry.")
+            return
+        }
+        var removalFailed = false
+        for pending in Array(Set(saved + volatileRemovals)) {
+            let result = await sinkForTarget(pending.target).remove(deviceToken: pending.deviceToken)
             lastSubmission = result
             if result == .sent {
-                defaults.removeObject(forKey: Self.pendingRemovalKey)
-            } else { return }
+                do {
+                    var current = try removalStore.read([PendingPushRemoval].self) ?? []
+                    current.removeAll { $0 == pending }
+                    if current.isEmpty { try removalStore.delete() } else { try removalStore.save(current) }
+                    volatileRemovals.removeAll { $0 == pending }
+                } catch {
+                    status = .failed("Push removal was confirmed, but local cleanup needs Keychain.")
+                    removalFailed = true
+                }
+            } else { removalFailed = true }
         }
         guard let deviceToken else { return }
         guard AgentAlertPreferences(defaults: defaults).alertsEnabled else {
@@ -218,11 +256,83 @@ final class PushRegistrar: ObservableObject {
             status = .failed("This build has no APNs environment.")
             return
         }
-        let result = await sink.submit(registration)
+        guard let target else { return }
+        let result = await sinkForTarget(target).submit(registration)
+        guard self.target == target, self.currentToken == deviceToken,
+              AgentAlertPreferences(defaults: defaults).alertsEnabled else { return }
         lastSubmission = result
         switch result {
-        case .sent: status = .registered
+        case .sent: status = removalFailed ? .failed("An older pairing still needs push removal.") : .registered
         case .notSent(let reason): status = .failed(reason)
+        }
+    }
+}
+
+/// Binds the beta alert adapters to the phone's current pairing and HTTPS origin.
+@MainActor
+final class AgentPushIntegration {
+    static let shared = AgentPushIntegration()
+
+    private weak var model: PhoneRemoteModel?
+    private var observers: Set<AnyCancellable> = []
+    private var currentTarget: PushPairingTarget?
+    private var previousPreferences: (enabled: Bool, timeSensitive: Bool, showName: Bool)?
+
+    func attach(_ model: PhoneRemoteModel) {
+        guard self.model !== model else { return }
+        self.model = model
+        observers.removeAll()
+        model.connection.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refresh() }
+            .store(in: &observers)
+        AnywhereAccess.shared.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refresh() }
+            .store(in: &observers)
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refresh() }
+            .store(in: &observers)
+        NotificationCenter.default.publisher(for: UIApplication.didBecomeActiveNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.refresh(force: true) }
+            .store(in: &observers)
+        refresh(force: true)
+    }
+
+    private func refresh(force: Bool = false) {
+        let removalBlocked = AnywhereAccess.shared.removalPending || AnywhereAccess.shared.removalRecoveryRequired
+        let mayRegister = !removalBlocked && model?.connection.startAllowed?() != false
+        let invitation = mayRegister ? model?.connection.invitation : nil
+        let next = invitation.flatMap(PushPairingTarget.init)
+        let pairChanged = next != currentTarget
+        if pairChanged {
+            currentTarget = next
+            PushRegistrar.shared.configure(invitation: invitation)
+            AgentAlertReports.shared.configure(target: next)
+        }
+        let preferences = AgentAlertPreferences()
+        let current = (enabled: preferences.alertsEnabled,
+                       timeSensitive: preferences.breakThroughFocus,
+                       showName: preferences.showAgentName)
+        let changed = previousPreferences.map {
+            $0.enabled != current.enabled || $0.timeSensitive != current.timeSensitive || $0.showName != current.showName
+        } ?? true
+        let wasEnabled = previousPreferences?.enabled ?? false
+        previousPreferences = current
+
+        if !current.enabled {
+            if wasEnabled { PushRegistrar.shared.forget() }
+        } else if next != nil && (pairChanged || !wasEnabled || force) {
+            // APNs may rotate the opaque token; each active launch asks iOS for the current one.
+            UIApplication.shared.registerForRemoteNotifications()
+        }
+        if pairChanged || changed || force {
+            Task {
+                await PushRegistrar.shared.submit()
+                await AgentAlertReports.shared.flush()
+            }
         }
     }
 }

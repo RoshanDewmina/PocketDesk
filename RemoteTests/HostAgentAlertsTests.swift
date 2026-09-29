@@ -66,6 +66,8 @@ final class HostAgentAlertsTests: XCTestCase {
         }
         made.record = { [unowned self] text in diary.append(text) }
         made.push = push
+        made.canUsePush = { true }
+        made.pushIdentity = { "test-pair" }
         return made
     }
 
@@ -166,6 +168,16 @@ final class HostAgentAlertsTests: XCTestCase {
         XCTAssertEqual(disposition, .pushed)
         XCTAssertEqual(push.delivered, [incoming])
         XCTAssertTrue(sent.isEmpty)
+    }
+
+    func testPendingRoomRemovalBlocksPushEvenWithAConfiguredRelay() async {
+        let alerts = turnOnWithoutListening()
+        phoneIsLive = false
+        push.outcome = .sent
+        alerts.canUsePush = { false }
+        let disposition = await alerts.receive(alert())
+        XCTAssertEqual(disposition, .pushUnavailable)
+        XCTAssertTrue(push.delivered.isEmpty)
     }
 
     func testAChannelThatWillNotTakeTheFrameFallsBackToPush() async {

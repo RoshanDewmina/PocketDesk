@@ -25,23 +25,19 @@ final class UnconfiguredAgentAlertReportSink: AgentAlertReportSink {
 /// Reports a notification action with the phone's pairing proof, never the screen key.
 @MainActor
 final class HTTPAgentAlertReportSink: AgentAlertReportSink {
+    let target: PushPairingTarget
     private let url: URL
-    private let invitation: () -> PairInvitation?
     private let session: URLSession
 
-    init?(baseURL: URL, invitation: @escaping () -> PairInvitation?) {
-        guard baseURL.scheme == "https", baseURL.host != nil, baseURL.user == nil,
-              baseURL.password == nil, baseURL.query == nil, baseURL.fragment == nil,
-              baseURL.path.isEmpty || baseURL.path == "/" else { return nil }
-        url = baseURL.appendingPathComponent("v1/push/report")
-        self.invitation = invitation
+    init(target: PushPairingTarget) {
+        self.target = target
+        url = target.origin.appendingPathComponent("v1/push/report")
         session = URLSession(configuration: .ephemeral, delegate: AgentReportNoRedirect(), delegateQueue: nil)
     }
 
     func submit(_ response: AgentAlertResponse) async -> Bool {
-        guard let pair = invitation(), SecureRandom.isToken(pair.room), SecureRandom.isToken(pair.token) else { return false }
         let body: [String: Any] = [
-            "room": pair.room, "token": pair.token, "helpRequestID": response.helpRequestID,
+            "room": target.room, "token": target.token, "helpRequestID": response.helpRequestID,
             "action": response.kind.rawValue, "at": Int(response.at.timeIntervalSince1970.rounded())
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: body) else { return false }
@@ -70,10 +66,20 @@ final class AgentAlertReports {
     static let shared = AgentAlertReports()
     private(set) var queued: [AgentAlertResponse] = []
     static let capacity = 32
-    var sink: any AgentAlertReportSink = UnconfiguredAgentAlertReportSink() {
-        didSet { Task { await flush() } }
-    }
+    var sink: any AgentAlertReportSink = UnconfiguredAgentAlertReportSink()
+    private(set) var target: PushPairingTarget?
     private var flushing = false
+    private var flushRequested = false
+
+    func configure(target next: PushPairingTarget?) {
+        guard next != target else { return }
+        // An old notification answer cannot be attributed to a newly paired Mac.
+        queued.removeAll()
+        target = next
+        if let next { sink = HTTPAgentAlertReportSink(target: next) }
+        else { sink = UnconfiguredAgentAlertReportSink() }
+        Task { await flush() }
+    }
 
     func record(_ response: AgentAlertResponse) {
         queued.append(response)
@@ -82,11 +88,20 @@ final class AgentAlertReports {
     }
 
     func flush() async {
-        guard !flushing else { return }
+        guard !flushing else { flushRequested = true; return }
         flushing = true
-        defer { flushing = false }
+        defer {
+            flushing = false
+            if flushRequested {
+                flushRequested = false
+                Task { await flush() }
+            }
+        }
         while let first = queued.first {
-            guard await sink.submit(first) else { return }
+            let capturedSink = sink
+            let capturedTarget = target
+            guard await capturedSink.submit(first) else { return }
+            guard sink === capturedSink, target == capturedTarget else { return }
             if !queued.isEmpty, queued[0] == first { queued.removeFirst() }
         }
     }

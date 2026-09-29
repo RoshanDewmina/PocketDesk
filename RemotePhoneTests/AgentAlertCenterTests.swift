@@ -234,32 +234,98 @@ final class AgentAlertCenterTests: XCTestCase {
 
 @MainActor
 final class PushRegistrarTests: XCTestCase {
+    private final class PendingStore: PairPersistence {
+        var data: Data?
+        func save<T: Encodable>(_ value: T) throws { data = try JSONEncoder().encode(value) }
+        func read<T: Decodable>(_ type: T.Type) throws -> T? {
+            try data.map { try JSONDecoder().decode(type, from: $0) }
+        }
+        func delete() throws { data = nil }
+    }
+
+    private func invitation(_ room: String = String(repeating: "a", count: 64),
+                            token: String = String(repeating: "b", count: 64),
+                            server: String = "wss://signal.example.test/signal") -> PairInvitation {
+        PairInvitation(server: server, room: room, token: token,
+                       key: Data(repeating: 1, count: 32), expires: .distantFuture, name: "Test Mac")
+    }
+
     @MainActor
     private final class RetrySink: PushRegistrationSink {
         var shouldConfirm = false
-        func submit(_ registration: PushRegistration) async -> PushSubmission { .sent }
+        var registrations: [String] = []
+        var removals: [String] = []
+        func submit(_ registration: PushRegistration) async -> PushSubmission {
+            registrations.append(registration.deviceToken)
+            return .sent
+        }
         func remove(deviceToken: String) async -> PushSubmission {
+            removals.append(deviceToken)
             return shouldConfirm ? .sent : .notSent("offline")
         }
+    }
+
+    func testOnlyHTTPSOriginFromExactPairedServerIsAccepted() {
+        let expected = PushPairingTarget(invitation: invitation(server: "wss://signal.example.test/signal"))
+        XCTAssertEqual(expected?.origin.absoluteString, "https://signal.example.test")
+        XCTAssertNil(PushPairingTarget(invitation: invitation(server: "ws://127.0.0.1/signal")))
+        XCTAssertNil(PushPairingTarget(invitation: invitation(server: "wss://signal.example.test/other")))
+        XCTAssertNil(PushPairingTarget(invitation: invitation(server: "wss://user@signal.example.test/signal")))
+    }
+
+    func testPairSwitchRetainsOldRemovalIdentityAndUsesNewOriginForRegistration() async throws {
+        let defaults = makeTestDefaults("PushRegistrarPairSwitch")
+        AgentAlertPreferences(defaults: defaults).alertsEnabled = true
+        let store = PendingStore()
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox", removalStore: store)
+        let old = try XCTUnwrap(PushPairingTarget(invitation: invitation()))
+        let newInvitation = invitation(String(repeating: "c", count: 64),
+                                       token: String(repeating: "d", count: 64),
+                                       server: "wss://new.example.test/signal")
+        let next = try XCTUnwrap(PushPairingTarget(invitation: newInvitation))
+        let oldSink = RetrySink()
+        let newSink = RetrySink()
+        registrar.sinkForTarget = { target in target == old ? oldSink : newSink }
+        registrar.configure(invitation: invitation())
+        registrar.received(token: Data([0xA1]))
+        await registrar.submit()
+
+        registrar.configure(invitation: newInvitation)
+        await registrar.submit()
+        let pending = try XCTUnwrap(store.read([PendingPushRemoval].self)?.first)
+        XCTAssertEqual(pending.target, old)
+        XCTAssertEqual(pending.deviceToken, "a1")
+        XCTAssertEqual(oldSink.removals.last, "a1")
+        XCTAssertNil(registrar.deviceToken, "A new pairing waits for a fresh APNs callback")
+
+        registrar.received(token: Data([0xB2]))
+        await registrar.submit()
+        XCTAssertEqual(registrar.target, next)
+        XCTAssertEqual(newSink.registrations.last, "b2")
+        XCTAssertFalse(oldSink.registrations.contains("b2"))
+        XCTAssertTrue(newSink.removals.isEmpty)
     }
 
     func testTheTokenIsStoredHexOnThePhoneAndForgottenOnRequest() {
         let defaults = makeTestDefaults("PushRegistrarTests")
         AgentAlertPreferences(defaults: defaults).alertsEnabled = true
-        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox")
+        let store = PendingStore()
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox", removalStore: store)
+        registrar.sinkForTarget = { _ in RetrySink() }
+        registrar.configure(invitation: invitation())
         XCTAssertNil(registrar.deviceToken)
         registrar.received(token: Data([0x00, 0xAB, 0x0F, 0xFF]))
         XCTAssertEqual(registrar.deviceToken, "00ab0fff")
         XCTAssertNil(defaults.string(forKey: "push.deviceToken"), "The current APNs token stays in memory only")
         registrar.forget()
         XCTAssertNil(registrar.deviceToken)
-        XCTAssertEqual(defaults.string(forKey: "push.pendingRemoval"), "00ab0fff")
+        XCTAssertEqual(try? store.read([PendingPushRemoval].self)?.first?.deviceToken, "00ab0fff")
         XCTAssertEqual(registrar.status, .idle)
     }
 
     func testTheRegistrationCarriesPreferencesAndNoPrivateContent() throws {
         let defaults = makeTestDefaults("PushRegistrarRecord")
-        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox")
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox", removalStore: PendingStore())
         XCTAssertNil(registrar.registration(), "No address, no registration")
         let preferences = AgentAlertPreferences(defaults: defaults)
         preferences.alertsEnabled = true
@@ -280,10 +346,10 @@ final class PushRegistrarTests: XCTestCase {
     func testNothingIsSentUntilAServiceExists() async {
         let defaults = makeTestDefaults("PushRegistrarSink")
         AgentAlertPreferences(defaults: defaults).alertsEnabled = true
-        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox")
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox", removalStore: PendingStore())
         registrar.received(token: Data([9]))
         await registrar.submit()
-        XCTAssertEqual(registrar.lastSubmission, .notSent("No Farside push service is configured."))
+        XCTAssertNil(registrar.lastSubmission, "Without a pairing, no proof or address is sent")
         registrar.failed(RemoteError.invalidMessage)
         if case .failed = registrar.status {} else { XCTFail("A failed registration is reported") }
     }
@@ -291,17 +357,19 @@ final class PushRegistrarTests: XCTestCase {
     func testOptOutKeepsOnlyADeletionTokenUntilTheServiceConfirmsRemoval() async {
         let defaults = makeTestDefaults("PushRegistrarRemoval")
         AgentAlertPreferences(defaults: defaults).alertsEnabled = true
-        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox")
-        registrar.received(token: Data([0xAB, 0xCD]))
+        let store = PendingStore()
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox", removalStore: store)
         let sink = RetrySink()
-        registrar.sink = sink
+        registrar.sinkForTarget = { _ in sink }
+        registrar.configure(invitation: invitation())
+        registrar.received(token: Data([0xAB, 0xCD]))
         AgentAlertPreferences(defaults: defaults).alertsEnabled = false
         registrar.forget()
         await registrar.submit()
         XCTAssertNil(registrar.deviceToken)
-        XCTAssertEqual(defaults.string(forKey: "push.pendingRemoval"), "abcd")
+        XCTAssertEqual(try? store.read([PendingPushRemoval].self)?.first?.deviceToken, "abcd")
         sink.shouldConfirm = true
         await registrar.submit()
-        XCTAssertNil(defaults.string(forKey: "push.pendingRemoval"))
+        XCTAssertNil(try? store.read([PendingPushRemoval].self))
     }
 }
