@@ -47,6 +47,18 @@ Instrument status (29 Sep, branch tip d3ffe4e): builds and unit suites pass (Rem
 | 9 | G8 restart-on-idle: after 300–500 ms without a complete SCK frame, if the screen changed since the last clean key frame and the IDR fits the link budget (G9's gate), reuse the encoder restart once per idle period; suppressed while input is active | CER at +0.3/+1/+3 s after a chart change, key-frame bytes, pacer max | batch 2, design only |
 | 10 | G17 pointer channel transport half (second data channel, unordered, no retransmits, latest-wins `sendPointer`), payload owned by the pointer agent | control-channel buffered/dropped counters, pointer gap histogram | batch 2, starts on the orchestrator's go |
 
+## Code follow-ups from the landing review of 4ca2a30 (small branch after .4)
+
+1. Switch for the level-5.2 probe warm-up and its positive cache (the batch's only default-behaviour change); fix the cache-key comment (major.minor.patch, and `utsname.machine` is "arm64" on macOS, so the key needs `hw.model` there).
+2. Show `StreamTuning.current.summary` in host diagnostics; prefer launch-argument defaults for A/Bs.
+3. Clamp `rateUpdates`, `encodeInFlightMax`, `encoderSessionAgeS` at the source (a failed summary validation ends the session).
+4. `DesktopH264Encoder.sharedCounters`: per-`PeerMedia` or locked, not a static weak var.
+5. Word the reduced-picture notice neutrally (the Mac's probe can be the one that failed).
+6. Observer-effect A/B (protocol run D) and a phone-side "marker off while stats on" switch.
+7. Clamp the legibility crop (it grows with zoom²) or crop to the visible area.
+8. Match clock echoes to outstanding probes.
+9. Route seed: a missing RTT is unknown, not LAN.
+
 ## Entry template
 
 ```
