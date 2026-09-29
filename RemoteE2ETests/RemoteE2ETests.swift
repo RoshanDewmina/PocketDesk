@@ -459,9 +459,8 @@ final class RemoteE2ETests: E2ETestCase {
 
         try revealDock()
         app.buttons["Controls"].tap()
-        let next = app.buttons["Next Space"].firstMatch
-        let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch
-        for _ in 0..<5 where !(next.exists && next.isHittable) { content.swipeUp() }
+        let next = app.buttons["Move right a Space"].firstMatch
+        XCTAssertTrue(next.waitForExistence(timeout: 5), "Space keys are the first row of the Controls panel")
         before = marks()
         next.tap()
         try expectHostInput("key", since: before) { $0.string("key") == "right" && ($0["modifiers"] as? [String]) == ["control"] }
@@ -469,7 +468,7 @@ final class RemoteE2ETests: E2ETestCase {
         try waitFor("back on the Test Pad's full-screen Space", timeout: 8) {
             pad.state.bool("onActiveSpace") && pad.state.bool("fullscreen") && host.state.bool("testPadFrontmost")
         }
-        recorder.check("Controls › Next Space (⌃→) returned to the Test Pad", true)
+        recorder.check("Controls › Space right (⌃→) returned to the Test Pad", true)
         pause(1)
         try waitFor("stream fresh after returning", timeout: 10) { phone.ready }
         try clickElement("A")

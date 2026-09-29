@@ -26,6 +26,7 @@ final class PhoneParityUITests: XCTestCase {
         let canvas = app.descendants(matching: .any)["remote.canvas"].firstMatch
         XCTAssertEqual(canvas.label, "Remote desktop trackpad", "Trackpad is the default")
         openControls(app)
+        openSettingsPage(app, "touch")
         let direct = app.buttons["Direct"]
         scrollControls(app, to: direct)
         XCTAssertTrue(app.buttons["Trackpad"].isSelected)
@@ -34,7 +35,7 @@ final class PhoneParityUITests: XCTestCase {
         let footer = app.staticTexts["remote.touchMode.footer"]
         XCTAssertTrue(footer.label.contains("tap exactly where you want to click"), footer.label)
         attachScreenshot("Touch setting - Direct")
-        app.buttons["Done"].tap()
+        tapDone(app)
         XCTAssertEqual(canvas.label, "Remote desktop, direct touch")
         app.terminate()
 
@@ -43,6 +44,7 @@ final class PhoneParityUITests: XCTestCase {
         XCTAssertEqual(app.descendants(matching: .any)["remote.canvas"].firstMatch.label,
                        "Remote desktop, direct touch", "The touch style is remembered")
         openControls(app)
+        openSettingsPage(app, "touch")
         scrollControls(app, to: app.buttons["Trackpad"])
         app.buttons["Trackpad"].tap()
         XCTAssertTrue(app.buttons["Trackpad"].isSelected)
@@ -337,13 +339,14 @@ final class PhoneParityUITests: XCTestCase {
         app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fill", "--ui-minimap-reset"]
         launchOffline(app)
         openControls(app)
+        openSettingsPage(app, "view")
         let setting = app.descendants(matching: .any)["remote.minimap.setting"].firstMatch
         scrollControls(app, to: setting)
         XCTAssertEqual(setting.label, iPad ? "Mini map" : "Mini map in landscape")
         attachScreenshot("Mini map setting")
         if !iPad {
             setting.tap()
-            app.buttons["Done"].tap()
+            tapDone(app)
             collapseDock(app)
             let map = app.descendants(matching: .any)["remote.minimap"].firstMatch
             XCTAssertFalse(map.waitForExistence(timeout: 2), "iPhone shows it in landscape only")
@@ -351,6 +354,7 @@ final class PhoneParityUITests: XCTestCase {
             XCTAssertTrue(map.waitForExistence(timeout: 4), "Fill crops in landscape, so the overview appears")
             // Leave the default (off) for other tests.
             openControls(app)
+            openSettingsPage(app, "view")
             scrollControls(app, to: setting)
             setting.tap()
         }
@@ -364,6 +368,7 @@ final class PhoneParityUITests: XCTestCase {
         app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit"]
         launchOffline(app)
         openControls(app)
+        openDisplayPicker(app)
         let builtIn = app.buttons["remote.display.1"]
         let studio = app.buttons["remote.display.2"]
         scrollControls(app, to: studio)
@@ -397,17 +402,23 @@ final class PhoneParityUITests: XCTestCase {
                                "--ui-minimap-reset", "--ui-minimap-pinned", "--ui-pointer-preview", "-touchInputMode", "direct"]
         launchOffline(app)
         openControls(app)
+        openDisplayPicker(app)
         scrollControls(app, to: app.buttons["remote.display.2"])
         attachScreenshot("\(prefix)display-picker")
+        tapDone(app)
+        openControls(app)
+        openSettingsPage(app, "touch")
         scrollControls(app, to: app.buttons["Direct"])
         attachScreenshot("\(prefix)touch-direct")
+        tapDone(app)
+        openControls(app)
+        openSettingsPage(app, "keyboard")
         let shortcuts = app.buttons["Shortcuts"].firstMatch
         scrollControls(app, to: shortcuts)
         shortcuts.tap()
-        let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch
-        content.swipeUp()
+        app.descendants(matching: .any)["remote.controls.page"].firstMatch.swipeUp()
         attachScreenshot("\(prefix)keyboard-shortcuts")
-        app.buttons["Done"].tap()
+        tapDone(app)
         collapseDock(app)
 
         if iPad {
@@ -543,24 +554,55 @@ final class PhoneParityUITests: XCTestCase {
         return (numbers[1], numbers[2])
     }
 
-    /// Controls is a long sheet; rows further down are only created once scrolled into view.
+    /// Settings pages are short lists; rows further down are only created once scrolled into view.
     @MainActor
     private func scrollControls(_ app: XCUIApplication, to element: XCUIElement) {
-        let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch
+        let content = app.descendants(matching: .any)["remote.controls.page"].firstMatch
         for _ in 0..<8 where !(element.exists && element.isHittable) { content.swipeUp() }
         XCTAssertTrue(element.waitForExistence(timeout: 3))
         waitUntilStill(element)
     }
 
+    /// Controls › Settings › one page, by the summary row's identifier (touch, view, keyboard, …).
+    @MainActor
+    private func openSettingsPage(_ app: XCUIApplication, _ page: String) {
+        let settings = app.buttons["remote.controls.settings"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        let row = app.buttons["remote.settings.\(page)"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        waitUntilStill(row)
+        row.tap()
+    }
+
+    /// iPhone portrait: the Display row under the keys. Landscape and iPad: Settings › Display.
+    @MainActor
+    private func openDisplayPicker(_ app: XCUIApplication) {
+        let row = app.buttons["remote.displayRow"].firstMatch
+        if row.waitForExistence(timeout: 3) {
+            row.tap()
+        } else {
+            openSettingsPage(app, "display")
+        }
+    }
+
+    /// In landscape the key overlay's Done sits under the Settings sheet; tap the one on top.
+    @MainActor
+    private func tapDone(_ app: XCUIApplication) {
+        let done = app.buttons.matching(NSPredicate(format: "label == 'Done'"))
+        XCTAssertTrue(done.firstMatch.waitForExistence(timeout: 3))
+        let visible = done.allElementsBoundByIndex.first { $0.isHittable } ?? done.firstMatch
+        visible.tap()
+    }
+
     @MainActor
     private func setZoom(_ app: XCUIApplication, sliderPosition: CGFloat) {
         openControls(app)
+        openSettingsPage(app, "view")
         let zoom = app.sliders["Zoom level"]
-        let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch
-        for _ in 0..<4 where !(zoom.exists && zoom.isHittable) { content.swipeUp() }
         XCTAssertTrue(zoom.waitForExistence(timeout: 3))
         zoom.adjust(toNormalizedSliderPosition: sliderPosition)
-        app.buttons["Done"].tap()
+        tapDone(app)
         collapseDock(app)
     }
 

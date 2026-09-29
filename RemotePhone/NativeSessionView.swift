@@ -18,6 +18,11 @@ struct NativeSessionView: View {
     @State private var dismissedAutoKeyboardRevision: UInt64 = 0
     @State private var autoKeyboardPreviewEmitted = false
     @State private var showControls = false
+    @State private var showOverlaySettings = false
+    @State private var controlsPath: [ControlsPage] = []
+    @State private var controlsDetent: PresentationDetent = .large
+    @State private var panelFrame: CGRect = .zero
+    @State private var curtainPreview = false
     @State private var showVoiceInput = false
     @State private var showClipboardRow = false
     @State private var primingMicrophone = false
@@ -44,6 +49,7 @@ struct NativeSessionView: View {
     @AppStorage("dockHintSessions") private var dockHintSessions = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.displayScale) private var displayScale
 
@@ -59,7 +65,7 @@ struct NativeSessionView: View {
             centerNotices
         }
         .overlay {
-            if !controlsCollapsed && !keyboardOpen {
+            if !controlsCollapsed && !keyboardOpen && !showControls {
                 FarsideDotScreen()
                     .ignoresSafeArea()
                     .transition(.opacity)
@@ -74,8 +80,14 @@ struct NativeSessionView: View {
         }
         #endif
         .overlay(alignment: .bottom) {
-            if !keyboardOpen {
+            if !keyboardOpen && !(showControls && controlsAsOverlay) {
                 dock.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { dockFrame = $0 }
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if showControls && controlsAsOverlay {
+                overlayControls
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
         .overlay(alignment: .bottomTrailing) {
@@ -96,7 +108,8 @@ struct NativeSessionView: View {
         .statusBarHidden(true)
         .persistentSystemOverlays(.hidden)
         .defersSystemGestures(on: .vertical)
-        .sheet(isPresented: $showControls) { controlsSheet }
+        .sheet(isPresented: controlsSheetPresented) { controlsSheet }
+        .onChange(of: controlsAsOverlay) { _, _ in if showControls { closeControls() } }
         .fullScreenCover(isPresented: $primingMicrophone) {
             PermissionPrimingView(kind: .microphone) {
                 primingMicrophone = false
@@ -190,7 +203,23 @@ struct NativeSessionView: View {
             if offlineLayoutCheck && LaunchOptions.has("--ui-keyboard-check") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { keyboardOpen = true }
             }
-            if offlineLayoutCheck && LaunchOptions.has("--ui-controls-check") { showControls = true }
+            if offlineLayoutCheck && LaunchOptions.has("--ui-curtain-preview") { curtainPreview = true }
+            if offlineLayoutCheck && LaunchOptions.has("--ui-controls-check") { openControls() }
+            if offlineLayoutCheck && LaunchOptions.has("--ui-controls-settings") {
+                openControls()
+                let page = LaunchOptions.value("--ui-controls-page=").flatMap(ControlsPage.named)
+                if controlsAsOverlay {
+                    showOverlaySettings = true
+                    controlsPath = page.map { [$0] } ?? []
+                } else {
+                    controlsPath = [.settings] + (page.map { [$0] } ?? [])
+                }
+            }
+            if offlineLayoutCheck, let hold = LaunchOptions.value("--ui-hold-preview=") {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                    model.previewHoldForTesting(explicit: hold == "explicit")
+                }
+            }
             if offlineLayoutCheck && LaunchOptions.has("--ui-dock-open") { controlsCollapsed = false }
             if offlineLayoutCheck && LaunchOptions.has("--ui-clipboard-row") {
                 controlsCollapsed = false
@@ -258,14 +287,14 @@ struct NativeSessionView: View {
     }
 
     private var inputSurface: some View {
-            NativeTrackpadSurface(enabled: model.canControl && !panMode && !showControls && !showVoiceInput, panMode: panMode,
+            NativeTrackpadSurface(enabled: model.canControl && !panMode && !controlsBlockInput && !showVoiceInput, panMode: panMode,
                                   direct: directTouch,
                                   revision: model.inputRevision &+ revision, sensitivity: CGFloat(sensitivity),
                                   pointerScale: viewport.scale, doubleClickInterval: model.doubleClickInterval,
                                   middleClickAvailable: model.middleButtonSupported,
                                   hardwareKeys: model.canControl && !showControls && !showVoiceInput && !keyboardOpen,
                                   hardwarePointer: model.canControl && model.absolutePointerSupported
-                                    && !showControls && !showVoiceInput,
+                                    && !controlsBlockInput && !showVoiceInput,
                                   keyboardFocus: !keyboardOpen && !showControls && !showVoiceInput
                                     && !primingMicrophone && scenePhase == .active,
                                   remapShortcuts: remapShortcuts,
@@ -275,7 +304,7 @@ struct NativeSessionView: View {
                                   onHardwareModifiers: { model.hardwareModifiers = $0 },
                                   onKeyDiagnostic: keyDiagnostic)
                 .accessibilityIdentifier("remote.canvas")
-                .allowsHitTesting(!showControls && !showVoiceInput && !model.privacyShield && !model.contentConcealed)
+                .allowsHitTesting(!controlsBlockInput && !showVoiceInput && !model.privacyShield && !model.contentConcealed)
     }
 
     private var keyDiagnostic: ((String) -> Void)? {
@@ -457,7 +486,7 @@ struct NativeSessionView: View {
     private var dock: some View {
         VStack(spacing: 10) {
             if controlsCollapsed {
-                if model.dragging { releaseChip.transition(.opacity) }
+                if model.dragging { holdChip.transition(.opacity) }
                 if dockHintVisible && !model.dragging {
                     Text("Swipe up for controls · double tap to type")
                         .farsideCaption(Farside.Palette.bone)
@@ -568,10 +597,10 @@ struct NativeSessionView: View {
 
     @ViewBuilder private var micOrReleaseTile: some View {
         if model.dragging {
-            Button { model.cancelInput() } label: { Label("Release", systemImage: "hand.raised.fill") }
+            Button { model.cancelInput() } label: { Label("Drop", systemImage: "arrow.down.to.line") }
                 .buttonStyle(FarsideTileButtonStyle(emphasized: true))
-                .accessibilityLabel("Release")
-                .accessibilityHint("Drops the held item on your Mac")
+                .accessibilityLabel("Drop")
+                .accessibilityHint("Lets go of the mouse button on your Mac")
         } else if showVoiceInput {
             Button { cancelVoiceInput() } label: { Label("Mic", systemImage: "waveform") }
                 .buttonStyle(FarsideTileButtonStyle(on: voiceInput.phase == .listening))
@@ -616,7 +645,7 @@ struct NativeSessionView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : "\(linkAccessibility). \(status)")
             Spacer(minLength: 4)
-            Button { cancelGesture(); showControls = true } label: {
+            Button { openControls() } label: {
                 Image(systemName: "slider.horizontal.3")
             }
             .buttonStyle(FarsideRoundButtonStyle(diameter: 40))
@@ -626,17 +655,6 @@ struct NativeSessionView: View {
                 .fixedSize()
                 .accessibilityLabel("End session")
         }
-    }
-
-    private var releaseChip: some View {
-        Button { model.cancelInput() } label: {
-            Label("Release", systemImage: "hand.raised.fill")
-                .font(.subheadline.weight(.semibold))
-        }
-        .buttonStyle(FarsidePrimaryButtonStyle(height: 40))
-        .fixedSize()
-        .accessibilityLabel("Release")
-        .accessibilityHint("Drops the held item on your Mac")
     }
 
     private var dockHandle: some View {
@@ -686,7 +704,9 @@ struct NativeSessionView: View {
 
     private var status: String {
         if offlineLayoutCheck { return "No Mac connected · nothing is sent" }
-        if model.dragging { return "Holding · tap Release to drop" }
+        if model.dragging {
+            return model.explicitHoldDeadline != nil ? "Mouse button held · tap Drop to let go" : "Holding click · lift to drop"
+        }
         if !model.fresh || !model.captureHealthy { return "Reconnecting the picture · controls paused" }
         if panMode { return "View · drag or pinch to look around" }
         if model.canControl && clickAcknowledged { return "Click sent" }
@@ -1130,81 +1150,488 @@ struct NativeSessionView: View {
         .accessibilityAddTraits(active ? .isSelected : [])
     }
 
-    // MARK: - Controls sheet
+    // MARK: - Controls panel
+
+    /// Pages pushed inside Controls. The key panel is the root.
+    private enum ControlsPage: String, Hashable, CaseIterable {
+        case settings, display, picture, pointer, touch, view, clipboard, keyboard, steer, diagnostics
+
+        static func named(_ name: String) -> ControlsPage? { ControlsPage(rawValue: name) }
+    }
+
+    /// iPhone portrait shows Controls as a short sheet with the trackpad live above it. A sheet in
+    /// landscape on iPhone, or on iPad, cannot stop at a short height, so there the keys are an
+    /// overlay like the dock and Settings opens as its own sheet.
+    private var controlsAsOverlay: Bool { compactHeight || horizontalSizeClass == .regular }
+
+    /// Settings pages cover the picture; the key panel never does.
+    private var controlsBlockInput: Bool {
+        guard showControls else { return false }
+        if controlsAsOverlay { return showOverlaySettings }
+        return !controlsPath.isEmpty || controlsDetent == .large
+    }
+
+    private var controlsSheetPresented: Binding<Bool> {
+        Binding(get: { showControls && !controlsAsOverlay }, set: { if !$0 { closeControls() } })
+    }
+
+    private var showsCurtainRow: Bool {
+        (model.curtainSupported && model.curtainState != nil) || curtainPreview
+    }
+
+    private var showsDisplayRow: Bool { model.displaySelectionSupported && model.displays.count > 1 }
+
+    /// Header, two rows of keys and up to two session rows. Nothing in the panel scrolls.
+    private var panelHeight: CGFloat {
+        var height: CGFloat = 288
+        if showsCurtainRow || showsDisplayRow { height += 14 }
+        if showsCurtainRow { height += 61 }
+        if showsDisplayRow { height += showsCurtainRow ? 53 : 52 }
+        return height
+    }
+
+    private var panelDetent: PresentationDetent { .height(panelHeight) }
+
+    private var macKeysDisabled: Bool { !model.canControl || panMode }
 
     private var controlsSheet: some View {
-        NavigationStack {
-            ScrollViewReader { proxy in
-                Form {
-                    viewSection
-                    pointerSection
-                    displaySection
-                    touchSection
-                    miniMapSection
-                    clipboardSection
-                    gesturesSection
-                    workspaceSection
-                    pictureSection
-                    hardwareSection
-                    macPrivacySection
-                    feelSection
+        NavigationStack(path: $controlsPath) {
+            controlsPanel
+                .toolbar(.hidden, for: .navigationBar)
+                .navigationDestination(for: ControlsPage.self) { controlsPage($0) }
+        }
+        .tint(Farside.Palette.bone)
+        .presentationDetents([panelDetent, .large], selection: $controlsDetent)
+        .presentationBackgroundInteraction(.enabled(upThrough: panelDetent))
+        .presentationDragIndicator(.visible)
+        .farsideSheet()
+        .onChange(of: controlsPath) { _, path in
+            withAnimation(reduceMotion ? nil : Farside.Motion.sheetSpring) {
+                controlsDetent = path.isEmpty ? panelDetent : .large
+            }
+        }
+        .onChange(of: panelHeight) { _, _ in
+            if controlsPath.isEmpty { controlsDetent = panelDetent }
+        }
+        .onAppear { controlsDetent = controlsPath.isEmpty ? panelDetent : .large }
+    }
+
+    private var controlsPanel: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 16) {
+                Text("Controls")
+                    .font(.headline)
+                    .foregroundStyle(Farside.Palette.bone)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 8)
+                NavigationLink(value: ControlsPage.settings) {
+                    Label("Settings", systemImage: "gearshape")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(Farside.Palette.bone)
                 }
-                .scrollContentBackground(.hidden)
-                .background(Farside.Palette.void2)
-                .onAppear {
-                    if model.displays.isEmpty { model.requestDisplays() }
-                    #if DEBUG
-                    if offlineLayoutCheck && LaunchOptions.has("--ui-clipboard-check") {
-                        proxy.scrollTo("remote.clipboard", anchor: .top)
-                    }
-                    #endif
+                .accessibilityIdentifier("remote.controls.settings")
+                controlsDoneButton
+            }
+            .frame(minHeight: 44)
+            .padding(.bottom, 12)
+            macKeys(compact: false)
+            if showsCurtainRow || showsDisplayRow {
+                sessionRows.padding(.top, 14)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Farside.Palette.void2)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
+        .onAppear { if model.displays.isEmpty { model.requestDisplays() } }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("remote.controls.content")
+    }
+
+    private var controlsDoneButton: some View {
+        Button { closeControls() } label: {
+            Image(systemName: "checkmark")
+                .font(.body.weight(.semibold))
+                .foregroundStyle(Farside.Palette.ink)
+                .frame(width: 36, height: 36)
+                .background(Farside.Palette.bone, in: .circle)
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Done")
+    }
+
+    /// Things you do to the Mac, each printed with its Mac shortcut or phone gesture.
+    private func macKeys(compact: Bool) -> some View {
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: compact ? 8 : 4)
+        return LazyVGrid(columns: columns, spacing: 8) {
+            macKey("Space left", "arrow.left.square", hint: "⌃←", label: "Move left a Space", compact: compact) {
+                _ = model.gesture(.workspaceSwipe(direction: .right))
+            }
+            .disabled(macKeysDisabled)
+            macKey("Mission Control", "rectangle.3.group", hint: "⌃↑", compact: compact) {
+                _ = model.gesture(.workspaceSwipe(direction: .up))
+            }
+            .disabled(macKeysDisabled)
+            macKey("App windows", "rectangle.stack", hint: "⌃↓", label: "Application windows", compact: compact) {
+                _ = model.gesture(.workspaceSwipe(direction: .down))
+            }
+            .disabled(macKeysDisabled)
+            macKey("Space right", "arrow.right.square", hint: "⌃→", label: "Move right a Space", compact: compact) {
+                _ = model.gesture(.workspaceSwipe(direction: .left))
+            }
+            .disabled(macKeysDisabled)
+            macKey("Right-click", "contextualmenu.and.cursorarrow", hint: "2-finger tap", compact: compact) {
+                model.action("right")
+            }
+            .disabled(macKeysDisabled)
+            macKey("Double-click", "cursorarrow.click.2", hint: "double tap", compact: compact) {
+                model.action("double")
+            }
+            .disabled(macKeysDisabled)
+            holdKey(compact: compact)
+            macKey("Show Desktop", "menubar.dock.rectangle", hint: "F11", compact: compact) {
+                _ = model.hardwareKey("f11", modifiers: [])
+            }
+            .disabled(macKeysDisabled || !model.extendedKeysSupported)
+            .accessibilityHint(model.extendedKeysSupported || offlineLayoutCheck
+                               ? "Presses F11 on your Mac" : "Needs the updated Farside on your Mac")
+        }
+    }
+
+    @ViewBuilder private func holdKey(compact: Bool) -> some View {
+        if model.dragging {
+            macKey("Drop", "arrow.down.to.line", hint: "lets go", compact: compact) { model.cancelInput() }
+                .accessibilityHint("Lets go of the mouse button on your Mac")
+        } else {
+            macKey("Hold click", "cursorarrow.and.square.on.square.dashed", hint: "tap, hold", compact: compact) {
+                model.drag()
+            }
+            .disabled(macKeysDisabled || !model.nativeInteractionSupported)
+            .accessibilityHint("Holds the mouse button down so you can drag with one finger. It drops by itself after \(Int(PhoneRemoteModel.explicitHoldLimit)) seconds.")
+        }
+    }
+
+    private func macKey(_ title: String, _ symbol: String, hint: String, label: String? = nil,
+                        compact: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: compact ? 4 : 5) {
+                Image(systemName: symbol)
+                    .font(.system(size: compact ? 19 : 21, weight: .medium))
+                    .frame(height: 24)
+                Text(title)
+                    .font(compact ? .caption2.weight(.medium) : .caption.weight(.medium))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                    .frame(height: compact ? 26 : 30)
+                if !compact {
+                    Text(hint)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(Farside.Palette.ash)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                 }
             }
-            .navigationTitle("Controls")
+            .foregroundStyle(Farside.Palette.bone)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(ControlsKeyStyle(compact: compact))
+        .accessibilityLabel(label ?? title)
+    }
+
+    private var sessionRows: some View {
+        VStack(spacing: 0) {
+            if showsCurtainRow { curtainPanelRow }
+            if showsCurtainRow && showsDisplayRow {
+                Rectangle().fill(Farside.Palette.line).frame(height: 1).padding(.leading, 50)
+            }
+            if showsDisplayRow { displayPanelRow }
+        }
+        .farsidePlate(Farside.Radius.card, fill: Farside.Palette.panel, stroke: Farside.Palette.line)
+    }
+
+    private var curtainPanelRow: some View {
+        let state = model.curtainState ?? .off
+        return HStack(spacing: 12) {
+            Image(systemName: "eye.slash")
+                .foregroundStyle(Farside.Palette.ash)
+                .frame(width: 24)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Hide Mac screen").foregroundStyle(Farside.Palette.bone).accessibilityHidden(true)
+                if state == .liftedLocally && !curtainPreview {
+                    Button("Lifted at your Mac · Hide it again") { model.setMacCurtain(true) }
+                        .font(.footnote)
+                        .foregroundStyle(Farside.Palette.bone)
+                        .disabled(!model.canChangeCurtain)
+                } else {
+                    Text(curtainCaption(state))
+                        .font(.footnote)
+                        .foregroundStyle(Farside.Palette.ash)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                        .accessibilityHidden(true)
+                }
+            }
+            Spacer(minLength: 8)
+            Toggle(isOn: Binding(get: { !curtainPreview && state.preferenceOn },
+                                 set: { model.setMacCurtain($0) })) { EmptyView() }
+                .toggleStyle(FarsideSwitchStyle())
+                .fixedSize()
+                .accessibilityLabel("Hide Mac screen")
+                .disabled(!model.canChangeCurtain)
+                .opacity(model.canChangeCurtain || curtainPreview ? 1 : 0.45)
+                .accessibilityIdentifier("remote.macCurtain")
+                .accessibilityHint(macCurtainFooter(state))
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 60)
+    }
+
+    private func curtainCaption(_ state: PrivacyCurtainState) -> String {
+        switch state {
+        case .off: "Covers your Mac’s displays"
+        case .pending: "Covers once the picture is live"
+        case .up: "Covered · Esc three times at the Mac lifts it"
+        case .liftedLocally: "Lifted at your Mac"
+        case .unavailable: "Needs Accessibility permission on your Mac"
+        case .failed: "Couldn’t confirm it was hidden, so it stayed visible"
+        }
+    }
+
+    private var currentDisplayName: String {
+        model.displays.first { $0.id == model.currentDisplayID }?.name ?? "Choose"
+    }
+
+    private var displayPanelRow: some View {
+        NavigationLink(value: ControlsPage.display) {
+            HStack(spacing: 12) {
+                Image(systemName: "display")
+                    .foregroundStyle(Farside.Palette.ash)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                Text("Display").foregroundStyle(Farside.Palette.bone)
+                Spacer(minLength: 8)
+                Text(currentDisplayName)
+                    .foregroundStyle(Farside.Palette.ash)
+                    .lineLimit(1)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Farside.Palette.dim)
+                    .accessibilityHidden(true)
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 52)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("remote.displayRow")
+    }
+
+    /// Landscape and iPad: one row of keys over the picture, with Settings and Done at the end.
+    private var overlayControls: some View {
+        HStack(alignment: .center, spacing: 10) {
+            macKeys(compact: true)
+                .frame(maxWidth: .infinity)
+            VStack(spacing: 6) {
+                Button { showOverlaySettings = true } label: { Image(systemName: "gearshape") }
+                    .buttonStyle(FarsideRoundButtonStyle(diameter: 40))
+                    .accessibilityLabel("Settings")
+                    .accessibilityIdentifier("remote.controls.settings")
+                controlsDoneButton
+            }
+        }
+        .padding(12)
+        .farsidePlate(Farside.Radius.sheet, fill: Farside.Palette.void2.opacity(0.97), stroke: Farside.Palette.line2)
+        .padding(.horizontal, 8)
+        .padding(.bottom, 6)
+        .frame(maxWidth: 860)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
+        .onAppear { if model.displays.isEmpty { model.requestDisplays() } }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("remote.controls.content")
+        // Under the Settings sheet the keys are covered; VoiceOver should not reach them either.
+        .accessibilityHidden(showOverlaySettings)
+        .sheet(isPresented: $showOverlaySettings, onDismiss: { controlsPath = [] }) {
+            NavigationStack(path: $controlsPath) {
+                settingsPage(session: true)
+                    .navigationDestination(for: ControlsPage.self) { controlsPage($0) }
+            }
+            .tint(Farside.Palette.bone)
+            .presentationDetents([.large])
+            .farsideSheet()
+        }
+    }
+
+    @ViewBuilder private func controlsPage(_ page: ControlsPage) -> some View {
+        switch page {
+        case .settings: settingsPage(session: false)
+        case .display: settingsForm("Display") { displaySection }
+        case .picture: settingsForm("Picture") { pictureSection }
+        case .pointer: settingsForm("Pointer") { feelSection }
+        case .touch: settingsForm("Touch") { touchSection }
+        case .view:
+            settingsForm("View") {
+                zoomSection
+                miniMapSection
+            }
+        case .clipboard: settingsForm("Clipboard") { clipboardSettingsSection }
+        case .keyboard: settingsForm("Keyboard and pointer") { hardwareSection }
+        case .steer: settingsForm("How to steer") { gesturesSection }
+        case .diagnostics: settingsForm("Diagnostics") { diagnosticsSection }
+        }
+    }
+
+    private func settingsForm<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        Form { content() }
+            .scrollContentBackground(.hidden)
+            .background(Farside.Palette.void2)
+            .accessibilityIdentifier("remote.controls.page")
+            .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", systemImage: "checkmark") { showControls = false }
+                    Button("Done", systemImage: "checkmark") { closeControls() }
                 }
             }
-            .accessibilityIdentifier("remote.controls.content")
+    }
+
+    /// One row per setting with its current value; each opens its own page.
+    private func settingsPage(session: Bool) -> some View {
+        settingsForm("Settings") {
+            if session && (showsCurtainRow || showsDisplayRow) {
+                macPrivacySection
+                if showsDisplayRow {
+                    Section {
+                        summaryRow("Display", "display", value: currentDisplayName, page: .display)
+                    }
+                }
+            }
+            Section {
+                summaryRow("Picture", "photo", value: model.streamQuality.title, page: .picture)
+                summaryRow("Pointer", "cursorarrow", value: "\(pointerSize.title) · \(followStyle.title)", page: .pointer)
+                summaryRow("Touch", "hand.point.up.left", value: touchMode.title, page: .touch)
+                summaryRow("View", "arrow.up.left.and.arrow.down.right", value: zoomDescription, page: .view)
+                if showsClipboard {
+                    summaryRow("Clipboard", "list.clipboard",
+                               value: model.clipboard.pasteAfterSending ? "⌘V after sending" : "Send only", page: .clipboard)
+                }
+                summaryRow("Keyboard and pointer", "keyboard",
+                           value: peripherals.keyboardConnected ? "Keyboard connected" : "", page: .keyboard)
+            }
+            Section {
+                summaryRow("How to steer", "hand.draw", value: "", page: .steer)
+                summaryRow("Diagnostics", "waveform.path.ecg", value: streamStatsEnabled ? "Statistics on" : "", page: .diagnostics)
+            }
         }
-        .tint(Farside.Palette.bone)
-        .presentationDetents(verticalSizeClass == .compact ? [.large] : [.medium, .large])
-        .farsideSheet()
+    }
+
+    private func summaryRow(_ title: String, _ symbol: String, value: String, page: ControlsPage) -> some View {
+        NavigationLink(value: page) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .foregroundStyle(Farside.Palette.ash)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                Text(title).foregroundStyle(Farside.Palette.bone)
+                Spacer(minLength: 8)
+                if !value.isEmpty {
+                    Text(value)
+                        .foregroundStyle(Farside.Palette.ash)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .listRowBackground(Farside.Palette.panel)
+        .accessibilityIdentifier("remote.settings.\(page)")
     }
 
     private func sectionHeader(_ title: String) -> some View {
-        Text(title).farsideCaption()
+        Text(title)
+            .font(.footnote.weight(.semibold))
+            .foregroundStyle(Farside.Palette.ash)
+            .textCase(nil)
     }
 
-    private var pointerSection: some View {
-        Section {
-            Grid(horizontalSpacing: 10, verticalSpacing: 10) {
-                GridRow {
-                    actionTile("Click", "cursorarrow.click") { model.action("click") }
-                    actionTile("Right-click", "contextualmenu.and.cursorarrow") { model.action("right") }
-                }
-                GridRow {
-                    actionTile("Double-click", "cursorarrow.click.2") { model.action("double") }
-                    actionTile(model.dragging ? "Release" : "Drag", model.dragging ? "hand.raised.fill" : "hand.point.up.left.and.text") {
-                        model.drag()
+    private func openControls() {
+        cancelGesture()
+        controlsPath = []
+        showOverlaySettings = false
+        controlsDetent = panelDetent
+        showControls = true
+    }
+
+    private func closeControls() {
+        showOverlaySettings = false
+        showControls = false
+        controlsPath = []
+    }
+
+    // MARK: - Hold states
+
+    /// A finger drag drops when the finger lifts, so it only needs a status line. A Hold click
+    /// from Controls stays down after lifting, so its chip carries Drop and the countdown.
+    @ViewBuilder private var holdChip: some View {
+        if let deadline = model.explicitHoldDeadline {
+            HStack(spacing: 12) {
+                contactDot
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Mouse button held")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Farside.Palette.bone)
+                    TimelineView(.periodic(from: .now, by: 1)) { _ in
+                        Text("Slide one finger to move it. Drops by itself in \(holdSecondsLeft(deadline)) s")
+                            .font(.footnote)
+                            .foregroundStyle(Farside.Palette.ash)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .disabled(!model.dragging && !model.nativeInteractionSupported)
-                    .accessibilityHint("Starts a visible drag for up to ten seconds. Use Release to drop.")
                 }
+                Spacer(minLength: 8)
+                Button("Drop") { model.cancelInput() }
+                    .buttonStyle(DropButtonStyle())
+                    .accessibilityHint("Lets go of the mouse button on your Mac")
             }
-            .disabled((!model.canControl || panMode) && !model.dragging)
-            .listRowInsets(EdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0))
-            .listRowBackground(Color.clear)
-        } header: {
-            sectionHeader("Pointer")
-        } footer: {
-            Text(panMode ? "Switch to Control to send clicks to your Mac."
-                 : directTouch ? "Tap where you want to click. Tap with two fingers to right-click there, or drag to click and drag."
-                 : "Move one finger to point. Tap to click, two fingers to right-click, or double-tap and hold to drag.")
-                .foregroundStyle(Farside.Palette.ash)
+            .padding(.leading, 16)
+            .padding(.trailing, 10)
+            .padding(.vertical, 10)
+            .farsidePlate(16, fill: Farside.Palette.void2.opacity(0.94), stroke: Farside.Palette.line2)
+            .frame(maxWidth: 440)
+            .padding(.horizontal, 4)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("remote.holdChip")
+        } else {
+            HStack(spacing: 10) {
+                contactDot
+                HStack(spacing: 0) {
+                    Text("Holding click").foregroundStyle(Farside.Palette.bone)
+                    Text(" · lift to drop").foregroundStyle(Farside.Palette.ash)
+                }
+                .font(.subheadline.weight(.medium))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .farsidePlate(14, fill: Farside.Palette.void2.opacity(0.94), stroke: Farside.Palette.line2)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Holding click. Lift your finger to drop.")
+            .accessibilityIdentifier("remote.holdChip")
         }
+    }
+
+    private var contactDot: some View {
+        Circle()
+            .fill(Farside.Palette.ember)
+            .frame(width: 8, height: 8)
+            .accessibilityHidden(true)
+    }
+
+    private func holdSecondsLeft(_ deadline: TimeInterval) -> Int {
+        max(0, Int((deadline - ProcessInfo.processInfo.systemUptime).rounded(.up)))
     }
 
     private var touchSection: some View {
@@ -1350,60 +1777,22 @@ struct NativeSessionView: View {
         touchMode = mode
     }
 
-    @ViewBuilder private var clipboardSection: some View {
+    @ViewBuilder private var clipboardSettingsSection: some View {
         if showsClipboard {
             Section {
-                HStack(spacing: 12) {
-                    Label("Send iPhone text to your Mac", systemImage: "iphone.and.arrow.forward")
-                        .foregroundStyle(Farside.Palette.bone)
-                    Spacer(minLength: 8)
-                    pasteToMacButton
-                        .labelStyle(.titleAndIcon)
-                        .buttonBorderShape(.capsule)
-                }
-                .id("remote.clipboard")
-                .listRowBackground(Farside.Palette.panel)
-                Grid(horizontalSpacing: 10, verticalSpacing: 10) {
-                    GridRow {
-                        actionTile("Copy selection", "doc.on.doc") { model.copySelectionFromMac() }
-                            .disabled(!model.canControl || !model.clipboardAvailable || model.clipboard.isBusy)
-                            .accessibilityHint("Presses Command-C on your Mac, then copies the selection to this iPhone")
-                        actionTile("Get Mac clipboard", "arrow.down.doc") { model.fetchMacClipboard() }
-                            .disabled(!model.clipboardAvailable || model.clipboard.isBusy)
-                            .accessibilityHint("Copies what is already on your Mac’s clipboard to this iPhone")
-                    }
-                }
-                .listRowInsets(EdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0))
-                .listRowBackground(Color.clear)
                 Toggle("Press ⌘V after sending", isOn: Binding(get: { model.clipboard.pasteAfterSending },
                                                                set: { model.clipboard.pasteAfterSending = $0 }))
                     .toggleStyle(FarsideSwitchStyle())
                     .listRowBackground(Farside.Palette.panel)
-                if model.clipboard.activity != .idle {
-                    ProgressView(model.clipboard.activity == .sending ? "Sending to your Mac…" : "Copying from your Mac…")
-                        .listRowBackground(Farside.Palette.panel)
-                } else if let notice = model.clipboard.notice {
-                    Label(notice.message, systemImage: notice.tone == .success ? "checkmark" : "exclamationmark.circle")
-                        .font(.footnote)
-                        .foregroundStyle(Farside.Palette.bone)
-                        .listRowBackground(Farside.Palette.panel)
-                }
-            } header: {
-                sectionHeader("Clipboard")
             } footer: {
-                Text("Text only, up to 256 KB. Farside reads your Mac’s clipboard only when you ask, and never shares items marked as passwords.")
+                Text("Send and copy from the dock’s Clip button. Text only, up to 256 KB. Farside reads your Mac’s clipboard only when you ask, and never shares items marked as passwords.")
                     .foregroundStyle(Farside.Palette.ash)
             }
         }
     }
 
-    private var viewSection: some View {
+    private var zoomSection: some View {
         Section {
-            FarsideSegmented(label: "Screen size",
-                             options: [(ViewportMode.fill, "Fill"), (ViewportMode.fit, "Fit")],
-                             selection: Binding(get: { viewport.mode }, set: { setMode($0) }))
-                .listRowBackground(Color.clear)
-                .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
             VStack(spacing: 2) {
                 LabeledContent {
                     Text(zoomDescription)
@@ -1418,18 +1807,10 @@ struct NativeSessionView: View {
                 zoomSlider
             }
             .listRowBackground(Farside.Palette.panel)
-            Button {
-                showControls = false
-                setInteractionMode(!panMode)
-            } label: {
-                Label(panMode ? "Control desktop" : "Move view", systemImage: panMode ? "cursorarrow.motionlines" : "hand.draw")
-                    .foregroundStyle(Farside.Palette.bone)
-            }
-            .listRowBackground(Farside.Palette.panel)
         } header: {
-            sectionHeader("View")
+            sectionHeader("Zoom")
         } footer: {
-            Text("Fill uses the whole screen; Fit shows all of it. In View, drag, pinch or double-tap to look around.")
+            Text("Pinch on the picture does the same. Fit and Fill are in the dock.")
                 .foregroundStyle(Farside.Palette.ash)
         }
     }
@@ -1446,26 +1827,6 @@ struct NativeSessionView: View {
                 .listRowBackground(Farside.Palette.panel)
         } header: {
             sectionHeader("Gestures")
-        }
-    }
-
-    private var workspaceSection: some View {
-        Section {
-            Grid(horizontalSpacing: 10, verticalSpacing: 10) {
-                GridRow {
-                    actionTile("Previous Space", "arrow.left") { _ = model.gesture(.workspaceSwipe(direction: .right)) }
-                    actionTile("Next Space", "arrow.right") { _ = model.gesture(.workspaceSwipe(direction: .left)) }
-                }
-                GridRow {
-                    actionTile("Mission Control", "rectangle.3.group") { _ = model.gesture(.workspaceSwipe(direction: .up)) }
-                    actionTile("App Exposé", "rectangle.stack") { _ = model.gesture(.workspaceSwipe(direction: .down)) }
-                }
-            }
-            .disabled(!model.canControl || panMode)
-            .listRowInsets(EdgeInsets(top: 12, leading: 0, bottom: 12, trailing: 0))
-            .listRowBackground(Color.clear)
-        } header: {
-            sectionHeader("Mac workspace")
         }
     }
 
@@ -1508,6 +1869,13 @@ struct NativeSessionView: View {
                 Text(status).font(.footnote).foregroundStyle(Farside.Palette.bone)
                     .listRowBackground(Farside.Palette.panel)
             }
+        } header: {
+            sectionHeader("Quality")
+        }
+    }
+
+    private var diagnosticsSection: some View {
+        Section {
             if !offlineLayoutCheck {
                 Text(codecDiagnostics)
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
@@ -1536,7 +1904,7 @@ struct NativeSessionView: View {
                     .listRowBackground(Farside.Palette.panel)
             }
         } header: {
-            sectionHeader("Picture")
+            sectionHeader("For testing")
         }
     }
 
@@ -1626,20 +1994,6 @@ struct NativeSessionView: View {
         }
     }
 
-    private func actionTile(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                Image(systemName: symbol).font(.title2)
-                Text(title).font(.footnote.weight(.medium))
-            }
-            .foregroundStyle(Farside.Palette.bone)
-            .frame(maxWidth: .infinity, minHeight: 72)
-            .contentShape(.rect)
-        }
-        .buttonStyle(ActionTileStyle())
-        .accessibilityLabel(title)
-    }
-
     private var zoomDescription: String {
         if viewport.zoom == 1 { return viewport.mode == .fill ? "Fill" : "Fit" }
         let magnification = viewport.fitScale > 0 ? viewport.scale / viewport.fitScale : 1
@@ -1649,7 +2003,7 @@ struct NativeSessionView: View {
     // MARK: - Behaviour
 
     private func handle(_ command: NativeGestureCommand) -> Bool {
-        guard !showControls, !showVoiceInput, !model.privacyShield, !model.contentConcealed else { return false }
+        guard !controlsBlockInput, !showVoiceInput, !model.privacyShield, !model.contentConcealed else { return false }
         switch command {
         case .zoomToggle(let anchor):
             model.pointerLocator.clear()
@@ -1671,7 +2025,7 @@ struct NativeSessionView: View {
             return true
         case .zoomEnded:
             DispatchQueue.main.async {
-                guard !showControls, !model.privacyShield, !model.contentConcealed else { return }
+                guard !controlsBlockInput, !model.privacyShield, !model.contentConcealed else { return }
                 withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
                     _ = viewport.settleZoom()
                 }
@@ -1692,11 +2046,12 @@ struct NativeSessionView: View {
     }
 
     private func follow(_ point: CGPoint) {
-        guard followStyle.follows, model.canControl, !model.dragging, !keyboardOpen, !showControls, !panMode,
+        guard followStyle.follows, model.canControl, !model.dragging, !keyboardOpen, !controlsBlockInput, !panMode,
               !model.privacyShield, !model.contentConcealed else { return }
+        // With Controls open, the pointer stays clear of the panel rather than the dock.
         let usable = PointerFollowLayout.usableRect(safeRect: viewport.safeRect,
                                                    canvasFrame: canvasFrame,
-                                                   dockFrame: dockFrame)
+                                                   dockFrame: showControls ? panelFrame : dockFrame)
         withAnimation(followStyle.animation(reduceMotion: reduceMotion)) {
             _ = viewport.reveal(sourcePoint: point, in: usable, margin: followStyle.margin)
         }
@@ -1950,24 +2305,43 @@ private struct DotWaveform: View {
     }
 }
 
-/// Plate-style press feedback for the Controls sheet tiles.
-private struct ActionTileStyle: ButtonStyle {
+/// A key in the Controls panel: a quiet plate that darkens while pressed.
+private struct ControlsKeyStyle: ButtonStyle {
+    var compact = false
+
     func makeBody(configuration: Configuration) -> some View {
-        TileBody(configuration: configuration)
+        KeyBody(configuration: configuration, compact: compact)
     }
 
-    private struct TileBody: View {
+    private struct KeyBody: View {
         let configuration: ButtonStyleConfiguration
+        let compact: Bool
         @Environment(\.isEnabled) private var isEnabled
 
         var body: some View {
             configuration.label
+                .frame(maxWidth: .infinity, minHeight: compact ? 66 : 92)
                 .background(configuration.isPressed ? Farside.Palette.panel2 : Farside.Palette.panel,
-                            in: .rect(cornerRadius: Farside.Radius.card - 2, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: Farside.Radius.card - 2, style: .continuous)
+                            in: .rect(cornerRadius: 14, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(Farside.Palette.line, lineWidth: 1))
                 .opacity(isEnabled ? 1 : 0.4)
+                .contentShape(.rect)
         }
+    }
+}
+
+/// The one action in the Hold click chip: a small bone key, not a pill.
+private struct DropButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.semibold))
+            .foregroundStyle(Farside.Palette.ink)
+            .padding(.horizontal, 18)
+            .frame(minHeight: 42)
+            .background(Farside.Palette.bone.opacity(configuration.isPressed ? 0.82 : 1),
+                        in: .rect(cornerRadius: 12, style: .continuous))
+            .contentShape(.rect)
     }
 }
 
