@@ -310,6 +310,28 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertNil(policy.evaluate(calm(), at: 12), "never above rung 0")
     }
 
+    func testOneFrameBucketJitterDoesNotBlockRecoveryAtThirtyFPS() {
+        var policy = LadderPolicy(targetFPS: 120)
+        for second in 0...5 { _ = policy.evaluate(backlog(), at: TimeInterval(second)) }
+        XCTAssertEqual(policy.state, rung(3, "encoding"))
+
+        for second in 6...14 {
+            var sample = calm()
+            sample.captureFPS = 57
+            sample.encodedFPS = second.isMultiple(of: 2) ? 28 : 29
+            sample.encodeLatencyP90Ms = 9
+            XCTAssertEqual(LadderTrigger.firing(sample, at: policy.state), [])
+            XCTAssertTrue(LadderPolicy.isClean(sample, at: policy.state))
+            XCTAssertNil(policy.evaluate(sample, at: TimeInterval(second)))
+        }
+        var final = calm()
+        final.captureFPS = 57
+        final.encodedFPS = 29
+        final.encodeLatencyP90Ms = 9
+        XCTAssertEqual(policy.evaluate(final, at: 15), rung(2, "encoding"),
+                       "ordinary 28/29-frame buckets must not reset the 10-second recovery clock")
+    }
+
     func testANeutralSampleRestartsTheCleanClock() {
         var policy = LadderPolicy(targetFPS: 120)
         _ = policy.evaluate(backlog(), at: 0)
@@ -333,6 +355,8 @@ final class LadderPolicyTests: XCTestCase {
         var unknown = calm()
         unknown.encodedFPS = nil
         XCTAssertFalse(LadderPolicy.isClean(unknown, at: ladder120[0]), "no encoded rate, no evidence of headroom")
+        unknown.encodedFPS = -0.1
+        XCTAssertFalse(LadderPolicy.isClean(unknown, at: ladder120[0]), "an invalid negative rate is not headroom")
     }
 
     func testAStepKeepsTheReasonUntilTheTop() {
@@ -555,16 +579,46 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(evaluate(&busy, rung(2, "network"), at: 13), .ok)
     }
 
-    func testBusyAtTheFloorForAsLongAsItSitsThere() {
+    func testACalmFloorShowsOnlyTheBoundedRecentStep() {
         var busy = BusyPolicy()
-        XCTAssertEqual(evaluate(&busy, rung(4, "encoding"), at: 0),
-                       BusyState(level: .busy, fps: 30, longEdge: 1280, reason: "encoding"))
-        for second in 1...59 { XCTAssertNil(evaluate(&busy, rung(4, "encoding"), at: TimeInterval(second))) }
-        XCTAssertEqual(evaluate(&busy, rung(3, "encoding"), at: 60),
-                       BusyState(level: .busy, fps: 30, longEdge: 1920, reason: "encoding"),
-                       "off the floor, busy holds but shows the new picture")
-        for second in 61...68 { XCTAssertNil(evaluate(&busy, rung(3, "encoding"), at: TimeInterval(second))) }
-        XCTAssertEqual(evaluate(&busy, rung(3, "encoding"), at: 69), .ok, "10 s after the last busy second")
+        var floor = LadderPolicy.ladder(targetFPS: 60)[3]
+        floor.reason = "phone"
+        var screenshot = calm(targetFPS: 60)
+        screenshot.captureFPS = 57
+        screenshot.encodedFPS = 29
+        screenshot.encodeLatencyP90Ms = 8.3
+        screenshot.phoneSupersededPerSecond = 5
+        screenshot.phoneDecodeMs = 3.3
+        screenshot.phonePresentedFPS = 27
+
+        XCTAssertEqual(evaluate(&busy, floor, screenshot, at: 0),
+                       BusyState(level: .strained, fps: 30, longEdge: 1280, reason: "phone"))
+        for second in 1...7 {
+            XCTAssertNil(evaluate(&busy, floor, screenshot, at: TimeInterval(second)))
+        }
+        XCTAssertEqual(evaluate(&busy, floor, screenshot, at: 8), .ok,
+                       "a historical floor reason must not keep claiming current phone pressure")
+        for second in 9...30 {
+            XCTAssertNil(evaluate(&busy, floor, screenshot, at: TimeInterval(second)))
+        }
+    }
+
+    func testBusyAtTheFloorRequiresCurrentPressureAndClearsAfterBoundedCalm() {
+        var busy = BusyPolicy()
+        let floor = rung(4, "phone")
+        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        XCTAssertEqual(evaluate(&busy, floor, phonePressure, at: 0),
+                       BusyState(level: .strained, fps: 30, longEdge: 1280, reason: "phone"),
+                       "one non-immediate sample is only the recent downward step")
+        XCTAssertEqual(evaluate(&busy, floor, phonePressure, at: 1),
+                       BusyState(level: .busy, fps: 30, longEdge: 1280, reason: "phone"))
+        XCTAssertNil(evaluate(&busy, floor, at: 2), "one calm sample must not flicker the warning")
+        XCTAssertEqual(busy.state, BusyState(level: .busy, fps: 30, longEdge: 1280, reason: "phone"))
+        XCTAssertNil(evaluate(&busy, floor, phonePressure, at: 3),
+                     "a live intermittent sample refreshes the calm clock without changing the pill")
+        for second in 4...12 { XCTAssertNil(evaluate(&busy, floor, at: TimeInterval(second))) }
+        XCTAssertEqual(evaluate(&busy, floor, at: 13), .ok,
+                       "the historical floor reason cannot refresh ten seconds without current pressure")
     }
 
     func testBusyWhenCaptureStaysBehindForFiveSeconds() {
@@ -599,27 +653,29 @@ final class LadderPolicyTests: XCTestCase {
                        BusyState(level: .busy, fps: 120, longEdge: 2560, reason: "encoding"))
     }
 
-    func testBusyClearsAfterTenSecondsOfHeadroomIntoAnyStrainedWindow() {
+    func testBusyClearsAfterTenSecondsWithoutCurrentPressureIntoAnyRecentStepWindow() {
         let slow = with { $0.encodeLatencyP90Ms = 17 }
         var busy = BusyPolicy()
         for second in 0...4 { XCTAssertNil(evaluate(&busy, ladder120[0], slow, at: TimeInterval(second))) }
         XCTAssertEqual(evaluate(&busy, ladder120[0], slow, at: 5)?.level, .busy)
         for second in 6...9 { XCTAssertNil(evaluate(&busy, ladder120[0], slow, at: TimeInterval(second))) }
-        for second in 10...11 { XCTAssertNil(evaluate(&busy, ladder120[0], at: TimeInterval(second)), "holding") }
+        for second in 10...11 { XCTAssertNil(evaluate(&busy, ladder120[0], at: TimeInterval(second))) }
         XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 12),
                        BusyState(level: .busy, fps: 60, longEdge: 2560, reason: "encoding"))
         for second in 13...18 { XCTAssertNil(evaluate(&busy, rung(1, "encoding"), at: TimeInterval(second))) }
         XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 19),
                        BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "encoding"),
-                       "10 s after the last busy second, inside the step's 8 s")
+                       "the current-pressure hold ends inside the later step's eight-second window")
         XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 20), .ok)
     }
 
-    func testTheReasonIsTheLaddersOrElseTheBusyTrigger() {
+    func testBusyNamesTheCurrentTriggerBeforeTheHistoricalLadderReason() {
         var stepped = BusyPolicy()
         let slowAtSixty = with { $0.encodeLatencyP90Ms = 40 }
         for second in 0...5 { _ = evaluate(&stepped, rung(1, "network"), slowAtSixty, at: TimeInterval(second)) }
-        XCTAssertEqual(stepped.state, BusyState(level: .busy, fps: 60, longEdge: 2560, reason: "network"))
+        XCTAssertEqual(stepped.state, BusyState(level: .busy, fps: 60, longEdge: 2560, reason: "encoding"))
+        XCTAssertNil(evaluate(&stepped, rung(1, "network"), at: 6))
+        XCTAssertEqual(stepped.state.reason, "encoding", "the hold keeps the last live cause")
 
         var top = BusyPolicy()
         let slowAtTop = with { $0.encodeLatencyP90Ms = 17 }
@@ -629,14 +685,19 @@ final class LadderPolicyTests: XCTestCase {
 
     func testBusyRestartsWhenTheTargetChanges() {
         var busy = BusyPolicy()
-        XCTAssertEqual(evaluate(&busy, rung(4, "encoding"), at: 0)?.level, .busy)
-        XCTAssertEqual(evaluate(&busy, LadderPolicy.ladder(targetFPS: 60)[0], calm(targetFPS: 60), at: 1), .ok)
+        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        XCTAssertEqual(evaluate(&busy, rung(4, "phone"), phonePressure, at: 0)?.level, .strained)
+        XCTAssertEqual(evaluate(&busy, rung(4, "phone"), phonePressure, at: 1)?.level, .busy)
+        XCTAssertEqual(evaluate(&busy, LadderPolicy.ladder(targetFPS: 60)[0], calm(targetFPS: 60), at: 2), .ok)
     }
 
     func testTheProtocolEntryPointReportsNoSize() {
         var busy = BusyPolicy()
-        XCTAssertEqual(busy.evaluate(ladder: rung(4, "encoding"), inputs: calm(), at: 0),
-                       BusyState(level: .busy, fps: 30, longEdge: 0, reason: "encoding"))
+        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        XCTAssertEqual(busy.evaluate(ladder: rung(4, "phone"), inputs: phonePressure, at: 0),
+                       BusyState(level: .strained, fps: 30, longEdge: 0, reason: "phone"))
+        XCTAssertEqual(busy.evaluate(ladder: rung(4, "phone"), inputs: phonePressure, at: 1),
+                       BusyState(level: .busy, fps: 30, longEdge: 0, reason: "phone"))
     }
 
     // MARK: Host monitor
