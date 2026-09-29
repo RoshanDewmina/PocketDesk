@@ -12,3 +12,8 @@ APPLE_ROOT_CERTS=
 APPLE_IAP_ISSUER_ID=
 APPLE_IAP_KEY_ID=
 APPLE_IAP_PRIVATE_KEY=
+# Optional agent-alert beta. APNs auth key is a PKCS#8 PEM; keep the real value out of git.
+# A missing or invalid configuration disables remote agent alerts.
+APNS_TEAM_ID=
+APNS_KEY_ID=
+APNS_PRIVATE_KEY=

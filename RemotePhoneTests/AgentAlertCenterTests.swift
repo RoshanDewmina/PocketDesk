@@ -234,43 +234,74 @@ final class AgentAlertCenterTests: XCTestCase {
 
 @MainActor
 final class PushRegistrarTests: XCTestCase {
+    @MainActor
+    private final class RetrySink: PushRegistrationSink {
+        var shouldConfirm = false
+        func submit(_ registration: PushRegistration) async -> PushSubmission { .sent }
+        func remove(deviceToken: String) async -> PushSubmission {
+            return shouldConfirm ? .sent : .notSent("offline")
+        }
+    }
+
     func testTheTokenIsStoredHexOnThePhoneAndForgottenOnRequest() {
-        let registrar = PushRegistrar(defaults: makeTestDefaults("PushRegistrarTests"))
+        let defaults = makeTestDefaults("PushRegistrarTests")
+        AgentAlertPreferences(defaults: defaults).alertsEnabled = true
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox")
         XCTAssertNil(registrar.deviceToken)
         registrar.received(token: Data([0x00, 0xAB, 0x0F, 0xFF]))
         XCTAssertEqual(registrar.deviceToken, "00ab0fff")
-        XCTAssertEqual(registrar.status, .registered)
+        XCTAssertNil(defaults.string(forKey: "push.deviceToken"), "The current APNs token stays in memory only")
         registrar.forget()
         XCTAssertNil(registrar.deviceToken)
+        XCTAssertEqual(defaults.string(forKey: "push.pendingRemoval"), "00ab0fff")
         XCTAssertEqual(registrar.status, .idle)
     }
 
     func testTheRegistrationCarriesPreferencesAndNoPrivateContent() throws {
         let defaults = makeTestDefaults("PushRegistrarRecord")
-        let registrar = PushRegistrar(defaults: defaults)
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox")
         XCTAssertNil(registrar.registration(), "No address, no registration")
-        registrar.received(token: Data([1, 2, 3]))
         let preferences = AgentAlertPreferences(defaults: defaults)
         preferences.alertsEnabled = true
         preferences.breakThroughFocus = true
+        registrar.received(token: Data([1, 2, 3]))
         let record = try XCTUnwrap(registrar.registration(preferences: preferences, now: Date(timeIntervalSince1970: 1_790_000_000)))
         XCTAssertEqual(record.deviceToken, "010203")
         XCTAssertTrue(record.alertsEnabled)
         XCTAssertTrue(record.timeSensitive)
         XCTAssertTrue(record.showAgentName)
         XCTAssertEqual(record.updatedAt, 1_790_000_000)
-        XCTAssertEqual(record.environment, "sandbox", "Debug builds register with the sandbox service")
+        XCTAssertEqual(record.environment, "sandbox", "The environment comes from signed-build configuration")
         let keys = Set(try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any]).keys)
         XCTAssertEqual(keys, ["deviceToken", "environment", "alertsEnabled", "timeSensitive", "showAgentName",
                               "locale", "appBuild", "osMajor", "updatedAt"], "No Mac name, agent text or screen content")
     }
 
     func testNothingIsSentUntilAServiceExists() async {
-        let registrar = PushRegistrar(defaults: makeTestDefaults("PushRegistrarSink"))
+        let defaults = makeTestDefaults("PushRegistrarSink")
+        AgentAlertPreferences(defaults: defaults).alertsEnabled = true
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox")
         registrar.received(token: Data([9]))
         await registrar.submit()
         XCTAssertEqual(registrar.lastSubmission, .notSent("No Farside push service is configured."))
         registrar.failed(RemoteError.invalidMessage)
         if case .failed = registrar.status {} else { XCTFail("A failed registration is reported") }
+    }
+
+    func testOptOutKeepsOnlyADeletionTokenUntilTheServiceConfirmsRemoval() async {
+        let defaults = makeTestDefaults("PushRegistrarRemoval")
+        AgentAlertPreferences(defaults: defaults).alertsEnabled = true
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox")
+        registrar.received(token: Data([0xAB, 0xCD]))
+        let sink = RetrySink()
+        registrar.sink = sink
+        AgentAlertPreferences(defaults: defaults).alertsEnabled = false
+        registrar.forget()
+        await registrar.submit()
+        XCTAssertNil(registrar.deviceToken)
+        XCTAssertEqual(defaults.string(forKey: "push.pendingRemoval"), "abcd")
+        sink.shouldConfirm = true
+        await registrar.submit()
+        XCTAssertNil(defaults.string(forKey: "push.pendingRemoval"))
     }
 }

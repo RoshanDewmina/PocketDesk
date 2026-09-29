@@ -102,6 +102,7 @@ Cloudflare Realtime TURN, `POST https://rtc.live.cloudflare.com/v1/turn/keys/{ke
 | `ADMIN_TOKEN` | same (≥ 32 chars) | bearer for `/ready` and `/v1/admin/*`, compared constant-time |
 | `APPLE_ROOT_CERTS` | same | comma-separated base64 DER of Apple Root CA - G3 (and optionally G2), obtained by the owner with `bun scripts/apple-roots.ts` from https://www.apple.com/certificateauthority/ |
 | `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_KEY_ID`, `APPLE_IAP_PRIVATE_KEY` | same (optional) | In-App Purchase key from App Store Connect, PKCS#8 PEM; enables the test-notification admin route |
+| `APNS_TEAM_ID`, `APNS_KEY_ID`, `APNS_PRIVATE_KEY` | same (optional) | Agent-alert beta APNs auth key. Missing configuration makes registration and delivery fail closed. Only a generic blocking-event type and request id reach APNs. |
 
 Vars (non-secret, per env): `ENVIRONMENT_NAME`, `APP_BUNDLE_ID=com.roshan.PocketDesk.Remote`, `APP_APPLE_ID` (empty until the record exists; production `/ready` stays `not_ready` without it), `ALLOWED_PRODUCT_IDS`, `ACCEPT_SANDBOX`, `ALLOW_XCODE_TRANSACTIONS` (dev/test only), `STUN_URLS`, `TURN_CREDENTIAL_TTL_SECONDS`, `ROOM_LEASE_SECONDS`, `MAX_DEVICES_PER_ENTITLEMENT`, `TEST_FORCE_RELAY`, `ALLOW_UNENTITLED_RELAY` (local dev/test migration switch only; refused on public staging and production), `KEEPALIVE_SECONDS` (0 off, else 15–600). Local development reads the same names from `.dev.vars` (`.dev.vars.example` is the template; the real file is git-ignored).
 

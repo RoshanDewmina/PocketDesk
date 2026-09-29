@@ -9,7 +9,7 @@
     "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
     "traces": { "enabled": false }
   },
-  "triggers": { "crons": ["17 4 * * *"] },
+  "triggers": { "crons": ["* * * * *", "17 4 * * *"] },
   "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RoomDO"] }],
   "d1_databases": [
@@ -51,7 +51,7 @@
         "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
         "traces": { "enabled": false }
       },
-      "triggers": { "crons": ["17 4 * * *"] },
+      "triggers": { "crons": ["* * * * *", "17 4 * * *"] },
       "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
       "d1_databases": [
         { "binding": "DB", "database_name": "farside-entitlements-staging", "database_id": "5b916903-865e-4659-b359-e8ef333167bd", "migrations_dir": "migrations" }
@@ -92,7 +92,7 @@
         "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
         "traces": { "enabled": false }
       },
-      "triggers": { "crons": ["17 4 * * *"] },
+      "triggers": { "crons": ["* * * * *", "17 4 * * *"] },
       "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
       "d1_databases": [
         { "binding": "DB", "database_name": "farside-entitlements-production", "database_id": "REPLACE_WITH_PRODUCTION_D1_ID", "migrations_dir": "migrations" }

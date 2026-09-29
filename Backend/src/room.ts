@@ -3,6 +3,7 @@ import { isPublicEnvironment, loadConfig, type Config } from "./config";
 import { claimDeviceRoom, entitlementForDevice, hasAccess, restoreDeviceRoom, roomStatus, touchRoom } from "./entitlement/store";
 import { environmentLetter, verifyEntitlementToken } from "./entitlement/token";
 import { fingerprint, log, logError } from "./log";
+import { forgetPushRoom } from "./push";
 import {
   AUTH_TIMEOUT_MS, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, REMOTE_FEATURE, RENEWAL_FEATURE, ROUTE_FEATURE, iceWithinClientLimits,
   parseAuthenticatedFrame, parseJsonFrame, parseRegister, type ErrorCode, type IceServer, type PeerRole, type RegisterMessage,
@@ -68,6 +69,31 @@ const revokeBackoffMs = (attempts: number) => {
 class IssuanceRateLimited extends Error {}
 
 export class RoomDO extends DurableObject<Env> {
+  /** A pairing hash survives transient host disconnect so the phone can opt out while offline. */
+  async authenticatePush(room: string, clientToken: string): Promise<boolean> {
+    const state = this.state();
+    if (state.room !== room || state.blocked !== 0) return false;
+    const stored = this.ctx.storage.sql.exec<{ client_hash: string }>(
+      "SELECT client_hash FROM push_pairing WHERE id=1 AND room=?", room,
+    ).toArray()[0];
+    return Boolean(stored && await secureEqual(await sha256Hex(clientToken), stored.client_hash));
+  }
+
+  /** Only the current route epoch may acquire an ActivityKit push address. */
+  async authenticateActivity(room: string, clientToken: string, routeEpoch: string): Promise<boolean> {
+    if (!(await this.authenticatePush(room, clientToken))) return false;
+    try {
+      const route = this.ctx.storage.sql.exec<{ route_epoch: string | null; route_expires_at: number | null; lease_ends_at: number | null }>(
+        "SELECT route_epoch, route_expires_at, lease_ends_at FROM room WHERE id=1",
+      ).one();
+      const now = Date.now();
+      return route.route_epoch === routeEpoch && route.route_expires_at !== null && route.route_expires_at > now &&
+        route.lease_ends_at !== null && route.lease_ends_at > now;
+    } catch {
+      // Older room objects have no route epoch and cannot register ActivityKit pushes.
+      return false;
+    }
+  }
   private readonly config: Config;
   private readonly provider: TurnProvider | undefined;
   private readonly messageCounters = new WeakMap<WebSocket, WindowCounter>();
@@ -112,6 +138,11 @@ export class RoomDO extends DurableObject<Env> {
         revoke_pending INTEGER NOT NULL DEFAULT 0,
         revoke_attempts INTEGER NOT NULL DEFAULT 0,
         next_revoke_at INTEGER
+      );
+      CREATE TABLE IF NOT EXISTS push_pairing (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        room TEXT NOT NULL,
+        client_hash TEXT NOT NULL
       );
     `);
     // Existing Durable Objects have the v1 table. Additive migration leaves pairings intact.
@@ -696,6 +727,21 @@ export class RoomDO extends DurableObject<Env> {
       }
       if (ws.readyState !== WebSocket.OPEN) return;
       if (this.slotTaken("host", ws)) { this.error(ws, "already_connected"); return; }
+      const previousPush = this.ctx.storage.sql.exec<{ client_hash: string }>(
+        "SELECT client_hash FROM push_pairing WHERE id=1 AND room=?", room,
+      ).toArray()[0];
+      if (previousPush && previousPush.client_hash !== msg.clientTokenHash) {
+        try { await forgetPushRoom(this.env.DB, room); }
+        catch {
+          this.close(ws, 1013, "push_cleanup_unavailable");
+          return;
+        }
+      }
+      if (ws.readyState !== WebSocket.OPEN || this.slotTaken("host", ws)) return;
+      this.ctx.storage.sql.exec(
+        "INSERT INTO push_pairing (id,room,client_hash) VALUES (1,?,?) ON CONFLICT(id) DO UPDATE SET room=excluded.room, client_hash=excluded.client_hash",
+        room, msg.clientTokenHash,
+      );
       const leaseEndsAt = now + this.config.leaseMs;
       this.update({ room, client_token_hash: msg.clientTokenHash, lease_ends_at: leaseEndsAt, entitlement_id: null, entitled_device: null, recheck_at: null, last_activity: now,
         route_epoch: randomHex(16), route_revision: 0, route_expires_at: null });
@@ -968,6 +1014,7 @@ export class RoomDO extends DurableObject<Env> {
 
   async block(): Promise<void> {
     this.update({ blocked: 1 });
+    this.ctx.storage.sql.exec("DELETE FROM push_pairing");
     this.terminate("room_not_approved");
     await this.scheduleAlarm();
   }
