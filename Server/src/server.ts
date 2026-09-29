@@ -123,7 +123,9 @@ export function createService(config: ServiceConfig = {}) {
   if (config.testForceRelay && !config.turnProvider) throw new Error('testForceRelay requires a relay provider');
   const relayPolicy = config.testForceRelay ? { policy: 'relay' as const } : {};
   const startedAt = clock.now();
-  const providerHealth = { lastOutcome: 'none' as 'none' | 'ok' | 'failed', consecutiveFailures: 0, rateLimited: 0 };
+  const providerHealth = {
+    lastOutcome: 'none' as 'none' | 'ok' | 'failed', consecutiveFailures: 0, rateLimited: 0, revocationFailures: 0,
+  };
   const renewalStats = { renewals: 0, credentialRefreshes: 0 };
   const pendingIssuances = new Set<Promise<IceServer[]>>();
   const pendingRevocations = new Set<Promise<void>>();
@@ -140,7 +142,11 @@ export function createService(config: ServiceConfig = {}) {
     pendingRevocations.add(task);
     void task.then(
       () => pendingRevocations.delete(task),
-      () => pendingRevocations.delete(task),
+      () => {
+        // The provider has already retried and logged why; readiness shows it was not silent.
+        providerHealth.revocationFailures += 1;
+        pendingRevocations.delete(task);
+      },
     );
   };
   // A superseded credential set is deliberately not revoked early: an existing relay allocation
@@ -404,6 +410,7 @@ export function createService(config: ServiceConfig = {}) {
         lastIssue: providerHealth.lastOutcome,
         consecutiveFailures: providerHealth.consecutiveFailures,
         issuanceRateLimited: providerHealth.rateLimited,
+        revocationFailures: providerHealth.revocationFailures,
       },
       renewal: {
         enabled: renewalEnabled,

@@ -1,7 +1,7 @@
 import { afterEach, expect, setSystemTime, test } from 'bun:test';
 import { loadServiceConfig } from '../src/config';
 import { createService, digest } from '../src/server';
-import { createCloudflareTurnProvider } from '../src/turn';
+import { createCloudflareTurnProvider, defaultRevocationRetry, revocationDelayMs } from '../src/turn';
 
 const keyId = 'k'.repeat(32);
 const apiToken = 't'.repeat(64);
@@ -40,8 +40,29 @@ function cloudflareMock(options: { generate?: () => Response | Promise<Response>
   return { calls, fetch };
 }
 
-function provider(fetch: typeof globalThis.fetch, overrides: { ttlSeconds?: number; timeoutMs?: number } = {}) {
-  return createCloudflareTurnProvider({ keyId, apiToken, ttlSeconds: overrides.ttlSeconds ?? 3600, timeoutMs: overrides.timeoutMs ?? 100, fetch });
+function provider(fetch: typeof globalThis.fetch, overrides: {
+  ttlSeconds?: number; timeoutMs?: number; log?: (line: string) => void; sleeps?: number[];
+} = {}) {
+  return createCloudflareTurnProvider({
+    keyId, apiToken, ttlSeconds: overrides.ttlSeconds ?? 3600, timeoutMs: overrides.timeoutMs ?? 100, fetch,
+    sleep: async ms => { overrides.sleeps?.push(ms); },
+    random: () => 0.5,
+    log: overrides.log ?? (() => {}),
+  });
+}
+
+/** Answers each revoke call from a script: a status (with an optional body) or a thrown network error. */
+function revokeScript(steps: (number | 'network' | { status: number; body: string })[]) {
+  const calls: string[] = [];
+  const fetch: typeof globalThis.fetch = async input => {
+    const url = String(input);
+    calls.push(url.split('/credentials/')[1] ?? url);
+    const step = steps.length > 1 ? steps.shift()! : steps[0];
+    if (step === 'network') throw new TypeError(`fetch failed for ${url}`);
+    if (typeof step === 'number') return new Response(null, { status: step });
+    return new Response(step.body, { status: step.status });
+  };
+  return { calls, fetch };
 }
 
 function peer(app: ReturnType<typeof createService>) {
@@ -275,6 +296,69 @@ test('revocation issues one call per distinct username and treats any non-204 as
   const rejecting = cloudflareMock({ revoke: () => new Response(null, { status: 404 }) });
   await expect(provider(rejecting.fetch).revoke!([{ urls: ['turn:turn.cloudflare.com:3478'], username: 'gone', credential: 'c' }]))
     .rejects.toThrow('TURN credential revocation rejected');
+});
+
+test('a revocation that Cloudflare rejects once is retried after a jittered backoff and succeeds', async () => {
+  const script = revokeScript([{ status: 502, body: `{"errors":[{"message":"upstream","key":"${apiToken}","user":"secret-user"}]}` }, 204]);
+  const lines: string[] = [];
+  const sleeps: number[] = [];
+  await provider(script.fetch, { log: line => lines.push(line), sleeps })
+    .revoke!([{ urls: ['turn:turn.cloudflare.com:3478'], username: 'secret-user', credential: 'secret-credential' }]);
+  expect(script.calls).toEqual(['secret-user/revoke', 'secret-user/revoke']);
+  expect(sleeps).toEqual([revocationDelayMs(1, defaultRevocationRetry, () => 0.5)]);
+  expect(lines.join('\n')).toContain('attempt 1 of 4 failed: status 502 body');
+  expect(lines.join('\n')).toContain('upstream');
+  expect(lines.join('\n')).toContain('revoked on attempt 2');
+  for (const secret of [apiToken, keyId, 'secret-user', 'secret-credential']) expect(lines.join('\n')).not.toContain(secret);
+});
+
+test('a revocation that keeps failing stops after the bounded attempts, still revokes the others, and rejects', async () => {
+  const failing = new Set(['stuck']);
+  const calls: string[] = [];
+  const fetch: typeof globalThis.fetch = async input => {
+    const name = String(input).split('/credentials/')[1]!.split('/')[0]!;
+    calls.push(name);
+    if (!failing.has(name)) return new Response(null, { status: 204 });
+    if (calls.filter(call => call === name).length % 2) throw new TypeError(`fetch failed for ${String(input)}`);
+    return new Response('rate limited', { status: 429 });
+  };
+  const lines: string[] = [];
+  const sleeps: number[] = [];
+  await expect(provider(fetch, { log: line => lines.push(line), sleeps }).revoke!([
+    { urls: ['turn:turn.cloudflare.com:3478'], username: 'stuck', credential: 'c1' },
+    { urls: ['turn:turn.cloudflare.com:3478'], username: 'fine', credential: 'c2' },
+  ])).rejects.toThrow('TURN credential revocation rejected');
+  expect(calls).toEqual(['stuck', 'stuck', 'stuck', 'stuck', 'fine']);
+  expect(sleeps).toHaveLength(3);
+  expect(sleeps.every((ms, index) => ms > 0 && ms <= defaultRevocationRetry.maxDelayMs && (index === 0 || ms >= sleeps[index - 1]!))).toBe(true);
+  const log = lines.join('\n');
+  expect(log).toContain('request failed (TypeError)');
+  expect(log).toContain('status 429 body "rate limited"');
+  expect(log).toContain('not revoked after 4 attempts');
+  expect(log).not.toContain('stuck');
+  expect(log).not.toContain(apiToken);
+});
+
+test('the backoff doubles up to its ceiling and jitters between half and all of it', () => {
+  const retry = { attempts: 6, baseDelayMs: 100, maxDelayMs: 500 };
+  expect([1, 2, 3, 4, 5].map(attempt => revocationDelayMs(attempt, retry, () => 1))).toEqual([100, 200, 400, 500, 500]);
+  expect([1, 2, 3].map(attempt => revocationDelayMs(attempt, retry, () => 0))).toEqual([50, 100, 200]);
+  const noFetch = (async () => { throw new Error('must not be called'); }) as unknown as typeof globalThis.fetch;
+  expect(() => createCloudflareTurnProvider({ keyId, apiToken, ttlSeconds: 3600, timeoutMs: 100, fetch: noFetch,
+    revocationRetry: { attempts: 0, baseDelayMs: 1, maxDelayMs: 1 } })).toThrow('invalid Cloudflare revocation retry policy');
+});
+
+test('readiness counts revocations that failed after their retries', async () => {
+  const mock = cloudflareMock({ revoke: () => new Response(null, { status: 500 }) });
+  const app = createService({ port: 0, turnProvider: provider(mock.fetch) });
+  instances.push(app);
+  const { host } = await registerHost(app);
+  await host.next();
+  expect(JSON.parse((await ready(app)).text).relay.revocationFailures).toBe(0);
+  host.ws.close();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(mock.calls.filter(call => call.url.endsWith('/revoke'))).toHaveLength(defaultRevocationRetry.attempts);
+  expect(JSON.parse((await ready(app)).text).relay.revocationFailures).toBe(1);
 });
 
 test('the Cloudflare provider validates key, token, TTL and timeout before any request', () => {
