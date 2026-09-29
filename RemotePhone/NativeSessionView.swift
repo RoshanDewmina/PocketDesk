@@ -1476,6 +1476,7 @@ struct NativeSessionView: View {
         Form { content() }
             .scrollContentBackground(.hidden)
             .background(Farside.Palette.void2)
+            .accessibilityIdentifier("remote.controls.page")
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1513,7 +1514,6 @@ struct NativeSessionView: View {
                 summaryRow("Diagnostics", "waveform.path.ecg", value: streamStatsEnabled ? "Statistics on" : "", page: .diagnostics)
             }
         }
-        .accessibilityIdentifier("remote.settings")
     }
 
     private func summaryRow(_ title: String, _ symbol: String, value: String, page: ControlsPage) -> some View {

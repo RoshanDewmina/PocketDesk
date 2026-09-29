@@ -51,15 +51,11 @@ final class SessionLayoutTests: XCTestCase {
         launchOfflineFixture(app)
         revealDock(app)
         app.buttons["Controls"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["remote.controls.content"].firstMatch.waitForExistence(timeout: 3))
+        openSettingsPage(app, "picture")
         let responsive = app.buttons["Responsive"]
-        let controlsContent = app.descendants(matching: .any)["remote.controls.content"].firstMatch
-        XCTAssertTrue(controlsContent.waitForExistence(timeout: 3))
-        for _ in 0..<5 {
-            if responsive.exists && responsive.isHittable { break }
-            controlsContent.swipeUp()
-        }
-        XCTAssertTrue(responsive.exists && responsive.isHittable,
-                      "Picture quality must remain reachable below the gesture and workspace controls")
+        XCTAssertTrue(responsive.waitForExistence(timeout: 3) && responsive.isHittable,
+                      "Picture quality must be one page away in Controls › Settings")
         responsive.tap()
         XCTAssertTrue(app.staticTexts["Lower resolution for a more responsive connection."].exists)
         app.buttons["Sharper"].tap()
@@ -158,15 +154,12 @@ final class SessionLayoutTests: XCTestCase {
         controls.tap()
         XCTAssertTrue(app.buttons["Double-click"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.buttons["Double-click"].isEnabled, "Offline remote clicks must be disabled")
-        XCTAssertTrue(app.buttons["Drag"].exists)
-        XCTAssertFalse(app.buttons["Drag"].isEnabled)
+        XCTAssertTrue(app.buttons["Hold click"].exists)
+        XCTAssertFalse(app.buttons["Hold click"].isEnabled)
+        XCTAssertTrue(app.buttons["Mission Control"].isHittable, "Landscape keys fit in one row without scrolling")
+        attachScreenshot("Controls keys landscape - offline layout")
+        openSettingsPage(app, "view")
         let zoom = app.sliders["Zoom level"]
-        let controlsContent = app.descendants(matching: .any)["remote.controls.content"].firstMatch
-        XCTAssertTrue(controlsContent.waitForExistence(timeout: 3))
-        for _ in 0..<3 {
-            if zoom.exists && zoom.isHittable { break }
-            controlsContent.swipeUp()
-        }
         XCTAssertTrue(zoom.waitForExistence(timeout: 3))
         zoom.adjust(toNormalizedSliderPosition: 0.8)
         let zoomValue = app.staticTexts["Current zoom"]
@@ -213,12 +206,9 @@ final class SessionLayoutTests: XCTestCase {
 
         let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch
         XCTAssertTrue(content.waitForExistence(timeout: 5))
+        openSettingsPage(app, "view")
         let zoom = app.sliders["Zoom level"]
-        for _ in 0..<3 {
-            if zoom.exists && zoom.isHittable { break }
-            content.swipeUp()
-        }
-        XCTAssertTrue(zoom.exists && zoom.isHittable, "Zoom must stay reachable in a landscape Controls sheet")
+        XCTAssertTrue(zoom.waitForExistence(timeout: 3) && zoom.isHittable, "Zoom must stay reachable from landscape Controls")
         zoom.adjust(toNormalizedSliderPosition: 0.7)
         XCTAssertTrue(app.staticTexts["Current zoom"].exists)
         attachScreenshot("Landscape controls - reachable zoom")
@@ -240,6 +230,7 @@ final class SessionLayoutTests: XCTestCase {
         canvas.doubleTap()
         attachScreenshot("View mode zoomed - offline layout")
         app.buttons["Controls"].tap()
+        openSettingsPage(app, "view")
         let zoomValue = app.staticTexts["Current zoom"]
         XCTAssertTrue(zoomValue.waitForExistence(timeout: 3))
         guard let value = zoomValue.value as? String,
@@ -247,7 +238,7 @@ final class SessionLayoutTests: XCTestCase {
             return XCTFail("Double-tap zoom must expose a numeric value")
         }
         XCTAssertGreaterThan(numeric, 1, "View double-tap must zoom into the desktop")
-        app.buttons["Done"].tap()
+        app.buttons["Done"].firstMatch.tap()
         app.buttons["Control desktop"].firstMatch.tap()
         XCTAssertEqual(canvas.label, "Remote desktop trackpad")
         attachScreenshot("View mode zoom and control toggle")
@@ -288,6 +279,17 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertFalse(app.buttons["Release"].exists)
         app.buttons["Return to Farside"].tap()
         XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 3))
+    }
+
+    /// Controls › Settings › one page, by the summary row's identifier (picture, view, …).
+    @MainActor
+    private func openSettingsPage(_ app: XCUIApplication, _ page: String) {
+        let settings = app.buttons["remote.controls.settings"].firstMatch
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.tap()
+        let row = app.buttons["remote.settings.\(page)"].firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.tap()
     }
 
     @MainActor

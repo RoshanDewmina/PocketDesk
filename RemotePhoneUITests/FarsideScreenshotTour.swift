@@ -34,13 +34,22 @@ final class FarsideScreenshotTour: XCTestCase {
         Shot(name: "dock-dictation", arguments: ["--ui-layout-check", "--ui-voice-preview-check"]),
         Shot(name: "dock-clipboard", arguments: ["--ui-layout-check", "--ui-viewport-fill", "--ui-clipboard-row"]),
         Shot(name: "keyboard", arguments: ["--ui-layout-check", "--ui-viewport-fill", "--ui-keyboard-check"], wait: 3),
-        Shot(name: "controls", arguments: ["--ui-layout-check", "--ui-controls-check"]),
+        Shot(name: "controls", arguments: ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet", "--ui-curtain-preview",
+                                           "--ui-viewport-fill", "--ui-pointer-preview", "--ui-controls-check"]),
+        Shot(name: "controls-settings", arguments: ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
+                                                    "--ui-viewport-fill", "--ui-controls-settings"]),
+        Shot(name: "hold-finger", arguments: ["--ui-layout-check", "--ui-viewport-fill", "--ui-pointer-preview",
+                                              "--ui-hold-preview=finger"]),
+        Shot(name: "hold-explicit", arguments: ["--ui-layout-check", "--ui-viewport-fill", "--ui-pointer-preview",
+                                                "--ui-hold-preview=explicit"]),
         Shot(name: "concealed", arguments: ["--ui-layout-check", "--ui-background-concealed-check"]),
         Shot(name: "landscape-home", arguments: ["--ui-demo-mac", "--ui-last-reached"], landscape: true),
         Shot(name: "landscape-session", arguments: ["--ui-layout-check", "--ui-viewport-fit", "--ui-pointer-preview"], landscape: true),
         Shot(name: "landscape-dock", arguments: ["--ui-layout-check", "--ui-viewport-fit", "--ui-dock-open"], landscape: true),
         Shot(name: "landscape-dictation", arguments: ["--ui-layout-check", "--ui-voice-preview-check"], landscape: true),
         Shot(name: "landscape-keyboard", arguments: ["--ui-layout-check", "--ui-viewport-fill", "--ui-keyboard-check"], landscape: true, wait: 3),
+        Shot(name: "landscape-controls", arguments: ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
+                                                     "--ui-viewport-fill", "--ui-pointer-preview", "--ui-controls-check"], landscape: true),
         Shot(name: "landscape-coach", arguments: ["--ui-coach"], landscape: true)
     ]
 
@@ -55,10 +64,12 @@ final class FarsideScreenshotTour: XCTestCase {
         super.tearDown()
     }
 
+    /// `TEST_RUNNER_FARSIDE_SHOTS=controls,hold-finger` captures only the named shots.
     @MainActor
     func testCaptureEveryScreen() {
         let app = XCUIApplication()
-        for shot in shots {
+        let only = ProcessInfo.processInfo.environment["FARSIDE_SHOTS"].map { Set($0.split(separator: ",").map(String.init)) }
+        for shot in shots where only?.contains(shot.name) ?? true {
             XCUIDevice.shared.orientation = shot.landscape ? .landscapeLeft : .portrait
             app.launchArguments = shot.arguments
             app.launch()
