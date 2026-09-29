@@ -1,4 +1,5 @@
 import { config } from "../../site.config";
+import a2File from "../hero-a2/a2.html" with { type: "text" };
 import { html, pd, raw, type Html } from "../lib/html";
 import { markSvg } from "../lib/mark";
 import { photo } from "./images";
@@ -15,7 +16,6 @@ const amount = (price: string) => {
   return cents ? html`${whole}${pd}${cents}` : html`${price}`;
 };
 
-const betaButton = (label = C.cta) => html`<a class="cta" href="#beta">${label}<span class="arr">${icon.arrow}</span></a>`;
 
 /** A real app screenshot in a simple device frame. */
 function shotImg(assets: Assets, key: string, sizes: string, eager = false): Html {
@@ -25,16 +25,44 @@ function shotImg(assets: Assets, key: string, sizes: string, eager = false): Htm
   return html`<img src="${i.src}" srcset="${i.srcset ?? i.src}" sizes="${sizes}" width="${i.w}" height="${i.h}" alt="${photo(key).alt}"${load} decoding="async">`;
 }
 
-const hero = (assets: Assets) => html`<section class="hero" aria-labelledby="hero-title">
+/** The two SVG symbols the hero demo draws with (the Farside mark and the Mac pointer), from the hero lab. */
+const A2_SPRITE = raw(`<svg class="a2-sprite" width="0" height="0" aria-hidden="true" focusable="false">
+  <symbol id="mk" viewBox="0 0 26 38"><g fill="#EDE8DF"><circle cx="3" cy="8" r="1.4"/><circle cx="7" cy="8" r="1.4"/><circle cx="3" cy="12" r="1.4"/><circle cx="7" cy="12" r="1.4"/><circle cx="11" cy="12" r="1.4"/><circle cx="3" cy="16" r="1.4"/><circle cx="7" cy="16" r="1.4"/><circle cx="11" cy="16" r="1.4"/><circle cx="15" cy="16" r="1.4"/><circle cx="3" cy="20" r="1.4"/><circle cx="7" cy="20" r="1.4"/><circle cx="11" cy="20" r="1.4"/><circle cx="15" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/><circle cx="3" cy="24" r="1.4"/><circle cx="7" cy="24" r="1.4"/><circle cx="11" cy="24" r="1.4"/><circle cx="15" cy="24" r="1.4"/><circle cx="19" cy="24" r="1.4"/><circle cx="23" cy="24" r="1.4"/><circle cx="3" cy="28" r="1.4"/><circle cx="7" cy="28" r="1.4"/><circle cx="11" cy="28" r="1.4"/><circle cx="3" cy="32" r="1.4"/><circle cx="11" cy="32" r="1.4"/><circle cx="15" cy="32" r="1.4"/><circle cx="15" cy="36" r="1.4"/></g><circle cx="3.2" cy="3.2" r="2.8" fill="#FF5B1F"/></symbol>
+  <symbol id="ptr" viewBox="-1.5 -1.5 17 23"><path d="M0 0V16.6L4.1 12.8L6.8 19.1L9.7 17.9L7 11.7H12.7Z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+</svg>`);
+
+/** The approved hero demo ("A2"), rendered into the page so it holds its size from the first paint. */
+const a2Markup = a2File as unknown as string;
+const a2Demo = raw(a2Markup.replace(/^\s*<template[^>]*>/, "").replace(/<\/template>\s*$/, ""));
+
+/**
+ * Beta sign-up, used in the hero and in #beta. A plain form post works without JavaScript (the waitlist
+ * function redirects to /?joined=1#joined or /?joined=0&error=<code>#join-error-<code>, shown in #beta);
+ * src/scripts/waitlist.ts turns it into an in-page request. The consent line sits right under the button.
+ */
+function joinForm(id: string): Html {
+  return html`<div class="wl" id="${id}">
+  <form class="join" method="post" action="${config.waitlist.action}" data-waitlist data-status="${id}-status">
+    <input type="hidden" name="source" value="home">
+    <div class="hp" hidden><label for="${id}-company">Leave this empty</label><input id="${id}-company" name="company" type="text" tabindex="-1" autocomplete="off"></div>
+    <label class="sr-only" for="${id}-email">Email address</label>
+    <input id="${id}-email" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" required maxlength="254" placeholder="Email address" aria-describedby="${id}-consent ${id}-status">
+    <button type="submit">${C.cta}</button>
+  </form>
+  <p class="consent" id="${id}-consent">${C.consent}</p>
+  <p class="note" id="${id}-status" role="status" aria-live="polite" tabindex="-1"></p>
+</div>`;
+}
+
+const hero = html`<section class="hero" data-v="a2" aria-labelledby="hero-title">
+  ${A2_SPRITE}
   <div class="w hero-grid">
-    <div class="hero-copy">
-      <h1 class="h1" id="hero-title">Control your Mac from your iPhone${pd}</h1>
-      <p class="sub">See your Mac’s screen on your iPhone or iPad and control it with your finger. Free when both are on the same Wi‑Fi; a paid plan adds access away from home.</p>
-      <div class="acts">${betaButton()}<p class="note">${C.availability}</p></div>
+    <div class="copy">
+      <h1 id="hero-title">Control your Mac from your iPhone.</h1>
+      <p class="sub">Your phone is the screen and the trackpad. Free on your Wi‑Fi.</p>
+      ${joinForm("join-hero")}
     </div>
-    <div class="device">
-      <div class="phone wide">${shotImg(assets, "photo-session", "(min-width: 1000px) 680px, calc(100vw - 40px)", true)}</div>
-    </div>
+    <div class="stage" id="stage">${a2Demo}</div>
   </div>
 </section>`;
 
@@ -47,9 +75,10 @@ const how = (assets: Assets) => html`<section class="sec" id="how" aria-labelled
         <li><h3>Pair your iPhone</h3><p>Scan the code on your Mac, then approve your phone on the Mac. No account needed.</p></li>
         <li><h3>Tap Connect</h3><p>Your Mac’s screen appears, and your phone becomes its trackpad.</p></li>
       </ol>
+      <p class="req">You’ll need ${R.mac}, and an iPhone with ${R.iphone} or an iPad with ${R.ipad}.</p>
     </div>
-    <div class="device tall">
-      <div class="phone tall">${shotImg(assets, "photo-home", "(min-width: 1000px) 300px, 260px")}</div>
+    <div class="shot-wrap">
+      <div class="shotframe">${shotImg(assets, "photo-home", "(min-width: 1000px) 300px, 260px")}</div>
     </div>
   </div>
 </section>`;
@@ -93,7 +122,7 @@ const QAS: QA[] = [
   },
   {
     q: "What do I need?",
-    a: html`<p>A Mac with ${R.mac} and the free Farside Mac app, and an iPhone with ${R.iphone} or an iPad with ${R.ipad}. These are the planned requirements. The <a href="/control-mac-from-iphone">setup guide</a> walks you through it.</p>`,
+    a: html`<p>${R.mac}, with the free Farside Mac app, and an iPhone with ${R.iphone} or an iPad with ${R.ipad}. These are the planned requirements. The <a href="/control-mac-from-iphone">setup guide</a> walks you through it.</p>`,
   },
   {
     q: "Can anyone else see my screen?",
@@ -131,27 +160,17 @@ const faq = html`<section class="sec" id="faq" aria-labelledby="faq-title">
  * turns those query strings into a message.
  */
 const beta = html`<section class="sec join-sec" id="beta" aria-labelledby="beta-title">
-  <div class="w join-w">
+  <div class="w">
     <div class="band-mark" aria-hidden="true">${raw(markSvg(44))}</div>
     <h2 class="h2" id="beta-title">${C.cta}</h2>
-    <p class="sec-intro">Try Farside before it launches. Leave your email and we’ll send you an invite.</p>
-    <form class="join" method="post" action="${config.waitlist.action}">
-      <input type="hidden" name="source" value="home">
-      <div class="hp" hidden><label for="join-company">Leave this empty</label><input id="join-company" name="company" type="text" tabindex="-1" autocomplete="off"></div>
-      <label for="join-email">Email address</label>
-      <div class="join-row">
-        <input id="join-email" name="email" type="email" autocomplete="email" inputmode="email" autocapitalize="off" spellcheck="false" required maxlength="254" aria-describedby="join-consent join-status">
-        <button class="cta" type="submit">${C.cta}<span class="arr">${icon.arrow}</span></button>
-      </div>
-      <p class="consent" id="join-consent">${C.consent}</p>
-      <p class="status" id="join-status" role="status" aria-live="polite" tabindex="-1"></p>
-    </form>
+    <p class="sec-intro">Try Farside before it launches. ${C.availability}</p>
     <div class="join-notes">
       <p id="joined">You’re on the list. We’ll email you when your beta invite is ready.</p>
       <p id="join-error-invalid_email">That email address doesn’t look right. Check it and try again.</p>
       <p id="join-error-rate_limited">Too many tries from your connection. Please try again in a few minutes.</p>
       <p id="join-error-forbidden">That sign-up was blocked. Reload this page and try again.</p>
     </div>
+    ${joinForm("join-beta")}
   </div>
 </section>`;
 
@@ -176,6 +195,6 @@ export function homePage(assets: Assets) {
       ),
     },
     assets,
-    html`${hero(assets)}\n${how(assets)}\n${features}\n${pricing}\n${faq}\n${beta}`,
+    html`${hero}\n${how(assets)}\n${features}\n${pricing}\n${faq}\n${beta}`,
   );
 }

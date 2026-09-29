@@ -89,7 +89,7 @@ export function controlGuidePage(assets: Assets) {
   <div class="prose">
     <h2 id="need">What you need</h2>
     <ul>
-      <li>A Mac running ${R.mac}, with the free Farside helper.</li>
+      <li>${R.mac}, with the free Farside helper.</li>
       <li>An iPhone on ${R.iphone}, or an iPad on ${R.ipad}, with the Farside app.</li>
       <li>Both on the same network for free use. To reach your Mac over the internet, the Anywhere plan.</li>
     </ul>

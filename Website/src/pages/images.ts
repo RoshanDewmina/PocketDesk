@@ -79,19 +79,10 @@ export const ARTS: ArtSpec[] = [
 /**
  * Real screenshots of the Farside app (iOS Simulator captures from 29 Sep 2026, ~/Downloads/farside-phone-*.png),
  * encoded to WebP at each width in `widths` as static/img/<key>-<width>.webp. w/h give the aspect ratio.
- * The live session shows the app's built-in preview desktop; swap in a real-Mac capture when one without
- * private content exists (same file names, same aspect ratio).
  */
 export type Photo = { key: string; widths: number[]; w: number; h: number; alt: string };
 
 export const PHOTOS: Photo[] = [
-  {
-    key: "photo-session",
-    widths: [720, 1080, 1440],
-    w: 1311,
-    h: 603,
-    alt: "The Farside app on an iPhone turned sideways, showing a Mac desktop with a Notes window, the menu bar and the Dock.",
-  },
   {
     key: "photo-home",
     widths: [320, 640, 900],

@@ -73,7 +73,7 @@ export function remoteGuidePage(assets: Assets) {
     ${figure(assets, "mac-menu", "The Mac always shows who is connected, with Stop Sharing one click away.")}
 
     <h2 id="setup">Set it up</h2>
-    <p>You need a Mac on ${R.mac} and an iPhone on ${R.iphone} or an iPad on ${R.ipad}. Install the free Farside helper on the Mac, allow Screen Recording and Accessibility, scan the pairing code with the Farside app, and tap Connect. The <a href="/control-mac-from-iphone">step-by-step guide</a> has the details.</p>
+    <p>You need ${R.mac}, and an iPhone on ${R.iphone} or an iPad on ${R.ipad}. Install the free Farside helper on the Mac, allow Screen Recording and Accessibility, scan the pairing code with the Farside app, and tap Connect. The <a href="/control-mac-from-iphone">step-by-step guide</a> has the details.</p>
 
     <h2 id="limits">Good to know</h2>
     <ul>

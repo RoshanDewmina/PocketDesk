@@ -1,6 +1,8 @@
 /* Farside website. Tokens: design/FARSIDE-DESIGN-SYSTEM.md §2. Dark only. Ember = contact moments + primary CTA arrow. */
 
 @import "./fallbacks.css";
+@import "../hero-a2/frame.css";
+@import "../hero-a2/a2.css";
 
 :root {
   --void: #050505;
@@ -19,8 +21,8 @@
 
   --dot: "Doto", "Doto Fallback", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   --serif: "Instrument Serif", "Instrument Serif Fallback", "Iowan Old Style", Georgia, serif;
-  --ui: "Geist", "Geist Fallback", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
-  --mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
 
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   --ease2: cubic-bezier(0.22, 1, 0.36, 1);
@@ -395,48 +397,206 @@ a.store:hover {
   background: rgba(237, 232, 223, 0.08);
 }
 
-/* ---------- home: hero ---------- */
+/* ---------- home: hero (A2 demo: src/hero-a2/) ---------- */
+.a2-sprite {
+  position: absolute;
+}
 .hero {
-  padding: 16px 0 64px;
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 4px 0 40px;
 }
 .hero-grid {
   display: grid;
-  gap: 36px;
-  align-items: center;
 }
-.h1 {
-  font: 800 clamp(34px, 9.2vw, 64px)/1.08 var(--dot);
-  letter-spacing: -0.01em;
+.copy {
+  position: relative;
+  z-index: 2;
+  padding-top: 6px;
+}
+:where(.hero) h1 {
+  font: 700 clamp(34px, 10.2vw, 46px)/1.04 var(--ui);
+  letter-spacing: -0.028em;
   text-wrap: balance;
+  max-width: 14ch;
 }
-.sub {
-  margin-top: 20px;
-  max-width: 34em;
-  font-size: 18px;
-  line-height: 1.55;
+:where(.hero) .sub {
+  margin: 14px 0 0;
+  font-size: 17px;
+  line-height: 1.42;
   color: var(--bone-2);
+  max-width: 30ch;
+  text-wrap: pretty;
 }
-.acts {
+.stage {
+  position: relative;
+  z-index: 1;
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 14px 20px;
-  margin-top: 28px;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 30px 0 8px;
 }
-.acts .note {
-  font-size: 16px;
+/* The scene is drawn at 800 × 500 and scaled by the demo script; keep it hidden until then. */
+.devs.a2:not(.ready) .a2-scene {
+  visibility: hidden;
+}
+/* Readable labels around the demo (the lab sets them at 12–13 px). */
+.hero .a2-status span {
+  font: 500 15px/1.3 var(--ui);
   color: var(--bone-2);
+}
+.hero .a2-hint,
+.hero .try {
+  font-size: max(15px, 3.4cqw);
+}
+/* Two greys in the drawn Mac scene sit just under 4.5:1; lifted a touch for the contrast audit. */
+.hero .s-tb span {
+  color: #9d988f;
+}
+.hero .ch-in .ph {
+  color: #938e86;
 }
 
-/* Real screenshots in simple device frames. The dot screen behind them is the brand layer; no text sits on it. */
-.device {
+/* Beta sign-up: an inline field and button (hero and #beta), consent right under the button. */
+.join {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  margin-top: 22px;
+  max-width: 440px;
+  height: 56px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: inset 0 0 0 1px rgba(237, 232, 223, 0.4);
+}
+.join:focus-within {
+  box-shadow: inset 0 0 0 2px var(--bone);
+}
+.join input[type="email"] {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--bone);
+  font: 16px var(--ui);
+  padding: 0 12px;
+  outline: none;
+}
+.join input::placeholder {
+  color: #a19c93;
+}
+.join input[aria-invalid="true"] {
+  color: var(--bone);
+}
+.join:has(input[aria-invalid="true"]) {
+  box-shadow: inset 0 0 0 2px var(--ember);
+}
+.join button {
+  flex: none;
+  border: 0;
+  border-radius: 10px;
+  padding: 0 18px;
+  background: var(--bone);
+  color: var(--ink);
+  font: 600 16px var(--ui);
+  cursor: pointer;
+  transition: transform 0.14s var(--ease);
+}
+.join button:active {
+  transform: scale(0.97);
+}
+.join button:focus-visible {
+  outline: 2px solid var(--bone);
+  outline-offset: 2px;
+}
+.join button:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+.wl .consent {
+  margin-top: 10px;
+  max-width: 440px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--bone-2);
+}
+:where(.wl) .note {
+  min-height: 24px;
+  margin-top: 6px;
+  font-size: 16px;
+  line-height: 1.5;
+}
+.wl .note:focus {
+  outline: none;
+}
+.wl .note[data-kind="ok"] {
+  font-weight: 600;
+}
+.wl .note[data-kind="err"]::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--ember);
+  vertical-align: 1px;
+}
+.hp {
+  display: none !important;
+}
+
+@media (min-width: 960px) {
+  .hero {
+    padding: 24px 0 48px;
+  }
+  .hero-grid {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 6fr);
+    column-gap: clamp(24px, 4vw, 64px);
+    align-items: center;
+  }
+  .copy {
+    padding: 0 0 72px;
+  }
+  :where(.hero) h1 {
+    font-size: clamp(48px, 4.2vw, 64px);
+    max-width: none;
+  }
+  :where(.hero) .sub {
+    font-size: 20px;
+    margin-top: 18px;
+  }
+  .hero .join {
+    margin-top: 30px;
+  }
+  .stage {
+    align-items: center;
+    padding: 0 0 56px;
+  }
+}
+
+@media (max-width: 520px) and (max-height: 760px) {
+  .bar {
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+  .wl .consent {
+    margin-top: 8px;
+    line-height: 1.35;
+  }
+}
+
+/* A real app screenshot in a simple iPhone frame (How it works). The dot screen behind it is the brand layer. */
+.shot-wrap {
   position: relative;
   isolation: isolate;
 }
-.device::before {
+.shot-wrap::before {
   content: "";
   position: absolute;
-  inset: -16% -6%;
+  inset: -12% 0;
   z-index: -1;
   background: radial-gradient(circle, rgba(237, 232, 223, 0.55) 0 1.1px, transparent 1.6px) 0 0 / 8px 8px;
   -webkit-mask: radial-gradient(closest-side, #000 30%, transparent);
@@ -444,33 +604,21 @@ a.store:hover {
   opacity: 0.5;
   pointer-events: none;
 }
-.phone {
+.shotframe {
+  width: min(260px, 70vw);
+  margin: 0 auto;
+  padding: 3%;
+  border-radius: 16.9% / 7.8%;
   background: #161616;
   box-shadow:
     0 0 0 1px rgba(237, 232, 223, 0.16),
     0 30px 80px rgba(0, 0, 0, 0.7);
 }
-.phone img {
+.shotframe img {
   width: 100%;
   height: auto;
-  background: #000;
-}
-/* iPhone 17 turned sideways (2622 × 1206 screen); the corner radius follows the display's. */
-.phone.wide {
-  padding: 1.3%;
-  border-radius: 7.7% / 16.6%;
-}
-.phone.wide img {
-  border-radius: 6.4% / 13.9%;
-}
-.phone.tall {
-  width: min(260px, 70vw);
-  margin: 0 auto;
-  padding: 3%;
-  border-radius: 16.9% / 7.8%;
-}
-.phone.tall img {
   border-radius: 13.9% / 6.4%;
+  background: #000;
 }
 
 /* ---------- sections ---------- */
@@ -626,74 +774,19 @@ a.store:hover {
   color: var(--bone);
 }
 
-/* beta sign-up (works without JavaScript; see src/scripts/waitlist.ts) */
+/* beta sign-up section; the form itself is styled with the hero's (.join, .wl) */
 .join-sec .band-mark {
   justify-content: flex-start;
   margin-bottom: 20px;
 }
-.join {
-  display: grid;
-  gap: 10px;
-  max-width: 620px;
+.join-sec .wl {
   margin-top: 28px;
 }
-.join label {
-  font: 600 17px/1.3 var(--ui);
-}
-.join-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.join input[type="email"] {
-  flex: 1 1 240px;
-  min-width: 0;
-  min-height: 52px;
-  padding: 0 16px;
-  border-radius: var(--r-control);
-  border: 1px solid rgba(237, 232, 223, 0.45);
-  background: var(--panel);
-  color: var(--bone);
-  font: 400 17px/1.2 var(--ui);
-}
-.join input[type="email"]:focus-visible {
-  outline: 2px solid var(--bone);
-  outline-offset: 2px;
-  border-color: var(--bone);
-}
-.join input[aria-invalid="true"] {
-  border-color: var(--ember);
-}
-.join .cta {
-  flex: none;
-}
-.join .consent {
+.req {
+  margin-top: 28px;
+  max-width: 40em;
   font-size: 15px;
   color: var(--bone-2);
-}
-.join .status {
-  font-size: 17px;
-}
-.join .status:focus {
-  outline: none;
-}
-.join .status[data-kind="ok"],
-.join .status[data-kind="err"],
-.join-notes p:target {
-  margin-top: 6px;
-  padding: 2px 0 2px 12px;
-  border-left: 3px solid var(--bone);
-}
-.join .status[data-kind="ok"] {
-  font-weight: 600;
-}
-.join .status[data-kind="err"] {
-  border-left-color: var(--ember);
-}
-.join.done > label,
-.join.done .join-row,
-.join.done .consent {
-  display: none;
 }
 .join-notes p {
   display: none;
@@ -703,9 +796,11 @@ a.store:hover {
 .join-notes p:target {
   display: block;
   margin-top: 16px;
+  padding: 2px 0 2px 12px;
+  border-left: 3px solid var(--bone);
 }
-.hp {
-  display: none !important;
+.join-notes p[id^="join-error"]:target {
+  border-left-color: var(--ember);
 }
 
 .faq {
@@ -1557,18 +1652,11 @@ a.store:hover {
   }
 }
 @media (min-width: 1000px) {
-  .hero {
-    padding: 40px 0 88px;
-  }
-  .hero-grid {
-    grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
-    gap: 56px;
-  }
   .how-grid {
     grid-template-columns: minmax(0, 1fr) 360px;
     gap: 80px;
   }
-  .phone.tall {
+  .shotframe {
     width: 300px;
   }
   .feats {

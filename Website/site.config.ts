@@ -112,7 +112,9 @@ export const config = {
 
   /** Planned minimum OS versions (STORE-LISTING.md). */
   requirements: {
-    mac: "macOS 26 or later",
+    /** D35: Apple silicon only for 1.0. */
+    mac: "macOS 26 or later on a Mac with Apple silicon (M1 or later)",
+    /** iPhone and iPad share one requirement line on the home page. */
     iphone: "iOS 26 or later",
     ipad: "iPadOS 26 or later",
   },
