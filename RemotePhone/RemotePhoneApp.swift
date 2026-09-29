@@ -432,7 +432,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// Offline screenshots of the hold states: a finger drag, or a Hold click from Controls.
     func previewHoldForTesting(explicit: Bool) {
         dragging = true
-        explicitHoldDeadline = explicit ? ProcessInfo.processInfo.systemUptime + 8.4 : nil
+        explicitHoldDeadline = explicit ? ProcessInfo.processInfo.systemUptime + Self.explicitHoldLimit : nil
     }
     #endif
 
