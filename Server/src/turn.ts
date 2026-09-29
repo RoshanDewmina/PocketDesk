@@ -105,6 +105,50 @@ export function createCoturnProvider(config: {
   };
 }
 
+export type RevocationRetry = {
+  /** Attempts per credential, including the first. */
+  attempts: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+};
+
+export const defaultRevocationRetry: RevocationRetry = { attempts: 4, baseDelayMs: 250, maxDelayMs: 2000 };
+
+/** Exponential backoff with jitter: between half and all of min(max, base * 2^(attempt-1)). */
+export function revocationDelayMs(attempt: number, retry: RevocationRetry, random: () => number = Math.random): number {
+  const ceiling = Math.min(retry.maxDelayMs, retry.baseDelayMs * 2 ** (attempt - 1));
+  return Math.round(ceiling / 2 + (ceiling / 2) * Math.min(1, Math.max(0, random())));
+}
+
+const maxLoggedBodyBytes = 512;
+
+async function readLogBody(response: Response, secrets: string[]): Promise<string> {
+  let text = '';
+  try {
+    const reader = response.body?.getReader();
+    if (reader) {
+      const chunks: Uint8Array[] = [];
+      let length = 0;
+      while (length < maxLoggedBodyBytes) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        length += value.byteLength;
+      }
+      await reader.cancel().catch(() => {});
+      const joined = new Uint8Array(length);
+      let offset = 0;
+      for (const chunk of chunks) { joined.set(chunk, offset); offset += chunk.byteLength; }
+      text = new TextDecoder().decode(joined.subarray(0, maxLoggedBodyBytes));
+    }
+  } catch {
+    text = '';
+  }
+  for (const secret of secrets) if (secret) text = text.split(secret).join('[redacted]');
+  text = text.replace(/[^\x20-\x7e]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
+}
+
 export function createCloudflareTurnProvider(config: {
   keyId: string;
   apiToken: string;
@@ -112,6 +156,11 @@ export function createCloudflareTurnProvider(config: {
   timeoutMs: number;
   fetch?: typeof globalThis.fetch;
   endpoint?: string;
+  revocationRetry?: RevocationRetry;
+  sleep?: (ms: number) => Promise<void>;
+  random?: () => number;
+  /** One line per event, never containing the API token, key ID or a credential username. */
+  log?: (line: string) => void;
 }): TurnCredentialProvider {
   if (!/^[A-Za-z0-9]{32}$/.test(config.keyId)) throw new Error('invalid Cloudflare TURN key ID');
   if (config.apiToken.length !== 64) throw new Error('invalid Cloudflare TURN API token');
@@ -123,6 +172,53 @@ export function createCloudflareTurnProvider(config: {
   }
   const fetcher = config.fetch ?? globalThis.fetch;
   const base = config.endpoint ?? 'https://rtc.live.cloudflare.com';
+  const retry = config.revocationRetry ?? defaultRevocationRetry;
+  if (!Number.isSafeInteger(retry.attempts) || retry.attempts < 1 || retry.attempts > 8 ||
+      !(retry.baseDelayMs >= 0) || !(retry.maxDelayMs >= retry.baseDelayMs) || retry.maxDelayMs > 30_000) {
+    throw new Error('invalid Cloudflare revocation retry policy');
+  }
+  const sleep = config.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  const random = config.random ?? Math.random;
+  const log = config.log ?? ((line: string) => console.error(line));
+
+  /** One revocation call. Resolves to undefined on success, or a secret-free reason. */
+  const attemptRevocation = async (username: string): Promise<string | undefined> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+    try {
+      const response = await fetcher(new URL(
+        `/v1/turn/keys/${encodeURIComponent(config.keyId)}/credentials/${encodeURIComponent(username)}/revoke`,
+        base,
+      ), {
+        method: 'POST',
+        headers: { authorization: `Bearer ${config.apiToken}` },
+        signal: controller.signal,
+      });
+      if (response.status === 204) return undefined;
+      const body = await readLogBody(response, [config.apiToken, config.keyId, username, encodeURIComponent(username)]);
+      return `status ${response.status}${body ? ` body "${body}"` : ''}`;
+    } catch (error) {
+      return controller.signal.aborted ? `timed out after ${config.timeoutMs} ms` : `request failed (${(error as Error)?.name ?? 'error'})`;
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  /** Retries with backoff; true once Cloudflare confirms. Never logs the username. */
+  const revokeWithRetry = async (username: string, index: number, count: number): Promise<boolean> => {
+    for (let attempt = 1; attempt <= retry.attempts; attempt += 1) {
+      const failure = await attemptRevocation(username);
+      if (!failure) {
+        if (attempt > 1) log(`TURN revocation: credential ${index} of ${count} revoked on attempt ${attempt}`);
+        return true;
+      }
+      log(`TURN revocation: credential ${index} of ${count}, attempt ${attempt} of ${retry.attempts} failed: ${failure}`);
+      if (attempt < retry.attempts) await sleep(revocationDelayMs(attempt, retry, random));
+    }
+    log(`TURN revocation: credential ${index} of ${count} not revoked after ${retry.attempts} attempts; ` +
+      `it lapses on its own within ${config.ttlSeconds} s of issue`);
+    return false;
+  };
   const credentialURL = new URL(`/v1/turn/keys/${encodeURIComponent(config.keyId)}/credentials/generate-ice-servers`, base);
 
   return {
@@ -150,25 +246,15 @@ export function createCloudflareTurnProvider(config: {
         clearTimeout(timer);
       }
     },
+    // Every credential gets its own attempts: one that keeps failing never stops the others from
+    // being revoked, and the call still rejects so the caller counts it.
     async revoke(servers) {
       const usernames = [...new Set(servers.flatMap(server => server.username ? [server.username] : []))];
-      for (const username of usernames) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), config.timeoutMs);
-        try {
-          const response = await fetcher(new URL(
-            `/v1/turn/keys/${encodeURIComponent(config.keyId)}/credentials/${encodeURIComponent(username)}/revoke`,
-            base,
-          ), {
-            method: 'POST',
-            headers: { authorization: `Bearer ${config.apiToken}` },
-            signal: controller.signal,
-          });
-          if (response.status !== 204) throw new Error('TURN credential revocation rejected');
-        } finally {
-          clearTimeout(timer);
-        }
+      let failed = 0;
+      for (const [index, username] of usernames.entries()) {
+        if (!(await revokeWithRetry(username, index + 1, usernames.length))) failed += 1;
       }
+      if (failed > 0) throw new Error('TURN credential revocation rejected');
     },
   };
 }
