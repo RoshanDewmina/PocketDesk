@@ -29,6 +29,47 @@ enum PointerSizePreference: String, CaseIterable, Identifiable {
     }
 }
 
+/// How the view moves to keep the pointer in sight while zoomed in. The pointer itself is never
+/// eased: it is drawn inside the picture's own placement, so it can only ever sit where the Mac
+/// pointer is over the Mac picture, however the camera moves.
+enum PointerFollowStyle: String, CaseIterable, Identifiable {
+    /// The picture eases after the pointer once it nears an edge (a short no-bounce spring).
+    case smooth
+    /// The picture moves in lockstep with the finger once the pointer reaches an edge; nothing
+    /// moves after the finger stops.
+    case rigid
+    /// No automatic panning; two-finger pan and the mini map only.
+    case off
+
+    static let key = "pointerFollow"
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .smooth: "Smooth"
+        case .rigid: "Rigid"
+        case .off: "Off"
+        }
+    }
+
+    var follows: Bool { self != .off }
+
+    /// Distance from the usable edge at which panning starts. Smooth needs room for the pointer
+    /// to lead the eased picture during a fast stroke without leaving the screen.
+    var margin: CGFloat {
+        switch self {
+        case .smooth: 48
+        case .rigid: 32
+        case .off: 0
+        }
+    }
+
+    func animation(reduceMotion: Bool) -> Animation? {
+        guard self == .smooth, !reduceMotion else { return nil }
+        return .smooth(duration: 0.22, extraBounce: 0)
+    }
+}
+
 /// Owns the predicted pointer and publishes only what the overlay draws, so pointer motion
 /// never invalidates the rest of the session view.
 @MainActor
@@ -38,13 +79,16 @@ final class PointerOverlayModel: ObservableObject {
         var shape: PointerShape
     }
 
-    static let followInterval: TimeInterval = 1.0 / 60.0
+    static let followInterval: TimeInterval = 1.0 / 120.0
+    /// ProMotion is asked for while the pointer moves or a correction is blending, and released when idle.
+    static let frameRateRange = CAFrameRateRange(minimum: 80, maximum: 120, preferred: 120)
+    static let motionLinger: TimeInterval = 0.25
 
     @Published private(set) var render: Render?
     let followUpdates = PassthroughSubject<CGPoint, Never>()
     private(set) var predictor = PointerPredictor(bounds: .zero)
     private(set) var policy = PointerOverlayPolicy()
-    private var displayLink: CADisplayLink?
+    private(set) var displayLink: CADisplayLink?
     private var lastFollowAt: TimeInterval = -.infinity
     private let clock: () -> TimeInterval
     #if DEBUG
@@ -87,9 +131,9 @@ final class PointerOverlayModel: ObservableObject {
     /// Moves the drawn pointer the instant the control channel accepts the delta.
     func localMove(ordinal: UInt64?, delta: CGSize, follow: Bool) {
         guard let ordinal else { return }
-        predictor.applyLocalMove(ordinal: ordinal, delta: delta)
-        refresh()
         let now = clock()
+        predictor.applyLocalMove(ordinal: ordinal, delta: delta, at: now)
+        refresh()
         guard follow, let point = predictor.displayed(at: now),
               now < lastFollowAt || now - lastFollowAt >= Self.followInterval else { return }
         lastFollowAt = now
@@ -118,7 +162,8 @@ final class PointerOverlayModel: ObservableObject {
         let next = policy.shouldDraw(at: now, hasPosition: point != nil)
             ? point.map { Render(point: $0, shape: policy.shape) } : nil
         if next != render { render = next }
-        setDisplayLink(active: next != nil && predictor.correcting(at: now))
+        let moving = now >= predictor.lastLocalMoveAt && now - predictor.lastLocalMoveAt < Self.motionLinger
+        setDisplayLink(active: next != nil && (moving || predictor.correcting(at: now)))
     }
 
     private func setDisplayLink(active: Bool) {
@@ -128,6 +173,7 @@ final class PointerOverlayModel: ObservableObject {
                                          self.refresh()
                                          return true
                                      }, selector: #selector(DisplayLinkTarget.step(_:)))
+            link.preferredFrameRateRange = Self.frameRateRange
             link.add(to: .main, forMode: .common)
             displayLink = link
         } else if !active, let link = displayLink {
@@ -189,6 +235,10 @@ struct PointerGlyphMetrics {
     }
 }
 
+/// Draws the pointer inside the picture's placement: positions are picture points (source × scale),
+/// so an eased camera pan moves picture and pointer as one. A move of the pointer itself never
+/// carries the camera's animation, or SwiftUI's additive position animation would accumulate every
+/// pan step into the glyph and push it off screen while the finger leads the picture.
 struct PointerOverlayView: View {
     @ObservedObject var model: PointerOverlayModel
     let viewport: ViewportTransform
@@ -202,11 +252,17 @@ struct PointerOverlayView: View {
                mapped.x <= viewport.canvasSize.width + limit, mapped.y <= viewport.canvasSize.height + limit {
                 let metrics = PointerGlyphMetrics.cached(shape: render.shape, arrowHeight: size.arrowHeight)
                 PointerGlyphView(shape: render.shape, arrowHeight: size.arrowHeight)
-                    .position(metrics.center(forHotSpotAt: mapped))
+                    .position(metrics.center(forHotSpotAt: Self.picturePoint(render.point, scale: viewport.scale)))
+                    .transaction(value: render.point) { $0.disablesAnimations = true }
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
         }
+    }
+
+    /// A source point in the picture container's coordinates.
+    static func picturePoint(_ source: CGPoint, scale: CGFloat) -> CGPoint {
+        CGPoint(x: source.x * scale, y: source.y * scale)
     }
 }
 

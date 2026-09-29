@@ -144,6 +144,19 @@ final class PointerNegotiationTests: XCTestCase {
         XCTAssertFalse(phone.shouldDraw(at: 2, hasPosition: true), "Pointer on another display is not drawn")
     }
 
+    func testAShortTelemetryStallNeitherHidesThePointerNorWithdrawsTheOverlay() {
+        var phone = PointerOverlayPolicy()
+        phone.hostCapability(PointerSync(videoCursor: false), at: 0)
+        XCTAssertTrue(phone.telemetry(sample(1, videoCursor: false), at: 0))
+        // Wi-Fi/AWDL stalls seen on the phone: one ~100-150 ms gap every second; allow up to 500 ms.
+        for gap in stride(from: 0.0, through: 0.5, by: 0.05) {
+            XCTAssertTrue(phone.shouldDraw(at: gap, hasPosition: true), "Hidden after a \(gap) s gap")
+            XCTAssertEqual(phone.advertisement(at: gap), PointerSync(overlay: true), "Withdrawn after a \(gap) s gap")
+        }
+        XCTAssertTrue(phone.telemetry(sample(3, videoCursor: false), at: 0.5))
+        XCTAssertFalse(phone.telemetry(sample(2, videoCursor: false), at: 0.51), "A reordered older sample is dropped")
+    }
+
     /// Runs both state machines against a delayed, ordered channel and checks that the
     /// pointer is never missing from what the phone shows and never hidden without telemetry.
     func testHandshakeNeverLeavesThePhoneWithoutAPointer() throws {
@@ -267,6 +280,25 @@ final class PointerSamplingTests: XCTestCase {
         XCTAssertNil(HostPointerTelemetryPolicy.displayPoint(CGPoint(x: 0, y: 10), in: frame))
         XCTAssertNil(HostPointerTelemetryPolicy.displayPoint(CGPoint(x: CGFloat.nan, y: 10), in: frame))
     }
+
+    func testInjectedPointIsReportedUntilTheCursorCatchesUp() {
+        var host = HostPointerTelemetryPolicy()
+        host.phoneHeartbeat(PointerSync(overlay: true), at: 1)
+        host.moveInjected(at: CGPoint(x: 200, y: 100), now: 1)
+        // WindowServer is late on a loaded Mac: 80 ms after the post the cursor still reads the old spot.
+        XCTAssertEqual(host.sample(observed: CGPoint(x: 150, y: 100), shape: .arrow, videoCursor: false, at: 1.08)?.x, 200,
+                       "The acknowledged move is reported where it was placed, not where the cursor lags")
+        XCTAssertNil(host.sample(observed: CGPoint(x: 200, y: 100), shape: .arrow, videoCursor: false, at: 1.1),
+                     "Catching up reports nothing new")
+        XCTAssertEqual(host.sample(observed: CGPoint(x: 205, y: 100), shape: .arrow, videoCursor: false, at: 1.12)?.x, 205,
+                       "Once caught up, a physical mouse move is not masked for the rest of the window")
+
+        host.phoneHeartbeat(PointerSync(overlay: true), at: 2)
+        host.moveInjected(at: CGPoint(x: 300, y: 100), now: 2)
+        XCTAssertEqual(host.sample(observed: CGPoint(x: 205, y: 100), shape: .arrow, videoCursor: false, at: 2.14)?.x, 300)
+        XCTAssertEqual(host.sample(observed: CGPoint(x: 205, y: 100), shape: .arrow, videoCursor: false, at: 2.16)?.x, 205,
+                       "Bridging is bounded by the settle window")
+    }
 }
 
 final class PointerPredictionTests: XCTestCase {
@@ -336,6 +368,82 @@ final class PointerPredictionTests: XCTestCase {
         XCTAssertEqual(predictor.pendingCount, 0)
         XCTAssertEqual(predictor.displayed(at: 0.1), CGPoint(x: 120, y: 100))
         XCTAssertEqual(predictor.displayed(at: 1)!.x, 100, accuracy: 0.01)
+    }
+
+    func testTrailingSamplesAreHeldWhileTheFingerMovesAndVanishWhenTheHostCatchesUp() {
+        var predictor = PointerPredictor(bounds: CGSize(width: 1000, height: 1000))
+        predictor.receive(point: CGPoint(x: 100, y: 100), applied: 0, at: 0)
+        var t = 0.0
+        for _ in 1...10 {
+            t += 1.0 / 120.0
+            predictor.applyLocalMove(ordinal: predictor.reserveOrdinal(), delta: CGSize(width: 5, height: 0), at: t)
+        }
+        XCTAssertEqual(predictor.displayed(at: t), CGPoint(x: 150, y: 100))
+        // The host acknowledges all ten moves but its cursor still reads two moves behind.
+        predictor.receive(point: CGPoint(x: 140, y: 100), applied: 10, at: t + 0.005)
+        XCTAssertEqual(predictor.pendingCount, 0)
+        XCTAssertEqual(predictor.displayed(at: t + 0.005), CGPoint(x: 150, y: 100), "No step backwards against the finger")
+        XCTAssertTrue(predictor.holdingCorrection)
+        XCTAssertEqual(predictor.displayed(at: t + 0.15)!.x, 150, accuracy: 0.001, "Held, not blended, while the finger is recent")
+        t += 0.16
+        predictor.applyLocalMove(ordinal: predictor.reserveOrdinal(), delta: CGSize(width: 5, height: 0), at: t)
+        XCTAssertEqual(predictor.displayed(at: t)!.x, 155, accuracy: 0.001, "The finger keeps the lead")
+        predictor.receive(point: CGPoint(x: 155, y: 100), applied: 11, at: t + 0.01)
+        XCTAssertEqual(predictor.displayed(at: t + 0.01)!.x, 155, accuracy: 0.001, "Catching up moves nothing")
+        XCTAssertFalse(predictor.correcting(at: t + 0.01))
+        XCTAssertFalse(predictor.holdingCorrection)
+    }
+
+    func testStallBurstOfTrailingSamplesKeepsTheDrawnPointerMonotonic() {
+        var predictor = PointerPredictor(bounds: CGSize(width: 2000, height: 1000))
+        predictor.receive(point: CGPoint(x: 100, y: 100), applied: 0, at: 0)
+        var t = 0.0
+        var queued: [(CGPoint, UInt64)] = []
+        var xs: [CGFloat] = []
+        for step in 1...48 {
+            t += 1.0 / 120.0
+            let ordinal = predictor.reserveOrdinal()
+            predictor.applyLocalMove(ordinal: ordinal, delta: CGSize(width: 4, height: 0), at: t)
+            if step % 2 == 0 {
+                // Each host sample reports the cursor two moves behind its own acknowledgement.
+                let hostPoint = CGPoint(x: 100 + CGFloat(max(0, Int(ordinal) - 2)) * 4, y: 100)
+                if (12...30).contains(step) {
+                    queued.append((hostPoint, ordinal))
+                } else {
+                    for (point, applied) in queued { predictor.receive(point: point, applied: applied, at: t) }
+                    queued.removeAll()
+                    predictor.receive(point: hostPoint, applied: ordinal, at: t)
+                }
+            }
+            xs.append(predictor.displayed(at: t)!.x)
+        }
+        for (a, b) in zip(xs, xs.dropFirst()) { XCTAssertGreaterThanOrEqual(b, a, "Drawn x went backwards: \(xs)") }
+        XCTAssertEqual(xs.last!, 100 + 48 * 4, accuracy: 0.001, "The finger's own motion is authoritative throughout")
+    }
+
+    func testAHeldCorrectionBlendsOutOnceTheFingerRests() {
+        var predictor = PointerPredictor(bounds: CGSize(width: 1000, height: 1000))
+        predictor.receive(point: CGPoint(x: 100, y: 100), applied: 0, at: 0)
+        predictor.applyLocalMove(ordinal: predictor.reserveOrdinal(), delta: CGSize(width: 20, height: 0), at: 1)
+        // Rejected by the host (control withdrawn): acknowledged, nothing moved.
+        predictor.receive(point: CGPoint(x: 100, y: 100), applied: 1, at: 1.02)
+        XCTAssertEqual(predictor.displayed(at: 1.02)!.x, 120, accuracy: 0.001)
+        XCTAssertEqual(predictor.displayed(at: 1.19)!.x, 120, accuracy: 0.001, "Nothing moves back while the finger may still be moving")
+        XCTAssertTrue(predictor.correcting(at: 1.19), "Still pending, so the render loop stays alive")
+        XCTAssertLessThan(predictor.displayed(at: 1.25)!.x, 120)
+        XCTAssertEqual(predictor.displayed(at: 1.6)!.x, 100, accuracy: 0.01, "Then it blends to the host's truth")
+    }
+
+    func testReversingTheFingerReleasesAHeldCorrection() {
+        var predictor = PointerPredictor(bounds: CGSize(width: 1000, height: 1000))
+        predictor.receive(point: CGPoint(x: 100, y: 100), applied: 0, at: 0)
+        predictor.applyLocalMove(ordinal: predictor.reserveOrdinal(), delta: CGSize(width: 20, height: 0), at: 1)
+        predictor.receive(point: CGPoint(x: 100, y: 100), applied: 1, at: 1.02)
+        XCTAssertTrue(predictor.holdingCorrection)
+        predictor.applyLocalMove(ordinal: predictor.reserveOrdinal(), delta: CGSize(width: -5, height: 0), at: 1.03)
+        XCTAssertFalse(predictor.holdingCorrection, "Moving back towards the host's position lets the residual blend")
+        XCTAssertEqual(predictor.displayed(at: 1.03)!.x, 115, accuracy: 0.001)
+        XCTAssertEqual(predictor.displayed(at: 1.5)!.x, 95, accuracy: 0.01)
     }
 
     func testMovesBeforeTheFirstSampleAreReplayedAndOrdinalsRestartPerEpoch() {
