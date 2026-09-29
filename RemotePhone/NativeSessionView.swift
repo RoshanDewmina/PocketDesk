@@ -83,13 +83,7 @@ struct NativeSessionView: View {
                 if LaunchOptions.has("--ui-probe-quiet") {
                     // Quiet screenshot checks still need the probe value to verify that a tap
                     // crossed transparent chrome and reached the real input surface.
-                    Color.clear
-                        .frame(width: 1, height: 1)
-                        .allowsHitTesting(false)
-                        .accessibilityElement(children: .ignore)
-                        .accessibilityIdentifier("remote.inputProbe")
-                        .accessibilityLabel("Input probe")
-                        .accessibilityValue(probe.entries.joined(separator: " | "))
+                    QuietInputProbe(probe: probe)
                 } else {
                     InputProbeOverlay(probe: probe).padding(.top, 60).padding(.leading, 12)
                 }
@@ -2309,6 +2303,22 @@ struct NativeSessionView: View {
         keyboardOpen = false
     }
 }
+
+#if DEBUG
+private struct QuietInputProbe: View {
+    @ObservedObject var probe: InputProbe
+
+    var body: some View {
+        Color.clear
+            .frame(width: 1, height: 1)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .ignore)
+            .accessibilityIdentifier("remote.inputProbe")
+            .accessibilityLabel("Input probe")
+            .accessibilityValue(probe.entries.joined(separator: " | "))
+    }
+}
+#endif
 
 /// Keeps automatic pointer follow above the dock without reserving permanent
 /// screen space when the controls are collapsed.
