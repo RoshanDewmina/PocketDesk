@@ -226,7 +226,7 @@ final class SessionActivityController {
     private static func previewState(_ phase: FarsideSessionAttributes.Phase, now: Date) -> FarsideSessionAttributes.ContentState {
         switch phase {
         case .live: .live(route: .direct)
-        case .paused: .paused(graceEnds: now.addingTimeInterval(24), route: .direct)
+        case .paused: .paused(graceEnds: now.addingTimeInterval(180), route: .direct)
         case .reconnecting: .reconnecting(route: .direct)
         case .ended: .ended(.timeout)
         }
