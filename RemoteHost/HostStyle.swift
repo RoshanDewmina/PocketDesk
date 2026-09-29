@@ -356,6 +356,32 @@ struct HostToggleRow: View {
     }
 }
 
+/// Rows between hairlines, as in the popover's toggle list; each child view is one row.
+struct HostHairlineList<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Group(subviews: content) { rows in
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    HostHairline()
+                    row.padding(.vertical, 10)
+                }
+            }
+            HostHairline()
+        }
+    }
+}
+
+struct HostHairline: View {
+    var body: some View {
+        Rectangle()
+            .fill(Farside.Palette.line)
+            .frame(height: 1)
+            .accessibilityHidden(true)
+    }
+}
+
 // MARK: Settings rows
 
 struct HostSettingsRow<Accessory: View>: View {

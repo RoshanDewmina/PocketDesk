@@ -39,6 +39,7 @@ struct HostPopoverView: View {
         .frame(width: HostTheme.popoverWidth)
         .background(HostTheme.popoverBackground)
         .preferredColorScheme(.dark)
+        .accessibilityIdentifier("farside.popover")
     }
 
     private func who(_ presentation: HostPopoverPresentation) -> some View {
@@ -63,34 +64,25 @@ struct HostPopoverView: View {
     }
 
     private var sessionToggles: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            hairline
+        HostHairlineList {
             VStack(alignment: .leading, spacing: 6) {
                 HostToggleRow(title: "Allow control",
                               subtitle: state.controlNeedsAccessibility ? "Needs Accessibility first" : "Off means view only",
                               isOn: state.allowControl, set: actions.setAllowControl)
+                    .accessibilityIdentifier("farside.popover.allowControl")
                 if state.controlNeedsAccessibility {
                     Button("Allow in System Settings…") {
                         dismiss()
                         actions.openSystemSettings(.accessibility)
                     }
                     .buttonStyle(HostButtonStyle(kind: .inline))
+                    .accessibilityIdentifier("farside.popover.allowAccessibility")
                 }
             }
-            .padding(.vertical, 10)
-            hairline
             HostToggleRow(title: "Chime when a phone connects", subtitle: "So you always know",
                           isOn: state.chimeOnConnect, set: actions.setChimeOnConnect)
-                .padding(.vertical, 10)
-            hairline
+                .accessibilityIdentifier("farside.popover.chime")
         }
-    }
-
-    private var hairline: some View {
-        Rectangle()
-            .fill(Farside.Palette.line)
-            .frame(height: 1)
-            .accessibilityHidden(true)
     }
 
     private func actionRow(_ presentation: HostPopoverPresentation) -> some View {
@@ -98,6 +90,7 @@ struct HostPopoverView: View {
             ForEach(Array(presentation.actions.enumerated()), id: \.offset) { index, action in
                 let button = Button(action.title) { perform(action) }
                     .buttonStyle(HostButtonStyle(kind: kind(presentation.emphasis(of: action)), fullWidth: true))
+                    .accessibilityIdentifier("farside.popover.\(action.identifier)")
                     .hostDefaultAction(index == presentation.actions.count - 1
                                        && presentation.emphasis(of: action) == .primary)
                 if presentation.actions.count > 1 && index == 0 {
@@ -116,15 +109,18 @@ struct HostPopoverView: View {
                 actions.openSettings()
             }
             .keyboardShortcut(",")
+            .accessibilityIdentifier("farside.popover.settings")
             Spacer()
             Button("Pair a phone…") {
                 dismiss()
                 actions.pairNewPhone()
             }
+            .accessibilityIdentifier("farside.popover.pairAPhone")
             Spacer()
             Button("Quit", action: actions.quit)
                 .keyboardShortcut("q")
                 .accessibilityLabel("Quit Farside")
+                .accessibilityIdentifier("farside.popover.quit")
         }
         .buttonStyle(HostButtonStyle(kind: .link))
     }

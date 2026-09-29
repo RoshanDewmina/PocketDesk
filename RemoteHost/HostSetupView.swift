@@ -65,11 +65,13 @@ struct HostSetupView: View {
             if let previous = HostSetupPage(rawValue: page.rawValue - 1) {
                 Button("Back") { page = previous }
                     .buttonStyle(HostButtonStyle(kind: .plate, height: 34))
+                    .accessibilityIdentifier("farside.setup.back")
             }
             if page == .ready {
                 Button("Done", action: actions.finishSetup)
                     .buttonStyle(HostButtonStyle(kind: .primary, height: 34))
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("farside.setup.done")
             } else {
                 let enabled = HostSetupFlow.canContinue(from: page, state: state)
                 Button("Continue") {
@@ -79,6 +81,7 @@ struct HostSetupView: View {
                 .buttonStyle(HostButtonStyle(kind: enabled ? .primary : .plate, height: 34))
                 .disabled(!enabled)
                 .hostDefaultAction(enabled)
+                .accessibilityIdentifier("farside.setup.continue")
             }
         }
     }
@@ -282,6 +285,7 @@ struct HostPermissionsPage: View {
                     open: { actions.openSystemSettings(.screenRecording) },
                     relaunch: actions.relaunch
                 )
+                .accessibilityIdentifier("farside.setup.screenRecording")
                 HostPermissionRow(
                     title: "Accessibility", reason: "So taps become clicks and typing becomes typing.",
                     symbol: "hand.point.up.left", status: state.accessibility,
@@ -290,6 +294,7 @@ struct HostPermissionsPage: View {
                     recovery: "Select \(state.appListName) in the list, remove it with –, then add it again with +.",
                     open: { actions.openSystemSettings(.accessibility) }
                 )
+                .accessibilityIdentifier("farside.setup.accessibility")
             }
             if !state.accessibility.isGranted && !state.accessibilitySkipped {
                 HStack(spacing: 6) {
@@ -298,6 +303,7 @@ struct HostPermissionsPage: View {
                         .foregroundStyle(Farside.Palette.ash)
                     Button("Skip, and your iPhone can only watch", action: actions.skipAccessibility)
                         .buttonStyle(HostButtonStyle(kind: .inline))
+                        .accessibilityIdentifier("farside.setup.skipAccessibility")
                 }
                 .padding(.top, 12)
             }
@@ -496,6 +502,7 @@ struct HostPairingPage: View {
                 }
                 Button("Copy code instead", action: actions.copyPairingCode)
                     .buttonStyle(HostButtonStyle(kind: .inline))
+                    .accessibilityIdentifier("farside.setup.copyCode")
             }
         case .expired:
             VStack(alignment: .leading, spacing: 10) {
@@ -506,6 +513,7 @@ struct HostPairingPage: View {
                 Button("New Code", action: actions.beginPairing)
                     .buttonStyle(HostButtonStyle(kind: .primary, height: 34))
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("farside.setup.newCode")
             }
         default:
             Text("Getting a fresh code").hostCaption(10.5)
@@ -522,9 +530,11 @@ struct HostPairingPage: View {
             HStack(spacing: 10) {
                 Button("Decline", action: actions.declinePhone)
                     .buttonStyle(HostButtonStyle(kind: .plate))
+                    .accessibilityIdentifier("farside.setup.declinePhone")
                 Button("Allow", action: actions.approvePhone)
                     .buttonStyle(HostButtonStyle(kind: .primary))
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("farside.setup.allowPhone")
             }
             .padding(.top, 22)
             Text("Don’t recognize it? Decline, then make a new code.")
@@ -542,9 +552,11 @@ struct HostPairingPage: View {
             HStack(spacing: 10) {
                 Button("Cancel", action: actions.cancelPairing)
                     .buttonStyle(HostButtonStyle(kind: .plate))
+                    .accessibilityIdentifier("farside.setup.cancelPairing")
                 Button("Replace Phone", action: actions.beginPairing)
                     .buttonStyle(HostButtonStyle(kind: .primary))
                     .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("farside.setup.replacePhone")
             }
             .padding(.top, 22)
         }

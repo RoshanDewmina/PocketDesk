@@ -19,13 +19,16 @@ struct HostSettingsView: View {
                 HostSettingsRow("Allow control", subtitle: state.controlNeedsAccessibility
                                 ? "Needs Accessibility first" : "Off means view only") {
                     HostSwitch(label: "Allow control", isOn: state.allowControl, set: actions.setAllowControl)
+                        .accessibilityIdentifier("farside.settings.allowControl")
                 }
                 HostSettingsRow("Keep this Mac awake", subtitle: "While sharing is on, so your iPhone can reach it") {
                     HostSwitch(label: "Keep this Mac awake", isOn: state.keepAwake, set: actions.setKeepAwake)
+                        .accessibilityIdentifier("farside.settings.keepAwake")
                 }
                 HostSettingsRow("Chime when a phone connects", subtitle: "So you always know") {
                     HostSwitch(label: "Chime when a phone connects", isOn: state.chimeOnConnect,
                                set: actions.setChimeOnConnect)
+                        .accessibilityIdentifier("farside.settings.chime")
                 }
                 if state.displays.count > 1 {
                     HostSettingsRow("Shared display") {
@@ -49,6 +52,7 @@ struct HostSettingsView: View {
             HostSettingsSection("General") {
                 HostSettingsRow("Open at login", subtitle: "Recommended, so Farside is back after a restart") {
                     HostSwitch(label: "Open at login", isOn: state.openAtLogin, set: actions.setOpenAtLogin)
+                        .accessibilityIdentifier("farside.settings.openAtLogin")
                 }
             }
         }
@@ -123,6 +127,7 @@ struct HostSettingsView: View {
                         Button(action.title) { perform(action) }
                             .buttonStyle(HostButtonStyle(kind: kind(presentation.emphasis(of: action)), height: 34))
                             .fixedSize()
+                            .accessibilityIdentifier("farside.settings.\(action.identifier)")
                     }
                 }
             }
@@ -140,7 +145,9 @@ struct HostSettingsView: View {
             HostSettingsRow("Your iPhone", subtitle: state.status.isSessionLive ? "Paired · connected now" : "Paired") {
                 HStack(spacing: 8) {
                     Button("Pair New Phone…", action: actions.pairNewPhone)
+                        .accessibilityIdentifier("farside.settings.pairNewPhone")
                     Button("Remove…") { confirmingRemoval = true }
+                        .accessibilityIdentifier("farside.settings.removePhone")
                 }
                 .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
             }
@@ -148,6 +155,7 @@ struct HostSettingsView: View {
             HostSettingsRow("No phone paired", subtitle: "Pairing takes about a minute") {
                 Button("Pair a Phone…", action: actions.pairNewPhone)
                     .buttonStyle(HostButtonStyle(kind: .primary, height: 30))
+                    .accessibilityIdentifier("farside.settings.pairNewPhone")
             }
         }
     }
