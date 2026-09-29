@@ -1227,7 +1227,7 @@ final class RemoteHostModel: ObservableObject {
         pointerTelemetry.begin(displayFrame: display.frame, epoch: inputEpoch.value)
 
         lifecycleTimer?.invalidate()
-        lifecycleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+        let lifecycleTimer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
                 if self.phonePause.isPaused {
@@ -1250,6 +1250,8 @@ final class RemoteHostModel: ObservableObject {
                 self.reconcileCurtain()
             }
         }
+        self.lifecycleTimer = lifecycleTimer
+        RunLoop.main.add(lifecycleTimer, forMode: .common)
 
         let logicalSize = display.frame.size
         let preflight = [
