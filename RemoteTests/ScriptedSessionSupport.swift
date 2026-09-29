@@ -56,8 +56,11 @@ final class ManualScheduler: RenewalScheduler, @unchecked Sendable {
 
     var sleeping: Int { lock.withLock { sleepers.count } }
 
+    /// A task created since the last step has not registered its sleeper yet; let it, so its deadline
+    /// is measured from the time it asked for rather than from wherever this call moves the clock.
     @MainActor
     func advance(by seconds: TimeInterval) async {
+        await settle()
         let target = now() + seconds
         while true {
             let due: Sleeper? = lock.withLock {
