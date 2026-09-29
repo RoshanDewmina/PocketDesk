@@ -1,3 +1,16 @@
+# Remaining app recovery — 29 September 2026, after build .6
+
+Roshan explicitly requested continuing the remaining Farside work with subagents. Baseline `4860999` is clean and both native apps are installed. Scope now includes completing and independently reviewing the existing backend and StoreKit branches, integrated verification, and available native acceptance. Public deployment, purchases, store submission, website and social work remain separate.
+
+| Package | Owner | Current state |
+|---|---|---|
+| Backend session ownership and revocation | `/root/performance_recovery`, Sol/high, existing `backend-workers` | Fix atomic device-room ownership, authorization after TURN issuance, immediate forget revocation, durable revocation retries; regression tests and independent review required |
+| StoreKit purchase/access completion | `/root/farside_claude_history`, Sol/high, existing `storekit` | Recover interrupted checks, identify/fix implementation gaps, scoped tests and independent review required; no real purchases |
+| Integration, native runtime and docs | Parent | Main checkout only; serialize heavy builds; integrate reviewed changes, update installed clients if required |
+| Scope inventory | `/root/farside_codex_history`, read-only | Completed: native physical feel/performance, real remote/relay renewal, notification beta wiring and HEVC measurement remain distinct gates |
+
+Live preflight: Mac host reports Ready, paired phone and both Screen Recording/Accessibility grants retained. iPhone Mirroring timed out on two connection attempts, so physical interaction acceptance is currently unavailable. The existing private service reports renewal enabled with nine renewals; `/ready` returns 503 solely because relay is not configured. This supersedes older assumptions that its bundle has not been updated, but does not establish public relay readiness or a measured physical soak. Receipt: `work/remaining-recovery/private-service-readiness.json`. Existing configuration and pairing were unchanged.
+
 # Active Codex recovery — 29 September 2026
 
 User explicitly requested recovery of the latest Claude Code/Codex conversations, subagent fan-out and completion of Farside app work. Recovered Claude coding session `ec632039-cbe8-4dc5-acc9-9bd5d44783a1` and companion fork `1433a11f-eb91-4433-8035-0e86b5b1824a`; both were interrupted by quota, not completed. Main baseline `0f776e1`, clean. Latest native scope: approved Controls A, repair pointer jumps/click placement, display-aware frame rate, phone-pixel cap, viewport capture and adaptive quality ladder. Preserve physical performance claims as unverified until measured. Website/social/portal work is separate from this native recovery.
