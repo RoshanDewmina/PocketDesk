@@ -163,8 +163,8 @@ final class WatchdogSupervisor {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).contains { app in
             guard !app.isTerminated, app.processIdentifier != pid, let url = app.bundleURL else { return false }
             #if DEBUG
-            // In E2E mode the owner's normal host is not "another instance" of the one supervised.
-            if WatchdogE2E.configuration != nil && !WatchdogE2E.isE2EInstance(pid: app.processIdentifier) { return false }
+            // An E2E harness instance and the owner's host never count as each other's other instance.
+            if WatchdogE2E.isE2EInstance(pid: app.processIdentifier) != (WatchdogE2E.configuration != nil) { return false }
             #endif
             return WatchdogFiles.normalized(url.path) == bundlePath
         }

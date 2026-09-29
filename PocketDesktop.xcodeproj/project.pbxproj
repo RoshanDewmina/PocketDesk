@@ -100,6 +100,7 @@
 		40ADB870296A5CA7683A9F24 /* BrowserPeerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F31D1E535A3D1FAC3F46962 /* BrowserPeerController.swift */; };
 		4142D9857D5AA61C65DA7963 /* HostPointerTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = E399F6A3DB9BCC147F0796C0 /* HostPointerTelemetry.swift */; };
 		416D93DC9E5929C2AD07C86B /* DesktopH264Encoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A8764CD274C62102BEC76EB /* DesktopH264Encoder.swift */; };
+		418F5720BF41E4BA924143F3 /* E2EWindowCoverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5DC5941798CC9570708F6E3 /* E2EWindowCoverTests.swift */; };
 		42C9EA8EB7BE0521A71B904E /* FarsideDesignTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DD8A198867F1E3881AF6815 /* FarsideDesignTests.swift */; };
 		44AFDEC625CCA12E0B403CAF /* VideoToolboxProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFE4ADC42F9E53923E64E0B6 /* VideoToolboxProbeTests.swift */; };
 		44C2E153BD26C1C9320975EE /* FarsideUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1B73F93602A3F8610EC7D8B /* FarsideUI.swift */; };
@@ -564,6 +565,7 @@
 		B0E9A460F4C70492B4EFA2FC /* HostInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostInput.swift; sourceTree = "<group>"; };
 		B10107405AE87CFAB89018C7 /* SessionLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLifecycleTests.swift; sourceTree = "<group>"; };
 		B4AB78D9E67A4FB4EB1D5ADA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		B5DC5941798CC9570708F6E3 /* E2EWindowCoverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EWindowCoverTests.swift; sourceTree = "<group>"; };
 		B6A57C1633C1D2CD5334A7ED /* E2EHooksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EHooksTests.swift; sourceTree = "<group>"; };
 		BA95F7DC2A3B867C7001558D /* E2EHarness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EHarness.swift; sourceTree = "<group>"; };
 		BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCrypto.swift; sourceTree = "<group>"; };
@@ -846,6 +848,7 @@
 				72DE368D956186BDF569C427 /* BrowserRelayPolicyTests.swift */,
 				7485A47A6290AA2F83D600A9 /* ClipboardTransferTests.swift */,
 				B6A57C1633C1D2CD5334A7ED /* E2EHooksTests.swift */,
+				B5DC5941798CC9570708F6E3 /* E2EWindowCoverTests.swift */,
 				22642CA5FCA6DB80803610D9 /* HostBackgroundServicesTests.swift */,
 				099CBB6FF189E2531A281E35 /* HostClipboardServiceTests.swift */,
 				24C25284073BC44C2F7E6CD2 /* HostDiagnosticsTests.swift */,
@@ -1672,6 +1675,7 @@
 				0DCCBFE1FB70CBE01B449751 /* E2EMedia.swift in Sources */,
 				51576017096AA354D185CC12 /* E2ESupport.swift in Sources */,
 				7DD02EEF8C64802492352D79 /* E2EWindowCover.swift in Sources */,
+				418F5720BF41E4BA924143F3 /* E2EWindowCoverTests.swift in Sources */,
 				6EC4BC0D214EBFFCFEB8CADD /* FarsideHalftone.swift in Sources */,
 				2D3749B5BF7F8FFEF2DE07C4 /* FarsideTheme.swift in Sources */,
 				8DC7E0BA9EF18FE93B1B2B7F /* HostBackgroundServicesTests.swift in Sources */,

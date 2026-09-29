@@ -164,10 +164,10 @@ for (const summary of iterationSummaries) {
 }
 const soaks = scenarios.filter((s) => s.id === "f" && s.status !== "skipped");
 if (soaks.length) {
-  md.push("## Soak", "", "| Iteration | Length | Clicks | Max frame age | Max render gap | Outages | Room boundary survived | Phone / host memory growth |", "|---|---|---|---|---|---|---|---|");
+  md.push("## Soak", "", "| Iteration | Length | Clicks | Max frame age | Max render gap | Outages | Survived the room lease | Lease renewals | Phone / host memory growth |", "|---|---|---|---|---|---|---|---|---|");
   for (const s of soaks) {
     const m = s.metrics;
-    md.push(`| ${s.iteration} | ${round(m.soakSeconds, 0)} s | ${m.clicks ?? "–"} (${(m.clickFailures ?? []).length} missed) | ${round(m.maxFrameAgeMs, 0)} ms | ${round(m.maxRenderGapMs, 0)} ms | ${(m.outages ?? []).length} | ${m.survivedRoomBoundary === undefined ? "not reached" : m.survivedRoomBoundary ? "yes" : "no (known issue)"} | ${round(m.phoneFootprintGrowthMB)} / ${round(m.hostFootprintGrowthMB)} MB |`);
+    md.push(`| ${s.iteration} | ${round(m.soakSeconds, 0)} s | ${m.clicks ?? "–"} (${(m.clickFailures ?? []).length} missed) | ${round(m.maxFrameAgeMs, 0)} ms | ${round(m.maxRenderGapMs, 0)} ms | ${(m.outages ?? []).length} | ${m.survivedRoomBoundary === undefined ? "not reached" : m.survivedRoomBoundary ? "yes" : "**no**"} (lease ${round((m.roomLifetimeSeconds ?? 1800) / 60, 0)} min) | ${m.sessionRenewalEnabled === false ? "off" : m.serviceRenewals ?? "–"} | ${round(m.phoneFootprintGrowthMB)} / ${round(m.hostFootprintGrowthMB)} MB |`);
   }
   md.push("");
 }

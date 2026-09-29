@@ -5,6 +5,7 @@
 #   script/e2e/run-e2e.sh --self-test      # synthetic stub host; no capture, no input injection
 set -uo pipefail
 setopt NULL_GLOB
+zmodload zsh/datetime
 
 ORIGINAL_ARGS=("$@")
 SCRIPT_DIR=${0:A:h}
@@ -29,11 +30,12 @@ Usage: script/e2e/run-e2e.sh (--host-app PATH | --self-test) [options]
   --host-app PATH       Installed Debug host to drive (bundle com.roshan.PocketDesk.RemoteHost).
                         A second, isolated E2E instance is launched; the running host is untouched.
   --self-test           Drive the synthetic stub host instead (proves the harness; no real input).
-  --scenarios LIST      Comma list of a,b,c,d,e,f (d = d1,d2,d3,d4; d1..d4 also accepted). Default: all.
+  --scenarios LIST      Comma list of a,b,c,d,e,f (d = d1..d5; d1..d5 also accepted). Default: all.
   --repeat N            Run the selected scenarios N times (default 1).
   --soak-seconds S      Scenario f duration in seconds (default 1200 = 20 min).
-  --long                Scenario f runs 45 min, crossing the 30-minute signaling-room boundary.
-  --room-lifetime S     Override the service's room lifetime (default: product default, 1800 s).
+  --long                Scenario f runs 45 min, past the 30-minute room lease; any disconnect fails.
+  --room-lifetime S     The service's room lease, 60-3599 s (default: product default, 1800 s).
+                        A short lease (e.g. 300) crosses several renewals in a shorter soak.
   --simulator NAME      Dedicated simulator (default "Farside E2E iPhone"; created if missing).
   --skip-build          Reuse existing build products in the derived-data folder.
   --derived-data PATH   Build products (default <repo>/outputs/E2EBuild).
@@ -76,7 +78,8 @@ while (( $# )); do
   esac
 done
 [[ $REPEAT == <1-> && $SOAK == <10-> ]] || { print -u2 "--repeat and --soak-seconds must be positive integers"; exit 2 }
-[[ -z $ROOM_LIFETIME || $ROOM_LIFETIME == <60-86399> ]] || { print -u2 "--room-lifetime must be 60-86399 seconds"; exit 2 }
+# The service requires the lease to stay below its relay-credential lifetime (3600 s by default).
+[[ -z $ROOM_LIFETIME || $ROOM_LIFETIME == <60-3599> ]] || { print -u2 "--room-lifetime must be 60-3599 seconds"; exit 2 }
 if (( SELF_TEST )) && [[ -n $HOST_APP ]]; then print -u2 "Use either --host-app or --self-test"; exit 2; fi
 if (( ! SELF_TEST )) && [[ -z $HOST_APP ]]; then print -u2 "--host-app PATH (or --self-test) is required"; usage >&2; exit 2; fi
 
@@ -88,15 +91,16 @@ typeset -A METHOD=(
   d2 test_d2_BackgroundLong
   d3 test_d3_HostRebootRecovery
   d4 test_d4_SignalingRestart
+  d5 test_d5_WatchdogRelaunch
   e test_e_FullScreenSpaces
   f test_f_Soak
 )
-typeset -A LIMIT=( a 360 b 600 c 480 d1 300 d2 360 d3 600 d4 360 e 480 f $(( SOAK + 900 )) )
+typeset -A LIMIT=( a 360 b 600 c 480 d1 300 d2 360 d3 600 d4 360 d5 480 e 480 f $(( SOAK + 900 )) )
 SCENARIOS=()
 for item in ${(s:,:)SCENARIO_ARG}; do
   case $item in
-    d) SCENARIOS+=(d1 d2 d3 d4) ;;
-    a|b|c|d1|d2|d3|d4|e|f) SCENARIOS+=($item) ;;
+    d) SCENARIOS+=(d1 d2 d3 d4 d5) ;;
+    a|b|c|d1|d2|d3|d4|d5|e|f) SCENARIOS+=($item) ;;
     *) print -u2 "Unknown scenario: $item"; exit 2 ;;
   esac
 done
@@ -109,6 +113,8 @@ HARNESS_LOG=""
 SERVICE_PID=""
 HOST_PID=""
 HOST_LAUNCH_ID=""
+WATCHDOG_PID=""
+WATCHDOG_EXEC=""
 TESTPAD_PID=""
 UDID=""
 PORT=""
@@ -148,6 +154,11 @@ preflight() {
     # A Release build has no E2E hooks and would start as a normal host with the real pairing.
     grep -q -a -- "FARSIDE_E2E_SIGNAL_URL" "$HOST_EXEC" \
       || die "$HOST_APP has no E2E hooks (not a Debug build of this branch); refusing to launch it"
+    WATCHDOG_EXEC="$HOST_APP/Contents/MacOS/FarsideWatchdog"
+    if [[ ! -x $WATCHDOG_EXEC ]] || ! grep -q -a -- "FARSIDE_E2E_LAUNCH_ID" "$WATCHDOG_EXEC"; then
+      log "WARNING: $HOST_APP has no E2E-capable FarsideWatchdog; scenario d5 will fail"
+      WATCHDOG_EXEC=""
+    fi
   fi
   SPACE_KEYS=$(space_keys_enabled)
 }
@@ -222,6 +233,7 @@ reap_stale() {
       host) [[ $command == *--farside-e2e* ]] || continue ;;
       testpad) [[ $command == *"Farside Test Pad"*--run-id* ]] || continue ;;
       service) [[ $command == *src/index.ts* ]] || continue ;;
+      watchdog) [[ $command == *FarsideWatchdog*--farside-e2e* ]] || continue ;;
       *) continue ;;
     esac
     log "Stopping leftover $role (pid $pid) from an earlier interrupted run"
@@ -363,6 +375,50 @@ kill_host() {
   HOST_PID=""
 }
 
+# The installed host's own FarsideWatchdog, run directly (never through launchd) in its E2E mode:
+# it supervises only E2E instances through the run record under $ROOT/host/watchdog and relaunches
+# them with the same E2E contract. The owner's registered helper and its crash ledger are untouched.
+start_watchdog() {
+  pid_alive $WATCHDOG_PID && return 0
+  [[ -n $WATCHDOG_EXEC ]] || return 1
+  local environment=(FARSIDE_E2E=1 "FARSIDE_E2E_DIR=$ROOT" "FARSIDE_E2E_RUN_ID=$RUN_ID"
+    "FARSIDE_E2E_SIGNAL_URL=ws://127.0.0.1:$PORT/signal")
+  (( SPACE_KEYS )) && environment+=(FARSIDE_E2E_ALLOW_SPACE_KEYS=1)
+  /usr/bin/env -i PATH=/usr/bin:/bin HOME="$HOME" "${environment[@]}" "$WATCHDOG_EXEC" --farside-e2e \
+    >> "$RUN/watchdog.log" 2>&1 &
+  WATCHDOG_PID=$!
+  record_pid watchdog $WATCHDOG_PID
+  sleep 1
+  pid_alive $WATCHDOG_PID || { log "E2E watchdog exited at once; see $RUN/watchdog.log"; WATCHDOG_PID=""; return 1 }
+  log "E2E watchdog running (pid $WATCHDOG_PID)"
+}
+
+stop_watchdog() {
+  pid_alive $WATCHDOG_PID || { WATCHDOG_PID=""; return 0 }
+  kill -TERM $WATCHDOG_PID
+  wait_gone $WATCHDOG_PID 5 || kill -KILL $WATCHDOG_PID
+  log "E2E watchdog stopped"
+  WATCHDOG_PID=""
+}
+
+# After a kill -9 with the watchdog running: wait for the host it relaunched and adopt it.
+await_relaunched_host() {
+  local previous=$1 deadline=$(( SECONDS + $2 )) launch pid
+  while (( SECONDS < deadline )); do
+    launch=$(host_state .launchID); pid=$(host_state .pid)
+    if [[ -n $launch && $launch != $previous && -n $pid ]] && pid_alive $pid \
+       && [[ $(ps -p $pid -o comm= 2>/dev/null) == $HOST_EXEC && $(ps -o command= -p $pid 2>/dev/null) == *--farside-e2e* ]]; then
+      HOST_PID=$pid; HOST_LAUNCH_ID=$launch
+      record_pid host $HOST_PID
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
+service_ready() { curl -sS --max-time 3 "http://127.0.0.1:$PORT/ready" 2>/dev/null | /usr/bin/jq -c . 2>/dev/null }
+
 ensure_host() {
   our_host_alive && return 0
   log "E2E host not running; relaunching it with its saved E2E pairing"
@@ -461,9 +517,10 @@ phone_pid() { pgrep -f "Devices/$UDID/data/Containers/Bundle/Application/.*/Pock
 # MARK: Requests from the UI tests (only actions on processes this harness owns)
 
 reply() {
-  local file="$RUN/responses/$1.json"
-  json_line --arg id "$1" --argjson ok $2 --arg message "$3" --argjson at $(date +%s) \
-    '{id: $id, ok: $ok, message: $message, at: $at}' > "$file.tmp" && mv -f "$file.tmp" "$file"
+  local file="$RUN/responses/$1.json" extra=${4:-}
+  [[ -n $extra ]] || extra='{}'
+  json_line --arg id "$1" --argjson ok $2 --arg message "$3" --argjson at $(date +%s) --argjson extra "$extra" \
+    '$extra + {id: $id, ok: $ok, message: $message, at: $at}' > "$file.tmp" && mv -f "$file.tmp" "$file"
 }
 
 serve_requests() {
@@ -476,16 +533,40 @@ serve_requests() {
     log "Request $action ($id)"
     case $action in
       host.kill)
-        local signal=$(jget "$done_file" .signal)
+        local signal=$(jget "$done_file" .signal) previous=$HOST_LAUNCH_ID killed_at
         [[ $signal == KILL ]] || signal=TERM
-        if our_host_alive; then kill_host $signal; reply "$id" true "host stopped with SIG$signal"
-        else reply "$id" false "no harness-owned host is running"; fi ;;
+        if ! our_host_alive; then reply "$id" false "no harness-owned host is running"
+        elif [[ $(jget "$done_file" .awaitRelaunch) == true ]]; then
+          if ! pid_alive $WATCHDOG_PID; then reply "$id" false "the E2E watchdog is not running"
+          else
+            killed_at=$EPOCHREALTIME
+            kill_host $signal
+            if await_relaunched_host "$previous" 20; then
+              local seconds=$(( EPOCHREALTIME - killed_at ))
+              log "Watchdog relaunched the E2E host in ${seconds}s (pid $HOST_PID, launch $HOST_LAUNCH_ID)"
+              reply "$id" true "host relaunched by the watchdog (pid $HOST_PID)" \
+                "$(json_line --argjson s $seconds --argjson pid $HOST_PID --arg launch $HOST_LAUNCH_ID '{seconds: $s, pid: $pid, launchID: $launch}')"
+            else
+              reply "$id" false "no relaunched E2E host within 20 s of SIG$signal; see $RUN/watchdog.log"
+            fi
+          fi
+        else kill_host $signal; reply "$id" true "host stopped with SIG$signal"; fi ;;
       host.launch)
         kill_host TERM
         if launch_host 0 && wait_host_ready 90; then reply "$id" true "host relaunched (pid $HOST_PID)"
         else reply "$id" false "host relaunch failed: $(host_state .coordinatorStatus)"; fi ;;
       service.stop)
         stop_service; reply "$id" true "signaling service stopped" ;;
+      service.ready)
+        local ready=$(service_ready)
+        if [[ -n $ready ]]; then reply "$id" true "service readiness" "$(json_line --argjson r "$ready" '{ready: $r}')"
+        else reply "$id" false "service readiness unavailable"; fi ;;
+      watchdog.start)
+        if (( SELF_TEST )); then reply "$id" false "the stub host has no watchdog"
+        elif start_watchdog; then reply "$id" true "E2E watchdog running (pid $WATCHDOG_PID)"
+        else reply "$id" false "E2E watchdog unavailable; see $RUN/watchdog.log"; fi ;;
+      watchdog.stop)
+        stop_watchdog; reply "$id" true "E2E watchdog stopped" ;;
       service.start)
         if pid_alive $SERVICE_PID || start_service; then reply "$id" true "signaling service running on $PORT"
         else reply "$id" false "signaling service did not start"; fi ;;
@@ -504,7 +585,7 @@ sample_resources() {
   (( SECONDS >= NEXT_SAMPLE )) || return 0
   NEXT_SAMPLE=$(( SECONDS + 5 ))
   local phone=$(phone_pid) role pid cpu rss
-  for role pid in host "$HOST_PID" phone "$phone" testpad "$TESTPAD_PID" service "$SERVICE_PID"; do
+  for role pid in host "$HOST_PID" phone "$phone" testpad "$TESTPAD_PID" service "$SERVICE_PID" watchdog "$WATCHDOG_PID"; do
     pid_alive "$pid" || continue
     read -r cpu rss <<< "$(ps -o %cpu=,rss= -p $pid 2>/dev/null)"
     [[ -n ${cpu:-} ]] || continue
@@ -525,7 +606,7 @@ prepare_for() {
       launch_host 1 || return 1
       wait_host_ready 120 || return $? ;;
     f)
-      # A fresh registration puts the 30-minute signaling-room boundary at a known point of the soak.
+      # A fresh registration puts the 30-minute room-lease boundary at a known point of the soak.
       kill_host TERM
       launch_host 0 || return 1
       wait_host_ready 120 || return $? ;;
@@ -537,6 +618,8 @@ prepare_for() {
   testpad_restore_window
   testpad_command reset
   activate_testpad
+  local covered=$(jget "$ROOT/testpad-state.json" '.coveredBy | if type == "array" then join(", ") else . end')
+  [[ -n $covered ]] && log "Test Pad currently covered by: $covered (the scenario relocates it or fails)"
   return 0
 }
 
@@ -584,6 +667,7 @@ run_scenario() {
   json_line --arg s $scenario --arg m $method --argjson rc $rc --argjson timedOut $([[ $timed_out == 1 ]] && print true || print false) \
     --argjson start $started_epoch --argjson end $(date +%s) \
     '{scenario: $s, method: $m, exitCode: $rc, timedOut: $timedOut, setupFailed: false, startedAt: $start, finishedAt: $end}' > "$out/harness.json"
+  stop_watchdog
   log "Scenario $scenario finished: exit $rc$([[ $timed_out == 1 ]] && print ' (timed out)') in $(( SECONDS - started ))s"
   # Result bundles are large; keep them (screenshots, activity logs) only when something failed.
   if (( rc == 0 && ! KEEP_XCRESULTS )) && [[ $(jget "$out/result.json" .status) == passed ]]; then
@@ -607,7 +691,7 @@ collect_iteration_logs() {
   cp -R "$ROOT/phone" "$destination/phone" 2>/dev/null
   rm -f "$destination/phone/commands.jsonl"
   cp "$ROOT"/testpad.jsonl "$ROOT"/testpad-state.json "$destination/" 2>/dev/null
-  cp "$RUN"/service.log "$RUN"/resources.jsonl "$RUN"/config.json "$destination/" 2>/dev/null
+  cp "$RUN"/service.log "$RUN"/resources.jsonl "$RUN"/config.json "$RUN"/watchdog.log "$destination/" 2>/dev/null
   cp "$RUN"/host-*.err "$destination/" 2>/dev/null
 }
 
@@ -618,6 +702,7 @@ cleanup() {
   (( CLEANED )) && return
   CLEANED=1
   log "Cleaning up"
+  stop_watchdog
   stop_xcodebuild
   quit_testpad
   kill_host TERM
@@ -661,7 +746,7 @@ json_line --arg run $RUN_STAMP --arg mode $MODE --arg hostApp "$HOST_APP" --arg 
 for (( iteration = 1; iteration <= REPEAT; iteration++ )); do
   RUN_ID="${RUN_STAMP}-i$iteration"
   log "=== Iteration $iteration of $REPEAT ($RUN_ID) ==="
-  stop_service; kill_host TERM; quit_testpad
+  stop_watchdog; stop_service; kill_host TERM; quit_testpad
   reset_iteration_state
   PORT=$(choose_port) || die "no free loopback port in 18790-18899"
   write_config

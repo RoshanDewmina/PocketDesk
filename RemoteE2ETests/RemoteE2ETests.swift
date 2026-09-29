@@ -500,12 +500,19 @@ final class RemoteE2ETests: E2ETestCase {
         try steerPointer(to: CGPoint(x: home.midX, y: home.midY), tolerance: 20, label: "home")
         let registeredAt = host.events.refresh().last(where: { $0.string("type") == "service.registered" })?.double("t")
         let roomAge = registeredAt.map { Date().timeIntervalSince1970 - $0 } ?? 0
-        let boundary = config.roomLifetimeSeconds - roomAge
+        // The service's /ready: renewal on/off, the lease, and renewal counters (no room IDs).
+        let readyAtStart = (try? harness.request("service.ready"))?.object("ready").object("renewal") ?? [:]
+        let lease = readyAtStart.double("leaseSeconds") ?? config.roomLifetimeSeconds
+        let renewalEnabled = readyAtStart.bool("enabled")
+        let boundary = lease - roomAge
         let crossesBoundary = duration > boundary + 60
-        recorder.metrics["roomLifetimeSeconds"] = config.roomLifetimeSeconds
+        // Peers renew at half-life, so a soak that outlives it must see at least one renewal.
+        let expectsRenewal = renewalEnabled && roomAge + duration > lease / 2 + 60
+        recorder.metrics["roomLifetimeSeconds"] = lease
+        recorder.metrics["sessionRenewalEnabled"] = renewalEnabled
         recorder.metrics["roomAgeAtSoakStartSeconds"] = roomAge
-        recorder.note(String(format: "soak %.0f s; signaling-room boundary expected %.0f s in (%@)", duration, boundary,
-                             crossesBoundary ? "crossed" : "not reached"))
+        recorder.note(String(format: "soak %.0f s; room lease %.0f s ends %.0f s in (%@); renewal %@", duration, lease, boundary,
+                             crossesBoundary ? "crossed" : "not reached", renewalEnabled ? "on" : "off"))
         let startPhone = phone.state, startHost = host.state
         let startStalls = startPhone.int("stallsOver1s") ?? 0
         var samples: [JSONObject] = []
@@ -543,10 +550,11 @@ final class RemoteE2ETests: E2ETestCase {
                     let recovered = (try? waitFor("automatic recovery after the session ended at \(Int(lostAt)) s",
                                                   timeout: config.reconnectTimeout) { phone.ready }) != nil
                     let outage: JSONObject = ["at": lostAt, "nearRoomBoundary": nearBoundary, "recovered": recovered,
-                                              "recoverySeconds": Date().timeIntervalSince(now)]
+                                              "recoverySeconds": Date().timeIntervalSince(now),
+                                              "phoneStatus": p.string("status") ?? "", "notice": p.string("sessionNotice") ?? ""]
                     outages.append(outage)
                     recorder.note("session ended at \(Int(lostAt)) s (room boundary: \(nearBoundary)); recovered: \(recovered)")
-                    if !nearBoundary { unexpectedOutages += 1 }
+                    unexpectedOutages += 1
                     if !recovered { break soak }
                     try? prepareTestPad()
                     continue
@@ -584,14 +592,26 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.metrics["maxRenderGapMs"] = endPhone.double("maxRenderGapMs") as Any
         recorder.check("soak ran the full duration", elapsed >= duration * 0.98 && endPhone.bool("connected"),
                        String(format: "%.0f of %.0f s", elapsed, duration))
-        recorder.check("no unexpected disconnects", unexpectedOutages == 0, "\(unexpectedOutages) outside the room boundary")
+        recorder.check("no disconnects during the soak", unexpectedOutages == 0,
+                       unexpectedOutages == 0 ? "none" : "\(unexpectedOutages): " + outages.map { "at \(Int($0.double("at") ?? 0)) s" }.joined(separator: ", "))
         if crossesBoundary {
             let boundaryOutages = outages.filter { $0.bool("nearRoomBoundary") }
-            recorder.metrics["survivedRoomBoundary"] = boundaryOutages.isEmpty
-            recorder.check("session survived the \(Int(config.roomLifetimeSeconds / 60))-minute signaling-room boundary",
-                           boundaryOutages.isEmpty,
-                           boundaryOutages.isEmpty ? "no interruption" : "ended at \(Int(boundaryOutages[0].double("at") ?? 0)) s; recovered automatically: \(boundaryOutages[0].bool("recovered"))",
-                           knownIssue: true)
+            let survived = boundaryOutages.isEmpty && elapsed > boundary + 30
+            recorder.metrics["survivedRoomBoundary"] = survived
+            recorder.check("session survived the \(Int(lease / 60))-minute room lease without a disconnect", survived,
+                           boundaryOutages.isEmpty ? String(format: "connected through %.0f s (lease ended %.0f s in)", elapsed, boundary)
+                               : "ended at \(Int(boundaryOutages[0].double("at") ?? 0)) s; recovered automatically: \(boundaryOutages[0].bool("recovered"))")
+        }
+        let readyAtEnd = (try? harness.request("service.ready"))?.object("ready").object("renewal") ?? [:]
+        let renewals = (readyAtEnd.int("renewals") ?? 0) - (readyAtStart.int("renewals") ?? 0)
+        let refreshes = (readyAtEnd.int("credentialRefreshes") ?? 0) - (readyAtStart.int("credentialRefreshes") ?? 0)
+        recorder.metrics["serviceRenewals"] = renewals
+        recorder.metrics["serviceCredentialRefreshes"] = refreshes
+        if expectsRenewal {
+            recorder.check("the service renewed the room lease during the soak", renewals >= 1,
+                           "\(renewals) renewals, \(refreshes) credential refreshes")
+        } else if !renewalEnabled {
+            recorder.note("the service does not offer session renewal (SESSION_RENEWAL=0 or an older service)")
         }
         recorder.check("no video stall over 1 s", stalls == 0 && maxFrameAge < 1000,
                        String(format: "%d stalls, max frame age %.0f ms, max render gap %.0f ms", stalls, maxFrameAge,
