@@ -134,10 +134,96 @@ final class FarsideNotifyScriptTests: XCTestCase {
     func testAToolsOwnInputCannotSpoofTheEventName() throws {
         let spoof = #"{"session_id":"s","hook_event_name":"Stop","tool_input":{"hook_event_name":"PermissionRequest","notification_type":"permission_prompt"}}"#
         _ = try run(["--agent", "codex"], stdin: spoof)
-        XCTAssertTrue(received.value.isEmpty, "Only the first occurrence of each field counts")
+        XCTAssertTrue(received.value.isEmpty, "Only top-level hook fields count")
         let reverse = #"{"session_id":"s","hook_event_name":"PermissionRequest","tool_input":{"hook_event_name":"Stop"}}"#
         _ = try run(["--agent", "codex"], stdin: reverse)
         XCTAssertEqual(received.value.count, 1)
+    }
+
+    func testNestedFieldsCannotSpoofOrSuppressAnEventInEitherKeyOrder() throws {
+        let quiet = [
+            #"{"tool_input":{"hook_event_name":"PermissionRequest"},"hook_event_name":"Stop","session_id":"s"}"#,
+            #"{"tool_input":{"notification_type":"permission_prompt"},"hook_event_name":"Notification","notification_type":"idle_prompt","session_id":"s"}"#
+        ]
+        for payload in quiet {
+            let result = try run(["--agent", "codex", "--dry-run"], stdin: payload)
+            XCTAssertEqual(result.status, 0)
+            XCTAssertEqual(result.out, "", "A nested field cannot turn a nonblocking event into an alert")
+            XCTAssertEqual(result.err, "")
+        }
+        let blocking = #"{"tool_input":{"hook_event_name":"Stop","notification_type":"idle_prompt"},"hook_event_name":"Notification","notification_type":"permission_prompt","session_id":"s"}"#
+        let result = try run(["--agent", "claude-code", "--dry-run"], stdin: blocking)
+        XCTAssertEqual(result.status, 0)
+        XCTAssertTrue(result.out.contains("\"type\":\"needs_user\""), "Nested fields cannot suppress a real blocking event")
+        XCTAssertEqual(result.err, "")
+        XCTAssertTrue(received.value.isEmpty, "Dry runs never deliver")
+    }
+
+    func testMalformedMissingAndNonStringHookEventsStayQuiet() throws {
+        let invalid = [
+            #"{"hook_event_name":"PermissionRequest","#,
+            #"{"hook_event_name":"PermissionRequest"} trailing"#,
+            #"{"tool_input":{"hook_event_name":"PermissionRequest"},"session_id":"s"}"#,
+            #"{"hook_event_name":true}"#,
+            #"{"hook_event_name":""}"#,
+            #"[ {"hook_event_name":"PermissionRequest"} ]"#,
+            #"{"hook_event_name":"PermissionRequest\n"}"#,
+            "{\"hook_event_name\":\"PermissionRequest\"\u{0000}}"
+        ]
+        for payload in invalid {
+            let result = try run(["--agent", "codex", "--dry-run"], stdin: payload)
+            XCTAssertEqual(result.status, 0, "Bad input must never interfere with agent permissions")
+            XCTAssertEqual(result.out, "")
+            XCTAssertEqual(result.err, "")
+        }
+        XCTAssertTrue(received.value.isEmpty)
+    }
+
+    func testEscapedSessionIdentifiersAreHashedAfterJSONDecoding() throws {
+        let escaped = #"{"hook_event_name":"PermissionRequest","session_id":"quote\"slash\\line\n\u00e9\n"}"#
+        let literal = "quote\"slash\\line\né\n"
+        let automatic = try run(["--agent", "codex", "--dry-run"], stdin: escaped)
+        XCTAssertEqual(automatic.status, 0)
+        let body = try XCTUnwrap(automatic.out.split(separator: "\n").last)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(body.utf8)) as? [String: Any])
+        let agent = try XCTUnwrap(object["agent"] as? [String: String])
+        let expected = String(SecureRandom.digest("farside-agent|codex|" + literal).prefix(12))
+        XCTAssertEqual(agent["sessionHash"], expected, "Hash the exact decoded UTF-8, including Unicode and trailing newline")
+
+        // Foundation Process normalizes Unicode arguments to the filesystem's decomposed form on
+        // macOS. Use ASCII for the independent manual-argument comparison; stdin keeps exact UTF-8.
+        let ascii = #"{"hook_event_name":"PermissionRequest","session_id":"quote\"slash\\line\n"}"#
+        let fromJSON = try run(["--agent", "codex", "--dry-run"], stdin: ascii)
+        let manual = try run(["--agent", "codex", "--session", "quote\"slash\\line\n", "--no-stdin", "--dry-run"], stdin: nil)
+        XCTAssertEqual(fromJSON.out, manual.out, "Escaped strings and trailing newlines must survive decoding")
+        XCTAssertFalse(automatic.out.contains("quote"))
+        XCTAssertTrue(received.value.isEmpty)
+    }
+
+    func testVerboseModeNeverRepeatsUnrecognizedHookOrNotificationText() throws {
+        let marker = "PRIVATE-FIXTURE-AGENT-WORDS"
+        let payloads = [
+            #"{"hook_event_name":"\#(marker)"}"#,
+            #"{"hook_event_name":"Notification","notification_type":"\#(marker)"}"#
+        ]
+        for payload in payloads {
+            let result = try run(["--agent", "codex", "--verbose", "--dry-run"], stdin: payload)
+            XCTAssertEqual(result.status, 0)
+            XCTAssertEqual(result.out, "")
+            XCTAssertFalse(result.err.contains(marker), "Diagnostic text must not repeat agent-controlled fields")
+            XCTAssertTrue(result.err.contains("no alert"))
+        }
+        XCTAssertTrue(received.value.isEmpty)
+    }
+
+    func testOversizedHookPayloadIsRejectedInsteadOfAcceptingItsValidPrefix() throws {
+        let prefix = #"{"hook_event_name":"PermissionRequest"}"#
+        let oversized = prefix + String(repeating: "\n", count: 65537 - prefix.utf8.count)
+        let result = try run(["--agent", "codex", "--dry-run"], stdin: oversized)
+        XCTAssertEqual(result.status, 0)
+        XCTAssertEqual(result.out, "")
+        XCTAssertEqual(result.err, "")
+        XCTAssertTrue(received.value.isEmpty)
     }
 
     // MARK: It never blocks an agent

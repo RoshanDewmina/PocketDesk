@@ -105,23 +105,40 @@ if [ -n "$print_hooks" ]; then
   exit 0
 fi
 
-# The hook's JSON, when there is any. Only enum-like fields are read out of it, and only the first
-# occurrence of each: a tool's own input, later in the payload, cannot spoof them.
+# Read at most 64 KiB of hook JSON. The sentinel preserves trailing newlines so an oversized input
+# cannot lose its extra byte through command substitution. No agent words are printed or forwarded.
 payload=""
 if [ "$use_stdin" = 1 ] && [ ! -t 0 ]; then
-  payload=$(head -c 65536 2>/dev/null | tr -d '\n\r')
+  # Shell variables cannot hold NUL. Turn it into a different forbidden JSON control byte so it
+  # remains invalid instead of silently disappearing before the parser sees it.
+  payload=$(head -c 65537 2>/dev/null | tr '\000' '\001'; printf '.')
+  payload=${payload%.}
+  payload_bytes=$(printf '%s' "$payload" | wc -c | tr -d '[:space:]')
+  [ "$payload_bytes" -le 65536 ] || finish "hook payload is too large: no alert" 1
 fi
 
+# plutil is bundled with macOS. Parse the complete input and extract only top-level string fields;
+# key ordering, nested tool input and escaped JSON strings cannot change the event we recognize.
 field() {
   printf '%s' "$payload" \
-    | grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
-    | head -n 1 \
-    | sed 's/^[^:]*:[[:space:]]*"\(.*\)"$/\1/'
+    | /usr/bin/plutil -extract "$1" raw -expect string -n -o - -- - 2>/dev/null \
+    && printf '.'
 }
 
-hook=$(field hook_event_name)
-notification=$(field notification_type)
-hook_session=$(field session_id)
+hook=""
+notification=""
+hook_session=""
+if [ -n "$payload" ]; then
+  first=$(printf '%s' "$payload" | tr -d '[:space:]' | cut -c 1)
+  [ "$first" = '{' ] || finish "hook payload is not a JSON object: no alert" 1
+  hook=$(field hook_event_name) || finish "hook payload has no valid event: no alert" 1
+  hook=${hook%.}
+  [ -n "$hook" ] || finish "hook payload has no event: no alert" 1
+  notification=$(field notification_type) || notification=""
+  notification=${notification%.}
+  hook_session=$(field session_id) || hook_session=""
+  hook_session=${hook_session%.}
+fi
 
 case "$hook" in
   "") : ;;
@@ -129,10 +146,10 @@ case "$hook" in
   Notification)
     case "$notification" in
       permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input) : ;;
-      *) finish "not a blocking notification ($notification): no alert" ;;
+      *) finish "not a blocking notification: no alert" ;;
     esac
     ;;
-  *) finish "hook $hook is not a blocking event: no alert" ;;
+  *) finish "not a blocking hook event: no alert" ;;
 esac
 
 # A short hash of the session, so repeats collapse without the id itself leaving this script.
