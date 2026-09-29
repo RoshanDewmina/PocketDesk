@@ -267,6 +267,10 @@ final class RemoteHostModel: ObservableObject {
             self.pointerTelemetry.captureCursorChanged(showsCursor: shows)
             self.sendCaptureHealth(self.captureHealthy)
         }
+        capture.onCaptureRegion = { [weak self] _ in
+            guard let self else { return }
+            self.sendCaptureHealth(self.captureHealthy)
+        }
         let workspaceEvents: [(Notification.Name, HostSleepPolicy.Event)] = [
             (NSWorkspace.willSleepNotification, .systemWillSleep),
             (NSWorkspace.didWakeNotification, .systemDidWake),
@@ -1154,6 +1158,9 @@ final class RemoteHostModel: ObservableObject {
             if connection.connected, action.epoch == inputEpoch.value, let pixels = action.screenPixels {
                 capture.setClientPixels(pixels)
             }
+            if connection.connected, action.epoch == inputEpoch.value, let viewport = action.viewport {
+                capture.setViewport(viewport)
+            }
             if let probe = action.clock, !probe.isEcho, (try? probe.validate()) != nil {
                 let received = min(MachClock.nowMs(), connection.media?.controlArrivalMs ?? .infinity)
                 _ = connection.sendControl(RemoteAction(
@@ -1347,7 +1354,8 @@ final class RemoteHostModel: ObservableObject {
             features: SessionFeature.host, hostState: state?.rawValue,
             hostStream: connection.media?.takeHostSummary(),
             curtain: curtainState.rawValue, hostEvent: event,
-            display: capturedDisplayID, agentAlert: alert
+            display: capturedDisplayID, agentAlert: alert,
+            captureRegion: capture.appliedCaptureRegion
         ))
         if sent && event != nil { recoveryNoticeDelivered = true }
         if sent && alert != nil { agentAlertOutbox.removeFirst() }
