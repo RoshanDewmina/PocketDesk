@@ -168,10 +168,19 @@ describe("POST /v1/appstore/notifications", () => {
 
     const yearly = `year-${randomHex(6)}`;
     const device2 = randomHex();
-    expect((await verify({ originalTransactionId: yearly, transactionId: "2000000000000002", purchaseDate: now - day, expiresDate: now + 29 * day }, device2)).entitled).toBe(true);
+    const newerPurchase = await verify({ originalTransactionId: yearly, transactionId: "2000000000000002", purchaseDate: now - day, expiresDate: now + 29 * day }, device2);
+    expect(newerPurchase.entitled).toBe(true);
+    const p = await pairing();
+    const host = await connectHost(p);
+    const client = await connectClient(p, { features: ["remote.1"], entitlement: newerPurchase.entitlementToken });
+    expect(client.registered.access).toBe("remote");
+    await host.next(); await host.next(); await client.next();
     const earlierPeriod = await notification("REFUND", { tx: { originalTransactionId: yearly, transactionId: "2000000000000001", purchaseDate: now - 31 * day, expiresDate: now - day, revocationDate: now - 1000, revocationReason: 0 } });
     expect(earlierPeriod.body.outcome).toBe("recorded");
     expect((await verify({ originalTransactionId: yearly, transactionId: "2000000000000002", purchaseDate: now - day, expiresDate: now + 29 * day }, device2)).entitled).toBe(true);
+    expect(host.ws.readyState).toBe(WebSocket.OPEN);
+    expect(client.ws.readyState).toBe(WebSocket.OPEN);
+    client.close(); host.close();
   });
 
   it("deduplicates by notificationUUID and records unknown types", async () => {

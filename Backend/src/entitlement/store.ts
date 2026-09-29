@@ -10,6 +10,7 @@ export type EntitlementRow = {
   expires_at: number;
   grace_until: number | null;
   revoked_at: number | null;
+  purchase_at: number;
   created_at: number;
   updated_at: number;
   last_verified_at: number | null;
@@ -17,12 +18,13 @@ export type EntitlementRow = {
 };
 
 export type DeviceRow = { device_id: string; last_room: string | null };
+export type EntitlementDeviceRow = EntitlementRow & { device_room: string | null };
 
 export const accessEndMs = (row: Pick<EntitlementRow, "expires_at" | "grace_until">) =>
   Math.max(row.expires_at, row.grace_until ?? 0);
 
 export const hasAccess = (row: Pick<EntitlementRow, "status" | "expires_at" | "grace_until">, now: number) =>
-  row.status !== "revoked" && accessEndMs(row) > now;
+  (row.status === "active" || row.status === "grace") && accessEndMs(row) > now;
 
 export async function entitlementIdFor(hashKey: string, originalTransactionId: string): Promise<string> {
   return bytesToHex(await hmacSha256(hashKey, `otid:${originalTransactionId}`));
@@ -36,27 +38,38 @@ export type UpsertEntitlement = {
   expiresAt: number;
   graceUntil?: number | null;
   revokedAt?: number | null;
+  /** Signed transaction purchase time; only a later purchase may clear an existing refund. */
+  purchaseAt?: number;
+  /** Apple's explicit refund reversal may clear a refund without a new purchase. */
+  refundReversed?: boolean;
   source: "verify" | "notification" | "recheck";
 };
 
-export async function upsertEntitlement(db: D1Database, fields: UpsertEntitlement, now: number): Promise<void> {
+/** Returns whether this purchase-versioned event changed the row. */
+export async function upsertEntitlement(db: D1Database, fields: UpsertEntitlement, now: number): Promise<boolean> {
   const verified = fields.source === "verify" ? now : null;
   const notified = fields.source === "notification" ? now : null;
-  await db.prepare(`
-    INSERT INTO entitlements (id, product_id, environment, status, expires_at, grace_until, revoked_at, created_at, updated_at, last_verified_at, last_notification_at)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10)
+  const result = await db.prepare(`
+    INSERT INTO entitlements (id, product_id, environment, status, expires_at, grace_until, revoked_at, created_at, updated_at, last_verified_at, last_notification_at, purchase_at)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11)
     ON CONFLICT(id) DO UPDATE SET
       product_id = excluded.product_id,
       environment = excluded.environment,
       status = excluded.status,
-      expires_at = excluded.expires_at,
+      expires_at = MAX(entitlements.expires_at, excluded.expires_at),
       grace_until = excluded.grace_until,
       revoked_at = excluded.revoked_at,
+      purchase_at = excluded.purchase_at,
       updated_at = excluded.updated_at,
       last_verified_at = COALESCE(excluded.last_verified_at, entitlements.last_verified_at),
       last_notification_at = COALESCE(excluded.last_notification_at, entitlements.last_notification_at)
+    WHERE excluded.purchase_at >= entitlements.purchase_at
+      AND (entitlements.revoked_at IS NULL OR excluded.revoked_at IS NOT NULL
+        OR excluded.purchase_at > entitlements.revoked_at OR ?12 = 1)
   `).bind(fields.id, fields.productId, fields.environment, fields.status, fields.expiresAt,
-    fields.graceUntil ?? null, fields.revokedAt ?? null, now, verified, notified).run();
+    fields.graceUntil ?? null, fields.revokedAt ?? null, now, verified, notified,
+    fields.purchaseAt ?? 0, fields.refundReversed ? 1 : 0).run();
+  return result.meta.changes > 0;
 }
 
 export async function getEntitlement(db: D1Database, id: string): Promise<EntitlementRow | null> {
@@ -64,12 +77,12 @@ export async function getEntitlement(db: D1Database, id: string): Promise<Entitl
 }
 
 /** The subscription as seen from one device: null unless that device is still linked to it. */
-export async function entitlementForDevice(db: D1Database, id: string, deviceId: string): Promise<EntitlementRow | null> {
+export async function entitlementForDevice(db: D1Database, id: string, deviceId: string): Promise<EntitlementDeviceRow | null> {
   return db.prepare(`
-    SELECT e.* FROM entitlements e
+    SELECT e.*, d.last_room AS device_room FROM entitlements e
     JOIN entitlement_devices d ON d.entitlement_id = e.id AND d.device_id = ?2
     WHERE e.id = ?1
-  `).bind(id, deviceId).first<EntitlementRow>();
+  `).bind(id, deviceId).first<EntitlementDeviceRow>();
 }
 
 const STALE_DEVICE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -95,17 +108,33 @@ export async function linkDevice(db: D1Database, id: string, deviceId: string, n
   return (await insert()).meta.changes > 0 ? "linked" : "device_limit";
 }
 
-export async function unlinkDevice(db: D1Database, id: string, deviceId: string): Promise<boolean> {
-  const result = await db.prepare("DELETE FROM entitlement_devices WHERE entitlement_id = ?1 AND device_id = ?2").bind(id, deviceId).run();
+export async function unlinkDeviceIfInRoom(db: D1Database, id: string, deviceId: string, room: string | null): Promise<boolean> {
+  const result = await db.prepare(
+    "DELETE FROM entitlement_devices WHERE entitlement_id = ?1 AND device_id = ?2 AND last_room IS ?3",
+  ).bind(id, deviceId, room).run();
   return result.meta.changes > 0;
 }
 
-/** Records the room a device is live in and returns the room it was live in before (if different). */
-export async function setDeviceRoom(db: D1Database, id: string, deviceId: string, room: string, now: number): Promise<string | null> {
-  const previous = await db.prepare("SELECT last_room FROM entitlement_devices WHERE entitlement_id = ?1 AND device_id = ?2").bind(id, deviceId).first<{ last_room: string | null }>();
-  await db.prepare("UPDATE entitlement_devices SET last_room = ?3, last_seen = ?4 WHERE entitlement_id = ?1 AND device_id = ?2")
-    .bind(id, deviceId, room, now).run();
-  return previous?.last_room ?? null;
+/** Compare-and-swap the single live room. A concurrent claim or unlink can never be silently overwritten. */
+export async function claimDeviceRoom(db: D1Database, id: string, deviceId: string, room: string, now: number): Promise<{ claimed: boolean; previous: string | null }> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const row = await db.prepare("SELECT last_room FROM entitlement_devices WHERE entitlement_id = ?1 AND device_id = ?2")
+      .bind(id, deviceId).first<{ last_room: string | null }>();
+    if (!row) return { claimed: false, previous: null };
+    const result = await db.prepare(
+      "UPDATE entitlement_devices SET last_room = ?3, last_seen = ?4 WHERE entitlement_id = ?1 AND device_id = ?2 AND last_room IS ?5",
+    ).bind(id, deviceId, room, now, row.last_room).run();
+    if (result.meta.changes > 0) return { claimed: true, previous: row.last_room };
+  }
+  // Contention or storage trouble is a local-only admission, never a second relay owner.
+  return { claimed: false, previous: null };
+}
+
+/** Undo a claim only if no newer room took ownership in the meantime. */
+export async function restoreDeviceRoom(db: D1Database, id: string, deviceId: string, room: string, previous: string | null): Promise<void> {
+  await db.prepare(
+    "UPDATE entitlement_devices SET last_room = ?4 WHERE entitlement_id = ?1 AND device_id = ?2 AND last_room = ?3",
+  ).bind(id, deviceId, room, previous).run();
 }
 
 export async function devicesForEntitlement(db: D1Database, id: string): Promise<DeviceRow[]> {

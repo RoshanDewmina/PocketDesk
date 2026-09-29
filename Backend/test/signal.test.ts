@@ -1,6 +1,7 @@
 import { evictDurableObject } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { mintEntitlementToken } from "../src/entitlement/token";
+import { verifyEntitlementToken } from "../src/entitlement/token";
 import type { RoomDO } from "../src/room";
 import { randomHex } from "../src/util";
 import { parseChain, signCompactJws, transactionPayload, type TestChain } from "./helpers/apple-chain";
@@ -237,6 +238,20 @@ describe("entitlement gate (remote.1)", () => {
     expect(turn.generateCalls).toBe(0);
   });
 
+  it("a signed token for the wrong Apple environment never allocates TURN", async () => {
+    turn.reset();
+    const valid = await entitlementToken();
+    const payload = await verifyEntitlementToken(testEnv.ENTITLEMENT_TOKEN_KEY, valid, Date.now(), "test");
+    expect(payload).toBeDefined();
+    const wrongEnvironment = await mintEntitlementToken(testEnv.ENTITLEMENT_TOKEN_KEY, { ...payload!, n: "S" });
+    const p = await pairing();
+    await connectHost(p);
+    const client = await connectClient(p, { features: ["remote.1"], entitlement: wrongEnvironment });
+    expect(client.pre).toEqual([{ type: "error", code: "entitlement_required" }]);
+    expect(client.ice.servers).toEqual([]);
+    expect(turn.generateCalls).toBe(0);
+  });
+
   it("a token stops working the moment its device is unlinked", async () => {
     turn.reset();
     const deviceId = randomHex();
@@ -249,6 +264,45 @@ describe("entitlement gate (remote.1)", () => {
     expect(client.pre).toEqual([{ type: "error", code: "entitlement_required" }]);
     expect(client.ice.servers).toEqual([]);
     expect(turn.generateCalls).toBe(0);
+  });
+
+  it("forgetting a linked phone ends its live room and revokes both relay credentials", async () => {
+    turn.reset();
+    const deviceId = randomHex();
+    const token = await entitlementToken({}, deviceId);
+    const p = await pairing();
+    const host = await connectHost(p);
+    const client = await connectClient(p, { features: ["remote.1"], entitlement: token });
+    await host.next(); await host.next(); await client.next();
+    expect((await postJson("/v1/entitlements/forget", { deviceId, entitlementToken: token }, freshIp())).status).toBe(204);
+    expect((await host.closed).reason).toBe("entitlement_revoked");
+    expect((await client.closed).reason).toBe("entitlement_revoked");
+    await sleep(50);
+    expect([...turn.revoked].sort()).toEqual([...turn.issued].sort());
+    expect(await snapshot(p.room)).toMatchObject({ hostOnline: false, clientOnline: false, entitled: false });
+  });
+
+  it("forgetting during TURN issuance cannot deliver relay after the device is unlinked", async () => {
+    turn.reset();
+    const deviceId = randomHex();
+    const token = await entitlementToken({}, deviceId);
+    const p = await pairing();
+    await connectHost(p);
+    const release = turn.holdGenerate();
+    try {
+      const joining = await open();
+      joining.send(registerMessage(p, "client", { features: ["remote.1"], entitlement: token }));
+      for (let attempt = 0; attempt < 100 && turn.generateCalls < 2; attempt += 1) await sleep(10);
+      expect(turn.generateCalls).toBe(2);
+      expect((await postJson("/v1/entitlements/forget", { deviceId, entitlementToken: token }, freshIp())).status).toBe(204);
+      expect((await joining.closed).reason).toBe("entitlement_revoked");
+      release();
+      await sleep(80);
+      expect([...turn.revoked].sort()).toEqual([...turn.issued].sort());
+      expect(await snapshot(p.room)).toMatchObject({ clientOnline: false, entitled: false, liveCredentials: 0 });
+    } finally {
+      release();
+    }
   });
 
   it("one device is live in one room at a time: joining a second room ends the first room's relay", async () => {
@@ -272,6 +326,99 @@ describe("entitlement gate (remote.1)", () => {
     await sleep(50);
     expect(turn.revoked.length).toBe(2);
     hostB.close(); clientB.close();
+  });
+
+  it("concurrent claims for one device leave at most one entitled room", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const payload = await verifyEntitlementToken(testEnv.ENTITLEMENT_TOKEN_KEY, token, Date.now(), "test");
+    expect(payload).toBeDefined();
+    const first = await pairing();
+    const second = await pairing();
+    const hostA = await connectHost(first);
+    const hostB = await connectHost(second);
+    await Promise.allSettled([
+      connectClient(first, { features: ["remote.1"], entitlement: token }),
+      connectClient(second, { features: ["remote.1"], entitlement: token }),
+    ]);
+    await sleep(50);
+    const a = await snapshot(first.room);
+    const b = await snapshot(second.room);
+    expect(Number(a.entitled) + Number(b.entitled)).toBe(1);
+    const device = await testEnv.DB.prepare(
+      "SELECT last_room FROM entitlement_devices WHERE entitlement_id = ?1 AND device_id = ?2",
+    ).bind(payload!.s, payload!.d).first<{ last_room: string | null }>();
+    expect(device?.last_room).toBe(a.entitled ? first.room : second.room);
+    hostA.close(); hostB.close();
+  });
+
+  it("moving one subscriber device does not close another device now using its former room", async () => {
+    turn.reset();
+    const otid = `shared-${randomHex(6)}`;
+    const deviceA = randomHex();
+    const deviceB = randomHex();
+    const tokenA = await entitlementToken({ originalTransactionId: otid }, deviceA);
+    const tokenB = await entitlementToken({ originalTransactionId: otid }, deviceB);
+    const first = await pairing();
+    const hostA = await connectHost(first);
+    const original = await connectClient(first, { features: ["remote.1"], entitlement: tokenA });
+    await hostA.next(); await hostA.next(); await original.next();
+    original.close();
+    expect(await hostA.next()).toEqual({ type: "peer", online: false });
+    expect((await hostA.next()).type).toBe("ice");
+    const replacement = await connectClient(first, { features: ["remote.1"], entitlement: tokenB });
+    expect(replacement.registered.access).toBe("remote");
+    await hostA.next(); await hostA.next(); await replacement.next();
+
+    const second = await pairing();
+    const hostB = await connectHost(second);
+    const moved = await connectClient(second, { features: ["remote.1"], entitlement: tokenA });
+    expect(moved.registered.access).toBe("remote");
+    expect(await snapshot(first.room)).toMatchObject({ hostOnline: true, clientOnline: true, entitled: true });
+    expect(hostA.ws.readyState).toBe(WebSocket.OPEN);
+    expect(replacement.ws.readyState).toBe(WebSocket.OPEN);
+    hostA.close(); replacement.close(); hostB.close(); moved.close();
+  });
+
+  it("a delayed refund push cannot close a room whose device has current paid access", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const payload = await verifyEntitlementToken(testEnv.ENTITLEMENT_TOKEN_KEY, token, Date.now(), "test");
+    expect(payload).toBeDefined();
+    const p = await pairing();
+    const host = await connectHost(p);
+    const client = await connectClient(p, { features: ["remote.1"], entitlement: token });
+    await host.next(); await host.next(); await client.next();
+    expect(await rooms().get(rooms().idFromName(p.room)).revokeEntitlement(payload!.s, payload!.d, true)).toBe(false);
+    expect(await snapshot(p.room)).toMatchObject({ hostOnline: true, clientOnline: true, entitled: true });
+    expect(host.ws.readyState).toBe(WebSocket.OPEN);
+    expect(client.ws.readyState).toBe(WebSocket.OPEN);
+    client.close(); host.close();
+  });
+
+  it("a second room fences a first room whose TURN allocation is still pending", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const first = await pairing();
+    const second = await pairing();
+    await connectHost(first);
+    await connectHost(second);
+    const release = turn.holdGenerate();
+    try {
+      const pending = await open();
+      pending.send(registerMessage(first, "client", { features: ["remote.1"], entitlement: token }));
+      for (let attempt = 0; attempt < 100 && turn.generateCalls < 2; attempt += 1) await sleep(10);
+      expect(turn.generateCalls).toBe(2);
+      const replacement = connectClient(second, { features: ["remote.1"], entitlement: token });
+      expect((await pending.closed).reason).toBe("entitlement_revoked");
+      release();
+      expect((await replacement).registered.access).toBe("remote");
+      await sleep(50);
+      expect(await snapshot(first.room)).toMatchObject({ clientOnline: false, entitled: false });
+      expect(await snapshot(second.room)).toMatchObject({ clientOnline: true, entitled: true });
+    } finally {
+      release();
+    }
   });
 
   it("a kicked socket cannot disturb the peer that replaces it", async () => {

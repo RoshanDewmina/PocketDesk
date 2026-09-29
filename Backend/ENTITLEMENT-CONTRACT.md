@@ -53,7 +53,7 @@ Rules for the phone: the server never revokes a token it issued early except thr
 - Bound to the `deviceId` that verified, to the subscription and to the deployment that minted it (a staging token is refused by production). On every `register` the server also requires the device to still be linked to the subscription and the subscription to have access, so `forget` (§5) or a refund stops a token at once, not at its expiry.
 - One live room per device: registering with the token in a second room ends the first room's relay (its peers close with `entitlement_revoked`). A phone that reconnects to the same Mac is unaffected.
 - Server-side revocation (refund, revoke, expiry notice, block) takes effect on the next `register` or `renew`, immediately for a live room through a push, and within five minutes through the room's own re-check (§4).
-- A storage outage on the server means `register` proceeds as local-only for that connection; an already established relayed session keeps its credentials.
+- A storage outage on the server means `register` proceeds as local-only for that connection; an already established relayed session keeps its credentials but receives no freshly minted TURN credentials until the entitlement can be checked again.
 
 ## 4. Signaling: additive protocol change (`Docs/REMOTE-PROTOCOL.md`, capability `remote.1`)
 
@@ -61,7 +61,7 @@ Wire messages stay as documented. Additions, all ignored by older apps:
 
 - The phone adds `"remote.1"` to `register.features` and, when it has one, `"entitlement": "<entitlementToken>"`. The Mac adds nothing.
 - `registered` to a peer that listed `remote.1` carries `"access": "remote" | "local"`.
-- `ice`: for a room whose phone is entitled, both peers receive STUN and short-lived TURN servers. The Mac, which registers before the phone, receives a second `ice` message with servers immediately before `peer` `online: true`. For a free room every `ice` carries `"servers": []`.
+- `ice`: for a room whose phone is entitled, both peers receive STUN and short-lived TURN servers. The Mac, which registers before the phone, receives a second `ice` message with servers immediately before `peer` `online: true`. For a free room every `ice` carries `"servers": []`. This withholds managed relay credentials; it does not prove that an encrypted direct candidate stays on the same LAN. The native clients must enforce the paid-internet route policy separately.
 - `error` with `"code": "entitlement_required"` is sent to a phone that listed `remote.1` and presented no token, an expired token, a token for another device, or a token whose subscription is no longer active. It is **non-closing**: `registered` (`access: "local"`) and `ice` (`servers: []`) follow and the session proceeds as same-network only. The phone should call `/v1/entitlements/verify` (with its latest transaction) and reconnect if that yields a token.
 - `renewed` for a phone whose entitlement lapsed mid-session carries `"code": "entitlement_required"` and no `servers`; the lease is still extended and the session continues until the credentials in use expire (natural expiry). A refund, revoke or operator block ends the room at once: both sockets close with reason `entitlement_revoked` (or `room_not_approved`) and every issued relay credential is revoked.
 - When the entitled phone leaves, the Mac receives `ice` with `"servers": []` after `peer` `online:false`, so its next session starts from the free state until a phone with a valid token joins again.
@@ -71,7 +71,7 @@ Wire messages stay as documented. Additions, all ignored by older apps:
 
 ## 5. `POST /v1/entitlements/forget`
 
-Privacy path ("Remove this Mac and delete server data", `Docs/launch/PRIVACY-POLICY.md`). Body `{"deviceId": "<64 hex>", "entitlementToken": "fe1..."}`. Unlinks that device from its subscription record (frees a device slot) and invalidates that device's token immediately; a later `verify` from the same device links it again. 204 on success (also when already unlinked), 401 when the token does not match the device, 400/429 as above. The subscription record itself is deleted 90 days after its access end (retention, DESIGN.md §9).
+Privacy path ("Remove this Mac and delete server data", `Docs/launch/PRIVACY-POLICY.md`). Body `{"deviceId": "<64 hex>", "entitlementToken": "fe1..."}`. Revokes that device's live room before conditionally unlinking it from its subscription record (freeing a slot), and invalidates its token immediately; a later `verify` from the same device links it again. 204 on success (also when already unlinked), 401 when the token does not match the device, 400/429 as above, 503 if the revoke push or storage step fails before unlinking (retry). The subscription record itself is deleted 90 days after its access end (retention, DESIGN.md §9).
 
 ## 6. `POST /v1/appstore/notifications` (Apple → server)
 
@@ -87,3 +87,4 @@ App Store Server Notifications V2. Body `{"signedPayload": "<JWS>"}`. Both the p
 
 - 2026-09-29 v1: initial contract.
 - 2026-09-29 v1.1 (same day, before any client implementation): token also bound to the deployment and to a live device link; `forget` invalidates immediately; one live room per device; sandbox purchases get one device; stale device slots reclaimed after 30 days; Mac receives `ice{servers:[]}` when its entitled phone leaves; keepalive `ice` repeats; bare 1013 closes for transient failures. Request and response shapes of §2 are unchanged.
+- 2026-09-29 v1.2: `/forget` revokes the specific device's live room before unlinking and may return 503 for a retryable failure; a stale verifier cannot clear a newer refund; an entitlement lookup outage does not authorize replacement TURN credentials. Empty ICE alone does not enforce same-LAN routes. Existing verification wire shapes remain unchanged.

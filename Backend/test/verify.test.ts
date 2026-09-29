@@ -1,7 +1,7 @@
 import { SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { mintEntitlementToken } from "../src/entitlement/token";
-import { entitlementIdFor } from "../src/entitlement/store";
+import { entitlementIdFor, getEntitlement, upsertEntitlement } from "../src/entitlement/store";
 import { randomHex } from "../src/util";
 import { parseChain, signCompactJws, transactionPayload, type TestChain } from "./helpers/apple-chain";
 import { postJson, testEnv } from "./helpers/client";
@@ -20,6 +20,27 @@ async function verify(overrides: Record<string, unknown> = {}, deviceId = random
 beforeAll(() => { chain = parseChain(testEnv.TEST_APPLE_CHAIN); });
 
 describe("POST /v1/entitlements/verify", () => {
+  it("a stale verifier write cannot clear a refund committed after its earlier read", async () => {
+    const id = await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY, `cas-${randomHex(6)}`);
+    const expiresAt = now + 30 * 24 * 60 * 60 * 1000;
+    const base = { id, productId: "com.roshan.PocketDesk.remote.monthly", environment: "Production", expiresAt,
+      graceUntil: null, source: "verify" as const };
+    await upsertEntitlement(testEnv.DB, { ...base, status: "active", purchaseAt: now - 60_000 }, now);
+    // This is the refund's atomic write while a verifier still holds the old active snapshot.
+    await upsertEntitlement(testEnv.DB, { ...base, status: "revoked", revokedAt: now - 1000,
+      purchaseAt: now - 60_000, source: "notification" }, now);
+    await upsertEntitlement(testEnv.DB, { ...base, status: "active", revokedAt: null,
+      purchaseAt: now - 60_000 }, now);
+    expect(await getEntitlement(testEnv.DB, id)).toMatchObject({ status: "revoked", revoked_at: now - 1000 });
+    // A later signed purchase can clear the refund; an explicit reversal can too.
+    await upsertEntitlement(testEnv.DB, { ...base, status: "active", purchaseAt: now }, now);
+    expect(await getEntitlement(testEnv.DB, id)).toMatchObject({ status: "active", revoked_at: null, purchase_at: now });
+    // The old refund handler may have read the pre-purchase row; its later write must be rejected.
+    const lateRefund = await upsertEntitlement(testEnv.DB, { ...base, status: "revoked", revokedAt: now + 1000,
+      purchaseAt: now - 60_000, source: "notification" }, now + 1000);
+    expect(lateRefund).toBe(false);
+    expect(await getEntitlement(testEnv.DB, id)).toMatchObject({ status: "active", revoked_at: null, purchase_at: now });
+  });
   it("entitles a valid production subscription and stores only a hashed identifier", async () => {
     const otid = `otid-${randomHex(8)}`;
     const deviceId = randomHex();

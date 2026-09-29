@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
 import { loadConfig, type Config } from "./config";
-import { entitlementForDevice, hasAccess, roomStatus, setDeviceRoom, touchRoom } from "./entitlement/store";
-import { verifyEntitlementToken } from "./entitlement/token";
+import { claimDeviceRoom, entitlementForDevice, hasAccess, restoreDeviceRoom, roomStatus, touchRoom } from "./entitlement/store";
+import { environmentLetter, verifyEntitlementToken } from "./entitlement/token";
 import { fingerprint, log, logError } from "./log";
 import {
   AUTH_TIMEOUT_MS, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, REMOTE_FEATURE, RENEWAL_FEATURE, iceWithinClientLimits,
@@ -109,9 +109,15 @@ export class RoomDO extends DurableObject<Env> {
     `);
   }
 
-  /** Wipes everything this room stored (a block survives) and leaves the object usable for a later registration. */
+  /** Removes room data. Pending TURN usernames survive until revocation is confirmed or their TTL expires. */
   private async wipe(): Promise<void> {
     const blocked = this.state().blocked;
+    if (this.pendingRevocations().length > 0) {
+      this.ctx.storage.sql.exec("DELETE FROM credentials WHERE revoke_pending = 0");
+      this.ctx.storage.sql.exec("DELETE FROM room");
+      this.ctx.storage.sql.exec("INSERT INTO room (id, blocked) VALUES (1, ?)", blocked);
+      return;
+    }
     await this.ctx.storage.deleteAll();
     await this.ctx.storage.deleteAlarm();
     this.ensureSchema();
@@ -264,6 +270,7 @@ export class RoomDO extends DurableObject<Env> {
     if (this.openSockets().length === 0 && state.last_activity + IDLE_DELETE_MS <= now) {
       this.revokeAll();
       await this.wipe();
+      await this.scheduleAlarm();
       return;
     }
     await this.scheduleAlarm();
@@ -286,7 +293,7 @@ export class RoomDO extends DurableObject<Env> {
     if (!state.entitlement_id || !state.entitled_device) return;
     try {
       const row = await withTimeout(entitlementForDevice(this.env.DB, state.entitlement_id, state.entitled_device), STORAGE_TIMEOUT_MS, "entitlement recheck");
-      if (!row || !hasAccess(row, now)) {
+      if (!row || !hasAccess(row, now) || row.device_room !== state.room) {
         log("entitlement_lapsed_live", { room: fingerprint(state.room ?? undefined) });
         this.terminate("entitlement_revoked");
       }
@@ -447,7 +454,7 @@ export class RoomDO extends DurableObject<Env> {
     if (!payload) return { entitled: false };
     try {
       const row = await withTimeout(entitlementForDevice(this.env.DB, payload.s, payload.d), STORAGE_TIMEOUT_MS, "entitlement lookup");
-      if (!row || !hasAccess(row, now)) return { entitled: false };
+      if (!row || !hasAccess(row, now) || environmentLetter(row.environment) !== payload.n) return { entitled: false };
       const until = Math.min(payload.x * 1000, Math.max(row.expires_at, row.grace_until ?? 0));
       return { entitled: true, entitlementId: payload.s, deviceId: payload.d, until };
     } catch (error) {
@@ -456,19 +463,20 @@ export class RoomDO extends DurableObject<Env> {
     }
   }
 
-  private async stillEntitled(attachment: Attachment, now: number): Promise<boolean> {
-    if (!attachment.entitled) return false;
-    if (attachment.entitlementUntil !== undefined && attachment.entitlementUntil <= now) return false;
+  /** Fresh authorization is required before minting replacement TURN credentials. */
+  private async stillEntitled(attachment: Attachment, now: number): Promise<"valid" | "invalid" | "unavailable"> {
+    if (!attachment.entitled) return "invalid";
+    if (attachment.entitlementUntil !== undefined && attachment.entitlementUntil <= now) return "invalid";
     const state = this.state();
     const entitlementId = attachment.entitlementId ?? state.entitlement_id;
     const deviceId = attachment.deviceId ?? state.entitled_device;
-    if (!entitlementId || !deviceId) return this.config.allowUnentitledRelay;
+    if (!entitlementId || !deviceId) return this.config.allowUnentitledRelay ? "valid" : "invalid";
     try {
       const row = await withTimeout(entitlementForDevice(this.env.DB, entitlementId, deviceId), STORAGE_TIMEOUT_MS, "entitlement lookup");
-      return row !== null && hasAccess(row, now);
+      return row !== null && hasAccess(row, now) && row.device_room === state.room ? "valid" : "invalid";
     } catch (error) {
       logError("entitlement_lookup_failed", error, { entitlement: fingerprint(entitlementId) });
-      return true;
+      return "unavailable";
     }
   }
 
@@ -666,8 +674,36 @@ export class RoomDO extends DurableObject<Env> {
     }
     if (this.slotTaken("client", ws)) { this.error(ws, "already_connected"); return; }
 
-    const entitlement = await this.checkEntitlement(msg.entitlement);
+    let entitlement = await this.checkEntitlement(msg.entitlement);
+    if (entitlement.entitled && entitlement.entitlementId && entitlement.deviceId) {
+      // Mark this pending socket before crossing into D1. A forget/revoke push can then close it
+      // even while TURN issuance or the ownership claim is in flight.
+      this.save(ws, { ...this.attachment(ws), entitlementId: entitlement.entitlementId, deviceId: entitlement.deviceId });
+      try {
+        const claim = await withTimeout(
+          claimDeviceRoom(this.env.DB, entitlement.entitlementId, entitlement.deviceId, room, now),
+          STORAGE_TIMEOUT_MS, "room ownership claim",
+        );
+        if (!claim.claimed) {
+          entitlement = { entitled: false };
+        } else if (claim.previous && claim.previous !== room) {
+          try {
+            const rooms = this.env.ROOM as unknown as DurableObjectNamespace<RoomDO>;
+            await withTimeout(rooms.get(rooms.idFromName(claim.previous)).revokeEntitlement(entitlement.entitlementId, entitlement.deviceId),
+              STORAGE_TIMEOUT_MS, "previous room revoke");
+          } catch (error) {
+            await restoreDeviceRoom(this.env.DB, entitlement.entitlementId, entitlement.deviceId, room, claim.previous);
+            throw error;
+          }
+        }
+      } catch (error) {
+        logError("device_room_claim_failed", error, { room: fingerprint(room) });
+        this.close(ws, 1013, "busy");
+        return;
+      }
+    }
     if (remoteAware && !entitlement.entitled) this.error(ws, "entitlement_required", false);
+    if (ws.readyState !== WebSocket.OPEN) return;
 
     let clientServers: IceServer[] = [];
     let hostServers: IceServer[] | undefined;
@@ -681,6 +717,26 @@ export class RoomDO extends DurableObject<Env> {
       }
     }
     // The Mac must still be the one this phone authenticated against: same socket, same pairing.
+    let authorized = true;
+    if (entitlement.entitled && entitlement.entitlementId && entitlement.deviceId) {
+      try {
+        const at = Date.now();
+        const row = await withTimeout(entitlementForDevice(this.env.DB, entitlement.entitlementId, entitlement.deviceId),
+          STORAGE_TIMEOUT_MS, "entitlement before delivery");
+        authorized = row !== null && hasAccess(row, at) && row.device_room === room &&
+          (entitlement.until ?? 0) > at;
+      } catch (error) {
+        logError("entitlement_before_delivery_failed", error, { room: fingerprint(room) });
+        authorized = false;
+      }
+    }
+    if (!authorized) {
+      this.revokeUsernames([...clientServers, ...(hostServers ?? [])].flatMap(server => server.username ? [server.username] : []));
+      clientServers = [];
+      hostServers = undefined;
+      entitlement = { entitled: false };
+      if (remoteAware && ws.readyState === WebSocket.OPEN) this.error(ws, "entitlement_required", false);
+    }
     const sameHost = ws.readyState === WebSocket.OPEN && this.peer("host") === host && this.state().client_token_hash === clientTokenHash;
     if (!sameHost) {
       this.revokeRole("client");
@@ -717,25 +773,8 @@ export class RoomDO extends DurableObject<Env> {
     this.sendIce(ws, "client", clientServers);
     this.send(host, { type: "peer", online: true });
     this.send(ws, { type: "peer", online: true });
-    if (entitlement.entitled && entitlement.entitlementId && entitlement.deviceId) {
-      this.ctx.waitUntil(this.recordLiveRoom(entitlement.entitlementId, entitlement.deviceId, room, issuedAt));
-    }
     log("client_registered", { room: fingerprint(room), entitled: entitlement.entitled, renewable });
     await this.scheduleAlarm();
-  }
-
-  /** One live room per device: registering here ends the entitlement of the room this device used before. */
-  private async recordLiveRoom(entitlementId: string, deviceId: string, room: string, now: number): Promise<void> {
-    try {
-      const previous = await setDeviceRoom(this.env.DB, entitlementId, deviceId, room, now);
-      if (previous && previous !== room) {
-        const rooms = this.env.ROOM as unknown as DurableObjectNamespace<RoomDO>;
-        await rooms.get(rooms.idFromName(previous)).revokeEntitlement(entitlementId);
-        log("previous_room_entitlement_ended", { room: fingerprint(previous) });
-      }
-    } catch (error) {
-      logError("device_room_update_failed", error);
-    }
   }
 
   // ---- renewal --------------------------------------------------------------------------------
@@ -766,7 +805,9 @@ export class RoomDO extends DurableObject<Env> {
     if (refreshDue) {
       this.renewalPending.add(ws);
       try {
-        if (!(await this.stillEntitled(attachment, now))) code = "entitlement_required";
+        const authorization = await this.stillEntitled(attachment, now);
+        if (authorization === "invalid") code = "entitlement_required";
+        else if (authorization === "unavailable") code = "relay_unavailable";
         else servers = await this.issueServers(attachment.role, attachment.entitlementId ?? state.entitlement_id ?? undefined);
       } catch (error) {
         code = error instanceof IssuanceRateLimited ? "rate_limited" : "relay_unavailable";
@@ -808,9 +849,27 @@ export class RoomDO extends DurableObject<Env> {
     this.update({ client_token_hash: null, lease_ends_at: null, entitlement_id: null, entitled_device: null, recheck_at: null, ice_host: null, ice_client: null });
   }
 
-  async revokeEntitlement(entitlementId: string): Promise<boolean> {
+  async revokeEntitlement(entitlementId: string, deviceId: string, onlyIfInactive = false): Promise<boolean> {
+    if (onlyIfInactive) {
+      // A later paid purchase can commit after the refund handler wrote D1 but before its push.
+      // The push must not terminate the replacement room using that newer entitlement.
+      const row = await withTimeout(entitlementForDevice(this.env.DB, entitlementId, deviceId),
+        STORAGE_TIMEOUT_MS, "revocation freshness check");
+      if (row && hasAccess(row, Date.now()) && row.device_room === this.state().room) return false;
+    }
     const state = this.state();
-    if (state.entitlement_id !== entitlementId) return false;
+    if (state.entitlement_id !== entitlementId || state.entitled_device !== deviceId) {
+      let pendingClosed = false;
+      for (const ws of this.openSockets()) {
+        const attachment = this.attachment(ws);
+        if (!attachment.pending || attachment.entitlementId !== entitlementId || attachment.deviceId !== deviceId) continue;
+        this.detach(ws);
+        this.close(ws, 1008, "entitlement_revoked");
+        pendingClosed = true;
+      }
+      if (pendingClosed) await this.scheduleAlarm();
+      return pendingClosed;
+    }
     log("entitlement_revoked_live", { room: fingerprint(state.room ?? undefined) });
     this.terminate("entitlement_revoked");
     await this.scheduleAlarm();
@@ -834,6 +893,7 @@ export class RoomDO extends DurableObject<Env> {
       this.close(ws, 1008, "room_forgotten");
     }
     await this.wipe();
+    await this.scheduleAlarm();
   }
 
   async snapshot(): Promise<{ hostOnline: boolean; clientOnline: boolean; entitled: boolean; blocked: boolean; liveCredentials: number; pendingRevocations: number; leaseEndsAt: number | null }> {

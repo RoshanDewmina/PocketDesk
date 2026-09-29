@@ -175,6 +175,32 @@ describe("lease and renewal", () => {
     expect(client.ws.readyState).toBe(WebSocket.OPEN);
   });
 
+  it("a D1 lookup outage never issues replacement TURN credentials on renewal", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const p = await pairing();
+    const host = await connectHost(p, { features: renewing });
+    const client = await connectClient(p, { features: [...renewing, "remote.1"], entitlement: token });
+    await host.next(); await host.next(); await client.next();
+    await advance(21 * minute);
+    const originalPrepare = testEnv.DB.prepare.bind(testEnv.DB);
+    const failing = vi.spyOn(testEnv.DB, "prepare").mockImplementation(query => {
+      if (query.includes("SELECT e.*, d.last_room")) throw new Error("D1 unavailable");
+      return originalPrepare(query);
+    });
+    try {
+      client.send({ type: "renew" });
+      const renewed = await client.next();
+      expect(renewed).toMatchObject({ type: "renewed", code: "relay_unavailable" });
+      expect(renewed.servers).toBeUndefined();
+      expect(turn.generateCalls).toBe(2);
+      expect(client.ws.readyState).toBe(WebSocket.OPEN);
+      expect(host.ws.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      failing.mockRestore();
+    }
+  });
+
   it("a provider outage on refresh keeps the room and reports relay_unavailable", async () => {
     turn.reset();
     const token = await entitlementToken();
@@ -206,6 +232,29 @@ describe("lease and renewal", () => {
     await sleep(50);
     expect(turn.revoked).toEqual([]);
     expect(await stub(p.room).snapshot()).toMatchObject({ liveCredentials: 0, pendingRevocations: 2 });
+    await advance(61_000);
+    expect(await runDurableObjectAlarm(stub(p.room))).toBe(true);
+    await sleep(50);
+    expect([...turn.revoked].sort()).toEqual([...turn.issued].sort());
+    expect(await stub(p.room).snapshot()).toMatchObject({ pendingRevocations: 0 });
+  });
+
+  it("room forget retains failed TURN revocations through its data wipe and retries them", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const p = await pairing();
+    const host = await connectHost(p);
+    const client = await connectClient(p, { features: ["remote.1"], entitlement: token });
+    await host.next(); await host.next(); await client.next();
+    turn.failRevokeNext(2);
+    expect((await postJson("/v1/rooms/forget", { room: p.room, token: p.hostToken }, freshIp())).status).toBe(204);
+    expect((await host.closed).reason).toBe("room_forgotten");
+    expect((await client.closed).reason).toBe("room_forgotten");
+    await sleep(50);
+    expect(await stub(p.room).snapshot()).toMatchObject({
+      hostOnline: false, clientOnline: false, entitled: false, liveCredentials: 0, pendingRevocations: 2,
+    });
+    expect(turn.revoked).toEqual([]);
     await advance(61_000);
     expect(await runDurableObjectAlarm(stub(p.room))).toBe(true);
     await sleep(50);

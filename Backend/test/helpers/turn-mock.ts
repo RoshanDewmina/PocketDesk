@@ -9,6 +9,8 @@ export type TurnMock = {
   failRevokeNext: (count: number) => void;
   /** The next N revoke calls answer Cloudflare's post-issuance 404 ("cannot find specified username"). */
   notFoundRevokeNext: (count: number) => void;
+  /** Hold issuance until release, to exercise unlink/revoke while the provider is in flight. */
+  holdGenerate: () => () => void;
   reset: () => void;
 };
 
@@ -23,14 +25,21 @@ export function installTurnMock(): TurnMock {
   let failures = 0;
   let revokeFailures = 0;
   let revokeNotFound = 0;
+  let generateGate: Promise<void> | undefined;
+  let releaseGenerate: (() => void) | undefined;
   const state: TurnMock = {
     issued: [], revoked: [], generateCalls: 0, revokeCalls: 0,
     failNext: count => { failures = count; },
     failRevokeNext: count => { revokeFailures = count; },
     notFoundRevokeNext: count => { revokeNotFound = count; },
+    holdGenerate: () => {
+      generateGate = new Promise<void>(resolve => { releaseGenerate = resolve; });
+      return () => { releaseGenerate?.(); generateGate = undefined; releaseGenerate = undefined; };
+    },
     reset: () => {
       state.issued.length = 0; state.revoked.length = 0; state.generateCalls = 0; state.revokeCalls = 0;
       failures = 0; revokeFailures = 0; revokeNotFound = 0;
+      releaseGenerate?.(); generateGate = undefined; releaseGenerate = undefined;
     },
   };
   const original = globalThis.fetch;
@@ -43,6 +52,7 @@ export function installTurnMock(): TurnMock {
     const rest = url.pathname.slice(KEY_PATH.length);
     if (rest === "generate-ice-servers") {
       state.generateCalls += 1;
+      if (generateGate) await generateGate;
       if (failures > 0) { failures -= 1; return new Response("provider down", { status: 500 }); }
       const username = `user-${state.issued.length + 1}`;
       state.issued.push(username);

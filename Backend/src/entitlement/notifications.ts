@@ -78,7 +78,8 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
   const txEnvironment = tx.environment === "LocalTesting" ? "Xcode" : tx.environment;
   const expiresAt = Math.max(tx.expiresDate ?? 0, existing?.expires_at ?? 0);
   const revokedAt = resolveRevokedAt(existing, tx, notificationType);
-  const base = { id: entitlementId, productId: tx.productId, environment: txEnvironment, expiresAt, revokedAt, source: "notification" as const };
+  const base = { id: entitlementId, productId: tx.productId, environment: txEnvironment, expiresAt, revokedAt,
+    purchaseAt: tx.purchaseDate, refundReversed: notificationType === "REFUND_REVERSED", source: "notification" as const };
   const statusFor = (fallback: EntitlementStatus): EntitlementStatus => revokedAt !== null ? "revoked" : fallback;
 
   switch (notificationType) {
@@ -119,7 +120,8 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
         await audit(env.DB, "refund_of_earlier_period", { entitlementId }, now);
         return finish("recorded");
       }
-      await upsertEntitlement(env.DB, { ...base, status: "revoked", graceUntil: null, revokedAt: tx.revocationDate ?? now }, now);
+      const applied = await upsertEntitlement(env.DB, { ...base, status: "revoked", graceUntil: null, revokedAt: tx.revocationDate ?? now }, now);
+      if (!applied) return finish("recorded");
       await pushRevocation(env, entitlementId, now);
       break;
     }
@@ -135,7 +137,7 @@ async function pushRevocation(env: Env, entitlementId: string, now: number): Pro
   for (const device of await devicesForEntitlement(env.DB, entitlementId)) {
     if (!device.last_room) continue;
     try {
-      await rooms.get(rooms.idFromName(device.last_room)).revokeEntitlement(entitlementId);
+      await rooms.get(rooms.idFromName(device.last_room)).revokeEntitlement(entitlementId, device.device_id, true);
     } catch (error) {
       logError("revoke_push_failed", error, { room: fingerprint(device.last_room) });
     }

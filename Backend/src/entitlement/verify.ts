@@ -1,9 +1,10 @@
 import { decodeJwsUnverified, JwsVerificationError, verifyAppleJws } from "../apple/jws";
 import type { Config } from "../config";
-import { fingerprint, log } from "../log";
+import { fingerprint, log, logError } from "../log";
 import { addressKey, allow } from "../ratelimit";
+import type { RoomDO } from "../room";
 import { BodyTooLarge, HEX64, isoFromMs, isRecord, json, readJsonBody } from "../util";
-import { audit, entitlementIdFor, getEntitlement, hasAccess, isDeviceLinked, linkDevice, unlinkDevice, upsertEntitlement, type EntitlementStatus } from "./store";
+import { audit, entitlementForDevice, entitlementIdFor, getEntitlement, hasAccess, linkDevice, unlinkDeviceIfInRoom, upsertEntitlement, type EntitlementStatus } from "./store";
 import { environmentLetter, MAX_TOKEN_TTL_MS, mintEntitlementToken, verifyEntitlementToken } from "./token";
 
 const MAX_BODY_BYTES = 32 * 1024;
@@ -136,32 +137,35 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     if (status === "expired" && existing && existing.status === "grace" && (existing.grace_until ?? 0) > now) status = "grace";
     await upsertEntitlement(env.DB, {
       id, productId: tx.productId, environment, status, expiresAt,
-      graceUntil: existing?.grace_until ?? null, revokedAt, source: "verify",
+      graceUntil: existing?.grace_until ?? null, revokedAt, purchaseAt: tx.purchaseDate, source: "verify",
     }, now);
-    const row = { status, expires_at: expiresAt, grace_until: existing?.grace_until ?? null };
+    // A refund may have committed after the read above. Use the row that actually survived the
+    // conditional upsert before linking a device or issuing a token.
+    const row = await getEntitlement(env.DB, id);
+    if (!row) throw new Error("entitlement missing after upsert");
     if (!hasAccess(row, now)) {
-      ctx.waitUntil(audit(env.DB, "verify_no_access", { entitlementId: id, detail: status }, now));
-      return json({ entitled: false, reason: status === "revoked" ? "revoked" : "expired", expiresAt: isoFromMs(expiresAt), environment });
+      ctx.waitUntil(audit(env.DB, "verify_no_access", { entitlementId: id, detail: row.status }, now));
+      return json({ entitled: false, reason: row.status === "revoked" ? "revoked" : "expired", expiresAt: isoFromMs(row.expires_at), environment: row.environment });
     }
     // Sandbox purchases are free (D5): one device each keeps App Review and TestFlight working without opening a relay pool.
-    const link = await linkDevice(env.DB, id, deviceId, now, environment === "Sandbox" ? 1 : config.maxDevices);
+    const link = await linkDevice(env.DB, id, deviceId, now, row.environment === "Sandbox" ? 1 : config.maxDevices);
     if (link === "device_limit") {
       ctx.waitUntil(audit(env.DB, "verify_device_limit", { entitlementId: id }, now));
-      return json({ entitled: false, reason: "device_limit", expiresAt: isoFromMs(expiresAt), environment });
+      return json({ entitled: false, reason: "device_limit", expiresAt: isoFromMs(row.expires_at), environment: row.environment });
     }
-    const accessEnd = Math.max(expiresAt, row.grace_until ?? 0);
+    const accessEnd = Math.max(row.expires_at, row.grace_until ?? 0);
     const tokenExpiresAt = Math.min(now + MAX_TOKEN_TTL_MS, accessEnd);
     const entitlementToken = await mintEntitlementToken(env.ENTITLEMENT_TOKEN_KEY, {
-      v: 1, d: deviceId, s: id, x: Math.floor(tokenExpiresAt / 1000), n: environmentLetter(environment), e: config.environmentName,
+      v: 1, d: deviceId, s: id, x: Math.floor(tokenExpiresAt / 1000), n: environmentLetter(row.environment), e: config.environmentName,
     });
     ctx.waitUntil(audit(env.DB, "verify_ok", { entitlementId: id, detail: environment }, now));
-    log("verify_ok", { environment, status, device: fingerprint(deviceId), entitlement: fingerprint(id) });
+    log("verify_ok", { environment: row.environment, status: row.status, device: fingerprint(deviceId), entitlement: fingerprint(id) });
     return json({
       entitled: true,
-      expiresAt: isoFromMs(expiresAt),
-      environment,
+      expiresAt: isoFromMs(row.expires_at),
+      environment: row.environment,
       productId: tx.productId,
-      inGracePeriod: status === "grace",
+      inGracePeriod: row.status === "grace",
       entitlementToken,
       tokenExpiresAt: isoFromMs(tokenExpiresAt),
     });
@@ -187,11 +191,23 @@ export async function handleForget(request: Request, env: Env, config: Config): 
   const payload = await verifyEntitlementToken(env.ENTITLEMENT_TOKEN_KEY, body.entitlementToken, now, config.environmentName);
   if (!payload || payload.d !== body.deviceId) return json({ error: "unauthorized" }, 401);
   try {
-    if (!(await isDeviceLinked(env.DB, payload.s, payload.d))) return new Response(null, { status: 204 });
-    await unlinkDevice(env.DB, payload.s, payload.d);
-    await audit(env.DB, "device_unlinked", { entitlementId: payload.s }, now);
-    return new Response(null, { status: 204 });
-  } catch {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const row = await entitlementForDevice(env.DB, payload.s, payload.d);
+      if (!row) return new Response(null, { status: 204 });
+      // Revoke before unlinking so an RPC failure leaves a retryable device/room reference.
+      // The conditional delete retries if another registration claims a different room meanwhile.
+      if (row.device_room) {
+        const rooms = env.ROOM as unknown as DurableObjectNamespace<RoomDO>;
+        await rooms.get(rooms.idFromName(row.device_room)).revokeEntitlement(payload.s, payload.d);
+      }
+      if (await unlinkDeviceIfInRoom(env.DB, payload.s, payload.d, row.device_room)) {
+        await audit(env.DB, "device_unlinked", { entitlementId: payload.s }, now);
+        return new Response(null, { status: 204 });
+      }
+    }
+  } catch (error) {
+    logError("device_forget_failed", error, { entitlement: fingerprint(payload.s) });
     return json({ error: "unavailable" }, 503);
   }
+  return json({ error: "unavailable" }, 503);
 }
