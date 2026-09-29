@@ -274,8 +274,9 @@ final class PhoneParityUITests: XCTestCase {
         let viewport = app.descendants(matching: .any)["remote.minimap.viewport"].firstMatch
         XCTAssertTrue(viewport.exists)
         let before = viewport.frame
-        let beforeValue = viewport.value as? String ?? ""
+        let beforeCentre = try XCTUnwrap(miniMapCentre(viewport), "\(String(describing: viewport.value))")
         XCTAssertTrue(map.frame.insetBy(dx: -1, dy: -1).contains(before), "The outline sits inside the overview")
+        XCTAssertLessThan(before.width, map.frame.width - 12, "The outline is the visible part, not the whole map")
 
         var mark = probeMark(app)
         let grab = viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
@@ -284,11 +285,12 @@ final class PhoneParityUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.6)
         let dragNotes = probeEntries(app, after: mark)
         let dragged = viewport.frame
-        let draggedValue = viewport.value as? String ?? ""
-        let trace = "\(dragNotes); outline \(before) → \(dragged); \(beforeValue) → \(draggedValue)"
+        let draggedCentre = try XCTUnwrap(miniMapCentre(viewport))
+        let trace = "\(dragNotes); outline \(before) → \(dragged); centre \(beforeCentre) → \(draggedCentre)"
         attachScreenshot(iPad ? "Mini map after drag - iPad" : "Mini map after drag - iPhone landscape")
-        XCTAssertNotEqual(draggedValue, beforeValue, "The map describes the new view: \(trace)")
-        XCTAssertLessThan(dragged.midX, before.midX - 4, "Dragging the outline moves the view with it: \(trace)")
+        XCTAssertLessThan(draggedCentre.across, beforeCentre.across, "Dragging left shows more of the left: \(trace)")
+        XCTAssertGreaterThan(draggedCentre.down, beforeCentre.down, "Dragging down shows more below: \(trace)")
+        XCTAssertLessThan(dragged.midX, before.midX - 4, "The outline moves with the finger: \(trace)")
         XCTAssertGreaterThan(dragged.midY, before.midY + 2, trace)
 
         mark = probeMark(app)
@@ -296,8 +298,12 @@ final class PhoneParityUITests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.6)
         let jumpNotes = probeEntries(app, after: mark)
         let jumped = viewport.frame
-        XCTAssertGreaterThan(jumped.midX, dragged.midX + 4, "Tapping jumps toward the tapped corner: \(jumpNotes)")
-        XCTAssertGreaterThan(jumped.midY, dragged.midY + 2, "\(jumpNotes)")
+        let jumpedCentre = try XCTUnwrap(miniMapCentre(viewport))
+        let jumpTrace = "\(jumpNotes); outline \(dragged) → \(jumped); centre \(draggedCentre) → \(jumpedCentre)"
+        XCTAssertGreaterThan(jumpedCentre.across, draggedCentre.across, "Tapping jumps toward the tapped corner: \(jumpTrace)")
+        XCTAssertGreaterThan(jumpedCentre.down, draggedCentre.down, jumpTrace)
+        XCTAssertGreaterThan(jumped.midX, dragged.midX + 4, jumpTrace)
+        XCTAssertGreaterThan(jumped.midY, dragged.midY + 2, jumpTrace)
 
         XCTAssertTrue(map.waitForNonExistence(timeout: 16), "It fades once the view is still")
     }
@@ -503,6 +509,16 @@ final class PhoneParityUITests: XCTestCase {
     @MainActor
     private func probeEntries(_ app: XCUIApplication, after mark: Int) -> [String] {
         rawProbe(app).filter { $0.sequence > mark }.map(\.text)
+    }
+
+    /// Where the view is centred, as VoiceOver reads the outline: "49 percent of the screen,
+    /// centred 50 percent across and 51 percent down".
+    @MainActor
+    private func miniMapCentre(_ outline: XCUIElement) -> (across: Int, down: Int)? {
+        guard let text = outline.value as? String else { return nil }
+        let numbers = text.split(whereSeparator: { !$0.isNumber }).compactMap { Int($0) }
+        guard numbers.count == 3 else { return nil }
+        return (numbers[1], numbers[2])
     }
 
     /// Controls is a long sheet; rows further down are only created once scrolled into view.

@@ -39,6 +39,14 @@ final class MiniMapLayoutTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(rect.width, 6)
         XCTAssertGreaterThanOrEqual(rect.height, 6)
         XCTAssertEqual(rect.midX, 705 * layout.scaleX, accuracy: 0.001, "Enlarging keeps it centred")
+
+        let map = CGRect(origin: .zero, size: layout.mapSize)
+        for corner in [CGRect(x: 0, y: 0, width: 10, height: 8),
+                       CGRect(x: display.width - 10, y: display.height - 8, width: 10, height: 8)] {
+            let enlarged = layout.viewportRect(for: corner)
+            XCTAssertTrue(map.contains(enlarged), "An enlarged outline at the edge stays on the map: \(enlarged)")
+            XCTAssertGreaterThanOrEqual(enlarged.width, 6)
+        }
     }
 
     func testDraggingTheRectangleMovesTheViewTheSameWayOverTheDisplay() {

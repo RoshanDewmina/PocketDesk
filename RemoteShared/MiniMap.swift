@@ -29,6 +29,9 @@ struct MiniMapLayout: Equatable {
                           width: visibleSource.width * scaleX, height: visibleSource.height * scaleY)
         if rect.width < minimumSide { rect = rect.insetBy(dx: (rect.width - minimumSide) / 2, dy: 0) }
         if rect.height < minimumSide { rect = rect.insetBy(dx: 0, dy: (rect.height - minimumSide) / 2) }
+        // Enlarging near an edge must not push the outline off the map.
+        rect.origin.x = min(max(rect.minX, 0), max(mapSize.width - rect.width, 0))
+        rect.origin.y = min(max(rect.minY, 0), max(mapSize.height - rect.height, 0))
         return rect
     }
 
