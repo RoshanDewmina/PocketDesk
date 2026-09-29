@@ -138,14 +138,15 @@ export async function apnsToken(env: PushEnv): Promise<string> {
   return `${input}.${base64UrlEncode(signature)}`;
 }
 
-function sendAPNs(env: PushEnv, saved: SavedRegistration, input: Record<string, unknown>, bearer: string): Promise<Response> {
+function sendAPNs(env: PushEnv, saved: SavedRegistration, input: Record<string, unknown>, bearer: string,
+  notificationIdentity: string): Promise<Response> {
   const name = saved.showAgentName ? (input.kind === "claude_code" ? "Claude Code" : "Codex") : "An agent";
   const payload = {
     aps: {
       alert: { "title-loc-key": "AGENT_NEEDS_YOU_TITLE", "title-loc-args": [name], "loc-key": "AGENT_NEEDS_YOU_BODY" },
       category: "AGENT_HELP", "thread-id": `mac-${String(input.room).slice(0, 8)}`,
       "interruption-level": saved.timeSensitive ? "time-sensitive" : "active", sound: "default",
-    }, hid: input.id,
+    }, hid: input.id, pairing: notificationIdentity,
   };
   const host = saved.environment === "production" ? "api.push.apple.com" : "api.sandbox.push.apple.com";
   return fetch(`https://${host}/3/device/${saved.deviceToken}`, {
@@ -187,12 +188,13 @@ export async function handlePushEvent(request: Request, env: Env): Promise<Respo
     // Sign first, then fence the final address against both D1 and the DO pairing immediately
     // before starting APNs fetch. A stale in-flight registration cannot target an old phone.
     const bearer = await apnsToken(env as PushEnv);
+    const notificationIdentity = await sha256Hex(`${input.room}:${row.pairingHash}`);
     const current = await env.DB.prepare("SELECT device_token AS deviceToken, pairing_hash AS pairingHash, version FROM push_registrations WHERE room=?1")
       .bind(input.room).first<{ deviceToken: string; pairingHash: string; version: number }>();
     if (current?.version !== row.version || current.deviceToken !== row.deviceToken ||
         current.pairingHash !== row.pairingHash || !(await pairingHashCurrent(env, input.room, row.pairingHash)))
       throw new Error("push_registration_changed");
-    const response = await sendAPNs(env as PushEnv, row, input, bearer);
+    const response = await sendAPNs(env as PushEnv, row, input, bearer, notificationIdentity);
     if (response.status === 410) {
       // A delayed APNs reply must not delete a newer registration after token rotation.
       await env.DB.prepare("DELETE FROM push_registrations WHERE room=?1 AND device_token=?2 AND pairing_hash=?3 AND version=?4")
@@ -241,7 +243,9 @@ export async function forgetPushRoom(db: D1Database, room: string): Promise<void
 
 export async function purgePushRetention(db: D1Database, now: number): Promise<void> {
   await db.batch([
-    db.prepare("DELETE FROM push_reports WHERE EXISTS (SELECT 1 FROM push_events e WHERE e.room=push_reports.room AND e.pairing_hash=push_reports.pairing_hash AND e.id=push_reports.id AND e.expires_at<=?1)").bind(now),
+    db.prepare(`DELETE FROM push_reports WHERE reported_at<=?1 OR NOT EXISTS
+      (SELECT 1 FROM push_events e WHERE e.room=push_reports.room AND e.pairing_hash=push_reports.pairing_hash
+       AND e.id=push_reports.id AND e.expires_at>?2)`).bind(now - EVENT_LIFETIME, now),
     db.prepare("DELETE FROM push_events WHERE expires_at<=?1").bind(now),
     db.prepare(`DELETE FROM push_registrations WHERE updated_at < ?1 OR NOT EXISTS
       (SELECT 1 FROM rooms WHERE rooms.id=push_registrations.room AND rooms.status='active')`)

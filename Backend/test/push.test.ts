@@ -84,7 +84,9 @@ describe("pairing-scoped generic APNs alerts", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.url).toContain("api.sandbox.push.apple.com");
     const payload = JSON.parse(sent[0]!.body) as Record<string, unknown>;
-    expect(payload).toMatchObject({ hid: id, aps: { alert: { "title-loc-args": ["An agent"] } } });
+    expect(payload).toMatchObject({ hid: id,
+      pairing: await sha256Hex(`${p.room}:${await sha256Hex(p.clientToken)}`),
+      aps: { alert: { "title-loc-args": ["An agent"] } } });
     expect(sent[0]!.body).not.toContain(p.hostToken);
     expect(sent[0]!.body).not.toContain(p.clientToken);
     expect(sent[0]!.headers.get("apns-topic")).toBe(testEnv.APP_BUNDLE_ID);
@@ -101,6 +103,23 @@ describe("pairing-scoped generic APNs alerts", () => {
     await purgePushRetention(testEnv.DB, Date.now() + 16 * 60_000);
     expect(await testEnv.DB.prepare("SELECT id FROM push_events WHERE room=?1 AND id=?2")
       .bind(p.room, id).first()).toBeNull();
+    expect(await testEnv.DB.prepare("SELECT id FROM push_reports WHERE room=?1 AND id=?2")
+      .bind(p.room, id).first()).toBeNull();
+  });
+
+  it("purges a report orphaned when an APNs failure removes its event", async () => {
+    const env = await configuredEnv();
+    const p = await livePair();
+    expect((await register(env, p, registration())).status).toBe(200);
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 200 }));
+    const id = `h_${randomHex(6)}`;
+    expect((await event(env, p, id)).status).toBe(202);
+    expect((await handlePushReport(req("report", {
+      room: p.room, token: p.clientToken, helpRequestID: id, action: "opened",
+      at: Math.floor(Date.now() / 1000),
+    }), env)).status).toBe(200);
+    await testEnv.DB.prepare("DELETE FROM push_events WHERE room=?1 AND id=?2").bind(p.room, id).run();
+    await purgePushRetention(testEnv.DB, Date.now());
     expect(await testEnv.DB.prepare("SELECT id FROM push_reports WHERE room=?1 AND id=?2")
       .bind(p.room, id).first()).toBeNull();
   });
