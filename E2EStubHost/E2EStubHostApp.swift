@@ -126,7 +126,7 @@ final class StubHost {
         recorder.event("host.launched", ["launchID": launchID, "mode": "stub", "signalURL": signalURL,
                                          "bundlePath": Bundle.main.bundlePath])
         ensurePairingAndStart()
-        schedule(0.25, into: &timers) { [weak self] in self?.tick() }
+        schedule(0.1, into: &timers) { [weak self] in self?.tick() }
     }
 
     func terminating() {

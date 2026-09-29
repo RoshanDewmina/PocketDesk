@@ -105,7 +105,7 @@ final class HostE2E {
             "screenRecording": CGPreflightScreenCaptureAccess(),
             "accessibility": AXIsProcessTrusted()
         ])
-        let timer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -213,7 +213,7 @@ final class HostE2E {
     /// Returns the action to inject, or a rejection reason. Pure decisions live in
     /// `HostE2EInputFence` so they can be unit tested without a window server.
     func fence(_ action: RemoteAction, held: Bool) -> (RemoteAction?, String) {
-        let environment = HostE2EFenceEnvironment.live(testPad: testPad)
+        let environment = HostE2EFenceEnvironment.live(testPad: testPad, fresh: action.action != "move")
         let verdict = HostE2EInputFence.decide(action, held: held, allowSpaceKeys: allowSpaceKeys,
                                                environment: environment)
         switch verdict {

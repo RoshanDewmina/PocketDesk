@@ -39,6 +39,7 @@ Usage: script/e2e/run-e2e.sh (--host-app PATH | --self-test) [options]
   --derived-data PATH   Build products (default <repo>/outputs/E2EBuild).
   --no-caffeinate       Do not hold display/system-awake assertions during the run.
   --keep-simulator      Leave the dedicated simulator booted afterwards.
+  --keep-xcresults      Keep .xcresult bundles of passed scenarios too (default: failures only).
 Exit: 0 all passed, 1 a scenario failed, 2 usage, 3 preflight/setup failure, 75 another run is active.
 EOF
 }
@@ -53,6 +54,7 @@ SIM_NAME="Farside E2E iPhone"
 SKIP_BUILD=0
 CAFFEINATE=1
 KEEP_SIM=0
+KEEP_XCRESULTS=0
 DERIVED="$REPO/outputs/E2EBuild"
 while (( $# )); do
   case $1 in
@@ -68,6 +70,7 @@ while (( $# )); do
     --derived-data) DERIVED=${2:-}; shift 2 ;;
     --no-caffeinate) CAFFEINATE=0; shift ;;
     --keep-simulator) KEEP_SIM=1; shift ;;
+    --keep-xcresults) KEEP_XCRESULTS=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) print -u2 "Unknown option: $1"; usage >&2; exit 2 ;;
   esac
@@ -202,6 +205,32 @@ locate_products() {
   fi
 }
 
+# MARK: Leftovers from a run that was killed before its cleanup (pids recorded by this harness)
+
+PID_FILE="$ROOT/harness-pids"
+
+record_pid() { [[ -n ${2:-} ]] && print -r -- "$1 $2" >> "$PID_FILE" }
+
+reap_stale() {
+  [[ -f $PID_FILE ]] || return 0
+  local role pid command
+  while read -r role pid; do
+    pid_alive "$pid" || continue
+    command=$(ps -o command= -p "$pid" 2>/dev/null)
+    case $role in
+      # Only processes this harness started carry these markers; the owner's host never does.
+      host) [[ $command == *--farside-e2e* ]] || continue ;;
+      testpad) [[ $command == *"Farside Test Pad"*--run-id* ]] || continue ;;
+      service) [[ $command == *src/index.ts* ]] || continue ;;
+      *) continue ;;
+    esac
+    log "Stopping leftover $role (pid $pid) from an earlier interrupted run"
+    kill -TERM "$pid" 2>/dev/null
+    wait_gone "$pid" 5 || kill -KILL "$pid" 2>/dev/null
+  done < "$PID_FILE"
+  rm -f "$PID_FILE"
+}
+
 # MARK: Private harness directory
 
 prepare_root() {
@@ -255,6 +284,7 @@ start_service() {
   ( cd "$REPO/Server" && exec /usr/bin/env -i PATH=/usr/bin:/bin HOME="$HOME" PORT=$PORT BIND=127.0.0.1 \
       CONNECTION_ATTEMPTS_PER_MINUTE=600 "${extra[@]}" "$BUN" src/index.ts ) >> "$RUN/service.log" 2>&1 &
   SERVICE_PID=$!
+  record_pid service $SERVICE_PID
   local tries=150
   while (( tries-- > 0 )); do
     curl -fsS "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { log "Signaling service up on 127.0.0.1:$PORT (pid $SERVICE_PID)"; return 0 }
@@ -300,7 +330,7 @@ launch_host() {
     if [[ -f $ROOT/host/refused.txt ]]; then log "Host refused E2E mode: $(cat "$ROOT/host/refused.txt")"; return 1; fi
     if [[ $(host_state .launchID) == $HOST_LAUNCH_ID ]]; then
       HOST_PID=$(host_state .pid)
-      if our_host_alive; then return 0; fi
+      if our_host_alive; then record_pid host $HOST_PID; return 0; fi
     fi
     sleep 0.1
   done
@@ -354,7 +384,7 @@ launch_testpad() {
   local tries=200
   while (( tries-- > 0 )); do
     TESTPAD_PID=$(jget "$ROOT/testpad-state.json" .pid)
-    testpad_alive && { log "Farside Test Pad running (pid $TESTPAD_PID)"; return 0 }
+    testpad_alive && { record_pid testpad $TESTPAD_PID; log "Farside Test Pad running (pid $TESTPAD_PID)"; return 0 }
     sleep 0.1
   done
   log "Farside Test Pad did not start"
@@ -555,6 +585,10 @@ run_scenario() {
     --argjson start $started_epoch --argjson end $(date +%s) \
     '{scenario: $s, method: $m, exitCode: $rc, timedOut: $timedOut, setupFailed: false, startedAt: $start, finishedAt: $end}' > "$out/harness.json"
   log "Scenario $scenario finished: exit $rc$([[ $timed_out == 1 ]] && print ' (timed out)') in $(( SECONDS - started ))s"
+  # Result bundles are large; keep them (screenshots, activity logs) only when something failed.
+  if (( rc == 0 && ! KEEP_XCRESULTS )) && [[ $(jget "$out/result.json" .status) == passed ]]; then
+    rm -rf "$out/result.xcresult"
+  fi
   testpad_restore_window
   return 0
 }
@@ -607,6 +641,7 @@ keep_awake() {
 # MARK: Main
 
 prepare_root
+reap_stale
 mkdir -p -m 700 "$RUN"
 log "Farside E2E run $RUN_STAMP: mode=$MODE scenarios=${(j:,:)SCENARIOS} repeat=$REPEAT soak=${SOAK}s"
 preflight

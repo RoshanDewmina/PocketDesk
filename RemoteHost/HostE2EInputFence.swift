@@ -12,16 +12,25 @@ struct HostE2EFenceEnvironment {
     /// Owner of the topmost visible window under the pointer; nil when it is the Test Pad.
     var coveringOwner: String?
 
+    /// Window-server snapshots are reused briefly so 60 Hz pointer moves stay cheap; clicks,
+    /// drags and scrolls always take a fresh snapshot before deciding.
+    @MainActor private static var cached: (at: TimeInterval, pid: pid_t?, windows: [[String: Any]])?
+
     @MainActor
-    static func live(testPad: E2ETestPadGeometry) -> Self {
+    static func live(testPad: E2ETestPadGeometry, fresh: Bool) -> Self {
         let pointer = CGEvent(source: nil)?.location ?? .zero
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: E2E.testPadBundleID).first else {
+        let now = ProcessInfo.processInfo.systemUptime
+        if fresh || cached == nil || now - cached!.at > 0.25 {
+            let pid = NSRunningApplication.runningApplications(withBundleIdentifier: E2E.testPadBundleID).first?.processIdentifier
+            let windows = pid == nil ? [] : (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                                         kCGNullWindowID) as? [[String: Any]]) ?? []
+            cached = (now, pid, windows)
+        }
+        guard let pid = cached?.pid else {
             return Self(testPadRunning: false, testPadFrontmost: false, testPadContent: nil, pointer: pointer, coveringOwner: nil)
         }
-        let pid = app.processIdentifier
         let frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
-        let windows = (CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
-                       as? [[String: Any]]) ?? []
+        let windows = cached?.windows ?? []
         func bounds(_ window: [String: Any]) -> CGRect? {
             (window[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }
         }

@@ -107,13 +107,18 @@ final class RemoteE2ETests: E2ETestCase {
             try expectHostInput("dragUp", since: before, timeout: 6)
             recorder.check("host accepted a held drag (down, moves, up)", true)
             if !config.isStub {
-                let end = try expectPadEvent("dragEnd", since: before, "Test Pad drag to finish")
+                // The gesture's first tap is itself a click on the handle (a zero-length drag).
+                let end = try expectPadEvent("dragEnd", since: before, "Test Pad drag to finish") {
+                    ($0.object("delta").double("x") ?? 0) > 15
+                }
                 let dx = end.object("delta").double("x") ?? 0
                 recorder.check("Test Pad handle moved with the drag", dx > 15, String(format: "Δx %.0f pt", dx))
             }
 
             let scrollArea = try element("scroll")
             try steerPointer(to: CGPoint(x: scrollArea.midX, y: scrollArea.midY), label: "scroll")
+            // Start mid-list so either scroll direction visibly moves the view.
+            if !config.isStub { try pad.command("scrollTo", ["y": 900]) }
             pause(0.8)
             let offsetBefore = pad.state.double("scrollOffset") ?? 0
             before = marks()
@@ -373,7 +378,7 @@ final class RemoteE2ETests: E2ETestCase {
         }
         recorder.check("Test Pad starts in a window on the current Space", !pad.state.bool("fullscreen") && pad.state.bool("onActiveSpace"))
 
-        try clickElement("fullscreenButton")
+        try pressFullScreenButton()
         try waitFor("Test Pad in native full screen", timeout: 15) { pad.state.bool("fullscreen") && pad.state.bool("onActiveSpace") }
         pause(1.5)
         try waitFor("stream still fresh after entering full screen", timeout: 10) { phone.ready }
@@ -405,9 +410,21 @@ final class RemoteE2ETests: E2ETestCase {
         try clickElement("A")
         recorder.check("input lands in the full-screen Test Pad after Space switching", true)
 
-        try clickElement("fullscreenButton")
+        try pressFullScreenButton()
         try waitFor("Test Pad back in a window", timeout: 15) { !pad.state.bool("fullscreen") && pad.state.bool("onActiveSpace") }
         recorder.check("exited full screen on the original Space", true)
+    }
+
+    /// The full-screen control is a standard button: its evidence is the button action, not a
+    /// target click.
+    private func pressFullScreenButton() throws {
+        let frame = try element("fullscreenButton")
+        try steerPointer(to: CGPoint(x: frame.midX, y: frame.midY), tolerance: 4, label: "fullscreenButton")
+        pause(0.8)
+        let before = marks()
+        tapCanvas()
+        try expectHostInput("click", since: before) { $0.string("target") == "fullscreenButton" }
+        try expectPadEvent("fullscreenButton", since: before, "Test Pad full-screen button pressed")
     }
 
     // MARK: f. Soak

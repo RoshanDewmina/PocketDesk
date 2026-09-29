@@ -118,10 +118,22 @@ class E2ETestCase: XCTestCase {
             launchPhone(reset: true, voiceTranscript: launchedVoiceTranscript)
             try waitFor("phone E2E state after reset", timeout: 20) { !phone.state.isEmpty }
         }
+        var viewOnlySince: Date?
         while Date() < deadline {
             if phone.ready { return }
             dismissSystemAlerts()
             let state = phone.state
+            // Live, healthy video but no geometry/viewing ever applied: the session can never
+            // become controllable. Fail fast and say so instead of timing out generically.
+            if state.bool("connected") && state.bool("fresh") && state.bool("captureHealthy")
+                && (state.int("geometryEpoch") ?? 0) == 0 && !state.bool("controlAllowed") {
+                viewOnlySince = viewOnlySince ?? Date()
+                if Date().timeIntervalSince(viewOnlySince!) > 10 {
+                    throw E2EFailure("Session connected with live video, but the phone never received the host's geometry/viewing messages (epoch 0, view-only) for 10 s; the host sends them once when the control channel opens. \(phone.summary()) \(host.summary())")
+                }
+            } else {
+                viewOnlySince = nil
+            }
             if Date().timeIntervalSince(lastAction) > 6 {
                 if !state.isEmpty && !state.bool("paired") && app.buttons["Paste a pairing code"].exists {
                     lastAction = Date()
@@ -363,17 +375,24 @@ class E2ETestCase: XCTestCase {
         throw E2EFailure("Pointer did not reach \(label) at \(target) after \(maxStrokes) strokes; last \(host.pointer.map { "\($0)" } ?? "unknown"). \(host.summary())")
     }
 
-    /// Host pointer once it stops changing (state is published every 100 ms).
+    /// Host pointer once it stops changing across two separate state publications (every 100 ms);
+    /// rereading one unchanged file is not evidence the pointer settled.
     func settledHostPointer(timeout: TimeInterval = 2) throws -> CGPoint? {
-        var previous = host.pointer
+        var previous: (t: Double, point: CGPoint)?
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            pause(0.18)
-            let current = host.pointer
-            if let current, let prior = previous, hypot(current.x - prior.x, current.y - prior.y) < 0.5 { return current }
-            previous = current
+            let state = host.state
+            if let t = state.double("t"), let point = state.point("pointer") {
+                if let prior = previous, t != prior.t {
+                    if hypot(point.x - prior.point.x, point.y - prior.point.y) < 0.5 { return point }
+                    previous = (t, point)
+                } else if previous == nil {
+                    previous = (t, point)
+                }
+            }
+            pause(0.12)
         }
-        return previous
+        return previous?.point
     }
 
     /// Phone-drawn pointer (predicted, reconciled) against the host's authoritative position.

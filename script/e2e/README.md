@@ -17,7 +17,11 @@ script/e2e/run-e2e.sh --self-test --soak-seconds 60                             
 
 Options: `--scenarios a,b,c,d,e,f` (d = d1–d4), `--repeat N`, `--soak-seconds S` (default 1200),
 `--long` (2700 s soak), `--room-lifetime S`, `--simulator NAME`, `--skip-build`,
-`--derived-data PATH`, `--no-caffeinate`, `--keep-simulator`. Exit code 0 = every scenario passed
+`--derived-data PATH`, `--no-caffeinate`, `--keep-simulator`, `--keep-xcresults` (by default only
+failed scenarios keep their `.xcresult`, so overnight loops do not fill the disk). A run killed
+outright (no cleanup) leaves a pid list; the next run stops those leftovers first — only processes
+carrying the harness's own markers (`--farside-e2e`, the Test Pad's `--run-id`, `src/index.ts`).
+Exit code 0 = every scenario passed
 (or failed only a known-issue check), 1 = a scenario failed, 2 = usage, 3 = setup failure,
 75 = another harness run is active.
 

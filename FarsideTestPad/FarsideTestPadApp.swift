@@ -247,6 +247,11 @@ final class TestPadApp: NSObject, NSApplicationDelegate, NSWindowDelegate, NSTex
             textDidChange(Notification(name: NSText.didChangeNotification))
         case "focusText":
             window.makeFirstResponder(pad.textView)
+        case "scrollTo":
+            let y = CGFloat(command["y"] as? Double ?? 0)
+            pad.scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+            pad.scroll.reflectScrolledClipView(pad.scroll.contentView)
+            result["offsetY"] = Double(pad.scroll.contentView.bounds.origin.y)
         case "enterFullScreen":
             if !isFullScreen { window.toggleFullScreen(nil) } else { result["note"] = "already full screen" }
         case "exitFullScreen":
