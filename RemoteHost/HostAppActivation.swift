@@ -2,10 +2,10 @@ import AppKit
 
 enum HostWindowID {
     static let setup = "setup"
-    static let setupTitle = "Set Up PocketDesk"
+    static let setupTitle = "Set Up Farside"
 }
 
-/// PocketDesk Host is an LSUIElement menu bar utility. It becomes a regular app (Dock icon,
+/// Farside's Mac companion is an LSUIElement menu bar utility. It becomes a regular app (Dock icon,
 /// Command-Tab) only while its setup or Settings window is open, so those windows can take focus.
 @MainActor
 final class HostAppActivation {

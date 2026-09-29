@@ -164,13 +164,21 @@ struct HostPreferences {
         static let sharingEnabled = "sharingEnabled"
         static let accessibilitySkipped = "setupAccessibilitySkipped"
         static let serviceAddress = "PocketDeskServiceURL"
+        static let chimeOnConnect = "chimeOnConnect"
     }
 
     let defaults: UserDefaults
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.allowControl: true, Key.keepAwake: true, Key.sharingEnabled: true])
+        defaults.register(defaults: [Key.allowControl: true, Key.keepAwake: true, Key.sharingEnabled: true,
+                                     Key.chimeOnConnect: true])
+    }
+
+    /// A short sound when a phone connects, so someone at the Mac always knows.
+    var chimeOnConnect: Bool {
+        get { defaults.bool(forKey: Key.chimeOnConnect) }
+        nonmutating set { defaults.set(newValue, forKey: Key.chimeOnConnect) }
     }
 
     var allowControl: Bool {

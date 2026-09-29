@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    
+    <radialGradient id="ground" cx="0.42" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#101010"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#FF5B1F" stop-opacity="0.6"/>
+      <stop offset="0.4" stop-color="#FF5B1F" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FF5B1F" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="body"><rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4" fill="url(#ground)"/>
+  <g clip-path="url(#body)">
+    <g fill="#EDE8DF">
+      <circle cx="325.0" cy="325.0" r="65.4"/>
+      <circle cx="475.0" cy="325.0" r="57.2"/>
+    </g>
+    
+    <path d="M512.0 468.0 L539.9 867.0 L629.6 774.1 L700.1 910.4 L755.8 880.8 L685.3 744.6 L813.0 735.7 Z" fill="#EDE8DF" stroke="#050505" stroke-width="40"
+          stroke-linejoin="round" paint-order="stroke"/>
+    <circle cx="512.0" cy="468.0" r="80" fill="#FF5B1F"/>
+  </g>
+  <rect x="101" y="101" width="822" height="822" rx="184.4" ry="184.4"
+        fill="none" stroke="#EDE8DF" stroke-opacity="0.1" stroke-width="2"/>
+</svg>

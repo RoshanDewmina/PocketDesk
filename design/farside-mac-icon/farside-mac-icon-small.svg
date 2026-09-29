@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%"><feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#000" flood-opacity="0.35"/></filter>
+    <radialGradient id="ground" cx="0.42" cy="0.38" r="0.75">
+      <stop offset="0" stop-color="#101010"/>
+      <stop offset="1" stop-color="#050505"/>
+    </radialGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#FF5B1F" stop-opacity="0.6"/>
+      <stop offset="0.4" stop-color="#FF5B1F" stop-opacity="0.18"/>
+      <stop offset="1" stop-color="#FF5B1F" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="body"><rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4"/></clipPath>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" ry="185.4" fill="url(#ground)" filter="url(#shadow)"/>
+  <g clip-path="url(#body)">
+    <g fill="#EDE8DF">
+      <circle cx="256.0" cy="152.0" r="39.9"/>
+      <circle cx="152.0" cy="256.0" r="31.2"/>
+      <circle cx="256.0" cy="256.0" r="45.9"/>
+      <circle cx="360.0" cy="256.0" r="42.2"/>
+      <circle cx="256.0" cy="360.0" r="36.6"/>
+      <circle cx="360.0" cy="360.0" r="46.8"/>
+      <circle cx="464.0" cy="360.0" r="45.6"/>
+      <circle cx="360.0" cy="464.0" r="34.7"/>
+    </g>
+    <circle cx="512.0" cy="468.0" r="110" fill="url(#glow)"/>
+    <path d="M512.0 468.0 L537.8 837.1 L620.8 751.2 L686.0 877.2 L737.5 849.8 L672.3 723.8 L790.4 715.6 Z" fill="#EDE8DF" stroke="#050505" stroke-width="30"
+          stroke-linejoin="round" paint-order="stroke"/>
+    <circle cx="512.0" cy="468.0" r="58" fill="#FF5B1F"/>
+  </g>
+  <rect x="101" y="101" width="822" height="822" rx="184.4" ry="184.4"
+        fill="none" stroke="#EDE8DF" stroke-opacity="0.1" stroke-width="2"/>
+</svg>

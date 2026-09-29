@@ -1,36 +1,34 @@
 import SwiftUI
 
 struct HostSettingsView: View {
-    @Environment(\.colorScheme) private var scheme
     let state: HostViewState
     let actions: HostActions
     @State private var confirmingRemoval = false
 
     var body: some View {
+        let presentation = HostPopoverPresentation.make(for: state)
         VStack(alignment: .leading, spacing: 18) {
-            statusHeader
+            header(presentation)
+            statusPanel(presentation)
 
             HostSettingsSection("Phone") {
                 phoneRow
             }
 
-            HostSettingsSection("While your phone is connected", footer: controlFooter) {
-                HostSettingsRow("Allow mouse and keyboard control", systemImage: "cursorarrow.rays") {
-                    Toggle("Allow mouse and keyboard control",
-                           isOn: Binding(get: { state.allowControl }, set: actions.setAllowControl))
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
+            HostSettingsSection("While your iPhone is connected", footer: sessionFooter) {
+                HostSettingsRow("Allow control", subtitle: state.controlNeedsAccessibility
+                                ? "Needs Accessibility first" : "Off means view only") {
+                    HostSwitch(label: "Allow control", isOn: state.allowControl, set: actions.setAllowControl)
                 }
-                HostSettingsRow("Keep this Mac awake while sharing", systemImage: "cup.and.saucer") {
-                    Toggle("Keep this Mac awake while sharing",
-                           isOn: Binding(get: { state.keepAwake }, set: actions.setKeepAwake))
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
+                HostSettingsRow("Keep this Mac awake", subtitle: "While sharing is on, so your iPhone can reach it") {
+                    HostSwitch(label: "Keep this Mac awake", isOn: state.keepAwake, set: actions.setKeepAwake)
+                }
+                HostSettingsRow("Chime when a phone connects", subtitle: "So you always know") {
+                    HostSwitch(label: "Chime when a phone connects", isOn: state.chimeOnConnect,
+                               set: actions.setChimeOnConnect)
                 }
                 if state.displays.count > 1 {
-                    HostSettingsRow("Shared display", systemImage: "display") {
+                    HostSettingsRow("Shared display") {
                         Picker("Shared display",
                                selection: Binding(get: { state.selectedDisplayID }, set: actions.selectDisplay)) {
                             ForEach(state.displays) { Text($0.name).tag($0.id) }
@@ -42,25 +40,23 @@ struct HostSettingsView: View {
             }
 
             HostSettingsSection("Permissions") {
-                permissionRow("Screen Recording", systemImage: "rectangle.dashed.badge.record",
+                permissionRow("Screen Recording", reason: "So your iPhone can see the screen",
                               status: state.screenRecording, pane: .screenRecording)
-                permissionRow("Accessibility", systemImage: "hand.point.up.left",
+                permissionRow("Accessibility", reason: "So your iPhone can click and type",
                               status: state.accessibility, pane: .accessibility)
             }
 
-            HostSettingsSection {
-                HostSettingsRow("Open at login", systemImage: "power") {
-                    Toggle("Open at login",
-                           isOn: Binding(get: { state.openAtLogin }, set: actions.setOpenAtLogin))
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.small)
+            HostSettingsSection("General") {
+                HostSettingsRow("Open at login", subtitle: "Recommended, so Farside is back after a restart") {
+                    HostSwitch(label: "Open at login", isOn: state.openAtLogin, set: actions.setOpenAtLogin)
                 }
             }
         }
-        .padding(20)
-        .frame(width: 460)
+        .padding(24)
+        .frame(width: HostTheme.settingsWidth)
         .fixedSize(horizontal: false, vertical: true)
+        .background(HostTheme.windowBackground)
+        .preferredColorScheme(.dark)
         .confirmationDialog("Remove your paired phone?", isPresented: $confirmingRemoval) {
             Button("Remove Phone", role: .destructive, action: actions.removePhone)
         } message: {
@@ -68,101 +64,130 @@ struct HostSettingsView: View {
         }
     }
 
-    private var statusHeader: some View {
-        HStack(spacing: 12) {
-            HostIconTile(systemImage: headerSymbol, tone: headerTone, size: 44)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(state.status.title)
-                    .font(.headline)
-                Text(headerDetail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+    private func header(_ presentation: HostPopoverPresentation) -> some View {
+        HStack(spacing: 10) {
+            HostMarkView(height: 18, tipLit: presentation.mood == .live)
+            HostWordmark(height: 13)
+            Spacer()
+            HStack(spacing: 6) {
+                if presentation.mood == .live { HostLiveDot(size: 6) }
+                Text(pillText(presentation)).hostCaption(10.5, color: presentation.mood == .live
+                                                         ? Farside.Palette.bone : Farside.Palette.ash)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .overlay(Capsule().strokeBorder(Farside.Palette.line2, lineWidth: 1))
+            .accessibilityElement(children: .combine)
+        }
+    }
+
+    private func pillText(_ presentation: HostPopoverPresentation) -> String {
+        switch state.status {
+        case .viewing, .controlling: "Live"
+        case .ready: "Ready"
+        case .starting: "Starting"
+        case .pairing: "Pairing"
+        case .paused: state.pausedUntil == nil ? "Off" : "Paused"
+        case .approvalRequested, .unavailable, .needsScreenRecording, .needsPhone: "Needs attention"
+        }
+    }
+
+    private func statusPanel(_ presentation: HostPopoverPresentation) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                HostIconTile(systemImage: presentation.symbol)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(presentation.title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(Farside.Palette.bone)
+                    if let caption = presentation.caption {
+                        Text(caption)
+                            .hostCaption(10.5)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .accessibilityElement(children: .combine)
+            if let message = presentation.message {
+                Text(message)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Farside.Palette.ash)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            Spacer()
-            headerAction
+            // Pairing lives in the Phone section below; don't offer it twice.
+            let actions = presentation.actions.filter { $0 != .pairPhone }
+            if !actions.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
+                        Button(action.title) { perform(action) }
+                            .buttonStyle(HostButtonStyle(kind: kind(presentation.emphasis(of: action)), height: 34))
+                            .fixedSize()
+                    }
+                }
+            }
         }
-    }
-
-    @ViewBuilder
-    private var headerAction: some View {
-        switch state.status {
-        case .viewing, .controlling, .ready, .starting, .pairing:
-            Button("Stop Sharing", action: actions.stopSharing)
-        case .paused:
-            Button("Resume Sharing", action: actions.resumeSharing)
-        case .unavailable:
-            Button("Try Again", action: actions.resumeSharing)
-        case .needsScreenRecording, .needsPhone:
-            Button("Finish Setup…", action: actions.openSetup)
-        case .approvalRequested:
-            Button("Review…", action: actions.openSetup)
-        }
-    }
-
-    private var headerSymbol: String {
-        state.status.needsAttention ? "exclamationmark.triangle" : state.status.menuBarSymbol
-    }
-
-    private var headerTone: HostTone {
-        switch state.status {
-        case .viewing, .controlling, .ready: .sage
-        case .needsScreenRecording, .needsPhone, .unavailable, .approvalRequested: .clay
-        default: .sand
-        }
-    }
-
-    private var headerDetail: String {
-        switch state.status {
-        case .ready: "Your phone can connect to \(state.macName)."
-        case .viewing: state.controlNeedsAccessibility ? "View only until Accessibility is allowed." : "View only."
-        case .controlling: "Your phone can use this Mac’s mouse and keyboard."
-        case .paused: "Your phone can’t connect until you resume."
-        case .unavailable: state.detail ?? "Check your internet connection, then try again."
-        case .needsScreenRecording: "PocketDesk needs Screen Recording to share this Mac."
-        case .needsPhone: "Pair your phone to start."
-        case .pairing: "Scan the code in the setup window."
-        case .approvalRequested: "Allow or decline the phone that scanned your code."
-        case .starting: "Connecting to the PocketDesk service."
-        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Farside.Palette.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .strokeBorder(Farside.Palette.line, lineWidth: 1))
     }
 
     @ViewBuilder
     private var phoneRow: some View {
         if state.hasPairedPhone {
-            HostSettingsRow("Your iPhone", subtitle: state.status.isSessionLive ? "Paired · Connected now" : "Paired",
-                            systemImage: "iphone.gen3") {
+            HostSettingsRow("Your iPhone", subtitle: state.status.isSessionLive ? "Paired · connected now" : "Paired") {
                 HStack(spacing: 8) {
                     Button("Pair New Phone…", action: actions.pairNewPhone)
                     Button("Remove…") { confirmingRemoval = true }
                 }
-                .controlSize(.small)
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
             }
         } else {
-            HostSettingsRow("No phone paired", systemImage: "iphone.gen3") {
+            HostSettingsRow("No phone paired", subtitle: "Pairing takes about a minute") {
                 Button("Pair a Phone…", action: actions.pairNewPhone)
-                    .controlSize(.small)
+                    .buttonStyle(HostButtonStyle(kind: .primary, height: 30))
             }
         }
     }
 
-    private var controlFooter: String? {
-        if state.controlNeedsAccessibility {
-            return "Control also needs Accessibility permission for PocketDesk Host."
-        }
-        return nil
+    private var sessionFooter: String {
+        state.controlNeedsAccessibility
+            ? "Control also needs Accessibility for Farside."
+            : "Closing the lid, restarting or logging out still stops sharing."
     }
 
-    private func permissionRow(_ title: String, systemImage: String, status: HostPermissionStatus,
+    private func permissionRow(_ title: String, reason: String, status: HostPermissionStatus,
                                pane: HostSystemSettingsPane) -> some View {
-        HostSettingsRow(title, systemImage: systemImage) {
-            HStack(spacing: 8) {
-                HostPermissionBadge(status: status)
-                if !status.isGranted {
-                    Button("Open…") { actions.openSystemSettings(pane) }
-                        .controlSize(.small)
-                }
+        HostSettingsRow(title, subtitle: reason) {
+            if status.isGranted {
+                HostGrantedBadge()
+            } else {
+                Button("Open Settings") { actions.openSystemSettings(pane) }
+                    .buttonStyle(HostArrowButtonStyle())
+                    .accessibilityLabel("Open System Settings for \(title)")
             }
+        }
+    }
+
+    private func kind(_ emphasis: HostPopoverPresentation.Emphasis) -> HostButtonStyle.Kind {
+        switch emphasis {
+        case .plate: .plate
+        case .primary: .primary
+        case .ember: .ember
+        }
+    }
+
+    private func perform(_ action: HostPopoverAction) {
+        switch action {
+        case .pause: actions.pauseSharing()
+        case .stopSharing: actions.stopSharing()
+        case .resumeNow, .resumeSharing, .tryAgain: actions.resumeSharing()
+        case .allowPhone: actions.approvePhone()
+        case .declinePhone: actions.declinePhone()
+        case .finishSetup, .showCode: actions.openSetup()
+        case .pairPhone: actions.pairNewPhone()
         }
     }
 }

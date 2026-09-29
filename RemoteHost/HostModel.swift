@@ -38,6 +38,9 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var keepAwakeActive = false
     @Published private(set) var displayAsleep = false
     @Published private(set) var openAtLogin = false
+    @Published private(set) var chimeOnConnect: Bool
+    @Published private(set) var timedPause = HostTimedPause()
+    @Published private(set) var unavailableReason: HostAvailabilityNote?
     @Published private var autoStart = HostAutoStartGate()
     private let preferences = HostPreferences()
     private let input = RemoteInputDriver()
@@ -47,6 +50,7 @@ final class RemoteHostModel: ObservableObject {
     private let displayWake = HostDisplayWake()
     private var screenLocked = false
     private var unavailabilityTeardown: Task<Void, Never>?
+    private var timedPauseTask: Task<Void, Never>?
     private let clipboard = HostClipboardService()
     private var phonePause = HostPhonePause()
     private var lifecycleTimer: Timer?
@@ -126,12 +130,15 @@ final class RemoteHostModel: ObservableObject {
     }
 
     var viewState: HostViewState {
-        HostViewState(
+        let status = status
+        return HostViewState(
             macName: Host.current().localizedName ?? "this Mac",
+            appListName: Self.appListName,
             screenRecording: screenRecordingPermission,
             accessibility: accessibilityPermission,
             screenRecordingSettingsOpened: screenRecordingSettingsOpened,
             accessibilitySettingsOpened: accessibilitySettingsOpened,
+            accessibilitySkipped: accessibilitySkipped,
             status: status,
             setupStep: setupStep,
             hasPairedPhone: hasPairedPhone,
@@ -141,21 +148,39 @@ final class RemoteHostModel: ObservableObject {
             allowControl: allowControl,
             keepAwake: keepAwakeEnabled,
             openAtLogin: openAtLogin,
+            chimeOnConnect: chimeOnConnect,
+            pausedUntil: timedPause.resumesAt,
+            session: status.isSessionLive ? HostSessionReadout.parse(connection.diagnostics) : nil,
+            availability: availabilityNote,
             displays: displays.map { HostDisplayOption(id: $0.displayID, name: Self.displayName(for: $0.displayID)) },
             selectedDisplayID: selected,
             detail: detail
         )
     }
 
+    private var availabilityNote: HostAvailabilityNote? {
+        if screenLocked { return .locked }
+        if let unavailableReason { return unavailableReason }
+        return displayAsleep && active ? .displayAsleep : nil
+    }
+
+    /// The installed bundle keeps its original file name so macOS permission grants survive the
+    /// rename; setup mentions it because System Settings may list the app under that name.
+    private static let appListName: String = {
+        let name = FileManager.default.displayName(atPath: Bundle.main.bundlePath)
+        return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
+    }()
+
     init() {
         controlConsent = HostControlConsentState(isAllowed: preferences.allowControl)
         keepAwakeEnabled = preferences.keepAwake
+        chimeOnConnect = preferences.chimeOnConnect
         wantsSharing = preferences.sharingEnabled
         accessibilitySkipped = preferences.accessibilitySkipped
         openAtLogin = SMAppService.mainApp.status == .enabled
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.active && !self.connection.connected }
         connection.restore()
-        connection.onAuthenticated = { [weak self] in self?.beginCapture() }
+        connection.onAuthenticated = { [weak self] in self?.phoneConnected() }
         connection.onEnded = { [weak self] in
             self?.endCapture()
             self?.reconcileAvailabilityAfterCoordinatorReset()
@@ -255,7 +280,7 @@ final class RemoteHostModel: ObservableObject {
             try process.run()
             NSApplication.shared.terminate(nil)
         } catch {
-            detail = "Couldn’t reopen automatically. Quit PocketDesk from the menu bar and open it again."
+            detail = "Couldn’t reopen automatically. Quit Farside from the menu bar and open it again."
         }
     }
 
@@ -281,7 +306,7 @@ final class RemoteHostModel: ObservableObject {
         guard let serviceAddress else { objectWillChange.send(); return }
         guard !browserSession.controller.running else { detail = "Browser access is on. Stop it before pairing a phone."; return }
         guard canPair, let display = validatedSelectedDisplay() else {
-            detail = "PocketDesk needs Screen Recording and an available display before pairing."
+            detail = "Farside needs Screen Recording and a display to share before pairing."
             return
         }
         releaseRemoteInput(notifyPhone: true)
@@ -297,6 +322,7 @@ final class RemoteHostModel: ObservableObject {
             pairingCode = try invitation.code()
             pairingExpires = invitation.expires
             pairingExpired = false
+            cancelTimedPause()
             wantsSharing = true
             preferences.sharingEnabled = true
             autoStart.clear()
@@ -343,6 +369,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Sharing
 
     func stopSharing() {
+        cancelTimedPause()
         wantsSharing = false
         preferences.sharingEnabled = false
         stop()
@@ -350,11 +377,42 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func resumeSharing() {
+        cancelTimedPause()
         wantsSharing = true
         preferences.sharingEnabled = true
         autoStart.clear()
         detail = nil
+        unavailableReason = nil
         if displayRefreshStatus != .ready { loadDisplays() } else { reconcileSharing() }
+    }
+
+    /// Stop Sharing now and Resume Sharing by itself later, unless the user resumes or stops
+    /// first. Only this in-memory timer resumes: after a relaunch sharing simply stays off.
+    func pauseSharing(for duration: TimeInterval = HostTimedPause.standard) {
+        stopSharing()
+        let resumesAt = timedPause.begin(at: Date(), duration: duration)
+        timedPauseTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(max(1, duration)))
+            guard let self, !Task.isCancelled, self.timedPause.isCurrent(resumesAt) else { return }
+            self.resumeSharing()
+        }
+    }
+
+    private func cancelTimedPause() {
+        timedPauseTask?.cancel()
+        timedPauseTask = nil
+        timedPause.cancel()
+    }
+
+    func setChimeOnConnect(_ enabled: Bool) {
+        chimeOnConnect = enabled
+        preferences.chimeOnConnect = enabled
+    }
+
+    private func phoneConnected() {
+        beginCapture()
+        guard chimeOnConnect, connection.connected, !terminating else { return }
+        NSSound(named: NSSound.Name("Glass"))?.play()
     }
 
     private func reconcileSharing() {
@@ -515,7 +573,7 @@ final class RemoteHostModel: ObservableObject {
         case .unavailable:
             detail = "macOS reported no display to share. Check the display connection."
         case .failed:
-            detail = "PocketDesk couldn’t list this Mac’s displays. Try again."
+            detail = "Farside couldn’t list this Mac’s displays. Try again."
         default:
             break
         }
@@ -925,6 +983,12 @@ final class RemoteHostModel: ObservableObject {
             case .switchedUser: detail = "Another user is using this Mac. Sharing resumes when you switch back."
             default: detail = "This Mac went to sleep. Sharing resumes when it wakes."
             }
+            unavailableReason = switch presence {
+            case .locked: .locked
+            case .switchedUser: .switchedUser
+            case .sleeping: .asleep
+            case .displayAsleep: .displayAsleep
+            }
             tearDownForUnavailability(presence)
         case .recover:
             if event == .screenUnlocked {
@@ -934,6 +998,7 @@ final class RemoteHostModel: ObservableObject {
             if HostScreenLock.isLocked() { screenLocked = true; return }
             autoStart.clear()
             detail = nil
+            unavailableReason = nil
             reconcileSharing()
         case .displayAsleep:
             displayAsleep = true
@@ -980,7 +1045,7 @@ final class RemoteHostModel: ObservableObject {
         let wanted = HostPowerPolicy.assertions(keepAwake: keepAwakeEnabled, sharing: active,
                                                 phoneConnected: connection.connected && !phonePause.isPaused)
         if wanted.system {
-            if !remoteAccessAwake.start() { detail = "PocketDesk couldn’t keep this Mac awake. Normal sleep settings still apply." }
+            if !remoteAccessAwake.start() { detail = "Farside couldn’t keep this Mac awake. Normal sleep settings still apply." }
         } else {
             _ = remoteAccessAwake.stop()
         }
