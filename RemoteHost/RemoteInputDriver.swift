@@ -36,7 +36,7 @@ struct RemoteInputLease {
     mutating func record(action: String, accepted: Bool, at time: TimeInterval) {
         guard accepted else { return }
         if action == "dragDown" { begin(at: time) }
-        else if action == "move" || action == "holdRenew" { refreshFromMove(at: time) }
+        else if action == "move" || action == "moveTo" || action == "holdRenew" { refreshFromMove(at: time) }
     }
 
     mutating func cancel() {
@@ -86,6 +86,8 @@ struct RemoteInputEventSink {
         var point: CGPoint
         var button: CGMouseButton
         var count: Int64
+        /// Modifier keys held on the phone's hardware keyboard (⌘-click, ⇧-click, ⌥-drag).
+        var flags: CGEventFlags = []
     }
 
     var pointerLocation: () -> CGPoint
@@ -107,6 +109,7 @@ struct RemoteInputEventSink {
                     mouseButton: description.button
                 ) else { return false }
                 event.setIntegerValueField(.mouseEventClickState, value: description.count)
+                if !description.flags.isEmpty { event.flags = description.flags }
                 events.append(event)
             }
             for event in events { RemoteInputTag.mark(event); event.post(tap: .cghidEventTap) }
@@ -255,21 +258,28 @@ final class RemoteInputDriver {
         }
 
         var outcome = RemoteInputOutcome(textRequestID: requestID)
+        let flags = Self.flags(for: input.modifiers)
         switch input.action {
-        case "move":
+        case "move", "moveTo":
             if upgraded && held && (input.interaction?.hold != externalHoldID || input.interaction?.clickCount != Int(heldClickCount)) { break }
             guard let bounds = validBounds else { break }
-            let current = clamped(eventSink.pointerLocation(), to: bounds)
-            let point = clamped(
-                CGPoint(x: current.x + input.x, y: current.y + input.y),
-                to: bounds
-            )
+            let target: CGPoint
+            if input.action == "moveTo" {
+                // Display-local logical points, exactly as `geometry` described the display.
+                guard input.x >= 0, input.y >= 0 else { break }
+                target = CGPoint(x: bounds.minX + input.x, y: bounds.minY + input.y)
+            } else {
+                let current = clamped(eventSink.pointerLocation(), to: bounds)
+                target = CGPoint(x: current.x + input.x, y: current.y + input.y)
+            }
+            let point = clamped(target, to: bounds)
             let wasHeld = held
             let event = RemoteInputEventSink.MouseEvent(
                 type: wasHeld ? .leftMouseDragged : .mouseMoved,
                 point: point,
                 button: .left,
-                count: wasHeld ? heldClickCount : 1
+                count: wasHeld ? heldClickCount : 1,
+                flags: flags
             )
             guard eventSink.mouseSequence([event]) else { break }
             lastPoint = point
@@ -277,6 +287,20 @@ final class RemoteInputDriver {
                hypot(point.x - semanticPoint.x, point.y - semanticPoint.y) > 5 { resetClickSequence() }
             outcome.accepted = true
             outcome.holdEvent = wasHeld ? .refreshed : .none
+
+        case "middle":
+            guard !held, let bounds = validBounds else { break }
+            if upgraded { guard input.interaction?.clickCount == 1 else { break } }
+            let point = clamped(eventSink.pointerLocation(), to: bounds)
+            let events: [RemoteInputEventSink.MouseEvent] = [
+                .init(type: .otherMouseDown, point: point, button: .center, count: 1, flags: flags),
+                .init(type: .otherMouseUp, point: point, button: .center, count: 1, flags: flags)
+            ]
+            guard eventSink.mouseSequence(events) else { break }
+            lastPoint = point
+            resetClickSequence()
+            outcome.accepted = true
+            outcome.clickPoint = point
 
         case "click", "right", "double":
             guard !held, let bounds = validBounds else { break }
@@ -289,17 +313,18 @@ final class RemoteInputDriver {
             var events: [RemoteInputEventSink.MouseEvent] = []
             lastPoint = point
             if upgraded {
+                // A multi-click continues only the click just before it: same button, same place.
                 guard let count = input.interaction?.clickCount,
-                      count == 1 || count == 2,
-                      (count == 1 || (clicks == 1 && lastButton == button &&
+                      (1...3).contains(count),
+                      (count == 1 || (clicks == Int64(count - 1) && lastButton == button &&
                         lastSemanticPoint.map { hypot($0.x - point.x, $0.y - point.y) <= 5 } == true)),
                       (!right || count == 1),
                       (input.action != "double" || count == 1)
                 else { break }
                 for index in 0..<repetitions {
                     let eventCount = Int64(count + index)
-                    events.append(.init(type: down, point: point, button: button, count: eventCount))
-                    events.append(.init(type: up, point: point, button: button, count: eventCount))
+                    events.append(.init(type: down, point: point, button: button, count: eventCount, flags: flags))
+                    events.append(.init(type: up, point: point, button: button, count: eventCount, flags: flags))
                 }
                 guard eventSink.mouseSequence(events) else { break }
                 clicks = Int64(count + repetitions - 1)
@@ -314,8 +339,8 @@ final class RemoteInputDriver {
                 clicks = now - lastClick < NSEvent.doubleClickInterval ? min(clicks + 1, 3) : 1
                 if repetitions == 2 { clicks = Int64(index + 1) }
                 lastClick = now
-                events.append(.init(type: down, point: point, button: button, count: clicks))
-                events.append(.init(type: up, point: point, button: button, count: clicks))
+                events.append(.init(type: down, point: point, button: button, count: clicks, flags: flags))
+                events.append(.init(type: up, point: point, button: button, count: clicks, flags: flags))
             }
             outcome.accepted = eventSink.mouseSequence(events)
             if outcome.accepted { outcome.clickPoint = point }
@@ -334,7 +359,8 @@ final class RemoteInputDriver {
             }
             let point = clamped(eventSink.pointerLocation(), to: bounds)
             let count = upgraded ? Int64(input.interaction!.clickCount!) : 1
-            let event = RemoteInputEventSink.MouseEvent(type: .leftMouseDown, point: point, button: .left, count: count)
+            let event = RemoteInputEventSink.MouseEvent(type: .leftMouseDown, point: point, button: .left,
+                                                        count: count, flags: flags)
             guard eventSink.mouseSequence([event]) else { break }
             lastPoint = point
             held = true
@@ -397,17 +423,7 @@ final class RemoteInputDriver {
 
         case "key":
             guard let key = Self.keys[input.key] else { break }
-            var flags: CGEventFlags = []
-            for modifier in input.modifiers {
-                switch modifier {
-                case "command": flags.insert(.maskCommand)
-                case "shift": flags.insert(.maskShift)
-                case "option": flags.insert(.maskAlternate)
-                case "control": flags.insert(.maskControl)
-                default: break
-                }
-            }
-            outcome.accepted = eventSink.key(key, flags)
+            outcome.accepted = eventSink.key(key, flags.union(Self.intrinsicFlags(for: input.key)))
             if outcome.accepted { resetClickSequence() }
 
         default:
@@ -415,6 +431,20 @@ final class RemoteInputDriver {
         }
         if outcome.accepted { report?("Input accepted for injection: \(input.action)") }
         return outcome
+    }
+
+    static func flags(for modifiers: [String]) -> CGEventFlags {
+        var flags: CGEventFlags = []
+        for modifier in modifiers {
+            switch modifier {
+            case "command": flags.insert(.maskCommand)
+            case "shift": flags.insert(.maskShift)
+            case "option": flags.insert(.maskAlternate)
+            case "control": flags.insert(.maskControl)
+            default: break
+            }
+        }
+        return flags
     }
 
     @discardableResult
@@ -492,7 +522,10 @@ final class RemoteInputDriver {
         )
     }
 
-    static let keys: [String: CGKeyCode] = [
+    static let keys: [String: CGKeyCode] = legacyKeys.merging(extendedKeys) { old, _ in old }
+
+    /// The original table; every phone may send these.
+    static let legacyKeys: [String: CGKeyCode] = [
         "a": 0, "s": 1, "d": 2, "f": 3, "h": 4, "g": 5, "z": 6, "x": 7,
         "c": 8, "v": 9, "b": 11, "q": 12, "w": 13, "e": 14, "r": 15,
         "y": 16, "t": 17, "o": 31, "u": 32, "i": 34, "p": 35, "l": 37,
@@ -500,4 +533,29 @@ final class RemoteInputDriver {
         "space": 49, "delete": 51, "escape": 53, "left": 123, "right": 124,
         "down": 125, "up": 126
     ]
+
+    /// Hardware keyboards on the phone (`SessionFeature.extendedKeys`): positional virtual key codes.
+    static let extendedKeys: [String: CGKeyCode] = [
+        "0": 29, "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26, "8": 28, "9": 25,
+        "minus": 27, "equal": 24, "leftBracket": 33, "rightBracket": 30, "backslash": 42,
+        "semicolon": 41, "quote": 39, "grave": 50, "comma": 43, "period": 47, "slash": 44, "section": 10,
+        "forwardDelete": 117, "home": 115, "end": 119, "pageUp": 116, "pageDown": 121, "help": 114,
+        "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97, "f7": 98, "f8": 100,
+        "f9": 101, "f10": 109, "f11": 103, "f12": 111, "f13": 105, "f14": 107, "f15": 113,
+        "f16": 106, "f17": 64, "f18": 79, "f19": 80, "f20": 90,
+        "keypad0": 82, "keypad1": 83, "keypad2": 84, "keypad3": 85, "keypad4": 86, "keypad5": 87,
+        "keypad6": 88, "keypad7": 89, "keypad8": 91, "keypad9": 92, "keypadDecimal": 65,
+        "keypadMultiply": 67, "keypadPlus": 69, "keypadClear": 71, "keypadDivide": 75,
+        "keypadEnter": 76, "keypadMinus": 78, "keypadEquals": 81,
+        "jisYen": 93, "jisUnderscore": 94, "jisKeypadComma": 95, "jisEisu": 102, "jisKana": 104
+    ]
+
+    /// Flags a Mac keyboard itself sets on these keys: Fn for function and navigation keys,
+    /// numeric pad for the keypad. Existing keys keep their original, flag-free events.
+    static func intrinsicFlags(for key: String) -> CGEventFlags {
+        if key.hasPrefix("keypad") { return .maskNumericPad }
+        if ["forwardDelete", "home", "end", "pageUp", "pageDown", "help"].contains(key) { return .maskSecondaryFn }
+        if key.count > 1, key.hasPrefix("f"), Int(key.dropFirst()) != nil { return .maskSecondaryFn }
+        return []
+    }
 }

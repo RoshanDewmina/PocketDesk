@@ -8,7 +8,17 @@ enum SessionFeature {
     static let backgroundPause = "pause.1"
     static let displayWake = "display.wake.1"
     static let privacyCurtain = "curtain.1"
-    static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain]
+    /// `moveTo` (display-local absolute pointer placement), triple-click counts and hardware
+    /// modifier flags on pointer actions. Direct touch and a hardware pointer need it.
+    static let absolutePointer = "pointer.absolute.1"
+    /// `middle`: a middle-button click at the pointer.
+    static let middleButton = "pointer.middle.1"
+    /// Key names beyond the original set: digits, punctuation, F1–F20, navigation and keypad keys.
+    static let extendedKeys = "keys.extended.1"
+    /// `displays` (list) and `display` (switch the streamed display within the session).
+    static let displaySelection = "display.select.1"
+    static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
+                       absolutePointer, middleButton, extendedKeys, displaySelection]
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as

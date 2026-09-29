@@ -12,7 +12,8 @@ struct PointerPredictor {
     static let snapDistance: CGFloat = 64
     static let pendingLimit = 512
 
-    private struct Pending { let ordinal: UInt64; let delta: CGSize }
+    /// A relative delta, or an absolute placement (`moveTo`) that replaces the replayed point.
+    private struct Pending { let ordinal: UInt64; let delta: CGSize; var target: CGPoint? = nil }
 
     private(set) var bounds: CGSize
     private(set) var authoritative: CGPoint?
@@ -42,6 +43,16 @@ struct PointerPredictor {
         if let predicted { self.predicted = clamp(CGPoint(x: predicted.x + delta.width, y: predicted.y + delta.height)) }
     }
 
+    /// Call only for an absolute placement the control channel accepted for sending. The host
+    /// places the pointer exactly there, so the drawn pointer jumps without a blended correction.
+    mutating func applyLocalWarp(ordinal: UInt64, to point: CGPoint) {
+        guard point.x.isFinite, point.y.isFinite, bounds.width > 0, bounds.height > 0 else { return }
+        pending.append(Pending(ordinal: ordinal, delta: .zero, target: point))
+        if pending.count > Self.pendingLimit { pending.removeFirst(pending.count - Self.pendingLimit) }
+        predicted = clamp(point)
+        correction = .zero
+    }
+
     mutating func receive(point: CGPoint, applied: UInt64?, at now: TimeInterval) {
         guard point.x.isFinite, point.y.isFinite, bounds.width > 0, bounds.height > 0 else { return }
         let before = displayed(at: now)
@@ -51,7 +62,11 @@ struct PointerPredictor {
         pending.removeAll { $0.ordinal <= acknowledged }
         var replayed = anchor
         for move in pending {
-            replayed = clamp(CGPoint(x: replayed.x + move.delta.width, y: replayed.y + move.delta.height))
+            if let target = move.target {
+                replayed = clamp(target)
+            } else {
+                replayed = clamp(CGPoint(x: replayed.x + move.delta.width, y: replayed.y + move.delta.height))
+            }
         }
         predicted = replayed
         if let before, hypot(before.x - replayed.x, before.y - replayed.y) <= Self.snapDistance {
