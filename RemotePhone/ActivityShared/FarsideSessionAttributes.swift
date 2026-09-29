@@ -102,6 +102,13 @@ enum SessionActivityCopy {
         }
     }
 
+    /// The second line in the Dynamic Island, which has room for two short lines: only the paused state
+    /// needs a shorter one, because its countdown and title already say that Farside lets go soon.
+    static func islandLine(for state: FarsideSessionAttributes.ContentState, macLabel: String, stale: Bool = false) -> String {
+        if !stale, state.phase == .paused { return "Come back and it never happened." }
+        return line(for: state, macLabel: macLabel, stale: stale)
+    }
+
     static func routeWord(_ route: FarsideSessionAttributes.Route) -> String {
         switch route {
         case .local: "same Wi-Fi"

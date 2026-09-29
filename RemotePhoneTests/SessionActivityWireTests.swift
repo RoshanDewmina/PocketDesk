@@ -65,6 +65,12 @@ final class SessionActivityWireTests: XCTestCase {
         let grace = Date(timeIntervalSince1970: 1_790_000_024)
         XCTAssertEqual(Copy.title(for: .paused(graceEnds: grace)), "Mac on hold")
         XCTAssertEqual(Copy.line(for: .paused(graceEnds: grace), macLabel: "Your Mac"), "Farside lets go soon. Come back and it never happened.")
+        XCTAssertEqual(Copy.islandLine(for: .paused(graceEnds: grace), macLabel: "Your Mac"), "Come back and it never happened.",
+                       "The island has two short lines: the title and the countdown already say it lets go soon")
+        XCTAssertEqual(Copy.islandLine(for: .live(route: .direct), macLabel: "Your Mac"), Copy.line(for: .live(route: .direct), macLabel: "Your Mac"))
+        XCTAssertEqual(Copy.islandLine(for: .ended(.timeout), macLabel: "Your Mac"), Copy.line(for: .ended(.timeout), macLabel: "Your Mac"))
+        XCTAssertEqual(Copy.islandLine(for: .paused(graceEnds: grace), macLabel: "Your Mac", stale: true),
+                       "Farside stopped updating. Open it to check.", "A stale paused state is not a paused state")
         XCTAssertEqual(Copy.title(for: .reconnecting()), "Reaching for your Mac")
         XCTAssertEqual(Copy.line(for: .reconnecting(), macLabel: "Your Mac"), "Hold on. It is a long way.")
         XCTAssertEqual(Copy.title(for: .ended(.user)), "Session ended")
@@ -91,6 +97,7 @@ final class SessionActivityWireTests: XCTestCase {
             for stale in [false, true] {
                 let words = [SessionActivityCopy.title(for: state, stale: stale),
                              SessionActivityCopy.line(for: state, macLabel: "Your Mac", stale: stale),
+                             SessionActivityCopy.islandLine(for: state, macLabel: "Your Mac", stale: stale),
                              SessionActivityCopy.accessibilitySummary(for: state, stale: stale)]
                 for text in words {
                     XCTAssertFalse(text.contains("ms"), "No latency in \(text)")

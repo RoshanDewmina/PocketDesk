@@ -110,10 +110,13 @@ final class LiveActivityUITests: XCTestCase {
         for state in states {
             let app = start(state.phase)
             toHomeScreen(settle: 8.0)
-            XCTAssertTrue(islandContainer.waitForExistence(timeout: 5), "\(state.phase): the island shows the activity")
+            // The first activity after an install can take a while: the system loads the widget extension cold.
+            XCTAssertTrue(islandContainer.waitForExistence(timeout: 40), "\(state.phase): the island shows the activity")
+            Thread.sleep(forTimeInterval: 4.0)
             attach("\(state.phase)-compact")
             attachTree("\(state.phase)-compact-tree")
             expandIsland()
+            if !springboard.staticTexts[state.title].waitForExistence(timeout: 4) { expandIsland() }
             attach("\(state.phase)-expanded")
             attachTree("\(state.phase)-expanded-tree")
             assertButtons(for: state, where: "island")
@@ -144,10 +147,12 @@ final class LiveActivityUITests: XCTestCase {
         app.launch()
         Thread.sleep(forTimeInterval: 3)
         toHomeScreen(settle: 2.0)
-        let pill = springboard.otherElements["spotlight-pill"].firstMatch
-        XCTAssertTrue(pill.waitForExistence(timeout: 5), "The Home Screen has its search pill")
-        pill.tap()
-        let field = springboard.searchFields.firstMatch
+        springboard.swipeDown()
+        var field = springboard.searchFields.firstMatch
+        if !field.waitForExistence(timeout: 4) {
+            springboard.otherElements["spotlight-pill"].firstMatch.tap()
+            field = springboard.searchFields.firstMatch
+        }
         XCTAssertTrue(field.waitForExistence(timeout: 5), "Spotlight opens with a search field")
         field.typeText("Farside")
         Thread.sleep(forTimeInterval: 4)
