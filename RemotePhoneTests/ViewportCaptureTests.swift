@@ -19,7 +19,7 @@ final class ViewportCaptureTests: XCTestCase {
     }
 
     /// A model that has the Mac's geometry (epoch 4) and one `capture` status with these features.
-    private func model(features: [String], pointerSync: PointerSync? = nil) throws -> PhoneRemoteModel {
+    private func sessionModel(features: [String], pointerSync: PointerSync? = nil) throws -> PhoneRemoteModel {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
         try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 4), to: model)
         try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, pointerSync: pointerSync, features: features),
@@ -104,7 +104,7 @@ final class ViewportCaptureTests: XCTestCase {
     // MARK: What a heartbeat carries
 
     func testAnOlderMacGetsTodaysHeartbeatPlusScreenPixels() throws {
-        let model = try model(features: [SessionFeature.clipboardText])
+        let model = try sessionModel(features: [SessionFeature.clipboardText])
         model.viewportChanged(request())
         let heartbeat = model.heartbeatAction(clock: nil, at: 1)
         XCTAssertNil(heartbeat.viewport)
@@ -133,7 +133,7 @@ final class ViewportCaptureTests: XCTestCase {
     }
 
     func testAHeartbeatWithAViewportPassesTheMacsValidation() throws {
-        let model = try model(features: [SessionFeature.viewportCapture])
+        let model = try sessionModel(features: [SessionFeature.viewportCapture])
         model.viewportChanged(request())
         let heartbeat = model.heartbeatAction(clock: ClockProbe(phoneMs: 1_000), at: 1)
         XCTAssertNotNil(heartbeat.viewport)
@@ -146,7 +146,8 @@ final class ViewportCaptureTests: XCTestCase {
     }
 
     func testAViewportHeartbeatKeepsThePointerAdvertisement() throws {
-        let model = try model(features: [SessionFeature.viewportCapture], pointerSync: PointerSync(videoCursor: false))
+        let model = try sessionModel(features: [SessionFeature.viewportCapture],
+                                     pointerSync: PointerSync(videoCursor: false))
         model.viewportChanged(request())
         let heartbeat = model.heartbeatAction(at: 1)
         XCTAssertNotNil(heartbeat.viewport)
@@ -155,7 +156,7 @@ final class ViewportCaptureTests: XCTestCase {
     }
 
     func testAZoomedViewportReachesTheHeartbeatInDisplayPoints() throws {
-        let model = try model(features: [SessionFeature.viewportCapture])
+        let model = try sessionModel(features: [SessionFeature.viewportCapture])
         var view = ViewportTransform(sourceSize: display, canvasSize: CGSize(width: 874, height: 402), mode: .fill,
                                      safeInsets: ViewportInsets(left: 62, bottom: 21, right: 62))
         view.setZoom(2, anchoredAt: CGPoint(x: 437, y: 201))
@@ -187,7 +188,7 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertNil(PhoneRemoteModel.screenPixels(nativeBounds: CGRect(x: 0, y: 0, width: CGFloat.nan, height: 2622)))
 
         for features in [[String](), [SessionFeature.viewportCapture]] {
-            let model = try model(features: features)
+            let model = try sessionModel(features: features)
             model.viewportChanged(request())
             XCTAssertEqual(model.heartbeatAction(at: 1).screenPixels, model.screenPixels(), "features \(features)")
         }
@@ -204,7 +205,7 @@ final class ViewportCaptureTests: XCTestCase {
 
     func testACaptureStatusRegionIsAdoptedOnlyForTheCurrentGeometry() throws {
         let features = [SessionFeature.viewportCapture]
-        let model = try model(features: features)
+        let model = try sessionModel(features: features)
         let region = CaptureRegion(epoch: 7, x: 327.5, y: 199, width: 815, height: 418,
                                    outputWidth: 2622, outputHeight: 1345)
         func status(epoch: UInt64 = 4, _ region: CaptureRegion?) -> RemoteAction {
@@ -251,6 +252,28 @@ final class ViewportCaptureTests: XCTestCase {
         let band = CropSummary(region(x: 0, y: 0, width: 1470, height: 239, output: (2622, 426)), displaySize: display)
         XCTAssertEqual(band?.caption, "crop 2622×426 · 2.0×", "a crop along one axis counts by area")
         XCTAssertEqual(band?.factor ?? 0, 2, accuracy: 1e-12)
+    }
+
+    func testThePointerGlyphAndACroppedFrameShareOnePlacement() {
+        var view = ViewportTransform(sourceSize: display, canvasSize: CGSize(width: 874, height: 402), mode: .fill,
+                                     safeInsets: ViewportInsets(left: 62, bottom: 21, right: 62))
+        view.setZoom(2.5, anchoredAt: CGPoint(x: 300, y: 150))
+        let output = CGSize(width: 2622, height: 1206)
+        let region = CaptureRegion(epoch: 3, x: 300, y: 200, width: 700, height: 322,
+                                   outputWidth: Int(output.width), outputHeight: Int(output.height))
+        let frame = view.picturePlacement(for: region)
+        let pointers = [CGPoint(x: 300, y: 200), CGPoint(x: 650, y: 361), CGPoint(x: 1000, y: 522),
+                        CGPoint(x: 431.25, y: 299.5)]
+        for pointer in pointers {
+            let glyph = PointerOverlayView.picturePoint(pointer, scale: view.scale)
+            let pixel = CGPoint(x: (glyph.x - frame.minX) / frame.width * output.width,
+                                y: (glyph.y - frame.minY) / frame.height * output.height)
+            let shown = CGPoint(x: region.x + Double(pixel.x / output.width) * region.width,
+                                y: region.y + Double(pixel.y / output.height) * region.height)
+            XCTAssertEqual(shown.x, pointer.x, accuracy: 1e-9, "the glyph sits on the pixel showing its Mac point")
+            XCTAssertEqual(shown.y, pointer.y, accuracy: 1e-9)
+        }
+        XCTAssertEqual(view.picturePlacement(for: nil), CGRect(origin: .zero, size: view.contentRect.size))
     }
 
     func testTheVideoFillsItsRegionOnlyWhileCropped() {
