@@ -1,6 +1,6 @@
 # Session length fix — remote sessions no longer end at 30 minutes
 
-29 September 2026 · Claude Code worktree branch `worktree-agent-aa03e26f1e815691c`, investigated at `pocketdesk-remote-chat` `0bd6245` and rebased onto `a0c3738` (which includes the Mac parity merge: the phone's 90 s session-loss reconnect window and the Mac waiting out its predecessor's connection slot; both behaviours are kept and their integration tests pass). Subordinate to PRODUCT.md; this report records a root-cause investigation, a fix and local evidence, not physical acceptance.
+29 September 2026 · Claude Code worktree branch `worktree-agent-aa03e26f1e815691c`, investigated at `pocketdesk-remote-chat` `0bd6245` and rebased onto `8c02bf0` (which includes the Mac parity merge, with the phone's 90 s session-loss reconnect window and the Mac waiting out its predecessor's connection slot, and the phone redesign; the reconnect behaviours are kept and their integration tests pass). Subordinate to PRODUCT.md; this report records a root-cause investigation, a fix and local evidence, not physical acceptance.
 
 **Evidence level reached:** source inspection of every path that could end a session; a real Bun signaling service driven by a fake clock; the real coordinator driven by a scripted service and a manual clock; the real service with real in-process WebRTC for renewal, credential refresh, ICE restart and the legacy fallback. **Not reached:** any real iPhone or Mac session, any real TURN allocation (Cloudflare or coturn), cellular. A real 45-minute check is listed in section 6.
 
