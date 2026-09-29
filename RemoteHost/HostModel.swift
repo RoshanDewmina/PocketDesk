@@ -505,7 +505,7 @@ final class RemoteHostModel: ObservableObject {
             events.record(.error, problem)
         }
         events.record(.settings, "Automatic recovery \(enabled ? "on" : "off")")
-        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: background.recoveryWanted)
+        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: recoveryHelperRunning)
         refreshBackgroundStates()
     }
 
@@ -579,13 +579,14 @@ final class RemoteHostModel: ObservableObject {
         loginItemState = background.loginState
         recoveryState = background.recoveryState
         openAtLogin = loginItemState.isRegistered
+        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: recoveryHelperRunning)
     }
 
     /// Launch at login and automatic recovery turn on once setup is complete; later choices stick.
     private func applyBackgroundDefaults() {
         if let problem = background.applyDefaults(setupComplete: true) { events.record(.error, problem) }
         refreshBackgroundStates()
-        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: background.recoveryWanted)
+        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: recoveryHelperRunning)
     }
 
     // MARK: Watchdog and recovery
@@ -594,7 +595,7 @@ final class RemoteHostModel: ObservableObject {
         let hang = HostHangWatchdog(onHang: watchdog.map {
             HostWatchdogReporter.hangHandler(files: $0.files, launchID: $0.record.launchID)
         } ?? { _ in _exit(3) })
-        hang.update(curtainUp: false, recoveryEnabled: background.recoveryWanted)
+        hang.update(curtainUp: false, recoveryEnabled: recoveryHelperRunning)
         hangWatchdog = hang
         hang.start()
         guard let watchdog else {
@@ -616,6 +617,9 @@ final class RemoteHostModel: ObservableObject {
             events.record(.recovery, "Stopped after repeated crashes; sharing paused until resumed")
         }
     }
+
+    /// Ending a stalled host only helps when the helper is registered to reopen it.
+    private var recoveryHelperRunning: Bool { background.recoveryWanted && background.recoveryState == .on }
 
     private static let crashLoopDetail = "Farside stopped after repeated crashes. Sharing is paused until you resume it."
     /// A recovery notice is still worth telling a phone that connects within this window.
@@ -655,7 +659,7 @@ final class RemoteHostModel: ObservableObject {
         }
         let covering = curtain.phase != .down
         watchdog?.setCurtainUp(covering)
-        hangWatchdog?.update(curtainUp: covering, recoveryEnabled: background.recoveryWanted)
+        hangWatchdog?.update(curtainUp: covering, recoveryEnabled: recoveryHelperRunning)
         let state = PrivacyCurtainPolicy.protocolState(inputs, up: curtain.phase == .up)
         if state != curtainState {
             curtainState = state
@@ -695,7 +699,7 @@ final class RemoteHostModel: ObservableObject {
     private func liftCurtain() {
         if curtain.phase != .down { curtain.lift() }
         watchdog?.setCurtainUp(false)
-        hangWatchdog?.update(curtainUp: false, recoveryEnabled: background.recoveryWanted)
+        hangWatchdog?.update(curtainUp: false, recoveryEnabled: recoveryHelperRunning)
     }
 
     private static func curtainStatus(_ state: PrivacyCurtainState, displays: Int) -> String? {
