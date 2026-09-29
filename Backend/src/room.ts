@@ -1085,6 +1085,9 @@ export class RoomDO extends DurableObject<Env> {
 
   async forget(): Promise<void> {
     this.queueActivityEnd("user");
+    // Admission must stop before the first await: a suspended Activity registration must not
+    // arrive after its old epoch's end queue has already been drained.
+    this.update({ route_epoch: null, route_expires_at: null, lease_ends_at: null });
     this.revokeAll();
     for (const ws of this.ctx.getWebSockets()) {
       this.detach(ws);
