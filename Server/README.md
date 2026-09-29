@@ -1,6 +1,6 @@
 # PocketDesk private signaling service
 
-This Bun service authenticates one approved PocketDesk host room, brokers opaque encrypted signaling messages, and issues short-lived TURN credentials. It does not terminate media encryption or carry video/input traffic. The wire messages remain `register`, `registered`, `ice`, `peer`, `signal`, and `error`.
+This Bun service authenticates one approved PocketDesk host room, brokers opaque encrypted signaling messages, and issues short-lived TURN credentials. It does not terminate media encryption or carry video/input traffic. The wire messages are `register`, `registered`, `ice`, `peer`, `signal`, and `error`, plus the optional, capability-negotiated `renew` and `renewed` described under "Session renewal" below.
 
 ## Local development
 
@@ -57,13 +57,35 @@ Set `TURN_PROVIDER=cloudflare`, `CLOUDFLARE_TURN_KEY_ID`, and `CLOUDFLARE_TURN_K
 
 The request uses the documented `POST /v1/turn/keys/{key_id}/credentials/generate-ice-servers` contract and requires HTTP 201 plus a valid relay entry. Provider rejection, malformed JSON, a response without a TURN URL, or timeout produces `error: relay_unavailable`; the room is not authorized. See Cloudflare's [Generate Credentials](https://developers.cloudflare.com/realtime/turn/generate-credentials/) documentation.
 
-`TURN_CREDENTIAL_TTL_SECONDS` defaults to 3600 and is constrained here to 60–86400 seconds, below Cloudflare's documented 48-hour maximum. `TURN_PROVIDER_TIMEOUT_MS` defaults to 3000 and must be lower than `AUTH_TIMEOUT_MS`. Runtime refresh during a session is not implemented, so `ROOM_LIFETIME_SECONDS` must remain below the credential lifetime for a bounded test. The service attempts Cloudflare's credential revocation endpoint when a signaling peer disconnects; TTL expiry remains the cleanup backstop if revocation is unavailable.
+`TURN_CREDENTIAL_TTL_SECONDS` defaults to 3600 and is constrained here to 60–86400 seconds, below Cloudflare's documented 48-hour maximum. `TURN_PROVIDER_TIMEOUT_MS` defaults to 3000 and must be lower than `AUTH_TIMEOUT_MS`. Apps that negotiate `renew.1` (see "Session renewal") refresh their credentials during a session. Apps that do not are still bounded by `ROOM_LIFETIME_SECONDS`, which therefore must remain below the credential lifetime. The service attempts Cloudflare's credential revocation endpoint when a signaling peer disconnects; TTL expiry remains the cleanup backstop if revocation is unavailable.
 
 `TURN_CREDENTIAL_ISSUES_PER_MINUTE` is an account-side issuance brake in addition to room authorization, connection limits, and authentication timeouts. It does not meter relayed bytes. Cloudflare TURN analytics and billing controls remain external provider controls; forced-relay physical testing is still required to observe real usage. Shutdown waits up to five seconds for in-flight credential requests and revocations; a credential returned after its socket closes is revoked before clean shutdown when it completes inside that bound. TTL expiry remains the backstop after a provider hang or forced process kill.
 
 ## Self-hosted coturn shared-secret mode
 
 Set `TURN_PROVIDER=coturn`, `TURN_URLS`, and `TURN_SECRET`. This is deliberately separate from Cloudflare mode. The service creates the expiring username and HMAC-SHA1 credential expected by coturn's TURN REST shared-secret authentication. The coturn instance must be configured with the same secret, TLS as applicable, its own allocation/bandwidth quotas, and a restricted relay port range. `TURN_SECRET` must contain at least 32 characters and must never be logged.
+
+## Session renewal
+
+A room used to end `ROOM_LIFETIME_SECONDS` (30 minutes) after the Mac registered, and relay credentials were issued once and never refreshed, so the room had to end before the credentials did. Native clients treat a signaling close as the end of the media session, so every session ended at that boundary. Renewal replaces the fixed cap with a lease that connected, authorized peers keep extending.
+
+Peers that support it add `"features":["renew.1"]` to `register`. The service answers only those peers, so every other message and lifetime is unchanged:
+
+- `registered` gains `renew: { version, leaseSeconds, renewAfterSeconds, credentialSeconds? }`. `credentialSeconds` appears only when a relay provider is configured.
+- The peer sends exactly `{"type":"renew"}` after `renewAfterSeconds`. A peer that did not negotiate the feature, or a message with any other field, gets `invalid_message` and is closed.
+- The service replies `renewed` with `leaseSeconds` (a full lease from now) and the next `renewAfterSeconds`. Once the peer's credentials are a third of their TTL old, the reply also carries fresh `servers` and `credentialSeconds`. If the refresh cannot be issued (`relay_unavailable`, `rate_limited`) or another renewal is still issuing (`renewal_pending`), the reply keeps the lease, omits `servers`, carries `code` and asks for a retry in 30 seconds. Nothing in it closes the room.
+
+Rules:
+
+- Either peer of an approved room can renew. Renewing extends the room lease to a full lease from that moment, so a phone app that renews keeps the room alive even for a Mac app that does not, and the reverse.
+- A renewal never extends a lease that has already lapsed, even if the expiry timer has not fired yet because the event loop was busy. The room ends.
+- Approval is checked on every renewal in addition to the audit loop. Revoking a room still ends both peers within `APPROVAL_AUDIT_INTERVAL_MS`, a renewal cannot revive it, and no credential is issued for a revoked room or delivered to a peer that has left.
+- Credentials refresh at a third of their TTL, so a peer has time for one failed round and an ICE restart before the credential in use can expire. Refreshes count against `TURN_CREDENTIAL_ISSUES_PER_MINUTE` and the provider timeout, and a peer cannot force an earlier one.
+- Superseded credentials are deliberately not revoked early. An existing relay allocation stays bound to the credential it was created with until an ICE restart replaces it, so revoking it would cut live media. They expire on their TTL and are all revoked when the peer disconnects (Stop Sharing, network loss, revocation, shutdown).
+- Peers that do not negotiate the feature keep the original behavior: the room closes `ROOM_LIFETIME_SECONDS` after the Mac registered.
+- `GET /ready` reports `renewal.enabled`, `renewal.leaseSeconds` and counters for renewals and credential refreshes, without any room ID or credential.
+
+To check a running service, open a session and watch `renewal.renewals` grow. For an accelerated test of the refresh path, run a private service with `ROOM_LIFETIME_SECONDS=300` and `TURN_CREDENTIAL_TTL_SECONDS=600`: credentials then refresh every 200 seconds.
 
 ## Configuration
 
@@ -90,7 +112,8 @@ Set `TURN_PROVIDER=coturn`, `TURN_URLS`, and `TURN_SECRET`. This is deliberately
 | `CONNECTION_ATTEMPTS_PER_MINUTE` | `30` | 2–10000 upgrades per observed source |
 | `MESSAGES_PER_SECOND` | `100` | 2–1000 messages per connection |
 | `TURN_CREDENTIAL_ISSUES_PER_MINUTE` | `12` | 2–120 provider credential calls across the process |
-| `ROOM_LIFETIME_SECONDS` | `1800` | 60–86400; closes signaling so native clients tear down media |
+| `ROOM_LIFETIME_SECONDS` | `1800` | 60–86400; the room lease. Apps that negotiate `renew.1` extend it while connected; other apps end here (closing signaling makes native clients tear down media). Must be below `TURN_CREDENTIAL_TTL_SECONDS` |
+| `SESSION_RENEWAL` | `1` | `0`/`false` stops offering renewal, so every session ends at `ROOM_LIFETIME_SECONDS` again (an operator kill switch) |
 | `POCKETDESK_TEST_FORCE_RELAY` | `0` | `1`/`true` adds `policy: "relay"` to the `ice` message so both native peers use relay-only ICE; refused without a TURN provider; acceptance testing only |
 | `POCKETDESK_SECRET_SOURCE` | `env` | `keychain` reads the Cloudflare TURN key ID and token from macOS Keychain and refuses to start if either is also in the environment |
 | `POCKETDESK_KEYCHAIN_SLOT` | `a` | 1–8 lowercase letters or digits; slot `a` uses `pocketdesk.cloudflare.turn-key-id` and `pocketdesk.cloudflare.turn-api-token`, another slot appends `.<slot>` (used to rotate keys) |

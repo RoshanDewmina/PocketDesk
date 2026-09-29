@@ -44,6 +44,15 @@ This is the MVP acceptance path. The signaling and relay service is PocketDesk's
 4. Turn **Relay-only test** on, reconnect from a fresh session, and require the route diagnostic to say `Relay`. Repeat the same clock, edit, and interrupted-drag task. A changing clock plus the reflected edit plus safe input release are all required. WSS authentication or returned ICE servers alone do not prove media crossed a relay.
 5. Stop the bounded runner when finished. Preserve redacted timestamps, route labels, observed behavior, and any necessary Mac intervention. Never retain pairing codes, tokens, or provider credentials in the receipt.
 
+## Session length: past the old 30-minute limit
+
+Sessions used to end at about 30 minutes. Current apps renew the room lease and refresh relay credentials while connected ([SESSION-LENGTH-FIX.md](research/2026-09-28-round2/SESSION-LENGTH-FIX.md)). Install this build on both the Mac and the iPhone; an older app on either side can still end the session at the old limit. This gate has only been exercised with a real service and loopback WebRTC so far, never on devices.
+
+1. Keep the service up for the whole test. The bounded runner stops its own processes after its duration, 1800 seconds by default, which is a test-rig limit rather than the product's: pass `3600` as the runner's duration for this gate.
+2. On the same Wi-Fi, connect and leave the session open for at least 45 minutes with light use every few minutes (read the clock, scroll, one short edit). Note any freeze, "Connection interrupted" status, phone return to the home screen, or Mac capture restart around minute 30, and again at minute 60 if you continue.
+3. Repeat over the built-in relay with **Relay-only test** on for at least 45 minutes. For a faster refresh cycle, set `ROOM_LIFETIME_SECONDS=300` and `TURN_CREDENTIAL_TTL_SECONDS=600` in the private service environment: credentials then refresh every 200 seconds and each refresh restarts ICE on a relayed route. Confirm with `curl -s http://127.0.0.1:<port>/ready` that `renewal.renewals` and `renewal.credentialRefreshes` keep increasing.
+4. Pass: no visible interruption at the old 30-minute mark or at any credential refresh, the route still says `Relay` on the relay run, the last input still lands, and Stop Sharing on the Mac ends the phone session immediately at the end. Also confirm an app built before this change still ends at the lease and reconnects on its own. Record timestamps.
+
 ## Temporary Tailscale path
 
 Tailscale is useful only as a private debugging route while the built-in service is unavailable. Its endpoint and successful session may help isolate pairing, capture, or input problems, but they do not establish PocketDesk’s standalone cellular or forced-relay behavior. A private WSS signaling check also does not prove a phone media/control session. Keep the temporary listener bounded and remove only the test processes it owns. Repeat the two built-in remote gates above before calling the MVP validated.
@@ -57,5 +66,7 @@ Mark each item with an observed result and a timestamp:
 | Local Wi-Fi |  |  |  | Local/direct |  |
 | Cellular |  |  |  | Record actual route |  |
 | Cellular relay-only |  |  |  | Must say `Relay` |  |
+| 45-minute session, Wi-Fi |  |  |  | Local/direct |  |
+| 45-minute session, relay-only |  |  |  | Must say `Relay` |  |
 
 The feasibility MVP remains unvalidated until all three rows pass on physical devices. Record a concise continue, change, or stop recommendation after the test.
