@@ -51,7 +51,11 @@ struct AnywhereEntitlement: Equatable {
     static let notSubscribed = AnywhereEntitlement(phase: .notSubscribed)
 
     /// Trial, paid, or a billing problem still inside Apple's grace period.
-    var hasAccess: Bool { phase == .trial || phase == .active || phase == .gracePeriod }
+    var hasAccess: Bool {
+        guard phase == .trial || phase == .active || phase == .gracePeriod else { return false }
+        // A cached status cannot extend access past the end StoreKit already reported.
+        return periodEnd.map { $0 > Date() } ?? true
+    }
     var hasBillingProblem: Bool { phase == .gracePeriod || phase == .billingRetry }
 
     static func resolve(_ snapshots: [SubscriptionSnapshot], now: Date = Date()) -> AnywhereEntitlement {

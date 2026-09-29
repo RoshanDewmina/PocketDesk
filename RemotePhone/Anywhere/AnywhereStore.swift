@@ -27,6 +27,7 @@ final class AnywhereStore: ObservableObject {
     private let sync: () async throws -> Void
     private var signedTransactionValue: String?
     private var listeners: [Task<Void, Never>] = []
+    private var expiryRefresh: Task<Void, Never>?
 
     init(productIDs: [String] = AnywherePlan.productIDs,
          accountToken: @escaping () -> UUID? = { InstallIdentity.current()?.accountToken },
@@ -67,6 +68,8 @@ final class AnywhereStore: ObservableObject {
     func stop() {
         listeners.forEach { $0.cancel() }
         listeners.removeAll()
+        expiryRefresh?.cancel()
+        expiryRefresh = nil
     }
 
     var offers: [PlanOffer] { products.compactMap { PlanOffer(product: $0, trialEligible: trialEligible) } }
@@ -97,6 +100,7 @@ final class AnywhereStore: ObservableObject {
         let best = AnywhereEntitlement.best(snapshots)
         signedTransactionValue = best.entitlement.hasAccess ? best.snapshot?.signedTransaction : nil
         if entitlement != best.entitlement { entitlement = best.entitlement }
+        scheduleExpiryRefresh()
         await updateTrialEligibility()
     }
 
@@ -152,7 +156,14 @@ final class AnywhereStore: ObservableObject {
         restoreMessage = nil
         do {
             try await sync()
-            await refresh()
+            // A StoreKit Test purchase made outside the app can reach subscription status just
+            // after sync returns. Give that same eventual propagation a short chance on device,
+            // so Restore does not claim "no subscription" while one is arriving.
+            for attempt in 0..<10 {
+                await refresh()
+                if entitlement.hasAccess || Task.isCancelled { break }
+                if attempt < 9 { try? await Task.sleep(for: .milliseconds(200)) }
+            }
             restoreMessage = entitlement.hasAccess
                 ? "Farside Anywhere is back on."
                 : "No Farside Anywhere subscription was found for this Apple Account."
@@ -164,6 +175,22 @@ final class AnywhereStore: ObservableObject {
     }
 
     func resetPurchaseState() { purchaseState = .idle }
+
+    private func scheduleExpiryRefresh() {
+        expiryRefresh?.cancel()
+        expiryRefresh = nil
+        guard entitlement.hasAccess, let end = entitlement.periodEnd else { return }
+        // Reconcile again at the known boundary even if StoreKit emits no update. Long periods
+        // are checked daily so a sleeping app does not rely on a single week-long timer.
+        let delay = min(max(end.timeIntervalSinceNow + 0.1, 0.1), 86_400)
+        expiryRefresh = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled, let self else { return }
+            self.expiryRefresh = nil
+            await self.refresh()
+            self.onTransactionUpdate?()
+        }
+    }
 
     private func updateTrialEligibility() async {
         guard let groupID else { trialEligible = false; return }

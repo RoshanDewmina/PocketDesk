@@ -149,12 +149,34 @@ final class AnywhereStoreKitTests: XCTestCase {
     func testExpiryEndsAccessAndTheSignedTransaction() async throws {
         // Match the app's transaction/status listener lifecycle while exercising StoreKitTest.
         store.start()
+        session.timeRate = .oneRenewalEveryTwoSeconds
         await store.purchase(try monthly)
-        try session.expireSubscription(productIdentifier: AnywherePlan.monthlyID)
-        await eventually("expiry") { store.entitlement.phase == .expired }
+        guard case .verified(let transaction)? = await Transaction.latest(for: AnywherePlan.monthlyID) else { return XCTFail("no transaction") }
+        try session.disableAutoRenewForTransaction(identifier: UInt(transaction.id))
+        await eventually("expiry", timeout: 15) { store.entitlement.phase == .expired }
         XCTAssertFalse(store.entitlement.hasAccess)
         let signed = await store.signedTransaction()
         XCTAssertNil(signed, "Nothing is sent to the service without access")
+    }
+
+    func testKnownEndRefreshesWithoutAStoreKitListenerOrCallerPolling() async throws {
+        session.timeRate = .oneRenewalEveryTwoSeconds
+        var boundaryCallbacks = 0
+        store.onTransactionUpdate = { boundaryCallbacks += 1 }
+        try await session.buyProduct(identifier: AnywherePlan.monthlyID)
+        await eventually("initial external purchase") { store.entitlement.hasAccess }
+        XCTAssertTrue(store.entitlement.hasAccess)
+        guard case .verified(let transaction)? = await Transaction.latest(for: AnywherePlan.monthlyID) else { return XCTFail("no transaction") }
+        try session.disableAutoRenewForTransaction(identifier: UInt(transaction.id))
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline, store.entitlement.phase != .expired {
+            try await Task.sleep(for: .milliseconds(200))
+        }
+        XCTAssertEqual(store.entitlement.phase, .expired, "The end-date timer reconciles status without a listener or caller refresh")
+        XCTAssertFalse(store.entitlement.hasAccess)
+        let signed = await store.signedTransaction()
+        XCTAssertNil(signed)
+        XCTAssertEqual(boundaryCallbacks, 1, "The boundary produces one service refresh without a timer loop")
     }
 
     func testRefundRevokesAccess() async throws {

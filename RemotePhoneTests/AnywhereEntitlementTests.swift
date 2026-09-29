@@ -39,6 +39,13 @@ final class AnywhereEntitlementTests: XCTestCase {
         XCTAssertEqual(AnywhereEntitlement.resolve([snap(.gracePeriod, ends: -60, grace: nil)], now: now).phase, .billingRetry)
     }
 
+    func testCachedAccessEndsAtItsKnownDateWithoutANewStoreKitUpdate() {
+        for phase in [AnywhereEntitlement.Phase.trial, .active, .gracePeriod] {
+            XCTAssertFalse(AnywhereEntitlement(phase: phase, periodEnd: .distantPast).hasAccess)
+            XCTAssertTrue(AnywhereEntitlement(phase: phase, periodEnd: .distantFuture).hasAccess)
+        }
+    }
+
     func testUnverifiedAndForeignStatusesNeverGrant() {
         XCTAssertEqual(AnywhereEntitlement.resolve([snap(.subscribed, verified: false)], now: now).phase, .notSubscribed)
         XCTAssertEqual(AnywhereEntitlement.resolve([snap(.subscribed, "com.example.other")], now: now).phase, .notSubscribed)
