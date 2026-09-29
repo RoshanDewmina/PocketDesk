@@ -1,6 +1,6 @@
 # Clipboard sync and background continuity — round 2 report
 
-28 September 2026 · Claude Code worktree branch `worktree-agent-a4c37112b2032ec1a` (based on `03884a3`). Subordinate to PRODUCT.md; this report records an implementation proposal plus local evidence, not physical acceptance.
+28 September 2026 · Claude Code worktree branch `worktree-agent-a4c37112b2032ec1a`, rebased onto `pocketdesk-remote-chat` at `3ec0a58` (includes `1875e69`, Codex's keyboard-focus commit and the relay-policy merge). Subordinate to PRODUCT.md; this report records an implementation proposal plus local evidence, not physical acceptance. Section 3b (display sleep, lock and Mac availability) was added at the coordinator's request from MAC-GAPS-SOLUTIONS.md gap 3.
 
 **Evidence level reached:** source + compilation (Mac host, iPhone app) + automated unit tests + a real local WebRTC data-channel integration test. **Not reached:** real Mac↔iPhone clipboard use, real iOS backgrounding on a device, cellular/relay behaviour. See the physical checklist at the end.
 
@@ -76,18 +76,35 @@ Only the finite task-completion window. PocketDesk uses it to (1) release input 
 ### Compatibility
 New phone + old host: no `pause.1` → phone closes on background and auto-reconnects on return (still better than today). Old phone + new host: never sends `pause`, behaves exactly as before.
 
+## 3b. Display sleep, lock and Mac availability (host)
+
+Before: `screensDidSleep` stopped sharing, so an awake Mac whose display had merely slept was unreachable from the phone. That same teardown was also the only thing that stopped sharing when the Mac was *locked* (lock → display sleep), and after a wake sharing restarted even if the Mac was still locked.
+
+| Event | New host behaviour |
+|---|---|
+| Display sleeps (system awake) | Sharing and relay presence stay up. With a phone connected: remote input released, capture status carries `hostState: "displayAsleep"`; the phone shows “Your Mac’s display is asleep” with **Wake display** (new `wake` action, feature `display.wake.1`, needs effective control). |
+| Phone connects / resumes while the display sleeps | `IOPMAssertionDeclareUserActivity(…, kIOPMUserActiveRemote)` wakes the display before capture starts (no special privileges, per `IOPMLib.h`). |
+| System will sleep · fast user switch · **screen lock** | Input and capture stop immediately, the phone receives `hostState` `sleeping` / `switchedUser` / `locked` on the ordered channel, and sharing tears down 0.2 s later. The phone then says “Your Mac went to sleep at 3:14 PM…” / “…was locked… unlock it in person” instead of guessing (PRODUCT: only state what the Mac reported). |
+| Lock detection | `com.apple.screenIsLocked` / `…Unlocked` distributed notifications (widely used, undocumented names) plus a 1 s `CGSessionCopyCurrentDictionary()["CGSSessionScreenIsLocked"]` check, and a hard check before any capture starts. Wake/unlock resumes only if the session is not still locked. |
+| Power | While sharing (and Keep awake on): `kIOPMAssertPreventUserIdleSystemSleep` keeps the Mac reachable; the display assertion is held only while a phone is connected and not paused. Lid close, Apple-menu sleep and low battery still sleep the Mac (documented assertion limits). Strictly less power than before, when the display assertion was held for the whole sharing period. |
+
+Pure policies (`HostSleepPolicy`, `HostPowerPolicy`, `HostScreenLock.isLocked`) are unit-tested; the notification wiring, the real display wake and lock detection need the physical checks below. Not done: AC-only/battery policy, screen-saver detection, LAN wake (research gap 3 items 5.1–5.2), and a host-UI line for “display asleep”.
+
 ## 4. Files
 
 New: `RemoteShared/ClipboardTransfer.swift` (limits, frame, chunker, assembler, outbox, privacy markers), `RemoteShared/SessionContinuity.swift` (features, extension validation, host pause, phone continuity policy), `RemoteHost/HostClipboard.swift` (pasteboard access + service), `RemotePhone/PhoneClipboard.swift` (phone controller, background-task wrapper), tests `RemoteTests/ClipboardTransferTests.swift`, `RemoteTests/HostClipboardServiceTests.swift`, `RemotePhoneTests/PhoneClipboardTests.swift`.
-Changed: `RemoteShared/ControlProtocol.swift` (+2 fields, +1 line), `RemoteShared/RemoteCoordinator.swift` (`isRunning`, `dropPeerSession()`), `RemoteHost/HostModel.swift`, `RemotePhone/RemotePhoneApp.swift`, `RemotePhone/NativeSessionView.swift`, `RemotePhone/HomeView.swift`, `RemoteTests/SessionIntegrationTests.swift`, `RemotePhoneTests/SessionLifecycleTests.swift`, `project.yml` (+`HostClipboard.swift` in RemoteCoreTests), regenerated `PocketDesktop.xcodeproj`.
+Changed: `RemoteShared/ControlProtocol.swift` (+3 appended fields `clipboard`, `features`, `hostState`, +1 line in `validate()`), `RemoteShared/RemoteCoordinator.swift` (`isRunning`, `dropPeerSession()`), `RemoteHost/HostModel.swift`, `RemoteHost/HostKeepAwake.swift` (assertion types, power/sleep policies, lock check, display wake), `RemotePhone/RemotePhoneApp.swift`, `RemotePhone/NativeSessionView.swift`, `RemotePhone/HomeView.swift`, `RemoteTests/SessionIntegrationTests.swift`, `RemoteTests/HostKeepAwakeTests.swift`, `RemotePhoneTests/SessionLifecycleTests.swift`, `project.yml` (+`HostClipboard.swift` in RemoteCoreTests), regenerated `PocketDesktop.xcodeproj`.
 
-## 5. Local verification
+Merge note: main's `textFocusProbe`/`textFocusEditable` fields sit beside the new fields; extension actions reject them explicitly because they return early from `validate()`. Pause and unavailability teardown also invalidate main's text-focus probe.
+
+## 5. Local verification (after rebase onto `3ec0a58`)
 
 - `xcodegen generate`; `PocketDeskRemoteHost` Debug build (unsigned) and `PocketDeskRemote` simulator build: no warnings in new code.
-- RemoteCoreTests (macOS): **175 tests, 0 failures, 1 pre-existing skip** (baseline 146). New: framing/limits/worst-case packet size, validation, reassembly gaps/tamper/invalid UTF-8/expiry, pacing, privacy markers, legacy decoding, unknown status codes, host service (verified push, refusals, paced pull held back by a full buffer, `afterCopy` wait/unchanged, blocked read → `busy` without blocking main, reset), real private-`NSPasteboard` concealed/limit/URL/marker checks, continuity policy, host grace.
-- Integration over real WebRTC on localhost (not network evidence): 262,141 bytes Mac→phone in 0.32–0.72 s with ~27 interleaved control messages, and phone→Mac in 0.28–0.42 s, session never tripped the buffer guard; grace expiry drops only the phone session and cached trust rejoins twice without approval. Three repeated runs passed.
-- RemotePhoneTests (iOS 27 simulator): **31 tests, 0 failures** (baseline 23). New: paced send + ⌘V only after `stored`, refusal/uncertain messages, preference persistence, verified receive to pasteboard, stray data ignored, timeouts, busy; lifecycle without a session, input release on background, recovery.
-- RemotePhoneUITests: see the delivery note (run on a dedicated simulator).
+- RemoteCoreTests (macOS): **192 tests, 0 new-test failures, 1 pre-existing skip** (main has 159; 33 new). New: framing/limits/worst-case packet size, validation, reassembly gaps/tamper/invalid UTF-8/expiry, pacing, privacy markers, legacy decoding, unknown status codes, host service (verified push, refusals, paced pull held back by a full buffer, `afterCopy` wait/unchanged, blocked read → `busy` without blocking main, reset), real private-`NSPasteboard` concealed/limit/URL/marker checks, continuity policy, host grace, sleep/power/lock policies, presence field.
+- One pre-existing integration test, `testHostKeepsRegisteredRoomWhenPhoneLeavesOrMediaDrops`, failed intermittently at different assertions while machine load averaged 300–800; it polls for a transient idle state that the phone's automatic rejoin can end. See the delivery note for the same-conditions comparison with untouched main.
+- Integration over real WebRTC on localhost (not network evidence): 262,141 bytes Mac→phone in 0.32–0.72 s with ~25 interleaved control messages, phone→Mac in 0.28–0.90 s; the session never tripped the buffer guard. Grace expiry drops only the phone session and cached trust rejoins twice without approval.
+- RemotePhoneTests (iOS 27 simulator): **34 tests, 0 failures** (main has 25; 9 new). New: paced send + ⌘V only after `stored`, refusal/uncertain messages, preference persistence, verified receive to pasteboard, stray data ignored, timeouts, busy; lifecycle without a session, input release on background, recovery, Mac-reported departure wording.
+- RemotePhoneUITests: **not completed.** The XCTest runner aborted in its stall handler before any test started, twice, while five simulators from several agents were booted and load averaged ~800; per the coordinator, simulator fan-out was not retried. Instead, the offline layout was checked with DEBUG launch switches (`--ui-keyboard-check`, `--ui-controls-check --ui-clipboard-check`, `--ui-background-concealed-check`); screenshots are in `~/Downloads/pocketdesk-clipboard-*.png` and `pocketdesk-concealed-return.png`. `testBackgroundConcealsOfflineLayoutUntilExplicitReturn` expectations (“Session ended”, “Return to PocketDesk”) are preserved by design.
 
 ## 6. Physical test checklist (iPhone + Mac, disposable text only)
 
@@ -109,6 +126,13 @@ Background
 13. While backgrounded, watch the Mac: capture stops at once (no streaming CPU), and the menu bar returns to ready when the phone’s hold ends (~25 s) — or within 45 s at most if the phone never closed cleanly.
 14. Repeat 8 and 11 on cellular through the relay once it is deployed.
 
+Display sleep and lock (Mac)
+15. With sharing on and no phone connected, let the Mac display sleep (or press ⌃⇧⏏ / use a hot corner). Connect from the phone: the display wakes and the picture appears; the Mac never went to “stopped”.
+16. During a session, sleep the display: the phone shows “Your Mac’s display is asleep” and Wake display brings the picture back.
+17. Lock the Mac (⌃⌘Q) during a session: the phone's input stops at once, the session ends, and the phone says the Mac was locked. Confirm no lock-screen frames are streamed afterwards, and sharing resumes by itself after unlocking.
+18. Apple menu › Sleep during a session: the phone says the Mac went to sleep; after wake with a password-protected lock screen, sharing stays off until unlock.
+19. Leave the Mac idle past its system-sleep time with sharing on: it stays reachable while the display sleeps (Activity Monitor › Energy shows the “PocketDesk remote access” assertion); turning off Keep awake lets it sleep normally.
+
 ## 7. Open risks and follow-ups
 
 - **Actual hold length and socket survival on device are unmeasured.** iOS grants an undocumented, variable window; the code adapts to `backgroundTimeRemaining`, but the relay WebSocket or ICE may still drop earlier on some networks.
@@ -117,5 +141,8 @@ Background
 - **Mac-side transparency:** the host UI does not yet say “phone paused” or “clipboard sent to phone”. Consider a subtle menu-bar status line.
 - **Merge with the pointer-telemetry work:** both branches append to `RemoteAction`. Extension actions return early from `validate()`, so any new telemetry field should also be rejected on `clipboard`/`pause`/`resume` in `validateSessionExtension()` after merge.
 - **PasteButton styling** is system-controlled (tinted circle in the toolbar); confirm it reads well in both themes and doesn’t show a prompt.
+- **Keyboard row order:** Paste/Copy now lead the scrolling key row, which pushes ⌘ just past the right edge in portrait. Judge on the phone; the alternative is to move the pair after Return (less discoverable).
+- **Lock detection relies on undocumented notification names** plus the `CGSSessionScreenIsLocked` session key; both are widely used but not API contracts. The pre-capture check fails closed only if the key is present.
+- **Wake on connect is deliberate:** a phone connection now turns the Mac display on (as Workbench does). That lights the local screen for anyone nearby; privacy-curtain work stays separate.
 - iPhone passwords copied from the iOS Passwords app carry no marker PocketDesk can see through the paste control; sending them is always an explicit user tap.
 - PRODUCT.md, the implementation ledger and the Workbench matrix (“Clipboard sync ❌”, “Background connection persistence ❌”) should be updated by the integrating agent after physical checks.
