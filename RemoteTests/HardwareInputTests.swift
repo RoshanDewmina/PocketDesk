@@ -115,6 +115,17 @@ final class ShortcutRemapTests: XCTestCase {
 }
 
 final class HardwareKeyRepeatTests: XCTestCase {
+    func testShortcutChordsNeverRepeat() {
+        var keyRepeat = HardwareKeyRepeat()
+        for modifiers in [["command"], ["control"], ["command", "shift"], ["option", "control"]] {
+            keyRepeat.pressed(usage: 0x2A, key: "delete", modifiers: modifiers, at: 10)
+            XCTAssertFalse(keyRepeat.isRepeating, "\(modifiers) + delete must act once")
+            XCTAssertNil(keyRepeat.due(at: 11))
+        }
+        keyRepeat.pressed(usage: 0x4F, key: "right", modifiers: ["shift", "option"], at: 10)
+        XCTAssertEqual(keyRepeat.due(at: 10.5)?.modifiers, ["shift", "option"], "Selection and word moves still repeat")
+    }
+
     func testHeldKeyRepeatsAfterTheDelayAtTheInterval() {
         var keyRepeat = HardwareKeyRepeat()
         keyRepeat.pressed(usage: 0x2A, key: "delete", modifiers: [], at: 10)

@@ -120,7 +120,9 @@ struct ShortcutRemap: Equatable, Identifiable {
 }
 
 /// Auto-repeat for a held key. The phone repeats rather than holding a Mac key down, so a lost
-/// connection can never leave a key stuck on the Mac. Only the most recent key repeats.
+/// connection can never leave a key stuck on the Mac. Only the most recent key repeats. The Mac
+/// receives every repeat as a fresh press, so ⌘ and ⌃ chords (shortcuts, and the ⌃⌥ stand-ins)
+/// never repeat: holding ⌘⌫ or ⌃⌥Q must act once.
 struct HardwareKeyRepeat {
     static let delay: TimeInterval = 0.5
     static let interval: TimeInterval = 0.07
@@ -137,7 +139,8 @@ struct HardwareKeyRepeat {
     var isRepeating: Bool { active != nil }
 
     mutating func pressed(usage: Int, key: String, modifiers: [String], at time: TimeInterval) {
-        active = HardwareKeyMap.repeats(key)
+        let shortcut = modifiers.contains("command") || modifiers.contains("control")
+        active = HardwareKeyMap.repeats(key) && !shortcut
             ? Active(usage: usage, key: key, modifiers: modifiers, next: time + Self.delay) : nil
     }
 

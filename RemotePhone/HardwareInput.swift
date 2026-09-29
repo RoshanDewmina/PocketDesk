@@ -64,6 +64,9 @@ final class HardwareKeyboardRouter {
     func updateModifiers(_ flags: UIKeyModifierFlags) {
         let names = Self.names(for: flags)
         guard names != heldModifiers else { return }
+        // A repeat carries the chord it started with; once the modifiers change it would be stale.
+        repeatState.cancel()
+        stopTimerIfIdle()
         heldModifiers = names
         modifiersChanged(names)
     }

@@ -60,6 +60,33 @@ final class HardwareKeyboardRouterTests: XCTestCase {
         XCTAssertEqual(sent, ["escape shift"])
     }
 
+    func testARepeatStopsWhenTheModifiersChangeAndShortcutsNeverRepeat() {
+        let router = makeRouter()
+        _ = router.pressBegan(usage: 0xE1, flags: .shift, at: 1)
+        _ = router.pressBegan(usage: 0x4F, flags: .shift, at: 1)
+        XCTAssertEqual(sent, ["right shift"])
+        _ = router.pressEnded(usage: 0xE1, flags: [])
+        let stopped = expectation(description: "no stale shift+right after shift is released")
+        stopped.isInverted = true
+        let watcher = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [unowned self] _ in
+            MainActor.assumeIsolated { if self.sent.count > 1 { stopped.fulfill() } }
+        }
+        wait(for: [stopped], timeout: 0.8)
+        watcher.invalidate()
+        XCTAssertEqual(sent, ["right shift"])
+
+        sent = []
+        _ = router.pressBegan(usage: 0x14, flags: [.control, .alternate], at: ProcessInfo.processInfo.systemUptime)
+        let once = expectation(description: "⌃⌥Q (⌘Q) is sent once however long it is held")
+        once.isInverted = true
+        let quitWatcher = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [unowned self] _ in
+            MainActor.assumeIsolated { if self.sent.count > 1 { once.fulfill() } }
+        }
+        wait(for: [once], timeout: 0.8)
+        quitWatcher.invalidate()
+        XCTAssertEqual(sent, ["q command"])
+    }
+
     func testReleaseAllClearsModifiers() {
         let router = makeRouter()
         _ = router.pressBegan(usage: 0xE1, flags: .shift, at: 1)
