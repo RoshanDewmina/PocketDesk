@@ -13,8 +13,10 @@ export type EntitlementTokenPayload = {
   s: string;
   /** expiry, Unix seconds */
   x: number;
-  /** environment: Production / Sandbox / Xcode */
+  /** Apple environment: Production / Sandbox / Xcode */
   n: EnvironmentLetter;
+  /** deployment that minted it (dev / test / staging / production); tokens never cross deployments */
+  e: string;
 };
 
 async function sign(key: string, body: string): Promise<Uint8Array> {
@@ -26,7 +28,7 @@ export async function mintEntitlementToken(key: string, payload: EntitlementToke
   return `${TOKEN_PREFIX}.${body}.${base64UrlEncode(await sign(key, body))}`;
 }
 
-export async function verifyEntitlementToken(key: string, token: string, nowMs: number): Promise<EntitlementTokenPayload | undefined> {
+export async function verifyEntitlementToken(key: string, token: string, nowMs: number, environmentName: string): Promise<EntitlementTokenPayload | undefined> {
   if (typeof token !== "string" || token.length > 512) return undefined;
   const parts = token.split(".");
   if (parts.length !== 3 || parts[0] !== TOKEN_PREFIX) return undefined;
@@ -41,11 +43,12 @@ export async function verifyEntitlementToken(key: string, token: string, nowMs: 
   if (!isRecord(payload) || payload.v !== 1 || typeof payload.d !== "string" || !HEX64.test(payload.d) ||
       typeof payload.s !== "string" || !/^[a-f0-9]{64}$/.test(payload.s) ||
       typeof payload.x !== "number" || !Number.isSafeInteger(payload.x) ||
-      (payload.n !== "P" && payload.n !== "S" && payload.n !== "X")) {
+      (payload.n !== "P" && payload.n !== "S" && payload.n !== "X") ||
+      typeof payload.e !== "string" || payload.e !== environmentName) {
     return undefined;
   }
   if (payload.x * 1000 <= nowMs) return undefined;
-  return { v: 1, d: payload.d, s: payload.s, x: payload.x, n: payload.n };
+  return { v: 1, d: payload.d, s: payload.s, x: payload.x, n: payload.n, e: payload.e };
 }
 
 export const environmentLetter = (environment: string): EnvironmentLetter =>

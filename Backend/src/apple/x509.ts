@@ -37,8 +37,8 @@ export type ParsedCertificate = {
 
 export class DerError extends Error {}
 
-function readTlv(bytes: Uint8Array, offset: number): Tlv {
-  if (offset + 2 > bytes.length) throw new DerError("truncated");
+function readTlv(bytes: Uint8Array, offset: number, limit = bytes.length): Tlv {
+  if (offset + 2 > limit) throw new DerError("truncated");
   const tag = bytes[offset]!;
   if ((tag & 0x1f) === 0x1f) throw new DerError("multi-byte tags unsupported");
   let length = bytes[offset + 1]!;
@@ -48,10 +48,12 @@ function readTlv(bytes: Uint8Array, offset: number): Tlv {
     if (count === 0 || count > 4 || start + count > bytes.length) throw new DerError("bad length");
     length = 0;
     for (let i = 0; i < count; i++) length = length * 256 + bytes[start + i]!;
+    // DER requires the shortest encoding: no leading zero byte and no long form for lengths under 128.
+    if (bytes[start] === 0 || length < 0x80) throw new DerError("non-minimal length");
     start += count;
   }
   const end = start + length;
-  if (end > bytes.length) throw new DerError("truncated value");
+  if (end > limit) throw new DerError("truncated value");
   return { tag, offset, start, end };
 }
 
@@ -59,7 +61,7 @@ function children(bytes: Uint8Array, tlv: Tlv): Tlv[] {
   const out: Tlv[] = [];
   let offset = tlv.start;
   while (offset < tlv.end) {
-    const child = readTlv(bytes, offset);
+    const child = readTlv(bytes, offset, tlv.end);
     out.push(child);
     offset = child.end;
   }
@@ -149,6 +151,10 @@ export function parseCertificate(der: Uint8Array): ParsedCertificate {
   }
   const [notBefore, notAfter] = children(der, validity);
   if (!notBefore || !notAfter) throw new DerError("bad validity");
+  const tbsSignatureOid = children(der, tbsSignature)[0];
+  if (!tbsSignatureOid || tbsSignatureOid.tag !== 0x06 || decodeOid(content(der, tbsSignatureOid)) !== decodeOid(content(der, signatureAlgorithmOidTlv))) {
+    throw new DerError("signature algorithm mismatch");
+  }
 
   const extensionOids = new Set<string>();
   for (; index < fields.length; index++) {

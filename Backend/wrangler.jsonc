@@ -6,8 +6,8 @@
   "compatibility_date": "2026-09-29",
   "observability": {
     "enabled": true,
-    "logs": { "enabled": true, "head_sampling_rate": 1 },
-    "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
+    "traces": { "enabled": false }
   },
   "triggers": { "crons": ["17 4 * * *"] },
   "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
@@ -22,7 +22,8 @@
     { "name": "RL_API_DEVICE", "namespace_id": "1004", "simple": { "limit": 6, "period": 60 } },
     { "name": "RL_API_SANDBOX", "namespace_id": "1005", "simple": { "limit": 3, "period": 60 } },
     { "name": "RL_NOTIFY", "namespace_id": "1006", "simple": { "limit": 120, "period": 60 } },
-    { "name": "RL_TURN", "namespace_id": "1007", "simple": { "limit": 600, "period": 60 } }
+    { "name": "RL_TURN", "namespace_id": "1007", "simple": { "limit": 600, "period": 60 } },
+    { "name": "RL_TURN_ENTITLEMENT", "namespace_id": "1008", "simple": { "limit": 20, "period": 60 } }
   ],
   "vars": {
     "ENVIRONMENT_NAME": "dev",
@@ -35,16 +36,20 @@
     "TURN_CREDENTIAL_TTL_SECONDS": "3600",
     "ROOM_LEASE_SECONDS": "1800",
     "MAX_DEVICES_PER_ENTITLEMENT": "3",
-    "TEST_FORCE_RELAY": "0"
+    "TEST_FORCE_RELAY": "0",
+    "ALLOW_UNENTITLED_RELAY": "0",
+    "KEEPALIVE_SECONDS": "0"
   },
   "env": {
     "staging": {
       "name": "farside-backend-staging",
+      "workers_dev": false,
+      "preview_urls": false,
       // "routes": [{ "pattern": "signal-staging.REPLACE_DOMAIN", "custom_domain": true }],
       "observability": {
         "enabled": true,
-        "logs": { "enabled": true, "head_sampling_rate": 1 },
-        "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+        "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
+        "traces": { "enabled": false }
       },
       "triggers": { "crons": ["17 4 * * *"] },
       "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
@@ -58,7 +63,8 @@
         { "name": "RL_API_DEVICE", "namespace_id": "2004", "simple": { "limit": 6, "period": 60 } },
         { "name": "RL_API_SANDBOX", "namespace_id": "2005", "simple": { "limit": 3, "period": 60 } },
         { "name": "RL_NOTIFY", "namespace_id": "2006", "simple": { "limit": 120, "period": 60 } },
-        { "name": "RL_TURN", "namespace_id": "2007", "simple": { "limit": 600, "period": 60 } }
+        { "name": "RL_TURN", "namespace_id": "2007", "simple": { "limit": 600, "period": 60 } },
+        { "name": "RL_TURN_ENTITLEMENT", "namespace_id": "2008", "simple": { "limit": 20, "period": 60 } }
       ],
       "vars": {
         "ENVIRONMENT_NAME": "staging",
@@ -71,16 +77,20 @@
         "TURN_CREDENTIAL_TTL_SECONDS": "3600",
         "ROOM_LEASE_SECONDS": "1800",
         "MAX_DEVICES_PER_ENTITLEMENT": "3",
-        "TEST_FORCE_RELAY": "0"
+        "TEST_FORCE_RELAY": "0",
+        "ALLOW_UNENTITLED_RELAY": "0",
+        "KEEPALIVE_SECONDS": "0"
       }
     },
     "production": {
       "name": "farside-backend-production",
+      "workers_dev": false,
+      "preview_urls": false,
       // "routes": [{ "pattern": "signal.REPLACE_DOMAIN", "custom_domain": true }],
       "observability": {
         "enabled": true,
-        "logs": { "enabled": true, "head_sampling_rate": 1 },
-        "traces": { "enabled": true, "head_sampling_rate": 0.02 }
+        "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
+        "traces": { "enabled": false }
       },
       "triggers": { "crons": ["17 4 * * *"] },
       "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
@@ -94,7 +104,8 @@
         { "name": "RL_API_DEVICE", "namespace_id": "3004", "simple": { "limit": 6, "period": 60 } },
         { "name": "RL_API_SANDBOX", "namespace_id": "3005", "simple": { "limit": 3, "period": 60 } },
         { "name": "RL_NOTIFY", "namespace_id": "3006", "simple": { "limit": 120, "period": 60 } },
-        { "name": "RL_TURN", "namespace_id": "3007", "simple": { "limit": 600, "period": 60 } }
+        { "name": "RL_TURN", "namespace_id": "3007", "simple": { "limit": 600, "period": 60 } },
+        { "name": "RL_TURN_ENTITLEMENT", "namespace_id": "3008", "simple": { "limit": 20, "period": 60 } }
       ],
       "vars": {
         "ENVIRONMENT_NAME": "production",
@@ -107,7 +118,9 @@
         "TURN_CREDENTIAL_TTL_SECONDS": "3600",
         "ROOM_LEASE_SECONDS": "1800",
         "MAX_DEVICES_PER_ENTITLEMENT": "3",
-        "TEST_FORCE_RELAY": "0"
+        "TEST_FORCE_RELAY": "0",
+        "ALLOW_UNENTITLED_RELAY": "0",
+        "KEEPALIVE_SECONDS": "0"
       }
     }
   }

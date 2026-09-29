@@ -29,6 +29,8 @@ export type VerifyOptions = {
   now: number;
   leafOid?: string;
   intermediateOid?: string;
+  /** Size cap for this token. Transactions are a few KiB; a V2 notification embeds two of them and needs more room. */
+  maxChars?: number;
 };
 
 function decodeJson(part: string): Record<string, unknown> {
@@ -42,8 +44,8 @@ function decodeJson(part: string): Record<string, unknown> {
   return parsed;
 }
 
-function splitCompact(compact: string): [string, string, string] {
-  if (typeof compact !== "string" || compact.length === 0 || compact.length > MAX_JWS_CHARS) throw new JwsVerificationError("malformed");
+function splitCompact(compact: string, maxChars = MAX_JWS_CHARS): [string, string, string] {
+  if (typeof compact !== "string" || compact.length === 0 || compact.length > maxChars) throw new JwsVerificationError("malformed");
   const parts = compact.split(".");
   if (parts.length !== 3 || parts.some(part => part.length === 0 && part !== parts[2])) throw new JwsVerificationError("malformed");
   return [parts[0]!, parts[1]!, parts[2]!];
@@ -56,7 +58,7 @@ export function decodeJwsUnverified(compact: string): { header: Record<string, u
 }
 
 export async function verifyAppleJws(compact: string, options: VerifyOptions): Promise<VerifiedJws> {
-  const [headerPart, payloadPart, signaturePart] = splitCompact(compact);
+  const [headerPart, payloadPart, signaturePart] = splitCompact(compact, options.maxChars);
   const header = decodeJson(headerPart);
   if (header.alg !== "ES256") throw new JwsVerificationError("algorithm");
   const x5c = header.x5c;

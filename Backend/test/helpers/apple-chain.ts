@@ -3,9 +3,9 @@
 // signs compact JWS with it. Pure WebCrypto + a small DER encoder, so it runs in Node (vitest
 // config) and in workerd (tests). Keys never leave the process.
 
-import { base64Encode, base64Decode, base64UrlEncode, utf8 } from "../../src/util";
+import { base64Encode, base64Decode, base64UrlEncode, utf8 } from "../../src/util.ts";
 
-const subtle = globalThis.crypto.subtle;
+const subtle = crypto.subtle;
 
 function concat(parts: Uint8Array[]): Uint8Array {
   const out = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
@@ -66,8 +66,9 @@ type Hash = keyof typeof SIG_OID;
 export type KeyPairDer = { publicKey: CryptoKey; privateKey: CryptoKey; spki: Uint8Array; curve: Curve };
 
 export async function generateKey(curve: Curve): Promise<KeyPairDer> {
-  const pair = await subtle.generateKey({ name: "ECDSA", namedCurve: curve }, true, ["sign", "verify"]);
-  return { publicKey: pair.publicKey, privateKey: pair.privateKey, spki: new Uint8Array(await subtle.exportKey("spki", pair.publicKey)), curve };
+  const pair = (await subtle.generateKey({ name: "ECDSA", namedCurve: curve }, true, ["sign", "verify"])) as CryptoKeyPair;
+  const spki = (await subtle.exportKey("spki", pair.publicKey)) as ArrayBuffer;
+  return { publicKey: pair.publicKey, privateKey: pair.privateKey, spki: new Uint8Array(spki), curve };
 }
 
 function rawToDerSignature(raw: Uint8Array, coordinateBytes: number): Uint8Array {
@@ -141,7 +142,7 @@ export async function generateTestChain(options: ChainOptions = {}): Promise<Tes
     notBefore: options.leafNotBefore ?? new Date(now - 10 * day), notAfter: options.leafNotAfter ?? new Date(now + 700 * day), serial: 3,
     extensionOids: options.leafOid === null ? [] : [options.leafOid ?? APPLE_LEAF_OID],
   });
-  return { rootDer, intermediateDer, leafDer, leafPrivatePkcs8: new Uint8Array(await subtle.exportKey("pkcs8", leafKey.privateKey)) };
+  return { rootDer, intermediateDer, leafDer, leafPrivatePkcs8: new Uint8Array((await subtle.exportKey("pkcs8", leafKey.privateKey)) as ArrayBuffer) };
 }
 
 export function serializeChain(chain: TestChain): string {

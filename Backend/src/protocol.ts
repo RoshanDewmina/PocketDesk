@@ -13,7 +13,10 @@ export const MAX_ICE_URLS = 8;
 export const MAX_ENTITLEMENT_TOKEN_CHARS = 512;
 export const AUTH_TIMEOUT_MS = 5000;
 export const MESSAGES_PER_SECOND = 100;
-export const BACKPRESSURE_LIMIT_BYTES = 512 * 1024;
+/** Per-socket outbound budget (workerd exposes no bufferedAmount, so the budget stands in for Bun's 512 KiB backpressure close). */
+export const OUTBOUND_BYTES_PER_SECOND = 2 * 1024 * 1024;
+/** Frames a gateway may hold before its room socket exists. */
+export const MAX_GATEWAY_BACKLOG_FRAMES = 32;
 
 const featurePattern = /^[a-z0-9][a-z0-9._-]{0,31}$/;
 const maxFeatures = 8;

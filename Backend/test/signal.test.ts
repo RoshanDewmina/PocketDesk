@@ -216,14 +216,14 @@ describe("entitlement gate (remote.1)", () => {
     turn.reset();
     const p = await pairing();
     const host = await connectHost(p);
-    const expired = await mintEntitlementToken(testEnv.ENTITLEMENT_TOKEN_KEY, { v: 1, d: randomHex(), s: randomHex(), x: Math.floor(now / 1000) - 10, n: "P" });
+    const expired = await mintEntitlementToken(testEnv.ENTITLEMENT_TOKEN_KEY, { v: 1, d: randomHex(), s: randomHex(), x: Math.floor(now / 1000) - 10, n: "P", e: "test" });
     const a = await connectClient(p, { entitlement: expired });
     expect(a.pre).toEqual([{ type: "error", code: "entitlement_required" }]);
     expect(a.registered.access).toBe("local");
     a.close();
     await host.next(); await host.next();
 
-    const forged = await mintEntitlementToken("not-the-key-0123456789abcdef0123456789abcdef", { v: 1, d: randomHex(), s: randomHex(), x: Math.floor(now / 1000) + 600, n: "P" });
+    const forged = await mintEntitlementToken("not-the-key-0123456789abcdef0123456789abcdef", { v: 1, d: randomHex(), s: randomHex(), x: Math.floor(now / 1000) + 600, n: "P", e: "test" });
     const b = await connectClient(p, { entitlement: forged });
     expect(b.pre).toEqual([{ type: "error", code: "entitlement_required" }]);
     b.close();
@@ -235,6 +235,65 @@ describe("entitlement gate (remote.1)", () => {
     expect(c.pre).toEqual([{ type: "error", code: "entitlement_required" }]);
     expect(c.ice.servers).toEqual([]);
     expect(turn.generateCalls).toBe(0);
+  });
+
+  it("a token stops working the moment its device is unlinked", async () => {
+    turn.reset();
+    const deviceId = randomHex();
+    const token = await entitlementToken({}, deviceId);
+    const forget = await postJson("/v1/entitlements/forget", { deviceId, entitlementToken: token }, freshIp());
+    expect(forget.status).toBe(204);
+    const p = await pairing();
+    await connectHost(p);
+    const client = await connectClient(p, { features: ["remote.1"], entitlement: token });
+    expect(client.pre).toEqual([{ type: "error", code: "entitlement_required" }]);
+    expect(client.ice.servers).toEqual([]);
+    expect(turn.generateCalls).toBe(0);
+  });
+
+  it("one device is live in one room at a time: joining a second room ends the first room's relay", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const first = await pairing();
+    const hostA = await connectHost(first);
+    const clientA = await connectClient(first, { features: ["remote.1"], entitlement: token });
+    expect(clientA.registered.access).toBe("remote");
+    await hostA.next(); await hostA.next(); await clientA.next();
+
+    const second = await pairing();
+    const hostB = await connectHost(second);
+    const clientB = await connectClient(second, { features: ["remote.1"], entitlement: token });
+    expect(clientB.registered.access).toBe("remote");
+    const [aHost, aClient] = await Promise.all([hostA.closed, clientA.closed]);
+    expect(aHost.reason).toBe("entitlement_revoked");
+    expect(aClient.reason).toBe("entitlement_revoked");
+    expect(await snapshot(first.room)).toMatchObject({ hostOnline: false, clientOnline: false, entitled: false });
+    expect(await snapshot(second.room)).toMatchObject({ hostOnline: true, clientOnline: true, entitled: true });
+    await sleep(50);
+    expect(turn.revoked.length).toBe(2);
+    hostB.close(); clientB.close();
+  });
+
+  it("a kicked socket cannot disturb the peer that replaces it", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const p = await pairing();
+    const host = await connectHost(p);
+    const first = await connectClient(p, { features: ["remote.1"], entitlement: token });
+    await host.next(); await host.next(); await first.next();
+    first.send({ type: "nonsense" });
+    expect((await first.next()).code).toBe("invalid_message");
+    expect(await host.next()).toEqual({ type: "peer", online: false });
+    expect((await host.next()).type).toBe("ice");
+    const replacement = await connectClient(p, { features: ["remote.1"], entitlement: token });
+    expect(replacement.registered.access).toBe("remote");
+    await first.closed;
+    await sleep(30);
+    expect((await host.next()).type).toBe("ice");
+    expect(await host.next()).toEqual({ type: "peer", online: true });
+    expect(await snapshot(p.room)).toMatchObject({ hostOnline: true, clientOnline: true, entitled: true, liveCredentials: 2 });
+    replacement.send({ type: "signal", payload: payload64(5) });
+    expect((await host.next()).payload).toBe(payload64(5));
   });
 
   it("a relay provider failure fails the entitled registration closed and leaves the host registered", async () => {

@@ -2,7 +2,7 @@ import { SELF } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { randomHex, sha256Hex } from "../../src/util";
 
-export const testEnv = env as unknown as Env & { TEST_APPLE_CHAIN: string; TEST_MIGRATIONS: D1Migration[] };
+export const testEnv = env as unknown as Env & { TEST_APPLE_CHAIN: string; TEST_MIGRATIONS: unknown[] };
 
 export type Message = Record<string, unknown> & { type: string };
 

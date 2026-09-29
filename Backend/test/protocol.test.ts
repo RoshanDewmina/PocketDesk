@@ -78,9 +78,17 @@ describe("TURN provider", () => {
       url: `https://rtc.live.cloudflare.com/v1/turn/keys/${"k".repeat(32)}/credentials/generate-ice-servers`,
       method: "POST", authorization: `Bearer ${"t".repeat(64)}`, body: JSON.stringify({ ttl: 900 }),
     });
-    await provider.revoke(["u", "u"]);
+    expect(await provider.revoke(["u", "u"])).toEqual([]);
     expect(calls.filter(call => call.url.endsWith("/revoke"))).toHaveLength(1);
     expect(calls[1]!.url).toBe(`https://rtc.live.cloudflare.com/v1/turn/keys/${"k".repeat(32)}/credentials/u/revoke`);
+    const flaky = createCloudflareTurnProvider({ keyId: "k".repeat(32), apiToken: "t".repeat(64), ttlSeconds: 900, timeoutMs: 100,
+      fetch: async input => {
+        const url = String(input);
+        if (url.endsWith("/gone/revoke")) return new Response(null, { status: 404 });
+        if (url.endsWith("/down/revoke")) return new Response("nope", { status: 500 });
+        return new Response(null, { status: 204 });
+      } });
+    expect(await flaky.revoke(["ok", "gone", "down"])).toEqual(["down"]);
 
     const rejecting = createCloudflareTurnProvider({ keyId: "k".repeat(32), apiToken: "t".repeat(64), ttlSeconds: 900, timeoutMs: 100, fetch: async () => new Response("denied", { status: 401 }) });
     await expect(rejecting.issue()).rejects.toThrow("unavailable");
@@ -100,9 +108,13 @@ describe("TURN provider", () => {
 describe("configuration guards", () => {
   const base = { ...testEnv } as unknown as Record<string, string>;
 
-  it("refuses test switches in production and inconsistent lifetimes", () => {
+  it("refuses test switches outside development and inconsistent lifetimes", () => {
     expect(() => loadConfig({ ...base, ENVIRONMENT_NAME: "production", ALLOW_XCODE_TRANSACTIONS: "1" } as unknown as Env)).toThrow("ALLOW_XCODE_TRANSACTIONS");
+    expect(() => loadConfig({ ...base, ENVIRONMENT_NAME: "staging", ALLOW_XCODE_TRANSACTIONS: "1" } as unknown as Env)).toThrow("ALLOW_XCODE_TRANSACTIONS");
     expect(() => loadConfig({ ...base, ENVIRONMENT_NAME: "production", TEST_FORCE_RELAY: "1" } as unknown as Env)).toThrow("TEST_FORCE_RELAY");
+    expect(() => loadConfig({ ...base, ENVIRONMENT_NAME: "production", ALLOW_UNENTITLED_RELAY: "1" } as unknown as Env)).toThrow("ALLOW_UNENTITLED_RELAY");
+    expect(() => loadConfig({ ...base, KEEPALIVE_SECONDS: "5" } as unknown as Env)).toThrow("KEEPALIVE_SECONDS");
+    expect(loadConfig({ ...base, ENVIRONMENT_NAME: "staging", ALLOW_UNENTITLED_RELAY: "1", KEEPALIVE_SECONDS: "45" } as unknown as Env)).toMatchObject({ allowUnentitledRelay: true, keepaliveMs: 45_000 });
     expect(() => loadConfig({ ...base, ROOM_LEASE_SECONDS: "3600", TURN_CREDENTIAL_TTL_SECONDS: "3600" } as unknown as Env)).toThrow("ROOM_LEASE_SECONDS");
     expect(() => loadConfig({ ...base, TEST_FORCE_RELAY: "1", CLOUDFLARE_TURN_KEY_ID: "" } as unknown as Env)).toThrow("TURN credentials");
     expect(() => loadConfig({ ...base, STUN_URLS: "http://nope" } as unknown as Env)).toThrow("STUN_URLS");

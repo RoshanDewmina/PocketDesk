@@ -63,16 +63,36 @@ export async function getEntitlement(db: D1Database, id: string): Promise<Entitl
   return db.prepare("SELECT * FROM entitlements WHERE id = ?1").bind(id).first<EntitlementRow>();
 }
 
+/** The subscription as seen from one device: null unless that device is still linked to it. */
+export async function entitlementForDevice(db: D1Database, id: string, deviceId: string): Promise<EntitlementRow | null> {
+  return db.prepare(`
+    SELECT e.* FROM entitlements e
+    JOIN entitlement_devices d ON d.entitlement_id = e.id AND d.device_id = ?2
+    WHERE e.id = ?1
+  `).bind(id, deviceId).first<EntitlementRow>();
+}
+
+const STALE_DEVICE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/**
+ * Links a device to a subscription, at most `maxDevices` per subscription. The count and the insert are one
+ * statement, so parallel calls cannot exceed the cap. A slot held by a device unseen for 30 days is reclaimed.
+ */
 export async function linkDevice(db: D1Database, id: string, deviceId: string, now: number, maxDevices: number): Promise<"linked" | "device_limit"> {
-  const existing = await db.prepare("SELECT device_id FROM entitlement_devices WHERE entitlement_id = ?1").bind(id).all<{ device_id: string }>();
-  const known = existing.results.some(row => row.device_id === deviceId);
-  if (!known && existing.results.length >= maxDevices) return "device_limit";
-  await db.prepare(`
+  const insert = () => db.prepare(`
     INSERT INTO entitlement_devices (entitlement_id, device_id, first_seen, last_seen)
-    VALUES (?1, ?2, ?3, ?3)
+    SELECT ?1, ?2, ?3, ?3
+    WHERE (SELECT COUNT(*) FROM entitlement_devices WHERE entitlement_id = ?1 AND device_id <> ?2) < ?4
     ON CONFLICT(entitlement_id, device_id) DO UPDATE SET last_seen = excluded.last_seen
-  `).bind(id, deviceId, now).run();
-  return "linked";
+  `).bind(id, deviceId, now, maxDevices).run();
+  if ((await insert()).meta.changes > 0) return "linked";
+  const reclaimed = await db.prepare(`
+    DELETE FROM entitlement_devices WHERE rowid IN (
+      SELECT rowid FROM entitlement_devices WHERE entitlement_id = ?1 AND last_seen < ?2 ORDER BY last_seen ASC LIMIT 1
+    )
+  `).bind(id, now - STALE_DEVICE_MS).run();
+  if (reclaimed.meta.changes === 0) return "device_limit";
+  return (await insert()).meta.changes > 0 ? "linked" : "device_limit";
 }
 
 export async function unlinkDevice(db: D1Database, id: string, deviceId: string): Promise<boolean> {
@@ -80,9 +100,12 @@ export async function unlinkDevice(db: D1Database, id: string, deviceId: string)
   return result.meta.changes > 0;
 }
 
-export async function setDeviceRoom(db: D1Database, id: string, deviceId: string, room: string, now: number): Promise<void> {
+/** Records the room a device is live in and returns the room it was live in before (if different). */
+export async function setDeviceRoom(db: D1Database, id: string, deviceId: string, room: string, now: number): Promise<string | null> {
+  const previous = await db.prepare("SELECT last_room FROM entitlement_devices WHERE entitlement_id = ?1 AND device_id = ?2").bind(id, deviceId).first<{ last_room: string | null }>();
   await db.prepare("UPDATE entitlement_devices SET last_room = ?3, last_seen = ?4 WHERE entitlement_id = ?1 AND device_id = ?2")
     .bind(id, deviceId, room, now).run();
+  return previous?.last_room ?? null;
 }
 
 export async function devicesForEntitlement(db: D1Database, id: string): Promise<DeviceRow[]> {
@@ -106,6 +129,10 @@ export async function markStatus(db: D1Database, id: string, status: Entitlement
     WHERE id = ?1
   `).bind(id, status, extra.expiresAt ?? null, extra.graceUntil ?? null, extra.revokedAt ?? null, now).run();
   return result.meta.changes > 0;
+}
+
+export async function notificationSeen(db: D1Database, uuid: string): Promise<boolean> {
+  return (await db.prepare("SELECT 1 AS present FROM notifications WHERE uuid = ?1").bind(uuid).first()) !== null;
 }
 
 /** Returns false when the notification UUID was already recorded. */
@@ -136,9 +163,10 @@ export async function setRoomStatus(db: D1Database, room: string, status: "activ
   `).bind(room, now, status).run();
 }
 
+/** Forgets a room's registry row and device references. A blocked room keeps its block. */
 export async function deleteRoom(db: D1Database, room: string): Promise<void> {
   await db.batch([
-    db.prepare("DELETE FROM rooms WHERE id = ?1").bind(room),
+    db.prepare("DELETE FROM rooms WHERE id = ?1 AND status <> 'blocked'").bind(room),
     db.prepare("UPDATE entitlement_devices SET last_room = NULL WHERE last_room = ?1").bind(room),
   ]);
 }

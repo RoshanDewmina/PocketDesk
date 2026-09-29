@@ -1,6 +1,7 @@
 import { SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { mintEntitlementToken } from "../src/entitlement/token";
+import { entitlementIdFor } from "../src/entitlement/store";
 import { randomHex } from "../src/util";
 import { parseChain, signCompactJws, transactionPayload, type TestChain } from "./helpers/apple-chain";
 import { postJson, testEnv } from "./helpers/client";
@@ -33,22 +34,25 @@ describe("POST /v1/entitlements/verify", () => {
     expect(headers.get("x-content-type-options")).toBe("nosniff");
     expect(headers.get("cache-control")).toBe("no-store");
 
-    const rows = (await testEnv.DB.prepare("SELECT id, status, environment FROM entitlements").all<{ id: string; status: string; environment: string }>()).results;
+    const id = await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY, otid);
+    const rows = (await testEnv.DB.prepare("SELECT id, status, environment FROM entitlements WHERE id = ?1").bind(id).all<{ id: string; status: string; environment: string }>()).results;
     expect(rows).toHaveLength(1);
     expect(rows[0]!.id).toMatch(/^[a-f0-9]{64}$/);
     expect(rows[0]!.id).not.toContain(otid);
     expect(rows[0]!.status).toBe("active");
-    const devices = (await testEnv.DB.prepare("SELECT device_id FROM entitlement_devices").all<{ device_id: string }>()).results;
+    expect((await testEnv.DB.prepare("SELECT COUNT(*) AS n FROM entitlements WHERE id LIKE ?1").bind(`%${otid}%`).first<{ n: number }>())?.n).toBe(0);
+    const devices = (await testEnv.DB.prepare("SELECT device_id FROM entitlement_devices WHERE entitlement_id = ?1").bind(id).all<{ device_id: string }>()).results;
     expect(devices.map(row => row.device_id)).toEqual([deviceId]);
     expect(JSON.stringify(body)).not.toContain(otid);
   });
 
   it("accepts sandbox transactions and flags them", async () => {
-    const { status, body } = await verify({ environment: "Sandbox", originalTransactionId: `sb-${randomHex(6)}` });
+    const otid = `sb-${randomHex(6)}`;
+    const { status, body } = await verify({ environment: "Sandbox", originalTransactionId: otid });
     expect(status).toBe(200);
     expect(body.entitled).toBe(true);
     expect(body.environment).toBe("Sandbox");
-    const row = await testEnv.DB.prepare("SELECT environment FROM entitlements").first<{ environment: string }>();
+    const row = await testEnv.DB.prepare("SELECT environment FROM entitlements WHERE id = ?1").bind(await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY, otid)).first<{ environment: string }>();
     expect(row?.environment).toBe("Sandbox");
   });
 
@@ -104,11 +108,22 @@ describe("POST /v1/entitlements/verify", () => {
     expect(fourth.body.entitled).toBe(true);
   });
 
+  it("holds the device cap under parallel verification and allows one device per sandbox purchase", async () => {
+    const otid = `par-${randomHex(6)}`;
+    const results = await Promise.all(Array.from({ length: 6 }, () => verify({ originalTransactionId: otid })));
+    expect(results.filter(result => result.body.entitled === true)).toHaveLength(3);
+    expect(results.filter(result => result.body.reason === "device_limit")).toHaveLength(3);
+
+    const sandbox = `sbx-${randomHex(6)}`;
+    expect((await verify({ originalTransactionId: sandbox, environment: "Sandbox" })).body.entitled).toBe(true);
+    expect((await verify({ originalTransactionId: sandbox, environment: "Sandbox" })).body).toMatchObject({ entitled: false, reason: "device_limit" });
+  });
+
   it("refuses forget with a token for another device or a forged token", async () => {
     const first = await verify({ originalTransactionId: `fg-${randomHex(6)}` });
     const otherDevice = await postJson("/v1/entitlements/forget", { deviceId: randomHex(), entitlementToken: first.body.entitlementToken }, freshIp());
     expect(otherDevice.status).toBe(401);
-    const forged = await mintEntitlementToken("wrong-key-0123456789abcdef0123456789abcdef", { v: 1, d: "a".repeat(64), s: "b".repeat(64), x: Math.floor(now / 1000) + 60, n: "P" });
+    const forged = await mintEntitlementToken("wrong-key-0123456789abcdef0123456789abcdef", { v: 1, d: "a".repeat(64), s: "b".repeat(64), x: Math.floor(now / 1000) + 60, n: "P", e: "test" });
     const forgedResponse = await postJson("/v1/entitlements/forget", { deviceId: "a".repeat(64), entitlementToken: forged }, freshIp());
     expect(forgedResponse.status).toBe(401);
   });

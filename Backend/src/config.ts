@@ -14,6 +14,10 @@ export type Config = {
   leaseMs: number;
   maxDevices: number;
   testForceRelay: boolean;
+  /** Dev/staging migration switch: peers that do not list `remote.1` still receive STUN and TURN. Refused in production. */
+  allowUnentitledRelay: boolean;
+  /** 0 disables; otherwise each peer's last `ice` message is re-sent unchanged every N seconds so quiet sockets stay open. */
+  keepaliveMs: number;
   roots: Uint8Array[];
   relayConfigured: boolean;
 };
@@ -23,12 +27,17 @@ const cache = new WeakMap<object, Config>();
 export function loadConfig(env: Env): Config {
   const cached = cache.get(env);
   if (cached) return cached;
-  const environmentName = env.ENVIRONMENT_NAME || "dev";
+  const environmentName: string = env.ENVIRONMENT_NAME || "dev";
   const isProduction = environmentName === "production";
   const allowXcode = flagVar(env.ALLOW_XCODE_TRANSACTIONS);
   const testForceRelay = flagVar(env.TEST_FORCE_RELAY);
-  if (isProduction && allowXcode) throw new Error("ALLOW_XCODE_TRANSACTIONS is refused in production");
+  // Unsigned Xcode transactions are for a developer's own machine only, never a shared deployment.
+  if (allowXcode && environmentName !== "dev" && environmentName !== "test") throw new Error("ALLOW_XCODE_TRANSACTIONS is allowed only in dev or test");
   if (isProduction && testForceRelay) throw new Error("TEST_FORCE_RELAY is refused in production");
+  const allowUnentitledRelay = flagVar(env.ALLOW_UNENTITLED_RELAY);
+  if (isProduction && allowUnentitledRelay) throw new Error("ALLOW_UNENTITLED_RELAY is refused in production");
+  const keepaliveSeconds = parseIntegerVar(env.KEEPALIVE_SECONDS, 0, 0, 600);
+  if (keepaliveSeconds !== 0 && keepaliveSeconds < 15) throw new Error("KEEPALIVE_SECONDS must be 0 or at least 15");
   const stunUrls = listVar(env.STUN_URLS);
   if (stunUrls.length > 8 || stunUrls.some(url => !/^(?:stun|stuns):[^\s]{1,500}$/.test(url))) throw new Error("STUN_URLS invalid");
   const turnTtlSeconds = parseIntegerVar(env.TURN_CREDENTIAL_TTL_SECONDS, 3600, 60, 86_400);
@@ -51,6 +60,8 @@ export function loadConfig(env: Env): Config {
     leaseMs: leaseSeconds * 1000,
     maxDevices: parseIntegerVar(env.MAX_DEVICES_PER_ENTITLEMENT, 3, 1, 10),
     testForceRelay,
+    allowUnentitledRelay,
+    keepaliveMs: keepaliveSeconds * 1000,
     roots: parseRootPins(env.APPLE_ROOT_CERTS),
     relayConfigured,
   };

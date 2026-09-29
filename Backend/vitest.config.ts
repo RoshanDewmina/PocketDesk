@@ -1,13 +1,13 @@
 import path from "node:path";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
-import { generateTestChain, serializeChain } from "./test/helpers/apple-chain";
-import { base64Encode } from "./src/util";
+import { generateTestChain, serializeChain } from "./test/helpers/apple-chain.ts";
+import { base64Encode } from "./src/util.ts";
 
 export default defineConfig({
   plugins: [
     cloudflareTest(async () => {
-      const migrations = await readD1Migrations(path.join(__dirname, "migrations"));
+      const migrations = await readD1Migrations(path.join(import.meta.dirname, "migrations"));
       // A throwaway Apple-shaped chain, generated per run: the Worker pins its root, tests sign with its leaf.
       const chain = await generateTestChain();
       return {

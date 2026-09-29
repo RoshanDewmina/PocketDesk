@@ -1,7 +1,7 @@
 import { decodeJwsUnverified, JwsVerificationError, verifyAppleJws } from "../apple/jws";
 import type { Config } from "../config";
 import { fingerprint, log } from "../log";
-import { allow } from "../ratelimit";
+import { addressKey, allow } from "../ratelimit";
 import { BodyTooLarge, HEX64, isoFromMs, isRecord, json, readJsonBody } from "../util";
 import { audit, entitlementIdFor, getEntitlement, hasAccess, isDeviceLinked, linkDevice, unlinkDevice, upsertEntitlement, type EntitlementStatus } from "./store";
 import { environmentLetter, MAX_TOKEN_TTL_MS, mintEntitlementToken, verifyEntitlementToken } from "./token";
@@ -89,9 +89,7 @@ export async function verifyTransactionJws(compact: string, config: Config, now:
 export const statusFromTransaction = (tx: TransactionInfo, now: number): EntitlementStatus =>
   tx.revocationDate !== undefined ? "revoked" : (tx.expiresDate ?? 0) > now ? "active" : "expired";
 
-function clientIp(request: Request): string {
-  return request.headers.get("cf-connecting-ip") ?? "unknown";
-}
+const clientIp = (request: Request) => addressKey(request.headers.get("cf-connecting-ip"));
 
 export async function handleVerify(request: Request, env: Env, ctx: ExecutionContext, config: Config): Promise<Response> {
   const now = Date.now();
@@ -145,7 +143,8 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
       ctx.waitUntil(audit(env.DB, "verify_no_access", { entitlementId: id, detail: status }, now));
       return json({ entitled: false, reason: status === "revoked" ? "revoked" : "expired", expiresAt: isoFromMs(expiresAt), environment });
     }
-    const link = await linkDevice(env.DB, id, deviceId, now, config.maxDevices);
+    // Sandbox purchases are free (D5): one device each keeps App Review and TestFlight working without opening a relay pool.
+    const link = await linkDevice(env.DB, id, deviceId, now, environment === "Sandbox" ? 1 : config.maxDevices);
     if (link === "device_limit") {
       ctx.waitUntil(audit(env.DB, "verify_device_limit", { entitlementId: id }, now));
       return json({ entitled: false, reason: "device_limit", expiresAt: isoFromMs(expiresAt), environment });
@@ -153,7 +152,7 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     const accessEnd = Math.max(expiresAt, row.grace_until ?? 0);
     const tokenExpiresAt = Math.min(now + MAX_TOKEN_TTL_MS, accessEnd);
     const entitlementToken = await mintEntitlementToken(env.ENTITLEMENT_TOKEN_KEY, {
-      v: 1, d: deviceId, s: id, x: Math.floor(tokenExpiresAt / 1000), n: environmentLetter(environment),
+      v: 1, d: deviceId, s: id, x: Math.floor(tokenExpiresAt / 1000), n: environmentLetter(environment), e: config.environmentName,
     });
     ctx.waitUntil(audit(env.DB, "verify_ok", { entitlementId: id, detail: environment }, now));
     log("verify_ok", { environment, status, device: fingerprint(deviceId), entitlement: fingerprint(id) });
@@ -185,9 +184,8 @@ export async function handleForget(request: Request, env: Env, config: Config): 
   if (!isRecord(body) || typeof body.deviceId !== "string" || !HEX64.test(body.deviceId) || typeof body.entitlementToken !== "string") {
     return json({ error: "invalid_request" }, 400);
   }
-  const payload = await verifyEntitlementToken(env.ENTITLEMENT_TOKEN_KEY, body.entitlementToken, now);
+  const payload = await verifyEntitlementToken(env.ENTITLEMENT_TOKEN_KEY, body.entitlementToken, now, config.environmentName);
   if (!payload || payload.d !== body.deviceId) return json({ error: "unauthorized" }, 401);
-  void config;
   try {
     if (!(await isDeviceLinked(env.DB, payload.s, payload.d))) return new Response(null, { status: 204 });
     await unlinkDevice(env.DB, payload.s, payload.d);

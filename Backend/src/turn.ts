@@ -3,7 +3,8 @@ import type { IceServer } from "./protocol";
 export type TurnProvider = {
   readonly ttlSeconds: number;
   issue(): Promise<IceServer[]>;
-  revoke(usernames: string[]): Promise<void>;
+  /** Resolves with the usernames whose revocation was not confirmed, so the caller can retry them. */
+  revoke(usernames: string[]): Promise<string[]>;
 };
 
 const allowedIceURL = /^(?:stun|stuns|turn|turns):[^\s]{1,500}$/;
@@ -100,7 +101,7 @@ export function createCloudflareTurnProvider(config: {
       }
     },
     async revoke(usernames) {
-      for (const username of new Set(usernames)) {
+      const failed = await revokeEach(usernames, async username => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), config.timeoutMs);
         try {
@@ -109,13 +110,25 @@ export function createCloudflareTurnProvider(config: {
             headers: { authorization: `Bearer ${config.apiToken}` },
             signal: controller.signal,
           });
-          if (response.status !== 204) throw new Error("TURN credential revocation rejected");
+          // 404: already revoked or expired on the provider side, which is the state we want.
+          return response.status === 204 || response.status === 404;
         } finally {
           clearTimeout(timer);
         }
-      }
+      });
+      return failed;
     },
   };
+}
+
+/** Attempts every revocation independently and returns the usernames that were not confirmed. */
+export async function revokeEach(usernames: string[], revokeOne: (username: string) => Promise<boolean>): Promise<string[]> {
+  const unique = [...new Set(usernames)];
+  const results = await Promise.allSettled(unique.map(username => revokeOne(username)));
+  return unique.filter((_, index) => {
+    const result = results[index]!;
+    return result.status === "rejected" || result.value !== true;
+  });
 }
 
 export function turnProviderFromEnv(env: Env, fetcher?: typeof globalThis.fetch): TurnProvider | undefined {

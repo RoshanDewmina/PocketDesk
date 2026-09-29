@@ -7,7 +7,8 @@ describe("/signal gateway", () => {
     expect((await SELF.fetch("https://farside.test/signal", { headers: { upgrade: "websocket", origin: "https://evil.example" } })).status).toBe(403);
     expect((await SELF.fetch("https://farside.test/signal")).status).toBe(426);
     expect((await SELF.fetch("https://farside.test/signal?room=x", { headers: { upgrade: "websocket" } })).status).toBe(404);
-    expect((await SELF.fetch("https://farside.test/signal", { method: "POST", headers: { upgrade: "websocket" } })).status).toBe(404);
+    // A fetch carrying `Upgrade: websocket` is always sent as a GET handshake by the runtime, so a POST is tested bare.
+    expect((await SELF.fetch("https://farside.test/signal", { method: "POST" })).status).toBe(404);
     expect((await SELF.fetch("https://farside.test/nope")).status).toBe(404);
   });
 

@@ -50,10 +50,15 @@ describe("lease and renewal", () => {
     expect(host.registered).toEqual({ type: "registered", role: "host", renew: { version: 1, leaseSeconds: 1800, renewAfterSeconds: 900 } });
     const client = await connectClient(p);
     expect(client.registered).toEqual({ type: "registered", role: "client" });
+    await client.next(); await host.next();
     client.send({ type: "renew" });
-    expect((await client.next()).code).toBe("invalid_message");
+    const refused = await client.next();
+    expect(refused, JSON.stringify(refused)).toEqual({ type: "error", code: "invalid_message" });
+    expect((await client.closed).reason).toBe("invalid_message");
+    expect(await host.next()).toEqual({ type: "peer", online: false });
     host.send({ type: "renew", extra: 1 });
-    expect((await host.next()).code).toBe("invalid_message");
+    const malformed = await host.next();
+    expect(malformed, JSON.stringify(malformed)).toEqual({ type: "error", code: "invalid_message" });
   });
 
   it("a room in which nobody renews ends at the lease exactly as before", async () => {
@@ -186,6 +191,45 @@ describe("lease and renewal", () => {
     const recovered = await client.next();
     expect(recovered.credentialSeconds).toBe(3600);
     expect(client.ws.readyState).toBe(WebSocket.OPEN);
+  });
+
+  it("a revocation the provider did not confirm is retried from the alarm until it succeeds", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const p = await pairing();
+    const host = await connectHost(p, { features: renewing });
+    const client = await connectClient(p, { features: [...renewing, "remote.1"], entitlement: token });
+    await host.next(); await host.next(); await client.next();
+    turn.failRevokeNext(2);
+    client.close();
+    expect(await host.next()).toEqual({ type: "peer", online: false });
+    await sleep(50);
+    expect(turn.revoked).toEqual([]);
+    expect(await stub(p.room).snapshot()).toMatchObject({ liveCredentials: 0, pendingRevocations: 2 });
+    await advance(61_000);
+    expect(await runDurableObjectAlarm(stub(p.room))).toBe(true);
+    await sleep(50);
+    expect([...turn.revoked].sort()).toEqual([...turn.issued].sort());
+    expect(await stub(p.room).snapshot()).toMatchObject({ pendingRevocations: 0 });
+  });
+
+  it("a live entitled room re-checks the subscription and ends when it was revoked meanwhile", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const p = await pairing();
+    const host = await connectHost(p, { features: renewing });
+    const client = await connectClient(p, { features: [...renewing, "remote.1"], entitlement: token });
+    await host.next(); await host.next(); await client.next();
+    await testEnv.DB.prepare("UPDATE entitlements SET status = 'revoked', revoked_at = ?1").bind(Date.now()).run();
+    await advance(4 * minute);
+    await runDurableObjectAlarm(stub(p.room));
+    expect(client.ws.readyState).toBe(WebSocket.OPEN);
+    await advance(2 * minute);
+    await runDurableObjectAlarm(stub(p.room));
+    expect((await host.closed).reason).toBe("entitlement_revoked");
+    expect((await client.closed).reason).toBe("entitlement_revoked");
+    await sleep(50);
+    expect([...turn.revoked].sort()).toEqual([...turn.issued].sort());
   });
 
   it("a socket that reaches the room and never registers times out there; peers are untouched", async () => {

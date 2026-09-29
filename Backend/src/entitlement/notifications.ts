@@ -1,13 +1,20 @@
 import { JwsVerificationError, verifyAppleJws } from "../apple/jws";
 import type { Config } from "../config";
 import { fingerprint, log, logError } from "../log";
-import { allow } from "../ratelimit";
+import { addressKey, allow } from "../ratelimit";
 import type { RoomDO } from "../room";
 import { BodyTooLarge, isRecord, json, readJsonBody } from "../util";
-import { audit, devicesForEntitlement, entitlementIdFor, getEntitlement, markStatus, recordNotification, upsertEntitlement } from "./store";
+import {
+  audit, devicesForEntitlement, entitlementIdFor, getEntitlement, notificationSeen, recordNotification, upsertEntitlement,
+  type EntitlementRow, type EntitlementStatus,
+} from "./store";
 import { checkTransactionPolicy, parseTransactionPayload, statusFromTransaction, type TransactionInfo } from "./verify";
 
-const MAX_BODY_BYTES = 32 * 1024;
+// A V2 notification wraps two further JWS (transaction and renewal info), each with its own three-certificate
+// chain, so the outer token is several times the size of a bare transaction.
+const MAX_BODY_BYTES = 96 * 1024;
+const MAX_OUTER_JWS_CHARS = 64 * 1024;
+const MAX_EMBEDDED_JWS_CHARS = 16 * 1024;
 
 type RenewalInfo = { gracePeriodExpiresDate?: number; originalTransactionId?: string };
 
@@ -19,11 +26,20 @@ function parseRenewalInfo(payload: Record<string, unknown>): RenewalInfo {
 }
 
 async function verifyEmbedded(compact: unknown, config: Config, now: number): Promise<Record<string, unknown> | undefined> {
-  if (typeof compact !== "string" || compact.length === 0 || compact.length > 16 * 1024) return undefined;
-  return (await verifyAppleJws(compact, { roots: config.roots, now })).payload;
+  if (typeof compact !== "string" || compact.length === 0 || compact.length > MAX_EMBEDDED_JWS_CHARS) return undefined;
+  return (await verifyAppleJws(compact, { roots: config.roots, now, maxChars: MAX_EMBEDDED_JWS_CHARS })).payload;
 }
 
 export type NotificationOutcome = "recorded" | "duplicate" | "applied" | "ignored_other_app";
+
+/** A refund is undone only by REFUND_REVERSED or by a purchase made after it; nothing older may clear it. */
+function resolveRevokedAt(existing: EntitlementRow | null, tx: TransactionInfo, notificationType: string): number | null {
+  if (tx.revocationDate !== undefined) return tx.revocationDate;
+  const current = existing?.revoked_at ?? null;
+  if (current === null) return null;
+  if (notificationType === "REFUND_REVERSED") return null;
+  return (tx.purchaseDate ?? 0) > current ? null : current;
+}
 
 export async function applyNotification(env: Env, config: Config, decoded: Record<string, unknown>, now: number): Promise<NotificationOutcome> {
   const notificationType = typeof decoded.notificationType === "string" ? decoded.notificationType : "UNKNOWN";
@@ -34,6 +50,7 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
 
   if (data && typeof data.bundleId === "string" && data.bundleId !== config.bundleId) return "ignored_other_app";
   if (data && environment === "Production" && config.appAppleId !== undefined && data.appAppleId !== config.appAppleId) return "ignored_other_app";
+  if (uuid && (await notificationSeen(env.DB, uuid))) return "duplicate";
 
   let tx: TransactionInfo | undefined;
   let renewal: RenewalInfo = {};
@@ -45,20 +62,24 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
   }
   const originalTransactionId = tx?.originalTransactionId ?? renewal.originalTransactionId;
   const entitlementId = originalTransactionId ? await entitlementIdFor(env.ENTITLEMENT_HASH_KEY, originalTransactionId) : undefined;
-
-  if (uuid) {
-    const fresh = await recordNotification(env.DB, { uuid, type: notificationType, subtype, environment, entitlementId }, now);
-    if (!fresh) return "duplicate";
-  }
   log("notification", { type: notificationType, subtype, environment, entitlement: fingerprint(entitlementId) });
-  if (!tx || !entitlementId) return "recorded";
+
+  // The dedupe row is written last: if applying fails, Apple's retry is applied instead of being dropped as a duplicate.
+  const finish = async (outcome: NotificationOutcome) => {
+    if (uuid) await recordNotification(env.DB, { uuid, type: notificationType, subtype, environment, entitlementId }, now);
+    return outcome;
+  };
+
+  if (!tx || !entitlementId) return finish("recorded");
   const policy = checkTransactionPolicy(tx, config);
-  if (policy && policy !== "environment_not_accepted") return "recorded";
+  if (policy && policy !== "environment_not_accepted") return finish("recorded");
 
   const existing = await getEntitlement(env.DB, entitlementId);
   const txEnvironment = tx.environment === "LocalTesting" ? "Xcode" : tx.environment;
   const expiresAt = Math.max(tx.expiresDate ?? 0, existing?.expires_at ?? 0);
-  const base = { id: entitlementId, productId: tx.productId, environment: txEnvironment, expiresAt, source: "notification" as const };
+  const revokedAt = resolveRevokedAt(existing, tx, notificationType);
+  const base = { id: entitlementId, productId: tx.productId, environment: txEnvironment, expiresAt, revokedAt, source: "notification" as const };
+  const statusFor = (fallback: EntitlementStatus): EntitlementStatus => revokedAt !== null ? "revoked" : fallback;
 
   switch (notificationType) {
     case "SUBSCRIBED":
@@ -66,8 +87,8 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
     case "OFFER_REDEEMED":
     case "REFUND_REVERSED":
     case "RENEWAL_EXTENDED":
-      // A payment happened: the subscription is current again, so any grace period or earlier refund is over.
-      await upsertEntitlement(env.DB, { ...base, status: statusFromTransaction({ ...tx, expiresDate: expiresAt }, now), graceUntil: null, revokedAt: null }, now);
+      // A payment happened: the subscription is current again and any grace period is over.
+      await upsertEntitlement(env.DB, { ...base, status: statusFor(statusFromTransaction({ ...tx, expiresDate: expiresAt, revocationDate: revokedAt ?? undefined }, now)), graceUntil: null }, now);
       break;
     case "DID_CHANGE_RENEWAL_PREF":
     case "DID_CHANGE_RENEWAL_STATUS":
@@ -75,33 +96,38 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
       // Preference changes carry no payment: keep the current access state, refresh product and expiry only.
       await upsertEntitlement(env.DB, {
         ...base,
-        status: existing?.status ?? statusFromTransaction({ ...tx, expiresDate: expiresAt }, now),
+        status: statusFor(existing?.status ?? statusFromTransaction({ ...tx, expiresDate: expiresAt }, now)),
         graceUntil: existing?.grace_until ?? null,
-        revokedAt: existing?.revoked_at ?? null,
       }, now);
       break;
     case "DID_FAIL_TO_RENEW":
       if (subtype === "GRACE_PERIOD" && renewal.gracePeriodExpiresDate) {
-        await upsertEntitlement(env.DB, { ...base, status: "grace", graceUntil: renewal.gracePeriodExpiresDate, revokedAt: null }, now);
+        await upsertEntitlement(env.DB, { ...base, status: statusFor("grace"), graceUntil: renewal.gracePeriodExpiresDate }, now);
       } else {
-        await upsertEntitlement(env.DB, { ...base, status: expiresAt > now ? "active" : "expired", graceUntil: existing?.grace_until ?? null }, now);
+        await upsertEntitlement(env.DB, { ...base, status: statusFor(expiresAt > now ? "active" : "expired"), graceUntil: existing?.grace_until ?? null }, now);
       }
       break;
     case "EXPIRED":
     case "GRACE_PERIOD_EXPIRED":
-      await upsertEntitlement(env.DB, { ...base, status: "expired", graceUntil: null }, now);
+      await upsertEntitlement(env.DB, { ...base, status: statusFor("expired"), graceUntil: null }, now);
       break;
     case "REFUND":
-    case "REVOKE":
+    case "REVOKE": {
+      // A refund of an earlier period leaves a newer paid period untouched.
+      const refundedPeriodEnd = tx.expiresDate ?? 0;
+      if (existing && refundedPeriodEnd > 0 && refundedPeriodEnd < existing.expires_at && existing.revoked_at === null) {
+        await audit(env.DB, "refund_of_earlier_period", { entitlementId }, now);
+        return finish("recorded");
+      }
       await upsertEntitlement(env.DB, { ...base, status: "revoked", graceUntil: null, revokedAt: tx.revocationDate ?? now }, now);
       await pushRevocation(env, entitlementId, now);
       break;
+    }
     default:
-      if (existing) await markStatus(env.DB, entitlementId, existing.status, now);
-      return "recorded";
+      return finish("recorded");
   }
   await audit(env.DB, "notification_applied", { entitlementId, detail: `${notificationType}${subtype ? `/${subtype}` : ""}` }, now);
-  return "applied";
+  return finish("applied");
 }
 
 async function pushRevocation(env: Env, entitlementId: string, now: number): Promise<void> {
@@ -119,7 +145,7 @@ async function pushRevocation(env: Env, entitlementId: string, now: number): Pro
 
 export async function handleNotification(request: Request, env: Env, config: Config): Promise<Response> {
   const now = Date.now();
-  if (!(await allow(env.RL_NOTIFY, request.headers.get("cf-connecting-ip") ?? "unknown", "RL_NOTIFY"))) return json({ error: "rate_limited" }, 429);
+  if (!(await allow(env.RL_NOTIFY, addressKey(request.headers.get("cf-connecting-ip")), "RL_NOTIFY"))) return json({ error: "rate_limited" }, 429);
   let body: unknown;
   try {
     body = await readJsonBody(request, MAX_BODY_BYTES);
@@ -131,7 +157,7 @@ export async function handleNotification(request: Request, env: Env, config: Con
   if (config.roots.length === 0) return json({ error: "unavailable" }, 503);
   let decoded: Record<string, unknown>;
   try {
-    decoded = (await verifyAppleJws(body.signedPayload, { roots: config.roots, now })).payload;
+    decoded = (await verifyAppleJws(body.signedPayload, { roots: config.roots, now, maxChars: MAX_OUTER_JWS_CHARS })).payload;
   } catch (error) {
     if (error instanceof JwsVerificationError) {
       log("notification_rejected", { reason: error.reason });

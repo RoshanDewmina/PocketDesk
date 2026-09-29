@@ -1,8 +1,8 @@
 import { appleApiConfigFromEnv, getTestNotificationStatus, requestTestNotification } from "./apple/server-api";
 import type { Config } from "./config";
-import { deleteRoom, readinessCounts, setRoomStatus } from "./entitlement/store";
+import { deleteRoom, readinessCounts, roomStatus, setRoomStatus } from "./entitlement/store";
 import { fingerprint, log, logError } from "./log";
-import { allow } from "./ratelimit";
+import { addressKey, allow } from "./ratelimit";
 import type { RoomDO } from "./room";
 import { BodyTooLarge, HEX64, isRecord, json, readJsonBody, secureEqual, sha256Hex } from "./util";
 
@@ -34,7 +34,7 @@ export async function ready(env: Env, config: Config): Promise<Response> {
     logError("readiness_counts_failed", error);
     reasons.push("database_unavailable");
   }
-  const ready = !reasons.some(reason => reason !== "app_apple_id_not_configured");
+  const ready = reasons.length === 0;
   return json({
     status: ready ? "ready" : "not_ready",
     environment: config.environmentName,
@@ -78,9 +78,9 @@ export async function adminTestNotification(request: Request, env: Env, config: 
   return json({ appleStatus: result.status, body: result.body }, result.status >= 200 && result.status < 300 ? 200 : 502);
 }
 
-/** The Mac's "Remove this Mac and delete server data": proves room ownership with the host token. */
+/** The Mac's "Remove this Mac and delete server data": proves room ownership with the host token. A blocked room stays blocked. */
 export async function forgetRoom(request: Request, env: Env): Promise<Response> {
-  if (!(await allow(env.RL_API_IP, request.headers.get("cf-connecting-ip") ?? "unknown", "RL_API_IP"))) return json({ error: "rate_limited" }, 429);
+  if (!(await allow(env.RL_API_IP, addressKey(request.headers.get("cf-connecting-ip")), "RL_API_IP"))) return json({ error: "rate_limited" }, 429);
   let body: unknown;
   try {
     body = await readJsonBody(request, 4096);
@@ -92,6 +92,7 @@ export async function forgetRoom(request: Request, env: Env): Promise<Response> 
     return json({ error: "invalid_request" }, 400);
   }
   if (!(await secureEqual(await sha256Hex(body.token), body.room))) return json({ error: "unauthorized" }, 401);
+  if ((await roomStatus(env.DB, body.room)) === "blocked") return json({ error: "blocked" }, 403);
   await rooms(env).get(rooms(env).idFromName(body.room)).forget();
   await deleteRoom(env.DB, body.room);
   log("room_forgotten", { room: fingerprint(body.room) });

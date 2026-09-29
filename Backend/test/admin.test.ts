@@ -87,6 +87,18 @@ describe("health, readiness and operator controls", () => {
     expect(back.registered.type).toBe("registered");
   });
 
+  it("forget cannot lift an operator block", async () => {
+    const p = await pairing();
+    await connectHost(p);
+    expect((await postJson(`/v1/admin/rooms/${p.room}/block`, {}, adminHeaders())).status).toBe(200);
+    const forgotten = await postJson("/v1/rooms/forget", { room: p.room, token: p.hostToken });
+    expect(forgotten.status).toBe(403);
+    const again = await open();
+    again.send(registerMessage(p, "host"));
+    expect(await again.next()).toEqual({ type: "error", code: "room_not_approved" });
+    expect((await testEnv.DB.prepare("SELECT status FROM rooms WHERE id = ?1").bind(p.room).first<{ status: string }>())?.status).toBe("blocked");
+  });
+
   it("the test-notification endpoint reports when the App Store Server API key is absent", async () => {
     const response = await postJson("/v1/admin/appstore/test-notification", {}, adminHeaders());
     expect(response.status).toBe(503);
