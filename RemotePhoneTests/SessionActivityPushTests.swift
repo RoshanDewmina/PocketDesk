@@ -111,6 +111,16 @@ final class SessionActivityPushTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? SessionActivityPushServiceError, .refused(status: 200))
         }
+
+        let rejecting = RegistryPushSink(refusedStatus: 400)
+        let lifecycle = SessionActivityPushLifecycle(sink: rejecting, retryDelay: { _ in })
+        let scope = await lifecycle.begin(pairing: pairing(), activityID: "rejected", sessionID: "session")
+        await lifecycle.receive(token: Data([1]), for: scope)
+        await lifecycle.settleTransport()
+        let rejected = await rejecting.state()
+        XCTAssertEqual(rejected.registered.count, 1, "A definitive HTTP 4xx is not retried")
+        XCTAssertTrue(rejected.registry.isEmpty)
+        XCTAssertTrue(rejected.removeAttempts.isEmpty, "A rejected tuple must not be tombstoned")
     }
 
     func testHTTPClientNeverFollowsARedirect() async {
@@ -237,16 +247,81 @@ final class SessionActivityPushTests: XCTestCase {
         XCTAssertEqual(state.removeAttempts.map(\.pushToken), ["01", "01", "01"])
     }
 
-    func testAmbiguousRegisterFailureConditionallyRemovesTheExactTuple() async {
-        let sink = RegistryPushSink(registerFailsAfterWrite: true)
+    func testLostFirstRegisterResponseRetriesWithoutRemovingTheLiveTuple() async {
+        let sink = RegistryPushSink(registerFailuresAfterWrite: 1)
         let lifecycle = SessionActivityPushLifecycle(sink: sink, retryDelay: { _ in })
         let scope = await lifecycle.begin(pairing: pairing(), activityID: "activity", sessionID: "session")
         await lifecycle.receive(token: Data([1]), for: scope)
         await lifecycle.settleTransport()
 
         let state = await sink.state()
+        XCTAssertEqual(state.registry["activity"], "01")
+        XCTAssertEqual(state.registered.map(\.pushToken), ["01", "01"])
+        XCTAssertTrue(state.removeAttempts.isEmpty,
+                      "A lost response must never tombstone a tuple while its activity is live")
+    }
+
+    func testExhaustedAmbiguousRegisterRemainsUntilFinishCleanup() async {
+        let sink = RegistryPushSink(registerFailuresAfterWrite: 3,
+                                    registerFailureIsCancellation: true)
+        let lifecycle = SessionActivityPushLifecycle(sink: sink, retryDelay: { _ in })
+        let scope = await lifecycle.begin(pairing: pairing(), activityID: "activity", sessionID: "session")
+        await lifecycle.receive(token: Data([1]), for: scope)
+        await lifecycle.settleTransport()
+
+        var state = await sink.state()
+        XCTAssertEqual(state.registry["activity"], "01")
+        XCTAssertEqual(state.registered.count, 3)
+        XCTAssertTrue(state.removeAttempts.isEmpty)
+
+        await lifecycle.finish(scope)
+        await lifecycle.settleTransport()
+        state = await sink.state()
         XCTAssertNil(state.registry["activity"])
-        XCTAssertEqual(state.removeAttempts.map(\.pushToken), ["01"])
+        XCTAssertEqual(state.removed.map(\.pushToken), ["01"])
+    }
+
+    func testFinishDuringRegisterBackoffCleansWithoutRetryingTheEndedScope() async {
+        let backoff = expectation(description: "registration entered retry backoff")
+        let gate = RegistrationRetryGate(onWait: { backoff.fulfill() })
+        let sink = RegistryPushSink(registerFailuresAfterWrite: 1)
+        let lifecycle = SessionActivityPushLifecycle(
+            sink: sink, retryDelay: { attempt in await gate.wait(attempt: attempt) })
+        let scope = await lifecycle.begin(pairing: pairing(), activityID: "activity", sessionID: "session")
+        await lifecycle.receive(token: Data([1]), for: scope)
+        await fulfillment(of: [backoff], timeout: 2)
+
+        await lifecycle.finish(scope)
+        await gate.releaseAll()
+        await lifecycle.settleTransport()
+
+        let state = await sink.state()
+        XCTAssertNil(state.registry["activity"])
+        XCTAssertEqual(state.registered.map(\.pushToken), ["01"])
+        XCTAssertEqual(state.removed.map(\.pushToken), ["01"])
+    }
+
+    func testSupersessionDuringRegisterBackoffCleansOldBeforeRegisteringNew() async {
+        let backoff = expectation(description: "old registration entered retry backoff")
+        let gate = RegistrationRetryGate(onWait: { backoff.fulfill() })
+        let sink = RegistryPushSink(registerFailuresAfterWrite: 1)
+        let lifecycle = SessionActivityPushLifecycle(
+            sink: sink, retryDelay: { attempt in await gate.wait(attempt: attempt) })
+        let old = await lifecycle.begin(pairing: pairing(), activityID: "old", sessionID: "one")
+        await lifecycle.receive(token: Data([1]), for: old)
+        await fulfillment(of: [backoff], timeout: 2)
+
+        let new = await lifecycle.begin(pairing: pairing(), activityID: "new", sessionID: "two")
+        await lifecycle.receive(token: Data([2]), for: new)
+        await gate.releaseAll()
+        await lifecycle.settleTransport()
+
+        let state = await sink.state()
+        XCTAssertNil(state.registry["old"])
+        XCTAssertEqual(state.registry["new"], "02")
+        XCTAssertEqual(state.registered.map { "\($0.scope.activityID):\($0.pushToken)" },
+                       ["old:01", "new:02"])
+        XCTAssertEqual(state.removed.map(\.scope.activityID), ["old"])
     }
 
     @MainActor
@@ -397,6 +472,24 @@ private final class ActivityPushURLProtocol: URLProtocol, @unchecked Sendable {
     }
 }
 
+private actor RegistrationRetryGate {
+    private let onWait: @Sendable () -> Void
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+
+    init(onWait: @escaping @Sendable () -> Void) { self.onWait = onWait }
+
+    func wait(attempt: Int) async {
+        onWait()
+        await withCheckedContinuation { continuations.append($0) }
+    }
+
+    func releaseAll() {
+        let waiting = continuations
+        continuations.removeAll()
+        waiting.forEach { $0.resume() }
+    }
+}
+
 private actor RegistryPushSink: SessionActivityPushSink {
     struct State: Sendable {
         var registry: [String: String]
@@ -407,7 +500,9 @@ private actor RegistryPushSink: SessionActivityPushSink {
 
     nonisolated let isConfigured = true
     private let heldToken: String?
-    private let registerFailsAfterWrite: Bool
+    private var registerFailuresAfterWrite: Int
+    private let registerFailureIsCancellation: Bool
+    private let refusedStatus: Int?
     private let rejectCancelledRegistrations: Bool
     private let onHeld: @Sendable () -> Void
     private var removeFailures: Int
@@ -418,24 +513,32 @@ private actor RegistryPushSink: SessionActivityPushSink {
     private var heldContinuation: CheckedContinuation<Void, Never>?
 
     init(heldToken: String? = nil, removeFailures: Int = 0,
-         registerFailsAfterWrite: Bool = false, rejectCancelledRegistrations: Bool = false,
+         registerFailuresAfterWrite: Int = 0, rejectCancelledRegistrations: Bool = false,
+         registerFailureIsCancellation: Bool = false, refusedStatus: Int? = nil,
          onHeld: @escaping @Sendable () -> Void = {}) {
         self.heldToken = heldToken
         self.removeFailures = removeFailures
-        self.registerFailsAfterWrite = registerFailsAfterWrite
+        self.registerFailuresAfterWrite = registerFailuresAfterWrite
         self.rejectCancelledRegistrations = rejectCancelledRegistrations
+        self.registerFailureIsCancellation = registerFailureIsCancellation
+        self.refusedStatus = refusedStatus
         self.onHeld = onHeld
     }
 
     func register(_ request: SessionActivityPushRequest) async throws {
         registered.append(request)
+        if let refusedStatus { throw SessionActivityPushServiceError.refused(status: refusedStatus) }
         if request.pushToken == heldToken {
             onHeld()
             await withCheckedContinuation { heldContinuation = $0 }
         }
         if rejectCancelledRegistrations, Task.isCancelled { throw CancellationError() }
         registry[request.scope.activityID] = request.pushToken
-        if registerFailsAfterWrite { throw URLError(.timedOut) }
+        if registerFailuresAfterWrite > 0 {
+            registerFailuresAfterWrite -= 1
+            if registerFailureIsCancellation { throw CancellationError() }
+            throw URLError(.timedOut)
+        }
     }
 
     func remove(_ request: SessionActivityPushRequest) async throws {
