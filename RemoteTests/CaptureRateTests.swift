@@ -130,6 +130,31 @@ final class CaptureRatePolicyTests: XCTestCase {
 }
 
 final class CaptureRateTuningTests: XCTestCase {
+    func testOptionalPhoneLoadIsBoundedAndHeartbeatOnly() throws {
+        var report = StreamStatsReport(role: "phone", previous: nil,
+                                       current: StreamStatsSample(entries: []), counters: nil)
+        report.supersededFrames = 31
+        report.decodeMs = 9
+        report.presentedFPS = 80
+        report.thermalState = 2
+        report.lowPowerMode = true
+        let feedback = PhoneLoadFeedback(report: report)
+        let action = RemoteAction(action: "heartbeat", phoneLoad: feedback)
+        XCTAssertNoThrow(try action.validate())
+        XCTAssertEqual(try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(action)).phoneLoad,
+                       feedback)
+        XCTAssertThrowsError(try RemoteAction(action: "capture", phoneLoad: feedback).validate())
+        XCTAssertNil(try JSONDecoder().decode(RemoteAction.self,
+                                               from: JSONEncoder().encode(RemoteAction(action: "heartbeat"))).phoneLoad,
+                     "old peers remain compatible")
+        var invalid = feedback
+        invalid.decodeMs = .infinity
+        XCTAssertThrowsError(try RemoteAction(action: "heartbeat", phoneLoad: invalid).validate())
+        invalid = feedback
+        invalid.supersededPerSecond = 1_001
+        XCTAssertThrowsError(try RemoteAction(action: "heartbeat", phoneLoad: invalid).validate())
+    }
+
     func testG5G4AndLadderSwitchesResolveFromDefaults() throws {
         let suite = "CaptureRateTuningTests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -270,13 +295,11 @@ final class SenderOutputFormatTests: XCTestCase {
 
     func testLadderStepsScaleAndThinWithoutExceedingRungZero() throws {
         let rungs = LadderState.rungs(targetFPS: 120)
-        XCTAssertEqual(rungs.map(\.fps), [120, 120, 60, 60, 60, 30, 30])
-        XCTAssertEqual(rungs.map(\.sizeFraction), [1, 0.75, 1, 0.75, 0.5, 0.75, 0.5])
+        XCTAssertEqual(rungs.map(\.fps), [120, 60, 60, 30, 30])
+        XCTAssertEqual(rungs.map(\.sizeFraction), [1, 1, 0.75, 0.75, 0.5])
         let expected = [SenderOutputFormat(width: 2560, height: 1440, fps: 120),
-                        SenderOutputFormat(width: 1920, height: 1080, fps: 120),
                         SenderOutputFormat(width: 2560, height: 1440, fps: 60),
                         SenderOutputFormat(width: 1920, height: 1080, fps: 60),
-                        SenderOutputFormat(width: 1280, height: 720, fps: 60),
                         SenderOutputFormat(width: 1920, height: 1080, fps: 30),
                         SenderOutputFormat(width: 1280, height: 720, fps: 30)]
         for (rung, format) in zip(rungs, expected) {

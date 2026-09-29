@@ -125,6 +125,8 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var busy: BusyState?
     private(set) var ladder: LadderState?
     private var viewportReporter = ViewportReporter()
+    private var phoneLoad: PhoneLoadFeedback?
+    private var phoneLoadReportedAt: TimeInterval?
     private var viewportSendTask: Task<Void, Never>?
     private var nativeScreenPixels: PixelSize?
     @Published var streamQuality: StreamQuality = .sharp {
@@ -220,12 +222,15 @@ final class PhoneRemoteModel: ObservableObject {
             self.macNotice = nil
             self.sessionEndReason = nil
             self.backgroundHoldEndsAt = nil
+            self.phoneLoad = nil
+            self.phoneLoadReportedAt = nil
             if let peer = self.connection.media {
                 peer.onStreamStatistics = { [weak self, weak peer] report in
                     Task { @MainActor in
                         guard let self, let peer, self.connection.media === peer else { return }
                         self.streamSummaryLines = report.summaryLines
                         self.link = LinkSummary(report)
+                        self.acceptPhoneStats(report)
                         self.noticeReducedPicture()
                         #if DEBUG
                         PhoneE2E.active?.record(report)
@@ -425,9 +430,18 @@ final class PhoneRemoteModel: ObservableObject {
     func heartbeatAction(clock: ClockProbe? = nil,
                          at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> RemoteAction {
         let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize, at: now) : nil
+        let load = hostFeatures.contains(SessionFeature.ladder) &&
+            phoneLoadReportedAt.map({ now >= $0 && now - $0 <= 2.5 }) == true ? phoneLoad : nil
         return RemoteAction(action: "heartbeat", epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
                             streamQuality: appliedStreamQuality == nil ? nil : streamQuality, clock: clock,
-                            screenPixels: screenPixels(), viewport: viewport)
+                            screenPixels: screenPixels(), viewport: viewport, phoneLoad: load)
+    }
+
+    /// Statistics run on every live media connection, including when the overlay is hidden.
+    func acceptPhoneStats(_ report: StreamStatsReport, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        guard report.role == "phone" else { return }
+        phoneLoad = PhoneLoadFeedback(report: report)
+        phoneLoadReportedAt = now
     }
 
     /// The phone's screen in device pixels, read once a window scene exists.
@@ -878,6 +892,10 @@ final class PhoneRemoteModel: ObservableObject {
 
     func enterBackground() {
         let now = ProcessInfo.processInfo.systemUptime
+        // A held connection can resume before the age limit. Require a new statistics sample
+        // after pause so a pre-background report cannot become new ladder evidence.
+        phoneLoad = nil
+        phoneLoadReportedAt = nil
         contentConcealed = true
         resumeState = .backgrounded
         cancelInput()
@@ -1264,6 +1282,8 @@ final class PhoneRemoteModel: ObservableObject {
         viewportSendTask?.cancel()
         viewportSendTask = nil
         viewportReporter.sessionEnded()
+        phoneLoad = nil
+        phoneLoadReportedAt = nil
         qualityRequestedAt = nil
         pointerLocator.clear()
         pointerOverlay.reset(sourceSize: sourceSize)

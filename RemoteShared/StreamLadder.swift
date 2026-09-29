@@ -9,30 +9,55 @@ struct LadderState: Codable, Equatable {
     var fps: Int
     var sizeFraction: Double
     /// Why the ladder moved here (`LadderReason`): "encoding", "capture", "network", "phone", "thermal",
-    /// "power", or nil at rung 0.
+    /// "power", "phonePower", or nil at rung 0.
     var reason: String?
 
     static let sizeFractions: [Double] = [1.0, 0.75, 0.5]
 
-    /// The rungs for a session whose top rate is `targetFPS`. A frame-rate step needs no key
-    /// frame, a size step does, so the order alternates: keep the rate as long as a smaller picture
-    /// can carry it, then halve the rate. Policies may pick any rung; the order is the default path.
+    /// Rate falls before size. Each step reduces one dimension without increasing the other, so
+    /// stepping down under load cannot increase pixel throughput or enlarge an encoded frame.
     static func rungs(targetFPS: Int) -> [LadderState] {
-        var rungs: [LadderState] = []
-        var rates = [60, 30]
-        if targetFPS > 60 { rates.insert(targetFPS, at: 0) }
-        for (index, fps) in rates.enumerated() {
-            let fractions = index == 0 ? [1.0, 0.75] : index == rates.count - 1 ? [0.75, 0.5] : [1.0, 0.75, 0.5]
-            for fraction in fractions {
-                rungs.append(LadderState(rung: rungs.count, fps: fps, sizeFraction: fraction, reason: nil))
-            }
+        let top = min(max(targetFPS, 1), 240)
+        let steps: [(Int, Double)] = top > 60
+            ? [(top, 1), (60, 1), (60, 0.75), (30, 0.75), (30, 0.5)]
+            : top > 30
+                ? [(top, 1), (30, 1), (30, 0.75), (30, 0.5)]
+                : [(top, 1), (top, 0.75), (top, 0.5)]
+        return steps.enumerated().map { index, step in
+            LadderState(rung: index, fps: step.0, sizeFraction: step.1, reason: nil)
         }
-        return rungs
     }
 
     func validate() throws {
         guard (0...16).contains(rung), (1...240).contains(fps), sizeFraction.isFinite,
               sizeFraction > 0, sizeFraction <= 1, (reason?.utf8.count ?? 0) <= 24 else { throw RemoteError.invalidMessage }
+    }
+}
+
+/// Optional phone-side load on a heartbeat. An older peer sends no field and leaves these inputs
+/// unknown. Values are bounded before transmission and again at the host's protocol boundary.
+struct PhoneLoadFeedback: Codable, Equatable {
+    var supersededPerSecond: Int?
+    var decodeMs: Double?
+    var presentedFPS: Double?
+    var thermalState: Int?
+    var lowPowerMode: Bool?
+
+    init(report: StreamStatsReport) {
+        supersededPerSecond = report.supersededFrames.flatMap { (0...1_000).contains($0) ? $0 : nil }
+        decodeMs = report.decodeMs.flatMap { $0.isFinite && (0...1_000).contains($0) ? $0 : nil }
+        presentedFPS = report.presentedFPS.flatMap { $0.isFinite && (0...240).contains($0) ? $0 : nil }
+        thermalState = report.thermalState.flatMap { (0...3).contains($0) ? $0 : nil }
+        lowPowerMode = report.lowPowerMode
+    }
+
+    func validate() throws {
+        guard supersededPerSecond.map({ (0...1_000).contains($0) }) ?? true,
+              decodeMs.map({ $0.isFinite && (0...1_000).contains($0) }) ?? true,
+              presentedFPS.map({ $0.isFinite && (0...240).contains($0) }) ?? true,
+              thermalState.map({ (0...3).contains($0) }) ?? true else {
+            throw RemoteError.invalidMessage
+        }
     }
 }
 
@@ -57,6 +82,7 @@ struct LadderInputs: Equatable {
     var phoneDecodeMs: Double?
     var phonePresentedFPS: Double?
     var phoneThermalState: String?
+    var phoneLowPowerMode: Bool? = nil
 
     var frameIntervalMs: Double { 1000 / Double(max(1, targetFPS)) }
 }

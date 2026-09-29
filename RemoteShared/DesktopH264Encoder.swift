@@ -119,18 +119,20 @@ struct EncoderLatencyTrace {
 /// release/start sequence libwebrtc itself uses when the resolution changes.
 ///
 /// It also feeds the encoder trace: submit → callback latency, frames in flight, bytes per frame,
-/// key-frame size, rate updates and session age, reported through `sharedCounters`.
+/// key-frame size, rate updates and session age, reported through the host stream's counters.
 final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     /// Benchmark-only trace of rate updates, restarts and key frames; nil in the apps.
     nonisolated(unsafe) static var trace: ((String) -> Void)?
-    /// The native host's stream counters; set by `PeerMedia` on the main queue while an earlier
-    /// encoder may still report from VideoToolbox's thread, hence the lock.
+    /// The native host's stream counters for the next encoder. A new PeerMedia updates this
+    /// binding, while each encoder retains the counters for its own session. The lock protects
+    /// construction during an earlier encoder's VideoToolbox callback.
     static var sharedCounters: StreamCounters? {
         get { countersBox.value }
         set { countersBox.value = newValue }
     }
     private static let countersBox = CountersBox()
     private let inner: RTCVideoEncoderH264
+    private weak var counters: StreamCounters?
     private let lock = NSLock()
     private var policy = EncoderRestartPolicy()
     private var latency = EncoderLatencyTrace()
@@ -143,6 +145,7 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
 
     init(codecInfo: RTCVideoCodecInfo) {
         inner = RTCVideoEncoderH264(codecInfo: codecInfo)
+        counters = Self.sharedCounters
         super.init()
     }
 
@@ -164,8 +167,8 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
                 if isKey { self.policy.lastKeyFrameBytes = image.buffer.count }
                 self.lock.unlock()
                 if let sample {
-                    Self.sharedCounters?.encoded(latencyMs: sample.latencyMs, bytes: image.buffer.count,
-                                                 isKeyFrame: isKey, inFlight: sample.inFlight)
+                    self.counters?.encoded(latencyMs: sample.latencyMs, bytes: image.buffer.count,
+                                           isKeyFrame: isKey, inFlight: sample.inFlight)
                 }
             }
             return callback(image, info)
@@ -187,7 +190,7 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         maxInFlight = tuning.encoderMaxInFlight
         latency.reset()
         lock.unlock()
-        Self.sharedCounters?.encoderSessionStarted()
+        counters?.encoderSessionStarted()
         return inner.startEncode(with: settings, numberOfCores: numberOfCores)
     }
 
@@ -208,7 +211,7 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         }
         lock.unlock()
         if let (limit, count) = queued, count >= limit, !Self.requestsKeyFrame(frameTypes) {
-            Self.sharedCounters?.droppedBeforeEncode()
+            counters?.droppedBeforeEncode()
             Self.trace?("dropped at submit, \(count) in flight")
             return 0
         }
@@ -218,7 +221,7 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
             if inner.startEncode(with: settings, numberOfCores: cores) == 0 {
                 inner.setCallback(callback)
                 _ = inner.setBitrate(target, framerate: framerate)
-                Self.sharedCounters?.encoderSessionStarted()
+                counters?.encoderSessionStarted()
                 Self.trace?("restarted session at \(target)kbps")
             }
         }
@@ -233,7 +236,7 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         policy.updateTarget(kbps: Double(bitrateKbit))
         if framerate > 0 { self.framerate = framerate }
         lock.unlock()
-        Self.sharedCounters?.encoderRateUpdated()
+        counters?.encoderRateUpdated()
         Self.trace?("setBitrate \(bitrateKbit)kbps \(framerate)fps")
         return inner.setBitrate(bitrateKbit, framerate: framerate)
     }

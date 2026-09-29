@@ -132,6 +132,29 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertNil(model.heartbeatAction(at: 2.75).viewport, "a Mac that stops advertising it gets none")
     }
 
+    func testPhoneLoadRidesOnlyOnLadderHeartbeatsAndExpiresWithoutFreshStatistics() throws {
+        let model = try sessionModel(features: [SessionFeature.ladder])
+        var report = StreamStatsReport(role: "phone", previous: nil,
+                                       current: StreamStatsSample(entries: []), counters: nil)
+        report.supersededFrames = 31
+        report.decodeMs = 9
+        report.presentedFPS = 80
+        report.thermalState = 2
+        report.lowPowerMode = true
+        model.acceptPhoneStats(report, at: 10)
+        XCTAssertEqual(model.heartbeatAction(at: 11).phoneLoad,
+                       PhoneLoadFeedback(report: report))
+        model.enterBackground()
+        XCTAssertNil(model.heartbeatAction(at: 11.1).phoneLoad,
+                     "a held session must not reuse a pre-pause phone report")
+        model.acceptPhoneStats(report, at: 11.2)
+        XCTAssertNil(model.heartbeatAction(at: 13.8).phoneLoad, "a frozen report cannot steer the Mac")
+
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: []), to: model)
+        model.acceptPhoneStats(report, at: 14)
+        XCTAssertNil(model.heartbeatAction(at: 14.1).phoneLoad, "an old Mac receives no new field")
+    }
+
     func testAHeartbeatWithAViewportPassesTheMacsValidation() throws {
         let model = try sessionModel(features: [SessionFeature.viewportCapture])
         model.viewportChanged(request())

@@ -1,6 +1,22 @@
 import XCTest
+import WebRTC
 
 final class StreamInstrumentStatsTests: XCTestCase {
+    func testEncoderKeepsItsOwnCountersAfterAnotherHostStarts() {
+        let first = StreamCounters()
+        let second = StreamCounters()
+        DesktopH264Encoder.sharedCounters = first
+        defer { DesktopH264Encoder.sharedCounters = nil }
+        let codec = RTCVideoCodecInfo(name: kRTCVideoCodecH264Name, parameters: [:])
+        let firstEncoder = DesktopH264Encoder(codecInfo: codec)
+
+        DesktopH264Encoder.sharedCounters = second
+        _ = firstEncoder.setBitrate(1_000, framerate: 60)
+
+        XCTAssertEqual(first.drain(inputBufferedBytes: nil).rateUpdates, 1)
+        XCTAssertNil(second.drain(inputBufferedBytes: nil).rateUpdates)
+    }
+
     func testEncoderLatencyTraceMatchesByKeyAndFallsBackToTheOldest() {
         var trace = EncoderLatencyTrace()
         trace.submitted(key: 100, atMs: 1_000)

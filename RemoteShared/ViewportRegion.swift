@@ -36,8 +36,8 @@ struct ViewportRegion: Codable, Equatable {
 
 /// Mac → phone on `capture` status: what the stream covers now. `epoch` 0 means the whole desktop
 /// (also what an old Mac implies by never sending one). The rect is in Mac points and includes the
-/// pan margin; `outputWidth × outputHeight` is the stream's pixel size, fixed across re-crops so a
-/// pan or zoom never re-initialises the encoder.
+/// pan margin; `outputWidth × outputHeight` is the applied stream size. It stays steady for small
+/// pans and zooms, but a large zoom can change it and require an encoder key frame.
 struct CaptureRegion: Codable, Equatable {
     var epoch: UInt64
     var x: Double

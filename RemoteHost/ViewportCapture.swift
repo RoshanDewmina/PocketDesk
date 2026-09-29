@@ -21,7 +21,7 @@ struct DisplayGeometry: Equatable {
 /// G4 (Docs/perf/PLAN-120FPS-AND-LOAD.md §4): what the stream covers for the phone's viewport.
 ///
 /// Crop: the visible rect clamped to the display, plus `margin` on each side so a small pan needs no
-/// re-crop, widened to the output's aspect (ScreenCaptureKit scales the crop into the fixed output, so
+/// re-crop, widened to the output's aspect (ScreenCaptureKit scales the crop into the applied output, so
 /// the phone's own aspect would come out stretched or letterboxed), at least `minimumLongEdgeFraction`
 /// of the display's long edge, with an even pixel origin and a pixel size in whole macroblocks. A crop
 /// that would cover `wholeDisplayCoverage` of the display or more is the whole display. While the

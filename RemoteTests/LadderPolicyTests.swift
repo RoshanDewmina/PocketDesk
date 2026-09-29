@@ -48,21 +48,27 @@ final class LadderPolicyTests: XCTestCase {
     func testRungsFollowTheContractAndNeverRunFasterThanTheTarget() {
         XCTAssertEqual(LadderPolicy.ladder(targetFPS: 120), LadderState.rungs(targetFPS: 120))
         XCTAssertEqual(LadderPolicy.ladder(targetFPS: 60), LadderState.rungs(targetFPS: 60))
-        XCTAssertEqual(ladder120.map(\.fps), [120, 120, 60, 60, 60, 30, 30])
-        XCTAssertEqual(ladder120.map(\.sizeFraction), [1, 0.75, 1, 0.75, 0.5, 0.75, 0.5])
+        XCTAssertEqual(ladder120.map(\.fps), [120, 60, 60, 30, 30])
+        XCTAssertEqual(ladder120.map(\.sizeFraction), [1, 1, 0.75, 0.75, 0.5])
         let thirty = LadderPolicy.ladder(targetFPS: 30)
         XCTAssertEqual(thirty.map(\.fps), [30, 30, 30], "a 30 fps override is a size-only ladder")
         XCTAssertEqual(thirty.map(\.sizeFraction), [1, 0.75, 0.5])
         XCTAssertEqual(thirty.map(\.rung), [0, 1, 2])
-        XCTAssertEqual(LadderPolicy.ladder(targetFPS: 45).map(\.fps), [45, 45, 30, 30])
+        XCTAssertEqual(LadderPolicy.ladder(targetFPS: 45).map(\.fps), [45, 30, 30, 30])
         for target in [30, 45, 60, 90, 120] {
             let rungs = LadderPolicy.ladder(targetFPS: target)
             XCTAssertEqual(rungs.map(\.rung), Array(rungs.indices))
             XCTAssertTrue(rungs.allSatisfy { $0.fps <= target && $0.reason == nil })
+            for (higher, lower) in zip(rungs, rungs.dropFirst()) {
+                XCTAssertLessThanOrEqual(lower.fps, higher.fps)
+                XCTAssertLessThanOrEqual(lower.sizeFraction, higher.sizeFraction)
+                XCTAssertLessThanOrEqual(Double(lower.fps) * lower.sizeFraction * lower.sizeFraction,
+                                         Double(higher.fps) * higher.sizeFraction * higher.sizeFraction)
+            }
             XCTAssertEqual(LadderPolicy(targetFPS: target).state, rungs[0])
             XCTAssertNoThrow(try rungs.forEach { try $0.validate() })
         }
-        XCTAssertEqual([30, 45, 60, 90, 120].map { LadderPolicy(targetFPS: $0).lowPowerRung }, [0, 0, 0, 2, 2])
+        XCTAssertEqual([30, 45, 60, 90, 120].map { LadderPolicy(targetFPS: $0).lowPowerRung }, [0, 0, 0, 1, 1])
     }
 
     // MARK: Down
@@ -119,7 +125,7 @@ final class LadderPolicyTests: XCTestCase {
             XCTAssertEqual(row.trigger.reason.rawValue, row.reason, row.name)
         }
         XCTAssertEqual(Set(downRows.map(\.trigger)).count, LadderTrigger.allCases.count, "every trigger has a row")
-        XCTAssertEqual(Set(downRows.map(\.reason)), Set(LadderReason.allCases.map(\.rawValue)).subtracting(["power"]),
+        XCTAssertEqual(Set(downRows.map(\.reason)), Set(LadderReason.allCases.map(\.rawValue)).subtracting(["power", "phonePower"]),
                        "every reason but power comes from a trigger")
     }
 
@@ -177,9 +183,9 @@ final class LadderPolicyTests: XCTestCase {
         let enoughPresented = with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 97 }
         XCTAssertEqual(LadderTrigger.firing(enoughPresented, at: ladder120[0]), [])
         let atThirty = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
-        XCTAssertTrue(LadderTrigger.phoneSuperseded.fires(atThirty, at: ladder120[5]), "8 of 30 is over 25 %")
+        XCTAssertTrue(LadderTrigger.phoneSuperseded.fires(atThirty, at: ladder120[3]), "8 of 30 is over 25 %")
         let sevenAtThirty = with { $0.phoneSupersededPerSecond = 7; $0.phonePresentedFPS = 20 }
-        XCTAssertFalse(LadderTrigger.phoneSuperseded.fires(sevenAtThirty, at: ladder120[5]))
+        XCTAssertFalse(LadderTrigger.phoneSuperseded.fires(sevenAtThirty, at: ladder120[3]))
         var policy = LadderPolicy(targetFPS: 120)
         XCTAssertNil(policy.evaluate(fewPresented, at: 0), "two samples, like every load trigger")
         XCTAssertEqual(policy.evaluate(fewPresented, at: 1), rung(1, "phone"))
@@ -213,8 +219,8 @@ final class LadderPolicyTests: XCTestCase {
 
     func testThresholdsFollowTheRungNotTheTarget() {
         let top = ladder120[0]
-        let sixty = ladder120[2]
-        let thirty = ladder120[5]
+        let sixty = ladder120[1]
+        let thirty = ladder120[3]
         let slowEncode = with { $0.encodeLatencyP90Ms = 20 }
         XCTAssertTrue(LadderTrigger.encodeLatency.fires(slowEncode, at: top), "20 ms is over 2 × 8.3 ms")
         XCTAssertFalse(LadderTrigger.encodeLatency.fires(slowEncode, at: sixty), "20 ms fits 2 × 16.7 ms")
@@ -276,9 +282,9 @@ final class LadderPolicyTests: XCTestCase {
         var mixed = LadderPolicy(targetFPS: 120)
         let hotAndBacklogged = with { $0.hostThermalState = "serious"; $0.encodeInFlightMax = 2 }
         let moves = run(&mixed, 0...10) { _ in hotAndBacklogged }
-        XCTAssertEqual(moves.map { $0.time }, [0, 2, 4, 6, 8, 10], "load keeps its own two-sample pace")
+        XCTAssertEqual(moves.map { $0.time }, [0, 2, 4, 6], "load keeps its own two-sample pace until the floor")
         XCTAssertEqual(moves.map { $0.state.reason },
-                       ["thermal", "encoding", "encoding", "encoding", "encoding", "thermal"])
+                       ["thermal", "encoding", "encoding", "encoding"])
     }
 
     func testTheReasonIsTheHighestPriorityTriggerOfTheMovingSample() {
@@ -311,7 +317,8 @@ final class LadderPolicyTests: XCTestCase {
         for second in 2...6 { XCTAssertNil(policy.evaluate(calm(), at: TimeInterval(second))) }
         var neutral = calm()
         neutral.encodedFPS = 100
-        XCTAssertFalse(LadderPolicy.isClean(neutral, at: ladder120[1]), "100 of 120 is not 95 %")
+        neutral.encodedFPS = 50
+        XCTAssertFalse(LadderPolicy.isClean(neutral, at: ladder120[1]), "50 of 60 is not 95 %")
         XCTAssertEqual(LadderTrigger.firing(neutral, at: ladder120[1]), [], "and not under 80 %")
         XCTAssertNil(policy.evaluate(neutral, at: 7))
         for second in 8...16 { XCTAssertNil(policy.evaluate(calm(), at: TimeInterval(second)), "second \(second)") }
@@ -344,13 +351,13 @@ final class LadderPolicyTests: XCTestCase {
         let script: [Bool] = (0..<3).flatMap { _ in [true, true] + Array(repeating: false, count: 12) }
             + (0..<10).flatMap { _ in [true, true, false, false, false] }
         let moves = run(&policy, 0...(script.count - 1)) { script[$0] ? self.backlog() : self.calm() }
-        XCTAssertEqual(moves.map { $0.state.rung }, [1, 0, 1, 2, 3, 4, 5, 6])
-        XCTAssertEqual(moves.map { $0.time }, [1, 11, 15, 29, 43, 48, 53, 58],
+        XCTAssertEqual(moves.map { $0.state.rung }, [1, 0, 1, 2, 3, 4])
+        XCTAssertEqual(moves.map { $0.time }, [1, 11, 15, 29, 43, 48],
                        "the climb at 11 failed at 15, so the next climb waits 20 s and never comes")
         for (previous, move) in zip(moves, moves.dropFirst()) where move.state.rung < previous.state.rung {
             XCTAssertGreaterThanOrEqual(move.time - previous.time, 10, "climb at \(move.time)")
         }
-        XCTAssertEqual(policy.state, ladder120[6].with(reason: "encoding"), "flapping walks down, never back up")
+        XCTAssertEqual(policy.state, ladder120[4].with(reason: "encoding"), "flapping walks down, never back up")
         XCTAssertEqual(policy.climbWait, 20)
     }
 
@@ -413,19 +420,17 @@ final class LadderPolicyTests: XCTestCase {
     func testLowPowerModeCapsTheTopAtTheFirstSixtyRung() {
         var policy = LadderPolicy(targetFPS: 120)
         let saving = with { $0.hostLowPowerMode = true }
-        XCTAssertEqual(policy.evaluate(saving, at: 0), rung(2, "power"), "one move to 60 fps at full size")
+        XCTAssertEqual(policy.evaluate(saving, at: 0), rung(1, "power"), "one move to 60 fps at full size")
         for second in 1...40 { XCTAssertNil(policy.evaluate(saving, at: TimeInterval(second)), "never above the cap") }
 
         var savingBacklog = saving
         savingBacklog.encodeInFlightMax = 2
         XCTAssertNil(policy.evaluate(savingBacklog, at: 41))
-        XCTAssertEqual(policy.evaluate(savingBacklog, at: 42), rung(3, "encoding"), "load still steps below the cap")
+        XCTAssertEqual(policy.evaluate(savingBacklog, at: 42), rung(2, "encoding"), "load still steps below the cap")
         for second in 43...51 { XCTAssertNil(policy.evaluate(saving, at: TimeInterval(second))) }
-        XCTAssertEqual(policy.evaluate(saving, at: 52), rung(2, "power"), "back to the cap, which is power's again")
+        XCTAssertEqual(policy.evaluate(saving, at: 52), rung(1, "power"), "back to the cap, which is power's again")
         for second in 53...62 { XCTAssertNil(policy.evaluate(saving, at: TimeInterval(second))) }
-        XCTAssertEqual(policy.evaluate(calm(), at: 63), rung(1, "power"), "Low Power Mode off: climbing resumes")
-        for second in 64...72 { XCTAssertNil(policy.evaluate(calm(), at: TimeInterval(second))) }
-        XCTAssertEqual(policy.evaluate(calm(), at: 73), ladder120[0])
+        XCTAssertEqual(policy.evaluate(calm(), at: 63), ladder120[0], "Low Power Mode off: climbing resumes")
     }
 
     func testLowPowerModeNeverPushesBelowTheCap() {
@@ -434,8 +439,8 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(policy.state, rung(4, "encoding"))
         let saving = with { $0.hostLowPowerMode = true }
         let moves = run(&policy, 8...40) { _ in saving }
-        XCTAssertEqual(moves.map { $0.time }, [17, 27])
-        XCTAssertEqual(moves.map { $0.state }, [rung(3, "encoding"), rung(2, "power")])
+        XCTAssertEqual(moves.map { $0.time }, [17, 27, 37])
+        XCTAssertEqual(moves.map { $0.state }, [rung(3, "encoding"), rung(2, "encoding"), rung(1, "power")])
 
         var sixty = LadderPolicy(targetFPS: 60)
         var saving60 = calm(targetFPS: 60)
@@ -448,8 +453,8 @@ final class LadderPolicyTests: XCTestCase {
     func testNeverBelowTheFloorNorAboveTheTop() {
         var policy = LadderPolicy(targetFPS: 120)
         let moves = run(&policy, 0...39) { _ in self.backlog() }
-        XCTAssertEqual(moves.map { $0.state.rung }, [1, 2, 3, 4, 5, 6])
-        XCTAssertEqual(policy.state, ladder120[6].with(reason: "encoding"))
+        XCTAssertEqual(moves.map { $0.state.rung }, [1, 2, 3, 4])
+        XCTAssertEqual(policy.state, ladder120[4].with(reason: "encoding"))
         XCTAssertEqual(policy.state.fps, 30)
         XCTAssertEqual(policy.state.sizeFraction, 0.5)
         XCTAssertNil(policy.evaluate(with { $0.hostThermalState = "critical" }, at: 40),
@@ -488,7 +493,7 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertNil(atTop.evaluate(calm(targetFPS: 120), at: 1))
 
         var saving = LadderPolicy(targetFPS: 60)
-        XCTAssertEqual(saving.evaluate(with { $0.hostLowPowerMode = true }, at: 0), rung(2, "power"),
+        XCTAssertEqual(saving.evaluate(with { $0.hostLowPowerMode = true }, at: 0), rung(1, "power"),
                        "the new ladder's power cap applies in the same second")
     }
 
@@ -526,7 +531,7 @@ final class LadderPolicyTests: XCTestCase {
     func testStrainedForEightSecondsAfterEachDownwardStep() throws {
         var busy = BusyPolicy()
         let strained = try XCTUnwrap(evaluate(&busy, rung(1, "encoding"), at: 0))
-        XCTAssertEqual(strained, BusyState(level: .strained, fps: 120, longEdge: 1920, reason: "encoding"))
+        XCTAssertEqual(strained, BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "encoding"))
         XCTAssertNoThrow(try strained.validate())
         for second in 1...7 { XCTAssertNil(evaluate(&busy, rung(1, "encoding"), at: TimeInterval(second))) }
         XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 8), .ok,
@@ -535,7 +540,7 @@ final class LadderPolicyTests: XCTestCase {
             XCTAssertNil(evaluate(&busy, rung(1, "encoding"), at: TimeInterval(second)), "no permanent pill")
         }
         XCTAssertEqual(evaluate(&busy, rung(2, "encoding"), at: 31),
-                       BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "encoding"))
+                       BusyState(level: .strained, fps: 60, longEdge: 1920, reason: "encoding"))
         for second in 32...38 { XCTAssertNil(evaluate(&busy, rung(2, "encoding"), at: TimeInterval(second))) }
         XCTAssertEqual(evaluate(&busy, rung(2, "encoding"), at: 39), .ok)
         XCTAssertNil(evaluate(&busy, rung(1, "encoding"), at: 40), "a climb is not news")
@@ -545,21 +550,21 @@ final class LadderPolicyTests: XCTestCase {
         var busy = BusyPolicy()
         XCTAssertEqual(evaluate(&busy, rung(1, "network"), at: 0)?.level, .strained)
         XCTAssertEqual(evaluate(&busy, rung(2, "network"), at: 5),
-                       BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "network"))
+                       BusyState(level: .strained, fps: 60, longEdge: 1920, reason: "network"))
         for second in 6...12 { XCTAssertNil(evaluate(&busy, rung(2, "network"), at: TimeInterval(second))) }
         XCTAssertEqual(evaluate(&busy, rung(2, "network"), at: 13), .ok)
     }
 
     func testBusyAtTheFloorForAsLongAsItSitsThere() {
         var busy = BusyPolicy()
-        XCTAssertEqual(evaluate(&busy, rung(6, "encoding"), at: 0),
+        XCTAssertEqual(evaluate(&busy, rung(4, "encoding"), at: 0),
                        BusyState(level: .busy, fps: 30, longEdge: 1280, reason: "encoding"))
-        for second in 1...59 { XCTAssertNil(evaluate(&busy, rung(6, "encoding"), at: TimeInterval(second))) }
-        XCTAssertEqual(evaluate(&busy, rung(5, "encoding"), at: 60),
+        for second in 1...59 { XCTAssertNil(evaluate(&busy, rung(4, "encoding"), at: TimeInterval(second))) }
+        XCTAssertEqual(evaluate(&busy, rung(3, "encoding"), at: 60),
                        BusyState(level: .busy, fps: 30, longEdge: 1920, reason: "encoding"),
                        "off the floor, busy holds but shows the new picture")
-        for second in 61...68 { XCTAssertNil(evaluate(&busy, rung(5, "encoding"), at: TimeInterval(second))) }
-        XCTAssertEqual(evaluate(&busy, rung(5, "encoding"), at: 69), .ok, "10 s after the last busy second")
+        for second in 61...68 { XCTAssertNil(evaluate(&busy, rung(3, "encoding"), at: TimeInterval(second))) }
+        XCTAssertEqual(evaluate(&busy, rung(3, "encoding"), at: 69), .ok, "10 s after the last busy second")
     }
 
     func testBusyWhenCaptureStaysBehindForFiveSeconds() {
@@ -602,10 +607,10 @@ final class LadderPolicyTests: XCTestCase {
         for second in 6...9 { XCTAssertNil(evaluate(&busy, ladder120[0], slow, at: TimeInterval(second))) }
         for second in 10...11 { XCTAssertNil(evaluate(&busy, ladder120[0], at: TimeInterval(second)), "holding") }
         XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 12),
-                       BusyState(level: .busy, fps: 120, longEdge: 1920, reason: "encoding"))
+                       BusyState(level: .busy, fps: 60, longEdge: 2560, reason: "encoding"))
         for second in 13...18 { XCTAssertNil(evaluate(&busy, rung(1, "encoding"), at: TimeInterval(second))) }
         XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 19),
-                       BusyState(level: .strained, fps: 120, longEdge: 1920, reason: "encoding"),
+                       BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "encoding"),
                        "10 s after the last busy second, inside the step's 8 s")
         XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 20), .ok)
     }
@@ -613,7 +618,7 @@ final class LadderPolicyTests: XCTestCase {
     func testTheReasonIsTheLaddersOrElseTheBusyTrigger() {
         var stepped = BusyPolicy()
         let slowAtSixty = with { $0.encodeLatencyP90Ms = 40 }
-        for second in 0...5 { _ = evaluate(&stepped, rung(2, "network"), slowAtSixty, at: TimeInterval(second)) }
+        for second in 0...5 { _ = evaluate(&stepped, rung(1, "network"), slowAtSixty, at: TimeInterval(second)) }
         XCTAssertEqual(stepped.state, BusyState(level: .busy, fps: 60, longEdge: 2560, reason: "network"))
 
         var top = BusyPolicy()
@@ -624,13 +629,13 @@ final class LadderPolicyTests: XCTestCase {
 
     func testBusyRestartsWhenTheTargetChanges() {
         var busy = BusyPolicy()
-        XCTAssertEqual(evaluate(&busy, rung(6, "encoding"), at: 0)?.level, .busy)
+        XCTAssertEqual(evaluate(&busy, rung(4, "encoding"), at: 0)?.level, .busy)
         XCTAssertEqual(evaluate(&busy, LadderPolicy.ladder(targetFPS: 60)[0], calm(targetFPS: 60), at: 1), .ok)
     }
 
     func testTheProtocolEntryPointReportsNoSize() {
         var busy = BusyPolicy()
-        XCTAssertEqual(busy.evaluate(ladder: rung(6, "encoding"), inputs: calm(), at: 0),
+        XCTAssertEqual(busy.evaluate(ladder: rung(4, "encoding"), inputs: calm(), at: 0),
                        BusyState(level: .busy, fps: 30, longEdge: 0, reason: "encoding"))
     }
 
@@ -655,7 +660,63 @@ final class LadderPolicyTests: XCTestCase {
                                     pacerDelayMs: 0.4, targetKbps: 18_000, availableKbps: 30_000,
                                     qualityLimitation: "none", hostThermalState: "fair", hostLowPowerMode: false,
                                     phoneSupersededPerSecond: nil, phoneDecodeMs: nil, phonePresentedFPS: nil,
-                                    phoneThermalState: nil))
+                                    phoneThermalState: nil, phoneLowPowerMode: nil))
+    }
+
+    func testMonitorMapsFreshPhoneReportAndExpiresIt() {
+        var report = StreamStatsReport(role: "phone", previous: nil,
+                                       current: StreamStatsSample(entries: []), counters: nil)
+        report.supersededFrames = 31
+        report.decodeMs = 9
+        report.presentedFPS = 80
+        report.thermalState = 2
+        report.lowPowerMode = true
+        let feedback = PhoneLoadFeedback(report: report)
+        XCTAssertEqual(HostLoadMonitor.currentPhoneLoad(feedback, receivedAt: 10, now: 12.5), feedback)
+        XCTAssertNil(HostLoadMonitor.currentPhoneLoad(feedback, receivedAt: 10, now: 12.501))
+        XCTAssertNil(HostLoadMonitor.currentPhoneLoad(feedback, receivedAt: 10, now: 9))
+        XCTAssertNil(HostLoadMonitor.currentPhoneLoad(feedback, receivedAt: nil, now: 10))
+        var withPhone = sample
+        withPhone.phoneLoad = feedback
+        let inputs = HostLoadMonitor.inputs(from: withPhone)
+        XCTAssertEqual(inputs.phoneSupersededPerSecond, 31)
+        XCTAssertEqual(inputs.phoneDecodeMs, 9)
+        XCTAssertEqual(inputs.phonePresentedFPS, 80)
+        XCTAssertEqual(inputs.phoneThermalState, "2")
+        XCTAssertEqual(inputs.phoneLowPowerMode, true)
+
+        withPhone.phoneLoad = nil
+        let oldPeer = HostLoadMonitor.inputs(from: withPhone)
+        XCTAssertNil(oldPeer.phoneSupersededPerSecond)
+        XCTAssertNil(oldPeer.phoneDecodeMs)
+        XCTAssertNil(oldPeer.phonePresentedFPS)
+        XCTAssertNil(oldPeer.phoneThermalState)
+        XCTAssertNil(oldPeer.phoneLowPowerMode)
+    }
+
+    func testFreshPhoneFeedbackChangesTheMonitorLadder() {
+        var hotReport = StreamStatsReport(role: "phone", previous: nil,
+                                          current: StreamStatsSample(entries: []), counters: nil)
+        hotReport.thermalState = 2
+        var hotSample = sample
+        hotSample.phoneLoad = PhoneLoadFeedback(report: hotReport)
+        var hotMonitor = HostLoadMonitor(targetFPS: 120)
+        XCTAssertEqual(hotMonitor.tick(sample: hotSample, at: 0).ladder, rung(1, "phone"))
+
+        var slowReport = hotReport
+        slowReport.thermalState = nil
+        slowReport.decodeMs = 9
+        var slowSample = sample
+        slowSample.phoneLoad = PhoneLoadFeedback(report: slowReport)
+        var slowMonitor = HostLoadMonitor(targetFPS: 120)
+        XCTAssertNil(slowMonitor.tick(sample: slowSample, at: 0).ladder)
+        XCTAssertEqual(slowMonitor.tick(sample: slowSample, at: 1).ladder, rung(1, "phone"))
+
+        slowReport.decodeMs = nil
+        slowReport.lowPowerMode = true
+        slowSample.phoneLoad = PhoneLoadFeedback(report: slowReport)
+        var powerMonitor = HostLoadMonitor(targetFPS: 120)
+        XCTAssertEqual(powerMonitor.tick(sample: slowSample, at: 0).ladder, rung(1, "phonePower"))
     }
 
     func testSampleFromTheHostReport() {
@@ -682,14 +743,14 @@ final class LadderPolicyTests: XCTestCase {
         bad.encodeInFlightMax = 2
         assertTick(monitor.tick(sample: bad, at: 0), ladder: nil, busy: nil)
         assertTick(monitor.tick(sample: bad, at: 1), ladder: rung(1, "encoding"),
-                   busy: BusyState(level: .strained, fps: 120, longEdge: 1920, reason: "encoding"))
+                   busy: BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "encoding"))
         assertTick(monitor.tick(sample: bad, at: 2), ladder: nil, busy: nil)
         assertTick(monitor.tick(sample: bad, at: 3), ladder: rung(2, "encoding"),
-                   busy: BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "encoding"))
+                   busy: BusyState(level: .strained, fps: 60, longEdge: 1920, reason: "encoding"))
         assertTick(monitor.tick(sample: bad, at: 4), ladder: nil, busy: nil)
         var unsized = bad
         unsized.longEdge = nil
-        let smaller = BusyState(level: .strained, fps: 60, longEdge: 1920, reason: "encoding")
+        let smaller = BusyState(level: .strained, fps: 30, longEdge: 1920, reason: "encoding")
         assertTick(monitor.tick(sample: unsized, at: 5), ladder: rung(3, "encoding"), busy: smaller,
                    "nil keeps the last long edge")
         XCTAssertEqual(monitor.longEdge, 2560)
@@ -717,7 +778,7 @@ final class LadderPolicyTests: XCTestCase {
         var monitor = HostLoadMonitor(targetFPS: 120)
         var saving = sample
         saving.lowPowerMode = true
-        assertTick(monitor.tick(sample: saving, at: 0), ladder: rung(2, "power"),
+        assertTick(monitor.tick(sample: saving, at: 0), ladder: rung(1, "power"),
                    busy: BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "power"))
         for second in 1...7 {
             assertTick(monitor.tick(sample: saving, at: TimeInterval(second)), ladder: nil, busy: nil)

@@ -15,7 +15,7 @@ struct BusyState: Codable, Equatable {
     var level: Level
     var fps: Int
     var longEdge: Int
-    /// Short, user-facing cause (`LadderReason`): "encoding", "capture", "network", "phone", "thermal", "power".
+    /// Short, user-facing cause (`LadderReason`): "encoding", "capture", "network", "phone", "thermal", "power", "phonePower".
     var reason: String
 
     static let ok = BusyState(level: .ok, fps: 0, longEdge: 0, reason: "")

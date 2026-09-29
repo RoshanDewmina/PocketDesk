@@ -138,6 +138,7 @@ final class SimulatedRenewalService {
     private(set) var issued: [(username: String, expiresAt: Double)] = []
     private(set) var leaseExpiries = 0
     private(set) var renewalsHandled = 0
+    var onExpired: (() -> Void)?
 
     init(signaling: ScriptedSignaling, scheduler: ManualScheduler, leaseSeconds: Double, credentialSeconds: Double?) {
         self.signaling = signaling
@@ -189,6 +190,7 @@ final class SimulatedRenewalService {
         leaseExpiries += 1
         leaseTask?.cancel()
         signaling.serverCloses()
+        onExpired?()
     }
 
     private func issue() -> [ICEServerConfiguration] {

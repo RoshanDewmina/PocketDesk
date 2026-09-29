@@ -36,6 +36,8 @@ struct RemoteAction: Codable {
     var screenPixels: PixelSize? = nil
     /// G4: the desktop region the phone shows, on heartbeats (only after `SessionFeature.viewportCapture`).
     var viewport: ViewportRegion? = nil
+    /// G12: bounded receiver load from a phone that knows the host supports the ladder.
+    var phoneLoad: PhoneLoadFeedback? = nil
     /// G4: the region the stream covers, on `capture` status.
     var captureRegion: CaptureRegion? = nil
     /// G12: the active ladder rung, on `capture` status.
@@ -53,6 +55,8 @@ struct RemoteAction: Codable {
         guard screenPixels == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
         try viewport?.validate()
         guard viewport == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
+        try phoneLoad?.validate()
+        guard phoneLoad == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
         try captureRegion?.validate()
         try ladder?.validate()
         try busy?.validate()

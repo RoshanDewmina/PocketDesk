@@ -87,6 +87,8 @@ final class RemoteHostModel: ObservableObject {
     private let capture = RemoteCapture()
     /// G12: one per capture session while the ladder switch is on.
     private var loadMonitor: HostLoadMonitor?
+    private var phoneLoad: PhoneLoadFeedback?
+    private var phoneLoadReceivedAt: TimeInterval?
     private var ladderState: LadderState?
     private var busyState: BusyState?
     private let keepAwake = HostKeepAwake()
@@ -1168,8 +1170,14 @@ final class RemoteHostModel: ObservableObject {
             if connection.connected, action.epoch == inputEpoch.value, let pixels = action.screenPixels {
                 capture.setClientPixels(pixels)
             }
-            if connection.connected, action.epoch == inputEpoch.value, let viewport = action.viewport {
-                capture.setViewport(viewport)
+            if connection.connected, action.epoch == inputEpoch.value, StreamTuning.current.viewportCapture {
+                // A heartbeat without a viewport means the phone can no longer describe its
+                // visible area. Return to the whole display instead of retaining an old crop.
+                capture.setViewport(action.viewport)
+            }
+            if connection.connected, action.epoch == inputEpoch.value {
+                phoneLoad = action.phoneLoad
+                phoneLoadReceivedAt = action.phoneLoad == nil ? nil : ProcessInfo.processInfo.systemUptime
             }
             if let probe = action.clock, !probe.isEcho, (try? probe.validate()) != nil {
                 let received = min(MachClock.nowMs(), connection.media?.controlArrivalMs ?? .infinity)
@@ -1350,12 +1358,16 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Ladder and busy state (G12)
 
     private func beginLoadMonitor(peer: PeerMedia) {
+        phoneLoad = nil
+        phoneLoadReceivedAt = nil
         ladderState = nil
         busyState = nil
         loadMonitor = StreamTuning.current.ladder ? HostLoadMonitor(targetFPS: peer.targetFPS) : nil
     }
 
     private func endLoadMonitor() {
+        phoneLoad = nil
+        phoneLoadReceivedAt = nil
         loadMonitor = nil
         ladderState = nil
         busyState = nil
@@ -1371,7 +1383,10 @@ final class RemoteHostModel: ObservableObject {
         let sample = HostLoadSample(report: report, targetFPS: peer.targetFPS, longEdge: longEdge,
                                     hostThermalState: HostLoadMonitor.thermalName(process.thermalState),
                                     lowPowerMode: process.isLowPowerModeEnabled)
-        let change = monitor.tick(sample: sample, at: process.systemUptime)
+        var sampleWithPhone = sample
+        sampleWithPhone.phoneLoad = HostLoadMonitor.currentPhoneLoad(phoneLoad, receivedAt: phoneLoadReceivedAt,
+                                                                    now: process.systemUptime)
+        let change = monitor.tick(sample: sampleWithPhone, at: process.systemUptime)
         loadMonitor = monitor
         if let ladder = change.ladder {
             ladderState = ladder

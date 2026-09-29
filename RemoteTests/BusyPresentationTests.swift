@@ -26,6 +26,8 @@ final class BusyPresentationTests: XCTestCase {
             (.strained, "phone", "Your iPhone is working hard", "iphone"),
             (.busy, "power", "Your Mac is saving power", "battery.25percent"),
             (.strained, "power", "Your Mac is saving power", "battery.25percent"),
+            (.busy, "phonePower", "Your iPhone is saving power", "battery.25percent"),
+            (.strained, "phonePower", "Your iPhone is saving power", "battery.25percent"),
             (.busy, "", "Your Mac is busy", "laptopcomputer"),
             (.strained, "something new", "Your Mac is working hard", "laptopcomputer"),
         ]
@@ -72,6 +74,7 @@ final class BusyPresentationTests: XCTestCase {
         XCTAssertEqual(iPad?.title, "Your iPad is busy")
         XCTAssertEqual(iPad?.symbol, "ipad")
         XCTAssertEqual(words(.strained, reason: "phone", device: "iPad")?.title, "Your iPad is working hard")
+        XCTAssertEqual(words(.strained, reason: "phonePower", device: "iPad")?.title, "Your iPad is saving power")
         XCTAssertEqual(words(.busy, reason: "encoding", device: "iPad")?.title, "Your Mac is busy",
                        "the device kind only matters when the phone is the limit")
     }

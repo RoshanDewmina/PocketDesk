@@ -70,9 +70,19 @@ struct StreamTuning: Equatable {
     static let tuned = StreamTuning(playoutDelayMinMs: 0, playoutDelayMaxMs: 0, videoPacing: nil,
                                     qualityBitrates: true, bandwidthHeadroom: 1, degradationPreference: .maintainResolution,
                                     encoderRestart: true, presentAtDisplayMaximum: true)
-    static let legacy = StreamTuning(playoutDelayMinMs: nil, playoutDelayMaxMs: nil, videoPacing: nil,
-                                     qualityBitrates: false, bandwidthHeadroom: 1, degradationPreference: nil,
-                                     encoderRestart: false, presentAtDisplayMaximum: false)
+    static let legacy: StreamTuning = {
+        var tuning = StreamTuning(playoutDelayMinMs: nil, playoutDelayMaxMs: nil, videoPacing: nil,
+                                  qualityBitrates: false, bandwidthHeadroom: 1, degradationPreference: nil,
+                                  encoderRestart: false, presentAtDisplayMaximum: false)
+        // "Previous stream tuning" must also exclude features added after that baseline.
+        tuning.cacheLevel52Probe = false
+        tuning.highRefreshCapture = false
+        tuning.highRefreshNoAdaptation = false
+        tuning.capToClientPixels = false
+        tuning.viewportCapture = false
+        tuning.ladder = false
+        return tuning
+    }()
 
     static let legacyDefaultsKey = "PocketDeskLegacyStreamTuning"
     static let captureNativeRateKey = "PocketDeskCaptureNativeRate"
@@ -176,6 +186,7 @@ struct StreamTuning: Equatable {
     }
 
     var summary: String {
+        if self == Self.legacy { return "legacy" }
         var parts: [String] = []
         if let playoutDelayMinMs, let playoutDelayMaxMs { parts.append("playout \(playoutDelayMinMs)-\(playoutDelayMaxMs)ms") }
         if let videoPacing { parts.append("pacing \(videoPacing)") }

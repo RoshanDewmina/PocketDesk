@@ -3,7 +3,7 @@ import Foundation
 /// The user-facing causes a ladder move or a busy state can carry (`LadderState.reason`, `BusyState.reason`).
 /// `power` is the Mac's Low Power Mode, a cap rather than a load.
 enum LadderReason: String, CaseIterable {
-    case thermal, capture, encoding, network, phone, power
+    case thermal, capture, encoding, network, phone, power, phonePower
 }
 
 /// One per-second signal that steps the ladder down, in priority order: when several fire in one
@@ -147,9 +147,10 @@ struct LadderPolicy: LadderEngine {
 
     private mutating func step(_ inputs: LadderInputs, at time: TimeInterval) {
         if let lastMoveAt, time - lastMoveAt >= Self.stableReset { climbWait = Self.upAfter }
-        let lowPower = inputs.hostLowPowerMode == true
+        let lowPower = inputs.hostLowPowerMode == true || inputs.phoneLowPowerMode == true
+        let powerReason: LadderReason = inputs.hostLowPowerMode == true ? .power : .phonePower
         if lowPower && state.rung < lowPowerRung {
-            move(to: lowPowerRung, reason: LadderReason.power.rawValue, at: time)
+            move(to: lowPowerRung, reason: powerReason.rawValue, at: time)
             return
         }
         let firing = LadderTrigger.firing(inputs, at: state)
@@ -174,7 +175,7 @@ struct LadderPolicy: LadderEngine {
         guard state.rung > top, let calmSince, time - calmSince >= climbWait else { return }
         if let thermalMoveAt, time - thermalMoveAt < Self.thermalUpAfter { return }
         let next = state.rung - 1
-        move(to: next, reason: lowPower && next == lowPowerRung ? LadderReason.power.rawValue : state.reason, at: time)
+        move(to: next, reason: lowPower && next == lowPowerRung ? powerReason.rawValue : state.reason, at: time)
         lastClimbAt = time
     }
 

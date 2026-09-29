@@ -2,8 +2,7 @@ import Foundation
 
 /// One statistics second on the Mac, reduced to what the ladder and the busy state read (G12).
 /// `longEdge` is the long edge in pixels of the rung-0 picture (the capture size before the ladder's
-/// `sizeFraction`); nil keeps the last one. The phone does not report its load to the Mac yet, so
-/// the phone fields of `LadderInputs` stay nil.
+/// `sizeFraction`); nil keeps the last one. Old phones leave `phoneLoad` nil.
 struct HostLoadSample: Equatable {
     var targetFPS: Int
     var longEdge: Int?
@@ -19,6 +18,7 @@ struct HostLoadSample: Equatable {
     var qualityLimitation: String?
     var hostThermalState: String?
     var lowPowerMode: Bool?
+    var phoneLoad: PhoneLoadFeedback? = nil
 }
 
 extension HostLoadSample {
@@ -38,12 +38,20 @@ extension HostLoadSample {
 /// Runs the ladder and the busy policy on each host statistics sample. Create one per capture
 /// session; a change of `targetFPS` inside a session restarts both at the top.
 struct HostLoadMonitor {
+    static let phoneFeedbackMaxAge: TimeInterval = 2.5
     private(set) var ladder: LadderPolicy
     private(set) var busy = BusyPolicy()
     private(set) var longEdge = 0
 
     init(targetFPS: Int) {
         ladder = LadderPolicy(targetFPS: targetFPS)
+    }
+
+    static func currentPhoneLoad(_ feedback: PhoneLoadFeedback?, receivedAt: TimeInterval?,
+                                 now: TimeInterval) -> PhoneLoadFeedback? {
+        guard let feedback, let receivedAt, now >= receivedAt,
+              now - receivedAt <= phoneFeedbackMaxAge else { return nil }
+        return feedback
     }
 
     static func inputs(from sample: HostLoadSample) -> LadderInputs {
@@ -53,8 +61,12 @@ struct HostLoadMonitor {
                      droppedBeforeEncode: sample.droppedBeforeEncode, pacerDelayMs: sample.pacerDelayMs,
                      targetKbps: sample.targetKbps, availableKbps: sample.availableKbps,
                      qualityLimitation: sample.qualityLimitation, hostThermalState: sample.hostThermalState,
-                     hostLowPowerMode: sample.lowPowerMode, phoneSupersededPerSecond: nil, phoneDecodeMs: nil,
-                     phonePresentedFPS: nil, phoneThermalState: nil)
+                     hostLowPowerMode: sample.lowPowerMode,
+                     phoneSupersededPerSecond: sample.phoneLoad?.supersededPerSecond,
+                     phoneDecodeMs: sample.phoneLoad?.decodeMs,
+                     phonePresentedFPS: sample.phoneLoad?.presentedFPS,
+                     phoneThermalState: sample.phoneLoad?.thermalState.map(String.init),
+                     phoneLowPowerMode: sample.phoneLoad?.lowPowerMode)
     }
 
     /// The new rung to apply and the new busy state to send, each nil when unchanged.
