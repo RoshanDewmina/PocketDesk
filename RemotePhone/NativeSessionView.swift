@@ -124,6 +124,11 @@ struct NativeSessionView: View {
             if new == .listening { return .start }
             return old == .listening && new != .listening ? .stop : nil
         }
+        .modifier(E2EViewportReporter(report: E2EViewportReport(
+            contentRect: viewport.contentRect, scale: viewport.scale, zoom: viewport.zoom,
+            mode: viewport.mode.rawValue, safeRect: viewport.safeRect, canvasFrame: canvasFrame,
+            dockFrame: dockFrame, keyboardOpen: keyboardOpen, panMode: panMode,
+            showControls: showControls, controlsCollapsed: controlsCollapsed)))
         .onChange(of: viewport.mode) { _, mode in ViewportPreference.store(mode) }
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
         .onAppear {
@@ -912,6 +917,13 @@ struct NativeSessionView: View {
             controlsCollapsed = false
             showVoiceInput = true
         }
+        #if DEBUG
+        // E2E: exercise the Done-to-insert delivery path without a microphone.
+        if model.voiceRetryTranscript.isEmpty, let transcript = PhoneE2E.active?.voiceTranscript {
+            voiceInput.loadNonRecordingPreview(transcript)
+            return
+        }
+        #endif
         if model.voiceRetryTranscript.isEmpty { beginVoiceCapture() }
     }
 

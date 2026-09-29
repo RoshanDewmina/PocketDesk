@@ -162,7 +162,7 @@ targets:
     type: tool
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [RemoteWatchdog/main.swift, RemoteWatchdog/WatchdogSupervisor.swift, RemoteHost/HostWatchdogState.swift]
+    sources: [RemoteWatchdog/main.swift, RemoteWatchdog/WatchdogSupervisor.swift, RemoteWatchdog/WatchdogE2E.swift, RemoteHost/HostWatchdogState.swift]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost.watchdog
@@ -176,7 +176,7 @@ targets:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [RemoteTests, RemoteShared, RemoteHost/HostPresentation.swift, RemoteHost/HostTextFocusProbe.swift, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift, RemoteHost/HostWatchdogState.swift, RemoteHost/HostHangWatchdog.swift, RemoteHost/HostWatchdogReporter.swift, RemoteHost/HostLoginItem.swift, RemoteHost/HostViewState.swift, RemoteHost/PrivacyCurtain.swift, RemoteHost/HostDiagnostics.swift]
+    sources: [RemoteTests, RemoteShared, RemoteHost/HostPresentation.swift, RemoteHost/HostTextFocusProbe.swift, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift, RemoteHost/HostWatchdogState.swift, RemoteHost/HostHangWatchdog.swift, RemoteHost/HostWatchdogReporter.swift, RemoteHost/HostLoginItem.swift, RemoteHost/HostViewState.swift, RemoteHost/PrivacyCurtain.swift, RemoteHost/HostDiagnostics.swift, RemoteHost/HostE2EInputFence.swift, RemoteWatchdog/WatchdogE2E.swift]
     dependencies:
       - package: WebRTC
     settings:
@@ -229,6 +229,62 @@ targets:
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_IDENTITY: '-'
     scheme: {}
+  # E2E harness (script/e2e/README.md): the only window the harness may click or type into.
+  FarsideTestPad:
+    type: application
+    platform: macOS
+    deploymentTarget: '26.0'
+    sources: [FarsideTestPad, RemoteShared/E2EWindowCover.swift]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.FarsideTestPad
+        PRODUCT_NAME: Farside Test Pad
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Farside Test Pad
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: '-'
+    scheme: {}
+  # E2E harness self-test host: synthetic frames, virtual pointer, no capture or injection.
+  FarsideE2EStubHost:
+    type: application
+    platform: macOS
+    deploymentTarget: '26.0'
+    sources: [E2EStubHost, RemoteShared]
+    dependencies:
+      - package: WebRTC
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.E2EStubHost
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Farside E2E Stub Host
+        INFOPLIST_KEY_LSUIElement: YES
+        CODE_SIGNING_ALLOWED: YES
+        CODE_SIGN_IDENTITY: '-'
+    scheme: {}
+  RemoteE2ETests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: '26.0'
+    sources: [RemoteE2ETests]
+    dependencies:
+      - target: PocketDeskRemote
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_OBJC_BRIDGING_HEADER: RemoteE2ETests/RemoteE2ETests-Bridging-Header.h
+schemes:
+  FarsideE2E:
+    build:
+      targets:
+        PocketDeskRemote: all
+        RemoteE2ETests: [test]
+    test:
+      config: Debug
+      gatherCoverageData: false
+      targets:
+        - RemoteE2ETests
 packages:
   WebRTC:
     url: https://github.com/stasel/WebRTC.git

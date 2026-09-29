@@ -45,7 +45,12 @@ final class WatchdogSupervisor {
         self.bundleIdentifier = identifier
         self.executablePath = executablePath
         self.executableIdentity = FileIdentity(path: executablePath)
+        #if DEBUG
+        files = WatchdogE2E.configuration?.files
+            ?? WatchdogFiles.forHost(bundleIdentifier: identifier, bundlePath: bundlePath, applicationSupport: support)
+        #else
         files = WatchdogFiles.forHost(bundleIdentifier: identifier, bundlePath: bundlePath, applicationSupport: support)
+        #endif
         ledger = WatchdogStore.read(WatchdogLedger.self, from: files.ledger) ?? WatchdogLedger()
     }
 
@@ -131,6 +136,14 @@ final class WatchdogSupervisor {
                 configuration.createsNewApplicationInstance = false
                 configuration.promptsUserIfNeeded = false
                 configuration.arguments = arguments
+                #if DEBUG
+                if WatchdogE2E.configuration != nil {
+                    // A second, E2E-only instance beside the owner's host, with the same contract.
+                    configuration.createsNewApplicationInstance = true
+                    configuration.arguments = arguments + ["--farside-e2e"]
+                    configuration.environment = WatchdogE2E.launchEnvironment()
+                }
+                #endif
                 NSWorkspace.shared.openApplication(at: self.bundleURL, configuration: configuration) { _, error in
                     let message = error?.localizedDescription
                     Task { @MainActor [weak self] in
@@ -149,6 +162,10 @@ final class WatchdogSupervisor {
     private func otherInstanceRunning(excluding pid: pid_t?) -> Bool {
         NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).contains { app in
             guard !app.isTerminated, app.processIdentifier != pid, let url = app.bundleURL else { return false }
+            #if DEBUG
+            // An E2E harness instance and the owner's host never count as each other's other instance.
+            if WatchdogE2E.isE2EInstance(pid: app.processIdentifier) != (WatchdogE2E.configuration != nil) { return false }
+            #endif
             return WatchdogFiles.normalized(url.path) == bundlePath
         }
     }

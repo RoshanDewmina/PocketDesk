@@ -57,6 +57,14 @@ final class RemoteCoordinator: ObservableObject {
     private var proofReceived = false
     private var sentControl: UInt64 = 0
     private var receivedControl: UInt64 = 0
+    #if DEBUG
+    /// E2E harness only (see script/e2e/README.md). Host: approves an unpaired phone whose
+    /// encrypted proof carries the harness's one-time token; nil keeps human approval.
+    var e2eProofApprover: ((Data?) -> Bool)?
+    /// E2E harness only. Phone: token sent inside the encrypted proof while enrolling.
+    var e2eEnrollmentProof: Data?
+    private var e2eEnrolling = false
+    #endif
 
     init(
         isHost: Bool,
@@ -113,6 +121,9 @@ final class RemoteCoordinator: ObservableObject {
     func enroll(_ code: String) throws {
         stop()
         invitation = try PairInvitation.parse(code)
+        #if DEBUG
+        e2eEnrolling = true
+        #endif
         start()
     }
     func start() {
@@ -242,14 +253,27 @@ final class RemoteCoordinator: ObservableObject {
         if !isHost, message.kind == "challenge" {
             guard message.request == request, session.isEmpty, !message.session.isEmpty, message.sequence == 0 else { throw RemoteError.stale }
             session = message.session; guardState = SessionReplayGuard(request: request, session: session)
+            #if DEBUG
+            send(kind: "proof", body: e2eEnrolling ? e2eEnrollmentProof : nil, handshake: true); return
+            #else
             send(kind: "proof", handshake: true); return
+            #endif
         }
         if isHost, message.kind == "proof" {
             guard message.request == request, message.session == session, !session.isEmpty,
                   message.sequence == 0, !proofReceived else { throw RemoteError.stale }
             proofReceived = true
             if hostPair?.paired == true { acceptSession() }
-            else { awaitingApproval = true; status = "Approve this phone on your Mac"; setTimeout(nanoseconds: 60_000_000_000) }
+            else {
+                #if DEBUG
+                if let approver = e2eProofApprover, (hostPair?.invitation.expires ?? .distantPast) > Date(),
+                   approver(message.body) {
+                    acceptSession()
+                    return
+                }
+                #endif
+                awaitingApproval = true; status = "Approve this phone on your Mac"; setTimeout(nanoseconds: 60_000_000_000)
+            }
             return
         }
         guard guardState != nil else { throw RemoteError.stale }
@@ -262,6 +286,9 @@ final class RemoteCoordinator: ObservableObject {
                 try next.validate(enrollment: false)
                 guard next.room == invitation?.room, next.server == invitation?.server else { throw RemoteError.invalidMessage }
                 try store.save(next); invitation = next
+                #if DEBUG
+                e2eEnrolling = false
+                #endif
             }
             prepareMedia()
             send(kind: "acceptedAck")

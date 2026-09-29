@@ -6,7 +6,12 @@ import ServiceManagement
 
 @MainActor
 final class RemoteHostModel: ObservableObject {
+    #if DEBUG
+    // E2E mode swaps in isolated trust and preferences; see HostE2E.swift.
+    let connection = RemoteCoordinator(isHost: true, store: HostE2E.active?.pairStore)
+    #else
     let connection = RemoteCoordinator(isHost: true)
+    #endif
     let browserSession = BrowserMediaSession()
     @Published private(set) var displays: [SCDisplay] = []
     @Published private(set) var selected: CGDirectDisplayID = 0 {
@@ -48,8 +53,14 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var crashLoopStopped = false
     @Published private var autoStart = HostAutoStartGate()
     let events = HostEventLog()
+    #if DEBUG
+    // E2E mode: inert login/recovery items and an isolated watchdog record; see HostE2E.swift.
+    private let background = HostE2E.active?.backgroundServices ?? HostBackgroundServices.live()
+    private let watchdog = HostE2E.active.map { $0.makeWatchdogReporter() } ?? HostWatchdogReporter.live()
+    #else
     private let background = HostBackgroundServices.live()
     private let watchdog = HostWatchdogReporter.live()
+    #endif
     private var hangWatchdog: HostHangWatchdog?
     private let curtain = PrivacyCurtainController()
     private var curtainRaising = false
@@ -63,7 +74,11 @@ final class RemoteHostModel: ObservableObject {
     private var sessionsThisLaunch = 0
     private var sessionStartedAt: Date?
     private var lastSessionDuration: TimeInterval?
+    #if DEBUG
+    private let preferences = HostPreferences(defaults: HostE2E.active?.defaults ?? .standard)
+    #else
     private let preferences = HostPreferences()
+    #endif
     private let input = RemoteInputDriver()
     private let capture = RemoteCapture()
     private let keepAwake = HostKeepAwake()
@@ -284,6 +299,9 @@ final class RemoteHostModel: ObservableObject {
             Task { @MainActor in self?.pollPermissions() }
         }
         if screenRecordingPermission.isGranted { loadDisplays() }
+        #if DEBUG
+        HostE2E.active?.attach(self)
+        #endif
     }
 
     // MARK: Setup
@@ -737,6 +755,9 @@ final class RemoteHostModel: ObservableObject {
 
     func stopForTermination() {
         liftCurtain()
+        #if DEBUG
+        HostE2E.active?.terminating()
+        #endif
         invalidateTextFocus()
         browserSession.stop()
         terminating = true
@@ -903,6 +924,12 @@ final class RemoteHostModel: ObservableObject {
             events.record(.session, "Phone connected")
         }
         captureUnhealthySince = nil
+        #if DEBUG
+        if let e2e = HostE2E.active {
+            peer.onStreamStatistics = { [weak e2e] report in e2e?.recordStats(report) }
+            e2e.event("capture.begin", ["display": display.frame, "displayID": display.displayID])
+        }
+        #endif
         wakeDisplayForRemoteSession()
         updatePowerAssertions()
         captureAttempt &+= 1
@@ -991,6 +1018,9 @@ final class RemoteHostModel: ObservableObject {
             recoveryNoticePending = false
             recoveryNoticeDelivered = false
         }
+        #if DEBUG
+        HostE2E.active?.event("capture.end")
+        #endif
         invalidateTextFocus()
         phonePause.clear()
         clipboard.reset()
@@ -1011,6 +1041,9 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func captureFailed() {
+        #if DEBUG
+        HostE2E.active?.event("capture.failed", ["screenRecording": CGPreflightScreenCaptureAccess()])
+        #endif
         stop()
         pollPermissions()
         if screenRecordingPermission.isGranted {
@@ -1088,10 +1121,23 @@ final class RemoteHostModel: ObservableObject {
             accessibilityPermission: accessibilityPermission,
             captureHealthy: captureHealthy
         )
+        #if DEBUG
+        // E2E harness interlock: injected input may only reach the Farside Test Pad.
+        var fenced: RemoteAction? = action
+        var fenceVerdict = "allow"
+        if let e2e = HostE2E.active { (fenced, fenceVerdict) = e2e.fence(action, held: input.held) }
+        if action.action == "key", action.key == "c", action.modifiers == ["command"], input.enabled, fenced != nil {
+            clipboard.prepareForCopyShortcut()
+        }
+        let outcome = fenced.map { input.handle($0, upgraded: admission == .upgraded, now: now) }
+            ?? RemoteInputOutcome(textRequestID: action.action == "text" ? action.key : nil)
+        HostE2E.active?.recordInput(action, accepted: outcome.accepted, fence: fenceVerdict, clickPoint: outcome.clickPoint)
+        #else
         if action.action == "key", action.key == "c", action.modifiers == ["command"], input.enabled {
             clipboard.prepareForCopyShortcut()
         }
         let outcome = input.handle(action, upgraded: admission == .upgraded, now: now)
+        #endif
         if action.action == "move", outcome.accepted {
             pointerTelemetry.moveInjected(globalPoint: input.lastPoint, at: now)
         }
@@ -1480,3 +1526,45 @@ final class RemoteHostModel: ObservableObject {
         "move", "click", "right", "double", "dragDown", "dragUp", "holdRenew", "scroll", "text", "key"
     ]
 }
+
+#if DEBUG
+extension RemoteHostModel {
+    /// Observable host state for the E2E harness (HostE2E writes it to host/state.json).
+    func e2eSnapshot() -> [String: Any] {
+        let display = displays.first { $0.displayID == selected }
+        return [
+            "status": "\(status)",
+            "coordinatorStatus": connection.status,
+            "diagnostics": connection.diagnostics,
+            "hostRegistered": connection.hostRegistered,
+            "connected": connection.connected,
+            "awaitingApproval": connection.awaitingApproval,
+            "paired": hasPairedPhone,
+            "active": active,
+            "wantsSharing": wantsSharing,
+            "captureHealthy": captureHealthy,
+            "allowControl": allowControl,
+            "inputEnabled": input.enabled,
+            "held": input.held,
+            "screenRecording": screenRecordingPermission.isGranted,
+            "accessibility": accessibilityPermission.isGranted,
+            "displayStatus": "\(displayRefreshStatus)",
+            "display": display?.frame as Any,
+            "capturedDisplayID": capturedDisplayID.map { Int($0) } as Any,
+            "epoch": inputEpoch.value,
+            "cursorInVideo": capture.cursorInVideo,
+            "appliedQuality": capture.appliedQuality?.rawValue as Any,
+            "phonePaused": phonePause.isPaused,
+            "displayAsleep": displayAsleep,
+            "screenLocked": screenLocked,
+            "autoStartSuppressed": autoStart.suppressed,
+            "detail": detail as Any,
+            "pairingCodeActive": !pairingCode.isEmpty && !pairingExpired,
+            "recoveredLaunch": ProcessInfo.processInfo.arguments.contains(WatchdogLaunchArgument.recovered),
+            "recoveredFromUnexpectedExit": watchdog?.assessment.recoveredFromUnexpectedExit ?? false,
+            "crashLoopStopped": crashLoopStopped,
+            "curtainPreference": curtainPreference
+        ]
+    }
+}
+#endif

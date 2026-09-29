@@ -75,8 +75,14 @@ enum ResumeState: Equatable {
 final class PhoneRemoteModel: ObservableObject {
     /// A lost live session keeps retrying for about 90 seconds, long enough for the Mac's
     /// watchdog to relaunch a crashed or hung Farside with the same pairing.
+    #if DEBUG
+    // E2E mode keeps its own trust; see PhoneE2E.swift.
+    let connection = RemoteCoordinator(isHost: false, store: PhoneE2E.active?.pairStore, sessionLossRetryLimit: 24,
+                                       maximumRetryDelayNanoseconds: 4_000_000_000)
+    #else
     let connection = RemoteCoordinator(isHost: false, sessionLossRetryLimit: 24,
                                        maximumRetryDelayNanoseconds: 4_000_000_000)
+    #endif
     let pointerLocator = PointerLocator()
     let pointerOverlay = PointerOverlayModel()
     let clipboard = PhoneClipboard()
@@ -183,6 +189,9 @@ final class PhoneRemoteModel: ObservableObject {
                         guard let self, let peer, self.connection.media === peer else { return }
                         self.streamSummaryLines = report.summaryLines
                         self.link = LinkSummary(report)
+                        #if DEBUG
+                        PhoneE2E.active?.record(report)
+                        #endif
                     }
                 }
             }
@@ -202,7 +211,19 @@ final class PhoneRemoteModel: ObservableObject {
         clipboard.bufferedAmount = { [weak self] in self?.connection.media?.controlBufferedAmount }
         clipboard.pressPaste = { [weak self] in self?.commandShortcut("v") ?? false }
         clipboardObserver = clipboard.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        #if DEBUG
+        PhoneE2E.active?.attach(self)
+        #endif
     }
+
+    #if DEBUG
+    /// E2E harness: a shortcut the phone UI has no button for, sent through the same admitted
+    /// path (fresh picture, host token, epoch) as every other key.
+    func e2eSendKey(_ key: String, modifiers: [String]) -> Bool {
+        guard canControl, !key.isEmpty, key.utf8.count <= 32, modifiers.count <= 4 else { return false }
+        return sendInput("key", key: key, modifiers: modifiers)
+    }
+    #endif
 
     var canControl: Bool {
         !privacyShield && !contentConcealed && connection.connected && controlAllowed && fresh && captureHealthy && geometryEpoch > 0
@@ -323,6 +344,9 @@ final class PhoneRemoteModel: ObservableObject {
     func frameReceived() {
         lastFrame = ProcessInfo.processInfo.systemUptime
         fresh = true
+        #if DEBUG
+        PhoneE2E.active?.frameReceived()
+        #endif
     }
 
     @discardableResult
