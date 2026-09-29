@@ -73,7 +73,7 @@ export class RoomDO extends DurableObject<Env> {
   /** A pairing hash survives transient host disconnect so the phone can opt out while offline. */
   async authenticatePush(room: string, clientToken: string): Promise<boolean> {
     const state = this.state();
-    if (state.room !== room || state.blocked !== 0) return false;
+    if ((state.room !== null && state.room !== room) || state.blocked !== 0) return false;
     const stored = this.ctx.storage.sql.exec<{ client_hash: string }>(
       "SELECT client_hash FROM push_pairing WHERE id=1 AND room=?", room,
     ).toArray()[0];
@@ -161,8 +161,10 @@ export class RoomDO extends DurableObject<Env> {
   /** Removes room data. Pending TURN usernames survive until revocation is confirmed or their TTL expires. */
   private async wipe(): Promise<void> {
     const blocked = this.state().blocked;
-    this.ctx.storage.sql.exec("DELETE FROM push_pairing");
-    if (this.pendingRevocations().length > 0 || this.ctx.storage.sql.exec("SELECT epoch FROM activity_ends LIMIT 1").toArray().length > 0) {
+    // Offline phones must still be able to opt out or remove a push address. Only explicit
+    // forget/block/credential rotation may discard the pairing hash.
+    const hasPushPairing = this.ctx.storage.sql.exec("SELECT room FROM push_pairing LIMIT 1").toArray().length > 0;
+    if (hasPushPairing || this.pendingRevocations().length > 0 || this.ctx.storage.sql.exec("SELECT epoch FROM activity_ends LIMIT 1").toArray().length > 0) {
       this.ctx.storage.sql.exec("DELETE FROM credentials WHERE revoke_pending = 0");
       this.ctx.storage.sql.exec("DELETE FROM room");
       this.ctx.storage.sql.exec("INSERT INTO room (id, blocked) VALUES (1, ?)", blocked);
@@ -305,7 +307,7 @@ export class RoomDO extends DurableObject<Env> {
     if (nextRevoke !== null) next = Math.min(next ?? Infinity, nextRevoke);
     const nextActivity = this.ctx.storage.sql.exec<{ at: number | null }>("SELECT MIN(next_attempt) AS at FROM activity_ends").one().at;
     if (nextActivity !== null) next = Math.min(next ?? Infinity, nextActivity);
-    if (next === undefined && this.openSockets().length === 0) next = now + IDLE_DELETE_MS;
+    if (next === undefined && this.openSockets().length === 0 && state.room !== null) next = now + IDLE_DELETE_MS;
     if (next === undefined) {
       await this.ctx.storage.deleteAlarm();
     } else {
@@ -1066,13 +1068,13 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   async block(): Promise<void> {
+    const room = this.state().room ?? this.ctx.storage.sql.exec<{ room: string }>("SELECT room FROM push_pairing WHERE id=1").toArray()[0]?.room;
     this.update({ blocked: 1 });
     this.ctx.storage.sql.exec("DELETE FROM push_pairing");
     this.terminate("room_not_approved");
     // Preserve unmarked activity addresses while a queued end is waiting on D1.
     await this.drainActivityEnds();
     if (this.ctx.storage.sql.exec("SELECT epoch FROM activity_ends LIMIT 1").toArray().length) throw new Error("activity_end_pending");
-    const room = this.state().room;
     if (room) await forgetPushRoom(this.env.DB, room);
     await this.scheduleAlarm();
   }
@@ -1090,8 +1092,9 @@ export class RoomDO extends DurableObject<Env> {
     }
     await this.drainActivityEnds();
     if (this.ctx.storage.sql.exec("SELECT epoch FROM activity_ends LIMIT 1").toArray().length) throw new Error("activity_end_pending");
-    const room = this.state().room;
+    const room = this.state().room ?? this.ctx.storage.sql.exec<{ room: string }>("SELECT room FROM push_pairing WHERE id=1").toArray()[0]?.room;
     if (room) await forgetPushRoom(this.env.DB, room);
+    this.ctx.storage.sql.exec("DELETE FROM push_pairing");
     await this.wipe();
     await this.scheduleAlarm();
   }
