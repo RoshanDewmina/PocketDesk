@@ -51,7 +51,7 @@ final class PhoneParityUITests: XCTestCase {
     @MainActor
     func testDirectTapsLandOnTheTouchedMacPointAtFitFillZoomAndLandscape() {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "--ui-touch-direct"]
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "-touchInputMode", "direct"]
         launchOffline(app)
         assertTargetsHitExactly(app, context: "Fit portrait")
         attachScreenshot("Direct touch - Fit portrait with probe targets")
@@ -74,7 +74,7 @@ final class PhoneParityUITests: XCTestCase {
     @MainActor
     func testDirectDragTwoFingerRightClickAndThreeFingerMiddleClick() {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "--ui-touch-direct"]
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "-touchInputMode", "direct"]
         launchOffline(app)
         // (0.5, 0.4) and (0.3, 0.6) of the Mac display: both visible in Fit.
         let start = app.descendants(matching: .any)["probe.target.7"].firstMatch
@@ -233,6 +233,92 @@ final class PhoneParityUITests: XCTestCase {
         XCTAssertTrue(entries.contains { $0.hasPrefix("scroll began") }, "\(entries)")
         XCTAssertTrue(entries.contains { $0.hasPrefix("scroll ended") || $0.hasPrefix("scroll cancelled") }, "\(entries)")
         attachScreenshot("iPad pointer passthrough - probe log")
+    }
+
+    // MARK: - Mini map
+
+    @MainActor
+    func testMiniMapAppearsWhenZoomedPansByDragJumpsByTapAndFades() throws {
+        let iPad = UIDevice.current.userInterfaceIdiom == .pad
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "--ui-minimap-reset"]
+            + (iPad ? [] : ["-miniMap.phoneLandscape", "YES"])
+        launchOffline(app)
+        if !iPad { rotate(app, to: .landscapeLeft) }
+        let map = app.descendants(matching: .any)["remote.minimap"].firstMatch
+        XCTAssertFalse(map.exists, "Fit at 1× shows everything: nothing to navigate")
+
+        setZoom(app, sliderPosition: iPad ? 0.25 : 0.2)
+        XCTAssertTrue(map.waitForExistence(timeout: 4), "Zooming in shows the mini map")
+        attachScreenshot(iPad ? "Mini map - iPad" : "Mini map - iPhone landscape")
+        let viewport = app.descendants(matching: .any)["remote.minimap.viewport"].firstMatch
+        XCTAssertTrue(viewport.exists)
+        let before = viewport.frame
+        XCTAssertTrue(map.frame.insetBy(dx: -1, dy: -1).contains(before), "The outline sits inside the overview")
+
+        let grab = viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        grab.press(forDuration: 0.05, thenDragTo: grab.withOffset(CGVector(dx: -14, dy: 8)))
+        let dragged = viewport.frame
+        XCTAssertLessThan(dragged.midX, before.midX - 4, "Dragging the outline moves the view with it")
+        XCTAssertGreaterThan(dragged.midY, before.midY + 2)
+
+        map.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.88)).tap()
+        let jumped = viewport.frame
+        XCTAssertGreaterThan(jumped.midX, dragged.midX + 4, "Tapping jumps toward the tapped corner")
+        XCTAssertGreaterThan(jumped.midY, dragged.midY + 2)
+
+        XCTAssertTrue(map.waitForNonExistence(timeout: 6), "It fades once the view is still")
+    }
+
+    @MainActor
+    func testMiniMapSettingIsReachableAndIPhonePortraitNeverShowsIt() throws {
+        let iPad = UIDevice.current.userInterfaceIdiom == .pad
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fill", "--ui-minimap-reset"]
+        launchOffline(app)
+        openControls(app)
+        let setting = app.descendants(matching: .any)["remote.minimap.setting"].firstMatch
+        scrollControls(app, to: setting)
+        XCTAssertEqual(setting.label, iPad ? "Mini map" : "Mini map in landscape")
+        attachScreenshot("Mini map setting")
+        if !iPad {
+            setting.tap()
+            app.buttons["Done"].tap()
+            collapseDock(app)
+            let map = app.descendants(matching: .any)["remote.minimap"].firstMatch
+            XCTAssertFalse(map.waitForExistence(timeout: 2), "iPhone shows it in landscape only")
+            rotate(app, to: .landscapeLeft)
+            XCTAssertTrue(map.waitForExistence(timeout: 4), "Fill crops in landscape, so the overview appears")
+            // Leave the default (off) for other tests.
+            openControls(app)
+            scrollControls(app, to: setting)
+            setting.tap()
+        }
+    }
+
+    // MARK: - Display picker
+
+    @MainActor
+    func testDisplayPickerListsDisplaysAndSwitchesTheStream() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit"]
+        launchOffline(app)
+        openControls(app)
+        let builtIn = app.buttons["remote.display.1"]
+        let studio = app.buttons["remote.display.2"]
+        scrollControls(app, to: studio)
+        XCTAssertTrue(builtIn.exists)
+        XCTAssertTrue(builtIn.isSelected, "The streamed display is ticked")
+        XCTAssertTrue(studio.label.contains("Studio Display"))
+        XCTAssertTrue(studio.label.contains("2560 × 1440"), studio.label)
+        attachScreenshot("Display picker")
+        let mark = probeMark(app)
+        studio.tap()
+        XCTAssertTrue(probeEntries(app, after: mark).contains("display 2"))
+        let selected = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isSelected == true"), object: studio)
+        XCTAssertEqual(XCTWaiter().wait(for: [selected], timeout: 5), .completed, "The Mac confirms the new display")
+        XCTAssertFalse(builtIn.isSelected)
+        attachScreenshot("Display picker - switched")
     }
 
     // MARK: - Helpers
