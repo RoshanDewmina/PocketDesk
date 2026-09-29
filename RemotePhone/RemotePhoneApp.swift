@@ -185,7 +185,6 @@ final class PhoneRemoteModel: ObservableObject {
         #endif
         if let mode = LaunchOptions.viewportOverride { ViewportPreference.store(mode) }
         if let mode = LaunchOptions.touchModeOverride { UserDefaults.standard.set(mode.rawValue, forKey: TouchInputMode.key) }
-        if LaunchOptions.has("--ui-minimap-phone") { UserDefaults.standard.set(true, forKey: "miniMap.phoneLandscape") }
         if LaunchOptions.has("--ui-minimap-reset") {
             UserDefaults.standard.removeObject(forKey: "miniMap.phoneLandscape")
             UserDefaults.standard.removeObject(forKey: "miniMap.pad")
@@ -475,6 +474,12 @@ final class PhoneRemoteModel: ObservableObject {
         guard canChangeCurtain else { return false }
         let request: PrivacyCurtainRequest = on ? .up : .down
         return connection.sendControl(RemoteAction(action: "curtain", epoch: geometryEpoch, curtain: request.rawValue))
+    }
+
+    /// A short notice over the live session (and to VoiceOver).
+    func announce(_ text: String) {
+        showSessionNotice(text)
+        AccessibilityNotification.Announcement(text).post()
     }
 
     private func showSessionNotice(_ text: String) {

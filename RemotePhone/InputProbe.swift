@@ -45,6 +45,8 @@ final class InputProbe: ObservableObject {
             parts.append("\(action.interaction?.clickCount ?? 1)")
         case "key":
             parts.append(action.key)
+        case "display":
+            parts.append("\(action.display ?? 0)")
         default:
             break
         }

@@ -139,6 +139,10 @@ struct NativeSessionView: View {
         }
         .sensoryFeedback(.selection, trigger: viewport.mode)
         .sensoryFeedback(.selection, trigger: touchMode)
+        .sensoryFeedback(.selection, trigger: model.currentDisplayID) { old, new in old != nil && new != nil }
+        .onChange(of: peripherals.keyboardConnected) { _, connected in
+            if connected && model.canControl { model.announce("Keyboard connected · keys go to your Mac") }
+        }
         .sensoryFeedback(.impact(weight: .light, intensity: 0.6), trigger: controlsCollapsed)
         .sensoryFeedback(trigger: model.dragging) { _, holding in
             holding ? .impact(weight: .medium) : .impact(weight: .light)
@@ -157,7 +161,8 @@ struct NativeSessionView: View {
         .onChange(of: viewport.zoom) { _, _ in pokeMiniMap() }
         .onChange(of: viewport.canvasSize) { _, _ in pokeMiniMap() }
         .onChange(of: miniMapEligible) { _, eligible in
-            if !eligible { withAnimation(miniMapMotion) { miniMap.eligibilityChanged(false) } }
+            // Closing the dock or a sheet after zooming shows where you are, briefly.
+            if eligible { pokeMiniMap() } else { withAnimation(miniMapMotion) { miniMap.eligibilityChanged(false) } }
         }
         .task(id: miniMapToken) {
             guard miniMapToken > 0, !LaunchOptions.has("--ui-minimap-pinned") else { return }
@@ -1126,6 +1131,7 @@ struct NativeSessionView: View {
                 .scrollContentBackground(.hidden)
                 .background(Farside.Palette.void2)
                 .onAppear {
+                    if model.displays.isEmpty { model.requestDisplays() }
                     #if DEBUG
                     if offlineLayoutCheck && LaunchOptions.has("--ui-clipboard-check") {
                         proxy.scrollTo("remote.clipboard", anchor: .top)
