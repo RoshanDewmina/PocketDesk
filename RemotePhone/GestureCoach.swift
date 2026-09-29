@@ -156,13 +156,31 @@ final class GestureCoachModel: ObservableObject {
     private(set) var pad = CGSize(width: 350, height: 392)
     private var rippleSerial = 0
     private var idleTask: Task<Void, Never>?
+    private var hasLaidOut = false
 
     static let scrollLength: CGFloat = 520
+    static let targetRadius: CGFloat = 24
 
+    /// Later size changes (a note appearing, rotation) rescale the lesson in place;
+    /// re-placing it would restart the lesson mid-attempt.
     func layout(_ size: CGSize) {
-        guard size.width > 40, size.height > 40, size != pad else { return }
+        guard size.width > 40, size.height > 40, size != pad || !hasLaidOut else { return }
+        let old = pad
         pad = size
-        placeForLesson()
+        guard hasLaidOut else {
+            hasLaidOut = true
+            placeForLesson()
+            return
+        }
+        let sx = size.width / old.width, sy = size.height / old.height
+        func scaled(_ point: CGPoint) -> CGPoint { CGPoint(x: point.x * sx, y: point.y * sy) }
+        pointer = clampedToPad(scaled(pointer))
+        target = scaled(target)
+        file = scaled(file)
+    }
+
+    private func clampedToPad(_ point: CGPoint) -> CGPoint {
+        CGPoint(x: min(pad.width - 2, max(2, point.x)), y: min(pad.height - 2, max(2, point.y)))
     }
 
     var yesButton: CGRect {
@@ -280,15 +298,14 @@ final class GestureCoachModel: ObservableObject {
     }
 
     private func movePointer(by delta: CGSize) {
-        let next = CGPoint(x: min(pad.width - 2, max(2, pointer.x + delta.width)),
-                           y: min(pad.height - 2, max(2, pointer.y + delta.height)))
+        let next = clampedToPad(CGPoint(x: pointer.x + delta.width, y: pointer.y + delta.height))
         if carrying {
             file.x += next.x - pointer.x
             file.y += next.y - pointer.y
         }
         pointer = next
         guard lesson == .move, !passed else { return }
-        if hypot(pointer.x - target.x, pointer.y - target.y) < 16 {
+        if hypot(pointer.x - target.x, pointer.y - target.y) < Self.targetRadius {
             if !targetDodged {
                 targetDodged = true
                 target = CGPoint(x: pad.width * 0.34, y: pad.height * 0.22)
@@ -514,6 +531,14 @@ struct GestureCoachView: View {
                                       sensitivity: CGFloat(sensitivity), pointerScale: 1, doubleClickInterval: 0.5,
                                       onCommand: coach.handle, onPointerMotionEnded: {})
                     .accessibilityHidden(true)
+                if LaunchOptions.has("--ui-coach-probe") {
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .allowsHitTesting(false)
+                        .accessibilityElement()
+                        .accessibilityIdentifier("coach.probe")
+                        .accessibilityValue("\(Int(coach.pointer.x)),\(Int(coach.pointer.y)),\(Int(coach.target.x)),\(Int(coach.target.y))")
+                }
             }
             .onAppear { coach.layout(proxy.size) }
             .onChange(of: proxy.size) { _, size in coach.layout(size) }

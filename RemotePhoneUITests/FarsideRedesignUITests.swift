@@ -64,6 +64,32 @@ final class FarsideRedesignUITests: XCTestCase {
     }
 
     @MainActor
+    func testMoveLessonCanBeCompletedWithRealTouches() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-coach", "--ui-coach-probe"]
+        app.launch()
+        let pad = app.descendants(matching: .any)["coach.pad"].firstMatch
+        XCTAssertTrue(pad.waitForExistence(timeout: 5))
+        let probe = app.descendants(matching: .any)["coach.probe"].firstMatch
+        XCTAssertTrue(probe.waitForExistence(timeout: 5))
+        let next = app.buttons["coach.next"]
+        for _ in 0..<40 where !next.exists {
+            guard let values = (probe.value as? String)?.split(separator: ",").compactMap({ Double($0) }),
+                  values.count == 4 else { return XCTFail("coach.probe has no positions") }
+            let dx = values[2] - values[0], dy = values[3] - values[1]
+            // Finger-to-pointer gain can exceed 1, so move part of the way and re-measure.
+            let start = pad.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+            let end = start.withOffset(CGVector(dx: dx * 0.6, dy: dy * 0.6))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.05)
+        }
+        XCTAssertTrue(next.waitForExistence(timeout: 3), "Lesson 1 passes with real touches on the practice pad")
+        attach("Gesture coach - move lesson passed")
+        next.tap()
+        XCTAssertTrue(app.staticTexts["Lesson 2 of 5 · Click"].waitForExistence(timeout: 3)
+                      || app.descendants(matching: .any)["coach"].firstMatch.exists, "Advances to the click lesson")
+    }
+
+    @MainActor
     func testFriendlyErrorGivesOneFixAndCloses() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-demo-mac", "--ui-error=napping"]

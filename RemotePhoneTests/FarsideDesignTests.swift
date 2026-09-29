@@ -85,6 +85,74 @@ final class FarsideDesignTests: XCTestCase {
     }
 
     @MainActor
+    func testMoveLessonCompletesEvenWhenThePadResizesMidAttempt() {
+        let coach = GestureCoachModel()
+        coach.layout(CGSize(width: 350, height: 392))
+        coach.start()
+        let start = coach.pointer
+
+        steer(coach, to: coach.target)
+        XCTAssertTrue(coach.targetDodged, "First arrival makes the pixel dodge once")
+        XCTAssertFalse(coach.passed)
+        let pointerAfterDodge = coach.pointer
+
+        // The dodge note appears and the pad shrinks; the lesson must not restart.
+        coach.layout(CGSize(width: 350, height: 372))
+        XCTAssertTrue(coach.targetDodged, "A resize keeps the dodge")
+        XCTAssertNotEqual(coach.pointer, start, "A resize doesn't send the pointer back to the start")
+        XCTAssertEqual(coach.pointer.x, pointerAfterDodge.x, accuracy: 0.5)
+
+        steer(coach, to: coach.target)
+        XCTAssertTrue(coach.passed, "Second arrival on the pixel passes the lesson")
+    }
+
+    @MainActor
+    func testEveryLessonCanBePassedThroughItsOwnGestures() {
+        let coach = GestureCoachModel()
+        coach.layout(CGSize(width: 350, height: 392))
+        coach.start()
+        steer(coach, to: coach.target)
+        steer(coach, to: coach.target)
+        XCTAssertTrue(coach.passed, "Move")
+        coach.advance()
+
+        XCTAssertTrue(coach.handle(.click(count: 1)))
+        XCTAssertTrue(coach.passed, "Click")
+        coach.advance()
+
+        for _ in 0..<40 { _ = coach.handle(.scroll(delta: CGSize(width: 0, height: -20), phase: "changed", stream: "s")) }
+        XCTAssertTrue(coach.passed, "Scroll")
+        coach.advance()
+
+        XCTAssertEqual(coach.lesson, .drag)
+        _ = coach.handle(.dragBegan(id: "d", count: 1))
+        steer(coach, to: CGPoint(x: coach.folderFrame.midX, y: coach.folderFrame.midY))
+        _ = coach.handle(.dragEnded(id: "d"))
+        XCTAssertTrue(coach.passed, "Drag")
+        coach.advance()
+
+        _ = coach.handle(.zoom(factor: 2.5, anchor: .zero))
+        XCTAssertTrue(coach.passed, "Zoom")
+        coach.advance()
+        XCTAssertTrue(coach.finished)
+    }
+
+    /// Moves the coach pointer toward a point in small steps, like a finger would.
+    @MainActor
+    private func steer(_ coach: GestureCoachModel, to goal: CGPoint) {
+        for _ in 0..<200 {
+            if coach.passed { return }
+            let dx = goal.x - coach.pointer.x, dy = goal.y - coach.pointer.y
+            let distance = hypot(dx, dy)
+            if distance < 2 { return }
+            let step = min(6, distance)
+            let before = coach.target
+            _ = coach.handle(.move(CGSize(width: dx / distance * step, height: dy / distance * step)))
+            if coach.target != before { return }
+        }
+    }
+
+    @MainActor
     func testCoachLessonsRunOnALocalPadAndAdvanceInOrder() {
         let coach = GestureCoachModel()
         coach.layout(CGSize(width: 350, height: 392))
