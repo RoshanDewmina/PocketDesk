@@ -192,6 +192,24 @@ final class NativeInputSafetyTests: XCTestCase {
         XCTAssertEqual(driver.lastPoint, CGPoint(x: 155, y: 100))
     }
 
+    func testNewGeometryOrSessionDiscardsThePreviousPointerChain() {
+        for geometryChange in [false, true] {
+            let recorder = NativeInputRecorder()
+            let driver = configuredDriver(recorder)
+            XCTAssertTrue(driver.handle(action("move", count: 1, x: 10), upgraded: true, now: 10).accepted)
+            XCTAssertEqual(driver.lastPoint.x, 110)
+            // WindowServer still reports the old position while the session or geometry changes.
+            if geometryChange {
+                driver.configure(bounds: CGRect(x: 0, y: 0, width: 500, height: 500))
+            } else {
+                driver.resetNativeSequence()
+            }
+            XCTAssertEqual(driver.nextPointerBase(now: 10.01), recorder.pointer)
+            XCTAssertTrue(driver.handle(action("move", count: 1, x: 5), upgraded: true, now: 10.01).accepted)
+            XCTAssertEqual(driver.lastPoint.x, 105, "A previous stream cannot supply the new stream's base")
+        }
+    }
+
     func testTheNextPointerBaseIsWhatTheDriverWillUseAndRecordsNothing() {
         let recorder = NativeInputRecorder()
         recorder.lagsByOneEvent = true

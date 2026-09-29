@@ -485,6 +485,10 @@ final class RemoteInputDriver {
 
     func resetNativeSequence() {
         resetClickSequence()
+        // A new session or geometry starts from the real cursor, even when it replaces a
+        // stream inside the short WindowServer settling window.
+        lastPostedAt = -.infinity
+        recentPosts.removeAll(keepingCapacity: true)
         externalHoldID = nil
         retiredHolds.removeAll()
         retiredHoldOrder.removeAll()
