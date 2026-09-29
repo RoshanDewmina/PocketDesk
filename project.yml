@@ -84,6 +84,7 @@ targets:
     sources: [RemotePhone, RemoteShared, PocketDesktop/TrackpadSurface.swift]
     dependencies:
       - package: WebRTC
+      - target: FarsideWidgets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote
@@ -94,6 +95,8 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Farside
         INFOPLIST_FILE: RemotePhone/Info.plist
+        CODE_SIGN_ENTITLEMENTS: $(FARSIDE_ENTITLEMENTS)
+        FARSIDE_ENTITLEMENTS: ''
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect directly to your paired Mac when it's on the same Wi-Fi.
         INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing code shown on your Mac.
@@ -102,6 +105,25 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
     scheme:
       testTargets: [RemotePhoneTests, RemotePhoneUITests]
+  FarsideWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: '26.0'
+    sources:
+      - FarsideWidgets
+      - RemotePhone/ActivityShared
+      - RemoteShared/FarsideTheme.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote.Widgets
+        CURRENT_PROJECT_VERSION: 20260928.11
+        MARKETING_VERSION: '0.1'
+        DEVELOPMENT_TEAM: 39HM2X8GS6
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: FarsideWidgets/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Farside
+        SKIP_INSTALL: YES
   RemotePhoneTests:
     type: bundle.unit-test
     platform: iOS

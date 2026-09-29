@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 import XCTest
 @testable import PocketDeskRemote
 
@@ -59,4 +60,46 @@ final class RecordingSessionHandler: SessionIntentHandling {
         endRequests += 1
         return outcome
     }
+}
+
+/// A notification center the tests drive: what was scheduled and removed, and what iOS "answers".
+@MainActor
+final class FakeNotificationCenter: AgentNotificationScheduling {
+    var categories: Set<UNNotificationCategory> = []
+    var accessValue: NotificationAccess = .notDetermined
+    var timeSensitiveValue: UNNotificationSetting = .enabled
+    var grantsPermission = true
+    private(set) var added: [UNNotificationRequest] = []
+    private(set) var removedPending: [String] = []
+    private(set) var removedDelivered: [String] = []
+    private(set) var authorizationRequests = 0
+
+    func setCategories(_ categories: Set<UNNotificationCategory>) { self.categories = categories }
+
+    func access() async -> (access: NotificationAccess, timeSensitive: UNNotificationSetting) {
+        (accessValue, timeSensitiveValue)
+    }
+
+    func requestAuthorization() async -> Bool {
+        authorizationRequests += 1
+        accessValue = grantsPermission ? .allowed : .denied
+        return grantsPermission
+    }
+
+    func add(_ request: UNNotificationRequest) async -> Bool {
+        added.append(request)
+        return true
+    }
+
+    func removePending(_ identifiers: [String]) { removedPending += identifiers }
+    func removeDelivered(_ identifiers: [String]) { removedDelivered += identifiers }
+    func pendingIdentifiers() async -> [String] { added.map(\.identifier) }
+}
+
+/// Isolated defaults so a test never sees, or changes, the real app's choices.
+func makeTestDefaults(_ name: String = #function) -> UserDefaults {
+    let suite = "FarsideTests.\(name)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defaults.removePersistentDomain(forName: suite)
+    return defaults
 }

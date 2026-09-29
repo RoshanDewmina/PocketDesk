@@ -24,12 +24,12 @@ enum PairedMacs {
     }
 
     private static func defaultLoader() -> [PairedMac] {
+        var saved: PairInvitation?
         #if DEBUG
-        if let name = LaunchOptions.value("--ui-paired-mac=") {
-            return [PairedMac(id: opaqueID(room: name), name: name, invitation: nil)]
-        }
+        saved = DebugLaunchSeeds.invitation
         #endif
-        guard let saved = try? PairStore(account: "phone").read(PairInvitation.self) else { return [] }
+        if saved == nil { saved = (try? PairStore(account: "phone").read(PairInvitation.self)) ?? nil }
+        guard let saved else { return [] }
         return [PairedMac(id: opaqueID(room: saved.room), name: saved.name, invitation: saved)]
     }
 }

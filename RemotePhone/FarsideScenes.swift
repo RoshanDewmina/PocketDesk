@@ -185,6 +185,34 @@ extension FarsideArt {
                     let height = 18 + 30 * abs(sin(time * 2.2 + Double(bar)))
                     fill(c, CGRect(x: x, y: center.y - height / 2 - 8, width: 7, height: height), 0.7)
                 }
+            case .notifications:
+                // A bell: dome and flared body, a clapper, and the alert ring swinging beside it.
+                let bell = CGMutablePath()
+                bell.move(to: CGPoint(x: center.x - 84, y: center.y + 56))
+                bell.addCurve(to: CGPoint(x: center.x - 52, y: center.y + 4),
+                              control1: CGPoint(x: center.x - 62, y: center.y + 50), control2: CGPoint(x: center.x - 52, y: center.y + 34))
+                bell.addCurve(to: CGPoint(x: center.x, y: center.y - 70),
+                              control1: CGPoint(x: center.x - 52, y: center.y - 40), control2: CGPoint(x: center.x - 32, y: center.y - 70))
+                bell.addCurve(to: CGPoint(x: center.x + 52, y: center.y + 4),
+                              control1: CGPoint(x: center.x + 32, y: center.y - 70), control2: CGPoint(x: center.x + 52, y: center.y - 40))
+                bell.addCurve(to: CGPoint(x: center.x + 84, y: center.y + 56),
+                              control1: CGPoint(x: center.x + 52, y: center.y + 34), control2: CGPoint(x: center.x + 62, y: center.y + 50))
+                bell.closeSubpath()
+                c.addPath(bell)
+                c.setFillColor(gray: 0.9, alpha: 1)
+                c.fillPath()
+                c.setFillColor(gray: 0.72, alpha: 1)
+                c.fillEllipse(in: CGRect(x: center.x - 12, y: center.y + 64, width: 24, height: 24))
+                c.fillEllipse(in: CGRect(x: center.x - 8, y: center.y - 84, width: 16, height: 16))
+                c.setStrokeColor(gray: 0.7, alpha: 1)
+                c.setLineWidth(9)
+                c.setLineCap(.round)
+                for (index, radius) in [30.0, 54.0].enumerated() {
+                    c.setStrokeColor(gray: 0.78 - CGFloat(index) * 0.2, alpha: 1)
+                    c.addArc(center: CGPoint(x: center.x + 34, y: center.y - 42), radius: CGFloat(radius),
+                             startAngle: -.pi * 0.42, endAngle: .pi * 0.02, clockwise: false)
+                    c.strokePath()
+                }
             }
             layers.glow(at: CGPoint(x: center.x + 70, y: center.y - 70), radius: 20, intensity: 0.7)
         }
@@ -234,5 +262,5 @@ extension FarsideArt {
 }
 
 enum PermissionKind: String {
-    case camera, localNetwork, microphone
+    case camera, localNetwork, microphone, notifications
 }
