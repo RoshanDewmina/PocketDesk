@@ -80,6 +80,15 @@ struct SessionActivityContent {
     var line: String { SessionActivityCopy.line(for: state, macLabel: attributes.macLabel, stale: isStale) }
     var summary: String { SessionActivityCopy.accessibilitySummary(for: state, stale: isStale) }
 
+    /// Live shows the time held, paused the time left before Farside lets go. Nothing else shows a clock.
+    var hasClock: Bool {
+        switch look {
+        case .live: true
+        case .paused: (state.graceEndsAt ?? .distantPast) > .now
+        case .reconnecting, .ended, .problem, .stale: false
+        }
+    }
+
     /// A stale activity keeps its End button: ending is always the safe direction.
     var canEnd: Bool { [.live, .paused, .reconnecting, .stale].contains(look) }
     var canReconnect: Bool { look == .problem && state.endedReason == .timeout }
@@ -95,33 +104,68 @@ struct SessionActivityContent {
 
 // MARK: - Lock Screen and StandBy
 
-struct SessionLockScreenView: View {
+/// The words that name the state: a title and one plain line. They get the full width of their row, so
+/// a title is never cut short by a button beside it.
+struct SessionTextColumn: View {
     let content: SessionActivityContent
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            SessionGlyphTile(look: content.look, size: 46)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(content.title)
-                    .font(.headline)
-                    .foregroundStyle(Farside.Palette.bone)
-                    .lineLimit(1)
-                Text(content.line)
-                    .font(.subheadline)
-                    .foregroundStyle(Farside.Palette.ash)
-                    .lineLimit(2)
-                    .privacySensitive()
-                if content.attributes.isPreview { SampleTag() }
+        VStack(alignment: .leading, spacing: 2) {
+            Text(content.title)
+                .font(.headline)
+                .foregroundStyle(Farside.Palette.bone)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            Text(content.line)
+                .font(.subheadline)
+                .foregroundStyle(Farside.Palette.ash)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .privacySensitive()
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(content.summary)
+    }
+}
+
+/// The one button a state offers, if any: End while a session is open, Reconnect after a timeout.
+struct SessionActionButton: View {
+    let content: SessionActivityContent
+
+    var body: some View {
+        if content.canEnd {
+            EndSessionButton()
+        } else if content.canReconnect {
+            ReconnectLink()
+        }
+    }
+}
+
+struct SessionLockScreenView: View {
+    let content: SessionActivityContent
+
+    private var hasSecondRow: Bool {
+        content.canEnd || content.canReconnect || content.attributes.isPreview
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
+                SessionGlyphTile(look: content.look, size: 42)
+                SessionTextColumn(content: content)
+                Spacer(minLength: 6)
+                if content.hasClock {
+                    SessionClock(content: content, size: 19)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                        .frame(width: 64, alignment: .trailing)
+                }
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(content.summary)
-            Spacer(minLength: 6)
-            VStack(alignment: .trailing, spacing: 8) {
-                SessionClock(content: content, size: 17)
-                if content.canEnd {
-                    EndSessionButton()
-                } else if content.canReconnect {
-                    ReconnectLink()
+            if hasSecondRow {
+                HStack(spacing: 10) {
+                    if content.attributes.isPreview { SampleTag() }
+                    Spacer(minLength: 6)
+                    SessionActionButton(content: content)
                 }
             }
         }
@@ -132,32 +176,23 @@ struct SessionLockScreenView: View {
 
 // MARK: - Dynamic Island
 
+/// The island's bottom region runs to the rounded corners, so it takes its own inset: text near a
+/// corner would otherwise lose its first letters.
 struct SessionExpandedBottom: View {
     let content: SessionActivityContent
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(content.title)
-                    .font(.headline)
-                    .foregroundStyle(Farside.Palette.bone)
-                    .lineLimit(1)
-                Text(content.line)
-                    .font(.subheadline)
-                    .foregroundStyle(Farside.Palette.ash)
-                    .lineLimit(2)
-                    .privacySensitive()
+            VStack(alignment: .leading, spacing: 4) {
+                SessionTextColumn(content: content)
                 if content.attributes.isPreview { SampleTag() }
             }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(content.summary)
             Spacer(minLength: 4)
-            if content.canEnd {
-                EndSessionButton()
-            } else if content.canReconnect {
-                ReconnectLink()
-            }
+            SessionActionButton(content: content)
         }
+        .padding(.leading, 12)
+        .padding(.trailing, 4)
+        .padding(.bottom, 10)
     }
 }
 
