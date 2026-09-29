@@ -25,6 +25,8 @@ struct RemoteAction: Codable {
     // Privacy curtain request ("curtain" action) or state (on "capture"); host lifecycle event.
     var curtain: String? = nil
     var hostEvent: String? = nil
+    /// A "needs you" alert from an agent on the Mac, sent once on a `capture` status. Older phones ignore it.
+    var agentAlert: AgentAlertFrame? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.

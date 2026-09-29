@@ -10,6 +10,7 @@
 		005F0E21A9B5F115D059E52E /* HostViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F688011A8DDECAEAAE11132 /* HostViewState.swift */; };
 		006FD13C8DD71202ABAF0D69 /* OFL-Doto.txt in Resources */ = {isa = PBXBuildFile; fileRef = D6F48E835098ABC5915960B7 /* OFL-Doto.txt */; };
 		008F7EA556CF504AC3748264 /* FarsideTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */; };
+		00E6E38B6002A06395899D57 /* AgentAlertFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4310863DCC8E9065BFE24212 /* AgentAlertFrame.swift */; };
 		0140D326F99F7EF39CACF262 /* AgentAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0675CE1974FD239B86F4A520 /* AgentAlert.swift */; };
 		025C7C5ACA218DE7AC3619BE /* HostFontTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD458C84A077F4138460ED7 /* HostFontTests.swift */; };
 		0294E4CBC7A3396E6DFF2FA6 /* HostAppActivation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66CE61B858A64288AAC8E996 /* HostAppActivation.swift */; };
@@ -17,6 +18,7 @@
 		0440A8D3B2DF1D0165E67650 /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412B04FA6976C7A9157CAECE /* SignalingClient.swift */; };
 		05B83FF88FF2B47142BE36CB /* OFL-InstrumentSerif.txt in Resources */ = {isa = PBXBuildFile; fileRef = E0FE88048602D763A8C0CE7D /* OFL-InstrumentSerif.txt */; };
 		06B6664F2280BABE0B892A66 /* NativeGestureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EBEF9617A31797FAF4B8D81 /* NativeGestureEngine.swift */; };
+		07E4F97F49032903044C83C7 /* LiveActivityUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1FB8BE569165581EBDCAA0F8 /* LiveActivityUITests.swift */; };
 		086699AB02A6466BA1834A85 /* PhoneRemoteModel+SessionSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4B88660641431AFE3BE1535 /* PhoneRemoteModel+SessionSnapshot.swift */; };
 		0A243A970FA454D211B3BC18 /* HostPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A1D74AFB97B3703E07FED7 /* HostPresentationTests.swift */; };
 		0AA3E7B82C175F3DCB6133E7 /* PointerPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550A78C530973E8E5387A23C /* PointerPrediction.swift */; };
@@ -75,6 +77,7 @@
 		27591B33CE73CC071150F456 /* RemotePhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FC077F3131B8830DBE715F /* RemotePhoneApp.swift */; };
 		27B9184CADFE50A02F9B8B22 /* PhoneClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D0946F7F5C7A6572E8C193F /* PhoneClipboard.swift */; };
 		27D57B10B0BF669C40D2A849 /* HostStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE3B05CE90F77B963214C3FC /* HostStream.swift */; };
+		28339260F92F452EF8239D51 /* AgentBridgeHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 917FB586A4DE316E3B4BDB97 /* AgentBridgeHTTP.swift */; };
 		28B8F853C97B032132A80A8F /* TrackpadSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9895ECA161AEB9A4D3B2451 /* TrackpadSurface.swift */; };
 		293BE92E11885E7D89B0C637 /* RemoteCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F36886E8EE8AABEF8D4DF81 /* RemoteCoordinator.swift */; };
 		2959ABA42ACFB531AB84C8FC /* PeerMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A9CB4348526C909CF253F1 /* PeerMedia.swift */; };
@@ -92,6 +95,7 @@
 		3014A1036CFBD6A1AA22A5D7 /* SessionActivityLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7F1C75D502BB9BAE75C3E5 /* SessionActivityLinks.swift */; };
 		3042945957F1DCF81CD9F5D9 /* HostArt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55CAFD1B122091C6D5203F91 /* HostArt.swift */; };
 		30C0A1E23D89935E9502F8E0 /* RemoteInputDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BA581AB036A468F69A1BE38 /* RemoteInputDriver.swift */; };
+		30F9C09B907C226F03B435E8 /* AgentAlertFromMacTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86ADDCC3BEF7DBD0E06583C0 /* AgentAlertFromMacTests.swift */; };
 		314AAE99E511F7A92CA675C5 /* HostPermissionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147A5E06CF33E961BEBB437B /* HostPermissionState.swift */; };
 		31C5E1F1AD6F55A44E5CE79C /* Doto-Variable.ttf in Resources */ = {isa = PBXBuildFile; fileRef = DBA567B99D97A0694C1C3235 /* Doto-Variable.ttf */; };
 		326E7C209D3B279481835545 /* StreamWireTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C81ED752BB30213C1E58EBF4 /* StreamWireTests.swift */; };
@@ -149,6 +153,7 @@
 		5326476F87B6F52DD4CAFD52 /* BrowserPeerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 173805F45FB3C845B4C84B82 /* BrowserPeerStore.swift */; };
 		5333B5539BA39A9A63B7286F /* HostPairingPreflight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8133C275FA11793AF24286F5 /* HostPairingPreflight.swift */; };
 		5444E7FAC68D2B6219D122B9 /* NativeCodecCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7E6B1B2D48610494416341 /* NativeCodecCapability.swift */; };
+		5593C6DDC607A0D951C88408 /* HostAgentAlertsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30414107DD0AB39F561435FE /* HostAgentAlertsTests.swift */; };
 		576310CB3DE8A911775B1E31 /* HostPermissionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147A5E06CF33E961BEBB437B /* HostPermissionState.swift */; };
 		590BB61F304E8433502AE3E3 /* ViewportTransform.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5598D7CD9CA98C9C794406BF /* ViewportTransform.swift */; };
 		5A359F21D1BF2375734662E7 /* SessionActivityWireTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C065A24E4F473C5D7F67BAD8 /* SessionActivityWireTests.swift */; };
@@ -176,6 +181,7 @@
 		69DF4A56FD106D73BDA8BB85 /* NativeGestureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EBEF9617A31797FAF4B8D81 /* NativeGestureEngine.swift */; };
 		6A5D072570A9B83695FB57FB /* AgentAlertCenter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 037581E28AF8C9D253064408 /* AgentAlertCenter.swift */; };
 		6A943413A0C969DBBCEF3106 /* RemoteCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F36886E8EE8AABEF8D4DF81 /* RemoteCoordinator.swift */; };
+		6AEFD338E430E51A7AAC9D67 /* AgentAlertGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF3A651C995C7EB2A15EDA11 /* AgentAlertGate.swift */; };
 		6B1FA9A88AE9CDD496C3E02B /* InstrumentSerif-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 07BAEBDDD3DC6F74B4F10274 /* InstrumentSerif-Italic.ttf */; };
 		6B2FE715EF8AC2D65B61F3A6 /* SessionLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10107405AE87CFAB89018C7 /* SessionLifecycleTests.swift */; };
 		6B67E276F174051A483976BF /* StreamQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68E0D2431AB187AE68C1ED2 /* StreamQuality.swift */; };
@@ -224,6 +230,7 @@
 		7FE9D7CAB6AC566C8E3EB77E /* HostSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC5305205008EFB73744EAF /* HostSetupView.swift */; };
 		80F6D5347AFCABCBCF257CDE /* FarsideTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */; };
 		819A3FE58149294139BAB614 /* HostInput.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0E9A460F4C70492B4EFA2FC /* HostInput.swift */; };
+		83A0C29582D1F90CCF466456 /* AgentAlertFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4310863DCC8E9065BFE24212 /* AgentAlertFrame.swift */; };
 		83DF670AB3FF2B52F2C2AC38 /* PointerTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70754EB2A998CAF466237F4F /* PointerTelemetry.swift */; };
 		85D08CC0727D85264A948C24 /* HostPopoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98B3BEF959150C7AF3DB285F /* HostPopoverView.swift */; };
 		86329B4BD4C616D1C2C9ACBB /* StreamStatistics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C40ABFFA6F1CBB2F7E05DC6 /* StreamStatistics.swift */; };
@@ -270,6 +277,7 @@
 		9E23F3D7A556F4C76DF28DEF /* AgentAlertPushUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 578EF156F79B236F46430BE1 /* AgentAlertPushUITests.swift */; };
 		9EB5CD9BF4A64423B552F382 /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9211D8B9DD746165FF31BB31 /* Pairing.swift */; };
 		9F596DEE7452BBE82C63E5E0 /* NativeInputFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06983976A15578FF281A602 /* NativeInputFreshness.swift */; };
+		A09296C091FAAA1D2D287652 /* HostAgentAlerts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1266A2BBBDB1C215DAB4C314 /* HostAgentAlerts.swift */; };
 		A0BFD8DE5AD92BAB97DEFC25 /* SessionActivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = B4206DBEE935B354F7458602 /* SessionActivityController.swift */; };
 		A221773615A10E8DA72B4D32 /* SessionContinuity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 643A13E08A654E915062CB1B /* SessionContinuity.swift */; };
 		A23CA132BE232C97A7EDCEE0 /* ScriptedSessionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79EB73E1E886FA5A57E8D89E /* ScriptedSessionSupport.swift */; };
@@ -277,6 +285,7 @@
 		A417255BD2C0E3CFA42F2E9A /* RemoteCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F36886E8EE8AABEF8D4DF81 /* RemoteCoordinator.swift */; };
 		A4317EBBA4A33AFD2FF96856 /* HostSettingsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7DD59E38BEC24B7621592F49 /* HostSettingsSection.swift */; };
 		A53E26EDCACCC5550C9EE98F /* HostUISnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F3CA9843FDDB78974EEAD51 /* HostUISnapshotTests.swift */; };
+		A5F5F589525E8BED0F84F6E6 /* AgentAlertFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4310863DCC8E9065BFE24212 /* AgentAlertFrame.swift */; };
 		A7AD19FDAB2BDECED3C55BA7 /* HostE2E.swift in Sources */ = {isa = PBXBuildFile; fileRef = 942D78BD1146178EC14C4F60 /* HostE2E.swift */; };
 		A7EED6B410924257757E2376 /* RemoteE2ETests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CC77D445379E8D9885B425A /* RemoteE2ETests.swift */; };
 		A8343D0D62B36008300F0532 /* PointerGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40F2AC5A22A82DCC4F04012B /* PointerGlyph.swift */; };
@@ -299,8 +308,10 @@
 		B4B92C3287E3EFE97DC5C5B2 /* SessionRenewal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FFA4B68F5D8B2568395C232 /* SessionRenewal.swift */; };
 		B4CA9582453AFF24B0C1148C /* NativeInputFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06983976A15578FF281A602 /* NativeInputFreshness.swift */; };
 		B50B079336BFB89EE634BC2B /* NativeInputSafetyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2406BCA00220ED02C01518 /* NativeInputSafetyTests.swift */; };
+		B5E73675225492B67AD71EA6 /* HostAgentAlerts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1266A2BBBDB1C215DAB4C314 /* HostAgentAlerts.swift */; };
 		B67E19FEF38F0E44F82BFA85 /* NativeInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = F5AB91A9D1F22807DFFBD915 /* NativeInteraction.swift */; };
 		B6E8D95DC2558187E3549E56 /* ViewportTransformTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99BE207FB127F805AC3EC932 /* ViewportTransformTests.swift */; };
+		B760C9BB3002A3168534DDD0 /* AgentBridgeHTTP.swift in Sources */ = {isa = PBXBuildFile; fileRef = 917FB586A4DE316E3B4BDB97 /* AgentBridgeHTTP.swift */; };
 		B766B7E3E937551469C25FB4 /* FarsideHalftone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D465DB529F7AFB91CFA9A74 /* FarsideHalftone.swift */; };
 		B85EA1D0BE330E3824689904 /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412B04FA6976C7A9157CAECE /* SignalingClient.swift */; };
 		B895D3DFB0EF0C38E1AC8AA6 /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412B04FA6976C7A9157CAECE /* SignalingClient.swift */; };
@@ -321,6 +332,7 @@
 		C39508042C84FB038528F0BC /* E2EMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E609125CE2A4A1E42653D11 /* E2EMedia.swift */; };
 		C4324CC42C0F48FEC5F2C5A7 /* NativeCodecCapabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 317BFB7BF5716BA9625EA3CF /* NativeCodecCapabilityTests.swift */; };
 		C54F8B2BCBD4C0D351541E61 /* BrowserCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */; };
+		C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */ = {isa = PBXBuildFile; fileRef = 7439197E639B36A019C5898C /* farside-notify */; };
 		C59521464BDF9427AE32E7E0 /* PrivacyCurtainTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C20DEAFF126EDB5CF5CAB164 /* PrivacyCurtainTests.swift */; };
 		C5FDF5C52EBC263D0224DBE7 /* E2ESupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B88956D18BC4F22E09C83F /* E2ESupport.swift */; };
 		C6845830BCD7524063546C0B /* PhoneClipboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDCB2DCE29C9A401C6C942C5 /* PhoneClipboardTests.swift */; };
@@ -335,6 +347,7 @@
 		CF48E665E58B645E06FE177E /* HostHangWatchdog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 346F5D16AA33CBD8D2A65487 /* HostHangWatchdog.swift */; };
 		CFBFD8F971CB49EE83C8E5E0 /* PermissionPriming.swift in Sources */ = {isa = PBXBuildFile; fileRef = 753BB61944F48B1BBAB18F0B /* PermissionPriming.swift */; };
 		CFC8D6668D45E36AFE16CB90 /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9211D8B9DD746165FF31BB31 /* Pairing.swift */; };
+		CFCCF23F8B9D59BA81F0ABE5 /* AgentAlertFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4310863DCC8E9065BFE24212 /* AgentAlertFrame.swift */; };
 		D002D91A1FBE428904B61552 /* HostPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728339BDDAADF154551B1FE0 /* HostPresentation.swift */; };
 		D0151F16A80FAD2777D8603A /* E2EHooksTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6A57C1633C1D2CD5334A7ED /* E2EHooksTests.swift */; };
 		D1ED32A1C58B585ACAD6817C /* HostRestartIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFE866C37F98027AD3619846 /* HostRestartIntegrationTests.swift */; };
@@ -350,6 +363,7 @@
 		D8DD17F466FF7657034CC277 /* HostDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C392AAB2578488DAA1A678 /* HostDiagnostics.swift */; };
 		DA2D7F477BDBD68CCFA14914 /* ControlProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2DA9B236B9DBE30DD8FF063 /* ControlProtocol.swift */; };
 		DA9CCB565345D64881F0B692 /* MacParityPhoneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B3FB4B05CCF8A594E97A6E /* MacParityPhoneTests.swift */; };
+		DBF1925B87119C49EEAA7703 /* AgentAlertBridgeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CEACADE18D34ACAE6984D81 /* AgentAlertBridgeTests.swift */; };
 		DD035669DE7EC8A9DC08CD22 /* HostClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C8A6B76BF8E55AEDB76371 /* HostClipboard.swift */; };
 		DDAFF4FE9C4E04D80074BF2F /* HostSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC5305205008EFB73744EAF /* HostSetupView.swift */; };
 		DE7FE97979CA2F745BCEAED5 /* PointerPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550A78C530973E8E5387A23C /* PointerPrediction.swift */; };
@@ -375,9 +389,12 @@
 		EA7F944B4587C08D0D6E1178 /* HostViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F688011A8DDECAEAAE11132 /* HostViewState.swift */; };
 		EAA7FA3C29D24885D2912AC8 /* HostTextFocusProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A4062788DDAD84E5D2C5B3E /* HostTextFocusProbe.swift */; };
 		EAB2924374997E1FA53837D0 /* OFL-Doto.txt in Resources */ = {isa = PBXBuildFile; fileRef = D6F48E835098ABC5915960B7 /* OFL-Doto.txt */; };
+		EBFE7851CC6CD3F5D3276B03 /* AgentAlertFrame.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4310863DCC8E9065BFE24212 /* AgentAlertFrame.swift */; };
 		EC57E2817AC4EC5A1069C6A7 /* FarsideRoute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F52BA62D85F95BE7AAB720B /* FarsideRoute.swift */; };
+		EC66FAADE4D856C8B4FDE162 /* AgentAlertBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423177A9D1744F143A5CD38B /* AgentAlertBridge.swift */; };
 		ED6A4108B6256C6B156556E1 /* BrowserPeerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 173805F45FB3C845B4C84B82 /* BrowserPeerStore.swift */; };
 		EDCE545EBD9E792FB0AA078F /* PointerTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70754EB2A998CAF466237F4F /* PointerTelemetry.swift */; };
+		EE0DB9441C134C8360644612 /* AgentAlertGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = FF3A651C995C7EB2A15EDA11 /* AgentAlertGate.swift */; };
 		EF29F581505C94F234AD77C5 /* StreamQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68E0D2431AB187AE68C1ED2 /* StreamQuality.swift */; };
 		EF2A2DCC418832C87D99A404 /* RemoteSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A899CCAC0EDBAD3B9C45B3DA /* RemoteSession.swift */; };
 		EF48E7F033EB8EA8F89136F5 /* PointerLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 057F364921B27FECBF6A058E /* PointerLocation.swift */; };
@@ -399,6 +416,8 @@
 		F9A33330FBB937E2059B98C4 /* HostArtTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42F4A94CF9915373F8C53751 /* HostArtTests.swift */; };
 		F9B8013137A0EB997AD2BB65 /* RemoteControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7612B83EB1CE18C2A0FE2189 /* RemoteControls.swift */; };
 		F9E52C0B98420978CDC20236 /* HostWatchdogReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8662E553866FF233B18209B4 /* HostWatchdogReporter.swift */; };
+		FA435134821786DF5462A249 /* AgentAlertBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = 423177A9D1744F143A5CD38B /* AgentAlertBridge.swift */; };
+		FAB688A0BBC052EAC06D557F /* AgentAlertFrameTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14CB53B333C6698EA49C8FB7 /* AgentAlertFrameTests.swift */; };
 		FBCAF216CF9FECD6AF6619C2 /* StreamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDB43E9A47D0C0BFAB1B5988 /* StreamWire.swift */; };
 		FC5285E8E3731B090B557367 /* PushRegistrar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AC95A3A887C76B4B1C9D375 /* PushRegistrar.swift */; };
 		FC651DAF83819F07FBBB0455 /* HostTermination.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09B1DC55741DE99187B84DA6 /* HostTermination.swift */; };
@@ -407,6 +426,7 @@
 		FDF665A25B39135278953562 /* BrowserCryptoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17CD4AA27077B3457AE5CAE0 /* BrowserCryptoTests.swift */; };
 		FE897E1759614E2B422F8028 /* RemoteInputDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BA581AB036A468F69A1BE38 /* RemoteInputDriver.swift */; };
 		FF0AF50F0FCDF33B23BF14F6 /* ControlProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2DA9B236B9DBE30DD8FF063 /* ControlProtocol.swift */; };
+		FF1BBFF3839BD027A5D88AE3 /* AgentHookScriptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6A334F7B8A99B66DD2EFF62 /* AgentHookScriptTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -462,6 +482,16 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
+		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
+			files = (
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		40E1B977BB0B47B682FE41A7 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
@@ -487,10 +517,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -509,11 +539,13 @@
 		09B1DC55741DE99187B84DA6 /* HostTermination.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostTermination.swift; sourceTree = "<group>"; };
 		0C78743520FB98953CDC93D0 /* MacStatusService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacStatusService.swift; sourceTree = "<group>"; };
 		0C792ABF9D495176D081B6D7 /* PointerTelemetryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointerTelemetryTests.swift; sourceTree = "<group>"; };
+		1266A2BBBDB1C215DAB4C314 /* HostAgentAlerts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostAgentAlerts.swift; sourceTree = "<group>"; };
 		12E9D61A7237811AFDC943C6 /* FarsideScenes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideScenes.swift; sourceTree = "<group>"; };
 		13C8A6B76BF8E55AEDB76371 /* HostClipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostClipboard.swift; sourceTree = "<group>"; };
 		13D66B889B29B13BDE33779E /* VideoCodecPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoCodecPolicy.swift; sourceTree = "<group>"; };
 		147A5E06CF33E961BEBB437B /* HostPermissionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPermissionState.swift; sourceTree = "<group>"; };
 		14A1D74AFB97B3703E07FED7 /* HostPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPresentationTests.swift; sourceTree = "<group>"; };
+		14CB53B333C6698EA49C8FB7 /* AgentAlertFrameTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertFrameTests.swift; sourceTree = "<group>"; };
 		16E5B189A6781A0590042A7D /* E2EWindowCover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EWindowCover.swift; sourceTree = "<group>"; };
 		173805F45FB3C845B4C84B82 /* BrowserPeerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPeerStore.swift; sourceTree = "<group>"; };
 		17CD4AA27077B3457AE5CAE0 /* BrowserCryptoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCryptoTests.swift; sourceTree = "<group>"; };
@@ -523,6 +555,7 @@
 		1D2D5712350233BB04C2ED07 /* BrowserInputGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserInputGate.swift; sourceTree = "<group>"; };
 		1D855557157B394E9F2314DE /* DesktopPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopPreview.swift; sourceTree = "<group>"; };
 		1E7525624D75FED03C780E9F /* AgentAlertPayload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertPayload.swift; sourceTree = "<group>"; };
+		1FB8BE569165581EBDCAA0F8 /* LiveActivityUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveActivityUITests.swift; sourceTree = "<group>"; };
 		20250C8B62E538F704C4D471 /* SessionLiveActivity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionLiveActivity.swift; sourceTree = "<group>"; };
 		21F403AFB03832185B23E1B6 /* RemoteE2ETests-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "RemoteE2ETests-Bridging-Header.h"; sourceTree = "<group>"; };
 		22642CA5FCA6DB80803610D9 /* HostBackgroundServicesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostBackgroundServicesTests.swift; sourceTree = "<group>"; };
@@ -533,6 +566,8 @@
 		2AB621AC85022A9148C82D69 /* FarsideIntentsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideIntentsTests.swift; sourceTree = "<group>"; };
 		2B47A3584507A2F653CE0816 /* DesktopPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopPreview.swift; sourceTree = "<group>"; };
 		2C7F1C75D502BB9BAE75C3E5 /* SessionActivityLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityLinks.swift; sourceTree = "<group>"; };
+		2CEACADE18D34ACAE6984D81 /* AgentAlertBridgeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertBridgeTests.swift; sourceTree = "<group>"; };
+		30414107DD0AB39F561435FE /* HostAgentAlertsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostAgentAlertsTests.swift; sourceTree = "<group>"; };
 		3113E7FFC8DA6DCE50ED6ACC /* HostModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostModel.swift; sourceTree = "<group>"; };
 		317BFB7BF5716BA9625EA3CF /* NativeCodecCapabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCodecCapabilityTests.swift; sourceTree = "<group>"; };
 		346F5D16AA33CBD8D2A65487 /* HostHangWatchdog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostHangWatchdog.swift; sourceTree = "<group>"; };
@@ -548,8 +583,10 @@
 		41545BFD1F703C9543DC1A50 /* SessionIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionIntegrationTests.swift; sourceTree = "<group>"; };
 		41949CA17D55D44290A6D3B3 /* HostCursorShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostCursorShape.swift; sourceTree = "<group>"; };
 		422AD8614A5B863A7FEA397A /* PhoneE2E.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneE2E.swift; sourceTree = "<group>"; };
+		423177A9D1744F143A5CD38B /* AgentAlertBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertBridge.swift; sourceTree = "<group>"; };
 		4242DD41D0DF29B3EE9CD1C4 /* HostReadinessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostReadinessTests.swift; sourceTree = "<group>"; };
 		42F4A94CF9915373F8C53751 /* HostArtTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostArtTests.swift; sourceTree = "<group>"; };
+		4310863DCC8E9065BFE24212 /* AgentAlertFrame.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertFrame.swift; sourceTree = "<group>"; };
 		43CA8C2354F26641D43EB6D9 /* FarsideRedesignUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideRedesignUITests.swift; sourceTree = "<group>"; };
 		4441AE7C836A65295CD44389 /* PocketDeskBrowserFixture.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketDeskBrowserFixture.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		44C7241D7358FC88D991696D /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -592,6 +629,7 @@
 		70CF6225E89050B276A72773 /* SessionRenewalIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRenewalIntegrationTests.swift; sourceTree = "<group>"; };
 		728339BDDAADF154551B1FE0 /* HostPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPresentation.swift; sourceTree = "<group>"; };
 		72DE368D956186BDF569C427 /* BrowserRelayPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserRelayPolicyTests.swift; sourceTree = "<group>"; };
+		7439197E639B36A019C5898C /* farside-notify */ = {isa = PBXFileReference; path = "farside-notify"; sourceTree = "<group>"; };
 		7485A47A6290AA2F83D600A9 /* ClipboardTransferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardTransferTests.swift; sourceTree = "<group>"; };
 		7508571DC4EBDB478A8D8616 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
 		753BB61944F48B1BBAB18F0B /* PermissionPriming.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionPriming.swift; sourceTree = "<group>"; };
@@ -610,6 +648,7 @@
 		7F3CA9843FDDB78974EEAD51 /* HostUISnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostUISnapshotTests.swift; sourceTree = "<group>"; };
 		8133C275FA11793AF24286F5 /* HostPairingPreflight.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPairingPreflight.swift; sourceTree = "<group>"; };
 		8662E553866FF233B18209B4 /* HostWatchdogReporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostWatchdogReporter.swift; sourceTree = "<group>"; };
+		86ADDCC3BEF7DBD0E06583C0 /* AgentAlertFromMacTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertFromMacTests.swift; sourceTree = "<group>"; };
 		86CC7F4305C87173BBE65A02 /* FarsideAppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideAppDelegate.swift; sourceTree = "<group>"; };
 		86E3B0AD4915A38B1F6919BA /* AgentAlertViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertViews.swift; sourceTree = "<group>"; };
 		86F35696F9CC17369CF1F761 /* StreamStatisticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamStatisticsTests.swift; sourceTree = "<group>"; };
@@ -623,6 +662,7 @@
 		8E609125CE2A4A1E42653D11 /* E2EMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EMedia.swift; sourceTree = "<group>"; };
 		8F28D4E17D1028952D0B9733 /* RemoteE2ETests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RemoteE2ETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		90D90505BF498BF2C1FA801F /* HostReadiness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostReadiness.swift; sourceTree = "<group>"; };
+		917FB586A4DE316E3B4BDB97 /* AgentBridgeHTTP.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentBridgeHTTP.swift; sourceTree = "<group>"; };
 		9211D8B9DD746165FF31BB31 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
 		924606EF7002CFDE239145B3 /* RemoteCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCapture.swift; sourceTree = "<group>"; };
 		937D90E11178ACE1E39BCE49 /* PointerOverlayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointerOverlayTests.swift; sourceTree = "<group>"; };
@@ -660,6 +700,7 @@
 		B4206DBEE935B354F7458602 /* SessionActivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityController.swift; sourceTree = "<group>"; };
 		B4AB78D9E67A4FB4EB1D5ADA /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		B5DC5941798CC9570708F6E3 /* E2EWindowCoverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EWindowCoverTests.swift; sourceTree = "<group>"; };
+		B6A334F7B8A99B66DD2EFF62 /* AgentHookScriptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHookScriptTests.swift; sourceTree = "<group>"; };
 		B6A57C1633C1D2CD5334A7ED /* E2EHooksTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EHooksTests.swift; sourceTree = "<group>"; };
 		B6D0BA4C0C5AD25BBF722D7F /* SessionActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionActivityTests.swift; sourceTree = "<group>"; };
 		B8134C7823DCEFB4A1B46F94 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
@@ -727,6 +768,7 @@
 		FE311B68522A225B1438CB85 /* Farside.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Farside.entitlements; sourceTree = "<group>"; };
 		FE33F86795CAAD3BAE7FAE69 /* PocketDesktopUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = PocketDesktopUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FE44A88349F2A4E620AE6E05 /* FarsideIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideIntents.swift; sourceTree = "<group>"; };
+		FF3A651C995C7EB2A15EDA11 /* AgentAlertGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertGate.swift; sourceTree = "<group>"; };
 		FFE4ADC42F9E53923E64E0B6 /* VideoToolboxProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoToolboxProbeTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -778,6 +820,7 @@
 			isa = PBXGroup;
 			children = (
 				0675CE1974FD239B86F4A520 /* AgentAlert.swift */,
+				4310863DCC8E9065BFE24212 /* AgentAlertFrame.swift */,
 				BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */,
 				F73AE673E6754C476D3A34C5 /* ClipboardTransfer.swift */,
 				F2DA9B236B9DBE30DD8FF063 /* ControlProtocol.swift */,
@@ -892,6 +935,9 @@
 		33CEBA1BC0CE213A2AE60E0C /* RemoteHost */ = {
 			isa = PBXGroup;
 			children = (
+				423177A9D1744F143A5CD38B /* AgentAlertBridge.swift */,
+				FF3A651C995C7EB2A15EDA11 /* AgentAlertGate.swift */,
+				917FB586A4DE316E3B4BDB97 /* AgentBridgeHTTP.swift */,
 				D09A7FB39F9390BCD37EAEB1 /* Assets.xcassets */,
 				FB6DA47FDA33D0407262019B /* BrowserFrameMarker.swift */,
 				EDD7CA3CE35BDCE44D60455E /* BrowserHostSettingsView.swift */,
@@ -899,6 +945,7 @@
 				962EDBF53CBBC8769AA77997 /* BrowserMediaSession.swift */,
 				9F31D1E535A3D1FAC3F46962 /* BrowserPeerController.swift */,
 				173805F45FB3C845B4C84B82 /* BrowserPeerStore.swift */,
+				1266A2BBBDB1C215DAB4C314 /* HostAgentAlerts.swift */,
 				66CE61B858A64288AAC8E996 /* HostAppActivation.swift */,
 				55CAFD1B122091C6D5203F91 /* HostArt.swift */,
 				13C8A6B76BF8E55AEDB76371 /* HostClipboard.swift */,
@@ -969,12 +1016,16 @@
 		6DEB5BEA9B8F3872FB151859 /* RemoteTests */ = {
 			isa = PBXGroup;
 			children = (
+				2CEACADE18D34ACAE6984D81 /* AgentAlertBridgeTests.swift */,
+				14CB53B333C6698EA49C8FB7 /* AgentAlertFrameTests.swift */,
+				B6A334F7B8A99B66DD2EFF62 /* AgentHookScriptTests.swift */,
 				17CD4AA27077B3457AE5CAE0 /* BrowserCryptoTests.swift */,
 				E5A4A5C6B82AD42422582E6F /* BrowserPeerTests.swift */,
 				72DE368D956186BDF569C427 /* BrowserRelayPolicyTests.swift */,
 				7485A47A6290AA2F83D600A9 /* ClipboardTransferTests.swift */,
 				B6A57C1633C1D2CD5334A7ED /* E2EHooksTests.swift */,
 				B5DC5941798CC9570708F6E3 /* E2EWindowCoverTests.swift */,
+				30414107DD0AB39F561435FE /* HostAgentAlertsTests.swift */,
 				22642CA5FCA6DB80803610D9 /* HostBackgroundServicesTests.swift */,
 				099CBB6FF189E2531A281E35 /* HostClipboardServiceTests.swift */,
 				24C25284073BC44C2F7E6CD2 /* HostDiagnosticsTests.swift */,
@@ -1021,6 +1072,7 @@
 				578EF156F79B236F46430BE1 /* AgentAlertPushUITests.swift */,
 				43CA8C2354F26641D43EB6D9 /* FarsideRedesignUITests.swift */,
 				8C56F9095024592E3C8FDBD7 /* FarsideScreenshotTour.swift */,
+				1FB8BE569165581EBDCAA0F8 /* LiveActivityUITests.swift */,
 				78393E114806ACFDD6DDF0BB /* PointerOverlayUITests.swift */,
 				7E0861848B93929EDE7B10C1 /* SessionLayoutTests.swift */,
 				764203FAFAD2090B12C4B10D /* SystemIntegrationsUITests.swift */,
@@ -1068,6 +1120,15 @@
 			path = Shared;
 			sourceTree = "<group>";
 		};
+		A963ACD91EE03C39369C4800 /* agent-hooks */ = {
+			isa = PBXGroup;
+			children = (
+				7439197E639B36A019C5898C /* farside-notify */,
+			);
+			name = "agent-hooks";
+			path = "script/agent-hooks";
+			sourceTree = "<group>";
+		};
 		ACFC8C3A6E6E70FB9881DB78 /* StreamTests */ = {
 			isa = PBXGroup;
 			children = (
@@ -1093,6 +1154,7 @@
 			isa = PBXGroup;
 			children = (
 				D5F06AA8473A3A424B3CB6BB /* AgentAlertCenterTests.swift */,
+				86ADDCC3BEF7DBD0E06583C0 /* AgentAlertFromMacTests.swift */,
 				C3FA5957A16826DD4FD27D9F /* AgentAlertPayloadTests.swift */,
 				35CC0B33A0853F5CB3C47A3D /* CommittedTextTests.swift */,
 				5DD8A198867F1E3881AF6815 /* FarsideDesignTests.swift */,
@@ -1116,6 +1178,7 @@
 		BF98085FBE0F68B6C4A7A81F = {
 			isa = PBXGroup;
 			children = (
+				A963ACD91EE03C39369C4800 /* agent-hooks */,
 				6C2C11871C6D695B4AFE0738 /* BrowserFixtureHost */,
 				5ED91F3DB7DA110F137D5916 /* E2EStubHost */,
 				D3AECE4C040C2D25C347D4E1 /* FarsideTestPad */,
@@ -1374,6 +1437,7 @@
 				4D6086A46C66371D0097D701 /* Sources */,
 				F3635E90A22FD4C5DDAB6532 /* Resources */,
 				7921CB30C5158D00B1977963 /* CopyFiles */,
+				2E49EEF7069398A9DE44D8A4 /* CopyFiles */,
 				9E057EF30B14EB65AC6CECB4 /* Frameworks */,
 				6AD4E58FE397E53439226D5D /* Embed Dependencies */,
 			);
@@ -1647,6 +1711,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				3900EE3ED690A541C6547421 /* AgentAlert.swift in Sources */,
+				CFCCF23F8B9D59BA81F0ABE5 /* AgentAlertFrame.swift in Sources */,
 				AA805402F78286185E94FD73 /* BrowserCrypto.swift in Sources */,
 				133005DF51DFAFBCFBED8A81 /* BrowserFixtureHostApp.swift in Sources */,
 				C1ED9FCC36FF29ED9A9DC921 /* BrowserFrameMarker.swift in Sources */,
@@ -1716,6 +1781,7 @@
 				9E23F3D7A556F4C76DF28DEF /* AgentAlertPushUITests.swift in Sources */,
 				63A95FB32A150E8864B6E683 /* FarsideRedesignUITests.swift in Sources */,
 				99FC381EA7EC56C30231ACD8 /* FarsideScreenshotTour.swift in Sources */,
+				07E4F97F49032903044C83C7 /* LiveActivityUITests.swift in Sources */,
 				787BE9A65A00AAF5B74AA9C6 /* PointerOverlayUITests.swift in Sources */,
 				88C196609E8E921FE6B1CB1D /* SessionLayoutTests.swift in Sources */,
 				F40DFDC3A8BF082B4808C647 /* SystemIntegrationsUITests.swift in Sources */,
@@ -1727,6 +1793,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0140D326F99F7EF39CACF262 /* AgentAlert.swift in Sources */,
+				00E6E38B6002A06395899D57 /* AgentAlertFrame.swift in Sources */,
 				7CCA63A1383293F1362F23F4 /* BrowserCrypto.swift in Sources */,
 				5B8DFC386C0A491C7013867F /* ClipboardTransfer.swift in Sources */,
 				DA2D7F477BDBD68CCFA14914 /* ControlProtocol.swift in Sources */,
@@ -1766,6 +1833,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				D8C8B8DAD1B3AAB0914B62E3 /* AgentAlert.swift in Sources */,
+				EC66FAADE4D856C8B4FDE162 /* AgentAlertBridge.swift in Sources */,
+				EBFE7851CC6CD3F5D3276B03 /* AgentAlertFrame.swift in Sources */,
+				6AEFD338E430E51A7AAC9D67 /* AgentAlertGate.swift in Sources */,
+				B760C9BB3002A3168534DDD0 /* AgentBridgeHTTP.swift in Sources */,
 				C54F8B2BCBD4C0D351541E61 /* BrowserCrypto.swift in Sources */,
 				3BDB6FF7070A806F51388590 /* BrowserFrameMarker.swift in Sources */,
 				7E8E378D895E8E87F485F6A7 /* BrowserHostSettingsView.swift in Sources */,
@@ -1781,6 +1852,7 @@
 				1D353B08718F7B84625781AD /* E2EWindowCover.swift in Sources */,
 				AC1D7174A3ECFA356ED75F25 /* FarsideHalftone.swift in Sources */,
 				80F6D5347AFCABCBCF257CDE /* FarsideTheme.swift in Sources */,
+				A09296C091FAAA1D2D287652 /* HostAgentAlerts.swift in Sources */,
 				0294E4CBC7A3396E6DFF2FA6 /* HostAppActivation.swift in Sources */,
 				5107C5090BD792AAF03A801C /* HostArt.swift in Sources */,
 				DD035669DE7EC8A9DC08CD22 /* HostClipboard.swift in Sources */,
@@ -1841,6 +1913,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				0EE20B6CFCA4B886E69B0A52 /* AgentAlertCenterTests.swift in Sources */,
+				30F9C09B907C226F03B435E8 /* AgentAlertFromMacTests.swift in Sources */,
 				E6870E4BE8CE3759FD3D9901 /* AgentAlertPayloadTests.swift in Sources */,
 				1445B77C93CE0CCDE6367589 /* CommittedTextTests.swift in Sources */,
 				42C9EA8EB7BE0521A71B904E /* FarsideDesignTests.swift in Sources */,
@@ -1865,6 +1938,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				384DE0D344103F95B0ECC714 /* AgentAlert.swift in Sources */,
+				FA435134821786DF5462A249 /* AgentAlertBridge.swift in Sources */,
+				DBF1925B87119C49EEAA7703 /* AgentAlertBridgeTests.swift in Sources */,
+				A5F5F589525E8BED0F84F6E6 /* AgentAlertFrame.swift in Sources */,
+				FAB688A0BBC052EAC06D557F /* AgentAlertFrameTests.swift in Sources */,
+				EE0DB9441C134C8360644612 /* AgentAlertGate.swift in Sources */,
+				28339260F92F452EF8239D51 /* AgentBridgeHTTP.swift in Sources */,
+				FF1BBFF3839BD027A5D88AE3 /* AgentHookScriptTests.swift in Sources */,
 				BA1C0BA7DC6B46312FF2421E /* BrowserCrypto.swift in Sources */,
 				FDF665A25B39135278953562 /* BrowserCryptoTests.swift in Sources */,
 				949D0523E9E1290EBD666F7F /* BrowserFrameMarker.swift in Sources */,
@@ -1884,6 +1964,8 @@
 				418F5720BF41E4BA924143F3 /* E2EWindowCoverTests.swift in Sources */,
 				6EC4BC0D214EBFFCFEB8CADD /* FarsideHalftone.swift in Sources */,
 				2D3749B5BF7F8FFEF2DE07C4 /* FarsideTheme.swift in Sources */,
+				B5E73675225492B67AD71EA6 /* HostAgentAlerts.swift in Sources */,
+				5593C6DDC607A0D951C88408 /* HostAgentAlertsTests.swift in Sources */,
 				8DC7E0BA9EF18FE93B1B2B7F /* HostBackgroundServicesTests.swift in Sources */,
 				9B136D5E8B26F80F97CA3E67 /* HostClipboard.swift in Sources */,
 				6EC1506536F0384C3394712C /* HostClipboardServiceTests.swift in Sources */,
@@ -1970,6 +2052,7 @@
 			files = (
 				B44A0938166D83F6A7991B33 /* AgentAlert.swift in Sources */,
 				6A5D072570A9B83695FB57FB /* AgentAlertCenter.swift in Sources */,
+				83A0C29582D1F90CCF466456 /* AgentAlertFrame.swift in Sources */,
 				CA659D054F69ED7425FF1390 /* AgentAlertPayload.swift in Sources */,
 				2597972A38EC1F06529793D7 /* AgentAlertViews.swift in Sources */,
 				7C9F2B717F759AA95B61AD6C /* AgentNotifications.swift in Sources */,
@@ -2246,12 +2329,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = "$(FARSIDE_ENTITLEMENTS)";
+				CODE_SIGN_ENTITLEMENTS = "$(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 20260928.11;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
-				FARSIDE_ENTITLEMENTS = "";
+				FARSIDE_ENABLE_PUSH = NO;
+				FARSIDE_ENTITLEMENTS_NO = "";
+				FARSIDE_ENTITLEMENTS_YES = RemotePhone/Farside.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RemotePhone/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Farside;
@@ -2560,12 +2645,14 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_ENTITLEMENTS = "$(FARSIDE_ENTITLEMENTS)";
+				CODE_SIGN_ENTITLEMENTS = "$(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 20260928.11;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
-				FARSIDE_ENTITLEMENTS = "";
+				FARSIDE_ENABLE_PUSH = NO;
+				FARSIDE_ENTITLEMENTS_NO = "";
+				FARSIDE_ENTITLEMENTS_YES = RemotePhone/Farside.entitlements;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = RemotePhone/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Farside;

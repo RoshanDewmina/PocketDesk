@@ -54,6 +54,10 @@ struct HostViewState: Equatable {
     var privacyCurtain = false
     /// What the curtain is doing now, when that differs from the preference alone.
     var curtainStatus: String?
+    /// Agent alerts (beta): a hook on this Mac tells the phone an agent needs a person.
+    var agentAlerts = false
+    /// One line about the last agent alert, or that the Mac is listening.
+    var agentAlertsStatus: String?
     var crashLoopStopped = false
     var displays: [HostDisplayOption] = []
     var selectedDisplayID: UInt32 = 0
@@ -88,6 +92,9 @@ struct HostActions {
     var setAutomaticRecovery: (Bool) -> Void = { _ in }
     var openLoginItems: () -> Void = {}
     var setPrivacyCurtain: (Bool) -> Void = { _ in }
+    var setAgentAlerts: (Bool) -> Void = { _ in }
+    var copyAgentHookSetup: () -> Void = {}
+    var resetAgentAlertLink: () -> Void = {}
     var copyDiagnostics: () -> Void = {}
     var selectDisplay: (UInt32) -> Void = { _ in }
     var openSetup: () -> Void = {}

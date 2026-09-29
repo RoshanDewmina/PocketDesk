@@ -189,6 +189,11 @@ final class HostUISnapshotTests: XCTestCase {
             $0.crashLoopStopped = true
             $0.automaticRecovery = .on
         }, actions: .preview))
+        try render("settings-agent-alerts", HostSettingsView(state: ready(.controlling) {
+            $0.session = Self.measured
+            $0.agentAlerts = true
+            $0.agentAlertsStatus = "Claude Code asked 2 min ago · told your iPhone"
+        }, actions: .preview))
     }
 
     func testCrashLoopAndCurtainAreExplained() {

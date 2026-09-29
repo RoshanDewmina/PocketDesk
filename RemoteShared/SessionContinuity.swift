@@ -86,6 +86,10 @@ extension RemoteAction {
                 throw RemoteError.invalidMessage
             }
         }
+        if let agentAlert {
+            guard action == "capture" else { throw RemoteError.invalidMessage }
+            try agentAlert.validate()
+        }
         guard Self.sessionExtensionActions.contains(action) else {
             guard clipboard == nil else { throw RemoteError.invalidMessage }
             return false

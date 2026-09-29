@@ -166,6 +166,7 @@ struct HostPreferences {
         static let serviceAddress = "PocketDeskServiceURL"
         static let chimeOnConnect = "chimeOnConnect"
         static let privacyCurtain = "privacyCurtainWhileSharing"
+        static let agentAlerts = "agentAlertsEnabled"
     }
 
     let defaults: UserDefaults
@@ -206,6 +207,12 @@ struct HostPreferences {
     var privacyCurtain: Bool {
         get { defaults.bool(forKey: Key.privacyCurtain) }
         nonmutating set { defaults.set(newValue, forKey: Key.privacyCurtain) }
+    }
+
+    /// Off unless the person turns it on: nothing on this Mac listens for an agent until they say so.
+    var agentAlerts: Bool {
+        get { defaults.bool(forKey: Key.agentAlerts) }
+        nonmutating set { defaults.set(newValue, forKey: Key.agentAlerts) }
     }
 
     var serviceAddress: String? {
