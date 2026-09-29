@@ -45,7 +45,7 @@
       "name": "farside-backend-staging",
       "workers_dev": false,
       "preview_urls": false,
-      // "routes": [{ "pattern": "signal-staging.REPLACE_DOMAIN", "custom_domain": true }],
+      "routes": [{ "pattern": "signal-staging.getfarside.com", "custom_domain": true }],
       "observability": {
         "enabled": true,
         "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
@@ -54,7 +54,7 @@
       "triggers": { "crons": ["17 4 * * *"] },
       "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
       "d1_databases": [
-        { "binding": "DB", "database_name": "farside-entitlements-staging", "database_id": "REPLACE_WITH_STAGING_D1_ID", "migrations_dir": "migrations" }
+        { "binding": "DB", "database_name": "farside-entitlements-staging", "database_id": "5b916903-865e-4659-b359-e8ef333167bd", "migrations_dir": "migrations" }
       ],
       "ratelimits": [
         { "name": "RL_SIGNAL", "namespace_id": "2001", "simple": { "limit": 30, "period": 60 } },
@@ -78,7 +78,7 @@
         "ROOM_LEASE_SECONDS": "1800",
         "MAX_DEVICES_PER_ENTITLEMENT": "3",
         "TEST_FORCE_RELAY": "0",
-        "ALLOW_UNENTITLED_RELAY": "0",
+        "ALLOW_UNENTITLED_RELAY": "1",
         "KEEPALIVE_SECONDS": "0"
       }
     },
