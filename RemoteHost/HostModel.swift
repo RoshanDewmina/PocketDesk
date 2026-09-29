@@ -42,6 +42,8 @@ final class RemoteHostModel: ObservableObject {
     private let input = RemoteInputDriver()
     private let capture = RemoteCapture()
     private let keepAwake = HostKeepAwake()
+    private let clipboard = HostClipboardService()
+    private var phonePause = HostPhonePause()
     private var lifecycleTimer: Timer?
     private var permissionTimer: Timer?
     private var inputLease = RemoteInputLease()
@@ -154,6 +156,11 @@ final class RemoteHostModel: ObservableObject {
             self?.reconcileAvailabilityAfterCoordinatorReset()
         }
         connection.onControl = { [weak self] data in self?.receive(data) }
+        clipboard.transport = { [weak self] frame in
+            guard let self, self.connection.connected else { return false }
+            return self.connection.sendControl(RemoteAction(action: "clipboard", epoch: self.inputEpoch.value, clipboard: frame))
+        }
+        clipboard.bufferedAmount = { [weak self] in self?.connection.media?.controlBufferedAmount }
         connectionObserver = connection.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
             Task { @MainActor [weak self] in self?.connectionDidChange() }
@@ -547,7 +554,10 @@ final class RemoteHostModel: ObservableObject {
             accessibilityPermission: accessibilityPermission,
             captureHealthy: captureHealthy
         )
-        if !effective { releaseRemoteInput(notifyPhone: notifyPhone) }
+        if !effective {
+            releaseRemoteInput(notifyPhone: notifyPhone)
+            clipboard.reset()
+        }
         if notifyPhone, connection.connected {
             _ = connection.sendControl(RemoteAction(action: "viewing", x: effective ? 1 : 0, epoch: inputEpoch.value))
         }
@@ -566,6 +576,7 @@ final class RemoteHostModel: ObservableObject {
         captureAttempt &+= 1
         if captureAttempt == 0 { captureAttempt = 1 }
         let attempt = captureAttempt
+        phonePause.clear()
         capturedDisplayID = display.displayID
         pointerLocator.reset()
         captureTask?.cancel()
@@ -580,6 +591,10 @@ final class RemoteHostModel: ObservableObject {
         lifecycleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                if self.phonePause.isPaused {
+                    if self.phonePause.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.expirePhonePause() }
+                    return
+                }
                 if self.inputLease.isExpired(at: ProcessInfo.processInfo.systemUptime) {
                     let releasedHold = self.input.externalHoldID
                     let releaseEpoch = self.inputEpoch.value
@@ -630,6 +645,8 @@ final class RemoteHostModel: ObservableObject {
 
     private func endCapture() {
         invalidateTextFocus()
+        phonePause.clear()
+        clipboard.reset()
         releaseRemoteInput(notifyPhone: false)
         inputFreshness.invalidate()
         input.resetNativeSequence()
@@ -679,6 +696,10 @@ final class RemoteHostModel: ObservableObject {
             receivePointerProbe(action)
             return
         }
+        if RemoteAction.sessionExtensionActions.contains(action.action) {
+            receiveSessionExtension(action)
+            return
+        }
 
         pointerTelemetry.moveProcessed(action)
         guard Self.userInputActions.contains(action.action), inputEpoch.accepts(action) else {
@@ -717,6 +738,9 @@ final class RemoteHostModel: ObservableObject {
             accessibilityPermission: accessibilityPermission,
             captureHealthy: captureHealthy
         )
+        if action.action == "key", action.key == "c", action.modifiers == ["command"], input.enabled {
+            clipboard.prepareForCopyShortcut()
+        }
         let outcome = input.handle(action, upgraded: admission == .upgraded, now: now)
         if action.action == "move", outcome.accepted {
             pointerTelemetry.moveInjected(globalPoint: input.lastPoint, at: now)
@@ -821,8 +845,58 @@ final class RemoteHostModel: ObservableObject {
         _ = connection.sendControl(RemoteAction(
             action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: true,
-            pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality
+            pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
+            features: SessionFeature.host
         ))
+    }
+
+    // MARK: Session extensions
+
+    private func receiveSessionExtension(_ action: RemoteAction) {
+        let current = connection.connected && active && action.epoch == inputEpoch.value
+        switch action.action {
+        case "pause":
+            if current { pauseForPhoneBackground() }
+        case "resume":
+            if current { resumeAfterPhoneBackground() }
+        case "clipboard":
+            guard let frame = action.clipboard else { return }
+            let controlEffective = allowControl && accessibilityPermission.isGranted
+            clipboard.receive(frame, allowed: current && !phonePause.isPaused && controlEffective)
+        default:
+            break
+        }
+    }
+
+    /// The phone is backgrounding: stop capture and input now, but keep the peer and its
+    /// session slot so a quick return resumes without renegotiation.
+    private func pauseForPhoneBackground() {
+        guard !phonePause.isPaused else { return }
+        phonePause.begin(at: ProcessInfo.processInfo.systemUptime)
+        clipboard.reset()
+        invalidateTextFocus()
+        releaseRemoteInput(notifyPhone: false)
+        inputFreshness.expireTokens()
+        input.enabled = false
+        captureHealthy = false
+        capturedDisplayID = nil
+        pointerLocator.reset()
+        pointerTelemetry.end()
+        captureAttempt &+= 1
+        captureTask?.cancel(); captureTask = nil
+        _ = capture.stop()
+    }
+
+    /// A fresh epoch, geometry and capture follow, so no pre-background input can apply.
+    private func resumeAfterPhoneBackground() {
+        guard phonePause.isPaused else { return }
+        phonePause.clear()
+        beginCapture()
+    }
+
+    private func expirePhonePause() {
+        phonePause.clear()
+        connection.dropPeerSession()
     }
 
     private func sendTextResult(for requestID: String, accepted: Bool) {

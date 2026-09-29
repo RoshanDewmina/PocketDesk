@@ -1,6 +1,7 @@
 import SwiftUI
 import WebRTC
 import AVFoundation
+import Combine
 
 @main
 struct RemotePhoneApp: App {
@@ -64,11 +65,26 @@ struct TextFocusProbeGate {
     }
 }
 
+/// What the concealed screen explains after the app returns from the background.
+enum ResumeState: Equatable {
+    case none, backgrounded, reconnecting, needsChoice
+}
+
 @MainActor
 final class PhoneRemoteModel: ObservableObject {
     let connection = RemoteCoordinator(isHost: false)
     let pointerLocator = PointerLocator()
     let pointerOverlay = PointerOverlayModel()
+    let clipboard = PhoneClipboard()
+    @Published private(set) var hostFeatures: Set<String> = []
+    @Published private(set) var resumeState: ResumeState = .none
+    private var continuity = BackgroundContinuity()
+    private let background: BackgroundExecution
+    private var holdTask: Task<Void, Never>?
+    private var resumeWatchdog: Task<Void, Never>?
+    private var backgroundEndTask: Task<Void, Never>?
+    private var lastHostStatusAt: TimeInterval = 0
+    private var clipboardObserver: AnyCancellable?
     private var pointerLocatorSupported = false
     @Published private(set) var appliedStreamQuality: StreamQuality?
     @Published private(set) var streamSummaryLines: [String] = []
@@ -129,15 +145,18 @@ final class PhoneRemoteModel: ObservableObject {
     private var sceneIsActive = false
     private var timer: Timer?
 
-    init() {
+    init(background: BackgroundExecution? = nil) {
+        self.background = background ?? SystemBackgroundExecution()
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
+        if contentConcealed { resumeState = .needsChoice }
         #endif
         if let mode = LaunchOptions.viewportOverride { ViewportPreference.store(mode) }
         connection.restore()
         connection.onAuthenticated = { [weak self] in
             guard let self else { return }
             self.contentConcealed = false
+            self.resumeState = .none
             if let peer = self.connection.media {
                 peer.onStreamStatistics = { [weak self, weak peer] report in
                     Task { @MainActor in
@@ -149,12 +168,19 @@ final class PhoneRemoteModel: ObservableObject {
             self.beginHeartbeat()
         }
         connection.onEnded = { [weak self] in
-            self?.end()
+            self?.sessionEnded()
         }
         connection.onControl = { [weak self] data in
             guard let action = try? JSONDecoder().decode(RemoteAction.self, from: data) else { return }
             self?.receive(action)
         }
+        clipboard.transport = { [weak self] frame in
+            guard let self, self.connection.connected else { return false }
+            return self.connection.sendControl(RemoteAction(action: "clipboard", epoch: self.geometryEpoch, clipboard: frame))
+        }
+        clipboard.bufferedAmount = { [weak self] in self?.connection.media?.controlBufferedAmount }
+        clipboard.pressPaste = { [weak self] in self?.commandShortcut("v") ?? false }
+        clipboardObserver = clipboard.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
     var canControl: Bool {
@@ -178,6 +204,52 @@ final class PhoneRemoteModel: ObservableObject {
     #if DEBUG
     func previewEditableFocusForTesting() { autoKeyboardRevision &+= 1 }
     #endif
+
+    var clipboardSupported: Bool { hostFeatures.contains(SessionFeature.clipboardText) }
+
+    /// Clipboard transfer needs a live session with control allowed on the Mac, but not a
+    /// fresh picture: it changes pasteboards, not the screen.
+    var clipboardAvailable: Bool {
+        clipboardSupported && connection.connected && controlAllowed && !privacyShield && !contentConcealed
+    }
+
+    func pasteToMac(_ strings: [String]) {
+        guard clipboardAvailable else { clipboard.postUnavailable(clipboardUnavailableMessage); return }
+        guard let text = strings.first(where: { !$0.isEmpty }) else {
+            clipboard.postUnavailable("Your iPhone clipboard has no text to send.")
+            return
+        }
+        clipboard.send(text)
+    }
+
+    /// Presses ⌘C on the Mac through the admitted key path, then brings the copied text here.
+    func copySelectionFromMac() {
+        guard clipboardAvailable else { clipboard.postUnavailable(clipboardUnavailableMessage); return }
+        guard !clipboard.isBusy else { clipboard.postUnavailable("Wait for the current clipboard transfer to finish."); return }
+        guard commandShortcut("c") else {
+            clipboard.postUnavailable("Copy needs control of your Mac and a fresh picture.")
+            return
+        }
+        clipboard.requestFromMac(afterCopy: true)
+    }
+
+    func fetchMacClipboard() {
+        guard clipboardAvailable else { clipboard.postUnavailable(clipboardUnavailableMessage); return }
+        clipboard.requestFromMac()
+    }
+
+    private var clipboardUnavailableMessage: String {
+        if !connection.connected { return "Connect to your Mac to use the clipboard." }
+        if !clipboardSupported { return "Clipboard needs the updated PocketDesk on your Mac." }
+        if !controlAllowed { return "Your Mac is view-only, so the clipboard is off." }
+        return "The clipboard is unavailable right now."
+    }
+
+    @discardableResult
+    func commandShortcut(_ key: String) -> Bool {
+        guard canControl else { return false }
+        return sendInput("key", key: key, modifiers: ["command"])
+    }
 
     @discardableResult
     func enroll(_ code: String) -> Bool {
@@ -356,6 +428,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func disconnect() {
+        clearContinuity()
         release()
         connection.stop()
         end()
@@ -363,42 +436,174 @@ final class PhoneRemoteModel: ObservableObject {
 
     /// `.inactive` covers Control Center, Notification Center, call banners and the start of a
     /// screen recording: the session survives and the picture is only shielded until the scene
-    /// is active again. A real `.background` ends the session and keeps the screen hidden.
+    /// is active again. `.background` conceals the screen, releases input and pauses video; a
+    /// live session is held briefly for a quick return, then closed and resumed on return.
     func sceneChanged(_ phase: ScenePhase) {
         switch phase {
         case .active:
             sceneIsActive = true
             hasBeenActive = true
             privacyShield = false
+            returnToForeground()
         case .inactive:
             sceneIsActive = false
             if hasBeenActive {
                 cancelInput()
                 privacyShield = true
+                if connection.connected {
+                    background.begin { [weak self] in self?.endBackgroundHold(immediately: true) }
+                }
             }
         case .background:
             sceneIsActive = false
             privacyShield = false
-            if hasBeenActive { concealForBackground() }
+            if hasBeenActive { enterBackground() }
         @unknown default:
             break
         }
     }
 
-    func concealForBackground() {
+    func enterBackground() {
+        let now = ProcessInfo.processInfo.systemUptime
         contentConcealed = true
-        disconnect()
+        resumeState = .backgrounded
+        cancelInput()
+        suspendInputReadiness()
+        clipboard.cancel()
+        clipboard.clearNotice()
+        resumeWatchdog?.cancel(); resumeWatchdog = nil
+        var canHold = connection.connected && hostFeatures.contains(SessionFeature.backgroundPause)
+        if canHold {
+            canHold = background.begin { [weak self] in self?.endBackgroundHold(immediately: true) }
+        }
+        let sessionOpen = connection.connected || connection.isRunning || LaunchOptions.layoutCheck
+        switch continuity.enterBackground(at: now, sessionOpen: sessionOpen, canHold: canHold,
+                                          budget: background.remainingTime) {
+        case .none:
+            background.end()
+        case .hold(let seconds):
+            _ = connection.sendControl(RemoteAction(action: "pause", epoch: geometryEpoch))
+            holdTask?.cancel()
+            holdTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                self?.endBackgroundHold(immediately: false)
+            }
+        case .release:
+            release()
+            connection.stop()
+            endBackgroundExecutionSoon()
+        }
+    }
+
+    /// Closes a held session cleanly before iOS suspends the app, so the relay frees the
+    /// phone's slot at once and the return can reconnect immediately.
+    private func endBackgroundHold(immediately: Bool) {
+        holdTask?.cancel(); holdTask = nil
+        if continuity.endHold() {
+            release()
+            connection.stop()
+        }
+        if immediately { background.end() } else { endBackgroundExecutionSoon() }
+    }
+
+    private func endBackgroundExecutionSoon() {
+        backgroundEndTask?.cancel()
+        backgroundEndTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.background.end()
+        }
+    }
+
+    private func returnToForeground() {
+        holdTask?.cancel(); holdTask = nil
+        backgroundEndTask?.cancel(); backgroundEndTask = nil
+        background.end()
+        let now = ProcessInfo.processInfo.systemUptime
+        switch continuity.returnToForeground(at: now, sessionConnected: connection.connected) {
+        case .none:
+            if resumeState == .backgrounded {
+                resumeState = .none
+                contentConcealed = false
+            }
+        case .resumeHeldSession:
+            resumeHeldSession(at: now)
+        case .reconnect:
+            if LaunchOptions.layoutCheck || connection.invitation == nil {
+                resumeState = .needsChoice
+            } else {
+                beginAutomaticReconnect()
+            }
+        case .offerReconnect:
+            resumeState = .needsChoice
+        }
+    }
+
+    private func resumeHeldSession(at now: TimeInterval) {
+        let supported = hostFeatures.contains(SessionFeature.backgroundPause)
+        guard !supported || connection.sendControl(RemoteAction(action: "resume", epoch: geometryEpoch)) else {
+            // A failed send already started the coordinator's bounded reconnect.
+            resumeState = .reconnecting
+            if !connection.isRunning { connection.start() }
+            return
+        }
+        resumeState = .none
+        contentConcealed = false
+        resumeWatchdog?.cancel()
+        resumeWatchdog = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, let self, self.connection.connected,
+                  self.lastHostStatusAt < now else { return }
+            self.contentConcealed = true
+            self.beginAutomaticReconnect(restart: true)
+        }
+    }
+
+    private func beginAutomaticReconnect(restart: Bool = false) {
+        resumeState = .reconnecting
+        if restart { connection.stop() }
+        if !connection.isRunning { connection.start() }
+    }
+
+    private func suspendInputReadiness() {
+        fresh = false
+        captureHealthy = false
+        inputToken = nil
+        lastFrame = 0
+        lastCaptureHealth = 0
+    }
+
+    private func clearContinuity() {
+        continuity.reset()
+        holdTask?.cancel(); holdTask = nil
+        resumeWatchdog?.cancel(); resumeWatchdog = nil
+        backgroundEndTask?.cancel(); backgroundEndTask = nil
+        background.end()
+        resumeState = .none
+    }
+
+    private func sessionEnded() {
+        end()
+        guard continuity.isHolding else { return }
+        // Lost while backgrounded: stop the coordinator's retries until the app returns.
+        continuity.endHold()
+        holdTask?.cancel(); holdTask = nil
+        Task { @MainActor [weak self] in self?.connection.stop() }
+        endBackgroundExecutionSoon()
     }
 
     func dismissConcealment() {
         guard !connection.connected else { return }
+        if resumeState == .reconnecting { connection.stop() }
+        clearContinuity()
         contentConcealed = false
     }
 
     func reconnect() {
-        dismissConcealment()
-        guard !contentConcealed, connection.invitation != nil else { return }
-        connection.start()
+        guard connection.invitation != nil else { dismissConcealment(); return }
+        contentConcealed = true
+        beginAutomaticReconnect(restart: connection.isRunning && !connection.connected)
     }
 
     func clearUncertainText() {
@@ -447,6 +652,8 @@ final class PhoneRemoteModel: ObservableObject {
         case "pointer":
             if action.epoch == geometryEpoch, let sync = action.pointerSync { pointerOverlay.receive(sync) }
         case "capture":
+            lastHostStatusAt = ProcessInfo.processInfo.systemUptime
+            hostFeatures = Set(action.features ?? [])
             appliedStreamQuality = action.streamQuality
             if action.streamQuality != nil, action.streamQuality != streamQuality, qualityRequestedAt == nil {
                 qualityRequestedAt = ProcessInfo.processInfo.systemUptime
@@ -463,6 +670,7 @@ final class PhoneRemoteModel: ObservableObject {
             lastCaptureHealth = captureHealthy ? ProcessInfo.processInfo.systemUptime : 0
             if !captureHealthy { pointerLocator.clear(); release() }
         case "geometry":
+            lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             guard action.epoch != geometryEpoch else { return }
             cancelInput()
             inputToken = nil
@@ -477,6 +685,8 @@ final class PhoneRemoteModel: ObservableObject {
             lastCaptureHealth = 0
         case "textResult":
             receiveTextResult(action)
+        case "clipboard":
+            if let frame = action.clipboard { clipboard.receive(frame) }
         case "release":
             if nativeInteractionSupported {
                 guard let activeHold, action.epoch == geometryEpoch,
@@ -591,6 +801,9 @@ final class PhoneRemoteModel: ObservableObject {
         if pendingText?.origin == .voice { voiceDeliveryStatus = .uncertain }
         pendingText = nil
         textStatus = ""
+        hostFeatures = []
+        clipboard.cancel()
+        resumeWatchdog?.cancel(); resumeWatchdog = nil
     }
 }
 

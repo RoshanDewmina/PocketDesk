@@ -16,8 +16,12 @@ struct RemoteAction: Codable {
     var streamQuality: StreamQuality? = nil
     var textFocusProbe: String? = nil
     var textFocusEditable: Bool? = nil
+    // Session extensions (clipboard, background pause). Validated in SessionContinuity.swift.
+    var clipboard: ClipboardFrame? = nil
+    var features: [String]? = nil
 
     func validate() throws {
+        if try validateSessionExtension() { return }
         if try validatePointerSync() { return }
         try interaction?.validate()
         try pointerLocation?.validate()

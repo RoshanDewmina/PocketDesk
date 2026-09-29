@@ -118,6 +118,18 @@ struct NativeSessionView: View {
             do { try await Task.sleep(for: .milliseconds(600)) } catch { return }
             clickAcknowledged = false
         }
+        .task(id: model.clipboard.notice?.id) {
+            guard model.clipboard.notice != nil else { return }
+            do { try await Task.sleep(for: .seconds(3.2)) } catch { return }
+            withAnimation(.easeOut(duration: 0.25)) { model.clipboard.clearNotice() }
+        }
+        .onChange(of: model.clipboard.notice) { _, notice in
+            if let notice { AccessibilityNotification.Announcement(notice.message).post() }
+        }
+        .sensoryFeedback(trigger: model.clipboard.notice?.id) { _, _ in
+            guard let notice = model.clipboard.notice else { return nil }
+            return notice.tone == .success ? .success : .warning
+        }
         .task(id: zoomBadgeToken) {
             guard zoomBadge != nil else { return }
             do { try await Task.sleep(for: .milliseconds(900)) } catch { return }
@@ -151,7 +163,7 @@ struct NativeSessionView: View {
         ZStack(alignment: .topLeading) {
             PhoneTheme.letterbox
             let rect = viewport.contentRect
-            if let track = connection.remoteVideo {
+            if let track = connection.remoteVideo, !model.contentConcealed {
                 RemoteVideoSurface(track: track, onFrame: model.frameReceived)
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
@@ -211,6 +223,7 @@ struct NativeSessionView: View {
                 .glassEffect(.regular, in: .capsule)
                 .transition(.opacity)
             }
+            clipboardStatus
             if let zoomBadge {
                 Text(zoomBadge)
                     .font(.subheadline.weight(.semibold).monospacedDigit())
@@ -222,6 +235,38 @@ struct NativeSessionView: View {
             }
         }
         .padding(.top, 8)
+    }
+
+    @ViewBuilder private var clipboardStatus: some View {
+        if model.clipboard.activity != .idle {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(model.clipboard.activity == .sending ? "Sending to your Mac…" : "Copying from your Mac…")
+                    .font(.subheadline.weight(.medium))
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .glassEffect(.regular, in: .capsule)
+            .transition(.opacity)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .combine)
+        } else if let notice = model.clipboard.notice, !showControls {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: notice.tone == .success ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                    .foregroundStyle(notice.tone == .success ? PhoneTheme.ready : PhoneTheme.caution)
+                    .accessibilityHidden(true)
+                Text(notice.message)
+                    .font(.subheadline.weight(.medium))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
+            .frame(maxWidth: 420)
+            .glassEffect(.regular, in: .rect(cornerRadius: 20))
+            .padding(.horizontal, 16)
+            .transition(.opacity)
+            .onTapGesture { model.clipboard.clearNotice() }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("remote.clipboard.notice")
+        }
     }
 
     private var privacyShield: some View {
@@ -391,6 +436,16 @@ struct NativeSessionView: View {
                 HStack(spacing: 8) {
                     ScrollView(.horizontal) {
                         HStack(spacing: 0) {
+                            if showsClipboard {
+                                pasteToMacButton
+                                    .labelStyle(.iconOnly)
+                                    .buttonBorderShape(.circle)
+                                    .padding(.horizontal, 4)
+                                iconButton("Copy from Mac", "doc.on.doc", enabled: model.canControl && !model.clipboard.isBusy,
+                                           action: model.copySelectionFromMac)
+                                    .accessibilityHint("Presses Command-C on your Mac, then copies the selection to this iPhone")
+                                Divider().frame(height: 22).padding(.horizontal, 4)
+                            }
                             keyButton("Escape", "escape", "escape")
                             keyButton("Tab", "arrow.right.to.line", "tab")
                             Divider().frame(height: 22).padding(.horizontal, 4)
@@ -667,6 +722,31 @@ struct NativeSessionView: View {
         .glassEffect(.regular, in: .rect(cornerRadius: 22))
     }
 
+    private var showsClipboard: Bool { model.clipboardSupported || offlineLayoutCheck }
+
+    /// The system paste control reads the iPhone clipboard without a paste prompt because the
+    /// person tapped it; PocketDesk never reads the iPhone clipboard on its own.
+    private var pasteToMacButton: some View {
+        PasteButton(payloadType: String.self) { strings in
+            Task { @MainActor in model.pasteToMac(strings) }
+        }
+        .tint(PhoneTheme.tint)
+        .disabled(!model.clipboardAvailable || model.clipboard.isBusy)
+        .accessibilityIdentifier("remote.clipboard.paste")
+    }
+
+    private func iconButton(_ label: String, _ symbol: String, enabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.body.weight(.medium))
+                .frame(width: 40, height: 40)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .disabled(!enabled)
+        .accessibilityLabel(label)
+    }
+
     private func keyButton(_ label: String, _ symbol: String, _ key: String) -> some View {
         Button { model.key(key) } label: {
             Image(systemName: symbol)
@@ -703,6 +783,7 @@ struct NativeSessionView: View {
             Form {
                 viewSection
                 pointerSection
+                clipboardSection
                 gesturesSection
                 workspaceSection
                 pictureSection
@@ -744,6 +825,45 @@ struct NativeSessionView: View {
         } footer: {
             Text(panMode ? "Switch to Control to send clicks to your Mac."
                          : "Move one finger to point. Tap to click, two fingers to right-click, or double-tap and hold to drag.")
+        }
+    }
+
+    @ViewBuilder private var clipboardSection: some View {
+        if showsClipboard {
+            Section {
+                HStack(spacing: 12) {
+                    Label("Send iPhone text to your Mac", systemImage: "iphone.and.arrow.forward")
+                    Spacer(minLength: 8)
+                    pasteToMacButton
+                        .labelStyle(.titleAndIcon)
+                        .buttonBorderShape(.capsule)
+                }
+                Grid(horizontalSpacing: 10, verticalSpacing: 10) {
+                    GridRow {
+                        actionTile("Copy selection", "doc.on.doc") { model.copySelectionFromMac() }
+                            .disabled(!model.canControl || !model.clipboardAvailable || model.clipboard.isBusy)
+                            .accessibilityHint("Presses Command-C on your Mac, then copies the selection to this iPhone")
+                        actionTile("Get Mac clipboard", "arrow.down.doc") { model.fetchMacClipboard() }
+                            .disabled(!model.clipboardAvailable || model.clipboard.isBusy)
+                            .accessibilityHint("Copies what is already on your Mac’s clipboard to this iPhone")
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12))
+                .listRowBackground(Color.clear)
+                Toggle("Press ⌘V after sending", isOn: Binding(get: { model.clipboard.pasteAfterSending },
+                                                               set: { model.clipboard.pasteAfterSending = $0 }))
+                if model.clipboard.activity != .idle {
+                    ProgressView(model.clipboard.activity == .sending ? "Sending to your Mac…" : "Copying from your Mac…")
+                } else if let notice = model.clipboard.notice {
+                    Label(notice.message, systemImage: notice.tone == .success ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .font(.footnote)
+                        .foregroundStyle(notice.tone == .success ? PhoneTheme.ready : PhoneTheme.caution)
+                }
+            } header: {
+                Text("Clipboard")
+            } footer: {
+                Text("Text only, up to 256 KB. PocketDesk reads your Mac’s clipboard only when you ask, and never shares items marked as passwords.")
+            }
         }
     }
 

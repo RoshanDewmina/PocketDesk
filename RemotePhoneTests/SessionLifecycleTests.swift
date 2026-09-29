@@ -4,6 +4,26 @@ import Combine
 @testable import PocketDeskRemote
 
 @MainActor
+final class FakeBackgroundExecution: BackgroundExecution {
+    private(set) var begins = 0
+    private(set) var ends = 0
+    private(set) var isActive = false
+    var granted = true
+    var remainingTime: TimeInterval? = 29
+
+    func begin(onExpiration: @escaping @MainActor () -> Void) -> Bool {
+        begins += 1
+        isActive = granted
+        return granted
+    }
+
+    func end() {
+        if isActive { ends += 1 }
+        isActive = false
+    }
+}
+
+@MainActor
 final class SessionLifecycleTests: XCTestCase {
     func testEditableFocusReplyOpensOnlyForNewestFreshClickOnce() {
         var gate = TextFocusProbeGate()
@@ -95,19 +115,57 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(model.connection.status, statusBefore)
     }
 
-    func testBackgroundEndsTheSessionAndKeepsTheScreenHidden() {
-        let model = PhoneRemoteModel()
+    func testBackgroundWithoutASessionConcealsTheSnapshotAndReturnsHome() {
+        let background = FakeBackgroundExecution()
+        let model = PhoneRemoteModel(background: background)
+        let statusBefore = model.connection.status
         model.sceneChanged(.active)
         model.sceneChanged(.inactive)
+        XCTAssertEqual(background.begins, 0, "No session means no background time is requested")
         model.sceneChanged(.background)
-        XCTAssertTrue(model.contentConcealed)
+        XCTAssertTrue(model.contentConcealed, "The app switcher snapshot never shows the previous screen")
+        XCTAssertEqual(model.resumeState, .backgrounded)
         XCTAssertFalse(model.privacyShield)
-        XCTAssertEqual(model.connection.status, "Disconnected")
+        XCTAssertEqual(model.connection.status, statusBefore, "There was nothing to disconnect")
+        XCTAssertFalse(background.isActive)
 
+        model.sceneChanged(.inactive)
         model.sceneChanged(.active)
-        XCTAssertTrue(model.contentConcealed, "Returning from the background needs an explicit choice")
+        XCTAssertFalse(model.contentConcealed, "Returning with nothing to resume goes straight home")
+        XCTAssertEqual(model.resumeState, .none)
+        XCTAssertFalse(model.connection.isRunning, "Nothing reconnects on its own without a prior session")
+    }
+
+    func testBackgroundCancelsHeldInputAndPendingClipboardWork() {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.sceneChanged(.active)
+        model.modifiers = ["command"]
+        let revision = model.inputRevision
+        model.sceneChanged(.background)
+        XCTAssertTrue(model.modifiers.isEmpty, "Held modifiers are released on backgrounding")
+        XCTAssertGreaterThan(model.inputRevision, revision)
+        XCTAssertFalse(model.canControl)
+        XCTAssertEqual(model.clipboard.activity, .idle)
+    }
+
+    func testConcealedRecoveryCanAlwaysReturnHome() {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.sceneChanged(.active)
+        model.sceneChanged(.background)
         model.dismissConcealment()
         XCTAssertFalse(model.contentConcealed)
+        XCTAssertEqual(model.resumeState, .none)
+    }
+
+    func testClipboardActionsExplainWhyTheyAreUnavailable() {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        XCTAssertFalse(model.clipboardSupported)
+        XCTAssertFalse(model.clipboardAvailable)
+        model.pasteToMac(["secret"])
+        XCTAssertEqual(model.clipboard.notice?.message, "Connect to your Mac to use the clipboard.")
+        model.copySelectionFromMac()
+        XCTAssertEqual(model.clipboard.activity, .idle)
+        XCTAssertFalse(model.commandShortcut("c"), "⌘C needs live control")
     }
 
     func testLaunchTransitionsBeforeFirstActivationDoNothing() {

@@ -15,6 +15,17 @@ private final class MemoryTrust: PairPersistence {
     func delete() throws { data = nil }
 }
 
+private final class IntegrationPasteboard: HostPasteboardAccess, @unchecked Sendable {
+    private let lock = NSLock()
+    private let result: HostPasteboardRead
+    private var stored: [ClipboardPayload] = []
+    init(_ result: HostPasteboardRead) { self.result = result }
+    var changeCount: Int { 0 }
+    var writes: [ClipboardPayload] { lock.lock(); defer { lock.unlock() }; return stored }
+    func read(limit: Int) -> HostPasteboardRead { result }
+    func write(_ payload: ClipboardPayload) -> Bool { lock.lock(); stored.append(payload); lock.unlock(); return true }
+}
+
 private final class TestFrameReceiver: NSObject, RTCVideoRenderer {
     private let lock = NSLock()
     private var count = 0
@@ -310,6 +321,110 @@ final class SessionIntegrationTests: XCTestCase {
             phone.status.contains("retrying")
         }
         XCTAssertFalse(host.awaitingApproval); XCTAssertFalse(host.connected); XCTAssertFalse(phone.connected)
+    }
+
+    @MainActor
+    private func connectedPair(_ url: String, name: String) async throws -> (RemoteCoordinator, RemoteCoordinator) {
+        let host = RemoteCoordinator(isHost: true, store: MemoryTrust())
+        let phone = RemoteCoordinator(isHost: false, store: MemoryTrust())
+        let invitation = try host.createPair(server: url, name: name)
+        host.start()
+        try await waitFor("host registered") { host.hostRegistered }
+        try phone.enroll(invitation.code())
+        try await waitFor("approval pending") { host.awaitingApproval }
+        host.approve()
+        try await waitFor("paired session connected", seconds: 25) { host.connected && phone.connected }
+        return (host, phone)
+    }
+
+    @MainActor
+    func testMaximumClipboardTransfersBothWaysOverTheRealControlChannel() async throws {
+        let (service, url) = try service(); defer { service.terminate() }
+        let (host, phone) = try await connectedPair(url, name: "Clipboard Host")
+        defer { host.stop(); phone.stop() }
+        let unit = "abcdé🙂\n"
+        let text = String(repeating: unit, count: ClipboardLimits.maximumBytes / unit.utf8.count)
+        let pasteboard = IntegrationPasteboard(.text(ClipboardPayload(text: text)))
+        let clipboard = HostClipboardService(pasteboard: pasteboard)
+        clipboard.transport = { frame in host.sendControl(RemoteAction(action: "clipboard", clipboard: frame)) }
+        clipboard.bufferedAmount = { host.media?.controlBufferedAmount }
+        host.onControl = { data in
+            guard let frame = (try? JSONDecoder().decode(RemoteAction.self, from: data))?.clipboard else { return }
+            clipboard.receive(frame, allowed: true)
+        }
+
+        var assembler = ClipboardAssembler()
+        var received: ClipboardPayload?
+        var frames = 0
+        phone.onControl = { data in
+            guard let frame = (try? JSONDecoder().decode(RemoteAction.self, from: data))?.clipboard else { return }
+            frames += 1
+            if case .complete(_, let payload) = assembler.accept(frame, at: 0) { received = payload }
+        }
+        let started = Date()
+        var interleaved = 0
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "clipboard", clipboard: .pull(ClipboardTransferID.make()))))
+        while received == nil, Date().timeIntervalSince(started) < 15 {
+            if phone.sendControl(RemoteAction(action: "heartbeat")) { interleaved += 1 }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        let pullSeconds = Date().timeIntervalSince(started)
+        XCTAssertEqual(received, ClipboardPayload(text: text))
+        XCTAssertEqual(frames, ClipboardLimits.maximumChunks)
+        XCTAssertTrue(host.connected && phone.connected, "Pacing must never trip the control channel's buffer guard")
+        XCTAssertGreaterThan(interleaved, 0)
+
+        var results: [String] = []
+        phone.onControl = { data in
+            guard let frame = (try? JSONDecoder().decode(RemoteAction.self, from: data))?.clipboard,
+                  frame.op == "result", let status = frame.status else { return }
+            results.append(status)
+        }
+        var outbox = ClipboardOutbox()
+        outbox.load(try ClipboardChunker.frames(for: ClipboardPayload(text: text + "!"), operation: "push",
+                                                transfer: ClipboardTransferID.make()))
+        XCTAssertThrowsError(try ClipboardChunker.frames(for: ClipboardPayload(text: text + String(repeating: "!", count: 64)),
+                                                         operation: "push", transfer: ClipboardTransferID.make()))
+        let pushStarted = Date()
+        while !outbox.isEmpty, Date().timeIntervalSince(pushStarted) < 15 {
+            for frame in outbox.release(bufferedAmount: phone.media?.controlBufferedAmount) {
+                XCTAssertTrue(phone.sendControl(RemoteAction(action: "clipboard", clipboard: frame)))
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
+        }
+        try await waitFor("Mac acknowledged the stored push", seconds: 10) { results == ["stored"] }
+        XCTAssertEqual(pasteboard.writes, [ClipboardPayload(text: text + "!")])
+        XCTAssertTrue(host.connected && phone.connected)
+        print(String(format: "CLIPBOARD RECEIPT: %d bytes Mac→phone in %.2f s with %d interleaved heartbeats; phone→Mac in %.2f s",
+                     text.utf8.count, pullSeconds, interleaved, Date().timeIntervalSince(pushStarted)))
+    }
+
+    @MainActor
+    func testGraceExpiryEndsOnlyThePhoneSessionAndCachedTrustRejoins() async throws {
+        let (service, url) = try service(); defer { service.terminate() }
+        let (host, phone) = try await connectedPair(url, name: "Pause Host")
+        defer { host.stop(); phone.stop() }
+        var hostStatuses: [String] = []
+        let observer = host.$status.sink { hostStatuses.append($0) }
+        defer { withExtendedLifetime(observer) {} }
+
+        // The first session after enrollment re-registers with rotated trust; later ones keep the room.
+        for round in 0..<2 {
+            XCTAssertTrue(phone.sendControl(RemoteAction(action: "pause", epoch: 1)))
+            let mark = hostStatuses.count
+            host.dropPeerSession()
+            XCTAssertFalse(host.connected, "The paused phone's session ends at once")
+            if round == 1 {
+                XCTAssertTrue(host.hostRegistered, "Grace expiry keeps the host listening")
+                XCTAssertEqual(host.status, "Ready for your paired phone")
+            }
+            try await waitFor("phone rejoined with cached credentials", seconds: 25) { host.connected && phone.connected }
+            XCTAssertTrue(hostStatuses.dropFirst(mark).contains("Ready for your paired phone"))
+            XCTAssertFalse(host.awaitingApproval, "Resuming never requires re-pairing")
+            if round == 1 {
+                XCTAssertFalse(hostStatuses.dropFirst(mark).contains { $0.contains("retrying") })
+            }
+        }
     }
 
     func testUTF16BoundAndHealthMessages() throws {
