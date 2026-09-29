@@ -54,28 +54,6 @@ struct HostSettingsView: View {
                               status: state.accessibility, pane: .accessibility)
             }
 
-            HostSettingsSection("Agent alerts (beta)",
-                                footer: "An agent’s hook sends Farside only its kind and a hash of its session id. Never a prompt, a file name or its own words.") {
-                HostSettingsRow("Tell my iPhone when an agent needs me",
-                                subtitle: state.agentAlertsStatus ?? "Off: nothing on this Mac listens for an agent") {
-                    HostSwitch(label: "Tell my iPhone when an agent needs me", isOn: state.agentAlerts,
-                               set: actions.setAgentAlerts)
-                        .accessibilityIdentifier("farside.settings.agentAlerts")
-                }
-                if state.agentAlerts {
-                    HostSettingsRow("Agent hooks", subtitle: "Claude Code and Codex, from one small script") {
-                        Button("Copy Hook Setup", action: actions.copyAgentHookSetup)
-                            .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
-                            .accessibilityIdentifier("farside.settings.copyAgentHookSetup")
-                    }
-                    HostSettingsRow("Agent link", subtitle: "A private key that stays on this Mac") {
-                        Button("Reset", action: actions.resetAgentAlertLink)
-                            .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
-                            .accessibilityIdentifier("farside.settings.resetAgentAlertLink")
-                    }
-                }
-            }
-
             HostSettingsSection("General", footer: generalFooter) {
                 HostSettingsRow("Open at login", subtitle: HostBackgroundItemCopy.loginSubtitle(state.loginItem)) {
                     backgroundItemAccessory(state.loginItem) {
@@ -89,6 +67,23 @@ struct HostSettingsView: View {
                         HostSwitch(label: "Restart Farside if it quits", isOn: state.automaticRecovery.isRegistered,
                                    set: actions.setAutomaticRecovery)
                             .accessibilityIdentifier("farside.settings.automaticRecovery")
+                    }
+                }
+                HostSettingsRow("Agent alerts (beta)",
+                                subtitle: state.agentAlertsStatus ?? "Tell your iPhone when an agent needs you") {
+                    HostSwitch(label: "Agent alerts", isOn: state.agentAlerts, set: actions.setAgentAlerts)
+                        .accessibilityIdentifier("farside.settings.agentAlerts")
+                }
+                if state.agentAlerts {
+                    HostSettingsRow("Agent hooks", subtitle: "Sends a kind and a hash, never an agent’s words") {
+                        HStack(spacing: 8) {
+                            Button("Copy Setup", action: actions.copyAgentHookSetup)
+                                .accessibilityIdentifier("farside.settings.copyAgentHookSetup")
+                            Button("Reset", action: actions.resetAgentAlertLink)
+                                .accessibilityLabel("Reset the agent link")
+                                .accessibilityIdentifier("farside.settings.resetAgentAlertLink")
+                        }
+                        .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
                     }
                 }
                 HostSettingsRow("Diagnostics", subtitle: "No screen content, typed text, clipboard, tokens or IP addresses") {
