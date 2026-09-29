@@ -370,6 +370,14 @@ final class PeerMedia: NSObject {
         SenderRateParameters.make(targetFPS: targetFPS, tuning: tuning, ladderFPS: ladderState?.fps)
     }
 
+    /// The capture applies a size rung itself (`RemoteCapture.setLadder`), so the sender scales only
+    /// the rate; `ladderState` keeps the real fraction for the statistics.
+    private var senderLadder: LadderState? {
+        guard var state = ladderState else { return nil }
+        state.sizeFraction = 1
+        return state
+    }
+
     /// Host, main queue: the capture session's rate (on every capture start, including a display
     /// switch). Clears the ladder to rung 0 and re-applies the sender when the rate settings change.
     func applyCaptureRate(targetFPS: Int, displayRefreshHz: Double?, display: String?) {
@@ -472,7 +480,7 @@ final class PeerMedia: NSObject {
         if nativeDesktopCodecs,
            let format = SenderOutputFormat.make(width: CVPixelBufferGetWidth(output),
                                                 height: CVPixelBufferGetHeight(output), budget: receivingBudget,
-                                                targetFPS: targetFPS, ladder: ladderState),
+                                                targetFPS: targetFPS, ladder: senderLadder),
            format != adaptedFormat {
             source.adaptOutputFormat(toWidth: Int32(format.width), height: Int32(format.height), fps: Int32(format.fps))
             adaptedFormat = format

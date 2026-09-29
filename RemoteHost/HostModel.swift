@@ -271,8 +271,9 @@ final class RemoteHostModel: ObservableObject {
             self.pointerTelemetry.captureCursorChanged(showsCursor: shows)
             self.sendCaptureHealth(self.captureHealthy)
         }
-        capture.onCaptureRegion = { [weak self] _ in
+        capture.onCaptureRegion = { [weak self] region in
             guard let self else { return }
+            self.connection.media?.captureRegion = region
             self.sendCaptureHealth(self.captureHealthy)
         }
         let workspaceEvents: [(Notification.Name, HostSleepPolicy.Event)] = [
@@ -1375,9 +1376,13 @@ final class RemoteHostModel: ObservableObject {
         if let ladder = change.ladder {
             ladderState = ladder
             capture.setLadder(ladder)
+            connection.media?.applyLadder(ladder)
             events.record(.session, "Ladder rung \(ladder.rung): \(ladder.fps) fps × \(ladder.sizeFraction) (\(ladder.reason ?? "headroom"))")
         }
-        if let busy = change.busy { busyState = busy }
+        if let busy = change.busy {
+            busyState = busy
+            connection.media?.busyState = busy
+        }
         if change.ladder != nil || change.busy != nil { sendCaptureHealth(captureHealthy) }
     }
 

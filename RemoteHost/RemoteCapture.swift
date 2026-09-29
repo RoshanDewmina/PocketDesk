@@ -765,7 +765,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         if status == .complete || status == .idle {
             let displayTime = (attachments.first?[.displayTime] as? NSNumber)?.uint64Value ?? 0
             peer?.counters.captured(idle: status == .idle,
-                                    displayLatencyMs: CaptureTiming.displayLatencyMs(displayTime: displayTime))
+                                    displayLatencyMs: CaptureTiming.displayLatencyMs(displayTime: displayTime),
+                                    displayTimeMs: displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : nil)
         }
         guard status == .complete,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer),
