@@ -44,7 +44,7 @@ Facts the policy must not overstate: the service can see connection metadata; DT
 
 **Effective date:** [TO FILL]  **Last updated:** [TO FILL]
 
-**Who we are:** [TO FILL: legal entity or individual name, registered address, country]. Contact for privacy questions: privacy@[TO FILL domain]. [TO FILL: EU/UK representative or data protection officer, only if counsel says one is required.]
+**Who we are:** Roshan [TO FILL: legal name as on the Apple Developer account], an individual (PRODUCT D37); mailing address [TO FILL: P.O. Box or UPS Store mailbox, never the home address], [TO FILL: country]; phone [TO FILL: published number]. Contact for privacy questions: support@getfarside.com. [TO FILL: EU/UK representative or data protection officer, only if counsel says one is required.]
 
 ## The short version
 

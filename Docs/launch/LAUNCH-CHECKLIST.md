@@ -34,7 +34,7 @@ Calendar notes: Canadian Thanksgiving is Mon 12 Oct; Remembrance and Veterans Da
 | # | Decision | By | Notes |
 |---|---|---|---|
 | D1 | **Name clearance: Farside versus The Far Side.** The exact store name "Farside" is taken (a space-sandbox game released 15 Sep 2026 and an older "FarSide" app), so the store title needs a suffix, working default "Farside: Mac Remote". "The Far Side" is a live US-registered mark of FarWorks, Inc. (Reg. 6255846, Class 41, Sections 8 and 15 accepted 4 May 2026 [V]). Commission a written trademark opinion (Canada and US) before creating the app record; keep the name one word; no cartoon imagery; have a fallback name. See STORE-LISTING.md section 1. | Fri 2 Oct | [O] Do not reserve the name in App Store Connect until this is answered. |
-| D2 | Legal owner: individual or company. Drives trader status, published address, tax forms, D-U-N-S, copyright line, trademark filer. | Fri 2 Oct | [O] |
+| D2 | Legal owner: individual or company. Drives trader status, published address, tax forms, D-U-N-S, copyright line, trademark filer. | Fri 2 Oct | **Decided 29 Sep (PRODUCT D37):** Roshan as an individual, under his own name. |
 | D3 | Domain: register getfarside.com (no registry match 28 Sep, plus tryfarside.com defensively). farside.com, .app, .io, .co, .dev and .ca are taken. | After D1 | [O] Register only after the trademark opinion. |
 | D4 | "Free on your network" boundary (SUBSCRIPTION-SETUP.md D1): block free direct WAN or allow it. | Fri 9 Oct | [B] |
 | D5 | macOS deployment floor: 26.0 today; competitors accept 14 to 15. | Fri 9 Oct | [B] Cutting the floor is engineering work. |
@@ -55,7 +55,7 @@ Checkboxes are for you to tick. "Done when" is an observable check.
 | 1.2 | Confirm Apple Developer Program: account type, Account Holder identity, team `39HM2X8GS6`, membership renewal date, two-factor, roles for anyone helping | O | Screenshot of Membership page saved privately |
 | 1.3 | Sign the **Paid Apps Agreement** (Account Holder only), enter bank account, submit tax forms (non-US developers: W-8BEN or W-8BEN-E as directed) | O | Agreement Active; bank and tax "Processing" or "Active" (verification takes days, so start today) [V] |
 | 1.4 | Enroll in the **App Store Small Business Program** | O | Enrollment confirmed [V] |
-| 1.5 | Declare **EU DSA trader status**; choose a publishable address, phone and email (a PO box or business address if you do not want a home address shown) | O | Trader status set [V] |
+| 1.5 | Declare **EU DSA trader status**; choose a publishable address, phone and email (a PO box or business address if you do not want a home address shown). Decided (D37): trader status declared; a P.O. Box or UPS Store mailbox address, a phone Roshan is willing to publish, support@getfarside.com; never the home address. The same details go on the website’s support, privacy and terms pages | O | Trader status set [V] |
 | 1.6 | Submit the **Persistent Content Capture** request form (needs Apple sign-in) | O | Confirmation email saved |
 | 1.7 | Create the **Developer ID Application** certificate (Account Holder) and an app-specific password or API key for `notarytool` | O | `security find-identity` shows the certificate on the release Mac |
 | 1.8 | App icon (1024 px master, plus Mac icon and menu-bar template glyphs); add asset catalogs to iOS and Mac targets | E | Archive validates with an icon; menu bar shows the glyph |

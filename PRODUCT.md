@@ -110,6 +110,7 @@ The primary user is the owner of the Mac. Helping someone else, team administrat
 | D33 | Run the Higgsfield hero look test (≈21–45 credits) before the credit reset around 6 Oct | 28 Sep, approved by Roshan. Follow the cheapest-first-test in `Docs/launch/VIDEO-PLAYBOOK.md`; hard cap 45 credits; anything more needs a new approval |
 | D34 | Pointer follow defaults to **Smooth** | 29 Sep, chosen by Roshan. The phone draws the pointer 1:1 with the finger; near an edge the picture eases after it and settles in about 0.2 s. Rigid and Off stay available in Controls → Feel. The website hero demo matches this behaviour |
 | D35 | Apple silicon Macs only (M1 or later) for 1.0 | 29 Sep, chosen by Roshan. No Intel support; the Mac host and helpers build arm64-only. Requirement text: "macOS 26 or later on a Mac with Apple silicon (M1 or later)" |
+| D37 | App Store seller: Roshan as an individual; EU DSA trader with a mailbox address | 29 Sep, chosen by Roshan. App Store seller: Roshan as an individual, under his own name. EU DSA trader status declared (he sells subscriptions), using a P.O. Box or UPS Store mailbox address, a phone number he’s willing to publish, and support@getfarside.com. His home address never appears in public listings. The same contact details go on the website’s support, privacy and terms pages. (D36 is reserved for Controls A, on its branch.) |
 
 ### Work scenarios that guide the designs
 
