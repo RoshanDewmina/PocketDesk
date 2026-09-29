@@ -385,6 +385,7 @@
 		F631B70328B2173231051AE8 /* E2EMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E609125CE2A4A1E42653D11 /* E2EMedia.swift */; };
 		F63F824E0BF289C797D43263 /* FarsideHalftone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D465DB529F7AFB91CFA9A74 /* FarsideHalftone.swift */; };
 		F7ECA03114F91A73C644A771 /* PointerGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40F2AC5A22A82DCC4F04012B /* PointerGlyph.swift */; };
+		F81118A4C1C23BC8E9B2BACF /* PhoneParityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1540D7EAE8AD57B8441DEEFE /* PhoneParityTests.swift */; };
 		F819BF5C95AA9BDA7046E2C6 /* E2ETouchSynthesizer.m in Sources */ = {isa = PBXBuildFile; fileRef = F068200E658ED95295A47CAA /* E2ETouchSynthesizer.m */; };
 		F8B97EB595D1D9513BC14877 /* SessionRenewalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 691D8B414697903DBB69B460 /* SessionRenewalTests.swift */; };
 		F8CBB4C674E2BDF22ADBCEA4 /* DirectTouchMapping.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F26E11F9C5B96C8C8E24570 /* DirectTouchMapping.swift */; };
@@ -485,6 +486,7 @@
 		13D66B889B29B13BDE33779E /* VideoCodecPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoCodecPolicy.swift; sourceTree = "<group>"; };
 		147A5E06CF33E961BEBB437B /* HostPermissionState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPermissionState.swift; sourceTree = "<group>"; };
 		14A1D74AFB97B3703E07FED7 /* HostPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPresentationTests.swift; sourceTree = "<group>"; };
+		1540D7EAE8AD57B8441DEEFE /* PhoneParityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneParityTests.swift; sourceTree = "<group>"; };
 		16E5B189A6781A0590042A7D /* E2EWindowCover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EWindowCover.swift; sourceTree = "<group>"; };
 		173805F45FB3C845B4C84B82 /* BrowserPeerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPeerStore.swift; sourceTree = "<group>"; };
 		17CD4AA27077B3457AE5CAE0 /* BrowserCryptoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCryptoTests.swift; sourceTree = "<group>"; };
@@ -1017,6 +1019,7 @@
 				5DD8A198867F1E3881AF6815 /* FarsideDesignTests.swift */,
 				A0B3FB4B05CCF8A594E97A6E /* MacParityPhoneTests.swift */,
 				CDCB2DCE29C9A401C6C942C5 /* PhoneClipboardTests.swift */,
+				1540D7EAE8AD57B8441DEEFE /* PhoneParityTests.swift */,
 				9FD721B733C0B127B815248C /* PointerLocatorTests.swift */,
 				937D90E11178ACE1E39BCE49 /* PointerOverlayTests.swift */,
 				D4813316A4C3B1FEFFD8E28B /* RemoteVideoSurfaceTests.swift */,
@@ -1740,6 +1743,7 @@
 				42C9EA8EB7BE0521A71B904E /* FarsideDesignTests.swift in Sources */,
 				DA9CCB565345D64881F0B692 /* MacParityPhoneTests.swift in Sources */,
 				C6845830BCD7524063546C0B /* PhoneClipboardTests.swift in Sources */,
+				F81118A4C1C23BC8E9B2BACF /* PhoneParityTests.swift in Sources */,
 				9B974E24C2B6449E959BA72B /* PointerLocatorTests.swift in Sources */,
 				4D7F0237C42712DC42936B7E /* PointerOverlayTests.swift in Sources */,
 				3410E8C37879B16EA0FFAE54 /* RemoteVideoSurfaceTests.swift in Sources */,

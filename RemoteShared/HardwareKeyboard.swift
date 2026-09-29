@@ -37,8 +37,22 @@ enum HardwareKeyMap {
     /// Left and right Control, Shift, Option and Command.
     static func isModifier(_ usage: Int) -> Bool { (0xE0...0xE7).contains(usage) }
     static let capsLock = 0x39
+    static let escape = 0x29
 
     static func name(forHIDUsage usage: Int) -> String? { names[usage] }
+
+    /// The US-position HID usage for a key command's input character (letters, digits, `,` `.`).
+    static func usage(forCharacter character: String) -> Int? {
+        guard character.count == 1, let scalar = character.lowercased().unicodeScalars.first else { return nil }
+        switch scalar {
+        case "a"..."z": return 0x04 + Int(scalar.value - UnicodeScalar("a").value)
+        case "1"..."9": return 0x1E + Int(scalar.value - UnicodeScalar("1").value)
+        case "0": return 0x27
+        case ",": return 0x36
+        case ".": return 0x37
+        default: return nil
+        }
+    }
 
     static func needsExtendedKeys(_ name: String) -> Bool { !legacyNames.contains(name) }
 

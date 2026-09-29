@@ -66,7 +66,7 @@ struct NativeSessionView: View {
         .overlay(alignment: .top) { topPills }
         #if DEBUG
         .overlay(alignment: .topLeading) {
-            if let probe = model.inputProbe {
+            if let probe = model.inputProbe, !LaunchOptions.has("--ui-probe-quiet") {
                 InputProbeOverlay(probe: probe).padding(.top, 60).padding(.leading, 12)
             }
         }
@@ -166,7 +166,8 @@ struct NativeSessionView: View {
         }
         .task(id: miniMapToken) {
             guard miniMapToken > 0, !LaunchOptions.has("--ui-minimap-pinned") else { return }
-            do { try await Task.sleep(for: .seconds(MiniMapVisibility.linger)) } catch { return }
+            let linger = LaunchOptions.value("--ui-minimap-linger=").flatMap(Double.init) ?? MiniMapVisibility.linger
+            do { try await Task.sleep(for: .seconds(linger)) } catch { return }
             withAnimation(miniMapMotion) { miniMap.lingerExpired() }
         }
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
@@ -269,9 +270,17 @@ struct NativeSessionView: View {
                                   onCommand: handle,
                                   onPointerMotionEnded: { model.pointerLocator.stopFollowing() },
                                   onHardwareKey: { key, modifiers in model.hardwareKey(key, modifiers: modifiers) },
-                                  onHardwareModifiers: { model.hardwareModifiers = $0 })
+                                  onHardwareModifiers: { model.hardwareModifiers = $0 },
+                                  onKeyDiagnostic: keyDiagnostic)
                 .accessibilityIdentifier("remote.canvas")
                 .allowsHitTesting(!showControls && !showVoiceInput && !model.privacyShield && !model.contentConcealed)
+    }
+
+    private var keyDiagnostic: ((String) -> Void)? {
+        #if DEBUG
+        if let probe = model.inputProbe { return { probe.note($0) } }
+        #endif
+        return nil
     }
 
     /// Direct touch needs a Mac that places the pointer absolutely; otherwise touches stay a trackpad.
@@ -300,7 +309,7 @@ struct NativeSessionView: View {
             if offlineLayoutCheck && LaunchOptions.has("--ui-pointer-gallery") {
                 PointerGlyphGallery(size: pointerSize)
             }
-            if model.inputProbe != nil {
+            if model.inputProbe != nil && !LaunchOptions.has("--ui-probe-quiet") {
                 InputProbeTargets(viewport: viewport)
             }
             #endif
@@ -774,6 +783,7 @@ struct NativeSessionView: View {
                 .buttonStyle(.plain)
                 .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
                 .accessibilityLabel("Hide keyboard")
+                .accessibilityIdentifier("remote.keyboard.hide")
             }
 
             HStack(alignment: .center, spacing: 8) {
@@ -1702,15 +1712,24 @@ struct NativeSessionView: View {
                         onPan: { translation in
                             model.pointerLocator.clear()
                             viewport.pan(by: translation)
+                            #if DEBUG
+                            model.inputProbe?.note(String(format: "minimap pan %.1f %.1f", translation.width, translation.height))
+                            #endif
                         },
                         onJump: { point in
                             model.pointerLocator.clear()
                             withAnimation(reduceMotion ? nil : .smooth(duration: 0.28, extraBounce: 0)) {
                                 viewport.center(onSourcePoint: point)
                             }
+                            #if DEBUG
+                            model.inputProbe?.note(String(format: "minimap jump %.0f %.0f", point.x, point.y))
+                            #endif
                         },
                         onTouch: { active in
                             if miniMap.touch(active, eligible: miniMapEligible) { miniMapToken &+= 1 }
+                            #if DEBUG
+                            model.inputProbe?.note("minimap touch \(active)")
+                            #endif
                         },
                         onShowAll: { setMode(.fit) })
         }

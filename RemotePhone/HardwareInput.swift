@@ -34,6 +34,15 @@ final class HardwareKeyboardRouter {
         return true
     }
 
+    /// A key UIKit hands over as a key command (Escape) rather than a press: sent once, never
+    /// repeated, because its release may never be reported.
+    func commandPressed(usage: Int, flags: UIKeyModifierFlags) {
+        guard let name = HardwareKeyMap.name(forHIDUsage: usage) else { return }
+        let modifiers = HardwareKeyMap.modifiers(Set(Self.names(for: flags)), capsLock: false, for: name)
+        let chord = ShortcutRemap.resolve(key: name, modifiers: modifiers, enabled: remapEnabled())
+        _ = send(chord.key, chord.modifiers)
+    }
+
     func pressEnded(usage: Int, flags: UIKeyModifierFlags) -> Bool {
         updateModifiers(flags)
         repeatState.released(usage: usage)
