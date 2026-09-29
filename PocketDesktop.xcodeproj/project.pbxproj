@@ -43,6 +43,7 @@
 		21ECC029B255A43B4BC90633 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4023B7A8AB3BADEB045391E3 /* HomeView.swift */; };
 		2342C8BAF30C43CA65A9D7F1 /* NativeInputFreshness.swift in Sources */ = {isa = PBXBuildFile; fileRef = F06983976A15578FF281A602 /* NativeInputFreshness.swift */; };
 		23AFD123FA6EF19E3F1CEB5F /* BrowserCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */; };
+		24F0B86E7D71B4326A9ABA44 /* SessionRenewalIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70CF6225E89050B276A72773 /* SessionRenewalIntegrationTests.swift */; };
 		2567A2AFFA65A680CE8DF92A /* StreamLoopbackBenchmarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C66DD577EE47D01D2F1DA6C /* StreamLoopbackBenchmarkTests.swift */; };
 		257347905984AD723B3A9ACA /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 720A48C7349CBB0217439251 /* WebRTC */; };
 		25FB523BB78BBFD73B520C44 /* NativeSessionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25E810ABB45AB9AFCB4F7080 /* NativeSessionView.swift */; };
@@ -277,6 +278,7 @@
 		F5CB58D631CDD130C27EBE66 /* PointerLocationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B45BA3810586D5E7548CC90 /* PointerLocationTests.swift */; };
 		F7ECA03114F91A73C644A771 /* PointerGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40F2AC5A22A82DCC4F04012B /* PointerGlyph.swift */; };
 		F87CB1A35F5EE5F1B9D13D37 /* HostHalftoneArt.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1631676BBB416905D4181D4 /* HostHalftoneArt.swift */; };
+		F8B97EB595D1D9513BC14877 /* SessionRenewalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 691D8B414697903DBB69B460 /* SessionRenewalTests.swift */; };
 		F920FE10DCAEC7D7C8EB5024 /* VideoCodecPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13D66B889B29B13BDE33779E /* VideoCodecPolicy.swift */; };
 		F9B8013137A0EB997AD2BB65 /* RemoteControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7612B83EB1CE18C2A0FE2189 /* RemoteControls.swift */; };
 		F9E52C0B98420978CDC20236 /* HostWatchdogReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8662E553866FF233B18209B4 /* HostWatchdogReporter.swift */; };
@@ -411,11 +413,13 @@
 		643A13E08A654E915062CB1B /* SessionContinuity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionContinuity.swift; sourceTree = "<group>"; };
 		66CE61B858A64288AAC8E996 /* HostAppActivation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostAppActivation.swift; sourceTree = "<group>"; };
 		67CC891F087F9506F67A4C05 /* HostMark.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostMark.swift; sourceTree = "<group>"; };
+		691D8B414697903DBB69B460 /* SessionRenewalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRenewalTests.swift; sourceTree = "<group>"; };
 		6B1A621E30D5EBB91E5AF5AC /* StreamQualityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamQualityTests.swift; sourceTree = "<group>"; };
 		6D465DB529F7AFB91CFA9A74 /* FarsideHalftone.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideHalftone.swift; sourceTree = "<group>"; };
 		6F58935C4C0AA6C0044AA26E /* HostStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostStyle.swift; sourceTree = "<group>"; };
 		6F688011A8DDECAEAAE11132 /* HostViewState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostViewState.swift; sourceTree = "<group>"; };
 		70754EB2A998CAF466237F4F /* PointerTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointerTelemetry.swift; sourceTree = "<group>"; };
+		70CF6225E89050B276A72773 /* SessionRenewalIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRenewalIntegrationTests.swift; sourceTree = "<group>"; };
 		728339BDDAADF154551B1FE0 /* HostPresentation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPresentation.swift; sourceTree = "<group>"; };
 		72DE368D956186BDF569C427 /* BrowserRelayPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserRelayPolicyTests.swift; sourceTree = "<group>"; };
 		7485A47A6290AA2F83D600A9 /* ClipboardTransferTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClipboardTransferTests.swift; sourceTree = "<group>"; };
@@ -721,6 +725,8 @@
 				C20DEAFF126EDB5CF5CAB164 /* PrivacyCurtainTests.swift */,
 				61439D711D81DE84D4388236 /* SecurityTests.swift */,
 				41545BFD1F703C9543DC1A50 /* SessionIntegrationTests.swift */,
+				70CF6225E89050B276A72773 /* SessionRenewalIntegrationTests.swift */,
+				691D8B414697903DBB69B460 /* SessionRenewalTests.swift */,
 				5C66DD577EE47D01D2F1DA6C /* StreamLoopbackBenchmarkTests.swift */,
 				6B1A621E30D5EBB91E5AF5AC /* StreamQualityTests.swift */,
 				86F35696F9CC17369CF1F761 /* StreamStatisticsTests.swift */,
@@ -1425,6 +1431,8 @@
 				E7E8BCA5CBC44EFE0684E519 /* SessionContinuity.swift in Sources */,
 				761827FC2AEDCC5F2EAFEF34 /* SessionIntegrationTests.swift in Sources */,
 				71FAD39B71B7D79FEC082D7D /* SessionRenewal.swift in Sources */,
+				24F0B86E7D71B4326A9ABA44 /* SessionRenewalIntegrationTests.swift in Sources */,
+				F8B97EB595D1D9513BC14877 /* SessionRenewalTests.swift in Sources */,
 				B85EA1D0BE330E3824689904 /* SignalingClient.swift in Sources */,
 				2567A2AFFA65A680CE8DF92A /* StreamLoopbackBenchmarkTests.swift in Sources */,
 				4ED74B9A7A197DC5BC72BD5D /* StreamQuality.swift in Sources */,
