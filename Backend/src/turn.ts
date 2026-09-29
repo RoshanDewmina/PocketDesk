@@ -1,10 +1,18 @@
 import type { IceServer } from "./protocol";
 
+/**
+ * `not_found` is not success: right after `generate-ice-servers` Cloudflare's revoke endpoint answers 404
+ * ("cannot find specified username") until the credential has propagated, and a retry moments later succeeds
+ * (observed live on the Bun relay, 29 Sep 2026). The caller decides what a 404 means from the credential's age.
+ */
+export type RevokeStatus = "confirmed" | "not_found" | "failed";
+export type RevokeOutcome = { username: string; status: RevokeStatus };
+
 export type TurnProvider = {
   readonly ttlSeconds: number;
   issue(): Promise<IceServer[]>;
-  /** Resolves with the usernames whose revocation was not confirmed, so the caller can retry them. */
-  revoke(usernames: string[]): Promise<string[]>;
+  /** One outcome per distinct username; never throws for a single username's failure. */
+  revoke(usernames: string[]): Promise<RevokeOutcome[]>;
 };
 
 const allowedIceURL = /^(?:stun|stuns|turn|turns):[^\s]{1,500}$/;
@@ -101,7 +109,7 @@ export function createCloudflareTurnProvider(config: {
       }
     },
     async revoke(usernames) {
-      const failed = await revokeEach(usernames, async username => {
+      return revokeEach(usernames, async username => {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), config.timeoutMs);
         try {
@@ -110,24 +118,24 @@ export function createCloudflareTurnProvider(config: {
             headers: { authorization: `Bearer ${config.apiToken}` },
             signal: controller.signal,
           });
-          // 404: already revoked or expired on the provider side, which is the state we want.
-          return response.status === 204 || response.status === 404;
+          if (response.status === 204) return "confirmed";
+          if (response.status === 404) return "not_found";
+          return "failed";
         } finally {
           clearTimeout(timer);
         }
       });
-      return failed;
     },
   };
 }
 
-/** Attempts every revocation independently and returns the usernames that were not confirmed. */
-export async function revokeEach(usernames: string[], revokeOne: (username: string) => Promise<boolean>): Promise<string[]> {
+/** Attempts every revocation independently; a thrown error or timeout counts as `failed` for that username only. */
+export async function revokeEach(usernames: string[], revokeOne: (username: string) => Promise<RevokeStatus>): Promise<RevokeOutcome[]> {
   const unique = [...new Set(usernames)];
   const results = await Promise.allSettled(unique.map(username => revokeOne(username)));
-  return unique.filter((_, index) => {
+  return unique.map((username, index) => {
     const result = results[index]!;
-    return result.status === "rejected" || result.value !== true;
+    return { username, status: result.status === "fulfilled" ? result.value : "failed" };
   });
 }
 

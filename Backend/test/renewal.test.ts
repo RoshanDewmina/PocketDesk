@@ -213,6 +213,60 @@ describe("lease and renewal", () => {
     expect(await stub(p.room).snapshot()).toMatchObject({ pendingRevocations: 0 });
   });
 
+  it("a 404 from the revoke endpoint right after issuance is retried with backoff until it is confirmed", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const p = await pairing();
+    const host = await connectHost(p, { features: renewing });
+    const client = await connectClient(p, { features: [...renewing, "remote.1"], entitlement: token });
+    await host.next(); await host.next(); await client.next();
+    expect(turn.issued).toHaveLength(2);
+
+    turn.notFoundRevokeNext(2);
+    client.close();
+    expect(await host.next()).toEqual({ type: "peer", online: false });
+    await sleep(50);
+    expect(turn.revokeCalls).toBe(2);
+    expect(turn.revoked).toEqual([]);
+    expect(await stub(p.room).snapshot()).toMatchObject({ liveCredentials: 0, pendingRevocations: 2 });
+
+    // Backoff for a first retry is 1.5–2.5 s; nothing is due before it.
+    await advance(1000);
+    await runDurableObjectAlarm(stub(p.room));
+    await sleep(50);
+    expect(turn.revokeCalls).toBe(2);
+
+    await advance(2000);
+    expect(await runDurableObjectAlarm(stub(p.room))).toBe(true);
+    await sleep(50);
+    expect(turn.revokeCalls).toBe(4);
+    expect([...turn.revoked].sort()).toEqual([...turn.issued].sort());
+    expect(await stub(p.room).snapshot()).toMatchObject({ pendingRevocations: 0 });
+  });
+
+  it("a 404 for a credential older than the propagation window counts as revoked and is not retried", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const p = await pairing();
+    const host = await connectHost(p, { features: renewing });
+    const client = await connectClient(p, { features: [...renewing, "remote.1"], entitlement: token });
+    await host.next(); await host.next(); await client.next();
+
+    await advance(31_000);
+    turn.notFoundRevokeNext(2);
+    client.close();
+    expect(await host.next()).toEqual({ type: "peer", online: false });
+    await sleep(50);
+    expect(turn.revokeCalls).toBe(2);
+    expect(turn.revoked).toEqual([]);
+    expect(await stub(p.room).snapshot()).toMatchObject({ liveCredentials: 0, pendingRevocations: 0 });
+
+    await advance(2 * minute);
+    await runDurableObjectAlarm(stub(p.room));
+    await sleep(50);
+    expect(turn.revokeCalls).toBe(2);
+  });
+
   it("a live entitled room re-checks the subscription and ends when it was revoked meanwhile", async () => {
     turn.reset();
     const token = await entitlementToken();

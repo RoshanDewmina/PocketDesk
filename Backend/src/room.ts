@@ -51,7 +51,15 @@ const RENEW_RETRY_MS = 30_000;
 const IDLE_DELETE_MS = 30 * 24 * 60 * 60 * 1000;
 const STORAGE_TIMEOUT_MS = 3000;
 const ENTITLEMENT_RECHECK_MS = 5 * 60 * 1000;
-const REVOKE_RETRY_MS = 60_000;
+/** Cloudflare's revoke endpoint can answer 404 for a credential issued moments ago; inside this window a 404 is retried. */
+const REVOKE_NOT_FOUND_GRACE_MS = 30_000;
+const REVOKE_BACKOFF_BASE_MS = 2000;
+const REVOKE_BACKOFF_MAX_MS = 60_000;
+
+const revokeBackoffMs = (attempts: number) => {
+  const base = Math.min(REVOKE_BACKOFF_MAX_MS, REVOKE_BACKOFF_BASE_MS * 2 ** Math.min(attempts, 6));
+  return Math.floor(base * (0.75 + Math.random() * 0.5));
+};
 
 class IssuanceRateLimited extends Error {}
 
@@ -95,7 +103,8 @@ export class RoomDO extends DurableObject<Env> {
         issued_at INTEGER NOT NULL,
         expires_at INTEGER NOT NULL,
         revoke_pending INTEGER NOT NULL DEFAULT 0,
-        revoke_requested_at INTEGER
+        revoke_attempts INTEGER NOT NULL DEFAULT 0,
+        next_revoke_at INTEGER
       );
     `);
   }
@@ -221,8 +230,8 @@ export class RoomDO extends DurableObject<Env> {
     if (this.config.keepaliveMs > 0 && authenticatedOpen) {
       next = Math.min(next ?? Infinity, Math.max(state.last_keepalive, state.last_activity) + this.config.keepaliveMs);
     }
-    const oldestPending = this.ctx.storage.sql.exec<{ at: number | null }>("SELECT MIN(revoke_requested_at) AS at FROM credentials WHERE revoke_pending = 1").one().at;
-    if (oldestPending !== null) next = Math.min(next ?? Infinity, oldestPending + REVOKE_RETRY_MS);
+    const nextRevoke = this.ctx.storage.sql.exec<{ at: number | null }>("SELECT MIN(next_revoke_at) AS at FROM credentials WHERE revoke_pending = 1").one().at;
+    if (nextRevoke !== null) next = Math.min(next ?? Infinity, nextRevoke);
     if (next === undefined && this.openSockets().length === 0) next = now + IDLE_DELETE_MS;
     if (next === undefined) {
       await this.ctx.storage.deleteAlarm();
@@ -292,7 +301,7 @@ export class RoomDO extends DurableObject<Env> {
     for (const server of servers) {
       if (!server.username) continue;
       this.ctx.storage.sql.exec(
-        "INSERT OR REPLACE INTO credentials (username, role, issued_at, expires_at, revoke_pending) VALUES (?, ?, ?, ?, 0)",
+        "INSERT OR REPLACE INTO credentials (username, role, issued_at, expires_at, revoke_pending, revoke_attempts, next_revoke_at) VALUES (?, ?, ?, ?, 0, 0, NULL)",
         server.username, role, now, now + this.config.turnTtlSeconds * 1000,
       );
     }
@@ -307,40 +316,80 @@ export class RoomDO extends DurableObject<Env> {
     return this.ctx.storage.sql.exec<{ username: string }>("SELECT username FROM credentials WHERE revoke_pending = 1").toArray().map(row => row.username);
   }
 
-  /** Marks credentials for revocation and asks the provider; anything not confirmed is retried from the alarm until it expires. */
+  /** Marks credentials for revocation and makes the first attempt; anything not settled is retried from the alarm until it expires. */
   private revokeUsernames(usernames: string[]): void {
     if (usernames.length === 0) return;
     const now = Date.now();
     const placeholders = usernames.map(() => "?").join(",");
     this.ctx.storage.sql.exec(`DELETE FROM credentials WHERE username IN (${placeholders}) AND expires_at <= ?`, ...usernames, now);
-    this.ctx.storage.sql.exec(`UPDATE credentials SET revoke_pending = 1, revoke_requested_at = ? WHERE username IN (${placeholders})`, now, ...usernames);
-    const live = this.ctx.storage.sql.exec<{ username: string }>(`SELECT username FROM credentials WHERE username IN (${placeholders})`, ...usernames)
+    this.ctx.storage.sql.exec(
+      `UPDATE credentials SET revoke_pending = 1, revoke_attempts = 0, next_revoke_at = ? WHERE username IN (${placeholders}) AND revoke_pending = 0`,
+      now, ...usernames,
+    );
+    const live = this.ctx.storage.sql.exec<{ username: string }>(`SELECT username FROM credentials WHERE username IN (${placeholders}) AND revoke_pending = 1`, ...usernames)
       .toArray().map(row => row.username);
-    if (!this.provider || live.length === 0) {
-      if (live.length) this.ctx.storage.sql.exec(`DELETE FROM credentials WHERE username IN (${live.map(() => "?").join(",")})`, ...live);
+    this.attemptRevocation(live);
+  }
+
+  /**
+   * One provider round for these credentials. `confirmed` deletes the row; `not_found` is trusted only once the
+   * credential is older than the propagation window (Cloudflare answers 404 for a moment after issuance); anything
+   * else is rescheduled with exponential backoff and jitter. The row's next attempt time is pushed out while the
+   * call is in flight so the alarm cannot start a second round for the same username.
+   */
+  private attemptRevocation(usernames: string[]): void {
+    if (usernames.length === 0) return;
+    const placeholders = usernames.map(() => "?").join(",");
+    if (!this.provider) {
+      this.ctx.storage.sql.exec(`DELETE FROM credentials WHERE username IN (${placeholders})`, ...usernames);
       return;
     }
     const provider = this.provider;
+    const startedAt = Date.now();
+    this.ctx.storage.sql.exec(`UPDATE credentials SET next_revoke_at = ? WHERE username IN (${placeholders})`, startedAt + REVOKE_BACKOFF_MAX_MS, ...usernames);
     this.ctx.waitUntil((async () => {
-      let unconfirmed: string[] = live;
+      let outcomes: Awaited<ReturnType<TurnProvider["revoke"]>>;
       try {
-        unconfirmed = await provider.revoke(live);
+        outcomes = await provider.revoke(usernames);
       } catch (error) {
-        logError("turn_revoke_failed", error, { count: live.length });
+        logError("turn_revoke_failed", error, { count: usernames.length });
+        outcomes = usernames.map(username => ({ username, status: "failed" as const }));
       }
-      const confirmed = live.filter(username => !unconfirmed.includes(username));
-      if (confirmed.length) this.ctx.storage.sql.exec(`DELETE FROM credentials WHERE username IN (${confirmed.map(() => "?").join(",")})`, ...confirmed);
-      if (unconfirmed.length) log("turn_revoke_retry_scheduled", { count: unconfirmed.length });
+      const now = Date.now();
+      let rescheduled = 0;
+      for (const outcome of outcomes) {
+        const row = this.ctx.storage.sql.exec<{ issued_at: number; revoke_attempts: number }>(
+          "SELECT issued_at, revoke_attempts FROM credentials WHERE username = ? AND revoke_pending = 1", outcome.username,
+        ).toArray()[0];
+        if (!row) continue;
+        const settled = outcome.status === "confirmed" ||
+          (outcome.status === "not_found" && now - row.issued_at >= REVOKE_NOT_FOUND_GRACE_MS);
+        if (settled) {
+          this.ctx.storage.sql.exec("DELETE FROM credentials WHERE username = ?", outcome.username);
+          if (outcome.status === "not_found") log("turn_revoke_not_found_after_window", { ageMs: now - row.issued_at });
+          continue;
+        }
+        // Backoff grows with the attempts already made: 1.5–2.5 s after the first, doubling to at most 60 s.
+        this.ctx.storage.sql.exec(
+          "UPDATE credentials SET revoke_attempts = ?, next_revoke_at = ? WHERE username = ?",
+          row.revoke_attempts + 1, now + revokeBackoffMs(row.revoke_attempts), outcome.username,
+        );
+        rescheduled += 1;
+      }
+      if (rescheduled > 0) {
+        log("turn_revoke_retry_scheduled", { count: rescheduled });
+        await this.scheduleAlarm();
+      }
     })());
   }
 
-  /** Retries revocations whose last attempt is old enough to have finished; expired credentials need no revocation. */
+  /** Retries revocations whose backoff has elapsed; expired credentials need no revocation. */
   private retryRevocations(now: number): void {
     this.ctx.storage.sql.exec("DELETE FROM credentials WHERE revoke_pending = 1 AND expires_at <= ?", now);
     const due = this.ctx.storage.sql.exec<{ username: string }>(
-      "SELECT username FROM credentials WHERE revoke_pending = 1 AND revoke_requested_at <= ?", now - REVOKE_RETRY_MS / 2,
+      "SELECT username FROM credentials WHERE revoke_pending = 1 AND next_revoke_at <= ?", now,
     ).toArray().map(row => row.username);
-    if (due.length) this.revokeUsernames(due);
+    this.attemptRevocation(due);
   }
 
   private revokeRole(role: PeerRole): void {

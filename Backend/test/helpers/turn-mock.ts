@@ -7,6 +7,8 @@ export type TurnMock = {
   revokeCalls: number;
   failNext: (count: number) => void;
   failRevokeNext: (count: number) => void;
+  /** The next N revoke calls answer Cloudflare's post-issuance 404 ("cannot find specified username"). */
+  notFoundRevokeNext: (count: number) => void;
   reset: () => void;
 };
 
@@ -20,11 +22,16 @@ const KEY_PATH = `/v1/turn/keys/${"k".repeat(32)}/credentials/`;
 export function installTurnMock(): TurnMock {
   let failures = 0;
   let revokeFailures = 0;
+  let revokeNotFound = 0;
   const state: TurnMock = {
     issued: [], revoked: [], generateCalls: 0, revokeCalls: 0,
     failNext: count => { failures = count; },
     failRevokeNext: count => { revokeFailures = count; },
-    reset: () => { state.issued.length = 0; state.revoked.length = 0; state.generateCalls = 0; state.revokeCalls = 0; failures = 0; revokeFailures = 0; },
+    notFoundRevokeNext: count => { revokeNotFound = count; },
+    reset: () => {
+      state.issued.length = 0; state.revoked.length = 0; state.generateCalls = 0; state.revokeCalls = 0;
+      failures = 0; revokeFailures = 0; revokeNotFound = 0;
+    },
   };
   const original = globalThis.fetch;
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
@@ -48,6 +55,7 @@ export function installTurnMock(): TurnMock {
     if (revoke) {
       state.revokeCalls += 1;
       if (revokeFailures > 0) { revokeFailures -= 1; return new Response("provider down", { status: 500 }); }
+      if (revokeNotFound > 0) { revokeNotFound -= 1; return Response.json({ error: "cannot find specified username" }, { status: 404 }); }
       state.revoked.push(decodeURIComponent(revoke[1]!));
       return new Response(null, { status: 204 });
     }

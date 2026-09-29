@@ -78,17 +78,26 @@ describe("TURN provider", () => {
       url: `https://rtc.live.cloudflare.com/v1/turn/keys/${"k".repeat(32)}/credentials/generate-ice-servers`,
       method: "POST", authorization: `Bearer ${"t".repeat(64)}`, body: JSON.stringify({ ttl: 900 }),
     });
-    expect(await provider.revoke(["u", "u"])).toEqual([]);
+    expect(await provider.revoke(["u", "u"])).toEqual([{ username: "u", status: "confirmed" }]);
     expect(calls.filter(call => call.url.endsWith("/revoke"))).toHaveLength(1);
     expect(calls[1]!.url).toBe(`https://rtc.live.cloudflare.com/v1/turn/keys/${"k".repeat(32)}/credentials/u/revoke`);
-    const flaky = createCloudflareTurnProvider({ keyId: "k".repeat(32), apiToken: "t".repeat(64), ttlSeconds: 900, timeoutMs: 100,
-      fetch: async input => {
+    // A 404 is reported as such, never as success: Cloudflare returns it for a credential issued moments ago.
+    const flaky = createCloudflareTurnProvider({ keyId: "k".repeat(32), apiToken: "t".repeat(64), ttlSeconds: 900, timeoutMs: 20,
+      fetch: ((input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        if (url.endsWith("/gone/revoke")) return new Response(null, { status: 404 });
-        if (url.endsWith("/down/revoke")) return new Response("nope", { status: 500 });
-        return new Response(null, { status: 204 });
-      } });
-    expect(await flaky.revoke(["ok", "gone", "down"])).toEqual(["down"]);
+        if (url.endsWith("/gone/revoke")) return Promise.resolve(Response.json({ error: "cannot find specified username" }, { status: 404 }));
+        if (url.endsWith("/down/revoke")) return Promise.resolve(new Response("nope", { status: 500 }));
+        if (url.endsWith("/slow/revoke")) return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+        });
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }) as typeof fetch });
+    expect(await flaky.revoke(["ok", "gone", "down", "slow"])).toEqual([
+      { username: "ok", status: "confirmed" },
+      { username: "gone", status: "not_found" },
+      { username: "down", status: "failed" },
+      { username: "slow", status: "failed" },
+    ]);
 
     const rejecting = createCloudflareTurnProvider({ keyId: "k".repeat(32), apiToken: "t".repeat(64), ttlSeconds: 900, timeoutMs: 100, fetch: async () => new Response("denied", { status: 401 }) });
     await expect(rejecting.issue()).rejects.toThrow("unavailable");
