@@ -31,7 +31,7 @@ Agent alerts are an optional beta for blocking Claude Code and Codex permission 
 
 ## Exact remaining submission inputs and acceptance
 
-- Read-only account inventory confirms staging D1 and staging health. Production D1, numeric Apple app ID, production verification settings and a compatible `route.1` deployment remain to be prepared and approved. The old private development service is not proof of public route enforcement.
+- Read-only account inventory confirms staging D1 and staging health. A fresh remote migration inventory shows `0002_purchase_order.sql` and `0003_agent_push.sql` are both unapplied; health does not establish current billing/push readiness. The staging bundle passes a local dry run, with no deployment. Production D1, numeric Apple app ID, production verification settings and a compatible `route.1` deployment remain to be prepared and approved. The old private development service is not proof of public route enforcement.
 - The owner confirmed domain/DNS ownership and active paid Apple Developer membership. Capability/profile/key inventory still needs the signed-in portal. Do not create or submit those changes without the historical action-time confirmation.
 - Existing local signing inventory has Apple Development, not Developer ID Application or a verified Apple Distribution archive. A Developer ID transition must be tested separately from the installed permission-preserving development update.
 - APNs provider credentials, matching App ID capabilities, AASA hosting, signed environments and real suspended delivery remain unverified. Do not claim push is live from unit tests.
