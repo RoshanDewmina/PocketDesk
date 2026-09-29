@@ -5,6 +5,7 @@ import Combine
 
 @main
 struct RemotePhoneApp: App {
+    @UIApplicationDelegateAdaptor(FarsideAppDelegate.self) private var appDelegate
     @StateObject private var model = PhoneRemoteModel()
     @Environment(\.scenePhase) private var phase
 
@@ -79,8 +80,9 @@ final class PhoneRemoteModel: ObservableObject {
     /// A lost live session keeps retrying for about 90 seconds, long enough for the Mac's
     /// watchdog to relaunch a crashed or hung Farside with the same pairing.
     #if DEBUG
-    // E2E mode keeps its own trust; see PhoneE2E.swift.
-    let connection = RemoteCoordinator(isHost: false, store: PhoneE2E.active?.pairStore, sessionLossRetryLimit: 24,
+    // E2E mode keeps its own trust (see PhoneE2E.swift); a launch that seeds a pairing keeps it in memory.
+    let connection = RemoteCoordinator(isHost: false, store: PhoneE2E.active?.pairStore ?? LaunchSeeds.pairingStore(),
+                                       sessionLossRetryLimit: 24,
                                        maximumRetryDelayNanoseconds: 4_000_000_000)
     #else
     let connection = RemoteCoordinator(isHost: false, sessionLossRetryLimit: 24,
@@ -91,6 +93,10 @@ final class PhoneRemoteModel: ObservableObject {
     let clipboard = PhoneClipboard()
     @Published private(set) var hostFeatures: Set<String> = []
     @Published private(set) var resumeState: ResumeState = .none
+    /// While a live session is held in the background: when Farside lets go of the Mac.
+    @Published private(set) var backgroundHoldEndsAt: Date?
+    /// Why the last session ended, for the Lock Screen and Dynamic Island.
+    private(set) var sessionEndReason: FarsideSessionAttributes.EndReason?
     @Published private(set) var hostPresence: HostPresence?
     /// The Mac's privacy curtain, or nil when the Mac does not support one.
     @Published private(set) var curtainState: PrivacyCurtainState?
@@ -199,6 +205,8 @@ final class PhoneRemoteModel: ObservableObject {
             self.contentConcealed = false
             self.resumeState = .none
             self.macNotice = nil
+            self.sessionEndReason = nil
+            self.backgroundHoldEndsAt = nil
             if let peer = self.connection.media {
                 peer.onStreamStatistics = { [weak self, weak peer] report in
                     Task { @MainActor in
@@ -734,6 +742,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func disconnect() {
+        sessionEndReason = .user
         clearContinuity()
         release()
         connection.stop()
@@ -788,6 +797,7 @@ final class PhoneRemoteModel: ObservableObject {
         case .none:
             background.end()
         case .hold(let seconds):
+            backgroundHoldEndsAt = Date().addingTimeInterval(seconds)
             _ = connection.sendControl(RemoteAction(action: "pause", epoch: geometryEpoch))
             holdTask?.cancel()
             holdTask = Task { @MainActor [weak self] in
@@ -796,6 +806,7 @@ final class PhoneRemoteModel: ObservableObject {
                 self?.endBackgroundHold(immediately: false)
             }
         case .release:
+            sessionEndReason = .timeout
             release()
             connection.stop()
             endBackgroundExecutionSoon()
@@ -806,7 +817,9 @@ final class PhoneRemoteModel: ObservableObject {
     /// phone's slot at once and the return can reconnect immediately.
     private func endBackgroundHold(immediately: Bool) {
         holdTask?.cancel(); holdTask = nil
+        backgroundHoldEndsAt = nil
         if continuity.endHold() {
+            sessionEndReason = .timeout
             release()
             connection.stop()
         }
@@ -824,6 +837,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     private func returnToForeground() {
         holdTask?.cancel(); holdTask = nil
+        backgroundHoldEndsAt = nil
         backgroundEndTask?.cancel(); backgroundEndTask = nil
         background.end()
         let now = ProcessInfo.processInfo.systemUptime
@@ -893,6 +907,8 @@ final class PhoneRemoteModel: ObservableObject {
         end()
         guard continuity.isHolding else { return }
         // Lost while backgrounded: stop the coordinator's retries until the app returns.
+        if sessionEndReason == nil { sessionEndReason = .error }
+        backgroundHoldEndsAt = nil
         continuity.endHold()
         holdTask?.cancel(); holdTask = nil
         Task { @MainActor [weak self] in self?.connection.stop() }
@@ -1148,7 +1164,10 @@ final class PhoneRemoteModel: ObservableObject {
         hostPresence = nil
         curtainState = nil
         recoveryNoticeShown = false
-        if let departureReason { macNotice = Self.notice(for: departureReason) }
+        if let departureReason {
+            macNotice = Self.notice(for: departureReason)
+            if sessionEndReason == nil { sessionEndReason = .macStopped }
+        }
         departureReason = nil
         clipboard.cancel()
         resumeWatchdog?.cancel(); resumeWatchdog = nil

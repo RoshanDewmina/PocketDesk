@@ -25,6 +25,8 @@ enum PermissionPrimer {
         case .microphone:
             return AVAudioApplication.shared.recordPermission == .undetermined
                 || SFSpeechRecognizer.authorizationStatus() == .notDetermined
+        case .notifications:
+            return !wasPrimed(.notifications, in: defaults)
         }
     }
 
@@ -137,6 +139,13 @@ struct PermissionPrimingView: View {
                           ("text.bubble", "Speech is turned into text on this iPhone. Audio never leaves it."),
                           ("hand.tap", "iOS asks twice: microphone, then speech recognition.")],
                  footnote: "Typing always works without these")
+        case .notifications:
+            Copy(heading: "Know when it needs you.", accent: "needs",
+                 body: "Farside can tap your shoulder when a coding agent on your Mac is stuck on something only a human can click.",
+                 points: [("bell.badge", "iOS asks next. Choose Allow."),
+                          ("eye.slash", "Alerts say who needs you. Never what is on your screen."),
+                          ("moon", "Breaking through Focus is a separate switch, and iOS lets you turn it off.")],
+                 footnote: "Farside works fine without notifications")
         }
     }
 }

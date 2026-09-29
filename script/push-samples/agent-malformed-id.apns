@@ -1,0 +1,14 @@
+{
+  "aps": {
+    "alert": {
+      "title-loc-key": "AGENT_NEEDS_YOU_TITLE",
+      "title-loc-args": ["Claude Code"],
+      "loc-key": "AGENT_NEEDS_YOU_BODY"
+    },
+    "category": "AGENT_HELP",
+    "thread-id": "mac-7f3a",
+    "interruption-level": "active",
+    "sound": "default"
+  },
+  "hid": "h 20af; drop everything"
+}

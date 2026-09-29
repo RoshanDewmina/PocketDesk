@@ -336,6 +336,13 @@ struct HomeView: View {
             }
             .buttonStyle(.plain)
             Rectangle().fill(Farside.Palette.line).frame(height: 1)
+            Button { AgentAlertCenter.shared.showsSettings = true } label: {
+                HomeRow(title: "Alerts & Lock Screen", trailing: "bell")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Alerts and Lock Screen")
+            .accessibilityIdentifier("home.agentAlerts")
+            Rectangle().fill(Farside.Palette.line).frame(height: 1)
             Button { onboarding.replayCoach() } label: {
                 HomeRow(title: "How to steer · 40 sec", trailing: "arrow.right")
             }
