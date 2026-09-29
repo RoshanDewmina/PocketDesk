@@ -23,15 +23,18 @@ final class AnywhereStore: ObservableObject {
 
     private let productIDs: [String]
     private let accountToken: () -> UUID?
+    private let serviceAvailable: () -> Bool
     private let sync: () async throws -> Void
     private var signedTransactionValue: String?
     private var listeners: [Task<Void, Never>] = []
 
     init(productIDs: [String] = AnywherePlan.productIDs,
          accountToken: @escaping () -> UUID? = { InstallIdentity.current()?.accountToken },
+         serviceAvailable: @escaping () -> Bool = { AnywhereService.canSell(configured: AnywhereService.configured) },
          sync: @escaping () async throws -> Void = { try await AppStore.sync() }) {
         self.productIDs = productIDs
         self.accountToken = accountToken
+        self.serviceAvailable = serviceAvailable
         self.sync = sync
     }
 
@@ -67,6 +70,7 @@ final class AnywhereStore: ObservableObject {
     }
 
     var offers: [PlanOffer] { products.compactMap { PlanOffer(product: $0, trialEligible: trialEligible) } }
+    var canSell: Bool { serviceAvailable() }
 
     func product(for id: String) -> Product? { products.first { $0.id == id } }
 
@@ -106,9 +110,18 @@ final class AnywhereStore: ObservableObject {
 
     /// Buys through SwiftUI's purchase action when the paywall provides one (it knows the scene).
     func purchase(_ product: Product, using action: PurchaseAction? = nil) async {
+        guard canSell else {
+            purchaseState = .failed("Farside Anywhere is temporarily unavailable. We can’t confirm a new purchase right now. Restore Purchases remains available.")
+            return
+        }
+        // Verification links the Apple transaction to this install. A locked Keychain must not
+        // initiate a charge that this phone could not subsequently prove to the service.
+        guard let token = accountToken() else {
+            purchaseState = .failed("This iPhone couldn’t prepare a secure purchase. Unlock it and try again, or restore an existing plan.")
+            return
+        }
         purchaseState = .purchasing
-        var options: Set<Product.PurchaseOption> = []
-        if let token = accountToken() { options.insert(.appAccountToken(token)) }
+        let options: Set<Product.PurchaseOption> = [.appAccountToken(token)]
         do {
             let result: Product.PurchaseResult
             if let action { result = try await action(product, options) }

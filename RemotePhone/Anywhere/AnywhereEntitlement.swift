@@ -72,17 +72,17 @@ struct AnywhereEntitlement: Equatable {
         if status.revocationDate != nil { return AnywhereEntitlement(phase: .revoked, productID: product) }
         switch status.renewal {
         case .subscribed:
-            if let end = status.expirationDate, end <= now {
-                return AnywhereEntitlement(phase: .expired, productID: product, periodEnd: end)
+            guard let end = status.expirationDate, end > now else {
+                return AnywhereEntitlement(phase: .expired, productID: product, periodEnd: status.expirationDate)
             }
             return AnywhereEntitlement(phase: status.isFreeTrial ? .trial : .active, productID: product,
-                                       periodEnd: status.expirationDate, willRenew: status.willAutoRenew)
+                                       periodEnd: end, willRenew: status.willAutoRenew)
         case .gracePeriod:
-            if let end = status.gracePeriodExpirationDate, end <= now {
+            guard let end = status.gracePeriodExpirationDate, end > now else {
                 return AnywhereEntitlement(phase: .billingRetry, productID: product)
             }
             return AnywhereEntitlement(phase: .gracePeriod, productID: product,
-                                       periodEnd: status.gracePeriodExpirationDate, willRenew: status.willAutoRenew)
+                                       periodEnd: end, willRenew: status.willAutoRenew)
         case .billingRetry:
             return AnywhereEntitlement(phase: .billingRetry, productID: product)
         case .revoked:
@@ -250,6 +250,12 @@ enum AnywhereCopy {
 
 /// Where the phone asks the service about a subscription.
 enum AnywhereService {
+    /// Never start a paid checkout unless the build names the service that can verify it.
+    /// A debug pairing-derived endpoint is useful for development, but is not a purchase target.
+    static func canSell(configured: String?) -> Bool {
+        baseURL(configured: configured, pairingServer: nil, allowDerived: false) != nil
+    }
+
     /// The configured production address wins. Without one, debug builds use the paired Mac's own
     /// signaling service (wss → https); release builds never send a signed transaction to an address
     /// that arrived in a pairing code.

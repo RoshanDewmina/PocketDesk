@@ -17,6 +17,9 @@ struct EntitlementGrant: Equatable, Codable {
     var token: String?
     var tokenExpiresAt: Date?
     var issuedAt: Date
+    /// The verification service that issued this token. Older persisted grants have no origin and
+    /// are deliberately unusable until verified again.
+    var serviceOrigin: String? = nil
 
     func tokenValid(at now: Date, margin: TimeInterval = 5) -> Bool {
         guard entitled, let token, !token.isEmpty, let tokenExpiresAt else { return false }
@@ -65,8 +68,6 @@ protocol EntitlementVerifying {
 /// The token is opaque; only `tokenExpiresAt` says how long it lasts.
 struct EntitlementWire {
     var path = "/v1/entitlements/verify"
-    /// Only if a service ever omits `tokenExpiresAt`: short, so a stale token is not reused for long.
-    var fallbackTokenLifetime: TimeInterval = 10 * 60
 
     func body(for request: EntitlementVerifyRequest) throws -> Data {
         try JSONSerialization.data(withJSONObject: ["signedTransaction": request.signedTransaction,
@@ -76,9 +77,17 @@ struct EntitlementWire {
     func grant(from data: Data, now: Date) throws -> EntitlementGrant {
         guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entitled = object["entitled"] as? Bool else { throw EntitlementServiceError.invalidResponse }
-        let token = entitled ? (object["entitlementToken"] as? String).flatMap { $0.isEmpty ? nil : $0 } : nil
-        let tokenExpiry = token.map { _ in
-            (object["tokenExpiresAt"] as? String).flatMap(Self.date) ?? now.addingTimeInterval(fallbackTokenLifetime)
+        let token: String?
+        let tokenExpiry: Date?
+        if entitled {
+            guard let value = object["entitlementToken"] as? String, !value.isEmpty,
+                  let expiryText = object["tokenExpiresAt"] as? String,
+                  let expiry = Self.date(expiryText) else { throw EntitlementServiceError.invalidResponse }
+            token = value
+            tokenExpiry = expiry
+        } else {
+            token = nil
+            tokenExpiry = nil
         }
         return EntitlementGrant(entitled: entitled, expiresAt: (object["expiresAt"] as? String).flatMap(Self.date),
                                 environment: object["environment"] as? String, reason: object["reason"] as? String,
@@ -106,12 +115,30 @@ struct EntitlementWire {
     }
 }
 
+/// Verification includes a signed transaction and a device identifier. A redirect must never
+/// replay that POST to a different server, even when the original endpoint is trusted.
+final class EntitlementNoRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
 struct HTTPEntitlementClient: EntitlementVerifying {
     let baseURL: URL
-    var session: URLSession = .shared
+    let session: URLSession
     var wire = EntitlementWire()
     var timeout: TimeInterval = 10
     var now: () -> Date = Date.init
+
+    init(baseURL: URL, configuration: URLSessionConfiguration = .ephemeral,
+         now: @escaping () -> Date = Date.init) {
+        self.baseURL = baseURL
+        self.now = now
+        // Own the session so callers cannot inject one whose redirect policy forwards the body.
+        self.session = URLSession(configuration: configuration, delegate: EntitlementNoRedirectDelegate(), delegateQueue: nil)
+    }
 
     func verify(_ request: EntitlementVerifyRequest) async throws -> EntitlementGrant {
         var http = URLRequest(url: baseURL.appending(path: wire.path), timeoutInterval: timeout)

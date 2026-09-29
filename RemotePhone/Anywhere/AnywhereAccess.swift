@@ -40,9 +40,12 @@ final class AnywhereAccess: ObservableObject {
     private let now: () -> Date
     private let persistence: (any PairPersistence)?
     private var inFlight: Task<Bool, Never>?
+    private var refreshAfterFlight = false
     private var refreshTimer: Task<Void, Never>?
     private var retryNotBefore: Date?
+    private var retryOrigin: String?
     private var lastEntitlementReconnect: Date?
+    private var grantGeneration = 0
     private var observers: Set<AnyCancellable> = []
 
     init(source: AnywhereEntitlementSource,
@@ -65,7 +68,10 @@ final class AnywhereAccess: ObservableObject {
     /// non-closing `entitlement_required` triggers one verification and, if it yields a token, one reconnect.
     func attach(_ connection: RemoteCoordinator, store: AnywhereStore) {
         connection.advertisesRemoteAccess = true
-        connection.entitlementToken = { [weak self] in self?.currentToken() }
+        connection.entitlementToken = { [weak self, weak connection] in
+            guard let server = connection?.invitation?.server else { return nil }
+            return self?.currentToken(forSignalingServer: server)
+        }
         serviceURL = { [weak connection] in
             AnywhereService.baseURL(configured: AnywhereService.configured, pairingServer: connection?.invitation?.server,
                                     allowDerived: AnywhereService.allowsDerived)
@@ -87,11 +93,18 @@ final class AnywhereAccess: ObservableObject {
     }
 
     /// The token signaling may present now, or nil.
-    func currentToken() -> String? {
+    func currentToken(forSignalingServer server: String? = nil) -> String? {
         // Right after launch StoreKit has not answered yet; a saved token may still be presented, and
         // the service, which knows about refunds, stays the judge.
         let phase = source.entitlement.phase
-        guard source.entitlement.hasAccess || phase == .unknown, let grant, grant.tokenValid(at: now()) else { return nil }
+        guard source.entitlement.hasAccess || phase == .unknown,
+              let grant, grant.tokenValid(at: now()),
+              let service = serviceURL(), let serviceOrigin = origin(service),
+              grant.serviceOrigin == serviceOrigin else { return nil }
+        if let server {
+            guard let signalingURL = AnywhereService.baseURL(configured: nil, pairingServer: server, allowDerived: true),
+                  origin(signalingURL) == serviceOrigin else { return nil }
+        }
         return grant.token
     }
 
@@ -103,13 +116,32 @@ final class AnywhereAccess: ObservableObject {
             if source.entitlement.phase != .unknown { clear() }
             return false
         }
-        if !force, let grant, !grant.needsRefresh(at: now()) { return true }
-        if let retryNotBefore, retryNotBefore > now() { return currentToken() != nil }
-        if let inFlight { return await inFlight.value }
-        let task = Task { await self.verify() }
+        if !force, let grant, currentToken() != nil, !grant.needsRefresh(at: now()) { return true }
+        if let retryNotBefore, retryOrigin == serviceURL().flatMap(origin), retryNotBefore > now() {
+            return currentToken() != nil
+        }
+        if let inFlight {
+            // A StoreKit renewal/refund may supersede the transaction an earlier verification
+            // captured. Coalesce callers, then make one fresh attempt after that response lands.
+            if force { refreshAfterFlight = true }
+            return await inFlight.value
+        }
+        refreshAfterFlight = false
+        let task = Task {
+            let first = await self.verify()
+            guard self.refreshAfterFlight else { return first }
+            self.refreshAfterFlight = false
+            return await self.verify()
+        }
         inFlight = task
         let result = await task.value
         inFlight = nil
+        if refreshAfterFlight {
+            // An update may arrive during the queued second verification, or after its result
+            // but before this owner clears inFlight. Start exactly one new flight for that update.
+            refreshAfterFlight = false
+            Task { [weak self] in await self?.refresh(force: true) }
+        }
         return result
     }
 
@@ -165,40 +197,71 @@ final class AnywhereAccess: ObservableObject {
     }
 
     private func dropGrant() {
+        grantGeneration &+= 1
         grant = nil
         try? persistence?.delete()
     }
 
     private func verify() async -> Bool {
-        guard let base = serviceURL() else { verification = .notConfigured; return false }
-        guard let signed = await source.signedTransaction(), let device = deviceID() else { return false }
+        guard let base = serviceURL(), let serviceOrigin = origin(base) else {
+            verification = .notConfigured; return false
+        }
+        let generation = grantGeneration
+        guard let device = deviceID() else { return false }
+        guard let signed = await source.signedTransaction() else { return false }
+        let currentSignedBeforePost = await source.signedTransaction()
+        // StoreKit may suspend while retrieving its JWS. Do not even POST an old transaction if
+        // the user removed the plan or the pairing/service changed during that suspension.
+        guard contextIsCurrent(generation: generation, origin: serviceOrigin, device: device),
+              currentSignedBeforePost == signed else { return false }
         verification = .verifying
         do {
             let answer = try await makeClient(base).verify(EntitlementVerifyRequest(signedTransaction: signed, deviceID: device))
+            let currentSigned = await source.signedTransaction()
+            guard contextIsCurrent(generation: generation, origin: serviceOrigin, device: device),
+                  currentSigned == signed else { return false }
             retryNotBefore = nil
+            retryOrigin = nil
             guard answer.entitled, answer.tokenValid(at: now()) else {
                 dropGrant()
                 verification = .refused(reason: answer.entitled ? nil : answer.reason)
                 return false
             }
-            grant = answer
-            try? persistence?.save(answer)
+            var bound = answer
+            bound.serviceOrigin = serviceOrigin
+            grant = bound
+            try? persistence?.save(bound)
             verification = .verified
-            scheduleRefresh(answer)
+            scheduleRefresh(bound)
             return true
         } catch EntitlementServiceError.rejected(_, let reason) {
+            let currentSigned = await source.signedTransaction()
+            guard contextIsCurrent(generation: generation, origin: serviceOrigin, device: device),
+                  currentSigned == signed else { return false }
             dropGrant()
             verification = .refused(reason: reason)
             return false
         } catch EntitlementServiceError.rateLimited(let wait) {
+            let currentSigned = await source.signedTransaction()
+            guard contextIsCurrent(generation: generation, origin: serviceOrigin, device: device),
+                  currentSigned == signed else { return false }
             retryNotBefore = now().addingTimeInterval(min(max(wait ?? 60, 1), 3600))
+            retryOrigin = serviceOrigin
             verification = .unreachable
             return currentToken() != nil
         } catch {
+            let currentSigned = await source.signedTransaction()
+            guard contextIsCurrent(generation: generation, origin: serviceOrigin, device: device),
+                  currentSigned == signed else { return false }
             // An outage keeps a still-valid token: it should not end a plan that was just confirmed.
             verification = .unreachable
             return currentToken() != nil
         }
+    }
+
+    private func contextIsCurrent(generation: Int, origin serviceOrigin: String, device: String) -> Bool {
+        generation == grantGeneration && source.entitlement.hasAccess &&
+            serviceURL().flatMap(origin) == serviceOrigin && deviceID() == device
     }
 
     private func scheduleRefresh(_ grant: EntitlementGrant) {
@@ -210,5 +273,23 @@ final class AnywhereAccess: ObservableObject {
             guard !Task.isCancelled else { return }
             await self?.refresh(force: true)
         }
+    }
+
+    private func origin(_ url: URL) -> String? {
+        guard var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              let scheme = components.scheme?.lowercased(),
+              let host = components.host?.lowercased(), !host.isEmpty,
+              scheme == "https" || scheme == "http" else { return nil }
+        components.scheme = scheme
+        components.host = host
+        if (scheme == "https" && components.port == 443) || (scheme == "http" && components.port == 80) {
+            components.port = nil
+        }
+        components.user = nil
+        components.password = nil
+        components.path = ""
+        components.query = nil
+        components.fragment = nil
+        return components.url?.absoluteString
     }
 }

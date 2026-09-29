@@ -156,8 +156,9 @@ TEST STEPS (about 5 minutes)
 IN-APP PURCHASE: "Farside Remote" (auto-renewable, group "Farside
 Remote", products [monthly ID] and [yearly ID], 7-day free trial). Remote access
 = relay + NAT traversal servers, needed when the phone is not on the Mac's
-network. Open Settings > Farside Remote (no Mac required) to reach the
-paywall; Restore Purchases is on the same screen. Sandbox purchases are accepted
+network. On Home, tap Farside Anywhere (or ? > Farside Anywhere); no Mac is
+required to reach the paywall; Restore Purchases is on the same screen.
+[Name: the app says "Farside Anywhere"; see STOREKIT-IMPLEMENTATION.md §6.] Sandbox purchases are accepted
 by our server. Same-network use is free and needs no purchase.
 
 PERMISSIONS: Camera (scan pairing code), Local Network (find the paired Mac on

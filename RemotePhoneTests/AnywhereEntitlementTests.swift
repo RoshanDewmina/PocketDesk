@@ -34,6 +34,11 @@ final class AnywhereEntitlementTests: XCTestCase {
         }
     }
 
+    func testMissingSubscriptionOrGraceEndCannotGrantAccess() {
+        XCTAssertEqual(AnywhereEntitlement.resolve([snap(.subscribed, ends: nil)], now: now).phase, .expired)
+        XCTAssertEqual(AnywhereEntitlement.resolve([snap(.gracePeriod, ends: -60, grace: nil)], now: now).phase, .billingRetry)
+    }
+
     func testUnverifiedAndForeignStatusesNeverGrant() {
         XCTAssertEqual(AnywhereEntitlement.resolve([snap(.subscribed, verified: false)], now: now).phase, .notSubscribed)
         XCTAssertEqual(AnywhereEntitlement.resolve([snap(.subscribed, "com.example.other")], now: now).phase, .notSubscribed)
@@ -82,6 +87,9 @@ final class AnywhereEntitlementTests: XCTestCase {
     }
 
     func testServiceAddress() {
+        XCTAssertFalse(AnywhereService.canSell(configured: nil), "An unconfigured app cannot initiate a charge")
+        XCTAssertFalse(AnywhereService.canSell(configured: "http://plain.example"))
+        XCTAssertTrue(AnywhereService.canSell(configured: "https://api.example"))
         XCTAssertEqual(AnywhereService.baseURL(configured: "https://api.getfarside.com/", pairingServer: "wss://other.example/signal",
                                                allowDerived: true)?.absoluteString, "https://api.getfarside.com")
         XCTAssertEqual(AnywhereService.baseURL(configured: "", pairingServer: "wss://relay.example/signal", allowDerived: true)?.absoluteString,
@@ -108,6 +116,8 @@ final class EntitlementClientTests: XCTestCase {
 
     override func tearDown() {
         StubProtocol.handler = nil
+        StubProtocol.redirectTarget = nil
+        StubProtocol.seenURLs = []
         super.tearDown()
     }
 
@@ -115,7 +125,7 @@ final class EntitlementClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubProtocol.self]
         let now = self.now
-        return HTTPEntitlementClient(baseURL: URL(string: "https://api.example")!, session: URLSession(configuration: configuration),
+        return HTTPEntitlementClient(baseURL: URL(string: "https://api.example")!, configuration: configuration,
                                      now: { now })
     }
 
@@ -160,6 +170,38 @@ final class EntitlementClientTests: XCTestCase {
         XCTAssertEqual(grant.reason, "device_limit")
         XCTAssertNil(grant.token, "A refusal never yields a token")
         XCTAssertFalse(grant.tokenValid(at: now))
+    }
+
+    func testEntitledResponseWithoutAuthoritativeTokenExpiryIsRejected() async {
+        StubProtocol.handler = { _ in (200, Data(#"{"entitled":true,"entitlementToken":"fe1.a.b"}"#.utf8)) }
+        await expectError(.invalidResponse)
+        StubProtocol.handler = { _ in (200, Data(#"{"entitled":true,"entitlementToken":"fe1.a.b","tokenExpiresAt":"bad"}"#.utf8)) }
+        await expectError(.invalidResponse)
+    }
+
+    func testSignedVerificationPostNeverFollowsCrossOriginRedirect() async {
+        var http = client()
+        http.timeout = 0.5
+        let delegate = http.session.delegate as? EntitlementNoRedirectDelegate
+        XCTAssertNotNil(delegate, "The verify client must use the no-redirect session")
+        let original = URL(string: "https://api.example/v1/entitlements/verify")!
+        let target = URL(string: "https://attacker.example/collect")!
+        let task = http.session.dataTask(with: original)
+        let response = HTTPURLResponse(url: original, statusCode: 307, httpVersion: nil,
+                                       headerFields: ["Location": target.absoluteString])!
+        var forwarded: URLRequest? = URLRequest(url: target)
+        delegate?.urlSession(http.session, task: task, willPerformHTTPRedirection: response,
+                             newRequest: URLRequest(url: target)) { forwarded = $0 }
+        XCTAssertNil(forwarded, "The redirect delegate must reject every HTTP redirect")
+        StubProtocol.redirectTarget = URL(string: "https://attacker.example/collect")!
+        do {
+            _ = try await http.verify(EntitlementVerifyRequest(signedTransaction: "jws", deviceID: String(repeating: "a", count: 64)))
+            XCTFail("A redirect must not yield an entitlement")
+        } catch {
+            XCTAssertEqual(error as? EntitlementServiceError, .unreachable)
+        }
+        XCTAssertEqual(StubProtocol.seenURLs, [URL(string: "https://api.example/v1/entitlements/verify")!],
+                       "A 307 must not replay the signed transaction or device ID to another host")
     }
 
     func testErrorsMapToRefusalBackoffAndOutage() async {
@@ -218,6 +260,8 @@ private struct FailingStore: PairPersistence {
 
 final class StubProtocol: URLProtocol {
     nonisolated(unsafe) static var handler: ((URLRequest) throws -> (Int, Data))?
+    nonisolated(unsafe) static var redirectTarget: URL?
+    nonisolated(unsafe) static var seenURLs: [URL] = []
 
     static func body(of request: URLRequest) -> Data {
         if let body = request.httpBody { return body }
@@ -238,6 +282,16 @@ final class StubProtocol: URLProtocol {
     override func stopLoading() {}
     override func startLoading() {
         do {
+            if let url = request.url { Self.seenURLs.append(url) }
+            if let target = Self.redirectTarget {
+                var redirected = URLRequest(url: target)
+                redirected.httpMethod = "POST"
+                redirected.httpBody = Self.body(of: request)
+                let response = HTTPURLResponse(url: request.url!, statusCode: 307, httpVersion: nil,
+                                               headerFields: ["Location": target.absoluteString])!
+                client?.urlProtocol(self, wasRedirectedTo: redirected, redirectResponse: response)
+                return
+            }
             guard let handler = Self.handler else { throw URLError(.cannotConnectToHost) }
             let (status, data) = try handler(request)
             let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
@@ -256,7 +310,18 @@ final class StubProtocol: URLProtocol {
 final class AnywhereAccessTests: XCTestCase {
     private final class Source: AnywhereEntitlementSource {
         var entitlement = AnywhereEntitlement.notSubscribed
-        func signedTransaction() async -> String? { entitlement.hasAccess ? "jws" : nil }
+        var signed = "jws"
+        var signedDelay: Duration = .zero
+        var signedRequests = 0
+        func signedTransaction() async -> String? {
+            signedRequests += 1
+            if signedDelay > .zero {
+                let delay = signedDelay
+                signedDelay = .zero
+                try? await Task.sleep(for: delay)
+            }
+            return entitlement.hasAccess ? signed : nil
+        }
     }
 
     private final class Verifier: EntitlementVerifying {
@@ -338,6 +403,137 @@ final class AnywhereAccessTests: XCTestCase {
         access.entitlementChanged()
         XCTAssertNil(access.grant)
         XCTAssertNil(try keychain.read(EntitlementGrant.self), "Deleted from the Keychain too")
+    }
+
+    func testTokenIsBoundToVerificationAndSignalingOrigins() async {
+        source.entitlement = AnywhereEntitlement(phase: .active)
+        verifier.answers = [.success(grant())]
+        let access = makeAccess()
+        let verified = await access.refresh()
+        XCTAssertTrue(verified)
+        XCTAssertEqual(access.currentToken(forSignalingServer: "wss://api.example/signal"), "fe1.t.s")
+        XCTAssertNil(access.currentToken(forSignalingServer: "wss://other.example/signal"),
+                     "A pairing code cannot receive a token issued by another service")
+        serviceURL = URL(string: "https://other.example")
+        XCTAssertNil(access.currentToken(), "A saved token cannot cross service deployments")
+        XCTAssertNil(access.currentToken(forSignalingServer: "wss://other.example/signal"))
+        verifier.answers = [.success(grant("fe1.other.s"))]
+        let switched = await access.refresh()
+        XCTAssertTrue(switched)
+        XCTAssertEqual(access.currentToken(forSignalingServer: "wss://other.example/signal"), "fe1.other.s")
+    }
+
+    func testLateVerificationCannotRestoreClearedOrChangedEntitlement() async {
+        source.entitlement = AnywhereEntitlement(phase: .active)
+        verifier.answers = [.success(grant())]
+        verifier.delay = .milliseconds(250)
+        let access = makeAccess()
+        let pending = Task { await access.refresh(force: true) }
+        for _ in 0..<100 where verifier.requests.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(verifier.requests.count, 1)
+        source.entitlement = AnywhereEntitlement(phase: .revoked)
+        access.clear()
+        let accepted = await pending.value
+        XCTAssertFalse(accepted)
+        XCTAssertNil(access.currentToken())
+        XCTAssertNil(try? keychain.read(EntitlementGrant.self))
+    }
+
+    func testClearingWhileFetchingSignedTransactionNeverPosts() async {
+        source.entitlement = AnywhereEntitlement(phase: .active)
+        source.signedDelay = .milliseconds(200)
+        let access = makeAccess()
+        let pending = Task { await access.refresh(force: true) }
+        for _ in 0..<100 where source.signedRequests == 0 { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(source.signedRequests, 1)
+        access.clear()
+        let accepted = await pending.value
+        XCTAssertFalse(accepted)
+        XCTAssertTrue(verifier.requests.isEmpty, "A JWS fetched before clear must never leave the phone")
+        XCTAssertEqual(access.verification, .idle)
+    }
+
+    func testStaleRejectionAfterClearCannotReplaceIdleStatus() async {
+        source.entitlement = AnywhereEntitlement(phase: .active)
+        verifier.answers = [.failure(.rejected(status: 401, reason: "old_transaction"))]
+        verifier.delay = .milliseconds(250)
+        let access = makeAccess()
+        let pending = Task { await access.refresh(force: true) }
+        for _ in 0..<100 where verifier.requests.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(verifier.requests.count, 1)
+        access.clear()
+        let accepted = await pending.value
+        XCTAssertFalse(accepted)
+        XCTAssertEqual(access.verification, .idle, "An old server refusal cannot overwrite a newer clear")
+        XCTAssertNil(access.grant)
+    }
+
+    func testLateVerificationCannotRestoreAnOldTransaction() async {
+        source.entitlement = AnywhereEntitlement(phase: .active)
+        verifier.answers = [.success(grant())]
+        verifier.delay = .milliseconds(250)
+        let access = makeAccess()
+        let pending = Task { await access.refresh(force: true) }
+        for _ in 0..<100 where verifier.requests.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(verifier.requests.count, 1)
+        source.signed = "new-jws"
+        let accepted = await pending.value
+        XCTAssertFalse(accepted)
+        XCTAssertNil(access.currentToken())
+        XCTAssertNil(try? keychain.read(EntitlementGrant.self))
+    }
+
+    func testTransactionUpdateDuringFlightQueuesOneFreshVerification() async {
+        source.entitlement = AnywhereEntitlement(phase: .active)
+        verifier.answers = [.success(grant("fe1.old.s")), .success(grant("fe1.new.s"))]
+        verifier.delay = .milliseconds(200)
+        let access = makeAccess()
+        let first = Task { await access.refresh(force: true) }
+        for _ in 0..<100 where verifier.requests.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(verifier.requests.count, 1)
+        source.signed = "renewed-jws"
+        let renewed = Task { await access.refresh(force: true) }
+        let accepted = await renewed.value
+        XCTAssertTrue(accepted)
+        _ = await first.value
+        XCTAssertEqual(verifier.requests.map(\.signedTransaction), ["jws", "renewed-jws"])
+        XCTAssertEqual(access.currentToken(), "fe1.new.s")
+    }
+
+    func testUpdateDuringQueuedVerificationStartsOneMoreFlight() async {
+        source.entitlement = AnywhereEntitlement(phase: .active)
+        verifier.answers = [.success(grant("fe1.first.s")), .success(grant("fe1.second.s")), .success(grant("fe1.third.s"))]
+        verifier.delay = .milliseconds(180)
+        let access = makeAccess()
+        let first = Task { await access.refresh(force: true) }
+        for _ in 0..<100 where verifier.requests.count < 1 { try? await Task.sleep(for: .milliseconds(10)) }
+        source.signed = "second-jws"
+        let second = Task { await access.refresh(force: true) }
+        for _ in 0..<100 where verifier.requests.count < 2 { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(verifier.requests.count, 2)
+        source.signed = "third-jws"
+        let third = Task { await access.refresh(force: true) }
+        _ = await first.value
+        _ = await second.value
+        _ = await third.value
+        for _ in 0..<100 where access.currentToken() != "fe1.third.s" { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(verifier.requests.map(\.signedTransaction), ["jws", "second-jws", "third-jws"])
+        XCTAssertEqual(access.currentToken(), "fe1.third.s")
+    }
+
+    func testLateVerificationCannotSaveToAnotherServiceOrigin() async {
+        source.entitlement = AnywhereEntitlement(phase: .active)
+        verifier.answers = [.success(grant())]
+        verifier.delay = .milliseconds(250)
+        let access = makeAccess()
+        let pending = Task { await access.refresh(force: true) }
+        for _ in 0..<100 where verifier.requests.isEmpty { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(verifier.requests.count, 1)
+        serviceURL = URL(string: "https://other.example")
+        let accepted = await pending.value
+        XCTAssertFalse(accepted)
+        XCTAssertNil(access.currentToken())
+        XCTAssertNil(try? keychain.read(EntitlementGrant.self))
     }
 
     func testAnOutageNeverBlocksAConnectionForLongAndKeepsAValidToken() async {

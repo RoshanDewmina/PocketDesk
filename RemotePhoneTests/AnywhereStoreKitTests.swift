@@ -20,7 +20,8 @@ final class AnywhereStoreKitTests: XCTestCase {
         session.disableDialogs = true
         session.clearTransactions()
         let token = accountToken
-        store = AnywhereStore(accountToken: { token }, sync: { [unowned self] in self.syncCalls += 1 })
+        store = AnywhereStore(accountToken: { token }, serviceAvailable: { true },
+                              sync: { [unowned self] in self.syncCalls += 1 })
         // The test environment can answer the very first request before the session is ready.
         for _ in 0..<10 where store.load != .loaded {
             await store.loadProducts()
@@ -100,6 +101,43 @@ final class AnywhereStoreKitTests: XCTestCase {
         XCTAssertFalse(store.offers.contains(where: \.hasTrial), "The paywall stops promising a trial")
     }
 
+    func testLockedInstallIdentityCannotStartPurchaseButRestoreStillWorks() async throws {
+        var restoreCalls = 0
+        var purchaseCalled = false
+        let blocked = AnywhereStore(accountToken: { nil }, serviceAvailable: { true }, sync: { restoreCalls += 1 })
+        await blocked.purchase(try yearly, using: { _, _ in
+            purchaseCalled = true
+            throw URLError(.badURL)
+        })
+        XCTAssertFalse(purchaseCalled, "Never charge without a stable install account token")
+        if case .failed(let message) = blocked.purchaseState {
+            XCTAssertTrue(message.contains("secure purchase"), message)
+        } else {
+            XCTFail("The purchase should explain why it could not start")
+        }
+        await blocked.restore()
+        XCTAssertEqual(restoreCalls, 1, "An existing purchase remains restorable without a new purchase identity")
+    }
+
+    func testUnconfiguredServiceCannotStartPurchaseButRestoreStillWorks() async throws {
+        var restoreCalls = 0
+        var purchaseCalled = false
+        let blocked = AnywhereStore(accountToken: { self.accountToken }, serviceAvailable: { false },
+                                    sync: { restoreCalls += 1 })
+        await blocked.purchase(try yearly, using: { _, _ in
+            purchaseCalled = true
+            throw URLError(.badURL)
+        })
+        XCTAssertFalse(purchaseCalled, "No service means no charge even if a caller bypasses the paywall")
+        if case .failed(let message) = blocked.purchaseState {
+            XCTAssertTrue(message.contains("temporarily unavailable"), message)
+        } else {
+            XCTFail("The purchase should explain why it could not start")
+        }
+        await blocked.restore()
+        XCTAssertEqual(restoreCalls, 1)
+    }
+
     func testRenewalAfterTheTrialIsPaid() async throws {
         await store.purchase(try monthly)
         XCTAssertEqual(store.entitlement.phase, .trial)
@@ -109,6 +147,8 @@ final class AnywhereStoreKitTests: XCTestCase {
     }
 
     func testExpiryEndsAccessAndTheSignedTransaction() async throws {
+        // Match the app's transaction/status listener lifecycle while exercising StoreKitTest.
+        store.start()
         await store.purchase(try monthly)
         try session.expireSubscription(productIdentifier: AnywherePlan.monthlyID)
         await eventually("expiry") { store.entitlement.phase == .expired }

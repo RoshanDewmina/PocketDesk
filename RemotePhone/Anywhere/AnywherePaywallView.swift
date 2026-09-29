@@ -18,6 +18,7 @@ struct AnywherePaywallView: View {
     private var offers: [PlanOffer] { store.offers }
     private var selected: PlanOffer? { offers.first { $0.id == selectedID } ?? offers.first }
     private var subscribed: Bool { store.entitlement.hasAccess || store.entitlement.phase == .billingRetry }
+    private var canSell: Bool { store.canSell }
 
     var body: some View {
         ScrollView {
@@ -188,6 +189,10 @@ struct AnywherePaywallView: View {
 
     @ViewBuilder private var notices: some View {
         VStack(alignment: .leading, spacing: Farside.Space.s) {
+            if !subscribed && !canSell {
+                FarsideNotice(message: "Farside Anywhere is temporarily unavailable. We can’t confirm a new purchase right now. Same Wi-Fi stays free, and Restore Purchases remains available.", tone: .caution)
+                    .accessibilityIdentifier("anywhere.purchaseUnavailable")
+            }
             switch store.purchaseState {
             case .pending:
                 FarsideNotice(message: "Waiting for approval. Anywhere turns on by itself once the purchase is approved.")
@@ -233,6 +238,7 @@ struct AnywherePaywallView: View {
                         .accessibilityIdentifier("anywhere.manage")
                 } else {
                     Button("Redeem Code") { showRedeem = true }
+                        .disabled(!canSell)
                         .accessibilityIdentifier("anywhere.redeem")
                 }
             }
@@ -269,7 +275,7 @@ struct AnywherePaywallView: View {
                     }
                 }
                 .buttonStyle(FarsidePrimaryButtonStyle(height: 56))
-                .disabled(selected == nil || store.purchaseState == .purchasing)
+                .disabled(selected == nil || store.purchaseState == .purchasing || !canSell)
                 .accessibilityIdentifier("anywhere.subscribe")
                 Button("Not now") { dismiss() }
                     .buttonStyle(FarsideLinkButtonStyle())
