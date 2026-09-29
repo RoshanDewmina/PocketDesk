@@ -106,12 +106,14 @@ enum VirtualDisplaySpike {
             selectHiDPIMode(id, scenario: scenario, tag: tag)
             try await hold(1)
         }
-        guard let screen = screen(for: id) else { throw SpikeFailure("the NSScreen for display \(id) went away") }
-        result.reportedHz = reportDisplay(id, screen: screen, tag: tag)
+        guard let virtualScreen = screen(for: id) else {
+            throw SpikeFailure("the NSScreen for display \(id) went away")
+        }
+        result.reportedHz = reportDisplay(id, screen: virtualScreen, tag: tag)
 
-        let view = SpikeMotionView(frame: NSRect(origin: .zero, size: screen.frame.size),
-                                   scale: screen.backingScaleFactor)
-        let window = makeWindow(on: screen, content: view)
+        let view = SpikeMotionView(frame: NSRect(origin: .zero, size: virtualScreen.frame.size),
+                                   scale: virtualScreen.backingScaleFactor)
+        let window = makeWindow(on: virtualScreen, content: view)
         resources.window = window
         resources.view = view
         window.orderFrontRegardless()
