@@ -102,6 +102,7 @@ final class FarsideNotifyScriptTests: XCTestCase {
         _ = try run(["--agent", "codex", "--session", "two"], stdin: nil)
         let hashes = received.value.map(\.sessionHash)
         XCTAssertEqual(hashes.count, 3)
+        guard hashes.count == 3 else { return }
         XCTAssertEqual(hashes[0], hashes[1])
         XCTAssertNotEqual(hashes[0], hashes[2])
     }
