@@ -20,20 +20,23 @@ script/e2e/run-e2e.sh --self-test --soak-seconds 60                             
 
 Options: `--scenarios a,b,c,d,e,f` (d = d1–d5), `--repeat N`, `--soak-seconds S` (default 1200),
 `--long` (2700 s soak), `--room-lifetime S` (the service's room lease, 60–3599 s; e.g. 300 crosses
-several renewals in a 10-minute soak), `--simulator NAME`, `--skip-build`, `--derived-data PATH`,
-`--no-caffeinate`, `--keep-simulator`, `--keep-xcresults` (by default only failed scenarios keep
-their `.xcresult`, so overnight loops do not fill the disk). A run killed outright (no cleanup) leaves
-a pid list; the next run stops those leftovers first — only processes carrying the harness's own
-markers (`--farside-e2e`, the Test Pad's `--run-id`, `src/index.ts`).
-Exit code 0 = every scenario passed (or failed only a known-issue check), 1 = a scenario failed,
-2 = usage, 3 = setup failure, 75 = another harness run is active.
+several renewals in a 10-minute soak), `--simulator NAME`, `--skip-build`, `--derived-data PATH`
+(default `~/Library/Developer/Xcode/DerivedData/FarsideE2E`, reused by every run; outside
+`~/Documents`, where test bundles cannot be loaded), `--no-caffeinate`, `--keep-simulator`,
+`--keep-xcresults` (keep every `.xcresult`; by default none are kept). A run killed outright (no
+cleanup) leaves a pid list; the next run stops those leftovers first — only processes carrying the
+harness's own markers (`--farside-e2e`, the Test Pad's `--run-id`, `src/index.ts`, `FarsideWatchdog
+--farside-e2e`). Exit code 0 = every scenario passed (or failed only a known-issue check), 1 = a
+scenario failed, 2 = usage, 3 = setup failure, 75 = another harness run is active.
 
 Reports: `/private/tmp/farside-e2e/reports/<run>/report.md` and `report.json`
-(`reports/latest` points at the newest). Each scenario folder keeps `xcodebuild.log`, the
-`.xcresult` bundle (screenshots on failure), the test's own `result.json` (checks, metrics, notes)
-and `harness.json` (exit code, timing, timeouts). `iter-N/logs/` keeps the host, phone and Test Pad
-logs, per-second stream statistics, the service and watchdog logs and a process CPU/memory sample
-every 5 s. When `bench/stats_summary.py` exists, the report includes its per-stage summary of the E2E
+(`reports/latest` points at the newest; the 30 newest runs are kept). Every scenario folder keeps the
+test's own `result.json` (checks, metrics, notes) and `harness.json` (exit code, timing, timeouts).
+A failed scenario also keeps `xcodebuild.log` and its failure screenshots (`failure-N.png`, taken
+from the result bundle, which is then deleted), and its iteration keeps `iter-N/logs/`: host, phone
+and Test Pad logs, per-second stream statistics, the service and watchdog logs and a process
+CPU/memory sample every 5 s. A passing iteration keeps only the report data, so overnight loops stay
+small. When `bench/stats_summary.py` exists, the report includes its per-stage summary of the E2E
 stream stats.
 
 Requirements: Xcode with an iOS simulator runtime, Bun, and — for the real host — an installed

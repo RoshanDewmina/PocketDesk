@@ -38,10 +38,11 @@ Usage: script/e2e/run-e2e.sh (--host-app PATH | --self-test) [options]
                         A short lease (e.g. 300) crosses several renewals in a shorter soak.
   --simulator NAME      Dedicated simulator (default "Farside E2E iPhone"; created if missing).
   --skip-build          Reuse existing build products in the derived-data folder.
-  --derived-data PATH   Build products (default <repo>/outputs/E2EBuild).
+  --derived-data PATH   Build products, reused across runs (default ~/Library/Developer/Xcode/DerivedData/FarsideE2E).
   --no-caffeinate       Do not hold display/system-awake assertions during the run.
   --keep-simulator      Leave the dedicated simulator booted afterwards.
-  --keep-xcresults      Keep .xcresult bundles of passed scenarios too (default: failures only).
+  --keep-xcresults      Keep every scenario's .xcresult bundle (default: none; a failed scenario keeps its
+                        logs and failure screenshots, a passing iteration keeps only the report).
 Exit: 0 all passed, 1 a scenario failed, 2 usage, 3 preflight/setup failure, 75 another run is active.
 EOF
 }
@@ -57,7 +58,8 @@ SKIP_BUILD=0
 CAFFEINATE=1
 KEEP_SIM=0
 KEEP_XCRESULTS=0
-DERIVED="$REPO/outputs/E2EBuild"
+# Outside ~/Documents: test bundles built there cannot be loaded (Documents privacy protection).
+DERIVED="$HOME/Library/Developer/Xcode/DerivedData/FarsideE2E"
 while (( $# )); do
   case $1 in
     --host-app) HOST_APP=${2:-}; shift 2 ;;
@@ -256,6 +258,8 @@ prepare_root() {
   chmod 700 "$ROOT/secrets"
   HARNESS_LOG="$REPORT_DIR/harness.log"
   : >> "$HARNESS_LOG"
+  local old=("$ROOT"/reports/[0-9]*T[0-9]*Z(N/On))
+  (( ${#old} > 30 )) && rm -rf -- "${(@)old[31,-1]}"
 }
 
 reset_iteration_state() {
@@ -669,12 +673,43 @@ run_scenario() {
     '{scenario: $s, method: $m, exitCode: $rc, timedOut: $timedOut, setupFailed: false, startedAt: $start, finishedAt: $end}' > "$out/harness.json"
   stop_watchdog
   log "Scenario $scenario finished: exit $rc$([[ $timed_out == 1 ]] && print ' (timed out)') in $(( SECONDS - started ))s"
-  # Result bundles are large; keep them (screenshots, activity logs) only when something failed.
-  if (( rc == 0 && ! KEEP_XCRESULTS )) && [[ $(jget "$out/result.json" .status) == passed ]]; then
-    rm -rf "$out/result.xcresult"
+  # Result bundles are large (screen recordings); a failure keeps its screenshots and logs instead.
+  local outcome=$(jget "$out/result.json" .status)
+  if [[ -d $out/result.xcresult ]]; then
+    [[ $rc == 0 && $outcome == (passed|skipped) ]] || save_failure_screenshots "$out"
+    (( KEEP_XCRESULTS )) || rm -rf "$out/result.xcresult"
   fi
+  [[ $rc == 0 && $outcome == (passed|skipped) ]] && rm -f "$out/xcodebuild.log"
   testpad_restore_window
   return 0
+}
+
+save_failure_screenshots() {
+  local out=$1 staging=$1/attachments index=0 file
+  mkdir -p "$staging"
+  xcrun xcresulttool export attachments --path "$out/result.xcresult" --output-path "$staging" >/dev/null 2>&1
+  for file in $(/usr/bin/jq -r '.[].attachments[] | select(.suggestedHumanReadableName | test("failure|covered"; "i"))
+      | select(.exportedFileName | test("[.]png$")) | .exportedFileName' "$staging/manifest.json" 2>/dev/null); do
+    [[ $file =~ '^[A-Za-z0-9._-]+$' && -f $staging/$file ]] || continue
+    mv "$staging/$file" "$out/failure-$(( ++index )).png"
+  done
+  rm -rf "$staging"
+}
+
+# After the report: a passing iteration keeps only its scenario results; build logs go when builds passed.
+prune_run_artifacts() {
+  local iteration scenario failed
+  for iteration in "$REPORT_DIR"/iter-*(N/); do
+    failed=0
+    for scenario in "$iteration"/*(N/); do
+      [[ ${scenario:t} == logs ]] && continue
+      [[ -f $scenario/xcodebuild.log || -f $scenario/failure-1.png ]] && failed=1
+      [[ $(jget "$scenario/harness.json" .exitCode) == 0 ]] || failed=1
+    done
+    (( failed )) || rm -rf "$iteration/logs"
+  done
+  rm -rf "$REPORT_DIR/build"
+  rm -rf "$RUN" "$ROOT/host" "$ROOT/phone" "$ROOT/stubhost"
 }
 
 stop_xcodebuild() {
@@ -763,6 +798,7 @@ cleanup
 json_line --argjson end $(date +%s) '{finishedAt: $end}' > "$REPORT_DIR/finished.json"
 "$BUN" "$SCRIPT_DIR/report.ts" "$REPORT_DIR"
 report_rc=$?
+prune_run_artifacts
 ln -sfn "$REPORT_DIR" "$ROOT/reports/latest"
 log "Report: $REPORT_DIR/report.md"
 exit $report_rc
