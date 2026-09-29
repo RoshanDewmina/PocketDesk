@@ -12,10 +12,15 @@ struct RelayMessage: Codable {
     var code: String?
     var servers: [ICEServerConfiguration]?
     var policy: String?
+    var features: [String]?
+    var renew: RenewalOffer?
+    var leaseSeconds: Double?
+    var renewAfterSeconds: Double?
+    var credentialSeconds: Double?
 }
 
 @MainActor
-final class SignalingClient {
+final class SignalingClient: SignalingTransport {
     var onMessage: ((RelayMessage) -> Void)?
     var onClose: (() -> Void)?
     private var socket: URLSessionWebSocketTask?
@@ -24,7 +29,7 @@ final class SignalingClient {
     private var pending: [String] = []
     private var generation = UUID()
 
-    func connect(invitation: PairInvitation, hostToken: String?) throws {
+    func connect(invitation: PairInvitation, hostToken: String?, features: [String] = []) throws {
         close()
         guard PairInvitation.validServer(invitation.server), let url = URL(string: invitation.server) else { throw RemoteError.invalidPairing }
         let socket = URLSession.shared.webSocketTask(with: url)
@@ -34,7 +39,8 @@ final class SignalingClient {
         socket.resume()
         send(RelayMessage(type: "register", version: 1, role: hostToken == nil ? "client" : "host",
             room: invitation.room, token: hostToken ?? invitation.token,
-            clientTokenHash: hostToken == nil ? nil : SecureRandom.digest(invitation.token)))
+            clientTokenHash: hostToken == nil ? nil : SecureRandom.digest(invitation.token),
+            features: features.isEmpty ? nil : features))
         reader = Task { [weak self, weak socket] in
             guard let socket else { return }
             do {
