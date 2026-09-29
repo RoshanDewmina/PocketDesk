@@ -78,6 +78,7 @@ struct SessionActivityContent {
 
     var title: String { SessionActivityCopy.title(for: state, stale: isStale) }
     var line: String { SessionActivityCopy.line(for: state, macLabel: attributes.macLabel, stale: isStale) }
+    var islandLine: String { SessionActivityCopy.islandLine(for: state, macLabel: attributes.macLabel, stale: isStale) }
     var summary: String { SessionActivityCopy.accessibilitySummary(for: state, stale: isStale) }
 
     /// Live shows the time held, paused the time left before Farside lets go. Nothing else shows a clock.
@@ -108,6 +109,8 @@ struct SessionActivityContent {
 /// a title is never cut short by a button beside it.
 struct SessionTextColumn: View {
     let content: SessionActivityContent
+    /// The island has less height than the Lock Screen: two lines, and a shorter paused line.
+    var forIsland = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -116,10 +119,10 @@ struct SessionTextColumn: View {
                 .foregroundStyle(Farside.Palette.bone)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
-            Text(content.line)
+            Text(forIsland ? content.islandLine : content.line)
                 .font(.subheadline)
                 .foregroundStyle(Farside.Palette.ash)
-                .lineLimit(3)
+                .lineLimit(forIsland ? 2 : 3)
                 .fixedSize(horizontal: false, vertical: true)
                 .privacySensitive()
         }
@@ -184,7 +187,7 @@ struct SessionExpandedBottom: View {
     var body: some View {
         HStack(alignment: .bottom, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                SessionTextColumn(content: content)
+                SessionTextColumn(content: content, forIsland: true)
                 if content.attributes.isPreview { SampleTag() }
             }
             Spacer(minLength: 4)
