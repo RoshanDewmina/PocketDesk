@@ -60,7 +60,7 @@ final class HardwareKeyMapTests: XCTestCase {
         XCTAssertEqual(RemoteInputDriver.intrinsicFlags(for: "f5"), .maskSecondaryFn)
         XCTAssertEqual(RemoteInputDriver.intrinsicFlags(for: "pageDown"), .maskSecondaryFn)
         XCTAssertEqual(RemoteInputDriver.intrinsicFlags(for: "keypad7"), .maskNumericPad)
-        XCTAssertEqual(RemoteInputDriver.intrinsicFlags(for: "left"), [], "Existing keys keep their original events")
+        XCTAssertEqual(RemoteInputDriver.intrinsicFlags(for: "left"), [.maskSecondaryFn, .maskNumericPad])
         XCTAssertEqual(RemoteInputDriver.intrinsicFlags(for: "a"), [])
         XCTAssertEqual(RemoteInputDriver.intrinsicFlags(for: "forwardDelete"), .maskSecondaryFn)
 
@@ -77,6 +77,26 @@ final class HardwareKeyMapTests: XCTestCase {
         XCTAssertTrue(driver.handle(RemoteAction(action: "key", key: "c", modifiers: ["command"])).accepted)
         XCTAssertEqual(posted.last?.1, .maskCommand)
         XCTAssertFalse(driver.handle(RemoteAction(action: "key", key: "menu")).accepted)
+    }
+
+    /// macOS matches ⌃-arrow system hotkeys (Spaces, Mission Control, App windows) only when the
+    /// arrow carries Fn, as a physical Mac keyboard sends it. Plain ⌃ never switched a Space.
+    func testControlArrowsCarryFnSoMissionControlAndSpacesHotkeysMatch() {
+        var posted: [(CGKeyCode, CGEventFlags)] = []
+        let sink = RemoteInputEventSink(pointerLocation: { .zero }, mouseSequence: { _ in true },
+                                        scroll: { _, _, _ in true }, text: { _ in true },
+                                        key: { code, flags in posted.append((code, flags)); return true })
+        let driver = RemoteInputDriver(eventSink: sink, isTrusted: { true })
+        driver.enabled = true
+        driver.configure(bounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+        for (key, code) in [("left", CGKeyCode(123)), ("right", 124), ("down", 125), ("up", 126)] {
+            XCTAssertTrue(driver.handle(RemoteAction(action: "key", key: key, modifiers: ["control"])).accepted, key)
+            XCTAssertEqual(posted.last?.0, code, key)
+            XCTAssertEqual(posted.last?.1, [.maskControl, .maskSecondaryFn, .maskNumericPad], key)
+        }
+        XCTAssertTrue(driver.handle(RemoteAction(action: "key", key: "left", modifiers: ["shift"])).accepted)
+        XCTAssertEqual(posted.last?.1, [.maskShift, .maskSecondaryFn, .maskNumericPad],
+                       "Shift-arrow selection keeps its shift and gains only the keyboard's own flags")
     }
 }
 

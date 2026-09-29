@@ -31,7 +31,7 @@ Usage: script/e2e/run-e2e.sh (--host-app PATH | --self-test) [options]
   --host-app PATH       Installed Debug host to drive (bundle com.roshan.PocketDesk.RemoteHost).
                         A second, isolated E2E instance is launched; the running host is untouched.
   --self-test           Drive the synthetic stub host instead (proves the harness; no real input).
-  --scenarios LIST      Comma list of a,b,c,d,e,f (d = d1..d5; d1..d5 also accepted). Default: all.
+  --scenarios LIST      Comma list of a,b,c,d,e,f,g (d = d1..d5; d1..d5 also accepted). Default: all.
   --repeat N            Run the selected scenarios N times (default 1).
   --soak-seconds S      Scenario f duration in seconds (default 1200 = 20 min).
   --long                Scenario f runs 45 min, past the 30-minute room lease; any disconnect fails.
@@ -50,7 +50,7 @@ EOF
 
 HOST_APP=""
 SELF_TEST=0
-SCENARIO_ARG="a,b,c,d,e,f"
+SCENARIO_ARG="a,b,c,d,e,g,f"
 REPEAT=1
 SOAK=1200
 ROOM_LIFETIME=""
@@ -96,14 +96,15 @@ typeset -A METHOD=(
   d4 test_d4_SignalingRestart
   d5 test_d5_WatchdogRelaunch
   e test_e_FullScreenSpaces
+  g test_g_ThreeFingerSwipesAndScrollRest
   f test_f_Soak
 )
-typeset -A LIMIT=( a 360 b 600 c 480 d1 300 d2 360 d3 600 d4 360 d5 480 e 480 f $(( SOAK + 900 )) )
+typeset -A LIMIT=( a 360 b 600 c 480 d1 300 d2 360 d3 600 d4 360 d5 480 e 480 g 480 f $(( SOAK + 900 )) )
 SCENARIOS=()
 for item in ${(s:,:)SCENARIO_ARG}; do
   case $item in
     d) SCENARIOS+=(d1 d2 d3 d4 d5) ;;
-    a|b|c|d1|d2|d3|d4|d5|e|f) SCENARIOS+=($item) ;;
+    a|b|c|d1|d2|d3|d4|d5|e|f|g) SCENARIOS+=($item) ;;
     *) print -u2 "Unknown scenario: $item"; exit 2 ;;
   esac
 done

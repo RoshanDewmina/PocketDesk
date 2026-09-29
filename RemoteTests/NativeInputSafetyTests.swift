@@ -144,6 +144,23 @@ final class NativeInputSafetyTests: XCTestCase {
         XCTAssertFalse(driver.handle(scroll("c", "changed", y: 5), upgraded: true, now: 1.51).accepted)
     }
 
+    func testRestingScrollKeepAliveHoldsTheStreamWithoutPostingAndSilenceStillExpires() {
+        let recorder = NativeInputRecorder()
+        let driver = configuredDriver(recorder)
+        XCTAssertTrue(driver.handle(scroll("a", "began", y: 4), upgraded: true, now: 0).accepted)
+        XCTAssertTrue(driver.handle(scroll("a", "changed"), upgraded: true, now: 0.4).accepted)
+        XCTAssertTrue(driver.handle(scroll("a", "changed"), upgraded: true, now: 0.8).accepted)
+        XCTAssertTrue(driver.handle(scroll("a", "changed", y: 6), upgraded: true, now: 1.2).accepted,
+                      "A scroll resumed after a pause continues its stream")
+        XCTAssertEqual(recorder.scrolls.map { $0.1 }, [4, 6], "Keep-alives post nothing to the Mac")
+        XCTAssertTrue(driver.handle(scroll("a", "ended"), upgraded: true, now: 1.3).accepted)
+
+        XCTAssertTrue(driver.handle(scroll("b", "began", y: 2), upgraded: true, now: 5).accepted)
+        XCTAssertFalse(driver.handle(scroll("b", "changed"), upgraded: true, now: 5.6).accepted,
+                       "A phone that goes silent still loses its stream after 0.5 s")
+        XCTAssertFalse(driver.handle(scroll("b", "changed", y: 3), upgraded: true, now: 5.7).accepted)
+    }
+
     func testRetiredIdentityWindowDoesNotExhaustLongSession() {
         let recorder = NativeInputRecorder()
         let driver = configuredDriver(recorder)

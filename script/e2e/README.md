@@ -18,7 +18,7 @@ script/e2e/run-e2e.sh --host-app "/Applications/PocketDesk Host.app" --long     
 script/e2e/run-e2e.sh --self-test --soak-seconds 60                              # harness self-test, no real host
 ```
 
-Options: `--scenarios a,b,c,d,e,f` (d = d1–d5), `--repeat N`, `--soak-seconds S` (default 1200),
+Options: `--scenarios a,b,c,d,e,f,g` (d = d1–d5), `--repeat N`, `--soak-seconds S` (default 1200),
 `--long` (2700 s soak), `--room-lifetime S` (the service's room lease, 60–3599 s; e.g. 300 crosses
 several renewals in a 10-minute soak), `--simulator NAME`, `--skip-build`, `--derived-data PATH`
 (default `~/Library/Developer/Xcode/DerivedData/FarsideE2E`, reused by every run; outside
@@ -75,6 +75,7 @@ harness never requests permissions. The Mac must be unlocked when the run starts
 | d4 | `test_d4_SignalingRestart` | Stop the harness's signaling service, restart it on the same port; both sides reconnect automatically within their retry budgets. |
 | d5 | `test_d5_WatchdogRelaunch` | Crash recovery: with the host's own `FarsideWatchdog` running in E2E mode, **one** `kill -9` of the E2E host; the watchdog must reopen it within **10 s** (as a recovered launch that knows it ended unexpectedly), the phone must reconnect by itself (≤ 100 s) and show "Your Mac’s Farside restarted — reconnected." exactly once; a click lands afterwards. Real host only. |
 | e | `test_e_FullScreenSpaces` | The phone clicks the Test Pad's full-screen button; three-finger swipe right (⌃←) leaves the Space; **Controls › Next Space** (⌃→) returns; the stream stays fresh; a click lands in the full-screen Test Pad; the phone exits full screen and the window is back on the original Space. Skipped when the ⌃←/⌃→ shortcuts are off. |
+| g | `test_g_ThreeFingerSwipesAndScrollRest` | Stub host: three-finger swipes left, right, up and down, landed together and staggered (fingers 50/90 ms apart, the first drifting 6 pt), each send exactly one ⌃-arrow and no click, drag or text. Both hosts: two fingers that rest for 1 s mid-scroll send zero-distance keep-alives, the scroll after the rest continues the same stream, and it ends cleanly. On the real host the swipe half is skipped (the fence refuses ⌃↑/⌃↓; scenario e covers ⌃←/⌃→). |
 | f | `test_f_Soak` | 20 min (default) of continuous pointer motion plus a verified click every 15 s. The host is relaunched right before the soak, so the room lease (30 min by default) ends at a known point. Fails on **any** disconnect, a video stall over 1 s, a missed click, or a memory trend (> max(96 MB, 35 %) growth after warm-up). With `--long` (45 min) it also asserts the session **survived the 30-minute lease without a disconnect**; whenever the soak outlives the lease's half-life it asserts the service **renewed** the lease (`/ready` → `renewal.renewals`). |
 
 The E2E service runs with the product's defaults (30-minute room lease with session renewal
