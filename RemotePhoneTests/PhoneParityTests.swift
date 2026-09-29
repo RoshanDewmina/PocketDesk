@@ -90,6 +90,26 @@ final class CanvasKeyCommandTests: XCTestCase {
         XCTAssertEqual(HardwareKeyMap.usage(forCharacter: ","), 0x36)
         XCTAssertEqual(HardwareKeyMap.name(forHIDUsage: HardwareKeyMap.usage(forCharacter: "q")!), "q")
     }
+
+    func testCloseWindowClosesTheMacWindowOnlyWhileKeysGoToTheMac() {
+        let view = NativeTrackpadInputView()
+        var sent: [String] = []
+        view.keyboard.send = { key, modifiers in sent.append(([key] + modifiers).joined(separator: " ")); return true }
+        let close = #selector(UIResponderStandardEditActions.performClose(_:))
+        XCTAssertFalse(view.canPerformAction(close, withSender: nil), "Outside a session ⌘W closes Farside's window")
+
+        view.hardwareKeys = true
+        XCTAssertTrue(view.canPerformAction(close, withSender: nil))
+        view.performClose(UIKeyCommand(input: "w", modifierFlags: .command, action: close))
+        XCTAssertEqual(sent, ["w command"])
+        let command = UICommand(title: "Close Window", action: close)
+        view.validate(command)
+        XCTAssertEqual(command.title, "Close Mac Window")
+
+        view.hardwareKeys = false
+        view.performClose(nil)
+        XCTAssertEqual(sent, ["w command"], "Nothing reaches the Mac once keys stop going there")
+    }
 }
 
 @MainActor

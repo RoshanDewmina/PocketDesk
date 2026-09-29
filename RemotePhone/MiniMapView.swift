@@ -33,8 +33,9 @@ struct MiniMapView<Thumbnail: View>: View {
                 .fill(Farside.Palette.void.opacity(0.5), style: FillStyle(eoFill: true))
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
-                // Placed by alignment guides, a layout position: VoiceOver and tests got the whole
-                // map as its frame with `.position` and the unmoved frame with `.offset`.
+                // VoiceOver frames this shape element as the whole map however it is placed
+                // (`.position`, alignment guides; `.offset` leaves it unmoved), so its value carries
+                // what is visible and where.
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .strokeBorder(Farside.Palette.bone, lineWidth: 1.5)
                     .frame(width: visible.width, height: visible.height)

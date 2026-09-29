@@ -197,6 +197,33 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
 
     static let windowCommandInputs = ["w", "m", "q", "n", ","]
 
+    /// iPadOS 26's File ▸ Close Window (⌘W) is `performClose:`, sent up the responder chain before
+    /// UIKit closes the window. While keys go to the Mac the canvas takes it, so ⌘W closes the Mac's
+    /// window, and the menu item says so; otherwise it passes on and closes Farside's window.
+    override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        #if DEBUG
+        if let command = sender as? UIKeyCommand, let input = command.input?.lowercased(),
+           MacShortcutMenu.inputs.contains(input) {
+            keyDiagnostic?("can \(NSStringFromSelector(action)) \(input) \(command.modifierFlags.rawValue)")
+        }
+        #endif
+        if action == #selector(UIResponderStandardEditActions.performClose(_:)) { return hardwareKeys }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    override func performClose(_ sender: Any?) {
+        keyDiagnostic?("performClose")
+        guard hardwareKeys, let usage = HardwareKeyMap.usage(forCharacter: "w") else { return }
+        keyboard.commandPressed(usage: usage, flags: (sender as? UIKeyCommand)?.modifierFlags ?? .command)
+    }
+
+    override func validate(_ command: UICommand) {
+        super.validate(command)
+        if command.action == #selector(UIResponderStandardEditActions.performClose(_:)), hardwareKeys {
+            command.title = "Close Mac Window"
+        }
+    }
+
     @objc private func priorityKeyCommand(_ command: UIKeyCommand) {
         keyDiagnostic?("command \(command.input ?? "nil")")
         guard hardwareKeys, let input = command.input,

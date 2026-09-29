@@ -114,6 +114,11 @@ enum MacShortcutMenu {
 
     static var isActive: Bool { !owners.isEmpty }
 
+    #if DEBUG
+    /// Offline input probe: which of these shortcuts the built menu held, to verify on a simulator.
+    static var debugNote: ((String) -> Void)?
+    #endif
+
     static func set(_ active: Bool, for owner: AnyObject) {
         guard UIDevice.current.userInterfaceIdiom == .pad else { return }
         let wasActive = isActive
@@ -128,6 +133,14 @@ enum MacShortcutMenu {
                 MainActor.assumeIsolated {
                     // A build handler replaces the app's own buildMenu(with:); keep SwiftUI's.
                     (UIApplication.shared.delegate as? UIResponder)?.buildMenu(with: builder)
+                    #if DEBUG
+                    if let debugNote, let root = builder.menu(for: .root) {
+                        let held = shortcuts(in: root).map {
+                            "\($0.title) \($0.input ?? "") \($0.modifierFlags.rawValue) \($0.action.map(NSStringFromSelector) ?? "-")"
+                        }
+                        debugNote("menu \(isActive ? "releases" : "keeps") [\(held.joined(separator: "; "))]")
+                    }
+                    #endif
                     if isActive { releaseShortcuts(in: builder) }
                 }
             }
@@ -137,6 +150,13 @@ enum MacShortcutMenu {
     static func releasesShortcut(_ command: UIKeyCommand) -> Bool {
         guard let input = command.input?.lowercased() else { return false }
         return inputs.contains(input) && modifierSets.contains(command.modifierFlags)
+    }
+
+    /// Every command in a menu tree whose shortcut the Mac should get.
+    static func shortcuts(in element: UIMenuElement) -> [UIKeyCommand] {
+        if let menu = element as? UIMenu { return menu.children.flatMap(shortcuts) }
+        guard let command = element as? UIKeyCommand, releasesShortcut(command) else { return [] }
+        return [command]
     }
 
     /// The same menu with the Mac's shortcuts removed from its commands; everything else unchanged.

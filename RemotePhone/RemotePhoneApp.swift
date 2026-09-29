@@ -175,12 +175,13 @@ final class PhoneRemoteModel: ObservableObject {
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
         if contentConcealed { resumeState = .needsChoice }
-        if inputProbe != nil {
+        if let inputProbe {
             // Behave like an upgraded Mac so drags, holds and new actions take their real paths.
             nativeInteractionSupported = true
             inputToken = "probe"
             controlAllowed = true
             geometryEpoch = 1
+            MacShortcutMenu.debugNote = { [weak inputProbe] in inputProbe?.note($0) }
         }
         #endif
         if let mode = LaunchOptions.viewportOverride { ViewportPreference.store(mode) }
