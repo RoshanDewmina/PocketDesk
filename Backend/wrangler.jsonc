@@ -1,0 +1,127 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Root config = local `wrangler dev` only. Deploy with `--env staging` or `--env production`.
+  "name": "farside-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-29",
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
+    "traces": { "enabled": false }
+  },
+  "triggers": { "crons": ["17 4 * * *"] },
+  "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["RoomDO"] }],
+  "d1_databases": [
+    { "binding": "DB", "database_name": "farside-entitlements-dev", "database_id": "00000000-0000-0000-0000-000000000000", "migrations_dir": "migrations" }
+  ],
+  "ratelimits": [
+    { "name": "RL_SIGNAL", "namespace_id": "1001", "simple": { "limit": 30, "period": 60 } },
+    { "name": "RL_ROOM_CREATE", "namespace_id": "1002", "simple": { "limit": 10, "period": 60 } },
+    { "name": "RL_API_IP", "namespace_id": "1003", "simple": { "limit": 20, "period": 60 } },
+    { "name": "RL_API_DEVICE", "namespace_id": "1004", "simple": { "limit": 6, "period": 60 } },
+    { "name": "RL_API_SANDBOX", "namespace_id": "1005", "simple": { "limit": 3, "period": 60 } },
+    { "name": "RL_NOTIFY", "namespace_id": "1006", "simple": { "limit": 120, "period": 60 } },
+    { "name": "RL_TURN", "namespace_id": "1007", "simple": { "limit": 600, "period": 60 } },
+    { "name": "RL_TURN_ENTITLEMENT", "namespace_id": "1008", "simple": { "limit": 20, "period": 60 } }
+  ],
+  "vars": {
+    "ENVIRONMENT_NAME": "dev",
+    "APP_BUNDLE_ID": "com.roshan.PocketDesk.Remote",
+    "APP_APPLE_ID": "",
+    "ALLOWED_PRODUCT_IDS": "com.roshan.PocketDesk.remote.monthly,com.roshan.PocketDesk.remote.yearly",
+    "ACCEPT_SANDBOX": "1",
+    "ALLOW_XCODE_TRANSACTIONS": "1",
+    "STUN_URLS": "stun:stun.cloudflare.com:3478",
+    "TURN_CREDENTIAL_TTL_SECONDS": "3600",
+    "ROOM_LEASE_SECONDS": "1800",
+    "MAX_DEVICES_PER_ENTITLEMENT": "3",
+    "TEST_FORCE_RELAY": "0",
+    "ALLOW_UNENTITLED_RELAY": "0",
+    "KEEPALIVE_SECONDS": "0"
+  },
+  "env": {
+    "staging": {
+      "name": "farside-backend-staging",
+      "workers_dev": false,
+      "preview_urls": false,
+      "routes": [{ "pattern": "signal-staging.getfarside.com", "custom_domain": true }],
+      "observability": {
+        "enabled": true,
+        "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
+        "traces": { "enabled": false }
+      },
+      "triggers": { "crons": ["17 4 * * *"] },
+      "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
+      "d1_databases": [
+        { "binding": "DB", "database_name": "farside-entitlements-staging", "database_id": "5b916903-865e-4659-b359-e8ef333167bd", "migrations_dir": "migrations" }
+      ],
+      "ratelimits": [
+        { "name": "RL_SIGNAL", "namespace_id": "2001", "simple": { "limit": 30, "period": 60 } },
+        { "name": "RL_ROOM_CREATE", "namespace_id": "2002", "simple": { "limit": 10, "period": 60 } },
+        { "name": "RL_API_IP", "namespace_id": "2003", "simple": { "limit": 20, "period": 60 } },
+        { "name": "RL_API_DEVICE", "namespace_id": "2004", "simple": { "limit": 6, "period": 60 } },
+        { "name": "RL_API_SANDBOX", "namespace_id": "2005", "simple": { "limit": 3, "period": 60 } },
+        { "name": "RL_NOTIFY", "namespace_id": "2006", "simple": { "limit": 120, "period": 60 } },
+        { "name": "RL_TURN", "namespace_id": "2007", "simple": { "limit": 600, "period": 60 } },
+        { "name": "RL_TURN_ENTITLEMENT", "namespace_id": "2008", "simple": { "limit": 20, "period": 60 } }
+      ],
+      "vars": {
+        "ENVIRONMENT_NAME": "staging",
+        "APP_BUNDLE_ID": "com.roshan.PocketDesk.Remote",
+        "APP_APPLE_ID": "",
+        "ALLOWED_PRODUCT_IDS": "com.roshan.PocketDesk.remote.monthly,com.roshan.PocketDesk.remote.yearly",
+        "ACCEPT_SANDBOX": "1",
+        "ALLOW_XCODE_TRANSACTIONS": "0",
+        "STUN_URLS": "stun:stun.cloudflare.com:3478",
+        "TURN_CREDENTIAL_TTL_SECONDS": "3600",
+        "ROOM_LEASE_SECONDS": "1800",
+        "MAX_DEVICES_PER_ENTITLEMENT": "3",
+        "TEST_FORCE_RELAY": "0",
+        "ALLOW_UNENTITLED_RELAY": "0",
+        "KEEPALIVE_SECONDS": "0"
+      }
+    },
+    "production": {
+      "name": "farside-backend-production",
+      "workers_dev": false,
+      "preview_urls": false,
+      // "routes": [{ "pattern": "signal.REPLACE_DOMAIN", "custom_domain": true }],
+      "observability": {
+        "enabled": true,
+        "logs": { "enabled": true, "head_sampling_rate": 1, "invocation_logs": false },
+        "traces": { "enabled": false }
+      },
+      "triggers": { "crons": ["17 4 * * *"] },
+      "durable_objects": { "bindings": [{ "name": "ROOM", "class_name": "RoomDO" }] },
+      "d1_databases": [
+        { "binding": "DB", "database_name": "farside-entitlements-production", "database_id": "REPLACE_WITH_PRODUCTION_D1_ID", "migrations_dir": "migrations" }
+      ],
+      "ratelimits": [
+        { "name": "RL_SIGNAL", "namespace_id": "3001", "simple": { "limit": 30, "period": 60 } },
+        { "name": "RL_ROOM_CREATE", "namespace_id": "3002", "simple": { "limit": 10, "period": 60 } },
+        { "name": "RL_API_IP", "namespace_id": "3003", "simple": { "limit": 20, "period": 60 } },
+        { "name": "RL_API_DEVICE", "namespace_id": "3004", "simple": { "limit": 6, "period": 60 } },
+        { "name": "RL_API_SANDBOX", "namespace_id": "3005", "simple": { "limit": 3, "period": 60 } },
+        { "name": "RL_NOTIFY", "namespace_id": "3006", "simple": { "limit": 120, "period": 60 } },
+        { "name": "RL_TURN", "namespace_id": "3007", "simple": { "limit": 600, "period": 60 } },
+        { "name": "RL_TURN_ENTITLEMENT", "namespace_id": "3008", "simple": { "limit": 20, "period": 60 } }
+      ],
+      "vars": {
+        "ENVIRONMENT_NAME": "production",
+        "APP_BUNDLE_ID": "com.roshan.PocketDesk.Remote",
+        "APP_APPLE_ID": "",
+        "ALLOWED_PRODUCT_IDS": "com.roshan.PocketDesk.remote.monthly,com.roshan.PocketDesk.remote.yearly",
+        "ACCEPT_SANDBOX": "1",
+        "ALLOW_XCODE_TRANSACTIONS": "0",
+        "STUN_URLS": "stun:stun.cloudflare.com:3478",
+        "TURN_CREDENTIAL_TTL_SECONDS": "3600",
+        "ROOM_LEASE_SECONDS": "1800",
+        "MAX_DEVICES_PER_ENTITLEMENT": "3",
+        "TEST_FORCE_RELAY": "0",
+        "ALLOW_UNENTITLED_RELAY": "0",
+        "KEEPALIVE_SECONDS": "0"
+      }
+    }
+  }
+}
