@@ -34,6 +34,11 @@ final class RemoteCoordinator: ObservableObject {
     private var retryCount = 0
     private let retryLimit: Int
     private let retryBaseNanoseconds: UInt64
+    private let sessionLossRetryLimit: Int?
+    private let maximumRetryDelayNanoseconds: UInt64?
+    /// An established session dropped (for example, the Mac app crashed and is being relaunched);
+    /// retries use the longer session-loss budget until a connection succeeds or is stopped.
+    private var recoveringLiveSession = false
     private let registrationStableNanoseconds: UInt64
     private var registrationStability: Task<Void, Never>?
     private var stopped = true
@@ -46,12 +51,16 @@ final class RemoteCoordinator: ObservableObject {
         store: (any PairPersistence)? = nil,
         retryLimit: Int = 5,
         retryBaseNanoseconds: UInt64 = 500_000_000,
+        sessionLossRetryLimit: Int? = nil,
+        maximumRetryDelayNanoseconds: UInt64? = nil,
         registrationStableNanoseconds: UInt64 = 5_000_000_000
     ) {
         self.isHost = isHost
         self.store = store ?? PairStore(account: isHost ? "host" : "phone")
         self.retryLimit = max(0, retryLimit)
         self.retryBaseNanoseconds = retryBaseNanoseconds
+        self.sessionLossRetryLimit = sessionLossRetryLimit.map { max(0, $0) }
+        self.maximumRetryDelayNanoseconds = maximumRetryDelayNanoseconds
         self.registrationStableNanoseconds = registrationStableNanoseconds
         relay.onMessage = { [weak self] message in self?.receive(message) }
         relay.onClose = { [weak self] in self?.connectionLost() }
@@ -94,7 +103,7 @@ final class RemoteCoordinator: ObservableObject {
         do {
             if isHost, let pair = hostPair, !pair.paired { try invitation.validate() }
             else { try invitation.validate(enrollment: false) }
-            if resetRetryBudget { retryCount = 0 }
+            if resetRetryBudget { retryCount = 0; recoveringLiveSession = false }
             stopped = false
             retry?.cancel(); retry = nil
             resetSession()
@@ -117,7 +126,7 @@ final class RemoteCoordinator: ObservableObject {
         catch { status = error.localizedDescription }
     }
     func stop() {
-        stopped = true; retry?.cancel(); retry = nil; retryCount = 0
+        stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
         relay.close(); registeredInvitation = nil; resetSession(); status = "Disconnected"
     }
     /// Connected, connecting, or waiting to retry.
@@ -169,6 +178,10 @@ final class RemoteCoordinator: ObservableObject {
                 // A freshly stopped phone may still occupy the server's client slot
                 // for a moment. Retry within the existing bound; never evict it.
                 if !isHost, code == "host_unavailable_or_unauthorized" || code == "already_connected" {
+                    connectionLost(finalStatus: serviceError)
+                } else if isHost, code == "already_connected" {
+                    // A relaunched host can race the service noticing that its crashed
+                    // predecessor's socket closed. Wait it out within the retry bound.
                     connectionLost(finalStatus: serviceError)
                 } else {
                     fail(serviceError)
@@ -273,7 +286,8 @@ final class RemoteCoordinator: ObservableObject {
                 self.status = state
                 if state == "connected" {
                     guard !self.connected else { return }
-                    self.connected = true; self.retryCount = 0; self.timeout?.cancel(); self.onAuthenticated?()
+                    self.connected = true; self.retryCount = 0; self.recoveringLiveSession = false
+                    self.timeout?.cancel(); self.onAuthenticated?()
                 } else if state == "failed" || state == "disconnected" || state == "closed" { self.peerDisconnected() }
             }
         }
@@ -328,28 +342,42 @@ final class RemoteCoordinator: ObservableObject {
         // A media and signaling failure can report the same outage independently.
         // The first event already closed the old transport and scheduled a retry.
         guard retry == nil else { return }
+        if connected && sessionLossRetryLimit != nil { recoveringLiveSession = true }
         relay.close(); registeredInvitation = nil; resetSession()
-        guard retryCount < retryLimit else {
+        let limit = recoveringLiveSession ? max(retryLimit, sessionLossRetryLimit ?? retryLimit) : retryLimit
+        guard retryCount < limit else {
             stopped = true
+            recoveringLiveSession = false
             status = finalStatus
             return
         }
         retryCount += 1
-        let delay = UInt64(1 << (retryCount - 1))
+        let delay = RetrySchedule.delay(attempt: retryCount, base: retryBaseNanoseconds,
+                                        maximum: maximumRetryDelayNanoseconds)
         status = "Connection interrupted · retrying…"
         retry = Task { [weak self] in
             guard let self else { return }
-            try? await Task.sleep(nanoseconds: delay * self.retryBaseNanoseconds)
+            try? await Task.sleep(nanoseconds: delay)
             guard !Task.isCancelled, !self.stopped else { return }
             self.retry = nil; self.start(resetRetryBudget: false)
         }
     }
     private func fail(_ message: String) {
-        stopped = true; retry?.cancel(); retry = nil
+        stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false
         relay.close(); registeredInvitation = nil; resetSession(); status = message
     }
 
     #if DEBUG
     func simulateTransportLossForTesting() { connectionLost() }
     #endif
+}
+
+enum RetrySchedule {
+    /// Exponential backoff of 1×, 2×, 4×… the base delay, optionally capped.
+    static func delay(attempt: Int, base: UInt64, maximum: UInt64?) -> UInt64 {
+        let exponent = UInt64(min(max(attempt - 1, 0), 32))
+        let (value, overflow) = base.multipliedReportingOverflow(by: UInt64(1) << exponent)
+        let delay = overflow ? UInt64.max : value
+        return maximum.map { min(delay, $0) } ?? delay
+    }
 }

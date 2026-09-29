@@ -64,6 +64,22 @@ struct RemoteInputEpoch {
     }
 }
 
+/// Marks every event the phone injects, so Mac-side listeners (the privacy curtain's local
+/// Escape shortcut) can tell them apart from the physical keyboard.
+enum RemoteInputTag {
+    static let value: Int64 = 0x4641_5253_4944_4531
+
+    static func mark(_ event: CGEvent) {
+        event.setIntegerValueField(.eventSourceUserData, value: value)
+    }
+
+    static func isInjected(_ event: CGEvent?, ownPID: pid_t = getpid()) -> Bool {
+        guard let event else { return false }
+        return event.getIntegerValueField(.eventSourceUserData) == value
+            || event.getIntegerValueField(.eventSourceUnixProcessID) == Int64(ownPID)
+    }
+}
+
 struct RemoteInputEventSink {
     struct MouseEvent {
         var type: CGEventType
@@ -93,7 +109,7 @@ struct RemoteInputEventSink {
                 event.setIntegerValueField(.mouseEventClickState, value: description.count)
                 events.append(event)
             }
-            for event in events { event.post(tap: .cghidEventTap) }
+            for event in events { RemoteInputTag.mark(event); event.post(tap: .cghidEventTap) }
             return true
         },
         scroll: { point, horizontal, vertical in
@@ -106,6 +122,7 @@ struct RemoteInputEventSink {
                 wheel3: 0
             ) else { return false }
             event.location = point
+            RemoteInputTag.mark(event)
             event.post(tap: .cghidEventTap)
             return true
         },
@@ -135,6 +152,7 @@ struct RemoteInputEventSink {
             default: phaseValue = 0
             }
             if phaseValue != 0 { event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phaseValue) }
+            RemoteInputTag.mark(event)
             event.post(tap: .cghidEventTap)
             return true
         },
@@ -145,6 +163,7 @@ struct RemoteInputEventSink {
                 characters.withUnsafeBufferPointer {
                     event.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: $0.baseAddress)
                 }
+                RemoteInputTag.mark(event)
             }
             down.post(tap: .cghidEventTap)
             up.post(tap: .cghidEventTap)
@@ -155,6 +174,7 @@ struct RemoteInputEventSink {
                   let up = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: false) else { return false }
             for event in [down, up] {
                 event.flags = flags
+                RemoteInputTag.mark(event)
             }
             down.post(tap: .cghidEventTap)
             up.post(tap: .cghidEventTap)

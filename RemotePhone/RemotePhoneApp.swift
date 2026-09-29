@@ -72,13 +72,22 @@ enum ResumeState: Equatable {
 
 @MainActor
 final class PhoneRemoteModel: ObservableObject {
-    let connection = RemoteCoordinator(isHost: false)
+    /// A lost live session keeps retrying for about 90 seconds, long enough for the Mac's
+    /// watchdog to relaunch a crashed or hung Farside with the same pairing.
+    let connection = RemoteCoordinator(isHost: false, sessionLossRetryLimit: 24,
+                                       maximumRetryDelayNanoseconds: 4_000_000_000)
     let pointerLocator = PointerLocator()
     let pointerOverlay = PointerOverlayModel()
     let clipboard = PhoneClipboard()
     @Published private(set) var hostFeatures: Set<String> = []
     @Published private(set) var resumeState: ResumeState = .none
     @Published private(set) var hostPresence: HostPresence?
+    /// The Mac's privacy curtain, or nil when the Mac does not support one.
+    @Published private(set) var curtainState: PrivacyCurtainState?
+    /// A short explanation shown over the live session, cleared after a few seconds.
+    @Published private(set) var sessionNotice: String?
+    private var sessionNoticeTask: Task<Void, Never>?
+    private var recoveryNoticeShown = false
     /// Why the last session ended, when the Mac itself said so.
     @Published private(set) var macNotice: String?
     private var departureReason: HostPresence?
@@ -258,6 +267,32 @@ final class PhoneRemoteModel: ObservableObject {
     func wakeMacDisplay() {
         guard canWakeDisplay else { return }
         _ = connection.sendControl(RemoteAction(action: "wake", epoch: geometryEpoch))
+    }
+
+    var curtainSupported: Bool { hostFeatures.contains(SessionFeature.privacyCurtain) }
+
+    /// Changing the curtain affects the Mac's own screen, so it needs control, like waking it.
+    var canChangeCurtain: Bool {
+        curtainSupported && connection.connected && controlAllowed && !privacyShield && !contentConcealed
+    }
+
+    /// Turns the Mac's "hide screen while sharing" preference on or off. The Mac confirms the new
+    /// state on its next status message; nothing changes locally until then.
+    @discardableResult
+    func setMacCurtain(_ on: Bool) -> Bool {
+        guard canChangeCurtain else { return false }
+        let request: PrivacyCurtainRequest = on ? .up : .down
+        return connection.sendControl(RemoteAction(action: "curtain", epoch: geometryEpoch, curtain: request.rawValue))
+    }
+
+    private func showSessionNotice(_ text: String) {
+        sessionNotice = text
+        sessionNoticeTask?.cancel()
+        sessionNoticeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.sessionNotice = nil
+        }
     }
 
     @discardableResult
@@ -670,6 +705,16 @@ final class PhoneRemoteModel: ObservableObject {
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             hostFeatures = Set(action.features ?? [])
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
+            let previousCurtain = curtainState
+            curtainState = curtainSupported
+                ? action.curtain.flatMap(PrivacyCurtainState.init(rawValue:)) ?? .off : nil
+            if let notice = PhoneSessionNotice.curtainChange(from: previousCurtain, to: curtainState) {
+                showSessionNotice(notice)
+            }
+            if action.hostEvent == HostLifecycleEvent.recovered.rawValue, !recoveryNoticeShown {
+                recoveryNoticeShown = true
+                showSessionNotice(PhoneSessionNotice.hostRecovered)
+            }
             if let hostPresence, hostPresence != .displayAsleep { departureReason = hostPresence }
             if let hostStream = action.hostStream { connection.media?.remoteHostSummary = hostStream }
             appliedStreamQuality = action.streamQuality
@@ -831,6 +876,8 @@ final class PhoneRemoteModel: ObservableObject {
         textStatus = ""
         hostFeatures = []
         hostPresence = nil
+        curtainState = nil
+        recoveryNoticeShown = false
         if let departureReason { macNotice = Self.notice(for: departureReason) }
         departureReason = nil
         clipboard.cancel()

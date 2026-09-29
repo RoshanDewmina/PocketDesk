@@ -46,7 +46,17 @@ final class HostUISnapshotTests: XCTestCase {
             ("popover-unavailable", ready(.unavailable) {
                 $0.detail = "Couldn’t reach the connection. Check this Mac’s internet, then try again."
             }),
-            ("popover-needs-setup", ready(.needsScreenRecording) { $0.screenRecording = .denied })
+            ("popover-needs-setup", ready(.needsScreenRecording) { $0.screenRecording = .denied }),
+            ("popover-crash-loop", ready(.unavailable) {
+                $0.crashLoopStopped = true
+                $0.detail = "Farside stopped after repeated crashes. Sharing is paused until you resume it."
+            }),
+            ("popover-curtain-up", ready(.controlling) {
+                $0.session = Self.measured
+                $0.privacyCurtain = true
+                $0.curtainStatus = "Covering your display. Your phone still sees the desktop."
+                $0.loginItem = .needsApproval
+            })
         ]
         for (name, state) in states {
             let presentation = HostPopoverPresentation.make(for: state, now: now)
@@ -177,6 +187,29 @@ final class HostUISnapshotTests: XCTestCase {
             $0.accessibility = .denied
             $0.openAtLogin = false
         }, actions: .preview))
+        try render("settings-reliability-privacy", HostSettingsView(state: ready(.controlling) {
+            $0.session = Self.measured
+            $0.openAtLogin = true
+            $0.loginItem = .on
+            $0.automaticRecovery = .needsApproval
+            $0.privacyCurtain = true
+            $0.curtainStatus = "Covering 2 displays. Your phone still sees the desktop."
+        }, actions: .preview))
+        try render("settings-crash-loop", HostSettingsView(state: ready(.unavailable) {
+            $0.crashLoopStopped = true
+            $0.automaticRecovery = .on
+        }, actions: .preview))
+    }
+
+    func testCrashLoopAndCurtainAreExplained() {
+        let stopped = HostPopoverPresentation.make(for: ready(.unavailable) { $0.crashLoopStopped = true })
+        XCTAssertEqual(stopped.headline, "Stopped after repeated crashes")
+        XCTAssertEqual(stopped.actions, [.tryAgain], "Try Again resumes sharing and clears the crash-loop stop")
+        XCTAssertEqual(HostBackgroundItemCopy.loginSubtitle(.needsApproval), "Waiting for approval in Login Items")
+        XCTAssertEqual(HostCurtainCopy.subtitle(for: ready(.controlling) {
+            $0.privacyCurtain = true
+            $0.accessibility = .denied
+        }), "Needs Accessibility, so Esc can always lift it")
     }
 
     // MARK: Rendering

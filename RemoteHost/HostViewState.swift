@@ -10,6 +10,23 @@ enum HostAvailabilityNote: Equatable {
     case displayAsleep, asleep, locked, switchedUser
 }
 
+/// A login item or LaunchAgent as System Settings sees it.
+enum HostBackgroundItemState: Equatable {
+    case on, off, needsApproval, unavailable
+
+    /// Registered with the system, whether or not the person has approved it yet.
+    var isRegistered: Bool { self == .on || self == .needsApproval }
+
+    var diagnosticsText: String {
+        switch self {
+        case .on: "on"
+        case .off: "off"
+        case .needsApproval: "needs approval in Login Items"
+        case .unavailable: "unavailable"
+        }
+    }
+}
+
 struct HostViewState: Equatable {
     var macName = "This Mac"
     /// How this app appears in Finder and, possibly, System Settings lists.
@@ -32,12 +49,19 @@ struct HostViewState: Equatable {
     var pausedUntil: Date?
     var session: HostSessionReadout?
     var availability: HostAvailabilityNote?
+    var loginItem: HostBackgroundItemState = .off
+    var automaticRecovery: HostBackgroundItemState = .off
+    var privacyCurtain = false
+    /// What the curtain is doing now, when that differs from the preference alone.
+    var curtainStatus: String?
+    var crashLoopStopped = false
     var displays: [HostDisplayOption] = []
     var selectedDisplayID: UInt32 = 0
     var detail: String?
 
     var controlNeedsAccessibility: Bool { allowControl && !accessibility.isGranted }
     var selectedDisplayName: String? { displays.first { $0.id == selectedDisplayID }?.name }
+    var curtainNeedsAccessibility: Bool { privacyCurtain && !accessibility.isGranted }
 }
 
 @MainActor
@@ -61,6 +85,10 @@ struct HostActions {
     var setKeepAwake: (Bool) -> Void = { _ in }
     var setChimeOnConnect: (Bool) -> Void = { _ in }
     var setOpenAtLogin: (Bool) -> Void = { _ in }
+    var setAutomaticRecovery: (Bool) -> Void = { _ in }
+    var openLoginItems: () -> Void = {}
+    var setPrivacyCurtain: (Bool) -> Void = { _ in }
+    var copyDiagnostics: () -> Void = {}
     var selectDisplay: (UInt32) -> Void = { _ in }
     var openSetup: () -> Void = {}
     var openSettings: () -> Void = {}

@@ -22,6 +22,9 @@ struct RemoteAction: Codable {
     var hostState: String? = nil
     /// Sender-side stream stages for the phone's optional statistics overlay. Older phones ignore it.
     var hostStream: HostStreamSummary? = nil
+    // Privacy curtain request ("curtain" action) or state (on "capture"); host lifecycle event.
+    var curtain: String? = nil
+    var hostEvent: String? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.

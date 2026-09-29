@@ -240,6 +240,15 @@ struct NativeSessionView: View {
                 .transition(.opacity)
             }
             clipboardStatus
+            if let notice = model.sessionNotice {
+                Text(notice)
+                    .font(.subheadline.weight(.medium))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .glassEffect(.regular, in: .capsule)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+            }
             if let zoomBadge {
                 Text(zoomBadge)
                     .font(.subheadline.weight(.semibold).monospacedDigit())
@@ -804,6 +813,7 @@ struct NativeSessionView: View {
                     gesturesSection
                     workspaceSection
                     pictureSection
+                    macPrivacySection
                     feelSection
                 }
                 .onAppear {
@@ -1002,6 +1012,36 @@ struct NativeSessionView: View {
             }
         } header: {
             Text("Picture")
+        }
+    }
+
+    @ViewBuilder private var macPrivacySection: some View {
+        if model.curtainSupported, let state = model.curtainState {
+            Section {
+                Toggle("Hide Mac screen", isOn: Binding(get: { state.preferenceOn },
+                                                        set: { model.setMacCurtain($0) }))
+                    .disabled(!model.canChangeCurtain)
+                    .accessibilityIdentifier("remote.macCurtain")
+                if state == .liftedLocally {
+                    Button("Hide it again") { model.setMacCurtain(true) }
+                        .disabled(!model.canChangeCurtain)
+                }
+            } header: {
+                Text("Mac privacy")
+            } footer: {
+                Text(macCurtainFooter(state))
+            }
+        }
+    }
+
+    private func macCurtainFooter(_ state: PrivacyCurtainState) -> String {
+        switch state {
+        case .off: "Covers your Mac’s displays while you’re connected. You still see the desktop here."
+        case .pending: "Your Mac covers its screen once the picture is live."
+        case .up: "Your Mac’s screen is covered. Anyone at the Mac can press Esc three times to lift it."
+        case .liftedLocally: "Someone at your Mac lifted the curtain for this session."
+        case .unavailable: "Your Mac needs Accessibility permission for Farside before it can hide its screen."
+        case .failed: "Your Mac couldn’t confirm the curtain was hidden from this stream, so its screen stayed visible."
         }
     }
 

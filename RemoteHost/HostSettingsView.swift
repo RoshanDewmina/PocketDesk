@@ -30,6 +30,11 @@ struct HostSettingsView: View {
                                set: actions.setChimeOnConnect)
                         .accessibilityIdentifier("farside.settings.chime")
                 }
+                HostSettingsRow("Hide this Mac’s screen", subtitle: HostCurtainCopy.subtitle(for: state)) {
+                    HostSwitch(label: "Hide this Mac’s screen", isOn: state.privacyCurtain,
+                               set: actions.setPrivacyCurtain)
+                        .accessibilityIdentifier("farside.settings.privacyCurtain")
+                }
                 if state.displays.count > 1 {
                     HostSettingsRow("Shared display") {
                         Picker("Shared display",
@@ -49,10 +54,25 @@ struct HostSettingsView: View {
                               status: state.accessibility, pane: .accessibility)
             }
 
-            HostSettingsSection("General") {
-                HostSettingsRow("Open at login", subtitle: "Recommended, so Farside is back after a restart") {
-                    HostSwitch(label: "Open at login", isOn: state.openAtLogin, set: actions.setOpenAtLogin)
-                        .accessibilityIdentifier("farside.settings.openAtLogin")
+            HostSettingsSection("General", footer: generalFooter) {
+                HostSettingsRow("Open at login", subtitle: HostBackgroundItemCopy.loginSubtitle(state.loginItem)) {
+                    backgroundItemAccessory(state.loginItem) {
+                        HostSwitch(label: "Open at login", isOn: state.openAtLogin, set: actions.setOpenAtLogin)
+                            .accessibilityIdentifier("farside.settings.openAtLogin")
+                    }
+                }
+                HostSettingsRow("Restart Farside if it quits",
+                                subtitle: HostBackgroundItemCopy.recoverySubtitle(state.automaticRecovery)) {
+                    backgroundItemAccessory(state.automaticRecovery) {
+                        HostSwitch(label: "Restart Farside if it quits", isOn: state.automaticRecovery.isRegistered,
+                                   set: actions.setAutomaticRecovery)
+                            .accessibilityIdentifier("farside.settings.automaticRecovery")
+                    }
+                }
+                HostSettingsRow("Diagnostics", subtitle: "No screen content, typed text, clipboard, tokens or IP addresses") {
+                    Button("Copy Diagnostics", action: actions.copyDiagnostics)
+                        .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+                        .accessibilityIdentifier("farside.settings.copyDiagnostics")
                 }
             }
         }
@@ -157,6 +177,23 @@ struct HostSettingsView: View {
                     .buttonStyle(HostButtonStyle(kind: .primary, height: 30))
                     .accessibilityIdentifier("farside.settings.pairNewPhone")
             }
+        }
+    }
+
+    private var generalFooter: String? {
+        state.crashLoopStopped ? "Farside stopped after repeated crashes. Try Again above resumes sharing." : nil
+    }
+
+    @ViewBuilder
+    private func backgroundItemAccessory<Switch: View>(_ item: HostBackgroundItemState,
+                                                       @ViewBuilder toggle: () -> Switch) -> some View {
+        HStack(spacing: 8) {
+            if item == .needsApproval {
+                Button("Allow…", action: actions.openLoginItems)
+                    .buttonStyle(HostArrowButtonStyle())
+                    .accessibilityLabel("Open Login Items in System Settings")
+            }
+            toggle()
         }
     }
 
