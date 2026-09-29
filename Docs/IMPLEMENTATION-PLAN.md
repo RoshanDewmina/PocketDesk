@@ -4,11 +4,11 @@ User explicitly requested recovery of the latest Claude Code/Codex conversations
 
 | Package | Owner / checkout | State |
 |---|---|---|
-| Controls A | `/root/farside_claude_history`, GPT-6 Sol/high; existing `landing-controls` worktree | Recover interrupted phone tests, four portrait UI tests and E2E compile; first exclusive Xcode slot; no main merge/install |
-| Performance W1–W5 | `/root/performance_recovery`, GPT-6 Sol/high; existing `perf-120fps` worktree | Review existing `10065ce`, resolve one failed renewal test and interrupted phone tests; preserve intended feature defaults; second Xcode slot |
-| Pointer touchdown | Parent; existing `pointer-touchdown-jump` worktree | `00cfe41`: inherited reproducer fails before fix; 46 gesture/direct-touch tests pass after; independent review pending |
-| Host pointer placement | Parent; existing `pointer-host-chain-landing` worktree | Review recovered chain/fence/telemetry changes and reset boundaries before integration |
-| Integrated verification/install | Parent; main checkout only | Pending package checks and independent reviews; preserve stable host identity and pairing |
+| Controls A | `/root/farside_claude_history`, GPT-6 Sol/high; existing `landing-controls` worktree | Merged `81161cb` after `57aa385` held-input fix; 201 phone unit tests, four portrait UI tests, held-input regression and six-state screenshot tour passed; E2E compiled; physical acceptance pending |
+| Performance W1–W5 | `/root/performance_recovery`, GPT-6 Sol/high; existing `perf-120fps` worktree | Author checks passed 44 core and 66 phone tests on initial recovery fixes. Independent review found missing phone load feedback and nonmonotonic quality rungs; bounded corrections and re-verification ongoing; intended tuned defaults preserved |
+| Pointer touchdown | Parent; existing `pointer-touchdown-jump` worktree | `00cfe41` merged via `dc32a64`: inherited reproducer fails before fix; 46 gesture/direct-touch tests pass; independent review approved; physical feel pending |
+| Host pointer placement | Parent; existing `pointer-host-chain-landing` worktree | Merged `9c35c7f` after reset-boundary, single-snapshot fence and relative-edge fixes (`7230b95`); 64 scoped core tests passed, independent review approved, integrated host built |
+| Integrated verification/install | Parent; main checkout only | Remaining performance correction/review, combined core/phone/UI checks and stable-identity install pending. Paired physical iPhone queried 29 Sep: tunnel unavailable; phone install and physical acceptance pending device availability |
 
 Only one heavy Xcode/simulator runner at a time under `/tmp/farside-xcodebuild.lock`. No other agent build processes remained at recovery. Native workers are Sol; no Astra coding/review worker. Read-only history discovery preceded repository model instructions. Existing unfinished worktrees and dirty files preserved. Global Claude inventory: 8 parent and 73 subagent records for this date, 0 unresolved matching records; only Farside conversations were read for scope. Historical entries below remain dated receipts.
 
