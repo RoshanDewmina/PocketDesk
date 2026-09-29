@@ -255,7 +255,7 @@ struct HomeView: View {
         let busy = status.tone == .busy
         return ReachArt(gap: gapTarget, contact: status.inContact ? 1 : 0,
                         cell: horizontalSizeClass == .regular ? 4.5 : 3.6, active: !covered,
-                        ripples: contactRipples, readout: busy)
+                        ripples: contactRipples, readoutText: busy ? status.text : nil)
             .animation(reduceMotion ? nil : Farside.Motion.easeOut(0.9), value: gapTarget)
             .animation(reduceMotion ? nil : Farside.Motion.easeOut(0.6), value: busy)
             .frame(height: verticalSizeClass == .compact ? 230 : (horizontalSizeClass == .regular ? 250 : 200))
