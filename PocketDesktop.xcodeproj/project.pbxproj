@@ -95,6 +95,7 @@
 		264C7933FB1D7DE6D0845473 /* HostPairingPreflightTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE8D633F7518C97C14277D3B /* HostPairingPreflightTests.swift */; };
 		26A84149D017BCFA042A347F /* PeerMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1A9CB4348526C909CF253F1 /* PeerMedia.swift */; };
 		26E36CBD26679AF1643E4F04 /* DesktopPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D855557157B394E9F2314DE /* DesktopPreview.swift */; };
+		27213DDE316573A07470BE00 /* ViewportCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E524D88101D87E596021B705 /* ViewportCaptureTests.swift */; };
 		274AB3019D901C3E379273DF /* NativeCodecCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7E6B1B2D48610494416341 /* NativeCodecCapability.swift */; };
 		27591B33CE73CC071150F456 /* RemotePhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FC077F3131B8830DBE715F /* RemotePhoneApp.swift */; };
 		27B9184CADFE50A02F9B8B22 /* PhoneClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D0946F7F5C7A6572E8C193F /* PhoneClipboard.swift */; };
@@ -601,10 +602,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -633,10 +634,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -898,6 +899,7 @@
 		E36FFD3DA225862D411FE682 /* StreamTuning.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamTuning.swift; sourceTree = "<group>"; };
 		E399F6A3DB9BCC147F0796C0 /* HostPointerTelemetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostPointerTelemetry.swift; sourceTree = "<group>"; };
 		E50E46708BCCA263DA92ECDF /* DebugLaunchSeeds.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLaunchSeeds.swift; sourceTree = "<group>"; };
+		E524D88101D87E596021B705 /* ViewportCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportCaptureTests.swift; sourceTree = "<group>"; };
 		E5A4A5C6B82AD42422582E6F /* BrowserPeerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPeerTests.swift; sourceTree = "<group>"; };
 		E68E0D2431AB187AE68C1ED2 /* StreamQuality.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamQuality.swift; sourceTree = "<group>"; };
 		EC94BB45B8A9E3D97A3B64EC /* HostTerminationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostTerminationTests.swift; sourceTree = "<group>"; };
@@ -1370,6 +1372,7 @@
 				B10107405AE87CFAB89018C7 /* SessionLifecycleTests.swift */,
 				0714DFC87A5CF68A0AA1E058 /* SystemIntegrationSupport.swift */,
 				54604090E4607DFCC6F5FA74 /* VideoPresentationProbeTests.swift */,
+				E524D88101D87E596021B705 /* ViewportCaptureTests.swift */,
 			);
 			path = RemotePhoneTests;
 			sourceTree = "<group>";
@@ -2198,6 +2201,7 @@
 				6B2FE715EF8AC2D65B61F3A6 /* SessionLifecycleTests.swift in Sources */,
 				4C933584E5C8EA807089888B /* SystemIntegrationSupport.swift in Sources */,
 				69C6E52AE6F23B982B354DE0 /* VideoPresentationProbeTests.swift in Sources */,
+				27213DDE316573A07470BE00 /* ViewportCaptureTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

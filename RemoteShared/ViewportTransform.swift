@@ -392,3 +392,120 @@ public struct ViewportTransform {
         point.x.isFinite && point.y.isFinite
     }
 }
+
+// MARK: - Viewport capture (G4)
+
+/// What the phone asks the Mac to capture (Docs/perf/PLAN-120FPS-AND-LOAD.md §4): a rect in display
+/// points with a top-left origin, the convention `moveTo` and direct touch use, and the device pixels
+/// that rect covers on screen at the current zoom.
+struct ViewportCaptureRequest: Equatable {
+    var rect: CGRect
+    var pixelWidth: Int
+    var pixelHeight: Int
+    /// Device pixels per display point.
+    var zoom: Double
+    /// The display the rect was measured on; a request for any other display is never sent.
+    var displaySize: CGSize
+
+    func region(epoch: UInt64) -> ViewportRegion {
+        ViewportRegion(epoch: epoch, x: Double(rect.minX), y: Double(rect.minY), width: Double(rect.width),
+                       height: Double(rect.height), pixelWidth: pixelWidth, pixelHeight: pixelHeight, zoom: zoom)
+    }
+}
+
+extension ViewportTransform {
+    /// Requested rects move in 1/64 pt steps, like direct touch, so rounding noise is never a change.
+    static let captureQuantum: CGFloat = 64
+
+    static func wholeDisplayRect(for displaySize: CGSize) -> CGRect {
+        guard displaySize.width.isFinite, displaySize.height.isFinite,
+              displaySize.width > 0, displaySize.height > 0 else { return .zero }
+        return CGRect(origin: .zero, size: displaySize)
+    }
+
+    /// Where a display-point rect lands when the whole display is drawn in `displayRect`, such as the
+    /// mini map. Each axis scales on its own, so a rounded map size cannot shift the rect.
+    static func placement(of rect: CGRect, displaySize: CGSize, in displayRect: CGRect) -> CGRect {
+        guard isFinite(rect), isFinite(displayRect), displaySize.width.isFinite, displaySize.height.isFinite,
+              displaySize.width > 0, displaySize.height > 0 else { return .zero }
+        let scaleX = displayRect.width / displaySize.width
+        let scaleY = displayRect.height / displaySize.height
+        return CGRect(x: displayRect.minX + rect.minX * scaleX, y: displayRect.minY + rect.minY * scaleY,
+                      width: rect.width * scaleX, height: rect.height * scaleY)
+    }
+
+    /// A display-point rect in the picture container, which sits on `contentRect` and positions the
+    /// pointer glyph the same way: display points × `scale`.
+    func pictureRect(fromSource rect: CGRect) -> CGRect {
+        guard scale > 0, Self.isFinite(rect) else { return .zero }
+        return CGRect(x: rect.minX * scale, y: rect.minY * scale,
+                      width: rect.width * scale, height: rect.height * scale)
+    }
+
+    /// A display-point rect on the canvas: the same mapping as `viewPoint(fromSource:)`.
+    func viewRect(fromSource rect: CGRect) -> CGRect {
+        guard scale > 0, Self.isFinite(rect) else { return .zero }
+        let content = contentRect
+        return pictureRect(fromSource: rect).offsetBy(dx: content.minX, dy: content.minY)
+    }
+
+    /// The display points under a canvas rect, not clamped to the display.
+    func sourceRect(fromView rect: CGRect) -> CGRect {
+        guard scale > 0, Self.isFinite(rect) else { return .zero }
+        let content = contentRect
+        return CGRect(x: (rect.minX - content.minX) / scale, y: (rect.minY - content.minY) / scale,
+                      width: rect.width / scale, height: rect.height / scale)
+    }
+
+    /// Where decoded frames sit inside the picture container. A cropped capture's frames show only the
+    /// region the Mac echoed for them, so they are placed by it, never by the viewport asked for last;
+    /// whole-display capture fills the container exactly as before viewport capture existed.
+    func picturePlacement(for region: CaptureRegion?) -> CGRect {
+        guard let region, !region.isWholeDisplay else { return CGRect(origin: .zero, size: contentRect.size) }
+        return pictureRect(fromSource: region.rect)
+    }
+
+    /// The same placement on the canvas.
+    func framePlacement(for region: CaptureRegion?) -> CGRect {
+        guard let region, !region.isWholeDisplay else { return contentRect }
+        return viewRect(fromSource: region.rect)
+    }
+
+    /// Fit, and any zoom at or below the mode's own size, asks for the whole display; so does a zoom
+    /// that still shows all of it.
+    var requestsWholeDisplay: Bool { zoom <= 1 || !isCropped }
+
+    /// What to ask the Mac to capture now; nil until the viewport has a display, a canvas and a scale.
+    func captureRequest(displayScale: CGFloat) -> ViewportCaptureRequest? {
+        guard displayScale.isFinite, displayScale > 0, scale > 0 else { return nil }
+        let display = Self.wholeDisplayRect(for: sourceSize)
+        let rect = requestsWholeDisplay ? display : Self.captureQuantized(visibleSourceRect, within: display)
+        guard rect.width > 0, rect.height > 0 else { return nil }
+        let pixelsPerPoint = scale * displayScale
+        let range = ViewportRegion.zoomRange
+        let rounded = (Double(pixelsPerPoint) * 10_000).rounded() / 10_000
+        let pixelZoom = min(max(rounded, range.lowerBound), range.upperBound)
+        return ViewportCaptureRequest(rect: rect, pixelWidth: Self.capturePixels(rect.width * pixelsPerPoint),
+                                      pixelHeight: Self.capturePixels(rect.height * pixelsPerPoint),
+                                      zoom: pixelZoom, displaySize: sourceSize)
+    }
+
+    private static func captureQuantized(_ rect: CGRect, within display: CGRect) -> CGRect {
+        func step(_ value: CGFloat, limit: CGFloat) -> CGFloat {
+            min(max(0, (value * captureQuantum).rounded() / captureQuantum), limit)
+        }
+        let minX = step(rect.minX, limit: display.maxX), maxX = step(rect.maxX, limit: display.maxX)
+        let minY = step(rect.minY, limit: display.maxY), maxY = step(rect.maxY, limit: display.maxY)
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    private static func capturePixels(_ value: CGFloat) -> Int {
+        let range = ViewportRegion.pixelRange
+        guard value.isFinite else { return range.lowerBound }
+        return Int(min(max(value.rounded(), CGFloat(range.lowerBound)), CGFloat(range.upperBound)))
+    }
+
+    private static func isFinite(_ rect: CGRect) -> Bool {
+        rect.origin.x.isFinite && rect.origin.y.isFinite && rect.size.width.isFinite && rect.size.height.isFinite
+    }
+}
