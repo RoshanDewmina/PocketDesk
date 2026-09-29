@@ -203,6 +203,83 @@ final class NativeGestureEngineTests: XCTestCase {
         XCTAssertEqual(log.scrollDeltas.map(\.height), [10, 0, 0, 10, 0], "Keep-alives carry no distance")
     }
 
+    // MARK: Touch-down landing roll
+
+    /// A finger landing at 120 Hz: it rolls `roll` points (most of it early, as the pad
+    /// flattens) over `frames` samples, then rests for `rest` samples.
+    private func land(_ input: NativeGestureEngine, id: UInt64, at start: TimeInterval, x: CGFloat,
+                      roll: CGFloat, frames: Int = 5, rest: Int = 20) -> TimeInterval {
+        var time = start
+        for index in 0...(frames + rest) {
+            let fraction = CGFloat(min(index, frames)) / CGFloat(frames)
+            let eased = 1 - (1 - fraction) * (1 - fraction)
+            time = start + Double(index) / 120
+            input.update([touch(id, x + roll * eased, 300 + roll * 0.3 * eased)], at: time)
+        }
+        return time
+    }
+
+    /// Frame-analysed on Roshan's phone (29 Sep, 240 fps clip): at a touch-down ~150 ms after a
+    /// tap, the pointer jumped most of a small button's width in ~60 ms with no deliberate slide.
+    /// The landing roll crossed the 4 pt motion threshold and was sent in one burst through the
+    /// speed gain. It must be absorbed, and the touch must still click.
+    func testLandingRollDoesNotMoveThePointerAndStillClicks() {
+        for scale in [CGFloat(1), 0.27] {
+            let log = CommandLog(); let input = engine(log, scale: scale)
+            input.update([touch(1, 100, 300)], at: 1)
+            input.update([], at: 1.02)
+            let end = land(input, id: 2, at: 1.17, x: 160, roll: 7)
+            input.update([], at: end + 0.01)
+            XCTAssertTrue(log.moves.isEmpty, "A 7 pt landing roll moved the pointer \(log.moves) at view scale \(scale)")
+            XCTAssertEqual(log.clicks, [1, 1], "Both touches are clicks")
+        }
+    }
+
+    func testSlideAfterALandingRollStartsSmoothly() {
+        let log = CommandLog(); let input = engine(log)
+        var time = land(input, id: 1, at: 1, x: 100, roll: 7, rest: 2)
+        for step in 1...36 {
+            time += 1.0 / 120
+            input.update([touch(1, 107 + CGFloat(step) * 30 / 36, 302.1)], at: time)
+        }
+        input.update([], at: time + 0.01)
+        let largest = log.moves.map { hypot($0.width, $0.height) }.max() ?? 0
+        XCTAssertLessThan(largest, 1.5, "No burst when the slide starts: \(log.moves.prefix(3))")
+        let travel = log.moves.reduce(0) { $0 + $1.width }
+        XCTAssertGreaterThan(travel, 12, "The slide itself still moves the pointer")
+        XCTAssertLessThan(travel, 20, "…but the roll before it adds nothing")
+    }
+
+    func testQuickFlickStillMovesFromTheFirstFrames() {
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 100, 300)], at: 1)
+        for step in 1...6 { input.update([touch(1, 100 + CGFloat(step) * 6, 300)], at: 1 + Double(step) / 120) }
+        input.update([], at: 1.06)
+        XCTAssertFalse(log.moves.isEmpty, "36 pt in 50 ms is deliberate, not a roll")
+        XCTAssertGreaterThan(log.moves.reduce(0) { $0 + $1.width }, 30, "Only the 8 pt landing slop is left out")
+    }
+
+    func testDoubleTapHoldDragStartsWithoutAJump() {
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 100, 300)], at: 1)
+        input.update([], at: 1.04)
+        // Second touch 150 ms later, 3 pt away, rolls 7 pt and rests: a double-tap-and-hold.
+        let start = 1.19
+        for index in 0...5 {
+            let eased = 1 - pow(1 - CGFloat(index) / 5, 2)
+            input.update([touch(2, 103 + 7 * eased, 300)], at: start + Double(index) / 120)
+        }
+        input.tick(at: start + 0.25)
+        XCTAssertEqual(log.dragBegins, 1)
+        input.update([touch(2, 110.2, 300)], at: start + 0.26)
+        let atStart = log.moves.map { hypot($0.width, $0.height) }.max() ?? 0
+        XCTAssertLessThan(atStart, 1, "The held item does not jump by the landing roll: \(log.moves)")
+        input.update([touch(2, 130.2, 300)], at: start + 0.36)
+        input.update([], at: start + 0.4)
+        XCTAssertGreaterThan(log.moves.reduce(0) { $0 + $1.width }, 5, "Sliding then drags it")
+        XCTAssertEqual(log.dragEnds, 1)
+    }
+
     private func touch(_ id: UInt64, _ x: CGFloat, _ y: CGFloat = 0) -> NativeGestureEngine.Touch {
         .init(id: id, point: CGPoint(x: x, y: y))
     }

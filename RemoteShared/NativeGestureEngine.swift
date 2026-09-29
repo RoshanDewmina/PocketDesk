@@ -37,9 +37,11 @@ final class NativeGestureEngine {
         let point: CGPoint
     }
 
-    /// Movement that turns a direct tap into a click-drag. Larger than the trackpad's 4 pt
+    /// Movement that turns a direct tap into a click-drag. Larger than the trackpad's
     /// pointer threshold so an ordinary tap is not mistaken for a drag.
     static let directSlop: CGFloat = 10
+    /// Finger-pad settling is tap motion, not pointer travel. Never replay it when sliding starts.
+    static let trackpadSlop: CGFloat = 8
     /// A still direct touch held this long presses the button, like touch-and-hold on a screen.
     static let directHoldDelay: TimeInterval = 0.5
     /// A three-finger tap: every finger lifts within this time and moves less than `tapTravel`.
@@ -271,7 +273,7 @@ final class NativeGestureEngine {
                     lastTap = (time, firstPoint)
                 }
             } else if mode == .candidate && enabled && !panMode &&
-                maxDistance <= (direct ? Self.directSlop : 8) && time - startTime <= 0.55 {
+                maxDistance <= (direct ? Self.directSlop : Self.trackpadSlop) && time - startTime <= 0.55 {
                 let clickCount = secondTap ? 2 : 1
                 let accepted = onCommand(.click(count: clickCount))
                 lastTap = accepted && clickCount == 1 ? (time, direct ? directPoint : firstPoint) : nil
@@ -324,13 +326,24 @@ final class NativeGestureEngine {
             beginDrag(count: secondTap ? 2 : 1)
             if mode == .drag { pointDirectly(at: point) }
         case .candidate:
-            guard maxDistance > 4 else { return }
+            guard maxDistance > Self.trackpadSlop else {
+                lastPoint = point
+                lastMotionTime = time
+                return
+            }
             if secondTap {
                 if time - startTime >= 0.07 { beginDrag(count: 2) }
-                if mode == .drag { sendMotion(point, at: time) }
+                if mode == .drag {
+                    discardLandingMotion(toward: point, at: time)
+                    sendMotion(point, at: time)
+                } else {
+                    lastPoint = point
+                    lastMotionTime = time
+                }
             } else {
                 mode = .pointer
                 lastTap = nil
+                discardLandingMotion(toward: point, at: time)
                 sendMotion(point, at: time)
             }
         case .drag where direct:
@@ -357,6 +370,22 @@ final class NativeGestureEngine {
         } else {
             mode = .blocked
         }
+    }
+
+    /// Start at the segment's exit from the tap radius. Interpolate its timestamp too so
+    /// the gain sees the finger's velocity, independent of callback frequency.
+    private func discardLandingMotion(toward point: CGPoint, at time: TimeInterval) {
+        guard distance(lastPoint, firstPoint) < Self.trackpadSlop else { return }
+        let dx = point.x - lastPoint.x, dy = point.y - lastPoint.y
+        let ox = lastPoint.x - firstPoint.x, oy = lastPoint.y - firstPoint.y
+        let a = dx * dx + dy * dy
+        guard a > 0 else { return }
+        let b = 2 * (ox * dx + oy * dy)
+        let c = ox * ox + oy * oy - Self.trackpadSlop * Self.trackpadSlop
+        let fraction = min(1, max(0, (-b + sqrt(max(0, b * b - 4 * a * c))) / (2 * a)))
+        lastPoint.x += dx * fraction
+        lastPoint.y += dy * fraction
+        lastMotionTime += (time - lastMotionTime) * Double(fraction)
     }
 
     /// Absolute motion needs no gain or residual: the pointer is wherever the finger is.
