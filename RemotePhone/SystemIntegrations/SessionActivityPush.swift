@@ -242,20 +242,52 @@ actor SessionActivityPushLifecycle {
         let priorCleanup = cleanupTail
         await priorCleanup?.value
         guard request.scope == scope, mine == revision else { return }
-        do { try await sink.register(request) }
-        catch {
-            // A transport error is ambiguous: the service may have stored the tuple before the
-            // response was lost. A conditional remove is safe and prevents an orphan registration.
-            scheduleRemove(request)
-            return
+        var registered = false
+        var ambiguous = false
+        for attempt in 0..<3 {
+            do {
+                try await sink.register(request)
+                registered = true
+                break
+            } catch {
+                guard request.scope == scope, mine == revision else {
+                    scheduleRemove(request)
+                    return
+                }
+                guard Self.isAmbiguousRegistrationFailure(error) else {
+                    if ambiguous { break }
+                    return
+                }
+                ambiguous = true
+                if attempt < 2 {
+                    await retryDelay(attempt)
+                    guard request.scope == scope, mine == revision else {
+                        scheduleRemove(request)
+                        return
+                    }
+                }
+            }
         }
         guard request.scope == scope, mine == revision else {
             scheduleRemove(request)
             return
         }
         let old = current
+        // An exhausted transport failure may mean the service stored the tuple and only its reply
+        // was lost. Keep that exact tuple as current so End/supersession cleans it later; removing it
+        // while live would create the backend's terminal tombstone and prevent a valid retry.
+        guard registered || ambiguous else { return }
         current = request
         if let old, old != request { scheduleRemove(old) }
+    }
+
+    private static func isAmbiguousRegistrationFailure(_ error: Error) -> Bool {
+        guard let serviceError = error as? SessionActivityPushServiceError else { return true }
+        switch serviceError {
+        case .invalidOrigin, .encoding: return false
+        case .refused(let status): return status == 408 || status == 429 || status >= 500
+        case .unreachable, .invalidResponse: return true
+        }
     }
 
     func finish(_ candidate: SessionActivityPushScope) {
