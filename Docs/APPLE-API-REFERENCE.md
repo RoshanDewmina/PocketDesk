@@ -1,6 +1,10 @@
 # Apple API reference and freshness record
 
-Latest focused refresh **28 September 2026**; original capture/transport snapshot **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.
+Latest focused refresh **29 September 2026**; original capture/transport snapshot **12 September 2026**. This is a focused engineering reference, subordinate to [PRODUCT.md](../PRODUCT.md). It records the relevant material actually inspected, not a claim to have read all Apple documentation or demonstrated runtime compatibility.
+
+## Input timer scheduling refresh — 29 September 2026
+
+Rechecked Apple's [Timer documentation](https://developer.apple.com/documentation/foundation/timer) and [RunLoop timer registration](https://developer.apple.com/documentation/foundation/runloop). The scheduled timer convenience API registers in the current run loop's default mode; explicit registration selects the modes in which a timer can run. The host capability timer and phone heartbeat/pointer timers now use common modes so UI tracking does not exclude them solely by mode. Intervals, the one-second input capability lifetime, and fail-closed admission remain unchanged. Common modes cannot guarantee timely execution during main-actor starvation; the observed physical disconnect is not causally attributed to this change without a new trace.
 
 ## Click-to-keyboard focus refresh — 28 September 2026
 
