@@ -535,13 +535,25 @@ final class RemoteInputDriver {
     /// events are streaming and the cursor still reads as a recently posted point, otherwise the
     /// cursor as WindowServer currently reports it.
     private func pointerBase(now: TimeInterval, in bounds: CGRect) -> CGPoint {
+        let base = resolvedBase(now: now, in: bounds)
+        if !base.chained { remember(base.point) }
+        return base.point
+    }
+
+    private func resolvedBase(now: TimeInterval, in bounds: CGRect) -> (point: CGPoint, chained: Bool) {
         let observed = clamped(eventSink.pointerLocation(), to: bounds)
         if now >= lastPostedAt, now - lastPostedAt < Self.pointerChainWindow,
            recentPosts.contains(where: { hypot($0.x - observed.x, $0.y - observed.y) <= Self.pointerChainTolerance }) {
-            return clamped(lastPoint, to: bounds)
+            return (clamped(lastPoint, to: bounds), true)
         }
-        remember(observed)
-        return observed
+        return (observed, false)
+    }
+
+    /// The point the next pointer event at `now` would start from, without recording anything.
+    /// The E2E input fence decides and clamps from this, so it judges exactly what will be posted.
+    func nextPointerBase(now: TimeInterval) -> CGPoint? {
+        guard let bounds = validBounds else { return nil }
+        return resolvedBase(now: now, in: bounds).point
     }
 
     private func notePosted(_ point: CGPoint, at now: TimeInterval) {

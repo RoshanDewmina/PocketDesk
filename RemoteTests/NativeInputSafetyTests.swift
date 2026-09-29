@@ -192,6 +192,61 @@ final class NativeInputSafetyTests: XCTestCase {
         XCTAssertEqual(driver.lastPoint, CGPoint(x: 155, y: 100))
     }
 
+    func testTheNextPointerBaseIsWhatTheDriverWillUseAndRecordsNothing() {
+        let recorder = NativeInputRecorder()
+        recorder.lagsByOneEvent = true
+        let driver = configuredDriver(recorder)
+        var now = 10.0
+        for _ in 1...4 {
+            now += 1.0 / 120.0
+            XCTAssertTrue(driver.handle(action("move", count: 1, x: 5), upgraded: true, now: now).accepted)
+        }
+        now += 0.01
+        XCTAssertNotEqual(recorder.pointer, driver.lastPoint, "The cursor still lags the posted point")
+        XCTAssertEqual(driver.nextPointerBase(now: now), driver.lastPoint, "While chaining, the base is the last post")
+        XCTAssertEqual(driver.nextPointerBase(now: now), driver.lastPoint, "Asking twice changes nothing")
+        XCTAssertTrue(driver.handle(action("click", count: 1), upgraded: true, now: now).accepted)
+        XCTAssertEqual(recorder.mouseEvents.last?.point, CGPoint(x: 120, y: 100))
+
+        now += RemoteInputDriver.pointerChainWindow + 0.01
+        recorder.lagsByOneEvent = false
+        recorder.pointer = CGPoint(x: 40, y: 50)
+        XCTAssertEqual(driver.nextPointerBase(now: now), CGPoint(x: 40, y: 50), "A moved cursor is read again")
+    }
+
+    /// The E2E fence clamps moves into the Test Pad and checks clicks against the base the driver
+    /// will post from, so a lagging cursor can never walk a fenced click out of the pad.
+    func testTheE2EFenceJudgesTheDriversOwnBaseUnderLag() throws {
+        let recorder = NativeInputRecorder()
+        recorder.lagsByOneEvent = true
+        let driver = configuredDriver(recorder)
+        let pad = CGRect(x: 60, y: 60, width: 70, height: 80)
+        var now = 10.0
+        for _ in 1...20 {
+            now += 1.0 / 120.0
+            let base = try XCTUnwrap(driver.nextPointerBase(now: now))
+            let environment = HostE2EFenceEnvironment(testPadRunning: true, testPadFrontmost: true, testPadContent: pad,
+                                                      pointer: base, coveringOwner: nil)
+            var move = action("move", count: 1, x: 5)
+            switch HostE2EInputFence.decide(move, held: false, allowSpaceKeys: false, environment: environment) {
+            case .allow: break
+            case .adjust(let dx, let dy): move.x = dx; move.y = dy
+            case .reject(let reason): XCTFail(reason); return
+            }
+            XCTAssertTrue(driver.handle(move, upgraded: true, now: now).accepted)
+            XCTAssertTrue(pad.insetBy(dx: HostE2EInputFence.edgeInset, dy: HostE2EInputFence.edgeInset)
+                .contains(driver.lastPoint), "Posted \(driver.lastPoint) stays in the pad")
+        }
+        now += 0.01
+        let base = try XCTUnwrap(driver.nextPointerBase(now: now))
+        let environment = HostE2EFenceEnvironment(testPadRunning: true, testPadFrontmost: true, testPadContent: pad,
+                                                  pointer: base, coveringOwner: nil)
+        XCTAssertEqual(HostE2EInputFence.decide(action("click", count: 1), held: false, allowSpaceKeys: false,
+                                                environment: environment), .allow)
+        XCTAssertTrue(driver.handle(action("click", count: 1), upgraded: true, now: now).accepted)
+        XCTAssertTrue(pad.contains(recorder.mouseEvents.last!.point), "The click lands where the fence judged it")
+    }
+
     func testRetiredIdentityWindowDoesNotExhaustLongSession() {
         let recorder = NativeInputRecorder()
         let driver = configuredDriver(recorder)

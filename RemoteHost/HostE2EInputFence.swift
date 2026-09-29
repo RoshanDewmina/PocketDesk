@@ -16,9 +16,11 @@ struct HostE2EFenceEnvironment {
     /// drags and scrolls always take a fresh snapshot before deciding.
     @MainActor private static var cached: (at: TimeInterval, pid: pid_t?, windows: [E2EWindowCover.Window])?
 
+    /// `pointer`: where the input driver will start the next event (it chains from its last posted
+    /// point while the window server's cursor lags); the cursor as read now when not given.
     @MainActor
-    static func live(testPad: E2ETestPadGeometry, fresh: Bool) -> Self {
-        let pointer = CGEvent(source: nil)?.location ?? .zero
+    static func live(testPad: E2ETestPadGeometry, fresh: Bool, pointer base: CGPoint? = nil) -> Self {
+        let pointer = base ?? CGEvent(source: nil)?.location ?? .zero
         let now = ProcessInfo.processInfo.systemUptime
         if fresh || cached == nil || now - cached!.at > 0.25 {
             let pid = NSRunningApplication.runningApplications(withBundleIdentifier: E2E.testPadBundleID).first?.processIdentifier

@@ -1214,7 +1214,9 @@ final class RemoteHostModel: ObservableObject {
         // E2E harness interlock: injected input may only reach the Farside Test Pad.
         var fenced: RemoteAction? = action
         var fenceVerdict = "allow"
-        if let e2e = HostE2E.active { (fenced, fenceVerdict) = e2e.fence(action, held: input.held) }
+        if let e2e = HostE2E.active {
+            (fenced, fenceVerdict) = e2e.fence(action, held: input.held, pointer: input.nextPointerBase(now: now))
+        }
         if action.action == "key", action.key == "c", action.modifiers == ["command"], input.enabled, fenced != nil {
             clipboard.prepareForCopyShortcut()
         }
