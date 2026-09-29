@@ -137,13 +137,14 @@ final class PhoneParityUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.F5.rawValue, modifierFlags: [])
         app.typeKey(XCUIKeyboardKey.forwardDelete.rawValue, modifierFlags: [])
         let entries = probeEntries(app, after: mark)
-        for expected in ["key a", "key c command", "key left shift", "key 7",
-                         "key e control+option", "key forwardDelete"] {
+        for expected in ["key a", "key c command", "key left shift", "key 7", "key e control+option"] {
             XCTAssertTrue(entries.contains(expected), "\(expected) missing from \(entries)")
         }
-        // XCTest's synthesized Escape never reaches the app in the iOS 27 simulator (not even as an
-        // unmapped press), so Esc is recorded here and verified by unit tests and on hardware.
-        let escape = XCTAttachment(string: "Escape delivered: \(entries.contains { $0.hasPrefix("key escape") }); entries: \(entries)")
+        // XCTest's synthesized Escape and Forward Delete never reach the app in the iOS 27 simulator
+        // (not even as unmapped presses), so they are recorded here and verified by unit tests and
+        // on hardware.
+        let escape = XCTAttachment(string: "Escape delivered: \(entries.contains { $0.hasPrefix("key escape") }); "
+            + "Forward Delete delivered: \(entries.contains { $0.hasPrefix("key forwardDelete") }); entries: \(entries)")
         escape.name = "Escape probe"
         escape.lifetime = .keepAlways
         add(escape)
@@ -265,25 +266,34 @@ final class PhoneParityUITests: XCTestCase {
         let map = app.descendants(matching: .any)["remote.minimap"].firstMatch
         XCTAssertFalse(map.exists, "Fit at 1× shows everything: nothing to navigate")
 
-        setZoom(app, sliderPosition: iPad ? 0.25 : 0.2)
+        // Deep enough that the display is cropped both ways (iPad portrait shows the full height at
+        // lower zoom), so the outline can move in both directions.
+        setZoom(app, sliderPosition: iPad ? 0.55 : 0.2)
         XCTAssertTrue(map.waitForExistence(timeout: 4), "Zooming in shows the mini map")
         attachScreenshot(iPad ? "Mini map - iPad" : "Mini map - iPhone landscape")
         let viewport = app.descendants(matching: .any)["remote.minimap.viewport"].firstMatch
         XCTAssertTrue(viewport.exists)
         let before = viewport.frame
+        let beforeValue = viewport.value as? String ?? ""
         XCTAssertTrue(map.frame.insetBy(dx: -1, dy: -1).contains(before), "The outline sits inside the overview")
 
         var mark = probeMark(app)
         let grab = viewport.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         grab.press(forDuration: 0.2, thenDragTo: grab.withOffset(CGVector(dx: -14, dy: 8)),
                    withVelocity: .slow, thenHoldForDuration: 0.1)
+        Thread.sleep(forTimeInterval: 0.6)
         let dragNotes = probeEntries(app, after: mark)
         let dragged = viewport.frame
-        XCTAssertLessThan(dragged.midX, before.midX - 4, "Dragging the outline moves the view with it: \(dragNotes)")
-        XCTAssertGreaterThan(dragged.midY, before.midY + 2, "\(dragNotes)")
+        let draggedValue = viewport.value as? String ?? ""
+        let trace = "\(dragNotes); outline \(before) → \(dragged); \(beforeValue) → \(draggedValue)"
+        attachScreenshot(iPad ? "Mini map after drag - iPad" : "Mini map after drag - iPhone landscape")
+        XCTAssertNotEqual(draggedValue, beforeValue, "The map describes the new view: \(trace)")
+        XCTAssertLessThan(dragged.midX, before.midX - 4, "Dragging the outline moves the view with it: \(trace)")
+        XCTAssertGreaterThan(dragged.midY, before.midY + 2, trace)
 
         mark = probeMark(app)
         map.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.88)).tap()
+        Thread.sleep(forTimeInterval: 0.6)
         let jumpNotes = probeEntries(app, after: mark)
         let jumped = viewport.frame
         XCTAssertGreaterThan(jumped.midX, dragged.midX + 4, "Tapping jumps toward the tapped corner: \(jumpNotes)")

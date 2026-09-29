@@ -110,12 +110,14 @@ struct MiniMapView<Thumbnail: View>: View {
     }
 }
 
-/// Re-renders only the mini map as the drawn pointer moves, never the whole session.
+/// Re-renders only the mini map as the drawn pointer moves, never the whole session. The
+/// viewport is a stored value (not read through the closure) so every pan re-renders the map.
 struct MiniMapPointerSource<Content: View>: View {
     @ObservedObject var model: PointerOverlayModel
-    @ViewBuilder let content: (CGPoint?) -> Content
+    let viewport: ViewportTransform
+    @ViewBuilder let content: (CGPoint?, ViewportTransform) -> Content
 
-    var body: some View { content(model.render?.point) }
+    var body: some View { content(model.render?.point, viewport) }
 }
 
 /// The live picture at mini map size: a second renderer on the same track, present only while

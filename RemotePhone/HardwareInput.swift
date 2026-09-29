@@ -100,6 +100,64 @@ final class HardwareKeyboardRouter {
     }
 }
 
+/// iPadOS 26 gives Farside a menu bar whose Close Window (⌘W), Minimize (⌘M), Quit (⌘Q), New
+/// Window (⌘N) and Settings (⌘,) shortcuts are resolved before any key command, so a Mac user's
+/// ⌘W would close Farside. While a session canvas sends hardware keys to the Mac, those menu items
+/// stay in the menu bar but give up their shortcuts, which then reach the canvas and the Mac.
+@MainActor
+enum MacShortcutMenu {
+    static let inputs = ["w", "m", "q", "n", ","]
+    static let modifierSets: [UIKeyModifierFlags] = [.command, [.command, .shift], [.command, .alternate]]
+
+    private static var owners = Set<ObjectIdentifier>()
+    private static var installed = false
+
+    static var isActive: Bool { !owners.isEmpty }
+
+    static func set(_ active: Bool, for owner: AnyObject) {
+        guard UIDevice.current.userInterfaceIdiom == .pad else { return }
+        let wasActive = isActive
+        if active { owners.insert(ObjectIdentifier(owner)) } else { owners.remove(ObjectIdentifier(owner)) }
+        guard isActive != wasActive else { return }
+        if installed {
+            UIMainMenuSystem.shared.setNeedsRebuild()
+        } else if isActive {
+            // Installed on first use only, so Farside's menus are untouched until a session wants keys.
+            installed = true
+            UIMainMenuSystem.shared.setBuildConfiguration(UIMainMenuSystem.Configuration()) { builder in
+                MainActor.assumeIsolated {
+                    // A build handler replaces the app's own buildMenu(with:); keep SwiftUI's.
+                    (UIApplication.shared.delegate as? UIResponder)?.buildMenu(with: builder)
+                    if isActive { releaseShortcuts(in: builder) }
+                }
+            }
+        }
+    }
+
+    static func releasesShortcut(_ command: UIKeyCommand) -> Bool {
+        guard let input = command.input?.lowercased() else { return false }
+        return inputs.contains(input) && modifierSets.contains(command.modifierFlags)
+    }
+
+    /// The same menu with the Mac's shortcuts removed from its commands; everything else unchanged.
+    static func releasing(_ element: UIMenuElement) -> UIMenuElement {
+        if let menu = element as? UIMenu { return menu.replacingChildren(menu.children.map(releasing)) }
+        guard let command = element as? UIKeyCommand, releasesShortcut(command), let action = command.action
+        else { return element }
+        return UICommand(title: command.title, image: command.image, action: action,
+                         propertyList: command.propertyList, alternates: command.alternates,
+                         discoverabilityTitle: command.discoverabilityTitle,
+                         attributes: command.attributes, state: command.state)
+    }
+
+    private static func releaseShortcuts(in builder: any UIMenuBuilder) {
+        guard let root = builder.menu(for: .root) else { return }
+        for case let menu as UIMenu in root.children {
+            builder.replaceChildren(ofMenu: menu.identifier) { $0.map(releasing) }
+        }
+    }
+}
+
 /// Keyboard and mouse connection state from GameController, which also carries the mouse's
 /// middle button (UIKit reports only primary and secondary). One instance, because each mouse
 /// has a single middle-button handler.
