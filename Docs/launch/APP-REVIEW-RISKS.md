@@ -1,5 +1,7 @@
 # Farside: App Review risk register and go/no-go list
 
+**Historical research notice — refreshed 29 September 2026:** The missing-StoreKit, missing-icons/manifests and private-service-only source claims below describe the 28 September snapshot. StoreKit, backend route enforcement, privacy manifests and dependency notices are now implemented. Production readiness, the original forced-expiry discrepancy, real sandbox purchases/expiry, APNs, physical removal/input and distribution acceptance remain gates. Use [CURRENT-REVIEW-PACKET.md](CURRENT-REVIEW-PACKET.md) for current evidence; the historical legal/review analysis is not a current sign-off.
+
 Prepared 28 September 2026 for the 3 November 2026 submission target. Documentation and research only; nothing was submitted, created in App Store Connect, or changed in source.
 
 **Naming:** the product is now called **Farside** (renamed from PocketDesk on 28 Sep 2026). Bundle IDs stay `com.roshan.PocketDesk.*`, and code identifiers, target names, file paths and Info.plist keys (`PocketDeskRemote`, `PocketDeskServiceURL`, `PocketDeskStreamStats`) still say PocketDesk until engineering renames them; they are quoted verbatim.

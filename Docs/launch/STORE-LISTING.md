@@ -1,5 +1,7 @@
 # Farside: App Store listing package
 
+**Current draft gate — 29 September 2026:** All price/trial and paid-access copy below is proposed material, not an accepted App Store offer or a live purchase receipt. Current UI uses Farside Anywhere; product identifiers are unchanged. Confirm the actual storefront price, introductory offer and eligibility before publishing, and use the terms returned by StoreKit. Purchases remain disabled until the intended service is ready.
+
 Prepared 28 September 2026. The product is now called **Farside** (renamed from PocketDesk on 28 Sep 2026). Bundle IDs stay `com.roshan.PocketDesk.*`; code identifiers still say PocketDesk until engineering renames them. Copy is written to Apple's tone (short, benefit-first, "it just works") and fits Apple's current field limits. Nothing was registered, reserved or submitted; the name, domain and trademark checks below are read-only lookups.
 
 **Division of labour:** `ASO-STRATEGY.md` (separate workstream) is authoritative for the title and subtitle wording, the keyword field, categories, screenshot order and messaging, and rating prompts. Values in this file are working defaults and the technical specifications (sizes, limits, compliance wording); where the two disagree, ASO-STRATEGY.md wins on positioning and this file wins on Apple's rules.
@@ -19,7 +21,7 @@ Labels: **[V]** verified today from a primary source or registry; **[R]** verifi
 
 ### Reading
 
-- The store title must carry a suffix. Working default **"Farside: Mac Remote" (19 characters)**; alternatives "Farside: Remote Mac" (19), "Farside: Remote for Mac" (23), "Farside Remote Desktop" (22). The title limit is 30 characters, and the subtitle should not repeat the suffix words. [V]
+- The store title must carry a suffix. Working default **"Farside: Mac Remote" (19 characters)**; alternatives "Farside: Remote Mac" (19), "Farside: Remote for Mac" (23), "Farside Anywhere Desktop" (24). The title limit is 30 characters, and the subtitle should not repeat the suffix words. [V]
 - The main legal question is **THE FAR SIDE**. The goods are far apart (cartoon entertainment versus remote-access software), which helps, but Farside is phonetically identical to a famous, actively maintained mark, and Apple's process lets a trademark owner file a claim against an app name, which can lead to removal. [V for the Apple claim process, per the App Store Connect add-a-new-app FAQ; I for enforcement likelihood]
 - Mitigations: get a written trademark opinion (Canada and US) before creating the app record; always spell it as one word; never "Far Side" or "The Far Side" in copy, keywords or URLs; no cartoon, cow, or comic imagery in the icon or screenshots; keep a fallback name ready.
 - Register **getfarside.com** as the primary web domain (and tryfarside.com defensively) after the trademark opinion, not before. `.ca` is owned by someone else.
@@ -34,7 +36,7 @@ The old name collided with two live "Pocket Desk" products (pocketdesk.app, pock
 |---|---|---|
 | App name (store title) | 30 | Farside: Mac Remote (19) |
 | Subtitle | 30 | Use your Mac from your phone (28). Alternatives: See and control your Mac (24) · Your Mac, from your phone (25) |
-| Promotional text | 170 | See and control your Mac from your iPhone or iPad. Free on your Wi-Fi; add Farside Remote to reach it from anywhere. No account, nothing to set up. (147) |
+| Promotional text | 170 | See and control your Mac from your iPhone or iPad. Free on your Wi-Fi; add Farside Anywhere to reach it from anywhere. No account, nothing to set up. (149) |
 | Keywords | 100 bytes | **See ASO-STRATEGY.md** (do not repeat words already in the title and subtitle; no competitor names; describe the app accurately) |
 | Primary and secondary category | | **See ASO-STRATEGY.md.** Default: Utilities, then Productivity. Workbench lists Utilities and Business, Jump Business and Utilities, Screens Utilities and Productivity. [V] |
 | Age rating | | 4+ (answers in PRIVACY-POLICY.md section 5) |
@@ -43,12 +45,12 @@ The old name collided with two live "Pocket Desk" products (pocketdesk.app, pock
 | Marketing URL | optional | https://[DOMAIN]/ |
 | Privacy Policy URL | required | https://[DOMAIN]/privacy |
 | Terms of Use (EULA) | required for subscriptions in practice | Custom Terms page, or Apple's standard EULA (https://www.apple.com/legal/internet-services/itunes/dev/stdeula/, responds today [V]). If your Terms set a minimum age above the calculated rating you must override the age rating. |
-| What's New (1.0) | 4000 | Welcome to Farside. See and control your Mac from your iPhone or iPad, free on your network. Add Farside Remote to reach it from anywhere. (138) |
-| In-app purchase display names | 35 | Farside Remote - Monthly (24) · Farside Remote - Yearly (23) |
+| What's New (1.0) | 4000 | Welcome to Farside. See and control your Mac from your iPhone or iPad, free on your network. Add Farside Anywhere to reach it from anywhere. (140) |
+| In-app purchase display names | 35 | Farside Anywhere - Monthly (26) · Farside Anywhere - Yearly (25) |
 | In-app purchase description | 55 | Reach your Mac from anywhere. (29) |
 | Version release | | Manual, or "no earlier than" 17 Nov 2026 |
 
-### Description working default (2357 characters; limit 4000)
+### Description working default (2468 characters; limit 4000)
 
 ```
 Your Mac, from your phone.
@@ -59,21 +61,21 @@ IT JUST WORKS
 Install the free Farside companion on your Mac, scan the code it shows, and approve your phone. That's it. No account. No sign-up. No router settings.
 
 A TRACKPAD IN YOUR HAND
-Slide a finger to move the pointer, tap to click, drag with two fingers to scroll. Pinch to zoom in and the view follows your pointer. You feel every click.
+Slide a finger to move the pointer, tap to click, drag with two fingers to scroll. Pinch to zoom in and the view follows your pointer. Supported iPhones provide haptic click feedback.
 Type on the iPhone keyboard, or tap the microphone and speak. Your words appear on your Mac. Speech is recognized on your iPhone.
 
 PRIVATE BY DESIGN
-Your screen goes straight to your phone, encrypted. You approve every phone on your Mac, and you can stop sharing with one click. Farside does not record your screen, your keystrokes or your voice. No ads. No trackers.
+Your screen travels encrypted between your devices, directly or through a relay. You approve every phone on your Mac, and you can stop sharing with one click. Farside does not record your screen, your keystrokes or your voice. No ads. No trackers.
 
 FREE ON YOUR NETWORK
 At home or in the office, Farside is free, with no time limit.
 
 REACH YOUR MAC FROM ANYWHERE
-Farside Remote is an optional auto-renewing subscription. It connects your phone to your Mac over cellular or any Wi-Fi, with no VPN and no port forwarding. Try it free for 7 days. The price and terms are shown before you subscribe.
+Farside Anywhere is an optional auto-renewing subscription. It connects your phone to your Mac over cellular or any Wi-Fi, with no VPN and no port forwarding. Eligible plans may offer a free trial. The price and terms are shown before you subscribe.
 
 WHAT'S INSIDE
 - Free, unlimited use on your local network
-- Farside Remote: optional subscription for use from anywhere
+- Farside Anywhere: optional subscription for use from anywhere
 - Click, right-click, double-click, drag and scroll
 - Pinch to zoom, fit or fill your Mac's screen
 - Full keyboard with Command, Option, Control and Shift
@@ -82,10 +84,10 @@ WHAT'S INSIDE
 - No account required
 
 REQUIREMENTS
-iPhone with iOS 26 or later, or iPad with iPadOS 26 or later. A Mac with Apple silicon (M1 or later) on macOS 26 or later, running the free Farside companion (download: [SHORT URL]). Screen Recording and Accessibility access are needed on the Mac. Using Farside away from your network requires the Farside Remote subscription.
+iPhone with iOS 26 or later, or iPad with iPadOS 26 or later. A Mac with Apple silicon (M1 or later) on macOS 26 or later, running the free Farside companion (download: [SHORT URL]). Screen Recording and Accessibility access are needed on the Mac. Using Farside away from your network requires the Farside Anywhere subscription.
 
 SUBSCRIPTION TERMS
-Farside Remote renews automatically each month or year unless canceled at least 24 hours before the end of the current period. Payment is charged to your Apple Account at confirmation of purchase. Manage or cancel anytime in Settings > your name > Subscriptions. Any unused part of a free trial is forfeited when you subscribe.
+Farside Anywhere renews automatically each month or year unless canceled at least 24 hours before the end of the current period. Payment is charged to your Apple Account at confirmation of purchase. Manage or cancel anytime in Settings > your name > Subscriptions. Any unused part of a free trial is forfeited when you subscribe.
 
 Terms of Use: [TERMS URL]
 Privacy Policy: [PRIVACY URL]
@@ -95,18 +97,18 @@ Copy rules applied: no prices in the name, subtitle or screenshots (Guideline 2.
 
 ### Claim checklist: only publish what is true in the submitted build
 
-| Claim in copy | Repo status (28 Sep) | Must be true by |
+| Claim in copy | Current preparation status (29 Sep) | Acceptance still required |
 |---|---|---|
-| Free, unlimited on the local network, "no time limit" | Local use works, but the service ends signaling rooms at 30 minutes (`ROOM_LIFETIME_SECONDS=1800`, `Server/.env.*.example`) [R] | Engineering lifts the cap; otherwise delete "no time limit" |
-| No account | True [R] | n/a |
-| Scan a code and approve on the Mac | Built; physical enrollment journey not yet accepted (PRODUCT section 12) | Device acceptance |
-| Trackpad control, zoom, follows your pointer, click haptics | Built and installed; physical feel not accepted | Device acceptance |
-| Voice dictation, recognized on the iPhone | Built (build 20260928.9), physical recognition unverified [R] | Device test in each launch language |
-| Full keyboard with modifiers | Built [R] | Device test |
-| iPad support | Basic adaptive layout only (PRODUCT section 2) | iPad screenshots must show real iPad UI |
-| Remote from anywhere, no VPN, no port forwarding | **Not deployed**: relay and signaling not public, no StoreKit [R] | Cellular and forced-relay acceptance on two networks |
-| Stop sharing with one click | Built (menu bar) [R] | Verify |
-| macOS 26 and iOS 26 minimums | Deployment targets in `project.yml` [R] | Confirm final targets |
+| Free with no time limit on supported local Wi-Fi/Ethernet | Native proof/selected-route policy and renewable rooms implemented; unsupported/VPN/routed/unverifiable free paths denied | Actual free LAN, denied WAN/VPN and renewal-boundary checks |
+| No account | No Farside account registration in source | Final configured data/consent review |
+| Scan a code and approve on the Mac | Implemented; fresh staging QR displayed on .11 | Human scan, approval and exact-build pairing |
+| Trackpad, zoom, pointer following and supported iPhone haptics | Implemented; automated gesture/pointer checks exist | Physical input, haptic feel and quiet/loaded measurements |
+| On-device voice dictation | Source requires on-device recognition and explicit Done | Physical recognition/permissions in supported launch languages |
+| Keyboard and modifiers | Keyboard UI and targeted shortcut checks pass | Physical typing/shortcut/input-release checks |
+| iPad support | Adaptive source and four targeted simulator shortcut checks pass | Actual iPad acceptance and real screenshots |
+| Anywhere internet access | StoreKit and backend entitlement/route source implemented; staging deployed; production and purchases not ready | Real sandbox purchase/expiry, paid direct/relay, cellular and renewal matrix |
+| Stop Sharing and removal | Stop implemented; .11 local removal returns -25244 with sharing Off and retry | Physical stop/input release; successful removal and relaunch absence |
+| macOS 26 / iOS 26 minimums | Current deployment targets preserved | Exact signed release archives and supported-device checks |
 
 ## 3. Screenshot specification and working shot list
 
@@ -129,13 +131,13 @@ Provide the 6.9" and iPad 13" sets. With a 6.9" set, Apple scales it for the sma
 | 3 | A trackpad in your hand. | Pointer over a text selection with a soft finger-touch marker | Show relative-pointer behaviour. |
 | 4 | Type or just talk. | iPhone keyboard beside the microphone dictation state | No private text. |
 | 5 | Zoom in on what matters. | Pinch-zoomed small code or text with the pointer visible | Legibility is the point. |
-| 6 | Free on your Wi-Fi. Anywhere with Farside Remote. | Route indicator and paywall header, no prices | States a purchase is needed (2.3.2); no prices in screenshots (2.3.7). [V] |
+| 6 | Free on your Wi-Fi. Reach your Mac with Farside Anywhere. | Route indicator and paywall header, no prices | States a purchase is needed (2.3.2); no prices in screenshots (2.3.7). [V] |
 | 7 | Private by design. | Mac menu bar with Stop Sharing, the approval prompt and the on-device speech note | |
 | 8 | Works in landscape. | Landscape session with the dock collapsed | Optional. |
 
 ### iPad 13" sequence (6 frames)
 
-1 hero landscape session; 2 pairing; 3 zoom and pointer follow; 4 keyboard with modifier row; 5 Free on your Wi-Fi / Farside Remote; 6 windowed or split-view session if supported. Each must be real iPad UI at 2752 x 2064 or 2064 x 2752.
+1 hero landscape session; 2 pairing; 3 zoom and pointer follow; 4 keyboard with modifier row; 5 Free on your Wi-Fi / Farside Anywhere; 6 windowed or split-view session if supported. Each must be real iPad UI at 2752 x 2064 or 2064 x 2752.
 
 ### Content rules for every frame
 
@@ -157,7 +159,7 @@ Storyboard, portrait (about 28 seconds, 30 fps):
 | 3 to 8 s | Mac shows the QR; phone scans; Mac approves | Scan. Approve. Done. |
 | 8 to 14 s | Slide, tap, two-finger scroll, pinch zoom on a document | A trackpad in your hand. |
 | 14 to 19 s | Tap the microphone, speak, words appear on the Mac | Type or talk. |
-| 19 to 24 s | Route badge switches from Wi-Fi to cellular with the Remote header | Anywhere with Farside Remote. |
+| 19 to 24 s | Route badge switches from Wi-Fi to cellular with the Remote header | Reach your Mac with Farside Anywhere. |
 | 24 to 28 s | Mac menu bar Stop Sharing, end card with icon and name | Private by design. |
 
 Capture from a real iPhone (QuickTime or Control Center recording), then scale to 886 x 1920; if the source is 60 fps, export at 30. Keep the route change real, not simulated (2.3.1).
@@ -168,10 +170,10 @@ Tone: plain, calm, no superlatives. Structure mirrors the listing. Web domain pr
 
 | Page | Purpose | Must contain |
 |---|---|---|
-| Home `/` | Explain in one screen | Headline "Your Mac, from your phone."; the iPhone hero video; two buttons, Download for Mac and App Store; one line each on free local use and Farside Remote; footer links to Privacy, Terms, Support |
+| Home `/` | Explain in one screen | Headline "Your Mac, from your phone."; the iPhone hero video; two buttons, Download for Mac and App Store; one line each on free local use and Farside Anywhere; footer links to Privacy, Terms, Support |
 | Download `/mac` | Install the companion | Notarized DMG link, version, system requirements (macOS 26 or later on a Mac with Apple silicon (M1 or later)), SHA-256, release notes, a 3-step first-run guide with the two permissions (Screen Recording, Accessibility) and why each is needed |
 | How it works `/how-it-works` | Trust | Pairing flow, what is encrypted, what the service can and cannot see (a short version of the policy), Stop Sharing |
-| Remote `/remote` | Subscription clarity | What Farside Remote adds (relay and network traversal), 7-day free trial, buy in the app, how to manage or cancel in Apple Account settings, refunds handled by Apple. No web checkout. |
+| Remote `/remote` | Subscription clarity | What Farside Anywhere adds (relay and network traversal), actual available introductory-offer terms, buy in the app only when purchases are ready, how to manage or cancel in Apple Account settings, refunds handled by Apple. No web checkout. |
 | Support `/support` | Required by Apple | Email, phone and legal address (real contact information is required on the Support URL [V]), troubleshooting (permissions, Local Network, firewall, cellular), "Report a problem" instructions, response-time expectation |
 | Privacy `/privacy` | Required | The policy in PRIVACY-POLICY.md |
 | Terms `/terms` | Required for subscriptions | EULA or custom Terms |

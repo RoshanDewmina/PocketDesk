@@ -1,5 +1,7 @@
 # Farside Remote: subscription setup
 
+**Historical research notice — refreshed 29 September 2026:** The no-StoreKit/source-enforcement statements below are superseded by implemented native StoreKit and Backend `route.1` policy. Current UI calls the plan Farside Anywhere; existing product identifiers stay unchanged. Free access requires proven directly attached Wi-Fi/Ethernet; VPN, routed and unverifiable paths require Anywhere. Purchases remain disabled pending intended-service acceptance; sandbox expiry and production Apple app configuration remain open. Use [CURRENT-REVIEW-PACKET.md](CURRENT-REVIEW-PACKET.md) for current gates rather than this earlier proposed setup.
+
 Prepared 28 September 2026. Design and research only: no App Store Connect records, keys or servers were created.
 
 **Naming:** the product is **Farside** (renamed from PocketDesk on 28 Sep 2026). Bundle IDs stay `com.roshan.PocketDesk.*`, and so do the proposed product IDs below, so App Store Connect identifiers stay consistent. Code identifiers still say PocketDesk until engineering renames them.

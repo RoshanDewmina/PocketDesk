@@ -1,5 +1,7 @@
 # Farside for Mac: how to distribute the companion
 
+**Historical research notice — refreshed 29 September 2026:** Current source includes local-network usage text, privacy/dependency notices, a production service default and a guarded Sparkle adapter. Earlier statements that these are absent describe the research snapshot below. Developer ID signing transition, archives, notarization/stapling, signed updates and clean installation/removal are still unverified. Use [CURRENT-REVIEW-PACKET.md](CURRENT-REVIEW-PACKET.md) and `script/release/README.md` for the current preparation path.
+
 Prepared 28 September 2026. Research only; no certificates, records or accounts were created and no source file was touched.
 
 **Naming:** the product is now called **Farside** (renamed from PocketDesk on 28 Sep 2026). Bundle IDs stay `com.roshan.PocketDesk.*`; target names, paths and plist keys still say PocketDesk until engineering renames them and are quoted verbatim. The Mac app will be presented to users as "Farside" (working name "Farside for Mac").

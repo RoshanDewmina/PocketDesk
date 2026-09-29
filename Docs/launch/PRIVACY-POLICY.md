@@ -1,175 +1,109 @@
-# Farside: privacy policy draft, App Privacy answers, export compliance and age rating
+# Farside privacy policy and App Privacy preparation
 
-Prepared 28 September 2026 from the code in this repository and Apple's current documentation. This is a working draft for the owner and a lawyer, not legal advice.
+Engineering facts refreshed 29 September 2026 against integrated native/backend source. This is an **unpublished draft**, not a live privacy-policy receipt or final legal classification. Purchases are disabled; real APNs delivery, production configuration and distribution acceptance remain open. Complete public contact/effective-date fields, verify provider logging/retention and obtain the owner's final review before publication or App Store entry. The older legal/export/age-rating research in sections 4–6 is dated 28 September and requires action-time verification; it does not authorize portal submissions or changes in availability.
 
-**Naming:** the product is now called **Farside** (renamed from PocketDesk on 28 Sep 2026). Bundle IDs stay `com.roshan.PocketDesk.*`; code identifiers and plist keys still say PocketDesk until engineering renames them and are quoted verbatim.
+The product is Farside; existing `com.roshan.PocketDesk.*` bundle identifiers remain. Engineering source anchors below describe prepared behavior, not a claim every provider feature is live.
 
-Labels: **[R]** verified in the repo (file named); **[V]** verified from a primary source today; **[I]** inference or unverified; **[O]** owner action; **[E]** engineering. Anything that needs the owner's legal or business details is marked **[TO FILL]**. Anything that depends on backend behaviour that does not exist yet is marked **[CONFIRM]**.
+## 1. Current engineering data inventory
 
-Contents: 1 data-flow inventory (what the app really does) · 2 the policy draft · 3 App Privacy "nutrition label" answers · 4 export compliance · 5 age rating · 6 other App Store Connect declarations and the privacy manifest · 7 open items.
+| Data | Destination, storage and limits | Source |
+|---|---|---|
+| Screen and input | Encrypted WebRTC media/data between paired devices, directly or through TURN. No app recording or content upload to the service. | `RemoteHost/RemoteCapture.swift`, `RemoteHost/RemoteInputDriver.swift`, `RemoteShared/PeerMedia.swift` |
+| Voice and camera | Speech recognition requires on-device support; only explicitly accepted text is sent to the Mac. Camera scans pairing QR locally. | `RemotePhone/VoiceInputController.swift`, `RemotePhone/ScannerView.swift` |
+| Text-field detection | Mac returns a boolean; no field content, title or label is requested. | `RemoteHost/HostTextFocusProbe.swift` |
+| Clipboard | Explicit text actions between devices, 256 KB cap; concealed/transient pasteboard types refused. No clipboard history or automatic synchronization service. Destination system clipboard may retain the transferred text. | `RemoteShared/ClipboardTransfer.swift`, `RemoteHost/HostClipboard.swift` |
+| Pairing trust and preferences | Pairing credentials/screen key in local Keychain; preferences in UserDefaults. iOS uses WhenUnlockedThisDeviceOnly. Existing macOS queries use the file-based Keychain; do not describe that Mac path as documented device-only Data Protection storage. | `RemoteShared/Pairing.swift`, `RemoteHost/HostReadiness.swift` |
+| Signaling and admission | TLS service receives random room identity, authentication proof, role and network metadata; encrypted signaling is forwarded. Workers/Durable Objects store room/authentication hashes, bounded policy state and relay credential/revocation metadata. D1 stores room status and entitlement associations. Screen-encryption key is not sent to the service. | `Backend/src/room.ts`, `Backend/src/entitlement/store.ts` |
+| Purchases | Service receives signed Apple transaction for verification; stores a keyed hash of original transaction ID, product/environment, access/grace/revocation dates and device associations. Apple notification identifiers/types are retained for deduplication. No card or Apple ID login credentials. | `Backend/src/entitlement/store.ts`, `Backend/src/apple/` |
+| Agent alerts | Opt-in pairing-bound APNs token/preferences plus generic event ID, agent kind and timing. Action reports are fixed choices, not prompt/chat/file/screen text. Event lifetime 15 minutes; expiry cleanup runs in the retention job. | `Backend/src/push.ts`, `RemotePhone/SystemIntegrations/AgentNotifications.swift`, `AgentAlertCenter.swift` |
+| Session Live Activity | Separate APNs activity token, activity ID and session epoch for end-only delivery; bounded retry after the session ends. Agent-alert opt-out does not delete an unrelated session-ending address. | `Backend/src/activity.ts`, `Backend/src/room.ts` |
+| Diagnostics | User-requested Copy Diagnostics and optional local stream statistics; no automatic content upload. Backend stores fixed security audit events/fingerprints. Final infrastructure logs and support retention still require review. | `RemoteHost/HostDiagnostics.swift`, `RemoteShared/StreamStatistics.swift`, `Backend/src/entitlement/store.ts` |
+| Updates and dependencies | Release Mac update checks use Sparkle only with configured public key/feed. Automatic checks/downloads are disabled in current configuration. WebRTC, Sparkle and bundled fonts have in-app notices. | `RemoteHost/HostUpdateController.swift`, `project.yml`, `RemoteShared/ThirdPartyNotices.txt`, `RemoteShared/LegalNoticesView.swift` |
 
----
+Removal is not cancellation. Local unlinking, authenticated server deletion and Apple subscription cancellation are separate actions. Local removal currently fails physically on `.11` with `delete:-25244`, leaving sharing Off and trust retryable; publication cannot claim that gate has passed.
 
-## 1. What the code actually collects, logs and sends
+## 2. Privacy policy draft for publication
 
-| Data | Where it goes | Stored? | Evidence [R] |
-|---|---|---|---|
-| Screen video of the selected Mac display | Mac to phone over WebRTC with DTLS-SRTP, direct or via a TURN relay | Not saved. Frames go to the encoder only. | `RemoteHost/RemoteCapture.swift` (`SCStream`, `capturesAudio = false`); only file write in the app is the opt-in stats log below |
-| Pointer, keyboard and text input | Phone to Mac over the WebRTC data channel; Mac injects with `CGEvent` | Not logged | `RemoteShared/ControlProtocol.swift`, `RemoteHost/RemoteInputDriver.swift`; grep for `Logger`, `print`, `NSLog` finds only the stats logger |
-| Voice | Recognized on the iPhone. Only the resulting text is sent to the Mac when the user taps Done. Audio never leaves the phone. | Not stored | `RemotePhone/VoiceInputController.swift`: requires `supportsOnDeviceRecognition`, sets `requiresOnDeviceRecognition = true`, otherwise refuses |
-| "Is the clicked element an editable text field?" | Mac answers yes or no to the phone | No | `RemoteHost/HostTextFocusProbe.swift`: role, enabled, editable and value-settable attributes only; contents and labels are not requested |
-| Camera frames | Scanned locally for the pairing QR | No | `RemotePhone/ScannerView.swift` (`AVCaptureMetadataOutput`) |
-| Pairing invitation (QR or pasted text) | Shown on the Mac, read by the phone. Contains signaling URL, room ID, one-time token, 32-byte key, expiry, Mac name. | Mac and phone keep trust in Keychain | `RemoteShared/Pairing.swift` (`HostPair.create` expires in 120 s; `validate` rejects more than 180 s) |
-| Connection setup messages | Phone and Mac to our signaling service, which forwards them. They are AES-256-GCM encrypted with the key from the QR; the service never has that key. | Not stored | `RemoteShared/Pairing.swift` (`SignalCipher`), `Server/src/server.ts` (forwards only base64 `payload`) |
-| Registration to signaling | Room ID (SHA-256 of a random host token), bearer tokens, role, client IP address as seen by the service | Rooms and rate-limit counters are in memory; approved room IDs persist in a file; pending approvals hold room ID, fingerprint and time | `Server/src/server.ts`, `Server/src/rooms.ts`, `Server/README.md` |
-| TURN relay traffic (subscribers, or as designed) | Encrypted media and input pass through Cloudflare TURN | Cloudflare keeps aggregate analytics per credential (bytes, connections, location of data centre); retention is not stated in its docs [V] | `Server/src/turn.ts`, Cloudflare TURN FAQ and analytics pages |
-| Trust material | iPhone and Mac Keychain, `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` (not synced) | On device | `RemoteShared/Pairing.swift` line 145 |
-| Preferences | Phone: click haptics, pointer sensitivity, viewport mode. Mac: allow control, keep awake, sharing enabled, accessibility step skipped, service URL. | On device (`UserDefaults`) | `RemotePhone/RemotePhoneApp.swift`, `NativeSessionView.swift`, `RemoteHost/HostReadiness.swift` |
-| Push notification token (only if push ships) | Phone registers with Apple Push Notification service; the token would be sent to our server so it can notify you | Server-side, until you remove the Mac or turn notifications off | Not in code today. `Docs/launch/APPLE-PORTAL-SETUP-2026-09-28.md` task 2 shows APNs key preparation is planned. Counts as Identifiers: Device ID (already declared). |
-| Diagnostics | A hidden switch (`PocketDeskStreamStats`) writes stream statistics (codec, fps, bitrate, route type, loss) to `Caches/PocketDeskStreamStats.jsonl` and the system log; nothing uploads it | On device, opt-in, capped near 32 MB | `RemoteShared/StreamStatistics.swift` lines 341 to 370 |
-| Analytics, ads, crash SDK, tracking | None. The only package dependency is WebRTC. | n/a | `project.yml` packages; grep for Firebase, Sentry, Mixpanel, Amplitude, MetricKit, Analytics returns nothing |
-| Login item and keep-awake | Opt-in, local | On device | `RemoteHost/HostModel.swift` lines 147 and 377; `HostKeepAwake.swift` |
-| Clipboard | No sync exists today. The Mac only copies the pairing code to the pasteboard when the user presses Copy. | n/a | `RemoteHost/HostModel.swift` line 291; clipboard sync is "in progress" per the owner |
-| Browser viewer path (hidden in Mac UI, unmounted MCP routes) | Would involve browser keys and the `Server/src/browser/` routes | n/a | PRODUCT section 12; disable in release or extend this policy |
+**Effective date:** [TO FILL] · **Last updated:** [TO FILL]
 
-Facts the policy must not overstate: the service can see connection metadata; DTLS-SRTP protects media contents but not who connects when; the Mac's physical screen is visible to anyone in the room; whoever holds a paired, unlocked phone can control the Mac while sharing is on.
+**Operator:** [TO FILL: confirmed legal seller name], individual seller under the recorded decision. **Public mailing address/telephone:** [TO FILL: confirmed business/mailbox details, never infer a home address]. **Privacy contact:** support@getfarside.com. **Policy URL:** https://getfarside.com/privacy (must actually serve this final reviewed policy).
 
----
+### Your screen, control and local features
 
-## 2. Privacy policy (draft for publication)
+Farside lets you view and control your own paired Mac from an iPhone or iPad. There is no Farside account registration. Your Mac screen and control messages travel encrypted between your devices, directly or through a relay. Farside does not record your screen, keystrokes or audio, and our connection service does not receive the screen-encryption key. Technical connection metadata remains visible to the service and relay provider.
 
-> Publish at a stable HTTPS URL (for example `https://[TO FILL domain]/privacy`) and link it in App Store Connect, from inside the iOS app (Settings), from the Mac app menu and from the website footer. Guideline 5.1.1(i) requires the in-app link and the ASC field. [V]
+Screen Recording and Accessibility permissions enable the chosen Mac display and allowed controls. Pairing requires a short-lived code and approval on the Mac. Camera frames are used locally to scan that code. Voice recognition runs on the phone; Farside refuses recognition that cannot run on device. Only the text you accept with Done goes to the Mac.
 
-# Farside Privacy Policy
+Clipboard actions transfer text only when you choose them. They do not create a Farside clipboard history or continuous sync. The receiving system clipboard may keep that text until you replace or clear it. Farside refuses marked concealed/transient clipboard content and limits each transfer to 256 KB.
 
-**Effective date:** [TO FILL]  **Last updated:** [TO FILL]
+Pairing credentials and encryption keys are stored in each device's Keychain. Preferences remain on the device. Keep your phone locked: anyone using an unlocked paired phone may exercise the controls you enabled while the Mac is sharing. The Mac's physical display may still be visible to people nearby.
 
-**Who we are:** Roshan [TO FILL: legal name as on the Apple Developer account], an individual (PRODUCT D37); mailing address [TO FILL: P.O. Box or UPS Store mailbox, never the home address], [TO FILL: country]; phone [TO FILL: published number]. Contact for privacy questions: support@getfarside.com. [TO FILL: EU/UK representative or data protection officer, only if counsel says one is required.]
+### Connection service and relays
 
-## The short version
+Our Cloudflare-hosted service receives authentication proof, random pairing/room identity, connection timing and network information needed to connect and secure your devices. It forwards encrypted setup messages and stores room/authentication hashes, session-policy state, entitlement links and relay revocation state. This is not an in-memory-only service.
 
-- Farside lets you see and control your own Mac from your iPhone or iPad. There is no Farside account. We do not ask for your name, email address or phone number.
-- What is on your Mac's screen, what you type and what you say travel between your own devices, encrypted. We do not record, store or look at your screen, keystrokes, clipboard or voice.
-- Our servers introduce your devices to each other and, if you subscribe to Farside Remote, pass encrypted traffic along when your devices cannot connect directly. To do that they see technical details such as IP addresses, timing and data volume, and a random identifier for each paired Mac.
-- We check your subscription with Apple. Apple handles your payment; we never see your card or Apple ID details.
-- No ads. No tracking. No analytics or advertising SDKs. We do not sell your data.
+Free access requires a verified directly attached local Wi-Fi/Ethernet path. Internet, VPN, routed or unverifiable access requires Farside Anywhere. When a relay is used, Cloudflare forwards encrypted media and control traffic and can observe IP addresses, timing and traffic volume. It does not receive the paired-device encryption key. [CONFIRM before publication: final Cloudflare logging, analytics, backup and provider retention settings.]
 
-## What Farside does with your information
+### Purchases
 
-### On your devices only
+Apple processes Farside Anywhere payments. We do not receive your payment-card details or Apple ID password. The app sends Apple's signed purchase transaction to our service to verify access. We keep a keyed identifier derived from the original transaction ID, subscription product/environment, access/grace/revocation dates and device associations. Apple server notifications let access reflect renewal, refund and revocation. Purchase records are eligible for cleanup 90 days after the verified access/grace deadline; notification deduplication records after 90 days.
 
-- **Screen.** After you allow Screen Recording in macOS, the Farside Mac app captures the display you choose and streams it to your paired phone using WebRTC with DTLS-SRTP encryption. The stream is not saved. It is not sent to us in readable form.
-- **Control.** After you enable control and allow Accessibility in macOS, taps and keys on your phone become pointer and keyboard actions on your Mac. They are not logged.
-- **Typing help.** When you click on your Mac, the Mac app can check whether the clicked item is a text field so your phone can open its keyboard. It checks only the type of item. It does not read what is in it.
-- **Voice input.** When you tap the microphone, your iPhone converts speech to text using Apple's speech recognition on the device. Only the text is sent to your Mac when you tap Done. We never receive audio. If on-device recognition is not available for your language, Farside turns voice input off; it does not send audio to a server instead.
-- **Camera.** Used only to scan the pairing QR code on your Mac. Pictures are not saved or sent.
-- **Local network.** Used to connect your phone to your Mac when they are on the same network.
-- **Clipboard.** [CONFIRM before launch: Farside 1.0 does not copy your clipboard between devices. If a send or paste action ships, it moves only the text you choose, directly between your devices, and is not stored.]
-- **Settings and trust.** Your pairing trust is stored in the Keychain on your devices and is not synced to iCloud. Preferences such as pointer speed live on the device.
+Unlinking a device or deleting Farside server data does not cancel an Apple subscription. Manage cancellation or refund requests through Apple. Current preparation builds have new purchases disabled until the intended service has passed acceptance.
 
-### To connect your devices
+### Optional alerts and Live Activities
 
-When you pair a phone with a Mac, the Mac shows a code that contains a random room identifier, a one-time token, an encryption key and an expiry of about two minutes. The key stays on your two devices. Our connection service forwards connection-setup messages between them; those messages are encrypted with that key, so we cannot read them.
+Agent alerts are an opt-in beta for blocking Claude Code/Codex permission events. We store a pairing-bound Apple push token and preferences to deliver generic alerts, plus short-lived event identifiers and fixed action reports for deduplication. We do not include prompts, chat text, file names, typed text or screen content. Tapping asks you to Connect; it never silently connects or approves an agent action.
 
-Each time a device connects, our service receives its IP address (as any internet service does), the random room identifier, a random token and the time. It keeps live connection state in memory only while devices are connected. It keeps a list of approved room identifiers so that only paired Macs can use the service. [CONFIRM: exact logging and retention once the production stack is final. Recommended: no request logs beyond 7 days and none containing message bodies.]
+Turning agent alerts off in Farside requests removal of their registration, events and reports; cleanup retries if the service is unavailable. Disabling notifications in iOS stops their presentation but does not itself guarantee server deletion. Session Live Activities use a separate token/session identity so the service can end an activity while the phone is suspended. Their ending addresses may remain briefly for bounded end-delivery retries. [CONFIRM before publication: exact signed APNs/AASA configuration and real delivery receipts.]
 
-If a direct connection is not possible and you have Farside Remote, your encrypted stream passes through a relay run by our provider Cloudflare. Cloudflare can see IP addresses, port numbers, timing and how much data passed. It cannot decrypt the stream. Relay credentials are short-lived and tied to a random room identifier, not to you. To find network addresses, connection setup may also contact a STUN server operated by Cloudflare. [CONFIRM: STUN configuration.]
+### Updates, diagnostics and support
 
-### Notifications
+Mac Release builds can check the configured signed-update feed using Sparkle. Automatic checks/downloads are currently disabled. A user-requested feed/download request exposes connection metadata to the hosting provider. Confirm the final archive's profiling and request fields before publication; do not promise an unmeasured provider request shape.
 
-[CONFIRM: only if push notifications ship. If they do: Farside asks permission before sending notifications. To deliver them, your phone's Apple push notification token is sent to our server and stored with the random room identifier of the Mac it belongs to. Notifications contain no screen contents. You can turn them off in iOS settings or in the app, which deletes the token.]
+Copy Diagnostics creates a local report with fixed app/permission/connection status and excludes screen content, typed text, clipboard contents, pairing codes, tokens and network addresses. Optional stream statistics stay local unless you choose to share them. Backend security audit records contain fixed event metadata/fingerprints, not screen content. No advertising or tracking SDK is included. [CONFIRM: any final provider logs and support-email retention.]
 
-### Subscription information
+### Retention and deletion
 
-Farside Remote is an auto-renewing subscription bought through Apple. Apple, not us, processes payment. To unlock relay access, the app sends the signed transaction that Apple provides to our server. Our server verifies it with Apple and stores: which subscription product it is, when it renews or expires, Apple's identifier for the subscription (Apple's original transaction ID) [CONFIRM: stored hashed], whether it is a live or test purchase, and which paired room identifiers it has enabled. We also receive notices from Apple about renewals, cancellations and refunds so that access matches your subscription. We keep this while your subscription is active and for [TO FILL: recommended 90 days] afterwards, then delete it.
+The current application cleanup rules are listed below. These are eligibility thresholds serviced by scheduled cleanup, not promises of deletion at an exact wall-clock instant. Provider backups/logs and applicable legal obligations must be reviewed separately.
 
-### Support
-
-If you email us we receive your email address and whatever you choose to send, and we use it to reply. We keep support emails for [TO FILL: recommended 24 months]. Please do not send passwords or screenshots of private content.
-
-### Our website and downloads
-
-Our website and download servers, run by [TO FILL: hosting provider], receive your IP address and the pages or files you request. We do not use advertising or analytics cookies. [CONFIRM] When the Mac app checks for updates it downloads a small update file from our server; the request includes your IP address, the app version and your macOS version. It does not send a system profile. [CONFIRM: Sparkle settings.]
-
-### Diagnostics
-
-Farside contains no crash-reporting or analytics service. If you choose to share analytics with app developers in iOS or macOS settings, Apple may give us anonymous, aggregated crash and usage reports; we cannot identify you from them. A hidden diagnostic setting can save technical connection statistics (frame rate, bitrate, connection type) to a file on your device. Nothing uploads that file; you can send it to us if you choose.
-
-### What we do not collect
-
-The contents of your screen, keystrokes, clipboard, voice or audio recordings, contacts, photos, location, advertising identifiers, browsing history, or health information.
-
-## How we use information
-
-To connect your devices; to verify your subscription and give you relay access; to keep the service secure and limit abuse; to answer your questions; and to meet legal obligations. We do not use it for advertising, profiling or sale.
-
-[TO FILL, if you serve people in the EU or UK: legal bases (for example performance of a contract and legitimate interests in security), and a statement about international transfers.]
-
-## Who receives information
-
-- **Cloudflare** (relay, and [CONFIRM: network, DNS and hosting services]).
-- **Apple** (App Store, purchases and server notifications; Apple's own privacy policy applies to its services).
-- **[TO FILL: hosting provider, email provider, support tool]**
-- Professional advisers or authorities when legally required.
-
-Each provider is bound to protect information at least as strongly as this policy states. We do not sell your information or share it for advertising.
-
-## How long we keep information
-
-| Information | Retention |
+| Information | Current application rule |
 |---|---|
-| Live connection state | Only while devices are connected (memory) |
-| Approved room identifiers | Until you remove the Mac or ask us to delete it [CONFIRM] |
-| Subscription record | Active term plus [TO FILL: 90 days] |
-| Server request logs, if any | [TO FILL: 7 days] |
-| Support emails | [TO FILL: 24 months] |
-| Data on your devices | Until you remove the pairing or delete the app |
+| Room/authentication state | Authenticated server removal clears ordinary room state and room/device links. Unused active D1 room entries are eligible after 365 days. Security blocks and pending relay revocations can remain to enforce abuse prevention/revocation. |
+| Purchase and device associations | Eligible 90 days after the verified access/grace deadline; unlinking removes the requested device association separately. |
+| Apple notification deduplication | Eligible after 90 days. |
+| Security audit | Eligible after 30 days. |
+| Agent alert events/reports | Events expire after 15 minutes; expired events/reports are removed by retention cleanup. |
+| Agent alert registration | Removed on successful app opt-out/unpairing/server removal or invalid-token handling; stale registrations eligible after 365 days or inactive-room cleanup. |
+| Activity-ending addresses | Stale active addresses eligible after 24 hours; ended addresses eligible 15 minutes after end. End retries are bounded. |
+| Local trust/preferences/clipboard | Local trust removal must succeed; preferences and system clipboard have their own local lifecycle. Deleting/unlinking does not guarantee all system clipboard or provider records disappear. |
+| Provider logs/backups and support | [TO FILL: reviewed effective settings and confirmed retention.] |
 
-## Security
+Stop Sharing ends remote access. Local Remove Phone removes the Mac's stored pairing only when its Keychain cleanup succeeds. The phone unlink and Mac Server Data controls use authenticated service endpoints; they preserve required proof while server deletion is pending and expose progress/retry. Completion means the requested server response and local cleanup have been confirmed. Security blocks, audit/purchase retention and pending relay revocations may remain as described above. Deleting server data does not cancel Apple billing.
 
-Media is encrypted between your devices with DTLS-SRTP. Connection setup messages use AES-256-GCM with a key that never reaches our servers. Connections to our servers use TLS. Trust is kept in the Keychain. Pairing codes expire quickly and the Mac must approve each phone. Stop Sharing on the Mac ends access immediately. No system is perfectly secure. Keep your phone locked and your Mac updated; anyone holding your paired, unlocked phone can use what you have allowed.
+### Providers and choices
 
-## Your choices and rights
+Cloudflare provides connection, relay and backend infrastructure. Apple provides distribution, purchases and push delivery. [TO FILL: confirmed website/support/email providers and any relevant international-transfer details.] We do not sell data or use it for advertising/tracking.
 
-- Stop sharing at any time from the Mac menu bar. Remove a paired phone from Farside on your Mac. Remove a Mac from the phone.
-- Delete your server-side record: use "Remove this Mac and delete server data" in Settings [E: to be built], or email privacy@[TO FILL domain]. With no account, we may ask you to prove ownership from the device.
-- Change permissions (camera, microphone, speech, local network, screen recording, accessibility) in your device settings.
-- Cancel your subscription in your Apple ID subscription settings. Refunds are handled by Apple.
-- You can ask what we hold about you, ask for correction or deletion, and object to processing. [TO FILL: rights and complaint routes under the laws that apply to you, for example Canada's PIPEDA and Quebec's Law 25, the EU and UK GDPR, and California law. Have counsel confirm which apply.]
+You can stop sharing, unlink devices, request authenticated server deletion, change device permissions, disable alerts and manage your subscription with Apple. Contact support@getfarside.com for privacy questions; ownership proof may be required for a deletion request. [TO FILL: applicable legal rights, complaint routes, legal bases, children's/minimum-age terms and jurisdiction reviewed for the actual distribution regions.]
 
-## Children
+We will update the published policy when practices change. [TO FILL: confirmed notice procedure and final operator contact details.]
 
-Farside is not directed to children under [TO FILL: 13 or 16, per counsel]. We do not knowingly collect personal information from children, and there is no account.
+## 3. App Privacy answer preparation
 
-## Changes
+Apple requires accurate declarations covering developer and integrated partners' collection, including data retained for app functionality. Its definition distinguishes real-time handling from readable retained data. Rechecked 29 September 2026: [Apple App Privacy details](https://developer.apple.com/app-store/app-privacy-details/).
 
-We will post changes here and, for significant changes, tell you in the app. The date at the top shows the current version.
+Current phone/host manifests declare Device ID and Purchase History, linked for app functionality with no tracking. Required-reason manifests exist for phone, Mac and widget; the exact signed archive and Xcode privacy report still need inspection.
 
-## Contact
+| Proposed declaration | Engineering basis / open final review |
+|---|---|
+| Purchase History, linked, functionality | Backend verifies and retains subscription records and device links. |
+| Device ID, linked, functionality | Pairing/install identities and APNs addresses persist for access and optional delivery. |
+| User ID | Review whether keyed subscription identity needs a distinct User ID declaration; do not treat hashing as proof it is unlinked. |
+| Product Interaction / other applicable event type, linked, functionality | Generic agent events and fixed action reports are retained beyond a single request. Final declaration/manifests must cover this beta behavior. |
+| Diagnostic / network metadata | Resolve from actual security records and provider log/analytics retention. Do not assume all metadata is unlinked or transient. |
+| Content and support | Screen/input/audio stay encrypted between devices; voice/camera processing is local. Separately review any support information voluntarily submitted and any provider-accessible retained content. |
 
-[TO FILL: name, postal address, email]
-
----
-
-## 3. App Privacy ("nutrition label") answers for the iOS app
-
-Apple's definitions [V, app-privacy-details page]: data is **collected** only when it is sent off the device and can be accessed by you or your partners for longer than needed to serve the request in real time; data is **linked** to identity when tied to an account, device or other details unless de-identified before and after collection; **tracking** means linking with third-party data for advertising or sharing with a data broker. Apple also says: if you collect and store IP addresses, declare the relevant data types by how you use them. Answers can be edited any time without a new app version, and must cover all platforms. [V]
-
-**Tracking:** No. No third-party advertising, no data broker, no ATT prompt.
-
-Recommended launch answers, assuming the backend is built as SUBSCRIPTION-SETUP.md proposes:
-
-| Data type | Collected | Linked to identity | Tracking | Purpose | Why |
-|---|---|---|---|---|---|
-| Purchases: Purchase History | Yes | Yes | No | App Functionality | Server records subscription status and expiry to gate relay. If the server verifies and stores nothing, answer No, but then relay gating and refund handling cannot work. |
-| Identifiers: User ID | Yes | Yes | No | App Functionality | Apple's original transaction ID (or its hash) identifies a subscriber. Skip if only a per-room "remote enabled until" flag is stored. |
-| Identifiers: Device ID | Yes | Yes | No | App Functionality | Persistent room or pairing identifier for the paired Mac is stored in the approved-rooms list. |
-| Diagnostics: Other Diagnostic Data | Only if IP addresses or logs are retained beyond real-time | No (rate-limit and abuse use only) | No | App Functionality | Conservative. Delete this row if logs with IPs are not kept (in-memory rate limiting in `server.ts` is per minute and not retained; proxy and CDN logs are the question). |
-| Everything else: Contact Info, Health and Fitness, Financial Info, Location, Sensitive Info, Contacts, User Content (including Audio Data, Photos or Videos, Other User Content), Browsing and Search History, Usage Data, Surroundings, Body, Other Data | No | n/a | n/a | n/a | Voice is processed on device; camera only scans a QR; screen and input are relayed encrypted and not retained; support email happens outside the app. |
-
-Third-party partners: WebRTC is a compiled library that collects nothing; no SDK collects data. Cloudflare is a service provider for infrastructure, and its retention of connection metadata is covered by the Device ID and Diagnostics rows.
-
-Because the answers tie to what the backend stores, finalize them only after the entitlement service and logging are frozen; recheck on every release that changes networking.
+Current source includes no ATT integration or advertising/data-broker tracking. Confirm the final partners' practices before submitting a no-tracking answer. Finalize the declarations from the configured release service and provider settings, then make the archive manifests, in-app policy and App Store answers agree. These are preparation notes, not submitted answers.
 
 ---
 
@@ -244,50 +178,20 @@ Expected result: **4+**. Region-specific ratings (Australia, Brazil, Korea, Viet
 | Accessibility Nutrition Labels | Voluntary now, expected to become mandatory over time. Do not claim VoiceOver for the streamed session canvas (PRODUCT does not promise it). Evaluate Dark Interface, Larger Text, Reduced Motion and the rest against Apple's criteria before claiming any. [V] |
 | iPhone and iPad apps on Apple silicon Macs | Opt out in Pricing and Availability. [V] |
 
-**iOS `PrivacyInfo.xcprivacy` (app target).** Apple stopped accepting uploads that use required-reason APIs without a manifest on 1 May 2024. The app uses `UserDefaults` in many places and `ProcessInfo.systemUptime` throughout the input and session code, which falls in the system boot time category [R; I on the exact API list, so run Xcode's Privacy Report on the archive to confirm]. Skeleton to give engineering:
-
-```xml
-<dict>
-  <key>NSPrivacyTracking</key><false/>
-  <key>NSPrivacyTrackingDomains</key><array/>
-  <key>NSPrivacyCollectedDataTypes</key>
-  <array>
-    <dict><key>NSPrivacyCollectedDataType</key><string>NSPrivacyCollectedDataTypePurchaseHistory</string>
-      <key>NSPrivacyCollectedDataTypeLinked</key><true/><key>NSPrivacyCollectedDataTypeTracking</key><false/>
-      <key>NSPrivacyCollectedDataTypePurposes</key><array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array></dict>
-    <dict><key>NSPrivacyCollectedDataType</key><string>NSPrivacyCollectedDataTypeUserID</string> ... same shape ...</dict>
-    <dict><key>NSPrivacyCollectedDataType</key><string>NSPrivacyCollectedDataTypeDeviceID</string> ... same shape ...</dict>
-  </array>
-  <key>NSPrivacyAccessedAPITypes</key>
-  <array>
-    <dict><key>NSPrivacyAccessedAPIType</key><string>NSPrivacyAccessedAPICategoryUserDefaults</string>
-      <key>NSPrivacyAccessedAPITypeReasons</key><array><string>CA92.1</string></array></dict>
-    <dict><key>NSPrivacyAccessedAPIType</key><string>NSPrivacyAccessedAPICategorySystemBootTime</string>
-      <key>NSPrivacyAccessedAPITypeReasons</key><array><string>35F9.1</string></array></dict>
-  </array>
-</dict>
-```
-
-Reason `CA92.1` covers reading and writing information only the app itself can access; `35F9.1` covers measuring elapsed time between in-app events, with the derived information not sent off the device except elapsed-time intervals. [V] The manifest's collected data types must match the App Privacy answers. The WebRTC framework already ships its own manifest declaring system boot time and file timestamp reasons and no collected data. [R]
+**Privacy manifests now exist.** `RemotePhone/PrivacyInfo.xcprivacy`, `RemoteHost/PrivacyInfo.xcprivacy` and `FarsideWidgets/PrivacyInfo.xcprivacy` replace the old proposed skeleton. Validate the archive's required reasons and collected-data declarations against the current flows in sections 1–3 and generate Xcode's Privacy Report. Existing library manifests and dependency notices do not replace this review. No export-compliance classification or portal answer is inferred from the presence of these files.
 
 **In-app requirements:** Settings must link to the Privacy Policy, Terms, Support and a Legal screen containing the WebRTC BSD-3-Clause and Google WebRTC copyright and disclaimer text (`Docs/WebRTC-distribution-license.md`), since binary redistribution must reproduce them. [R]
 
 ---
 
-## 7. Open items
+## 7. Publication and submission gates
 
-| # | Item | Owner |
-|---|---|---|
-| 1 | Legal name, address, contact, jurisdiction, effective date | O |
-| 2 | Lawyer review for Canada (PIPEDA, Quebec Law 25), EU or UK GDPR if distributing there, California | O |
-| 3 | Fix logging and retention on the production stack; fill retention table | E + O |
-| 4 | Decide whether IP-bearing logs exist, then finalize the Diagnostics row | E |
-| 5 | Build "Remove this Mac and delete server data" and an entitlement-record deletion path | E |
-| 6 | Confirm STUN use and Sparkle profiling settings | E |
-| 7 | Decide clipboard scope before launch; update the policy line | E |
-| 8 | Export classification, France decision, BIS report plan | O |
-| 9 | Decide whether Terms set a minimum age | O |
-| 10 | Disable the hidden browser path or extend this policy to cover it | E |
+- Confirm legal seller/contact/mailbox details, effective date, distribution jurisdictions and minimum-age terms; keep personal home address out of public material.
+- Review applicable privacy/export obligations and action-time Apple questionnaires. Earlier research is a dated reference, not approval or final classification.
+- Verify effective production provider logging, backups, retention jobs, support retention, STUN/TURN and update request/profiling settings.
+- Finalize App Privacy/manifest categories for retained generic agent events/action reports and security metadata; hashing alone does not make linked records anonymous.
+- Verify removal, purchase/expiry, APNs/suspended-activity ending and exact archives physically. Source paths are implemented; actual `.11` local Keychain removal currently fails safely.
+- Publish the final policy only after these fields/reviews are complete and URLs work; no publication or App Store submission occurred in this preparation.
 
 ## Sources (all checked 2026-09-28)
 
