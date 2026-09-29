@@ -212,7 +212,7 @@ final class RemoteCoordinator: ObservableObject {
             guard matches(saved) else {
                 // A different persisted pairing won during the server request. Retire stale RAM
                 // authority for the removed Mac without interrupting a newer enrollment.
-                if let current = invitation, matches(current) {
+                if invitation == nil || invitation.map(matches) == true {
                     stop()
                     invitation = saved
                     status = "Ready to connect to your paired Mac"
