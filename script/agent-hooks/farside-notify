@@ -1,0 +1,180 @@
+#!/bin/sh
+# farside-notify: tell Farside on this Mac that an AI coding agent needs a person.
+#
+# Wire it to an agent's hooks (see --print-hooks). It reads the hook's JSON from stdin, decides whether
+# the event is a blocking one (a permission prompt, an elicitation), and if so tells Farside's local
+# agent bridge, which tells your iPhone.
+#
+# What it sends: the agent's kind, a hash of the session id and the event name. Nothing else: never the
+# hook's message, a tool's input, a prompt or a file name.
+#
+# It prints nothing on stdout, because a permission hook's output can be read as a decision, and it exits
+# 0 whatever happens, so it can never block or steer an agent. --strict changes only the exit status.
+#
+# Usage: farside-notify [--agent claude-code|codex|cursor|other] [--session ID] [--bridge-file PATH]
+#                       [--dry-run] [--verbose] [--strict] [--no-stdin] [--print-hooks claude-code|codex]
+#
+# The bridge file (default: ~/Library/Application Support/Farside/agent-bridge.json, or $FARSIDE_BRIDGE_FILE)
+# holds the port and token Farside wrote when Agent alerts are on. It is read on every call.
+
+set -u
+
+agent=other
+session=""
+bridge_file=${FARSIDE_BRIDGE_FILE:-"$HOME/Library/Application Support/Farside/agent-bridge.json"}
+dry_run=0
+verbose=0
+strict=0
+use_stdin=1
+print_hooks=""
+
+usage() {
+  sed -n '2,/^set -u/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --agent) agent=${2:-other}; shift; [ $# -gt 0 ] && shift ;;
+    --agent=*) agent=${1#--agent=}; shift ;;
+    --session) session=${2:-}; shift; [ $# -gt 0 ] && shift ;;
+    --session=*) session=${1#--session=}; shift ;;
+    --bridge-file) bridge_file=${2:-$bridge_file}; shift; [ $# -gt 0 ] && shift ;;
+    --bridge-file=*) bridge_file=${1#--bridge-file=}; shift ;;
+    --dry-run) dry_run=1; shift ;;
+    --verbose|-v) verbose=1; shift ;;
+    --strict) strict=1; shift ;;
+    --no-stdin) use_stdin=0; shift ;;
+    --print-hooks) print_hooks=${2:-claude-code}; shift; [ $# -gt 0 ] && shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) shift ;;
+  esac
+done
+
+log() {
+  [ "$verbose" = 1 ] && printf 'farside-notify: %s\n' "$*" >&2
+  return 0
+}
+
+# Every way out goes through here: quiet and successful unless --strict.
+finish() {
+  log "$1"
+  if [ "$strict" = 1 ] && [ "${2:-0}" != 0 ]; then exit "$2"; fi
+  exit 0
+}
+
+case "$agent" in
+  claude-code|claude_code|claude) agent=claude_code ;;
+  codex) agent=codex ;;
+  cursor) agent=cursor ;;
+  *) agent=other ;;
+esac
+
+script_path=$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")
+
+hooks_json() {
+  command="\\\"$script_path\\\" --agent $1"
+  if [ "$1" = codex ]; then
+    cat <<EOF
+{
+  "hooks": {
+    "PermissionRequest": [
+      { "hooks": [ { "type": "command", "command": "$command", "timeout": 5 } ] }
+    ]
+  }
+}
+EOF
+    return
+  fi
+  cat <<EOF
+{
+  "hooks": {
+    "PermissionRequest": [
+      { "hooks": [ { "type": "command", "command": "$command", "timeout": 5 } ] }
+    ],
+    "Notification": [
+      { "matcher": "permission_prompt|elicitation_dialog|elicitation_url_dialog",
+        "hooks": [ { "type": "command", "command": "$command", "timeout": 5 } ] }
+    ]
+  }
+}
+EOF
+}
+
+if [ -n "$print_hooks" ]; then
+  hooks_json "$print_hooks"
+  exit 0
+fi
+
+# The hook's JSON, when there is any. Only enum-like fields are read out of it, and only the first
+# occurrence of each: a tool's own input, later in the payload, cannot spoof them.
+payload=""
+if [ "$use_stdin" = 1 ] && [ ! -t 0 ]; then
+  payload=$(head -c 65536 2>/dev/null | tr -d '\n\r')
+fi
+
+field() {
+  printf '%s' "$payload" \
+    | grep -o "\"$1\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" \
+    | head -n 1 \
+    | sed 's/^[^:]*:[[:space:]]*"\(.*\)"$/\1/'
+}
+
+hook=$(field hook_event_name)
+notification=$(field notification_type)
+hook_session=$(field session_id)
+
+case "$hook" in
+  "") : ;;
+  PermissionRequest) : ;;
+  Notification)
+    case "$notification" in
+      permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input) : ;;
+      *) finish "not a blocking notification ($notification): no alert" ;;
+    esac
+    ;;
+  *) finish "hook $hook is not a blocking event: no alert" ;;
+esac
+
+# A short hash of the session, so repeats collapse without the id itself leaving this script.
+if [ -n "$session" ]; then
+  seed="$session"
+elif [ -n "$hook_session" ]; then
+  seed="$hook_session"
+else
+  seed="$PPID|$PWD"
+fi
+hash=$(printf '%s' "farside-agent|$agent|$seed" | shasum -a 256 | cut -c1-12)
+case "$hash" in
+  *[!0-9a-f]*|"") finish "could not hash the session" 1 ;;
+esac
+
+body="{\"agent\":{\"kind\":\"$agent\",\"sessionHash\":\"$hash\"},\"type\":\"needs_user\"}"
+
+[ -r "$bridge_file" ] || finish "no bridge file at $bridge_file: is Agent alerts on in Farside's Settings?" 3
+discovery=$(tr -d '\n\r' < "$bridge_file" 2>/dev/null)
+port=$(printf '%s' "$discovery" | grep -o '"port"[[:space:]]*:[[:space:]]*[0-9]*' | head -n 1 | sed 's/^[^:]*:[[:space:]]*//')
+token=$(printf '%s' "$discovery" | grep -o '"token"[[:space:]]*:[[:space:]]*"[0-9a-f]*"' | head -n 1 | sed 's/^[^:]*:[[:space:]]*"\(.*\)"$/\1/')
+
+case "$port" in
+  ""|*[!0-9]*) finish "the bridge file has no usable port" 3 ;;
+esac
+[ "$port" -ge 1 ] && [ "$port" -le 65535 ] || finish "Farside is not listening for agent alerts (port $port)" 3
+[ "${#token}" = 64 ] || finish "the bridge file has no usable token" 3
+
+url="http://127.0.0.1:$port/agent/v1/event"
+
+if [ "$dry_run" = 1 ]; then
+  printf 'POST %s\n%s\n' "$url" "$body"
+  exit 0
+fi
+
+# The token goes to curl on stdin as a header, never in its argument list, where `ps` could read it.
+status=$(printf 'Authorization: Bearer %s\n' "$token" \
+  | curl -sS --noproxy '*' --connect-timeout 1 --max-time 2 -o /dev/null -w '%{http_code}' \
+      -H @- -H 'Content-Type: application/json' --data-raw "$body" "$url" 2>/dev/null)
+
+case "$status" in
+  2??) finish "Farside answered $status" ;;
+  ""|000) finish "Farside did not answer" 4 ;;
+  *) finish "Farside answered $status" 5 ;;
+esac

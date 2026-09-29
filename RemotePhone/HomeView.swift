@@ -37,6 +37,7 @@ struct PhoneRemoteView: View {
                 GestureCoachView(onFinish: onboarding.coachFinished)
             }
         }
+        .farsideSystemRoutes(model: model, onboarding: onboarding)
         .onChange(of: connection.connected) { _, connected in
             if connected {
                 lastReachedAt = Date().timeIntervalSince1970
@@ -334,6 +335,13 @@ struct HomeView: View {
                 HomeRow(title: "Pair another Mac", trailing: "plus")
             }
             .buttonStyle(.plain)
+            Rectangle().fill(Farside.Palette.line).frame(height: 1)
+            Button { AgentAlertCenter.shared.showsSettings = true } label: {
+                HomeRow(title: "Alerts & Lock Screen", trailing: "bell")
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Alerts and Lock Screen")
+            .accessibilityIdentifier("home.agentAlerts")
             Rectangle().fill(Farside.Palette.line).frame(height: 1)
             Button { onboarding.replayCoach() } label: {
                 HomeRow(title: "How to steer · 40 sec", trailing: "arrow.right")

@@ -1,0 +1,310 @@
+import XCTest
+import Darwin
+
+private final class RecordingPush: AgentPushRelay, @unchecked Sendable {
+    private let stored = LockedBox<[AgentAlert]>([])
+    private let answer = LockedBox<AgentPushOutcome>(.unavailable("not configured"))
+
+    var outcome: AgentPushOutcome {
+        get { answer.value }
+        set { answer.value = newValue }
+    }
+
+    var delivered: [AgentAlert] { stored.value }
+
+    func deliver(_ alert: AgentAlert) async -> AgentPushOutcome {
+        stored.mutate { $0.append(alert) }
+        return answer.value
+    }
+}
+
+/// The Mac's side of agent alerts: what each alert becomes once it has passed the bridge. The listener
+/// itself is covered by `AgentAlertBridgeTests`; here the phone and the push service are fakes.
+@MainActor
+final class HostAgentAlertsTests: XCTestCase {
+    private var directory: URL!
+    private var suite: String!
+    private var defaults: UserDefaults!
+    private var alerts: HostAgentAlerts!
+    private var push: RecordingPush!
+    private var now = Date(timeIntervalSince1970: 1_790_000_000)
+    private var phoneIsLive = true
+    private var phoneIsPaired = true
+    private var channelAccepts = true
+    private var sent: [AgentAlertFrame] = []
+    private var diary: [String] = []
+
+    override func setUp() async throws {
+        try await super.setUp()
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("farside-host-alerts-\(UUID().uuidString)")
+        suite = "FarsideHostAlertsTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: suite)
+        sent = []
+        diary = []
+        phoneIsLive = true
+        phoneIsPaired = true
+        channelAccepts = true
+        push = RecordingPush()
+        alerts = makeAlerts()
+    }
+
+    override func tearDown() async throws {
+        alerts.shutDown()
+        try? FileManager.default.removeItem(at: directory)
+        defaults.removePersistentDomain(forName: suite)
+        try await super.tearDown()
+    }
+
+    private func makeAlerts() -> HostAgentAlerts {
+        let made = HostAgentAlerts(preferences: HostPreferences(defaults: defaults), directory: directory)
+        made.now = { [unowned self] in now }
+        made.isPhoneLive = { [unowned self] in phoneIsLive }
+        made.hasPairedPhone = { [unowned self] in phoneIsPaired }
+        made.deliverToPhone = { [unowned self] frame in
+            if channelAccepts { sent.append(frame) }
+            return channelAccepts
+        }
+        made.record = { [unowned self] text in diary.append(text) }
+        made.push = push
+        return made
+    }
+
+    private func alert(_ session: String = "0123456789ab", kind: AgentKind = .claudeCode) -> AgentAlert {
+        AgentAlert(id: AgentAlert.makeID(), kind: kind, event: .needsUser, sessionHash: session, raisedAt: now)
+    }
+
+    private func turnOnWithoutListening() -> HostAgentAlerts {
+        HostPreferences(defaults: defaults).agentAlerts = true
+        alerts = makeAlerts()
+        return alerts
+    }
+
+    private func mode(of url: URL) throws -> Int {
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes[.posixPermissions] as? NSNumber)?.intValue ?? -1
+    }
+
+    // MARK: Off, on, and off again
+
+    func testNothingListensUntilThePersonTurnsItOn() async {
+        XCTAssertFalse(alerts.isOn)
+        XCTAssertNil(alerts.statusLine())
+        let disposition = await alerts.receive(alert())
+        XCTAssertEqual(disposition, .disabled)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: alerts.discoveryFile.path), "No listener, no discovery file")
+        XCTAssertTrue(sent.isEmpty)
+    }
+
+    func testTurningItOnListensOnThisMacOnlyAndTurningItOffStops() async throws {
+        await alerts.setEnabled(true)
+        XCTAssertTrue(alerts.isOn)
+        XCTAssertTrue(HostPreferences(defaults: defaults).agentAlerts, "The choice is remembered")
+        XCTAssertEqual(alerts.statusLine(), "Listening on this Mac only")
+
+        let listening = try XCTUnwrap(AgentAlertBridge.readDiscovery(at: alerts.discoveryFile))
+        XCTAssertGreaterThan(listening.port, 0)
+        XCTAssertEqual(try mode(of: alerts.discoveryFile), 0o600, "Only this user can read the token")
+        XCTAssertEqual(try mode(of: directory), 0o700)
+
+        await alerts.setEnabled(false)
+        XCTAssertFalse(alerts.isOn)
+        XCTAssertFalse(HostPreferences(defaults: defaults).agentAlerts)
+        XCTAssertEqual(try XCTUnwrap(AgentAlertBridge.readDiscovery(at: alerts.discoveryFile)).port, 0,
+                       "The file says nothing is listening")
+        XCTAssertNil(alerts.statusLine())
+    }
+
+    func testItComesBackOnAtLaunchOnlyWhenItWasLeftOn() async throws {
+        await alerts.startIfEnabled()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: alerts.discoveryFile.path), "Off stays off")
+
+        let restarted = turnOnWithoutListening()
+        await restarted.startIfEnabled()
+        XCTAssertGreaterThan(try XCTUnwrap(AgentAlertBridge.readDiscovery(at: restarted.discoveryFile)).port, 0)
+    }
+
+    func testAResetKeepsAnOldHooksTokenFromWorking() async throws {
+        await alerts.setEnabled(true)
+        let before = try XCTUnwrap(AgentAlertBridge.readDiscovery(at: alerts.discoveryFile)).token
+        alerts.resetLink()
+        let after = try XCTUnwrap(AgentAlertBridge.readDiscovery(at: alerts.discoveryFile)).token
+        XCTAssertNotEqual(before, after)
+        XCTAssertTrue(diary.contains("Agent alert link reset"))
+    }
+
+    // MARK: What an alert becomes
+
+    func testALivePhoneGetsTheAlertOnTheControlChannelAsAFrameWithNoWords() async {
+        let alerts = turnOnWithoutListening()
+        let incoming = alert(kind: .codex)
+        let disposition = await alerts.receive(incoming)
+        XCTAssertEqual(disposition, .forwarded)
+        XCTAssertEqual(sent, [incoming.frame])
+        XCTAssertEqual(sent.first?.kind, "codex")
+        XCTAssertEqual(sent.first?.event, "needs_user")
+        XCTAssertTrue(push.delivered.isEmpty, "A live session never also gets a push")
+        XCTAssertTrue(diary.contains { $0.contains("Codex needs you") })
+        XCTAssertFalse(diary.joined().contains(incoming.sessionHash), "The log never holds the session hash")
+    }
+
+    func testAPhoneThatIsNotInASessionIsForPushAndPushIsAStub() async {
+        let alerts = turnOnWithoutListening()
+        phoneIsLive = false
+        alerts.push = UnconfiguredAgentPushRelay()
+        let disposition = await alerts.receive(alert())
+        XCTAssertEqual(disposition, .pushUnavailable, "It says plainly that nothing could be sent")
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertTrue(diary.contains { $0.contains("not configured") })
+    }
+
+    func testOnceAPushServiceExistsThePhoneOutsideASessionGetsIt() async {
+        let alerts = turnOnWithoutListening()
+        phoneIsLive = false
+        push.outcome = .sent
+        let incoming = alert()
+        let disposition = await alerts.receive(incoming)
+        XCTAssertEqual(disposition, .pushed)
+        XCTAssertEqual(push.delivered, [incoming])
+        XCTAssertTrue(sent.isEmpty)
+    }
+
+    func testAChannelThatWillNotTakeTheFrameFallsBackToPush() async {
+        let alerts = turnOnWithoutListening()
+        channelAccepts = false
+        push.outcome = .sent
+        let disposition = await alerts.receive(alert())
+        XCTAssertEqual(disposition, .pushed)
+        XCTAssertEqual(push.delivered.count, 1)
+    }
+
+    func testWithNoPairedPhoneNothingIsSentAndNothingIsUsedUp() async {
+        let alerts = turnOnWithoutListening()
+        phoneIsPaired = false
+        let first = await alerts.receive(alert("aaaaaaaaaaaa"))
+        XCTAssertEqual(first, .noPhone)
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertTrue(push.delivered.isEmpty)
+        phoneIsPaired = true
+        let second = await alerts.receive(alert("aaaaaaaaaaaa"))
+        XCTAssertEqual(second, .forwarded, "The no-phone ask did not count against the session")
+    }
+
+    func testRepeatsFromOneSessionCollapseAndARunawayAgentIsStopped() async {
+        let alerts = turnOnWithoutListening()
+        let first = await alerts.receive(alert("aaaaaaaaaaaa"))
+        let repeated = await alerts.receive(alert("aaaaaaaaaaaa"))
+        XCTAssertEqual(first, .forwarded)
+        XCTAssertEqual(repeated, .duplicate)
+        XCTAssertEqual(sent.count, 1)
+
+        now = now.addingTimeInterval(61)
+        let later = await alerts.receive(alert("aaaaaaaaaaaa"))
+        XCTAssertEqual(later, .forwarded, "A minute later it is a new ask")
+
+        var last = AgentAlertDisposition.forwarded
+        for index in 0..<8 {
+            now = now.addingTimeInterval(1)
+            last = await alerts.receive(alert(String(format: "%012x", index + 1)))
+        }
+        XCTAssertEqual(last, .rateLimited, "Six an hour, however many sessions ask")
+        XCTAssertEqual(sent.count, 6)
+        XCTAssertTrue(diary.contains { $0.contains("too many this hour") })
+    }
+
+    // MARK: The line in Settings
+
+    func testSettingsSaysWhatTheLastAlertDid() async {
+        let alerts = turnOnWithoutListening()
+        XCTAssertEqual(alerts.statusLine(now: now), "Listening on this Mac only")
+        _ = await alerts.receive(alert(kind: .claudeCode))
+        XCTAssertEqual(alerts.statusLine(now: now), "Claude Code asked just now · told your iPhone")
+        XCTAssertEqual(alerts.statusLine(now: now.addingTimeInterval(125)), "Claude Code asked 2 min ago · told your iPhone")
+        XCTAssertEqual(alerts.statusLine(now: now.addingTimeInterval(7300)), "Claude Code asked 2 hr ago · told your iPhone")
+
+        phoneIsLive = false
+        now = now.addingTimeInterval(70)
+        _ = await alerts.receive(alert("bbbbbbbbbbbb", kind: .cursor))
+        XCTAssertEqual(alerts.statusLine(now: now), "Cursor asked just now · your iPhone is not in a session, and push is not on yet")
+    }
+
+    // MARK: The hook setup text
+
+    func testTheHookSetupNamesTheScriptAndBothAgentsAndParsesAsJSON() throws {
+        let path = "/Users/someone/Library/Application Support/Farside/farside-notify"
+        let text = HostAgentAlerts.hookSetup(scriptPath: path)
+        XCTAssertTrue(text.contains(path))
+        XCTAssertTrue(text.contains("~/.claude/settings.json"))
+        XCTAssertTrue(text.contains("~/.codex/hooks.json"))
+        XCTAssertTrue(text.contains("Never a prompt, a file name or the agent's own words."))
+
+        for agent in ["claude-code", "codex"] {
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(
+                with: Data(HostAgentAlerts.hooksJSON(agent: agent, scriptPath: path).utf8)) as? [String: Any])
+            let hooks = try XCTUnwrap(object["hooks"] as? [String: Any])
+            let command = try XCTUnwrap(((hooks["PermissionRequest"] as? [[String: Any]])?.first?["hooks"] as? [[String: Any]])?.first?["command"] as? String)
+            XCTAssertEqual(command, "\"\(path)\" --agent \(agent)", "A path with a space stays one word")
+            XCTAssertEqual(hooks["Notification"] == nil, agent == "codex")
+        }
+    }
+
+    func testTheScriptIsCopiedOutOfTheAppSoAnAgentsConfigSurvivesAnUpdate() throws {
+        let bundled = FileManager.default.temporaryDirectory.appendingPathComponent("bundled-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: bundled) }
+        try Data("#!/bin/sh\necho one\n".utf8).write(to: bundled)
+
+        let installed = try XCTUnwrap(alerts.installScript(from: bundled))
+        XCTAssertEqual(installed.deletingLastPathComponent().standardizedFileURL, directory.standardizedFileURL)
+        XCTAssertEqual(installed.lastPathComponent, HostAgentAlerts.scriptName)
+        XCTAssertEqual(try String(contentsOf: installed, encoding: .utf8), "#!/bin/sh\necho one\n")
+        XCTAssertEqual(try mode(of: installed), 0o755, "An agent has to be able to run it")
+        XCTAssertEqual(try mode(of: directory), 0o700)
+
+        try Data("#!/bin/sh\necho two\n".utf8).write(to: bundled)
+        _ = alerts.installScript(from: bundled)
+        XCTAssertEqual(try String(contentsOf: installed, encoding: .utf8), "#!/bin/sh\necho two\n", "A newer app replaces the copy")
+
+        XCTAssertNil(alerts.installScript(from: nil), "A build without the script says so instead of pointing at nothing")
+    }
+
+    // MARK: From a hook, through the script and the bridge, to the phone
+
+    private nonisolated static func runHook(script: URL, bridgeFile: URL, stdin: String) -> Int32 {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = [script.path, "--agent", "claude-code"]
+        process.environment = ["PATH": "/usr/bin:/bin", "HOME": NSHomeDirectory(), "FARSIDE_BRIDGE_FILE": bridgeFile.path]
+        let input = Pipe()
+        process.standardInput = input
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do { try process.run() } catch { return -1 }
+        input.fileHandleForWriting.write(Data(stdin.utf8))
+        try? input.fileHandleForWriting.close()
+        process.waitUntilExit()
+        return process.terminationStatus
+    }
+
+    func testAnAgentsHookReachesTheLivePhoneEndToEnd() async throws {
+        alerts.now = { Date() }
+        await alerts.setEnabled(true)
+        let script = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("script/agent-hooks/farside-notify")
+        let bridgeFile = alerts.discoveryFile
+        let hook = #"{"session_id":"sess-9","cwd":"/tmp","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"rm -rf /"}}"#
+
+        let status = await Task.detached { Self.runHook(script: script, bridgeFile: bridgeFile, stdin: hook) }.value
+        XCTAssertEqual(status, 0)
+        XCTAssertEqual(sent.count, 1, "The phone was told once")
+        let frame = try XCTUnwrap(sent.first)
+        XCTAssertEqual(frame.kind, "claude_code")
+        XCTAssertEqual(frame.event, "needs_user")
+        XCTAssertTrue(AgentAlertFrame.isToken(frame.id, max: 64))
+        XCTAssertFalse(String(describing: frame).contains("rm -rf"), "The tool's input never leaves the hook")
+        try frame.validate()
+        XCTAssertTrue(alerts.statusLine()?.hasPrefix("Claude Code asked just now") == true)
+
+        let again = await Task.detached { Self.runHook(script: script, bridgeFile: bridgeFile, stdin: hook) }.value
+        XCTAssertEqual(again, 0)
+        XCTAssertEqual(sent.count, 1, "The same session asking again within a minute is the same ask")
+    }
+}

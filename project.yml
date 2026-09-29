@@ -84,6 +84,7 @@ targets:
     sources: [RemotePhone, RemoteShared, PocketDesktop/TrackpadSurface.swift]
     dependencies:
       - package: WebRTC
+      - target: FarsideWidgets
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote
@@ -94,6 +95,13 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Farside
         INFOPLIST_FILE: RemotePhone/Info.plist
+        # Push, Time Sensitive and Associated Domains need an explicit App ID, which the wildcard
+        # development profile cannot provide. Off by default so a device build signs; on with
+        # FARSIDE_ENABLE_PUSH=YES once the App ID exists (design/SYSTEM-INTEGRATIONS-REPORT.md).
+        CODE_SIGN_ENTITLEMENTS: $(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))
+        FARSIDE_ENABLE_PUSH: 'NO'
+        FARSIDE_ENTITLEMENTS_NO: ''
+        FARSIDE_ENTITLEMENTS_YES: RemotePhone/Farside.entitlements
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect directly to your paired Mac when it's on the same Wi-Fi.
         INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing code shown on your Mac.
@@ -102,6 +110,25 @@ targets:
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
     scheme:
       testTargets: [RemotePhoneTests, RemotePhoneUITests]
+  FarsideWidgets:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: '26.0'
+    sources:
+      - FarsideWidgets
+      - RemotePhone/ActivityShared
+      - RemoteShared/FarsideTheme.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote.Widgets
+        CURRENT_PROJECT_VERSION: 20260928.11
+        MARKETING_VERSION: '0.1'
+        DEVELOPMENT_TEAM: 39HM2X8GS6
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: FarsideWidgets/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Farside
+        SKIP_INSTALL: YES
   RemotePhoneTests:
     type: bundle.unit-test
     platform: iOS
@@ -136,6 +163,11 @@ targets:
           copyFiles:
             destination: wrapper
             subpath: Contents/Library/LaunchAgents
+      - path: script/agent-hooks/farside-notify
+        buildPhase:
+          copyFiles:
+            destination: resources
+            subpath: agent-hooks
     dependencies:
       - package: WebRTC
       - target: FarsideWatchdog
@@ -176,7 +208,7 @@ targets:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [RemoteTests, RemoteShared, RemoteHost/HostPresentation.swift, RemoteHost/HostTextFocusProbe.swift, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift, RemoteHost/HostWatchdogState.swift, RemoteHost/HostHangWatchdog.swift, RemoteHost/HostWatchdogReporter.swift, RemoteHost/HostLoginItem.swift, RemoteHost/HostViewState.swift, RemoteHost/PrivacyCurtain.swift, RemoteHost/HostDiagnostics.swift, RemoteHost/HostE2EInputFence.swift, RemoteWatchdog/WatchdogE2E.swift, RemoteHost/HostDisplayCatalog.swift]
+    sources: [RemoteTests, RemoteShared, RemoteHost/HostPresentation.swift, RemoteHost/HostTextFocusProbe.swift, RemoteHost/RemoteCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift, RemoteHost/HostWatchdogState.swift, RemoteHost/HostHangWatchdog.swift, RemoteHost/HostWatchdogReporter.swift, RemoteHost/HostLoginItem.swift, RemoteHost/HostViewState.swift, RemoteHost/PrivacyCurtain.swift, RemoteHost/HostDiagnostics.swift, RemoteHost/HostE2EInputFence.swift, RemoteWatchdog/WatchdogE2E.swift, RemoteHost/HostDisplayCatalog.swift, RemoteHost/AgentAlertGate.swift, RemoteHost/AgentBridgeHTTP.swift, RemoteHost/AgentAlertBridge.swift, RemoteHost/HostAgentAlerts.swift]
     dependencies:
       - package: WebRTC
     settings:

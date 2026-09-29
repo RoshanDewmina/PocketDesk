@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- OFF by default. Nothing here is in a normal build, because each key needs an explicit App ID
+	     with the capability registered, and a build signed with Xcode's wildcard development profile
+	     fails to sign with any of them. Turn them all on together with FARSIDE_ENABLE_PUSH=YES, after
+	     the steps in design/SYSTEM-INTEGRATIONS-REPORT.md ("Turning push on"). -->
+
+	<!-- Push Notifications. Xcode swaps "development" for "production" when signing for distribution. -->
+	<key>aps-environment</key>
+	<string>development</string>
+	<!-- Time Sensitive Notifications: agent alerts that light the screen through Focus. -->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
+	<!-- Universal links for /open/<id>. The public domain is not chosen yet: farside.example is a
+	     reserved placeholder that never resolves. Replace it here, in FarsideRoute.associatedHosts and
+	     in the site's apple-app-site-association file together. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:farside.example</string>
+	</array>
+</dict>
+</plist>

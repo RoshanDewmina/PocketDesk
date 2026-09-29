@@ -26,6 +26,7 @@ final class OnboardingFlow: ObservableObject {
         if LaunchOptions.has("--ui-priming-network") { step = .priming(.localNetwork) }
         if LaunchOptions.has("--ui-priming-mic") { step = .priming(.microphone) }
         if LaunchOptions.has("--ui-priming-camera") { step = .priming(.camera) }
+        if LaunchOptions.has("--ui-priming-notifications") { step = .priming(.notifications) }
         #endif
     }
 

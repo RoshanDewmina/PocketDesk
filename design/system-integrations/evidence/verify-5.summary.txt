@@ -1,0 +1,38 @@
+v5-unit started 05:22:56
+v5-unit exit=0 finished 05:27:05
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.045 (0.052) seconds
+	 Executed 8 tests, with 0 failures (0 unexpected) in 8.105 (8.113) seconds
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.350 (0.360) seconds
+** TEST SUCCEEDED ** [91.334 sec]
+free KB: 16260460
+v5-build-for-testing started 05:27:05
+v5-build-for-testing exit=0 finished 05:31:45
+free KB: 16030204
+routing agent-needs-you started 05:31:45
+routing agent-needs-you exit=1 finished 05:35:32
+== agent-needs-you (route)
+   the test never became ready (see /tmp/farside-push-log.ZJLanX)
+   FAILED (exit 65); log: /tmp/farside-push-log.ZJLanX; result: /tmp/farside-push-result.NrAIPg/routing.xcresult
+   result bundle: /tmp/farside-push-result.NrAIPg/routing.xcresult
+failures: 1
+v5-springboard started 05:35:32
+v5-springboard exit=65 finished 05:47:38
+	 Executed 4 tests, with 4 failures (0 unexpected) in 556.812 (556.844) seconds
+	 Executed 4 tests, with 4 failures (0 unexpected) in 556.812 (556.850) seconds
+	 Executed 4 tests, with 4 failures (0 unexpected) in 556.812 (556.974) seconds
+** TEST FAILED **
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/LiveActivityUITests.swift:156: error: -[RemotePhoneUITests.LiveActivityUITests testSpotlightOffersTheApp] : XCTAssertTrue failed - Spotlight opens with a search field
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/LiveActivityUITests.swift:157: error: -[RemotePhoneUITests.LiveActivityUITests testSpotlightOffersTheApp] : Failed to get matching snapshot: No matches found for first query match sequen
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/LiveActivityUITests.swift:178: error: -[RemotePhoneUITests.LiveActivityUITests testTheEndButtonEndsTheActivityFromTheLockScreen] : XCTAssertTrue failed - ending shows the closing state
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/LiveActivityUITests.swift:181: error: -[RemotePhoneUITests.LiveActivityUITests testTheEndButtonEndsTheActivityFromTheLockScreen] : XCTAssertFalse failed - the kill switch does not outliv
+free KB: 15061360
+v5-ui-all started 05:47:38
+v5-ui-all exit=65 finished 06:15:14
+	 Executed 31 tests, with 6 tests skipped and 2 failures (0 unexpected) in 707.911 (708.143) seconds
+	 Executed 5 tests, with 1 failure (0 unexpected) in 124.273 (124.280) seconds
+	 Executed 8 tests, with 0 failures (0 unexpected) in 162.650 (162.736) seconds
+** TEST FAILED **
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/FarsideRedesignUITests.swift:100: error: -[RemotePhoneUITests.FarsideRedesignUITests testDockOffersKeysMicClipFitModeSegmentsAndEnd] : failed - Offline fixture must either open directly 
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/SessionLayoutTests.swift:298: error: -[RemotePhoneUITests.SessionLayoutTests testViewportModeIsRememberedAcrossLaunches] : XCTAssertTrue failed
+free KB: 12077700
+ALL DONE 06:15:14

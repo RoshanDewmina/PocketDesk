@@ -69,6 +69,23 @@ struct HostSettingsView: View {
                             .accessibilityIdentifier("farside.settings.automaticRecovery")
                     }
                 }
+                HostSettingsRow("Agent alerts (beta)",
+                                subtitle: state.agentAlertsStatus ?? "Tell your iPhone when an agent needs you") {
+                    HostSwitch(label: "Agent alerts", isOn: state.agentAlerts, set: actions.setAgentAlerts)
+                        .accessibilityIdentifier("farside.settings.agentAlerts")
+                }
+                if state.agentAlerts {
+                    HostSettingsRow("Agent hooks", subtitle: "Sends a kind and a hash, never an agent’s words") {
+                        HStack(spacing: 8) {
+                            Button("Copy Setup", action: actions.copyAgentHookSetup)
+                                .accessibilityIdentifier("farside.settings.copyAgentHookSetup")
+                            Button("Reset", action: actions.resetAgentAlertLink)
+                                .accessibilityLabel("Reset the agent link")
+                                .accessibilityIdentifier("farside.settings.resetAgentAlertLink")
+                        }
+                        .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+                    }
+                }
                 HostSettingsRow("Diagnostics", subtitle: "No screen content, typed text, clipboard, tokens or IP addresses") {
                     Button("Copy Diagnostics", action: actions.copyDiagnostics)
                         .buttonStyle(HostButtonStyle(kind: .plate, height: 30))

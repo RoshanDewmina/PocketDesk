@@ -1,0 +1,15 @@
+{
+  "aps": {
+    "alert": {
+      "title-loc-key": "AGENT_NEEDS_YOU_TITLE",
+      "title-loc-args": ["Some Other Tool"],
+      "loc-key": "AGENT_NEEDS_YOU_BODY"
+    },
+    "category": "AGENT_HELP",
+    "thread-id": "mac-7f3a",
+    "interruption-level": "active",
+    "relevance-score": 1.0,
+    "sound": "default"
+  },
+  "hid": "h_5c02"
+}

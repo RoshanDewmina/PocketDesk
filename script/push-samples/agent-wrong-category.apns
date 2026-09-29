@@ -1,0 +1,11 @@
+{
+  "aps": {
+    "alert": {
+      "title": "Farside",
+      "body": "A notification that is not an agent alert."
+    },
+    "category": "SOMETHING_ELSE",
+    "sound": "default"
+  },
+  "hid": "h_9d10"
+}
