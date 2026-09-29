@@ -212,7 +212,16 @@ final class RemoteCoordinator: ObservableObject {
             pair.room == room && pair.server == server && SecureRandom.digest(pair.token) == tokenDigest
         }
         if let saved = try store.read(PairInvitation.self) {
-            guard matches(saved) else { return false }
+            guard matches(saved) else {
+                // A different persisted pairing won during the server request. Retire stale RAM
+                // authority for the removed Mac without interrupting a newer enrollment.
+                if let current = invitation, matches(current) {
+                    stop()
+                    invitation = saved
+                    status = "Ready to connect to your paired Mac"
+                }
+                return false
+            }
             try store.delete()
         }
         if let current = invitation, matches(current) {
@@ -220,7 +229,7 @@ final class RemoteCoordinator: ObservableObject {
             invitation = nil
             status = "Pairing removed. Pair again to connect."
         }
-        return true
+        return invitation == nil
     }
     func stop() {
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
