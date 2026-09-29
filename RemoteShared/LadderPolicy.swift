@@ -201,10 +201,12 @@ struct LadderPolicy: LadderEngine {
     }
 
     /// Headroom: no trigger (checked by the caller), the encoder keeps up with what capture
-    /// delivered, and its latency fits one frame interval. An encoder without a latency trace
-    /// (nil) does not block the climb.
+    /// delivered, and its latency fits one frame interval. The one-frame allowance keeps ordinary
+    /// one-second bucket jitter (28/29 frames at a 30 fps rung) from restarting recovery forever.
+    /// An encoder without a latency trace (nil) does not block the climb.
     static func isClean(_ inputs: LadderInputs, at rung: LadderState) -> Bool {
-        guard let encoded = inputs.encodedFPS, encoded >= 0.95 * demandFPS(inputs, at: rung) else { return false }
+        guard let encoded = inputs.encodedFPS, encoded >= 0,
+              encoded + 1 >= 0.95 * demandFPS(inputs, at: rung) else { return false }
         if let latency = inputs.encodeLatencyP90Ms, latency >= frameIntervalMs(rung) { return false }
         return true
     }
@@ -231,10 +233,11 @@ struct LadderPolicy: LadderEngine {
     }
 }
 
-/// The honest load pill (BusyState.swift states the contract). `busy` while the ladder sits at its
-/// floor, or capture is behind or encoder latency is over two frame intervals for 5 s, and until
-/// 10 s after the last such second; `strained` for 8 s after each downward step, then `ok` even
-/// below the top. The size shown is `longEdge × sizeFraction`, `longEdge` being the rung-0 picture's.
+/// The honest load pill (BusyState.swift states the contract). `busy` while current pressure keeps
+/// firing at the floor, or capture is behind or encoder latency is over two frame intervals for
+/// 5 s, and through 10 continuous seconds without a current trigger so intermittent samples do not
+/// flicker the warning. `strained` is the bounded record of a recent downward step. The size shown
+/// is `longEdge × sizeFraction`, `longEdge` being the rung-0 picture's.
 struct BusyPolicy {
     static let holdSeconds: TimeInterval = 5
     static let clearSeconds: TimeInterval = 10
@@ -246,7 +249,9 @@ struct BusyPolicy {
     private var steppedDownAt: TimeInterval?
     private var captureBehindSince: TimeInterval?
     private var encodeSlowSince: TimeInterval?
+    private var floorLoadSamples = 0
     private var busyAt: TimeInterval?
+    private var busyReason: LadderReason?
 
     mutating func evaluate(ladder: LadderState, inputs: LadderInputs, at time: TimeInterval) -> BusyState? {
         evaluate(ladder: ladder, inputs: inputs, longEdge: 0, at: time)
@@ -263,6 +268,10 @@ struct BusyPolicy {
         if ladder.rung > lastRung { steppedDownAt = time }
         lastRung = ladder.rung
         let floor = LadderPolicy.ladder(targetFPS: inputs.targetFPS).count - 1
+        let firing = LadderTrigger.firing(inputs, at: ladder)
+        let liveTrigger = firing.first
+        let atFloor = ladder.rung >= floor
+        floorLoadSamples = atFloor && liveTrigger != nil ? floorLoadSamples + 1 : 0
         let captureLate = LadderTrigger.captureBehind.fires(inputs, at: ladder)
         let encodeSlow = LadderTrigger.encodeLatency.fires(inputs, at: ladder)
         captureBehindSince = captureLate ? captureBehindSince ?? time : nil
@@ -270,8 +279,18 @@ struct BusyPolicy {
 
         let captureHeld = Self.held(captureBehindSince, at: time)
         let encodeHeld = Self.held(encodeSlowSince, at: time)
-        let rawBusy = ladder.rung >= floor || captureHeld || encodeHeld
-        if rawBusy { busyAt = time }
+        let floorBusy = atFloor && liveTrigger.map {
+            $0.isImmediate || $0.isThermal || floorLoadSamples >= LadderPolicy.downSamples
+        } == true
+        let liveReason: LadderReason? = floorBusy ? liveTrigger?.reason
+            : captureHeld ? .capture
+            : encodeHeld ? .encoding
+            : nil
+        let rawBusy = floorBusy || captureHeld || encodeHeld
+        if let currentReason = liveTrigger?.reason ?? liveReason {
+            busyAt = time
+            busyReason = currentReason
+        }
 
         let level: BusyState.Level
         if rawBusy || (state.level == .busy && busyAt.map({ time - $0 < Self.clearSeconds }) ?? false) {
@@ -286,8 +305,9 @@ struct BusyPolicy {
         if level == .ok {
             next = .ok
         } else {
-            let trigger: LadderReason? = captureHeld ? .capture : encodeHeld ? .encoding : nil
-            let reason = (ladder.rung > 0 ? ladder.reason : nil) ?? trigger?.rawValue ?? state.reason
+            let reason = (level == .busy ? (liveReason ?? busyReason)?.rawValue : nil)
+                ?? (ladder.rung > 0 ? ladder.reason : nil)
+                ?? state.reason
             let edge = Int((Double(max(0, longEdge)) * ladder.sizeFraction).rounded())
             next = BusyState(level: level, fps: min(240, max(0, ladder.fps)), longEdge: min(16_384, edge),
                              reason: reason)
