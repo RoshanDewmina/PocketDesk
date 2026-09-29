@@ -23,9 +23,11 @@ enum DebugLaunchSeeds {
     ///     --ui-agent-alert=claude_code[:option]  the sheet a tap opens; options: test, reminder, old
     ///     --ui-agent-banner=codex                the quiet banner shown over a live session
     ///     --ui-session-live                      treat a session as live for alert presentation
+    ///     --ui-request-notifications             ask iOS for notification permission, as turning alerts on does
     @MainActor
     static func applyPresentations(to alerts: AgentAlertCenter) {
         if LaunchOptions.has("--ui-session-live") { alerts.isSessionLive = { true } }
+        if LaunchOptions.has("--ui-request-notifications") { Task { @MainActor in _ = await alerts.requestAndEnable() } }
         if LaunchOptions.has("--ui-agent-settings") { alerts.showsSettings = true }
         if let spec = LaunchOptions.value("--ui-agent-alert=") {
             let parts = spec.split(separator: ":").map(String.init)

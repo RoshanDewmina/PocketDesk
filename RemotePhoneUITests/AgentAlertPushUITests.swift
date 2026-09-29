@@ -20,12 +20,15 @@ final class AgentAlertPushUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    /// Launches with a paired Mac, turns alerts on (the moment iOS is asked) and tells the harness to push.
+    /// Launches with a paired Mac and alerts on, asks iOS for notification permission the way turning
+    /// alerts on does, answers it, and tells the harness to push. The defaults are set on the command line
+    /// for this run only, so nothing carries over: a command-line default also beats what the app writes,
+    /// which is why the switch is not driven here.
     @MainActor
     private func launchWithAlertsOnAndSignalReady() throws -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-seed-pairing=Studio Mac", "--ui-x",
-                                "-agentAlerts.enabled", "NO", "-agentAlerts.declinedIDs", "()", "-agentAlerts.snoozedIDs", "()"]
+        app.launchArguments = ["--ui-seed-pairing=Studio Mac", "--ui-x", "--ui-request-notifications",
+                                "-agentAlerts.enabled", "YES", "-agentAlerts.declinedIDs", "()", "-agentAlerts.snoozedIDs", "()"]
         addUIInterruptionMonitor(withDescription: "Notification permission") { alert in
             for label in ["Allow", "Allow While Using App", "OK"] where alert.buttons[label].exists {
                 alert.buttons[label].tap()
@@ -34,23 +37,11 @@ final class AgentAlertPushUITests: XCTestCase {
             return false
         }
         app.launch()
-
-        let row = app.buttons["home.agentAlerts"]
-        XCTAssertTrue(row.waitForExistence(timeout: 10))
-        row.tap()
-        let toggle = app.descendants(matching: .any)["agent.settings.alerts"].firstMatch
-        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
-        toggle.tap()
-        // The first time, the phone explains before iOS asks: Continue, then answer iOS's question.
-        let continueButton = app.buttons["Continue"]
-        if continueButton.waitForExistence(timeout: 4) { continueButton.tap() }
+        XCTAssertTrue(app.buttons["home.agentAlerts"].waitForExistence(timeout: 10), "Home is showing")
+        // iOS asks once per install; a simulator that already answered goes straight on.
         let allow = XCUIApplication(bundleIdentifier: "com.apple.springboard").buttons["Allow"]
-        if allow.waitForExistence(timeout: 6) { allow.tap() }
-        let test = app.descendants(matching: .any)["agent.settings.test"].firstMatch
-        let enabled = NSPredicate(format: "isEnabled == true")
-        expectation(for: enabled, evaluatedWith: test)
-        waitForExpectations(timeout: 15)
-        app.buttons["Done"].tap()
+        if allow.waitForExistence(timeout: 8) { allow.tap() }
+        Thread.sleep(forTimeInterval: 1.0)
 
         let ready = environment["FARSIDE_PUSH_READY_FILE"] ?? "/tmp/farside-push-ready"
         try "ready".write(toFile: ready, atomically: true, encoding: .utf8)
