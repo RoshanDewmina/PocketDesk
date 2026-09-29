@@ -1,0 +1,59 @@
+// Shared behaviour for every page. Kept tiny: fonts, the mobile menu, the motion switch.
+
+import { FONTS_URL } from "../lib/fonts";
+import { isPaused, onMotionChange, prefersReduced, setPaused } from "./motion";
+
+// Web fonts load right after the first paint, so they never hold up the words. The local fallback
+// faces (src/styles/fallbacks.css) share their metrics, so the swap moves nothing.
+requestAnimationFrame(() =>
+  setTimeout(() => {
+    const sheet = document.createElement("link");
+    sheet.rel = "stylesheet";
+    sheet.href = FONTS_URL;
+    document.head.appendChild(sheet);
+  }, 0),
+);
+
+// Mobile menu: a <details> disclosure that also closes on Escape, outside clicks and link taps.
+const menu = document.querySelector<HTMLDetailsElement>(".nav-mob");
+if (menu) {
+  const summary = menu.querySelector("summary");
+  const close = (focus: boolean) => {
+    if (!menu.open) return;
+    menu.open = false;
+    if (focus) summary?.focus();
+  };
+  menu.addEventListener("click", (e) => {
+    if ((e.target as Element).closest("a")) close(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") close(true);
+  });
+  document.addEventListener("click", (e) => {
+    if (!menu.contains(e.target as Node)) close(false);
+  });
+  const sync = () => summary?.setAttribute("aria-label", menu.open ? "Close menu" : "Menu");
+  menu.addEventListener("toggle", sync);
+  sync();
+}
+
+// Long documents: the table of contents is a disclosure on phones and stays open beside the text on wide screens.
+const wide = window.matchMedia("(min-width: 900px)");
+const tocs = [...document.querySelectorAll<HTMLDetailsElement>("details[data-wide-open]")];
+const syncToc = () => tocs.forEach((d) => (d.open = wide.matches));
+wide.addEventListener("change", syncToc);
+syncToc();
+
+// Motion switch (home hero). Hidden when the OS already asks for less motion.
+const motionBtn = document.querySelector<HTMLButtonElement>(".motion");
+if (motionBtn) {
+  const label = motionBtn.querySelector<HTMLElement>(".lbl");
+  const render = () => {
+    motionBtn.hidden = prefersReduced();
+    motionBtn.dataset.paused = isPaused() ? "true" : "false";
+    if (label) label.textContent = isPaused() ? "Play motion" : "Pause motion";
+  };
+  motionBtn.addEventListener("click", () => setPaused(!isPaused()));
+  onMotionChange(render);
+  render();
+}
