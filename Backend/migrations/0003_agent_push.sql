@@ -1,6 +1,7 @@
 -- Pairing-scoped APNs registry and bounded request history. No agent text or screen data.
 CREATE TABLE push_registrations (
   room TEXT PRIMARY KEY,
+  pairing_hash TEXT NOT NULL,
   device_token TEXT NOT NULL,
   environment TEXT NOT NULL,
   alerts_enabled INTEGER NOT NULL,
@@ -14,20 +15,22 @@ CREATE TABLE push_registrations (
 );
 CREATE TABLE push_events (
   room TEXT NOT NULL,
+  pairing_hash TEXT NOT NULL,
   id TEXT NOT NULL,
   session_hash TEXT NOT NULL,
   kind TEXT NOT NULL,
   raised_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
-  PRIMARY KEY (room, id)
+  PRIMARY KEY (room, pairing_hash, id)
 );
 CREATE INDEX push_events_room_time ON push_events(room, raised_at);
 CREATE TABLE push_reports (
   room TEXT NOT NULL,
+  pairing_hash TEXT NOT NULL,
   id TEXT NOT NULL,
   action TEXT NOT NULL,
   reported_at INTEGER NOT NULL,
-  PRIMARY KEY (room, id, action)
+  PRIMARY KEY (room, pairing_hash, id, action)
 );
 -- Only end pushes for a currently authenticated route epoch are supported.
 CREATE TABLE activity_registrations (
@@ -42,6 +45,7 @@ CREATE TABLE activity_registrations (
   end_at INTEGER,
   next_retry_at INTEGER,
   attempts INTEGER NOT NULL DEFAULT 0,
+  local_removed INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (room, route_epoch, activity_id)
 );
 CREATE INDEX activity_registrations_room_epoch ON activity_registrations(room, route_epoch);

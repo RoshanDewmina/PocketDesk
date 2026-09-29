@@ -79,22 +79,27 @@ export async function handleActivityRegister(request: Request, env: Env): Promis
       ON CONFLICT(room,route_epoch,activity_id) DO UPDATE SET push_token=excluded.push_token,
         environment=excluded.environment, version=activity_registrations.version+1,
         updated_at=excluded.updated_at,
-        next_retry_at=CASE WHEN activity_registrations.next_retry_at IS NOT NULL
+        next_retry_at=CASE WHEN activity_registrations.end_reason IS NOT NULL
+          AND activity_registrations.local_removed=0
+          AND activity_registrations.end_at>?8
           AND activity_registrations.push_token<>excluded.push_token THEN excluded.updated_at
           ELSE activity_registrations.next_retry_at END,
-        attempts=CASE WHEN activity_registrations.next_retry_at IS NOT NULL
+        attempts=CASE WHEN activity_registrations.end_reason IS NOT NULL
+          AND activity_registrations.local_removed=0
+          AND activity_registrations.end_at>?8
           AND activity_registrations.push_token<>excluded.push_token THEN 0
           ELSE activity_registrations.attempts END`)
       .bind(input.room, input.routeEpoch, input.activityId, input.pushToken, input.environment,
-        now, MAX_ACTIVE_ACTIVITIES_PER_EPOCH).run();
+        now, MAX_ACTIVE_ACTIVITIES_PER_EPOCH, now - END_RETRY_LIFETIME).run();
     if ((written.meta.changes ?? 0) === 0) return json({ error: "activity_limit" }, 429);
   } else {
     const updated = await env.DB.prepare(`UPDATE activity_registrations SET
       push_token=?4, environment=?5, version=version+1, updated_at=?6,
-      next_retry_at=CASE WHEN next_retry_at IS NOT NULL AND push_token<>?4 THEN ?6 ELSE next_retry_at END,
-      attempts=CASE WHEN next_retry_at IS NOT NULL AND push_token<>?4 THEN 0 ELSE attempts END
+      next_retry_at=CASE WHEN local_removed=0 AND end_at>?7 AND push_token<>?4 THEN ?6 ELSE next_retry_at END,
+      attempts=CASE WHEN local_removed=0 AND end_at>?7 AND push_token<>?4 THEN 0 ELSE attempts END
       WHERE room=?1 AND route_epoch=?2 AND activity_id=?3 AND end_reason IS NOT NULL`)
-      .bind(input.room, input.routeEpoch, input.activityId, input.pushToken, input.environment, now).run();
+      .bind(input.room, input.routeEpoch, input.activityId, input.pushToken, input.environment,
+        now, now - END_RETRY_LIFETIME).run();
     if ((updated.meta.changes ?? 0) === 0) return json({ error: "unauthorized_or_stale_route" }, 401);
   }
   const row = await env.DB.prepare(`SELECT room,route_epoch,activity_id,push_token,environment,version,
@@ -135,11 +140,12 @@ export async function handleActivityRemove(request: Request, env: Env): Promise<
   // Removal is terminal for this ActivityKit ID. Keep a short-lived tombstone, otherwise a
   // delayed pushTokenUpdates callback could insert the same activity again while the route lives.
   await env.DB.prepare(`INSERT INTO activity_registrations
-    (room,route_epoch,activity_id,push_token,environment,version,updated_at,end_reason,end_at,next_retry_at,attempts)
-    VALUES (?1,?2,?3,?4,?5,1,?6,'user',?6,NULL,?7)
-    ON CONFLICT(room,route_epoch,activity_id) DO UPDATE SET end_reason='user', end_at=?6,
-      next_retry_at=NULL, attempts=?7 WHERE activity_registrations.end_reason IS NULL
-      AND activity_registrations.push_token=excluded.push_token
+    (room,route_epoch,activity_id,push_token,environment,version,updated_at,end_reason,end_at,next_retry_at,attempts,local_removed)
+    VALUES (?1,?2,?3,?4,?5,1,?6,'user',?6,NULL,?7,1)
+    ON CONFLICT(room,route_epoch,activity_id) DO UPDATE SET
+      end_reason=COALESCE(activity_registrations.end_reason,'user'),
+      end_at=COALESCE(activity_registrations.end_at,?6), version=activity_registrations.version+1,
+      next_retry_at=NULL, attempts=?7, local_removed=1 WHERE activity_registrations.push_token=excluded.push_token
       AND activity_registrations.environment=excluded.environment`)
     .bind(input.room, input.routeEpoch, input.activityId, input.pushToken, input.environment, now, MAX_END_ATTEMPTS).run();
   return new Response(null, { status: 204 });

@@ -206,6 +206,58 @@ describe("end-only ActivityKit push", () => {
     await testEnv.DB.prepare("DELETE FROM activity_registrations WHERE room=?1").bind(p.room).run();
   });
 
+  it("reissues a server end when ActivityKit rotates its token after APNs accepted or invalidated the old one", async () => {
+    for (const firstStatus of [200, 410]) {
+      const p = await livePair();
+      const env = await envForEpoch(p);
+      expect((await handleActivityRegister(req("register", identity(p)), env)).status).toBe(200);
+      const sent: Array<{ url: string; body: string }> = [];
+      vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+        sent.push({ url, body: String(init.body) });
+        return new Response(null, { status: sent.length === 1 ? firstStatus : 200 });
+      });
+      const ended = await endRoomActivities(env, p.room, epoch, "timeout");
+      expect(ended[firstStatus === 200 ? "accepted" : "invalidToken"]).toBe(1);
+      const first = await testEnv.DB.prepare("SELECT end_at AS ended,next_retry_at AS retry FROM activity_registrations WHERE room=?1")
+        .bind(p.room).first<{ ended: number; retry: number | null }>();
+      expect(first?.retry).toBeNull();
+      const rotated = "cd".repeat(300);
+      const endedEnv = await envForEpoch(p, randomHex(16));
+      expect((await handleActivityRegister(req("register", identity(p, { pushToken: rotated })), endedEnv)).status).toBe(409);
+      expect(sent).toHaveLength(2);
+      expect(sent[1]!.url).toContain(rotated);
+      expect((JSON.parse(sent[1]!.body) as { aps: { timestamp: number } }).aps.timestamp)
+        .toBe(Math.floor(first!.ended / 1000));
+      expect(await testEnv.DB.prepare("SELECT next_retry_at AS retry FROM activity_registrations WHERE room=?1")
+        .bind(p.room).first()).toEqual({ retry: null });
+    }
+  });
+
+  it("does not send an end to a rotated token after the phone removed that ActivityKit ID", async () => {
+    const p = await livePair();
+    const env = await envForEpoch(p);
+    expect((await handleActivityRegister(req("register", identity(p)), env)).status).toBe(200);
+    expect((await handleActivityRemove(req("remove", identity(p)), env)).status).toBe(204);
+    const apns = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", apns);
+    expect((await handleActivityRegister(req("register", identity(p, { pushToken: "cd".repeat(300) })), env)).status).toBe(409);
+    expect(apns).not.toHaveBeenCalled();
+    expect(await testEnv.DB.prepare("SELECT local_removed AS removed,next_retry_at AS retry FROM activity_registrations WHERE room=?1")
+      .bind(p.room).first()).toEqual({ removed: 1, retry: null });
+
+    const endedPair = await livePair();
+    const endedEnv = await envForEpoch(endedPair);
+    expect((await handleActivityRegister(req("register", identity(endedPair)), endedEnv)).status).toBe(200);
+    expect((await endRoomActivities(endedEnv, endedPair.room, epoch, "timeout")).accepted).toBe(1);
+    const beforeRemove = await testEnv.DB.prepare("SELECT end_reason AS reason,end_at AS ended FROM activity_registrations WHERE room=?1")
+      .bind(endedPair.room).first();
+    expect((await handleActivityRemove(req("remove", identity(endedPair)), endedEnv)).status).toBe(204);
+    expect(await testEnv.DB.prepare("SELECT end_reason AS reason,end_at AS ended FROM activity_registrations WHERE room=?1")
+      .bind(endedPair.room).first()).toEqual(beforeRemove);
+    expect((await handleActivityRegister(req("register", identity(endedPair, { pushToken: "ef".repeat(300) })), endedEnv)).status).toBe(409);
+    expect(apns).toHaveBeenCalledTimes(1);
+  });
+
   it("retries a failed end after room forget with the original event time", async () => {
     const p = await livePair();
     const env = await envForEpoch(p);
