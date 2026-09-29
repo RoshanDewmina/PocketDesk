@@ -90,6 +90,8 @@ final class PhoneE2E: ObservableObject {
     private var connectedSessions = 0
     private var disconnects = 0
     private var lastStatus = ""
+    private var lastNotice: String?
+    private var noticesSeen: [String: Int] = [:]
 
     private static func bootstrap() -> PhoneE2E? {
         let options = E2ELaunchOptions.current
@@ -184,6 +186,13 @@ final class PhoneE2E: ObservableObject {
             recorder?.event(connection.connected ? "session.connected" : "session.disconnected",
                             ["status": connection.status])
         }
+        if model.sessionNotice != lastNotice {
+            lastNotice = model.sessionNotice
+            if let notice = model.sessionNotice {
+                noticesSeen[notice, default: 0] += 1
+                recorder?.event("session.notice", ["text": notice])
+            }
+        }
         if connection.status != lastStatus {
             lastStatus = connection.status
             recorder?.event("coordinator.status", ["status": connection.status])
@@ -204,6 +213,8 @@ final class PhoneE2E: ObservableObject {
             "contentConcealed": model.contentConcealed,
             "privacyShield": model.privacyShield,
             "macNotice": model.macNotice as Any,
+            "sessionNotice": model.sessionNotice as Any,
+            "noticesSeen": noticesSeen,
             "error": model.error,
             "geometryEpoch": model.geometryEpoch,
             "sourceSize": model.sourceSize,

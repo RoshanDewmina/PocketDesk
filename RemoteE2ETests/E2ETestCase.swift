@@ -166,7 +166,7 @@ class E2ETestCase: XCTestCase {
         if paste.waitForExistence(timeout: 5) {
             paste.tap()
         } else {
-            app.buttons["More"].tap()
+            app.buttons["Help and more"].tap()
             app.buttons["Paste Pairing Code"].tap()
         }
         let field = app.descendants(matching: .any)["Pairing code"].firstMatch

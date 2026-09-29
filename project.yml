@@ -162,7 +162,7 @@ targets:
     type: tool
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [RemoteWatchdog/main.swift, RemoteWatchdog/WatchdogSupervisor.swift, RemoteHost/HostWatchdogState.swift]
+    sources: [RemoteWatchdog/main.swift, RemoteWatchdog/WatchdogSupervisor.swift, RemoteWatchdog/WatchdogE2E.swift, RemoteHost/HostWatchdogState.swift]
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost.watchdog

@@ -244,9 +244,18 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.check("⌘A selects all (sent via the admitted key path; the phone UI has no ⌘A button)", true)
 
         if phone.state["hostFeatures"].flatMap({ $0 as? [String] })?.contains("clipboard.text.1") == true {
+            // The dock's Clip row holds Paste to Mac and Copy from Mac.
+            closePhoneKeyboard()
+            try revealDock()
+            let clip = app.buttons["Clipboard"].firstMatch
+            guard clip.waitForExistence(timeout: 3) else { throw E2EFailure("Clipboard dock tile not found") }
+            clip.tap()
+            let copy = app.buttons["Copy from Mac"].firstMatch
+            guard copy.waitForExistence(timeout: 3) else { throw E2EFailure("Copy from Mac not found in the Clip row") }
             let padText = pad.state.string("text") ?? ""
             before = marks()
-            try tapKey("Copy from Mac")
+            try ensureTestPadClear()
+            copy.tap()
             try expectHostInput("key", since: before) { $0.string("key") == "c" }
             try waitFor("Mac clipboard to arrive on the phone", timeout: 15) {
                 phone.state.object("clipboard").object("fromMac").string("sha256") == E2EDigest.sha256(padText)
@@ -258,6 +267,7 @@ final class RemoteE2ETests: E2ETestCase {
             before = marks()
             let paste = app.buttons["remote.clipboard.paste"].firstMatch
             guard paste.waitForExistence(timeout: 3) else { throw E2EFailure("Paste to Mac control not found") }
+            try ensureTestPadClear()
             paste.tap()
             try expectHostInput("key", since: before, timeout: 15) { $0.string("key") == "v" }
             try waitFor("pasted text in the Test Pad", timeout: 10) { (pad.state.string("text") ?? "").contains(marker) }
@@ -292,26 +302,67 @@ final class RemoteE2ETests: E2ETestCase {
         try runBackground(seconds: config.backgroundLongSeconds)
     }
 
+    /// Normal restart: the harness quits its host gracefully (SIGTERM, a clean exit the watchdog
+    /// ignores) and opens it again, as after a reboot or an update.
     func test_d3_HostRebootRecovery() throws {
         launchPhone()
         try ensureConnected()
         try prepareTestPad()
         try clickElement("A")
-        for signal in ["KILL", "TERM"] {
-            let killed = Date()
-            try harness.request("host.kill", ["signal": signal])
-            try waitFor("phone to notice the host went away (\(signal))", timeout: 20) { !phone.state.bool("connected") }
-            recorder.metrics["hostGone.\(signal).detectSeconds"] = Date().timeIntervalSince(killed)
-            try harness.request("host.launch", timeout: 120)
-            let relaunched = Date()
-            let automatic = (try? waitFor("automatic reconnect after host relaunch (\(signal))", timeout: config.reconnectTimeout) { phone.ready }) != nil
-            recorder.metrics["hostRelaunch.\(signal).reconnectSeconds"] = Date().timeIntervalSince(relaunched)
-            recorder.check("phone reconnected automatically after host \(signal == "KILL" ? "crash" : "quit") and relaunch",
-                           automatic, automatic ? "" : "needed a user tap: \(phone.summary())")
-            if !automatic { try ensureConnected() }
-            try prepareTestPad()
-            try clickElement(signal == "KILL" ? "B" : "C")
+        let quit = Date()
+        try harness.request("host.kill", ["signal": "TERM"])
+        try waitFor("phone to notice the host quit", timeout: 20) { !phone.state.bool("connected") }
+        recorder.metrics["hostQuit.detectSeconds"] = Date().timeIntervalSince(quit)
+        try harness.request("host.launch", timeout: 120)
+        let relaunched = Date()
+        let automatic = (try? waitFor("automatic reconnect after the host restarted", timeout: config.reconnectTimeout) { phone.ready }) != nil
+        recorder.metrics["hostRestart.reconnectSeconds"] = Date().timeIntervalSince(relaunched)
+        recorder.check("phone reconnected automatically after the host quit and reopened", automatic,
+                       automatic ? String(format: "%.1f s", Date().timeIntervalSince(relaunched)) : "needed a user tap: \(phone.summary())")
+        if !automatic { try ensureConnected() }
+        try prepareTestPad()
+        try clickElement("B")
+    }
+
+    /// Crash recovery: one kill -9 of the E2E host; the watchdog helper (run by the harness in E2E
+    /// mode against the E2E run record only) must reopen it within 10 s and the phone must reconnect
+    /// on its own and say once that Farside restarted. One unexpected exit per run keeps the
+    /// crash-loop guard (3 in 5 minutes) far away.
+    func test_d5_WatchdogRelaunch() throws {
+        if config.isStub { throw XCTSkip("The watchdog helper ships only inside the real host app") }
+        launchPhone()
+        try ensureConnected()
+        try prepareTestPad()
+        try clickElement("A")
+        try harness.request("watchdog.start")
+        cleanups.append { [harness = self.harness] in _ = try? harness.request("watchdog.stop") }
+        pause(4)
+        let previousLaunch = host.state.string("launchID")
+        let recoveredNotice = "Your Mac’s Farside restarted — reconnected."
+        let noticesBefore = phone.state.object("noticesSeen").int(recoveredNotice) ?? 0
+        let response = try harness.request("host.kill", ["signal": "KILL", "awaitRelaunch": true], timeout: 60)
+        let relaunchSeconds = response.double("seconds") ?? .infinity
+        recorder.metrics["watchdogRelaunchSeconds"] = relaunchSeconds
+        recorder.check("watchdog reopened the host within 10 s of kill -9", relaunchSeconds <= 10,
+                       String(format: "%.1f s", relaunchSeconds))
+        try waitFor("reopened host to report a recovered launch", timeout: 20) {
+            host.state.string("launchID") != previousLaunch && host.state.bool("recoveredLaunch")
         }
+        recorder.check("host knows it recovered from an unexpected exit", host.state.bool("recoveredFromUnexpectedExit"))
+        let reopened = Date()
+        let automatic = (try? waitFor("phone reconnect after the watchdog relaunch", timeout: 100) { phone.ready }) != nil
+        recorder.metrics["watchdogRelaunch.reconnectSeconds"] = Date().timeIntervalSince(reopened)
+        recorder.check("phone reconnected automatically after the watchdog relaunch", automatic,
+                       automatic ? "" : "needed a user tap: \(phone.summary())")
+        if !automatic { try ensureConnected() }
+        try waitFor("the one-time restart notice", timeout: 10) {
+            (phone.state.object("noticesSeen").int(recoveredNotice) ?? 0) > noticesBefore
+        }
+        let seen = (phone.state.object("noticesSeen").int(recoveredNotice) ?? 0) - noticesBefore
+        recorder.check("phone said once that the Mac's Farside restarted", seen == 1, "\(seen) notices")
+        try prepareTestPad()
+        try clickElement("B")
+        try harness.request("watchdog.stop")
     }
 
     func test_d4_SignalingRestart() throws {
