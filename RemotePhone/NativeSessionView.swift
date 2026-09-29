@@ -45,6 +45,7 @@ struct NativeSessionView: View {
     @AppStorage(PointerSizePreference.key) private var pointerSize: PointerSizePreference = .medium
     @AppStorage(PointerFollowStyle.key) private var followStyle: PointerFollowStyle = .smooth
     @AppStorage(StreamDebug.defaultsKey) private var streamStatsEnabled = false
+    @AppStorage(StreamDebug.markerReadingKey) private var markerReadingEnabled = true
     @AppStorage(StreamTuning.legacyDefaultsKey) private var legacyStreamTuning = false
     @AppStorage("dockHintSessions") private var dockHintSessions = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -177,6 +178,9 @@ struct NativeSessionView: View {
             dockFrame: dockFrame, keyboardOpen: keyboardOpen, panMode: panMode,
             showControls: showControls, controlsCollapsed: controlsCollapsed)))
         .onChange(of: viewport.mode) { _, mode in ViewportPreference.store(mode) }
+        .onChange(of: viewport.captureRequest(displayScale: displayScale), initial: true) { _, request in
+            model.viewportChanged(request)
+        }
         .onChange(of: viewport.offset) { _, _ in pokeMiniMap() }
         .onChange(of: viewport.zoom) { _, _ in pokeMiniMap() }
         .onChange(of: viewport.canvasSize) { _, _ in pokeMiniMap() }
@@ -330,11 +334,16 @@ struct NativeSessionView: View {
             // separate them: the pointer is positioned in picture points inside this container.
             ZStack(alignment: .topLeading) {
                 if let track = connection.remoteVideo, !model.contentConcealed {
-                    RemoteVideoSurface(track: track, counters: connection.media?.counters, statistics: streamStatsEnabled,
-                                       sourceSize: streamStatsEnabled ? model.sourceSize : .zero,
+                    let picture = viewport.picturePlacement(for: model.captureRegion)
+                    RemoteVideoSurface(track: track, counters: connection.media?.counters,
+                                       statistics: streamStatsEnabled && markerReadingEnabled,
+                                       sourceSize: streamStatsEnabled && model.captureRegion == nil
+                                        ? model.sourceSize : .zero,
                                        displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
+                                       fillsFrame: model.captureRegion != nil,
                                        onFrame: model.frameReceived)
-                        .frame(width: rect.width, height: rect.height)
+                        .frame(width: picture.width, height: picture.height)
+                        .offset(x: picture.minX, y: picture.minY)
                 } else if offlineLayoutCheck {
                     DesktopPreview(size: model.sourceSize)
                         .scaleEffect(viewport.scale, anchor: .topLeading)
@@ -398,9 +407,14 @@ struct NativeSessionView: View {
                               end: model.disconnect)
                     .transition(.opacity)
             }
+            if connection.connected, let busy = model.busy, busy.isVisible {
+                MacBusyPill(state: busy, device: UIDevice.current.model)
+                    .transition(.opacity)
+            }
             if streamStatsEnabled && !model.streamSummaryLines.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(model.streamSummaryLines.enumerated()), id: \.offset) { _, line in
+                    let lines = model.streamSummaryLines + [model.cropSummary?.caption].compactMap { $0 }
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                         Text(line).lineLimit(1).minimumScaleFactor(0.7)
                     }
                 }
@@ -695,7 +709,11 @@ struct NativeSessionView: View {
         var parts = [macName]
         if let route = model.link?.route { parts.append(route == "Relay" ? "Relayed" : route) }
         if let rtt = model.link?.roundTripMs { parts.append("\(rtt) ms") }
-        if let size = model.link?.pictureSize { parts.append(size) }
+        if let crop = model.cropSummary {
+            parts.append(crop.caption)
+        } else if let size = model.link?.pictureSize {
+            parts.append(size)
+        }
         return parts.joined(separator: " · ")
     }
 
@@ -703,7 +721,11 @@ struct NativeSessionView: View {
         var parts = [macName]
         if let route = model.link?.route { parts.append(route == "Relay" ? "relayed connection" : "direct connection") }
         if let rtt = model.link?.roundTripMs { parts.append("network round trip \(rtt) milliseconds") }
-        if let size = model.link?.pictureSize { parts.append("picture \(size.replacingOccurrences(of: "×", with: " by "))") }
+        if let crop = model.cropSummary {
+            parts.append(crop.spoken)
+        } else if let size = model.link?.pictureSize {
+            parts.append("picture \(size.replacingOccurrences(of: "×", with: " by "))")
+        }
         return parts.joined(separator: ", ")
     }
 
@@ -1856,6 +1878,7 @@ struct NativeSessionView: View {
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
             _ = viewport.settleZoom()
         }
+        reportSettledViewport()
     }
 
     private var pictureSection: some View {
@@ -1892,6 +1915,12 @@ struct NativeSessionView: View {
                 .listRowBackground(Farside.Palette.panel)
             if streamStatsEnabled {
                 Text("Shows per-stage timing over the picture and records it on this iPhone for export.")
+                    .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                    .listRowBackground(Farside.Palette.panel)
+                Toggle("Read bench marker", isOn: $markerReadingEnabled)
+                    .toggleStyle(FarsideSwitchStyle())
+                    .listRowBackground(Farside.Palette.panel)
+                Text("Per-frame latency and legibility from the Mac's bench window. Off keeps the statistics without touching the frame path.")
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .listRowBackground(Farside.Palette.panel)
                 if let log = StreamDebug.logFileURL {
@@ -2015,6 +2044,7 @@ struct NativeSessionView: View {
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
                 viewport.toggleZoom(anchoredAt: anchor)
             }
+            reportSettledViewport()
             showZoomBadge()
             return true
         case .navigate(let factor, let anchor, let translation):
@@ -2034,6 +2064,7 @@ struct NativeSessionView: View {
                 withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
                     _ = viewport.settleZoom()
                 }
+                reportSettledViewport()
                 showZoomBadge()
             }
             return true
@@ -2122,6 +2153,7 @@ struct NativeSessionView: View {
                         },
                         onTouch: { active in
                             if miniMap.touch(active, eligible: miniMapEligible) { miniMapToken &+= 1 }
+                            if !active { reportSettledViewport() }
                             #if DEBUG
                             model.inputProbe?.note("minimap touch \(active)")
                             if !active, model.inputProbe != nil {
@@ -2138,7 +2170,16 @@ struct NativeSessionView: View {
     }
 
     @ViewBuilder private func miniMapThumbnail(_ size: CGSize) -> some View {
-        if let track = connection.remoteVideo, !model.contentConcealed {
+        if let track = connection.remoteVideo, !model.contentConcealed, let region = model.captureRegion {
+            let placement = ViewportTransform.placement(of: region.rect, displaySize: model.sourceSize,
+                                                        in: CGRect(origin: .zero, size: size))
+            ZStack(alignment: .topLeading) {
+                Farside.Palette.void2
+                MiniMapVideo(track: track)
+                    .frame(width: placement.width, height: placement.height)
+                    .offset(x: placement.minX, y: placement.minY)
+            }
+        } else if let track = connection.remoteVideo, !model.contentConcealed {
             MiniMapVideo(track: track)
         } else if offlineLayoutCheck {
             DesktopPreview(size: model.sourceSize)
@@ -2178,7 +2219,13 @@ struct NativeSessionView: View {
         guard mode != viewport.mode || !viewport.isAtBaseline else { return }
         cancelGesture()
         withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) { viewport.setMode(mode) }
+        reportSettledViewport()
         showZoomBadge()
+    }
+
+    /// A gesture or a jump has ended, so the Mac hears about the new viewport at once.
+    private func reportSettledViewport() {
+        model.viewportChanged(viewport.captureRequest(displayScale: displayScale), settled: true)
     }
 
     private func toggleMode() { setMode(viewport.mode.toggled) }

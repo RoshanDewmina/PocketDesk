@@ -70,6 +70,8 @@ struct StreamCounterSnapshot {
     var captureLatencyP90Ms: Double?
     var captureGapP90Ms: Double?
     var captureGapMaxMs: Double?
+    /// Median gap between ScreenCaptureKit display times of complete frames: the source's real cadence.
+    var captureGapMedianMs: Double?
     var presentedFrames = 0
     var supersededFrames = 0
     var presentLatencyP50Ms: Double?
@@ -80,6 +82,8 @@ struct StreamCounterSnapshot {
     // Bench marker (G28): per presented frame, Mac display time → phone display time.
     var markerFrames = 0
     var markerDistinct = 0
+    /// Glass samples: one per new marker value while the clock is synced (nil when not counted).
+    var glassSamples: Int?
     var glassP50Ms: Double?
     var glassP95Ms: Double?
     var glassP99Ms: Double?
@@ -105,6 +109,7 @@ struct StreamCounterSnapshot {
     var keyFrameBytesMax: Int?
     var rateUpdates: Int?
     var encoderSessionAgeS: Double?
+    var encoderDropped: Int?
 }
 
 /// Compact sender-side stages the Mac forwards to the phone overlay once per statistics sample.
@@ -135,19 +140,45 @@ struct HostStreamSummary: Codable, Equatable {
     var keyFrameBytesMax: Int?
     var rateUpdates: Int?
     var encoderSessionAgeS: Double?
+    /// Frames the encoder's newest-frame-wins gate dropped at submit in the last sample.
+    var encoderDropped: Int?
+    // Rate, load and region (G5/G4/G12; older phones ignore these).
+    var targetFPS: Int?
+    var displayRefreshHz: Double?
+    var captureDisplay: String?
+    var captureGapMedianMs: Double?
+    /// The Mac's `ProcessInfo.thermalState` raw value, 0 (nominal) … 3 (critical).
+    var thermalState: Int?
+    var lowPowerMode: Bool?
+    var ladder: LadderState?
+    var busy: BusyState?
+    var captureRegion: CaptureRegion?
+
+    static let fpsRange = 1...240
+    static let refreshRange = 0.0...1_000
+    static let thermalRange = 0...3
+    static let displayDescriptionBytes = 48
 
     func validate() throws {
         let numbers = [captureFPS, captureLatencyMs, captureGapP90Ms, encodedFPS, encodeMs, pacerDelayMs,
                        sentFPS, sentKbps, targetKbps, maxKbps, qpAverage,
-                       encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS].compactMap { $0 }
-        let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates].compactMap { $0 }
+                       encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs].compactMap { $0 }
+        let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates,
+                        encoderDropped].compactMap { $0 }
         let bytes = [encodeBytesP50, keyFrameBytesMax].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 10_000_000 }),
               integers.allSatisfy({ $0 >= 0 && $0 <= 100_000 }),
               bytes.allSatisfy({ $0 >= 0 && $0 <= 50_000_000 }),
-              (encoder?.utf8.count ?? 0) <= 48, (qualityLimitation?.utf8.count ?? 0) <= 24 else {
+              (encoder?.utf8.count ?? 0) <= 48, (qualityLimitation?.utf8.count ?? 0) <= 24,
+              targetFPS.map({ Self.fpsRange.contains($0) }) ?? true,
+              displayRefreshHz.map({ Self.refreshRange.contains($0) }) ?? true,
+              thermalState.map({ Self.thermalRange.contains($0) }) ?? true,
+              (captureDisplay?.utf8.count ?? 0) <= Self.displayDescriptionBytes else {
             throw RemoteError.invalidMessage
         }
+        try ladder?.validate()
+        try busy?.validate()
+        try captureRegion?.validate()
     }
 }
 
@@ -230,6 +261,7 @@ struct StreamStatsReport: Codable, Equatable {
     // Bench marker: per presented frame, Mac display time → phone display time on the synced clock.
     var markerFrames: Int?
     var markerDistinctFPS: Double?
+    var glassSamples: Int?
     var glassP50Ms: Double?
     var glassP95Ms: Double?
     var glassP99Ms: Double?
@@ -254,6 +286,18 @@ struct StreamStatsReport: Codable, Equatable {
     var keyFrameBytesMax: Int?
     var rateUpdates: Int?
     var encoderSessionAgeS: Double?
+    var encoderDropped: Int?
+    // Rate, load and region. This device's thermal state and Low Power Mode on both roles; the
+    // rest is the host's (the phone sees the Mac's through `host`).
+    var targetFPS: Int?
+    var displayRefreshHz: Double?
+    var captureDisplay: String?
+    var captureGapMedianMs: Double?
+    var thermalState: Int?
+    var lowPowerMode: Bool?
+    var ladder: LadderState?
+    var busy: BusyState?
+    var captureRegion: CaptureRegion?
 
     init(role: String, previous: StreamStatsSample?, current: StreamStatsSample,
          counters: StreamCounterSnapshot?) {
@@ -328,6 +372,7 @@ struct StreamStatsReport: Codable, Equatable {
                 captureLatencyP90Ms = Self.round(counters.captureLatencyP90Ms)
                 captureGapP90Ms = Self.round(counters.captureGapP90Ms)
                 captureGapMaxMs = Self.round(counters.captureGapMaxMs)
+                captureGapMedianMs = Self.round(counters.captureGapMedianMs)
                 encodeLatencyMs = Self.round(counters.encodeLatencyP50Ms)
                 encodeLatencyP90Ms = Self.round(counters.encodeLatencyP90Ms)
                 encodeLatencyMaxMs = Self.round(counters.encodeLatencyMaxMs)
@@ -336,6 +381,7 @@ struct StreamStatsReport: Codable, Equatable {
                 keyFrameBytesMax = counters.keyFrameBytesMax
                 rateUpdates = counters.rateUpdates
                 encoderSessionAgeS = Self.round(counters.encoderSessionAgeS)
+                encoderDropped = counters.encoderDropped
             } else {
                 renderedFPS = Self.round(Double(counters.renderedFrames) / seconds)
                 renderGapMedianMs = Self.round(counters.renderGapMedianMs)
@@ -353,6 +399,7 @@ struct StreamStatsReport: Codable, Equatable {
                 if counters.markerFrames > 0 {
                     markerFrames = counters.markerFrames
                     markerDistinctFPS = Self.round(Double(counters.markerDistinct) / seconds)
+                    glassSamples = counters.glassSamples
                     glassP50Ms = Self.round(counters.glassP50Ms)
                     glassP95Ms = Self.round(counters.glassP95Ms)
                     glassP99Ms = Self.round(counters.glassP99Ms)
@@ -388,10 +435,45 @@ struct StreamStatsReport: Codable, Equatable {
                           encoder: encoderImplementation.map { String($0.prefix(48)) },
                           hardwareEncoder: powerEfficientEncoder,
                           qualityLimitation: qualityLimitation.map { String($0.prefix(24)) },
-                          encodeLatencyMs: encodeLatencyMs, encodeLatencyP90Ms: encodeLatencyP90Ms,
-                          encodeInFlightMax: encodeInFlightMax, encodeBytesP50: encodeBytesP50,
-                          keyFrameBytesMax: keyFrameBytesMax, rateUpdates: rateUpdates,
-                          encoderSessionAgeS: encoderSessionAgeS)
+                          encodeLatencyMs: encodeLatencyMs.map { min($0, 10_000_000) },
+                          encodeLatencyP90Ms: encodeLatencyP90Ms.map { min($0, 10_000_000) },
+                          encodeInFlightMax: encodeInFlightMax.map { min($0, 100_000) },
+                          encodeBytesP50: encodeBytesP50.map { min($0, 50_000_000) },
+                          keyFrameBytesMax: keyFrameBytesMax.map { min($0, 50_000_000) },
+                          rateUpdates: rateUpdates.map { min($0, 100_000) },
+                          encoderSessionAgeS: encoderSessionAgeS.map { min($0, 10_000_000) },
+                          encoderDropped: encoderDropped.map { min($0, 100_000) },
+                          targetFPS: targetFPS.map { Self.clamp($0, HostStreamSummary.fpsRange) },
+                          displayRefreshHz: displayRefreshHz.flatMap {
+                              $0.isFinite ? Self.clamp($0, HostStreamSummary.refreshRange) : nil
+                          },
+                          captureDisplay: captureDisplay.map {
+                              Self.truncated($0, bytes: HostStreamSummary.displayDescriptionBytes)
+                          },
+                          captureGapMedianMs: captureGapMedianMs.map { min($0, 10_000_000) },
+                          thermalState: thermalState.map { Self.clamp($0, HostStreamSummary.thermalRange) },
+                          lowPowerMode: lowPowerMode,
+                          ladder: ladder.flatMap { (try? $0.validate()) == nil ? nil : $0 },
+                          busy: busy.flatMap { (try? $0.validate()) == nil ? nil : $0 },
+                          captureRegion: captureRegion.flatMap { (try? $0.validate()) == nil ? nil : $0 })
+    }
+
+    static func thermalName(_ state: Int?) -> String? {
+        guard let state, HostStreamSummary.thermalRange.contains(state) else { return nil }
+        return ["nominal", "fair", "serious", "critical"][state]
+    }
+
+    private static func clamp<Value: Comparable>(_ value: Value, _ range: ClosedRange<Value>) -> Value {
+        min(range.upperBound, max(range.lowerBound, value))
+    }
+
+    private static func truncated(_ text: String, bytes: Int) -> String {
+        var result = ""
+        for character in text {
+            guard result.utf8.count + character.utf8.count <= bytes else { break }
+            result.append(character)
+        }
+        return result
     }
 
     /// Sum of the average stage delays from the Mac's display to the phone's draw call.
@@ -416,26 +498,82 @@ struct StreamStatsReport: Codable, Equatable {
             return number >= 100 ? "\(Int(number.rounded()))\(unit)" : String(format: "%.1f%@", number, unit)
         }
         func hardware(_ flag: Bool?) -> String { flag == true ? "hw" : flag == false ? "sw?" : "hw?" }
+        func dropped(_ count: Int?) -> String { count.map { " · dropped \($0)/s" } ?? "" }
+        func rateLine(_ prefix: String, target: Int?, refresh: Double?, display: String?, gapMedian: Double?,
+                      thermal: Int?, lowPower: Bool?) -> String? {
+            var parts: [String] = []
+            if let target { parts.append("target \(target)fps") }
+            if let display {
+                parts.append(display)
+            } else if let refresh {
+                parts.append(String(format: "%.0fHz", refresh))
+            }
+            if let gapMedian { parts.append("capture Δ p50 \(value(gapMedian, "ms"))") }
+            if let name = Self.thermalName(thermal) { parts.append("thermal \(name)") }
+            if lowPower == true { parts.append("low power") }
+            return parts.isEmpty ? nil : prefix + parts.joined(separator: " · ")
+        }
+        func loadLine(_ prefix: String, ladder: LadderState?, busy: BusyState?, region: CaptureRegion?) -> String? {
+            var parts: [String] = []
+            if let ladder {
+                let size = String(format: "%.2f", ladder.sizeFraction)
+                let reason = ladder.reason.map { " (\($0))" } ?? ""
+                parts.append("ladder \(ladder.rung) \(ladder.fps)fps ×\(size)\(reason)")
+            }
+            if let busy {
+                let state = "\(busy.level.rawValue) \(busy.fps)fps \(busy.longEdge)px (\(busy.reason))"
+                parts.append(busy.isVisible ? state : "not busy")
+            }
+            if let region {
+                let output = "\(region.outputWidth)×\(region.outputHeight)"
+                if region.isWholeDisplay {
+                    parts.append("whole display → \(output)")
+                } else {
+                    let rect = [region.x, region.y, region.width, region.height].map { Int($0.rounded()) }
+                    parts.append("region #\(region.epoch) \(rect[0]),\(rect[1]) \(rect[2])×\(rect[3])pt → \(output)")
+                }
+            }
+            return parts.isEmpty ? nil : prefix + parts.joined(separator: " · ")
+        }
         let refresh = displayMaxFPS.map { " · \($0)Hz" } ?? ""
         var lines = ["\(route ?? "Route pending") · \(codec ?? "codec?") \(h264ProfileLevel ?? "") · RTT \(value(rttMs, "ms"))\(refresh)"]
         if role == "host" {
+            if let rate = rateLine("", target: targetFPS, refresh: displayRefreshHz, display: captureDisplay,
+                                   gapMedian: captureGapMedianMs, thermal: thermalState, lowPower: lowPowerMode) {
+                lines.append(rate)
+            }
             lines.append("capture \(value(captureFPS))fps lag \(value(captureLatencyMs, "ms")) p90 \(value(captureLatencyP90Ms, "ms")) · gap p90 \(value(captureGapP90Ms, "ms")) · cap \(captureMaximumDimension.map(String.init) ?? "–")")
             lines.append("pushed \(value(pushedFPS)) · skipped \(pushSkipped ?? 0) · dropped pre-encode \(droppedBeforeEncode ?? 0)")
             lines.append("encode \(value(encodedFPS))fps \(value(encodeMs, "ms")) · pacer \(value(pacerDelayMs, "ms")) · sent \(value(sentFPS))fps \(sentWidth ?? 0)×\(sentHeight ?? 0)")
             lines.append("\(value(sentKbps, "kbps")) · target \(value(targetKbps, "kbps")) · max \(value(maxKbps, "kbps")) · BWE \(value(availableOutgoingKbps, "kbps"))")
             lines.append("\(encoderImplementation ?? "encoder?") \(hardware(powerEfficientEncoder)) · limit \(qualityLimitation ?? "?") · QP \(value(qpAverage)) · rtx \(retransmittedPackets ?? 0)")
-            if encodeLatencyMs != nil {
-                lines.append("VT lat p50 \(value(encodeLatencyMs, "ms")) p90 \(value(encodeLatencyP90Ms, "ms")) max \(value(encodeLatencyMaxMs, "ms")) · in-flight ≤\(encodeInFlightMax ?? 0) · bytes p50 \(encodeBytesP50 ?? 0) · key ≤\((keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(rateUpdates ?? 0) · session \(value(encoderSessionAgeS, "s"))")
+            if encodeLatencyMs != nil || encoderDropped != nil {
+                lines.append("VT lat p50 \(value(encodeLatencyMs, "ms")) p90 \(value(encodeLatencyP90Ms, "ms")) max \(value(encodeLatencyMaxMs, "ms")) · in-flight ≤\(encodeInFlightMax ?? 0) · bytes p50 \(encodeBytesP50 ?? 0) · key ≤\((keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(rateUpdates ?? 0) · session \(value(encoderSessionAgeS, "s"))"
+                             + dropped(encoderDropped))
             }
+            if let load = loadLine("", ladder: ladder, busy: busy, region: captureRegion) { lines.append(load) }
         } else {
             if let host {
+                if let rate = rateLine("Mac ", target: host.targetFPS, refresh: host.displayRefreshHz,
+                                       display: host.captureDisplay, gapMedian: host.captureGapMedianMs,
+                                       thermal: host.thermalState, lowPower: host.lowPowerMode) {
+                    lines.append(rate)
+                }
                 lines.append("Mac capture \(value(host.captureFPS))fps lag \(value(host.captureLatencyMs, "ms")) gap90 \(value(host.captureGapP90Ms, "ms")) · lost \((host.pushSkipped ?? 0) + (host.droppedBeforeEncode ?? 0))")
                 // No QP here: skip-only screen frames report QP 51 whatever the visible quality.
                 lines.append("Mac encode \(value(host.encodedFPS))fps \(value(host.encodeMs, "ms")) · pacer \(value(host.pacerDelayMs, "ms")) · kbps sent \(value(host.sentKbps)) target \(value(host.targetKbps)) max \(value(host.maxKbps))")
                 lines.append("Mac \(host.encoder ?? "encoder?") \(hardware(host.hardwareEncoder)) \(host.sentWidth ?? 0)×\(host.sentHeight ?? 0) · limit \(host.qualityLimitation ?? "?") · age \(value(hostSummaryAgeMs, "ms"))")
-                if host.encodeLatencyMs != nil {
-                    lines.append("Mac VT lat p50 \(value(host.encodeLatencyMs, "ms")) p90 \(value(host.encodeLatencyP90Ms, "ms")) · in-flight ≤\(host.encodeInFlightMax ?? 0) · bytes p50 \(host.encodeBytesP50 ?? 0) · key ≤\((host.keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(host.rateUpdates ?? 0) · session \(value(host.encoderSessionAgeS, "s"))")
+                if host.encodeLatencyMs != nil || host.encoderDropped != nil {
+                    lines.append("Mac VT lat p50 \(value(host.encodeLatencyMs, "ms")) p90 \(value(host.encodeLatencyP90Ms, "ms")) · in-flight ≤\(host.encodeInFlightMax ?? 0) · bytes p50 \(host.encodeBytesP50 ?? 0) · key ≤\((host.keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(host.rateUpdates ?? 0) · session \(value(host.encoderSessionAgeS, "s"))"
+                                 + dropped(host.encoderDropped))
                 }
+                if let load = loadLine("Mac ", ladder: host.ladder, busy: host.busy, region: host.captureRegion) {
+                    lines.append(load)
+                }
+            }
+            if let own = rateLine("phone ", target: nil, refresh: nil, display: nil, gapMedian: nil,
+                                  thermal: thermalState, lowPower: lowPowerMode) {
+                lines.append(own)
             }
             lines.append("recv \(value(receivedFPS)) · decoded \(value(decodedFPS)) · shown \(value(presentedFPS)) (replaced \(supersededFrames ?? 0)) · dropped \(framesDropped ?? 0)")
             lines.append("assemble \(value(assemblyMs, "ms")) · jitter \(value(jitterBufferMs, "ms")) · decode \(value(decodeMs, "ms")) · to-screen \(value(presentLatencyMs, "ms")) p90 \(value(presentLatencyP90Ms, "ms"))")
@@ -444,8 +582,10 @@ struct StreamStatsReport: Codable, Equatable {
             if let estimate = estimatedDisplayToDrawMs {
                 lines.append("≈ Mac display → phone draw \(value(estimate, "ms")) (stage sum)")
             }
-            if let markerFrames, markerFrames > 0 {
-                lines.append("glass p50 \(value(glassP50Ms, "ms")) p95 \(value(glassP95Ms, "ms")) max \(value(glassMaxMs, "ms")) ±\(value(clockUncertaintyMs, "ms")) · n \(markerFrames) · distinct \(value(markerDistinctFPS))/s")
+            if let markerFrames, markerFrames > 0, (markerDistinctFPS ?? 0) == 0 {
+                lines.append("glass — · no new Mac frame · shown \(markerFrames)")
+            } else if let markerFrames, markerFrames > 0 {
+                lines.append("glass p50 \(value(glassP50Ms, "ms")) p95 \(value(glassP95Ms, "ms")) max \(value(glassMaxMs, "ms")) ±\(value(clockUncertaintyMs, "ms")) · n \(glassSamples ?? markerFrames) · distinct \(value(markerDistinctFPS))/s")
             } else if clockSamples != nil {
                 lines.append("clock offset \(value(clockOffsetMs, "ms")) ±\(value(clockUncertaintyMs, "ms")) (\(clockSamples ?? 0) probes) · no bench marker in view")
             }
@@ -586,6 +726,7 @@ final class StreamCounters: @unchecked Sendable {
     private var snapshot = StreamCounterSnapshot(interval: 0)
     private var cadence = FrameCadenceWindow()
     private var captureCadence = FrameCadenceWindow()
+    private var captureDisplayCadence = FrameCadenceWindow()
     private var captureLatency = LatencyWindow()
     private var presentLatency = LatencyWindow()
     private var presentCadence = FrameCadenceWindow()
@@ -606,19 +747,25 @@ final class StreamCounters: @unchecked Sendable {
     private var encodeInFlightMax = 0
     private var keyFrameBytesMax = 0
     private var rateUpdates = 0
+    private var encoderDropped = 0
     private var encoderSessionStartedMs: Double?
 
     /// The refresh rate the video view presents at, fixed once the view is on screen.
     func setDisplayMaxFPS(_ fps: Int) { lock.lock(); displayMaxFPS = fps; lock.unlock() }
 
-    /// `displayLatencyMs` is the time from the window server displaying the frame to its capture callback.
-    func captured(idle: Bool, displayLatencyMs: Double? = nil,
+    /// `displayLatencyMs` is the time from the window server displaying the frame to its capture callback;
+    /// `displayTimeMs` is that display time (ScreenCaptureKit's `displayTime` in mach ms), whose gaps
+    /// give the source's own cadence without the callback's scheduling jitter.
+    func captured(idle: Bool, displayLatencyMs: Double? = nil, displayTimeMs: Double? = nil,
                   at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         lock.lock(); defer { lock.unlock() }
         if idle { snapshot.captureIdleFrames += 1; return }
         snapshot.captureFrames += 1
         captureCadence.record(at: time)
         if let displayLatencyMs { captureLatency.record(displayLatencyMs) }
+        if let displayTimeMs, displayTimeMs.isFinite, displayTimeMs > 0 {
+            captureDisplayCadence.record(at: displayTimeMs / 1000)
+        }
     }
 
     func pushed() { lock.lock(); snapshot.pushedFrames += 1; lock.unlock() }
@@ -662,7 +809,9 @@ final class StreamCounters: @unchecked Sendable {
     }
 
     /// A frame reached the display at `presentedMs` (phone mach ms, `MTLDrawable.presentedTime`).
-    /// `marker` is the bench strip it carried, if any.
+    /// `marker` is the bench strip it carried, if any. A marker value seen before (the Mac's idle
+    /// re-push of an unchanged frame) is that frame's age, not a latency, so only the first
+    /// appearance of each value feeds glass, input-to-photon and the distinct count.
     func presentedFrame(atMs presentedMs: Double, marker: BenchMarker?) {
         lock.lock(); defer { lock.unlock() }
         if let last = lastPresentedMs, presentedMs > last {
@@ -674,10 +823,9 @@ final class StreamCounters: @unchecked Sendable {
         lastPresentedMs = presentedMs
         guard let marker else { return }
         snapshot.markerFrames += 1
-        if marker.timeMs != lastMarkerTime {
-            snapshot.markerDistinct += 1
-            lastMarkerTime = marker.timeMs
-        }
+        guard marker.timeMs != lastMarkerTime else { return }
+        snapshot.markerDistinct += 1
+        lastMarkerTime = marker.timeMs
         if let clock {
             let hostNow = presentedMs + clock.offsetMs
             glassLatency.record(hostNow - marker.unwrappedTimeMs(near: hostNow))
@@ -708,6 +856,11 @@ final class StreamCounters: @unchecked Sendable {
         lock.lock(); rateUpdates += 1; lock.unlock()
     }
 
+    /// The encoder dropped a frame at submit because enough were already inside VideoToolbox.
+    func droppedBeforeEncode() {
+        lock.lock(); encoderDropped += 1; lock.unlock()
+    }
+
     func encoderSessionStarted(atMs ms: Double = MachClock.nowMs()) {
         lock.lock(); encoderSessionStartedMs = ms; lock.unlock()
     }
@@ -727,6 +880,7 @@ final class StreamCounters: @unchecked Sendable {
         let captureGaps = captureCadence.drain()
         result.captureGapP90Ms = captureGaps.p90GapMs
         result.captureGapMaxMs = captureGaps.maxGapMs
+        result.captureGapMedianMs = captureDisplayCadence.drain().medianGapMs
         let capture = captureLatency.drain()
         result.captureLatencyP50Ms = capture.p50
         result.captureLatencyP90Ms = capture.p90
@@ -736,6 +890,7 @@ final class StreamCounters: @unchecked Sendable {
         result.presentGapP90Ms = presentCadence.drain().p90GapMs
         result.displayMaxFPS = displayMaxFPS
         let glass = glassLatency.drainPercentiles()
+        result.glassSamples = glass.count
         result.glassP50Ms = glass.p50
         result.glassP95Ms = glass.p95
         result.glassP99Ms = glass.p99
@@ -764,9 +919,11 @@ final class StreamCounters: @unchecked Sendable {
         result.keyFrameBytesMax = keyFrameBytesMax > 0 ? keyFrameBytesMax : nil
         result.rateUpdates = encode.count > 0 || rateUpdates > 0 ? rateUpdates : nil
         result.encoderSessionAgeS = encoderSessionStartedMs.map { max(0, (MachClock.nowMs() - $0) / 1000) }
+        result.encoderDropped = encode.count > 0 || encoderDropped > 0 ? encoderDropped : nil
         encodeInFlightMax = 0
         keyFrameBytesMax = 0
         rateUpdates = 0
+        encoderDropped = 0
         snapshot = StreamCounterSnapshot(interval: 0)
         startedAt = time
         return result
@@ -779,6 +936,12 @@ final class StreamCounters: @unchecked Sendable {
 enum StreamDebug {
     static let defaultsKey = "PocketDeskStreamStats"
     static var enabled: Bool { UserDefaults.standard.bool(forKey: defaultsKey) }
+    /// Phone: read the bench marker and score the chart while statistics are on (default on); off
+    /// leaves the statistics but removes the instruments' own touch on the frame path.
+    static let markerReadingKey = "PocketDeskMarkerReading"
+    static var markerReading: Bool {
+        UserDefaults.standard.object(forKey: markerReadingKey) == nil || UserDefaults.standard.bool(forKey: markerReadingKey)
+    }
 
     private static let logger = Logger(subsystem: "com.roshan.PocketDesk", category: "stream-stats")
     private static let fileQueue = DispatchQueue(label: "PocketDesk.stream-stats-log")

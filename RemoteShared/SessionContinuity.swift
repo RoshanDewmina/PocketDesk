@@ -17,8 +17,12 @@ enum SessionFeature {
     static let extendedKeys = "keys.extended.1"
     /// `displays` (list) and `display` (switch the streamed display within the session).
     static let displaySelection = "display.select.1"
+    /// G4: the Mac crops the capture to the phone's `viewport` and echoes `captureRegion`.
+    static let viewportCapture = "capture.viewport.1"
+    /// G12: the Mac reports its ladder rung and busy state on `capture` status.
+    static let ladder = "ladder.1"
     static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
-                       absolutePointer, middleButton, extendedKeys, displaySelection]
+                       absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder]
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as

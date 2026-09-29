@@ -87,6 +87,12 @@ struct EncoderLatencyTrace {
 
     var inFlight: Int { pending.count }
 
+    /// Frames submitted within the last `windowMs` that have not called back: the gate for dropping
+    /// at submit, short enough that a frame VideoToolbox silently drops does not hold it shut.
+    func pending(withinMs windowMs: Double, now: Double) -> Int {
+        pending.reduce(0) { now - $1.atMs <= windowMs ? $0 + 1 : $0 }
+    }
+
     mutating func submitted(key: Int64, atMs: Double) {
         prune(now: atMs)
         pending.append((key: key, atMs: atMs, inFlight: pending.count + 1))
@@ -113,13 +119,20 @@ struct EncoderLatencyTrace {
 /// release/start sequence libwebrtc itself uses when the resolution changes.
 ///
 /// It also feeds the encoder trace: submit → callback latency, frames in flight, bytes per frame,
-/// key-frame size, rate updates and session age, reported through `sharedCounters`.
+/// key-frame size, rate updates and session age, reported through the host stream's counters.
 final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     /// Benchmark-only trace of rate updates, restarts and key frames; nil in the apps.
     nonisolated(unsafe) static var trace: ((String) -> Void)?
-    /// The native host's stream counters; set by `PeerMedia` when it owns the desktop track.
-    nonisolated(unsafe) static weak var sharedCounters: StreamCounters?
+    /// The native host's stream counters for the next encoder. A new PeerMedia updates this
+    /// binding, while each encoder retains the counters for its own session. The lock protects
+    /// construction during an earlier encoder's VideoToolbox callback.
+    static var sharedCounters: StreamCounters? {
+        get { countersBox.value }
+        set { countersBox.value = newValue }
+    }
+    private static let countersBox = CountersBox()
     private let inner: RTCVideoEncoderH264
+    private weak var counters: StreamCounters?
     private let lock = NSLock()
     private var policy = EncoderRestartPolicy()
     private var latency = EncoderLatencyTrace()
@@ -127,9 +140,12 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     private var cores: Int32 = 1
     private var framerate: UInt32 = 60
     private var callback: RTCVideoEncoderCallback?
+    private var maxInFlight: Int?
+    static let inFlightWindowMs = 250.0
 
     init(codecInfo: RTCVideoCodecInfo) {
         inner = RTCVideoEncoderH264(codecInfo: codecInfo)
+        counters = Self.sharedCounters
         super.init()
     }
 
@@ -151,8 +167,8 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
                 if isKey { self.policy.lastKeyFrameBytes = image.buffer.count }
                 self.lock.unlock()
                 if let sample {
-                    Self.sharedCounters?.encoded(latencyMs: sample.latencyMs, bytes: image.buffer.count,
-                                                 isKeyFrame: isKey, inFlight: sample.inFlight)
+                    self.counters?.encoded(latencyMs: sample.latencyMs, bytes: image.buffer.count,
+                                           isKeyFrame: isKey, inFlight: sample.inFlight)
                 }
             }
             return callback(image, info)
@@ -171,9 +187,10 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         policy.minimumKbps = tuning.restartFloorKbps
         policy.keyFrameBudgetMs = tuning.restartKeyFrameBudgetMs
         policy.sessionStarted(kbps: Double(settings.startBitrate), at: ProcessInfo.processInfo.systemUptime)
+        maxInFlight = tuning.encoderMaxInFlight
         latency.reset()
         lock.unlock()
-        Self.sharedCounters?.encoderSessionStarted()
+        counters?.encoderSessionStarted()
         return inner.startEncode(with: settings, numberOfCores: numberOfCores)
     }
 
@@ -188,14 +205,23 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         let target = UInt32(policy.targetKbps)
         let settings = settings, cores = cores, framerate = framerate, callback = callback
         if restart { latency.reset() }
+        let now = MachClock.nowMs()
+        let queued = maxInFlight.map { limit in
+            (limit, latency.pending(withinMs: Self.inFlightWindowMs, now: now))
+        }
         lock.unlock()
+        if let (limit, count) = queued, count >= limit, !Self.requestsKeyFrame(frameTypes) {
+            counters?.droppedBeforeEncode()
+            Self.trace?("dropped at submit, \(count) in flight")
+            return 0
+        }
         if restart, let settings {
             settings.startBitrate = target
             _ = inner.release()
             if inner.startEncode(with: settings, numberOfCores: cores) == 0 {
                 inner.setCallback(callback)
                 _ = inner.setBitrate(target, framerate: framerate)
-                Self.sharedCounters?.encoderSessionStarted()
+                counters?.encoderSessionStarted()
                 Self.trace?("restarted session at \(target)kbps")
             }
         }
@@ -210,9 +236,13 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         policy.updateTarget(kbps: Double(bitrateKbit))
         if framerate > 0 { self.framerate = framerate }
         lock.unlock()
-        Self.sharedCounters?.encoderRateUpdated()
+        counters?.encoderRateUpdated()
         Self.trace?("setBitrate \(bitrateKbit)kbps \(framerate)fps")
         return inner.setBitrate(bitrateKbit, framerate: framerate)
+    }
+
+    private static func requestsKeyFrame(_ frameTypes: [NSNumber]) -> Bool {
+        frameTypes.contains { $0.intValue == RTCFrameType.videoFrameKey.rawValue }
     }
 
     func implementationName() -> String { inner.implementationName() }
@@ -220,4 +250,13 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     var resolutionAlignment: Int { inner.resolutionAlignment }
     var applyAlignmentToAllSimulcastLayers: Bool { inner.applyAlignmentToAllSimulcastLayers }
     var supportsNativeHandle: Bool { inner.supportsNativeHandle }
+}
+
+private final class CountersBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private weak var stored: StreamCounters?
+    var value: StreamCounters? {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
+    }
 }

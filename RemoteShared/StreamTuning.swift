@@ -41,6 +41,27 @@ struct StreamTuning: Equatable {
     var restartKeyFrameBudgetMs: Double?
     /// Encoder A/B: replaces the picture mode's encoder ceiling (Sharper 25 Mb/s, Responsive 12 Mb/s).
     var encoderCeilingKbps: Int?
+    /// G13: warm the level-5.2 decode probe up at launch and cache a positive result across launches.
+    /// Off, the probe runs at the first factory as before and nothing is cached.
+    var cacheLevel52Probe = true
+    /// G5: stream a source of 100 Hz or more at 120 fps (capture at its native cadence, level fit
+    /// and pixel budget at 120, sender at 120). Inert on a 60 Hz display.
+    var highRefreshCapture = true
+    /// G5 test override for the target rate (30…120), regardless of the display.
+    var targetFPSOverride: Int?
+    /// G5: in 120 mode, turn WebRTC's degradation off: its overuse detector trips at 200 % of the frame
+    /// interval for a hardware encoder (16.7 ms at 120 fps, just above VideoToolbox's good 14.7 ms
+    /// state), so it would cut the rate on every queueing spike; the app's own ladder decides instead.
+    var highRefreshNoAdaptation = true
+    /// Newest frame wins: drop a frame at submit while this many are already inside VideoToolbox
+    /// (Chrome Remote Desktop keeps one pending). Nil lets frames queue as today.
+    var encoderMaxInFlight: Int?
+    /// Cap the capture long edge to the client's advertised screen pixels (reduction only).
+    var capToClientPixels = true
+    /// G4: crop the capture to the phone's reported viewport (`SessionFeature.viewportCapture`).
+    var viewportCapture = true
+    /// G12: let the ladder step the rate and size down under load and report the busy state.
+    var ladder = true
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -49,9 +70,19 @@ struct StreamTuning: Equatable {
     static let tuned = StreamTuning(playoutDelayMinMs: 0, playoutDelayMaxMs: 0, videoPacing: nil,
                                     qualityBitrates: true, bandwidthHeadroom: 1, degradationPreference: .maintainResolution,
                                     encoderRestart: true, presentAtDisplayMaximum: true)
-    static let legacy = StreamTuning(playoutDelayMinMs: nil, playoutDelayMaxMs: nil, videoPacing: nil,
-                                     qualityBitrates: false, bandwidthHeadroom: 1, degradationPreference: nil,
-                                     encoderRestart: false, presentAtDisplayMaximum: false)
+    static let legacy: StreamTuning = {
+        var tuning = StreamTuning(playoutDelayMinMs: nil, playoutDelayMaxMs: nil, videoPacing: nil,
+                                  qualityBitrates: false, bandwidthHeadroom: 1, degradationPreference: nil,
+                                  encoderRestart: false, presentAtDisplayMaximum: false)
+        // "Previous stream tuning" must also exclude features added after that baseline.
+        tuning.cacheLevel52Probe = false
+        tuning.highRefreshCapture = false
+        tuning.highRefreshNoAdaptation = false
+        tuning.capToClientPixels = false
+        tuning.viewportCapture = false
+        tuning.ladder = false
+        return tuning
+    }()
 
     static let legacyDefaultsKey = "PocketDeskLegacyStreamTuning"
     static let captureNativeRateKey = "PocketDeskCaptureNativeRate"
@@ -59,6 +90,19 @@ struct StreamTuning: Equatable {
     static let restartFloorKey = "PocketDeskRestartFloorKbps"
     static let restartKeyFrameBudgetKey = "PocketDeskRestartKeyFrameBudgetMs"
     static let encoderCeilingKey = "PocketDeskEncoderCeilingKbps"
+    static let level52ProbeCacheKey = "PocketDeskLevel52ProbeCache"
+    static let highRefreshCaptureKey = "PocketDeskHighRefreshCapture"
+    static let targetFPSKey = "PocketDeskTargetFPS"
+    static let highRefreshNoAdaptationKey = "PocketDeskHighRefreshNoAdaptation"
+    static let capToClientPixelsKey = "PocketDeskCapToClientPixels"
+    static let viewportCaptureKey = "PocketDeskViewportCapture"
+    static let ladderKey = "PocketDeskLadder"
+    static let encoderMaxInFlightKey = "PocketDeskEncoderMaxInFlight"
+    /// Every experiment key, for the session protocol's cleanup step.
+    static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
+                                 restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
+                                 highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
+                                 viewportCaptureKey, ladderKey, encoderMaxInFlightKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -94,6 +138,32 @@ struct StreamTuning: Equatable {
             let ceiling = defaults.integer(forKey: encoderCeilingKey)
             tuning.encoderCeilingKbps = (1_000...60_000).contains(ceiling) ? ceiling : nil
         }
+        if defaults.object(forKey: level52ProbeCacheKey) != nil {
+            tuning.cacheLevel52Probe = defaults.bool(forKey: level52ProbeCacheKey)
+        }
+        if defaults.object(forKey: highRefreshCaptureKey) != nil {
+            tuning.highRefreshCapture = defaults.bool(forKey: highRefreshCaptureKey)
+        }
+        if defaults.object(forKey: targetFPSKey) != nil {
+            let fps = defaults.integer(forKey: targetFPSKey)
+            tuning.targetFPSOverride = CaptureRatePolicy.overrideRange.contains(fps) ? fps : nil
+        }
+        if defaults.object(forKey: highRefreshNoAdaptationKey) != nil {
+            tuning.highRefreshNoAdaptation = defaults.bool(forKey: highRefreshNoAdaptationKey)
+        }
+        if defaults.object(forKey: capToClientPixelsKey) != nil {
+            tuning.capToClientPixels = defaults.bool(forKey: capToClientPixelsKey)
+        }
+        if defaults.object(forKey: viewportCaptureKey) != nil {
+            tuning.viewportCapture = defaults.bool(forKey: viewportCaptureKey)
+        }
+        if defaults.object(forKey: ladderKey) != nil {
+            tuning.ladder = defaults.bool(forKey: ladderKey)
+        }
+        if defaults.object(forKey: encoderMaxInFlightKey) != nil {
+            let limit = defaults.integer(forKey: encoderMaxInFlightKey)
+            tuning.encoderMaxInFlight = (1...8).contains(limit) ? limit : nil
+        }
         return tuning
     }
 
@@ -116,6 +186,7 @@ struct StreamTuning: Equatable {
     }
 
     var summary: String {
+        if self == Self.legacy { return "legacy" }
         var parts: [String] = []
         if let playoutDelayMinMs, let playoutDelayMaxMs { parts.append("playout \(playoutDelayMinMs)-\(playoutDelayMaxMs)ms") }
         if let videoPacing { parts.append("pacing \(videoPacing)") }
@@ -128,6 +199,14 @@ struct StreamTuning: Equatable {
         if restartFloorKbps != Self.tuned.restartFloorKbps { parts.append("restart floor \(Int(restartFloorKbps))") }
         if let restartKeyFrameBudgetMs { parts.append("IDR budget \(Int(restartKeyFrameBudgetMs))ms") }
         if let encoderCeilingKbps { parts.append("ceiling \(encoderCeilingKbps)") }
+        if !cacheLevel52Probe { parts.append("no probe cache") }
+        if !highRefreshCapture { parts.append("60 fps only") }
+        if let targetFPSOverride { parts.append("target \(targetFPSOverride) fps") }
+        if !highRefreshNoAdaptation { parts.append("webrtc adaptation at 120") }
+        if !capToClientPixels { parts.append("no client cap") }
+        if !viewportCapture { parts.append("whole-display capture") }
+        if !ladder { parts.append("no ladder") }
+        if let encoderMaxInFlight { parts.append("max in-flight \(encoderMaxInFlight)") }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
 
@@ -192,9 +271,12 @@ enum SeedRoute: String, Equatable {
     /// A host↔host pair with a LAN round trip is `lan`; the same pair over a VPN or tunnel counts as `p2p`.
     static let lanRoundTripLimitMs = 15.0
 
+    /// A host pair without a round-trip figure yet is unknown, not LAN.
     static func classify(detail: String?, rttMs: Double?) -> SeedRoute? {
         switch detail {
-        case "lan": return (rttMs ?? 0) < lanRoundTripLimitMs ? .lan : .p2p
+        case "lan":
+            guard let rttMs else { return nil }
+            return rttMs < lanRoundTripLimitMs ? .lan : .p2p
         case "p2p": return .p2p
         case "relay": return .relay
         default: return nil

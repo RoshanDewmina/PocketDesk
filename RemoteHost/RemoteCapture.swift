@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import ScreenCaptureKit
 import CoreMedia
@@ -55,24 +56,38 @@ struct CapturePixelDimensions: Equatable {
     let width: Int
     let height: Int
 
-    static func fitted(contentSize: CGSize, pointPixelScale: Double,
-                       quality: StreamQuality) -> CapturePixelDimensions? {
+    /// `maximumDimension` replaces the mode's cap (the client-pixel cap); `fps` sets the level fit.
+    static func fitted(contentSize: CGSize, pointPixelScale: Double, quality: StreamQuality,
+                       fps: Int = CaptureRatePolicy.standardFPS, maximumDimension: Int? = nil) -> CapturePixelDimensions? {
         let sourceWidth = Double(contentSize.width) * pointPixelScale
         let sourceHeight = Double(contentSize.height) * pointPixelScale
         guard pointPixelScale.isFinite, pointPixelScale > 0,
               sourceWidth.isFinite, sourceHeight.isFinite,
-              sourceWidth >= 2, sourceHeight >= 2 else { return nil }
+              sourceWidth >= 2, sourceHeight >= 2, fps > 0 else { return nil }
 
-        let maximum = Double(quality.maximumDimension)
+        let maximum = Double(maximumDimension ?? quality.maximumDimension(at: fps))
         let scale = min(1, maximum / max(sourceWidth, sourceHeight))
         var width = Int((sourceWidth * scale).rounded(.down)) & ~1
         var height = Int((sourceHeight * scale).rounded(.down)) & ~1
-        while width >= 2, height >= 2, !H264LevelPolicy.fitsAt60FPS(width: width, height: height) {
+        while width >= 2, height >= 2, !H264LevelPolicy.fits(width: width, height: height, fps: fps) {
             width -= 2
             height = Int((Double(width) * sourceHeight / sourceWidth).rounded(.down)) & ~1
         }
         guard width >= 2, height >= 2 else { return nil }
         return CapturePixelDimensions(width: width, height: height)
+    }
+}
+
+/// The refresh rate of the display being captured, from CoreGraphics' current mode or the
+/// matching NSScreen; nil when neither reports one (some virtual and adaptive displays say 0).
+enum DisplayRefresh {
+    static func rateHz(for displayID: CGDirectDisplayID) -> Double? {
+        if let mode = CGDisplayCopyDisplayMode(displayID), mode.refreshRate > 0 { return mode.refreshRate }
+        let screen = NSScreen.screens.first {
+            ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == displayID
+        }
+        if let fps = screen?.maximumFramesPerSecond, fps > 0 { return Double(fps) }
+        return nil
     }
 }
 
@@ -97,11 +112,23 @@ final class RemoteCapture {
     var onExclusionLost: (() -> Void)?
     private(set) var excludedWindowIDs: Set<CGWindowID> = []
 
+    /// G4: what the stream covers, once at every start (the whole display) and whenever
+    /// ScreenCaptureKit has applied a different region; echoed to the phone on `capture` status.
+    var onCaptureRegion: ((CaptureRegion) -> Void)?
+    private(set) var appliedCaptureRegion: CaptureRegion?
+
     private var ownership = ScopedCaptureOwner()
     private var session: RemoteCaptureSession?
     private weak var streamPeer: PeerMedia?
     private var requestedQuality: StreamQuality = .balanced
     private var requestedShowsCursor = true
+    /// The client's longest screen edge in pixels, capping the capture (reduction only).
+    private var requestedClientLongEdge: Int?
+    private var appliedClientLongEdge: Int?
+    private var requestedViewport: ViewportRegion?
+    /// The display the requested viewport's points refer to.
+    private var viewportDisplayID: CGDirectDisplayID?
+    private var requestedLadder: LadderState?
     private var captureStarted = false
     private var qualityUpdateTask: Task<Void, Never>?
     private var exclusionGeneration: UInt64 = 0
@@ -111,6 +138,32 @@ final class RemoteCapture {
         guard quality != requestedQuality else { return }
         requestedQuality = quality
         scheduleQualityUpdate()
+    }
+
+    /// The client's screen in pixels (heartbeats); the capture never exceeds its longest edge.
+    func setClientPixels(_ pixels: PixelSize?) {
+        let edge = pixels?.longEdge
+        guard edge != requestedClientLongEdge else { return }
+        requestedClientLongEdge = edge
+        scheduleQualityUpdate()
+    }
+
+    /// G4: the desktop region the phone shows (heartbeats). The crop is resolved and applied on the
+    /// capture queue; nil returns to the whole display.
+    func setViewport(_ viewport: ViewportRegion?) {
+        guard viewport != requestedViewport else { return }
+        requestedViewport = viewport
+        guard captureStarted, let session else { return }
+        session.requestViewport(viewport)
+    }
+
+    /// G12: the ladder's rung is applied at the capture (frame interval and output size), so the
+    /// encoder never sees frames it would have to drop; nil is rung 0. Cleared by `stop()`.
+    func setLadder(_ state: LadderState?) {
+        guard state != requestedLadder else { return }
+        requestedLadder = state
+        guard captureStarted, let session else { return }
+        session.requestLadder(state)
     }
 
     /// Only a client drawing its own pointer may hide it. Every capture starts with it shown.
@@ -124,6 +177,9 @@ final class RemoteCapture {
 
     func start(display: SCDisplay, peer: PeerMedia) async throws -> UInt64 {
         let owner = ownership.begin()
+        if viewportDisplayID != display.displayID { requestedViewport = nil }
+        viewportDisplayID = display.displayID
+        appliedCaptureRegion = nil
         dropExclusions()
         qualityUpdateTask?.cancel()
         qualityUpdateTask = nil
@@ -138,7 +194,9 @@ final class RemoteCapture {
         guard ownership.owns(owner) else { throw CancellationError() }
 
         let initialQuality = requestedQuality
-        let next = try RemoteCaptureSession(display: display, peer: peer, quality: initialQuality)
+        let initialClientLongEdge = requestedClientLongEdge
+        let next = try RemoteCaptureSession(display: display, peer: peer, quality: initialQuality,
+                                            clientLongEdge: initialClientLongEdge)
         next.onHealth = { [weak self, weak next] healthy in
             Task { @MainActor in
                 guard let self, let next, self.ownership.owns(owner), self.session === next else { return }
@@ -151,6 +209,13 @@ final class RemoteCapture {
                 self.onFailure?()
             }
         }
+        // Delivered on the main queue in the order applied; a Task hop could reorder two regions.
+        next.onCaptureRegion = { [weak self, weak next] region in
+            MainActor.assumeIsolated {
+                guard let self, let next, self.ownership.owns(owner), self.session === next else { return }
+                self.publishCaptureRegion(region)
+            }
+        }
         session = next
 
         do {
@@ -159,9 +224,20 @@ final class RemoteCapture {
             guard ownership.owns(owner), session === next else { throw CancellationError() }
             captureStarted = true
             appliedQuality = initialQuality
+            appliedClientLongEdge = initialClientLongEdge
             streamPeer = peer
             peer.applyStreamQuality(initialQuality)
+            peer.applyCaptureRate(targetFPS: next.targetFPS, displayRefreshHz: next.displayRefreshHz,
+                                  display: next.displayDescription)
             onQuality?(initialQuality)
+            publishCaptureRegion(next.initialRegion)
+            if let viewport = requestedViewport {
+                if ViewportCapturePolicy.isValid(viewport, for: next.geometry) {
+                    next.requestViewport(viewport)
+                } else {
+                    requestedViewport = nil
+                }
+            }
             scheduleQualityUpdate()
             return owner
         } catch {
@@ -185,6 +261,12 @@ final class RemoteCapture {
         qualityUpdateTask = nil
         requestedQuality = .balanced
         appliedQuality = nil
+        requestedClientLongEdge = nil
+        appliedClientLongEdge = nil
+        requestedViewport = nil
+        viewportDisplayID = nil
+        requestedLadder = nil
+        appliedCaptureRegion = nil
         resetCursor()
         captureStarted = false
         streamPeer = nil
@@ -239,9 +321,13 @@ final class RemoteCapture {
         onExclusionLost?()
     }
 
+    private var qualityUpdatePending: Bool {
+        requestedQuality != appliedQuality || requestedShowsCursor != appliedShowsCursor
+            || requestedClientLongEdge != appliedClientLongEdge
+    }
+
     private func scheduleQualityUpdate() {
-        guard qualityUpdateTask == nil, captureStarted, let session,
-              requestedQuality != appliedQuality || requestedShowsCursor != appliedShowsCursor else { return }
+        guard qualityUpdateTask == nil, captureStarted, let session, qualityUpdatePending else { return }
         let owner = ownership.current
         qualityUpdateTask = Task { [weak self] in
             await self?.applyRequestedQuality(to: session, owner: owner)
@@ -250,11 +336,11 @@ final class RemoteCapture {
 
     private func applyRequestedQuality(to target: RemoteCaptureSession, owner: UInt64) async {
         while !Task.isCancelled, ownership.owns(owner), session === target,
-              let appliedQuality,
-              requestedQuality != appliedQuality || requestedShowsCursor != appliedShowsCursor {
+              let appliedQuality, qualityUpdatePending {
             let quality = requestedQuality
             let showsCursor = requestedShowsCursor
-            let succeeded = await target.updateQuality(quality, showsCursor: showsCursor)
+            let clientLongEdge = requestedClientLongEdge
+            let succeeded = await target.updateQuality(quality, showsCursor: showsCursor, clientLongEdge: clientLongEdge)
             guard !Task.isCancelled, ownership.owns(owner), session === target else { break }
             if succeeded {
                 if quality != appliedQuality {
@@ -262,10 +348,13 @@ final class RemoteCapture {
                     streamPeer?.applyStreamQuality(quality)
                     onQuality?(quality)
                 }
+                appliedClientLongEdge = clientLongEdge
                 let before = cursorInVideo
                 appliedShowsCursor = showsCursor
                 notifyCursor(changedFrom: before)
-            } else if requestedQuality == quality && requestedShowsCursor == showsCursor {
+            } else if requestedQuality == quality && requestedShowsCursor == showsCursor && requestedClientLongEdge == clientLongEdge {
+                // A rejected client cap must not retry forever; keep the applied one.
+                requestedClientLongEdge = appliedClientLongEdge
                 if requestedShowsCursor != appliedShowsCursor {
                     // Keep reporting what frames really contain; the caller may retry later.
                     let before = cursorInVideo
@@ -277,6 +366,12 @@ final class RemoteCapture {
         }
         guard ownership.owns(owner), session === target else { return }
         qualityUpdateTask = nil
+    }
+
+    private func publishCaptureRegion(_ region: CaptureRegion) {
+        guard region != appliedCaptureRegion else { return }
+        appliedCaptureRegion = region
+        onCaptureRegion?(region)
     }
 
     private func resetCursor() {
@@ -317,8 +412,79 @@ enum RemoteCaptureConfiguration {
 
     /// A 1/60 floor by default; `.zero` asks ScreenCaptureKit for the display's own cadence (G1).
     static func minimumFrameInterval(for tuning: StreamTuning) -> CMTime {
-        tuning.captureAtNativeRate ? .zero : CMTime(value: 1, timescale: 60)
+        minimumFrameInterval(for: tuning, targetFPS: CaptureRatePolicy.standardFPS, displayRefreshHz: nil)
     }
+
+    /// Above 60: the display's own cadence, unless the display runs faster than the target (a
+    /// 144 Hz panel streamed at 120), in which case ScreenCaptureKit thins to the target itself.
+    static func minimumFrameInterval(for tuning: StreamTuning, targetFPS: Int, displayRefreshHz: Double?) -> CMTime {
+        if targetFPS > CaptureRatePolicy.standardFPS {
+            if let displayRefreshHz, displayRefreshHz > Double(targetFPS) + 1 {
+                return CMTime(value: 1, timescale: CMTimeScale(targetFPS))
+            }
+            return .zero
+        }
+        return tuning.captureAtNativeRate ? .zero : CMTime(value: 1, timescale: 60)
+    }
+
+    /// The whole-display output: the mode's (or the client's) long-edge cap at this rate, then the
+    /// receiver's H.264 level.
+    static func outputSize(contentSize: CGSize, pointPixelScale: Double, quality: StreamQuality,
+                           budget: H264FrameBudget?, fps: Int, clientLongEdge: Int?,
+                           tuning: StreamTuning) -> CapturePixelDimensions? {
+        let maximum = CaptureRatePolicy.maximumDimension(quality: quality, fps: fps, clientLongEdge: clientLongEdge,
+                                                         tuning: tuning)
+        guard let dimensions = CapturePixelDimensions.fitted(
+            contentSize: contentSize, pointPixelScale: pointPixelScale, quality: quality, fps: fps,
+            maximumDimension: maximum
+        ) else { return nil }
+        guard let fitted = budget?.fitted(width: dimensions.width, height: dimensions.height, fps: fps) else {
+            return dimensions
+        }
+        return CapturePixelDimensions(width: fitted.width, height: fitted.height)
+    }
+
+    /// G12: a size rung shrinks the whole-display output linearly, to whole macroblocks.
+    static func scaled(_ size: CapturePixelDimensions, by fraction: Double?) -> CapturePixelDimensions {
+        guard let fraction, fraction.isFinite, fraction > 0, fraction < 1 else { return size }
+        let block = ViewportCapturePolicy.macroblock
+        func shrink(_ value: Int) -> Int { max(block, Int(Double(value) * fraction) / block * block) }
+        return CapturePixelDimensions(width: shrink(size.width), height: shrink(size.height))
+    }
+
+    /// A crop (G4) sets `sourceRect` and its own output size, and fills the output exactly: its
+    /// macroblock alignment leaves its aspect up to a few percent off the output's, and the default
+    /// aspect-preserving fit would letterbox the picture and shift it against the rect the phone maps
+    /// it to. Without a crop the configuration is the whole-display one, unchanged.
+    static func streamConfiguration(output: CapturePixelDimensions, region: CaptureRegion?, showsCursor: Bool,
+                                    fps: Int, displayRefreshHz: Double?,
+                                    tuning: StreamTuning) -> SCStreamConfiguration {
+        let configuration = SCStreamConfiguration()
+        configuration.width = output.width
+        configuration.height = output.height
+        if let region, !region.isWholeDisplay {
+            configuration.sourceRect = region.rect
+            configuration.width = region.outputWidth
+            configuration.height = region.outputHeight
+            configuration.preservesAspectRatio = false
+        }
+        configuration.minimumFrameInterval = minimumFrameInterval(for: tuning, targetFPS: fps,
+                                                                  displayRefreshHz: displayRefreshHz)
+        configuration.queueDepth = CaptureRatePolicy.queueDepth(for: fps)
+        configuration.showsCursor = showsCursor
+        configuration.capturesAudio = false
+        configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        return configuration
+    }
+}
+
+private struct CaptureInputs: Equatable {
+    var quality: StreamQuality
+    var showsCursor: Bool
+    var clientLongEdge: Int?
+    /// G12: a rung below the session rate, and a picture fraction below 1; nil at rung 0.
+    var ladderFPS: Int? = nil
+    var sizeFraction: Double? = nil
 }
 
 private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
@@ -330,55 +496,196 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private var lastBuffer: CVPixelBuffer?
     private var lastSentAt = 0.0
     private var stopping = false
-    private let filter: SCContentFilter
     private let display: SCDisplay
+    private let tuning: StreamTuning
+
+    // Configuration state, confined to `queue`: every updateConfiguration is built from the latest
+    // inputs and viewport, one at a time, so a crop can never undo a newer quality or cursor change.
+    private var requested: CaptureInputs
+    private var applied: CaptureInputs
+    private var viewport: ViewportRegion?
+    private var appliedRegion: CaptureRegion
+    /// The whole-display output changed, so the next region must not keep a size held for the old one.
+    private var heldOutputInvalid = false
+    private var gate = ConfigurationUpdateGate()
+    private var trailingUpdate: DispatchSourceTimer?
+    private var waiters: [(Bool) -> Void] = []
+    private var inFlightWaiters: [(Bool) -> Void] = []
 
     var onFailure: (() -> Void)?
     var onHealth: ((Bool) -> Void)?
+    var onCaptureRegion: ((CaptureRegion) -> Void)?
 
-    init(display: SCDisplay, peer: PeerMedia, quality: StreamQuality) throws {
+    /// The rate this session captures and the peer sends at, fixed for the session (G5).
+    let targetFPS: Int
+    let displayRefreshHz: Double?
+    /// "2560x1440 @1x 144Hz": which display and scale a measurement came from.
+    let displayDescription: String
+    let geometry: DisplayGeometry
+    let initialRegion: CaptureRegion
+
+    init(display: SCDisplay, peer: PeerMedia, quality: StreamQuality, clientLongEdge: Int?) throws {
         let filter = SCContentFilter(display: display, excludingWindows: [])
-        guard let configuration = Self.configuration(for: filter, quality: quality, showsCursor: true,
-                                                     budget: peer.nativeCaptureBudget) else {
+        let tuning = StreamTuning.current
+        let refresh = DisplayRefresh.rateHz(for: display.displayID)
+        let fps = CaptureRatePolicy.targetFPS(displayRefreshHz: refresh, tuning: tuning)
+        let geometry = DisplayGeometry(size: filter.contentRect.size, pointPixelScale: Double(filter.pointPixelScale))
+        guard let output = RemoteCaptureConfiguration.outputSize(
+            contentSize: geometry.size, pointPixelScale: geometry.pointPixelScale, quality: quality,
+            budget: peer.nativeCaptureBudget, fps: fps, clientLongEdge: clientLongEdge, tuning: tuning
+        ) else {
             throw CaptureSizingError.invalidSource
         }
-        self.filter = filter
+        let configuration = RemoteCaptureConfiguration.streamConfiguration(
+            output: output, region: nil, showsCursor: true, fps: fps, displayRefreshHz: refresh, tuning: tuning
+        )
         self.display = display
         self.peer = peer
+        self.tuning = tuning
+        self.geometry = geometry
+        let inputs = CaptureInputs(quality: quality, showsCursor: true, clientLongEdge: clientLongEdge)
+        requested = inputs
+        applied = inputs
+        initialRegion = ViewportCapturePolicy.wholeDisplay(geometry, output: output)
+        appliedRegion = initialRegion
+        targetFPS = fps
+        displayRefreshHz = refresh
+        let scale = Double(filter.pointPixelScale)
+        let pixels = CGSize(width: Double(filter.contentRect.width) * scale, height: Double(filter.contentRect.height) * scale)
+        displayDescription = String(format: "%.0fx%.0f @%.0fx %@", pixels.width, pixels.height, scale,
+                                    refresh.map { String(format: "%.0fHz", $0) } ?? "?Hz")
         super.init()
         self.stream = SCStream(filter: filter, configuration: configuration, delegate: self)
     }
 
-    private static func configuration(for filter: SCContentFilter, quality: StreamQuality,
-                                      showsCursor: Bool, budget: H264FrameBudget?) -> SCStreamConfiguration? {
-        guard let dimensions = CapturePixelDimensions.fitted(
-            contentSize: filter.contentRect.size,
-            pointPixelScale: Double(filter.pointPixelScale), quality: quality
-        ) else { return nil }
-        let configuration = SCStreamConfiguration()
-        let fitted = budget?.fitted(width: dimensions.width, height: dimensions.height)
-        configuration.width = fitted?.width ?? dimensions.width
-        configuration.height = fitted?.height ?? dimensions.height
-        configuration.minimumFrameInterval = RemoteCaptureConfiguration.minimumFrameInterval(for: StreamTuning.current)
-        configuration.queueDepth = RemoteCaptureConfiguration.queueDepth
-        configuration.showsCursor = showsCursor
-        configuration.capturesAudio = false
-        configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
-        return configuration
+    /// A new quality or client cap resets the held output and re-derives the crop in the same update.
+    func updateQuality(_ quality: StreamQuality, showsCursor: Bool, clientLongEdge: Int?) async -> Bool {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                guard !stopping else {
+                    continuation.resume(returning: false)
+                    return
+                }
+                var inputs = requested
+                inputs.quality = quality
+                inputs.showsCursor = showsCursor
+                inputs.clientLongEdge = clientLongEdge
+                if inputs.quality != requested.quality || inputs.clientLongEdge != requested.clientLongEdge {
+                    heldOutputInvalid = true
+                }
+                requested = inputs
+                waiters.append { continuation.resume(returning: $0) }
+                handle(gate.request(at: CACurrentMediaTime(), immediate: true))
+            }
+        }
     }
 
-    func updateQuality(_ quality: StreamQuality, showsCursor: Bool) async -> Bool {
-        let stopped = queue.sync { stopping }
-        guard !stopped, let configuration = Self.configuration(for: filter, quality: quality, showsCursor: showsCursor,
-                                                               budget: peer?.nativeCaptureBudget) else {
-            return false
+    /// A rung change goes out without the viewport wait; a size step resets the held crop output so
+    /// the crop is re-derived for the new picture in the same update.
+    func requestLadder(_ state: LadderState?) {
+        queue.async { [self] in
+            guard !stopping else { return }
+            var inputs = requested
+            inputs.ladderFPS = state.flatMap { $0.fps < targetFPS ? $0.fps : nil }
+            inputs.sizeFraction = state.flatMap { $0.sizeFraction < 1 ? $0.sizeFraction : nil }
+            guard inputs != requested else { return }
+            if inputs.sizeFraction != requested.sizeFraction { heldOutputInvalid = true }
+            requested = inputs
+            handle(gate.request(at: CACurrentMediaTime(), immediate: true))
         }
-        do {
-            try await stream.updateConfiguration(configuration)
-            return !queue.sync { stopping }
-        } catch {
-            return false
+    }
+
+    /// One hop onto the capture queue; the crop is applied there on the leading edge when the gate is idle.
+    func requestViewport(_ viewport: ViewportRegion?) {
+        queue.async { [weak self] in
+            guard let self, !self.stopping, self.viewport != viewport else { return }
+            self.viewport = viewport
+            self.handle(self.gate.request(at: CACurrentMediaTime(), immediate: !self.waiters.isEmpty))
         }
+    }
+
+    private func handle(_ action: ConfigurationUpdateGate.Action) {
+        switch action {
+        case .none: break
+        case .start: performConfigurationUpdate()
+        case .wait(let deadline): scheduleTrailingUpdate(at: deadline)
+        }
+    }
+
+    private func scheduleTrailingUpdate(at deadline: TimeInterval) {
+        guard trailingUpdate == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + max(0, deadline - CACurrentMediaTime()))
+        timer.setEventHandler { [weak self] in
+            guard let self, !self.stopping else { return }
+            self.trailingUpdate?.cancel()
+            self.trailingUpdate = nil
+            self.handle(self.gate.deadlineReached(at: CACurrentMediaTime(), immediate: !self.waiters.isEmpty))
+        }
+        trailingUpdate = timer
+        timer.resume()
+    }
+
+    private func performConfigurationUpdate() {
+        trailingUpdate?.cancel()
+        trailingUpdate = nil
+        let inputs = requested
+        inFlightWaiters = waiters
+        waiters = []
+        let previous = heldOutputInvalid ? nil : appliedRegion
+        heldOutputInvalid = false
+        // The pixel budget stays the session rate's: a slower rung must not grow the picture.
+        guard let whole = RemoteCaptureConfiguration.outputSize(
+            contentSize: geometry.size, pointPixelScale: geometry.pointPixelScale, quality: inputs.quality,
+            budget: peer?.nativeCaptureBudget, fps: targetFPS, clientLongEdge: inputs.clientLongEdge, tuning: tuning
+        ) else {
+            requested = applied
+            completeConfigurationUpdate(succeeded: false)
+            return
+        }
+        let output = RemoteCaptureConfiguration.scaled(whole, by: inputs.sizeFraction)
+        let region = ViewportCapturePolicy.region(for: viewport, display: geometry, output: output, tuning: tuning,
+                                                  previous: previous)
+        let geometryChanges = ViewportCapturePolicy.needsReconfiguration(from: appliedRegion, to: region)
+        guard inputs != applied || geometryChanges else {
+            publish(region)
+            completeConfigurationUpdate(succeeded: true)
+            return
+        }
+        let configuration = RemoteCaptureConfiguration.streamConfiguration(
+            output: output, region: region, showsCursor: inputs.showsCursor,
+            fps: min(targetFPS, inputs.ladderFPS ?? targetFPS),
+            displayRefreshHz: displayRefreshHz, tuning: tuning
+        )
+        stream.updateConfiguration(configuration) { [self] error in
+            queue.async { [self] in
+                // stop() already answered the waiters.
+                guard !stopping else { return }
+                if error == nil {
+                    applied = inputs
+                    // The idle refresh must not resend a frame of the old region under the new one.
+                    if geometryChanges { lastBuffer = nil }
+                    publish(region)
+                } else if requested == inputs {
+                    requested = applied
+                }
+                completeConfigurationUpdate(succeeded: error == nil)
+            }
+        }
+    }
+
+    private func completeConfigurationUpdate(succeeded: Bool) {
+        let finished = inFlightWaiters
+        inFlightWaiters = []
+        finished.forEach { $0(succeeded) }
+        handle(gate.finished(at: CACurrentMediaTime(), immediate: !waiters.isEmpty))
+    }
+
+    private func publish(_ region: CaptureRegion) {
+        guard region != appliedRegion else { return }
+        appliedRegion = region
+        let callback = onCaptureRegion
+        DispatchQueue.main.async { callback?(region) }
     }
 
     /// Same display, minus the given windows. Sizing is unchanged, so the configuration stays.
@@ -424,10 +731,17 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                 stopping = true
                 timer?.cancel()
                 timer = nil
+                trailingUpdate?.cancel()
+                trailingUpdate = nil
                 lastBuffer = nil
                 peer = nil
                 onFailure = nil
                 onHealth = nil
+                onCaptureRegion = nil
+                let unanswered = inFlightWaiters + waiters
+                inFlightWaiters = []
+                waiters = []
+                unanswered.forEach { $0(false) }
             }
         }
         try? await stream.stopCapture()
@@ -451,7 +765,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         if status == .complete || status == .idle {
             let displayTime = (attachments.first?[.displayTime] as? NSNumber)?.uint64Value ?? 0
             peer?.counters.captured(idle: status == .idle,
-                                    displayLatencyMs: CaptureTiming.displayLatencyMs(displayTime: displayTime))
+                                    displayLatencyMs: CaptureTiming.displayLatencyMs(displayTime: displayTime),
+                                    displayTimeMs: displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : nil)
         }
         guard status == .complete,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer),

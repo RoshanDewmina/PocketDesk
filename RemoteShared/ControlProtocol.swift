@@ -32,6 +32,18 @@ struct RemoteAction: Codable {
     var agentAlert: AgentAlertFrame? = nil
     /// Clock-sync probe on a heartbeat: the phone sends it, the host echoes it (see `ClockProbe`).
     var clock: ClockProbe? = nil
+    /// The client's screen in device pixels, on heartbeats, so the host caps the capture to it.
+    var screenPixels: PixelSize? = nil
+    /// G4: the desktop region the phone shows, on heartbeats (only after `SessionFeature.viewportCapture`).
+    var viewport: ViewportRegion? = nil
+    /// G12: bounded receiver load from a phone that knows the host supports the ladder.
+    var phoneLoad: PhoneLoadFeedback? = nil
+    /// G4: the region the stream covers, on `capture` status.
+    var captureRegion: CaptureRegion? = nil
+    /// G12: the active ladder rung, on `capture` status.
+    var ladder: LadderState? = nil
+    /// The Mac's load state for the phone's pill, on `capture` status.
+    var busy: BusyState? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
@@ -39,6 +51,18 @@ struct RemoteAction: Codable {
         guard hostStream == nil || action == "capture" else { throw RemoteError.invalidMessage }
         try clock?.validate()
         guard clock == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
+        try screenPixels?.validate()
+        guard screenPixels == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
+        try viewport?.validate()
+        guard viewport == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
+        try phoneLoad?.validate()
+        guard phoneLoad == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
+        try captureRegion?.validate()
+        try ladder?.validate()
+        try busy?.validate()
+        guard (captureRegion == nil && ladder == nil && busy == nil) || action == "capture" else {
+            throw RemoteError.invalidMessage
+        }
         // Also before the early returns, so no other action can carry a display list.
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }

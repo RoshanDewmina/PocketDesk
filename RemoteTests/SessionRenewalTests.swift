@@ -192,6 +192,12 @@ final class CoordinatorRenewalTests: XCTestCase {
 
     func testAnAppThatDoesNotAskForRenewalSendsNothingNewAndEndsAtTheLeaseThenTheReconnectLogicRecovers() async throws {
         let rig = RenewalRig(isHost: true, advertisesRenewal: false)
+        var registeredAtExpiry: Bool?
+        var statusAtExpiry: String?
+        rig.service.onExpired = { [weak coordinator = rig.coordinator] in
+            registeredAtExpiry = coordinator?.hostRegistered
+            statusAtExpiry = coordinator?.status
+        }
         try await rig.startHost()
         XCTAssertEqual(rig.signaling.connects[0].features, [])
         XCTAssertNil(rig.coordinator.renewalPlanForTesting)
@@ -202,8 +208,8 @@ final class CoordinatorRenewalTests: XCTestCase {
 
         await rig.scheduler.advance(by: 1)
         XCTAssertEqual(rig.service.leaseExpiries, 1)
-        XCTAssertFalse(rig.coordinator.hostRegistered)
-        XCTAssertTrue(rig.coordinator.status.contains("retrying"))
+        XCTAssertEqual(registeredAtExpiry, false, "the expired connection unregisters before reconnecting")
+        XCTAssertTrue(statusAtExpiry?.contains("retrying") == true)
 
         try await waitFor("the existing bounded reconnect registered the Mac again") {
             rig.signaling.connects.count == 2 && rig.coordinator.hostRegistered

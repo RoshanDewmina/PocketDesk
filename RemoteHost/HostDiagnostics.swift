@@ -99,6 +99,8 @@ struct HostDiagnosticsSnapshot {
     var streamQuality: String?
     /// Sent size, negotiated codec level, encoder and decoder-probe outcome of the last session.
     var stream: String?
+    /// The active stream tuning, including any experiment switch left in defaults.
+    var tuning: String?
 
     var events: [HostEventLog.Entry] = []
 }
@@ -153,6 +155,7 @@ enum HostDiagnosticsReport {
         row("Route", s.route ?? "not measured")
         row("Picture quality", s.streamQuality ?? "not applied")
         row("Stream", s.stream ?? "not measured")
+        row("Stream tuning", s.tuning ?? "?")
         section("Recent events")
         if s.events.isEmpty { lines.append("none") }
         for entry in s.events.suffix(40) {

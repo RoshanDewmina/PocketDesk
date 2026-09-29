@@ -6,9 +6,11 @@ import VideoToolbox
 /// A conservative, process-cached capability gate for the native H.264 Level 5.2 path.
 /// One successful frame proves format/decode compatibility, not sustained 4K60 performance.
 ///
-/// A positive result is also cached in UserDefaults, keyed by OS build and hardware model, so later
-/// launches skip the probe; a failed or timed-out probe is never cached and is retried next launch.
+/// With `StreamTuning.cacheLevel52Probe` (the default), a positive result is also cached in
+/// UserDefaults, keyed by OS version (major.minor.patch) and hardware model, so later launches skip
+/// the probe; a failed or timed-out probe is never cached and is retried next launch, and
 /// `warmUp()` runs the probe on a background queue at launch so the first factory rarely waits.
+/// With the switch off the probe runs at the first factory, uncached, as it did before.
 enum NativeCodecCapability {
     enum Outcome: Equatable {
         case simulator
@@ -44,7 +46,8 @@ enum NativeCodecCapability {
             state.outcome = .noHardwareDecode
             return false
         }
-        if cachedResult() == true {
+        let caching = StreamTuning.current.cacheLevel52Probe
+        if caching, cachedResult() == true {
             state.outcome = .cached
             return true
         }
@@ -56,7 +59,7 @@ enum NativeCodecCapability {
             let result = runProbe()
             outcome.set(result)
             // A late success still helps the next launch.
-            if result { storeResult(true) }
+            if result, caching { storeResult(true) }
             group.leave()
         }
         guard group.wait(timeout: .now() + probeTimeout) == .success else {
@@ -71,6 +74,7 @@ enum NativeCodecCapability {
 
     /// Evaluates the probe off the calling thread so a later factory creation finds it done.
     static func warmUp() {
+        guard StreamTuning.current.cacheLevel52Probe else { return }
         DispatchQueue.global(qos: .userInitiated).async { _ = supportsLevel52 }
     }
 
@@ -86,15 +90,22 @@ enum NativeCodecCapability {
         defaults.set(true, forKey: key)
     }
 
+    /// OS version and hardware model ("hw.model" on the Mac, e.g. Mac16,13; "hw.machine" on iOS,
+    /// e.g. iPhone18,1), so an OS update or another device re-probes.
     static var systemAndModel: String {
-        var system = utsname()
-        uname(&system)
-        let capacity = MemoryLayout.size(ofValue: system.machine)
-        let machine = withUnsafePointer(to: &system.machine) {
-            $0.withMemoryRebound(to: CChar.self, capacity: capacity) { String(cString: $0) }
+        #if os(macOS)
+        let name = "hw.model"
+        #else
+        let name = "hw.machine"
+        #endif
+        var model = "unknown"
+        var size = 0
+        if sysctlbyname(name, nil, &size, nil, 0) == 0, size > 0 {
+            var buffer = [CChar](repeating: 0, count: size)
+            if sysctlbyname(name, &buffer, &size, nil, 0) == 0 { model = String(cString: buffer) }
         }
         let version = ProcessInfo.processInfo.operatingSystemVersion
-        return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion).\(machine)"
+        return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion).\(model)"
     }
 
     /// Exposed to focused tests so the baked sample's advertised profile and dimensions

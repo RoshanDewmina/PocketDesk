@@ -25,8 +25,14 @@ final class ClockSyncTests: XCTestCase {
     func testEstimatorUsesTheLowestRoundTripAndReportsHalfOfIt() {
         var estimator = ClockSyncEstimator()
         // Host clock is 500 ms ahead of the phone; the path is asymmetric on the slow sample.
+        estimator.sent(phoneMs: 1_000)
+        estimator.sent(phoneMs: 2_000)
         XCTAssertTrue(estimator.record(ClockProbe(phoneMs: 1_000, hostReceivedMs: 1_520, hostSentMs: 1_521), receivedAtPhoneMs: 1_040))
         XCTAssertTrue(estimator.record(ClockProbe(phoneMs: 2_000, hostReceivedMs: 2_503, hostSentMs: 2_503.5), receivedAtPhoneMs: 2_006))
+        XCTAssertFalse(estimator.record(ClockProbe(phoneMs: 2_000, hostReceivedMs: 2_503, hostSentMs: 2_503.5), receivedAtPhoneMs: 2_010),
+                       "an echo counts once")
+        XCTAssertFalse(estimator.record(ClockProbe(phoneMs: 3_000, hostReceivedMs: 3_503, hostSentMs: 3_503.5), receivedAtPhoneMs: 3_006),
+                       "an echo of a probe never sent is ignored")
         let estimate = estimator.estimate(now: 2_010)
         XCTAssertEqual(estimate?.samples, 2)
         XCTAssertEqual(estimate?.offsetMs ?? 0, 500, accuracy: 0.26, "the 6 ms sample wins: ((503) + (497.5)) / 2")
@@ -36,6 +42,7 @@ final class ClockSyncTests: XCTestCase {
     func testEstimatorRejectsImpossibleTimingAndExpiresSamples() {
         var estimator = ClockSyncEstimator()
         estimator.windowMs = 1_000
+        for _ in 0..<4 { estimator.sent(phoneMs: 100) }
         XCTAssertFalse(estimator.record(ClockProbe(phoneMs: 100), receivedAtPhoneMs: 110), "not an echo")
         XCTAssertFalse(estimator.record(ClockProbe(phoneMs: 100, hostReceivedMs: 900, hostSentMs: 950), receivedAtPhoneMs: 120), "host time inside the round trip exceeds it")
         XCTAssertFalse(estimator.record(ClockProbe(phoneMs: 100, hostReceivedMs: 900, hostSentMs: 900), receivedAtPhoneMs: 5_000), "round trip over the limit")

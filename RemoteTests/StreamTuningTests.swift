@@ -9,6 +9,20 @@ final class StreamTuningTests: XCTestCase {
         XCTAssertTrue(StreamTuning.tuned.summary.contains("playout 0-0ms"))
     }
 
+    func testPreviousStreamTuningExcludesNewCaptureAndAdaptationFeatures() {
+        let legacy = StreamTuning.legacy
+        XCTAssertFalse(legacy.cacheLevel52Probe)
+        XCTAssertFalse(legacy.highRefreshCapture)
+        XCTAssertFalse(legacy.highRefreshNoAdaptation)
+        XCTAssertFalse(legacy.capToClientPixels)
+        XCTAssertFalse(legacy.viewportCapture)
+        XCTAssertFalse(legacy.ladder)
+        XCTAssertTrue(StreamTuning.tuned.highRefreshCapture)
+        XCTAssertTrue(StreamTuning.tuned.capToClientPixels)
+        XCTAssertTrue(StreamTuning.tuned.viewportCapture)
+        XCTAssertTrue(StreamTuning.tuned.ladder)
+    }
+
     func testSharperRaisesTheBitrateNotJustThePixels() {
         let pixelRatio = Double(StreamQuality.sharp.maximumDimension * StreamQuality.sharp.maximumDimension)
             / Double(StreamQuality.balanced.maximumDimension * StreamQuality.balanced.maximumDimension)
