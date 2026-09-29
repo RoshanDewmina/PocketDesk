@@ -178,6 +178,150 @@ final class NativeGestureEngineTests: XCTestCase {
         XCTAssertEqual(log.scrollPhases, ["began", "changed", "ended"])
     }
 
+    func testUnequalParallelFingerMotionScrollsAtCloseSkewedAndThumbSpacings() {
+        let offsets: [CGPoint] = [CGPoint(x: 0, y: 30), CGPoint(x: 12, y: 0),
+                                 CGPoint(x: 6, y: 18), CGPoint(x: 280, y: 50)]
+        for offset in offsets {
+            for reversed in [false, true] {
+                let log = CommandLog(); let input = engine(log)
+                func pair(_ firstY: CGFloat, _ secondY: CGFloat, jitter: CGFloat = 0) -> [NativeGestureEngine.Touch] {
+                    let touches = [touch(1, 100, 100 + firstY),
+                                   touch(2, 100 + offset.x + jitter, 100 + offset.y + secondY)]
+                    return reversed ? Array(touches.reversed()) : touches
+                }
+                input.update(pair(0, 0), at: 1)
+                // The physical one-hand regression: both fingers move down, one leads by 11pt.
+                // On the 30pt vertical span the old span/centroid test immediately chose pinch.
+                input.update(pair(12, 1), at: 1.02)
+                XCTAssertEqual(log.zooms, 0, "Parallel lead must not zoom: \(offset), reversed \(reversed)")
+                input.tick(at: 1.17)
+                XCTAssertEqual(log.zooms, 0, "A pause with aligned finger motion must retain scroll intent")
+                input.update(pair(24, 9, jitter: 2), at: 1.2)
+                input.update(pair(36, 24, jitter: -2), at: 1.22)
+                input.update([], at: 1.25)
+                XCTAssertEqual(log.zooms, 0)
+                XCTAssertEqual(log.scrollPhases.first, "began")
+                XCTAssertEqual(log.scrollPhases.last, "ended")
+                XCTAssertEqual(log.scrollPhases.filter { $0 == "began" }.count, 1)
+                XCTAssertEqual(log.scrollDeltas.reduce(0) { $0 + $1.height }, 30, accuracy: 0.001,
+                               "Include all centroid travel when the scroll is recognized")
+                XCTAssertTrue(log.clicks.isEmpty)
+                XCTAssertEqual(log.secondary, 0)
+            }
+        }
+    }
+
+    func testStaggeredFingerLandingAndMotionDoNotTurnParallelScrollIntoPinch() {
+        let identifiers: [UInt64] = [1, 2]
+        for firstID in identifiers {
+            let secondID: UInt64 = firstID == 1 ? 2 : 1
+            let log = CommandLog(); let input = engine(log)
+            input.update([touch(firstID, 100, 100)], at: 1)
+            input.update([touch(firstID, 100, 101), touch(secondID, 100, 130)], at: 1.01)
+            // Separate contact updates, as when one finger moves before its partner.
+            input.update([touch(firstID, 100, 113), touch(secondID, 100, 130)], at: 1.03)
+            XCTAssertEqual(log.zooms, 0)
+            input.update([touch(firstID, 100, 113), touch(secondID, 100, 134)], at: 1.04)
+            input.update([touch(firstID, 100, 125), touch(secondID, 100, 145)], at: 1.06)
+            input.update([], at: 1.1)
+            XCTAssertEqual(log.zooms, 0)
+            XCTAssertEqual(log.scrollPhases, ["began", "changed", "ended"])
+            XCTAssertTrue(log.clicks.isEmpty)
+        }
+    }
+
+    func testAnchoredPinchWaitsForIntentThenKeepsItsFullScaleInEitherTouchOrder() {
+        for firstIsAnchor in [false, true] {
+            let directions: [CGFloat] = [-1, 1]
+            for direction in directions {
+                let log = CommandLog(); let input = engine(log)
+                let anchorID: UInt64 = firstIsAnchor ? 1 : 2
+                let movingID: UInt64 = firstIsAnchor ? 2 : 1
+                func pair(_ movement: CGFloat) -> [NativeGestureEngine.Touch] {
+                    [touch(anchorID, 100, 100), touch(movingID, 100 + direction * (60 + movement), 100)]
+                }
+                let first = firstIsAnchor ? touch(anchorID, 100, 100) : touch(movingID, 100 + direction * 60, 100)
+                input.update([first], at: 1)
+                input.update(pair(0), at: 1.01)
+                input.update(pair(8), at: 1.03)
+                XCTAssertEqual(log.zooms, 0, "A first-finger lead is ambiguous until anchored intent settles")
+                input.update(pair(18), at: 1.15)
+                input.update(pair(24), at: 1.18)
+                input.update([touch(anchorID, 100, 100)], at: 1.19)
+                input.update([], at: 1.2)
+                XCTAssertEqual(log.zooms, 2, "An intentional stationary-finger pinch remains available")
+                XCTAssertEqual(log.zoomFactors.reduce(1, *), 1.4, accuracy: 0.001)
+                XCTAssertEqual(log.zoomEnds, 1)
+                XCTAssertTrue(log.scrollPhases.isEmpty)
+                XCTAssertTrue(log.clicks.isEmpty)
+                XCTAssertEqual(log.secondary, 0)
+            }
+        }
+    }
+
+    func testOpposingFingerPinchesWorkVerticallyAndWithAReverseTouchOrder() {
+        for reversed in [false, true] {
+            let log = CommandLog(); let input = engine(log)
+            let start = [touch(1, 100, 100), touch(2, 100, 130)]
+            let spread = [touch(1, 101, 94), touch(2, 99, 137)]
+            input.update(reversed ? Array(start.reversed()) : start, at: 1)
+            input.update(reversed ? Array(spread.reversed()) : spread, at: 1.02)
+            input.update([], at: 1.1)
+            XCTAssertEqual(log.zooms, 1)
+            XCTAssertEqual(log.zoomEnds, 1)
+            XCTAssertTrue(log.scrollPhases.isEmpty)
+            XCTAssertTrue(log.clicks.isEmpty)
+        }
+    }
+
+    func testAnchoredPinchSettlesWhileHeldAndEndsOnceOnCancellation() {
+        let directions: [CGFloat] = [-1, 1]
+        for direction in directions {
+            let log = CommandLog(); let input = engine(log)
+            input.update([touch(1, 100, 100), touch(2, 160, 100)], at: 1)
+            input.update([touch(1, 100, 100), touch(2, 160 + direction * 18, 100)], at: 1.02)
+            input.tick(at: 1.08)
+            XCTAssertEqual(log.zooms, 0)
+            input.tick(at: 1.15)
+            XCTAssertEqual(log.zooms, 1, "An anchored pinch settles without needing another motion event")
+            XCTAssertEqual(log.zoomFactors.first ?? 0, (60 + direction * 18) / 60, accuracy: 0.001)
+            input.cancel()
+            input.tick(at: 1.2)
+            input.update([touch(1, 100, 100), touch(2, 200, 100)], at: 1.3)
+            input.update([], at: 1.4)
+            input.cancel()
+            XCTAssertEqual(log.zooms, 1)
+            XCTAssertEqual(log.zoomEnds, 1)
+            XCTAssertTrue(log.scrollPhases.isEmpty)
+            XCTAssertTrue(log.clicks.isEmpty)
+        }
+    }
+
+    func testRecognizedScrollCannotTurnIntoZoomAndEndsOnceAcrossInterruptions() {
+        for ending in 0..<3 {
+            let log = CommandLog(); let input = engine(log)
+            input.update([touch(1, 100, 100), touch(2, 130, 100)], at: 1)
+            input.update([touch(1, 100, 112), touch(2, 130, 110)], at: 1.02)
+            // Even strong subsequent separation cannot steal an established scroll's intent.
+            input.update([touch(1, 80, 125), touch(2, 150, 120)], at: 1.04)
+            switch ending {
+            case 0:
+                input.update([touch(2, 150, 120)], at: 1.06)
+            case 1: input.cancel()
+            default:
+                input.configure(enabled: true, panMode: false, revision: 2,
+                                sensitivity: 1, pointerScale: 1, doubleClickInterval: 0.5)
+            }
+            input.update([touch(2, 150, 145)], at: 1.08)
+            input.update([], at: 1.1)
+            input.cancel()
+            XCTAssertEqual(log.zooms, 0)
+            XCTAssertEqual(log.scrollPhases, ["began", "changed", ending == 0 ? "ended" : "cancelled"])
+            XCTAssertTrue(log.clicks.isEmpty)
+            XCTAssertEqual(log.secondary, 0)
+        }
+    }
+
     func testScrollDistanceIsInMacPointsAtTheCurrentZoom() {
         let log = CommandLog(); let input = engine(log, scale: 0.5)
         input.update([touch(1, 0, 100), touch(2, 40, 100)], at: 1)
@@ -394,6 +538,29 @@ final class NativeGestureEngineTests: XCTestCase {
         XCTAssertEqual(log.clicks, [1, 1])
     }
 
+    func testTitleBarDoubleTapHoldOwnsHorizontalMovementUntilLift() {
+        // The Mac pointer already rests on a title bar. These are phone contact points,
+        // so holding the second tap must press before relative window-drag movement.
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 140, 220)], at: 1)
+        input.update([], at: 1.04)
+        input.update([touch(2, 142, 220)], at: 1.14)
+        input.update([touch(2, 143, 220)], at: 1.18)
+        input.tick(at: 1.38)
+        input.tick(at: 1.9)
+        XCTAssertEqual(log.trace, ["click1", "dragBegan2"])
+        input.update([touch(2, 163, 220)], at: 2)
+        input.update([touch(2, 193, 220)], at: 2.05)
+        input.update([], at: 2.1)
+        input.cancel()
+        XCTAssertEqual(log.trace, ["click1", "dragBegan2", "move", "move", "dragEnded"])
+        XCTAssertTrue(log.moves.allSatisfy { $0.width > 0 && $0.height == 0 })
+        XCTAssertEqual(log.dragBeginIDs, log.dragEndIDs, "Release the same admitted button hold exactly once")
+        XCTAssertEqual(log.dragCounts, [2])
+        XCTAssertEqual(log.secondary, 0)
+        XCTAssertTrue(log.scrollPhases.isEmpty)
+    }
+
     func testRejectedDragBeginCannotEmitMoveOrRelease() {
         let log = CommandLog()
         log.acceptDrag = false
@@ -466,11 +633,14 @@ final class CommandLog {
     var scrollPhases: [String] = []
     var scrollDeltas: [CGSize] = []
     var zooms = 0
+    var zoomFactors: [CGFloat] = []
     var zoomEnds = 0
     var pans = 0
     var dragBegins = 0
+    var dragBeginIDs: [String] = []
     var dragCounts: [Int] = []
     var dragEnds = 0
+    var dragEndIDs: [String] = []
     var acceptDrag = true
     /// Rejects `pointTo` for points matching this predicate, as a letterbox band would.
     var rejectPoint: (CGPoint) -> Bool = { _ in false }
@@ -490,11 +660,11 @@ final class CommandLog {
             guard !rejectPoint(point) else { trace.append("pointTo-rejected"); return false }
             points.append(point); trace.append("pointTo")
         case .scroll(let delta, let phase, _): scrollPhases.append(phase); scrollDeltas.append(delta); trace.append("scroll-\(phase)")
-        case .zoom: zooms += 1; trace.append("zoom")
+        case .zoom(let factor, _): zooms += 1; zoomFactors.append(factor); trace.append("zoom")
         case .zoomEnded: zoomEnds += 1; trace.append("zoomEnded")
         case .pan: pans += 1; trace.append("pan")
-        case .dragBegan(_, let count): dragBegins += 1; dragCounts.append(count); trace.append("dragBegan\(count)"); return acceptDrag
-        case .dragEnded: dragEnds += 1; trace.append("dragEnded")
+        case .dragBegan(let id, let count): dragBegins += 1; dragBeginIDs.append(id); dragCounts.append(count); trace.append("dragBegan\(count)"); return acceptDrag
+        case .dragEnded(let id): dragEnds += 1; dragEndIDs.append(id); trace.append("dragEnded")
         }
         return true
     }

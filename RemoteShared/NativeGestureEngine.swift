@@ -51,8 +51,11 @@ final class NativeGestureEngine {
     /// still starts a three-finger gesture.
     static let workspaceLandingWindow: TimeInterval = 0.25
     static let workspaceLandingSlop: CGFloat = 12
-    /// Two-finger movement after which the larger of travel and spread decides scroll or pinch.
-    static let multiDecisionTravel: CGFloat = 24
+    /// Ignore resting-finger jitter when comparing each finger's direction.
+    static let multiFingerMotionSlop: CGFloat = 2
+    /// One moving finger may just lead a scroll. Allow its partner to catch up before
+    /// recognizing a deliberate pinch with a stationary anchor.
+    static let anchoredPinchDelay: TimeInterval = 0.12
     /// Well inside the Mac's 0.5 s expiry for a silent scroll stream.
     static let scrollKeepAliveInterval: TimeInterval = 0.25
 
@@ -72,6 +75,8 @@ final class NativeGestureEngine {
     private var workspaceOrigins: [UInt64: CGPoint] = [:]
     private var hadTwo = false
     private var multiTapEligible = false
+    private var multiOrigins: [UInt64: CGPoint] = [:]
+    private var multiStartTime: TimeInterval = 0
     private var multiStartCenter: CGPoint = .zero
     private var multiLastCenter: CGPoint = .zero
     private var multiStartDistance: CGFloat = 0
@@ -238,7 +243,7 @@ final class NativeGestureEngine {
         }
 
         if hadTwo {
-            if count == 2 { processMulti(next) }
+            if count == 2 { processMulti(next, at: time) }
             if count < 2 && (mode == .scroll || mode == .zoom) { finishContinuous(cancelled: false) }
             if count == 0 {
                 if mode == .multiCandidate && multiTapEligible && enabled && !panMode &&
@@ -295,6 +300,11 @@ final class NativeGestureEngine {
     /// UITouch/system uptime.
     func tick(at time: TimeInterval) {
         guard time.isFinite else { return }
+        if active.count == 2, mode == .multiCandidate, !panMode {
+            // A deliberate anchored pinch can settle while both contacts are held still.
+            processMulti(active, at: time)
+            return
+        }
         if mode == .scroll, let id = scrollID, enabled, !panMode,
            time - lastScrollSent >= Self.scrollKeepAliveInterval {
             // Resting fingers send nothing, but the Mac retires a silent scroll after 0.5 s.
@@ -423,6 +433,8 @@ final class NativeGestureEngine {
         let points = Array(touches.values)
         guard points.count == 2 else { mode = .blocked; return }
         multiStartCenter = midpoint(points[0], points[1])
+        multiOrigins = touches
+        multiStartTime = lastUpdateTime
         multiLastCenter = multiStartCenter
         multiStartDistance = distance(points[0], points[1])
         multiLastDistance = multiStartDistance
@@ -430,7 +442,7 @@ final class NativeGestureEngine {
         mode = .multiCandidate
     }
 
-    private func processMulti(_ touches: [UInt64: CGPoint]) {
+    private func processMulti(_ touches: [UInt64: CGPoint], at time: TimeInterval) {
         let points = Array(touches.values)
         let center = midpoint(points[0], points[1])
         let span = distance(points[0], points[1])
@@ -459,14 +471,29 @@ final class NativeGestureEngine {
         }
         var justRecognizedZoom = false
         if mode == .multiCandidate {
-            // Scrolling fingers move together and splay a little; pinching fingers move apart.
-            // Whichever motion clearly dominates wins, so a scroll that starts with a small
-            // splay is not taken for a pinch, and closely held fingers can still scroll.
+            // Span alone confuses unequal parallel motion with pinch, especially for close
+            // fingers. Compare each contact with its own origin instead of its array order.
+            let motion = touches.compactMap { id, point -> CGSize? in
+                guard let origin = multiOrigins[id] else { return nil }
+                return CGSize(width: point.x - origin.x, height: point.y - origin.y)
+            }
+            guard motion.count == 2 else { mode = .blocked; return }
+            let lengths = motion.map { hypot($0.width, $0.height) }
+            let dot = motion[0].width * motion[1].width + motion[0].height * motion[1].height
+            let product = lengths[0] * lengths[1]
+            let bothMoving = min(lengths[0], lengths[1]) >= Self.multiFingerMotionSlop
+            // A small but aligned partner movement is evidence of scrolling too. Do not
+            // reinterpret a paused (+12,+1) parallel lead as an anchored pinch on a tick.
+            let together = min(lengths[0], lengths[1]) >= Self.multiFingerMotionSlop * 0.5 &&
+                dot >= product * 0.5
+            let opposing = bothMoving && dot <= -product * 0.25
             let spanChange = abs(span - multiStartDistance)
-            let decisive = max(travel, spanChange) >= Self.multiDecisionTravel
-            let zooms = scaleChange >= 0.055 && spanChange >= 5 &&
-                (spanChange >= travel * 1.5 || (decisive && spanChange >= travel))
-            let scrolls = !zooms && travel >= 5 && (travel > spanChange || decisive)
+            let anchored = min(lengths[0], lengths[1]) < Self.multiFingerMotionSlop &&
+                max(lengths[0], lengths[1]) >= 12 && spanChange >= 8 &&
+                spanChange >= max(lengths[0], lengths[1]) * 0.7 &&
+                time - multiStartTime >= Self.anchoredPinchDelay
+            let zooms = !together && scaleChange >= 0.055 && spanChange >= 5 && (opposing || anchored)
+            let scrolls = !zooms && travel >= 5 && (together || spanChange < travel * 0.75)
             if zooms {
                 mode = .zoom
                 zoomActive = true
@@ -608,6 +635,7 @@ final class NativeGestureEngine {
         workspaceSwipeFired = false
         hadTwo = false
         multiTapEligible = false
+        multiOrigins = [:]
         secondTap = false
         residual = .zero
     }
