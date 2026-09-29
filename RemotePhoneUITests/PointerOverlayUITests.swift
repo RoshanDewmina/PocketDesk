@@ -51,7 +51,7 @@ final class PointerOverlayUITests: XCTestCase {
         app.launch()
         let showControls = app.buttons["Show controls"]
         if showControls.waitForExistence(timeout: 3) { return }
-        let returnButton = app.buttons["Return to PocketDesk"]
+        let returnButton = app.buttons["Return to Farside"]
         XCTAssertTrue(returnButton.waitForExistence(timeout: 5))
         returnButton.tap()
         XCTAssertTrue(showControls.waitForExistence(timeout: 5))

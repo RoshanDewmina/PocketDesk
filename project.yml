@@ -92,13 +92,13 @@ targets:
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: PocketDesk
+        INFOPLIST_KEY_CFBundleDisplayName: Farside
         INFOPLIST_FILE: RemotePhone/Info.plist
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Discover and connect securely to your paired Mac.
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect directly to your paired Mac when it's on the same Wi-Fi.
         INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing code shown on your Mac.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Use your microphone to dictate text for your Mac.
-        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Turn your speech into text for the active field on your Mac.
+        INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Turn your speech into text on this iPhone for the active field on your Mac.
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
     scheme:
       testTargets: [RemotePhoneTests, RemotePhoneUITests]

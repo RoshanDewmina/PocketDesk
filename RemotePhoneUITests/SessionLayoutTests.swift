@@ -74,7 +74,7 @@ final class SessionLayoutTests: XCTestCase {
         app.launch()
         let home = app.descendants(matching: .any)["phone.home"].firstMatch
         if !home.waitForExistence(timeout: 3) {
-            let recovery = app.buttons["Return to PocketDesk"]
+            let recovery = app.buttons["Return to Farside"]
             XCTAssertTrue(recovery.waitForExistence(timeout: 5))
             recovery.tap()
         }
@@ -131,8 +131,8 @@ final class SessionLayoutTests: XCTestCase {
         let field = app.textViews.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5), "Handle double tap must open the keyboard directly")
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "Opening the editor must focus it")
-        field.typeText("PocketDesk layout check\nsecond line")
-        XCTAssertEqual(field.value as? String, "PocketDesk layout check\nsecond line", "The keyboard bar must retain multiline draft text")
+        field.typeText("Farside layout check\nsecond line")
+        XCTAssertEqual(field.value as? String, "Farside layout check\nsecond line", "The keyboard bar must retain multiline draft text")
         XCTAssertFalse(app.buttons["Send text"].isEnabled, "Offline layout mode must never authorize input")
         XCTAssertTrue(app.buttons["Escape"].exists, "Keyboard bar offers Escape, Tab, modifiers and arrows")
         XCTAssertTrue(app.buttons["Command"].exists)
@@ -265,7 +265,7 @@ final class SessionLayoutTests: XCTestCase {
         let field = app.textViews.firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
-        let expected = "PocketDesk layout check\nsecond line"
+        let expected = "Farside layout check\nsecond line"
         for character in expected {
             field.typeText(String(character))
             Thread.sleep(forTimeInterval: 0.08)
@@ -286,7 +286,7 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertFalse(app.buttons["Controls"].exists)
         XCTAssertFalse(app.buttons["Keyboard"].exists)
         XCTAssertFalse(app.buttons["Release"].exists)
-        app.buttons["Return to PocketDesk"].tap()
+        app.buttons["Return to Farside"].tap()
         XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 3))
     }
 
@@ -322,7 +322,7 @@ final class SessionLayoutTests: XCTestCase {
         app.launch()
         let showControls = app.buttons["Show controls"]
         if showControls.waitForExistence(timeout: 3) { return }
-        let returnButton = app.buttons["Return to PocketDesk"]
+        let returnButton = app.buttons["Return to Farside"]
         guard returnButton.waitForExistence(timeout: 5) else {
             return XCTFail("Offline fixture must either open directly or offer explicit privacy recovery")
         }

@@ -27,12 +27,14 @@ enum Farside {
     /// Bundled accent faces (SIL OFL 1.1). Everyday UI uses the system font.
     /// If a face is not bundled, SwiftUI falls back to the system font.
     enum Typeface {
-        static let dotMatrix = "Doto"
+        /// CoreText registers each named instance of the variable `Doto[ROND,wght]` font as
+        /// `Doto-Black_<Instance>`; plain "Doto" resolves to Regular (400). Display uses ExtraBold (800).
+        static let dotMatrix = "Doto-Black_ExtraBold"
         static let serifItalic = "InstrumentSerif-Italic"
 
         /// Dot-matrix display text, 28 pt and larger. Keep punctuation out of Doto strings.
         static func display(_ size: CGFloat, relativeTo style: Font.TextStyle = .largeTitle) -> Font {
-            .custom(dotMatrix, size: size, relativeTo: style).weight(.heavy)
+            .custom(dotMatrix, size: size, relativeTo: style)
         }
 
         /// The single italic accent word in a heading.

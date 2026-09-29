@@ -67,7 +67,7 @@ struct DesktopPreview: View {
             .frame(height: 44)
             .background(Color(white: 0.95))
             VStack(alignment: .leading, spacing: 18) {
-                Text("PocketDesk").font(.system(size: 44, weight: .semibold, design: .serif))
+                Text("Farside").font(.system(size: 44, weight: .semibold, design: .serif))
                 Text("Offline preview · no remote actions")
                     .font(.system(size: 22, weight: .medium, design: .monospaced))
                     .foregroundStyle(.secondary)
