@@ -304,6 +304,17 @@ final class PeerMedia: NSObject {
         }
     }
 
+    /// G5: the capture session's target rate and display (W1 applies them to the sender).
+    private(set) var targetFPS = CaptureRatePolicy.standardFPS
+    private(set) var displayRefreshHz: Double?
+    private(set) var captureDisplay: String?
+
+    func applyCaptureRate(targetFPS: Int, displayRefreshHz: Double?, display: String?) {
+        self.targetFPS = targetFPS
+        self.displayRefreshHz = displayRefreshHz
+        captureDisplay = display
+    }
+
     /// Host: the picture mode the capture session actually applied. Updates the encoder ceiling
     /// without restarting the stream.
     func applyStreamQuality(_ quality: StreamQuality) {
