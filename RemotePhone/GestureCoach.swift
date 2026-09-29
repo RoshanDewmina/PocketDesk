@@ -378,31 +378,37 @@ struct GestureCoachView: View {
 
     // MARK: Layout
 
-    @ViewBuilder private var lessonLayout: some View {
-        if verticalSizeClass == .compact || horizontalSizeClass == .regular {
-            HStack(alignment: .top, spacing: Farside.Space.l) {
+    /// Wide screens (landscape phone, landscape iPad) put the pad beside the words; tall ones stack.
+    private var lessonLayout: some View {
+        GeometryReader { proxy in
+            if proxy.size.width > proxy.size.height * 1.1 {
+                HStack(alignment: .top, spacing: Farside.Space.l) {
+                    VStack(alignment: .leading, spacing: Farside.Space.m) {
+                        topBar
+                        instructions
+                        Spacer(minLength: 0)
+                        footer
+                    }
+                    .frame(width: min(380, proxy.size.width * 0.4))
+                    pad.frame(maxWidth: 680, maxHeight: 620)
+                }
+                .padding(Farside.Space.l)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
                 VStack(alignment: .leading, spacing: Farside.Space.m) {
                     topBar
-                    instructions
+                    FarsideHeading(coach.lesson.heading, size: 30)
+                    pad.frame(maxHeight: horizontalSizeClass == .regular ? 620 : .infinity)
+                    paragraph
                     Spacer(minLength: 0)
                     footer
                 }
-                .frame(maxWidth: 380)
-                pad.frame(maxWidth: 620, maxHeight: 560)
+                .padding(.horizontal, Farside.Space.l)
+                .padding(.top, Farside.Space.xs)
+                .padding(.bottom, Farside.Space.s)
+                .frame(maxWidth: 640)
+                .frame(maxWidth: .infinity)
             }
-            .padding(Farside.Space.l)
-        } else {
-            VStack(alignment: .leading, spacing: Farside.Space.m) {
-                topBar
-                FarsideHeading(coach.lesson.heading, size: 30)
-                pad
-                paragraph
-                Spacer(minLength: 0)
-                footer
-            }
-            .padding(.horizontal, Farside.Space.l)
-            .padding(.top, Farside.Space.xs)
-            .padding(.bottom, Farside.Space.s)
         }
     }
 
