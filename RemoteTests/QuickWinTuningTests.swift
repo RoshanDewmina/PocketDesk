@@ -53,7 +53,7 @@ final class QuickWinTuningTests: XCTestCase {
         XCTAssertFalse(uncached.cacheLevel52Probe)
         XCTAssertTrue(uncached.summary.contains("no probe cache"), uncached.summary)
         XCTAssertTrue(StreamTuning.tuned.cacheLevel52Probe)
-        XCTAssertEqual(Set(StreamTuning.experimentKeys).count, 7, "every experiment key is listed for the cleanup step")
+        XCTAssertEqual(Set(StreamTuning.experimentKeys).count, 14, "every experiment key is listed for the cleanup step")
 
         defaults.set(true, forKey: StreamTuning.legacyDefaultsKey)
         XCTAssertEqual(StreamTuning.resolve(defaults: defaults), .legacy, "the legacy switch wins")

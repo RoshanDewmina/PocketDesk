@@ -35,6 +35,7 @@
 		0EDDA50481468C9D28F0A4F2 /* LegibilityChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF186848E0B566BE006CF760 /* LegibilityChart.swift */; };
 		0EE20B6CFCA4B886E69B0A52 /* AgentAlertCenterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5F06AA8473A3A424B3CB6BB /* AgentAlertCenterTests.swift */; };
 		0EFDDC5F73CE0DB540BBC7D9 /* FarsideAppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86CC7F4305C87173BBE65A02 /* FarsideAppDelegate.swift */; };
+		0F960CB2D947452338BA7932 /* ViewportCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 641018F06FE5E45EF98441DE /* ViewportCapture.swift */; };
 		10034FDF2F07FDA6A2EDE6D6 /* MacReachabilityProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D30BE4E93A054834970E4E8 /* MacReachabilityProbe.swift */; };
 		112638FC5A467BEACC7FA86F /* RemoteCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F36886E8EE8AABEF8D4DF81 /* RemoteCoordinator.swift */; };
 		11421FD58517E627E3800711 /* DebugLaunchSeeds.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50E46708BCCA263DA92ECDF /* DebugLaunchSeeds.swift */; };
@@ -68,6 +69,7 @@
 		1C1C88B47E7708FA8010F74A /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9211D8B9DD746165FF31BB31 /* Pairing.swift */; };
 		1C32D9B6FA449B671B4A859C /* SessionContinuity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 643A13E08A654E915062CB1B /* SessionContinuity.swift */; };
 		1C4ECDBFDC877E197F9F3DEA /* MiniMap.swift in Sources */ = {isa = PBXBuildFile; fileRef = A23F9F9BE132EBDFD48DACFA /* MiniMap.swift */; };
+		1C5F9A903F7F529369522887 /* ViewportCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 641018F06FE5E45EF98441DE /* ViewportCapture.swift */; };
 		1CF73F1CD49A051EFAC75221 /* SessionMotion.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CD9CD849FB175CE0D84EEAF /* SessionMotion.swift */; };
 		1D07483A90E07D6C3D360584 /* E2EWindowCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16E5B189A6781A0590042A7D /* E2EWindowCover.swift */; };
 		1D353B08718F7B84625781AD /* E2EWindowCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16E5B189A6781A0590042A7D /* E2EWindowCover.swift */; };
@@ -218,6 +220,7 @@
 		63A95FB32A150E8864B6E683 /* FarsideRedesignUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 43CA8C2354F26641D43EB6D9 /* FarsideRedesignUITests.swift */; };
 		63B2BB4DB44A22DBC3F3680E /* E2ETestCase.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40DA37C0E1C156382B139585 /* E2ETestCase.swift */; };
 		647D0FD25F73AAE67602CCA9 /* PocketDeskStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E3A80162075BC6B8C142A82 /* PocketDeskStyle.swift */; };
+		64DF4EAB1CE1DCCFF75BD178 /* ViewportCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E9E76F70F47C18AF8B49BD2 /* ViewportCaptureTests.swift */; };
 		657DD397894AA64359793381 /* PocketDesktopApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 198B0BB374C240A740F9D1AE /* PocketDesktopApp.swift */; };
 		65A044AB0614AAF7B4E52802 /* HostCursorShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41949CA17D55D44290A6D3B3 /* HostCursorShape.swift */; };
 		65EB48E64A43769C5C4B4F43 /* FarsideTestPadApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03D1E305450796D8024D9CF3 /* FarsideTestPadApp.swift */; };
@@ -655,6 +658,7 @@
 		0C78743520FB98953CDC93D0 /* MacStatusService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacStatusService.swift; sourceTree = "<group>"; };
 		0C792ABF9D495176D081B6D7 /* PointerTelemetryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointerTelemetryTests.swift; sourceTree = "<group>"; };
 		0CA0571A4D3A5DB8B1BF96B9 /* DirectTouchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTouchTests.swift; sourceTree = "<group>"; };
+		0E9E76F70F47C18AF8B49BD2 /* ViewportCaptureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportCaptureTests.swift; sourceTree = "<group>"; };
 		1266A2BBBDB1C215DAB4C314 /* HostAgentAlerts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostAgentAlerts.swift; sourceTree = "<group>"; };
 		12E9D61A7237811AFDC943C6 /* FarsideScenes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideScenes.swift; sourceTree = "<group>"; };
 		13C8A6B76BF8E55AEDB76371 /* HostClipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostClipboard.swift; sourceTree = "<group>"; };
@@ -745,6 +749,7 @@
 		605C05707C7B4FBAF453DCE5 /* MiniMapVideoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMapVideoTests.swift; sourceTree = "<group>"; };
 		61439D711D81DE84D4388236 /* SecurityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityTests.swift; sourceTree = "<group>"; };
 		623D4E7C80996C8F073FB4B0 /* DirectTouchMappingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTouchMappingTests.swift; sourceTree = "<group>"; };
+		641018F06FE5E45EF98441DE /* ViewportCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportCapture.swift; sourceTree = "<group>"; };
 		64383AFDC6694A5849AC3D64 /* FarsideWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = FarsideWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		643A13E08A654E915062CB1B /* SessionContinuity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionContinuity.swift; sourceTree = "<group>"; };
 		652B094C95978F6D605C1E82 /* LadderPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LadderPolicy.swift; sourceTree = "<group>"; };
@@ -1150,6 +1155,7 @@
 				924606EF7002CFDE239145B3 /* RemoteCapture.swift */,
 				9C6528802DEF73BFE075870D /* RemoteHostApp.swift */,
 				9BA581AB036A468F69A1BE38 /* RemoteInputDriver.swift */,
+				641018F06FE5E45EF98441DE /* ViewportCapture.swift */,
 				3C638D102B3A6835A42BEF4C /* VirtualDisplaySpike.swift */,
 			);
 			path = RemoteHost;
@@ -1246,6 +1252,7 @@
 				C812181590DE874E58758A35 /* VideoCodecPolicyTests.swift */,
 				F67E71CA38D99224EB9E0605 /* VideoFrameTimestampTests.swift */,
 				FFE4ADC42F9E53923E64E0B6 /* VideoToolboxProbeTests.swift */,
+				0E9E76F70F47C18AF8B49BD2 /* ViewportCaptureTests.swift */,
 				99BE207FB127F805AC3EC932 /* ViewportTransformTests.swift */,
 				A9A7ABD6CBA79EEDC321211A /* WatchdogE2ETests.swift */,
 				FDE103764B22966479AEA9A4 /* WatchdogTests.swift */,
@@ -2159,6 +2166,7 @@
 				71D9BF675142D06794403505 /* StreamStatistics.swift in Sources */,
 				F467F2AC18E666A0748C5E92 /* StreamTuning.swift in Sources */,
 				8B2FA9CC9AD80729477CCC03 /* VideoCodecPolicy.swift in Sources */,
+				1C5F9A903F7F529369522887 /* ViewportCapture.swift in Sources */,
 				AA4534AC6F3437537258B96E /* ViewportRegion.swift in Sources */,
 				590BB61F304E8433502AE3E3 /* ViewportTransform.swift in Sources */,
 				754454E5B2AC7C146F883D81 /* VirtualDisplaySpike.swift in Sources */,
@@ -2328,6 +2336,8 @@
 				149509DDA6192FD5FAE05D6A /* VideoCodecPolicyTests.swift in Sources */,
 				1643A8AEC2B7CE036CA9C069 /* VideoFrameTimestampTests.swift in Sources */,
 				44AFDEC625CCA12E0B403CAF /* VideoToolboxProbeTests.swift in Sources */,
+				0F960CB2D947452338BA7932 /* ViewportCapture.swift in Sources */,
+				64DF4EAB1CE1DCCFF75BD178 /* ViewportCaptureTests.swift in Sources */,
 				CCB7A3034D3B1A570ED06353 /* ViewportRegion.swift in Sources */,
 				9A63E32E5C3DDF74A6F0E069 /* ViewportTransform.swift in Sources */,
 				B6E8D95DC2558187E3549E56 /* ViewportTransformTests.swift in Sources */,
