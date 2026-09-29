@@ -1,7 +1,7 @@
 import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
-import { forgetPushRoom, handlePushEvent, handlePushRegister, handlePushRemove, handlePushReport, purgePushRetention } from "../src/push";
+import { forgetPushRoom, handlePushEvent, handlePushPreferences, handlePushRegister, handlePushRemove, handlePushReport, purgePushRetention } from "../src/push";
 import { randomHex, sha256Hex } from "../src/util";
-import { connectHost, pairing, sleep, testEnv, type Pairing } from "./helpers/client";
+import { connectHost, pairing, postJson, sleep, testEnv, type Pairing } from "./helpers/client";
 import { installTurnMock } from "./helpers/turn-mock";
 
 beforeAll(() => { installTurnMock(); });
@@ -146,5 +146,64 @@ describe("pairing-scoped generic APNs alerts", () => {
     expect(await testEnv.DB.prepare("SELECT room FROM push_registrations WHERE room=?1").bind(p.room).first()).toBeNull();
     expect((await register(env, p, registration())).status).toBe(401);
     expect((await register(env, replacement, registration())).status).toBe(200);
+  });
+
+  it("removes an old phone's registration if its pairing rotates during the D1 write", async () => {
+    const env = await configuredEnv();
+    const p = await livePair();
+    const oldToken = randomHex();
+    let checks = 0;
+    const gate = { authenticatePush: async () => ++checks === 1 };
+    Object.assign(env, { ROOM: { idFromName: (room: string) => room, get: () => gate } });
+    expect((await register(env, p, registration(oldToken))).status).toBe(401);
+    expect(await testEnv.DB.prepare("SELECT device_token FROM push_registrations WHERE room=?1")
+      .bind(p.room).first()).toBeNull();
+  });
+
+  it("a stale phone's cleanup cannot erase a newer push address", async () => {
+    const env = await configuredEnv();
+    const p = await livePair();
+    const oldToken = randomHex();
+    const newToken = randomHex();
+    let checks = 0;
+    const gate = { authenticatePush: async () => {
+      checks += 1;
+      if (checks === 2) {
+        await testEnv.DB.prepare("UPDATE push_registrations SET device_token=?2,version=version+1 WHERE room=?1")
+          .bind(p.room, newToken).run();
+      }
+      return checks === 1;
+    } };
+    Object.assign(env, { ROOM: { idFromName: (room: string) => room, get: () => gate } });
+    expect((await register(env, p, registration(oldToken))).status).toBe(401);
+    expect(await testEnv.DB.prepare("SELECT device_token AS token FROM push_registrations WHERE room=?1")
+      .bind(p.room).first()).toEqual({ token: newToken });
+  });
+
+  it("disables alerts without a fresh APNs token while retaining the ActivityKit end address", async () => {
+    const env = await configuredEnv();
+    const p = await livePair();
+    expect((await register(env, p, registration())).status).toBe(200);
+    await testEnv.DB.prepare(`INSERT INTO activity_registrations
+      (room,route_epoch,activity_id,push_token,environment,updated_at)
+      VALUES (?1,?2,'held-activity','ab','sandbox',?3)`)
+      .bind(p.room, randomHex(16), Date.now()).run();
+    const disable = (token: string) => handlePushPreferences(req("preferences", {
+      room: p.room, token, alertsEnabled: false,
+    }), env);
+    expect((await disable(randomHex())).status).toBe(401);
+    expect(await testEnv.DB.prepare("SELECT room FROM push_registrations WHERE room=?1")
+      .bind(p.room).first()).not.toBeNull();
+    expect((await disable(p.clientToken)).status).toBe(200);
+    expect((await postJson("/v1/push/preferences", {
+      room: p.room, token: p.clientToken, alertsEnabled: false,
+    })).status).toBe(200);
+    expect(await testEnv.DB.prepare("SELECT room FROM push_registrations WHERE room=?1")
+      .bind(p.room).first()).toBeNull();
+    expect(await testEnv.DB.prepare("SELECT activity_id FROM activity_registrations WHERE room=?1")
+      .bind(p.room).first()).toEqual({ activity_id: "held-activity" });
+    expect((await handlePushPreferences(req("preferences", {
+      room: p.room, token: p.clientToken, alertsEnabled: true,
+    }), env)).status).toBe(400);
   });
 });

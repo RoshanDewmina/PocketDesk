@@ -6,7 +6,7 @@ import { purgeRetention } from "./entitlement/store";
 import { handleForget, handleVerify } from "./entitlement/verify";
 import { handleSignalUpgrade } from "./gateway";
 import { log, logError } from "./log";
-import { handlePushEvent, handlePushRegister, handlePushRemove, handlePushReport, purgePushRetention } from "./push";
+import { handlePushEvent, handlePushPreferences, handlePushRegister, handlePushRemove, handlePushReport, purgePushRetention } from "./push";
 import { json } from "./util";
 
 export { RoomDO } from "./room";
@@ -32,6 +32,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (path === "/v1/rooms/forget") return forgetRoom(request, env);
     if (path === "/v1/push/register") return handlePushRegister(request, env);
     if (path === "/v1/push/remove") return handlePushRemove(request, env);
+    if (path === "/v1/push/preferences") return handlePushPreferences(request, env);
     if (path === "/v1/push/event") return handlePushEvent(request, env);
     if (path === "/v1/push/report") return handlePushReport(request, env);
     if (path === "/v1/activity/register") return handleActivityRegister(request, env);

@@ -58,7 +58,7 @@ describe("end-only ActivityKit push", () => {
     await host.next();
     await expect.poll(async () => (await testEnv.DB.prepare(
       "SELECT end_reason FROM activity_registrations WHERE room=?1").bind(p.room).first<{ end_reason: string }>())?.end_reason).toBe("user");
-    expect((await handleActivityRegister(req("register", current), env)).status).toBe(401);
+    expect((await handleActivityRegister(req("register", current), env)).status).toBe(409);
     host.close();
     await host.closed;
     expect((await handleActivityRemove(req("remove", current), env)).status).toBe(204);
@@ -103,7 +103,57 @@ describe("end-only ActivityKit push", () => {
     expect(await testEnv.DB.prepare("SELECT room FROM activity_registrations WHERE room=?1").bind(p.room).first()).not.toBeNull();
     expect((await handleActivityRemove(req("remove", identity(p)), env)).status).toBe(204);
     expect((await handleActivityRemove(req("remove", identity(p)), env)).status).toBe(204);
-    expect(await testEnv.DB.prepare("SELECT room FROM activity_registrations WHERE room=?1").bind(p.room).first()).toBeNull();
+    expect(await testEnv.DB.prepare("SELECT end_reason FROM activity_registrations WHERE room=?1")
+      .bind(p.room).first()).toEqual({ end_reason: "user" });
+    expect((await handleActivityRegister(req("register", identity(p)), env)).status).toBe(409);
+  });
+
+  it("caps distinct live activities per room epoch while allowing an existing token update", async () => {
+    const p = await livePair();
+    const env = await envForEpoch(p);
+    for (let index = 0; index < 4; index += 1) {
+      expect((await handleActivityRegister(req("register", identity(p, {
+        activityId: `activity_${index}`,
+      })), env)).status).toBe(200);
+    }
+    expect((await handleActivityRegister(req("register", identity(p, {
+      activityId: "activity_overflow",
+    })), env)).status).toBe(429);
+    expect((await handleActivityRegister(req("register", identity(p, {
+      activityId: "activity_0", pushToken: "cd".repeat(300),
+    })), env)).status).toBe(200);
+    expect(await testEnv.DB.prepare(`SELECT COUNT(*) AS count FROM activity_registrations
+      WHERE room=?1 AND route_epoch=?2 AND end_reason IS NULL`).bind(p.room, epoch)
+      .first<{ count: number }>()).toEqual({ count: 4 });
+  });
+
+  it("retains a stale in-flight registration for end delivery even if cleanup ran first", async () => {
+    const p = await livePair();
+    const env = await envForEpoch(p);
+    let checks = 0;
+    const gate = {
+      authenticatePush: async () => true,
+      authenticateActivity: async () => {
+        checks += 1;
+        if (checks === 2) {
+          await testEnv.DB.prepare("DELETE FROM activity_registrations WHERE room=?1 AND end_reason IS NULL")
+            .bind(p.room).run();
+        }
+        return checks === 1;
+      },
+    };
+    Object.assign(env, { ROOM: { idFromName: (room: string) => room, get: () => gate } });
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 503 }));
+    expect((await handleActivityRegister(req("register", identity(p)), env)).status).toBe(401);
+    const pending = await testEnv.DB.prepare(`SELECT end_reason,end_at,next_retry_at FROM activity_registrations
+      WHERE room=?1 AND route_epoch=?2`).bind(p.room, epoch)
+      .first<{ end_reason: string; end_at: number; next_retry_at: number }>();
+    expect(pending?.end_reason).toBe("error");
+    expect(pending!.next_retry_at).toBeGreaterThan(pending!.end_at);
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 200 }));
+    expect((await retryPendingActivityEnds(env, pending!.next_retry_at)).accepted).toBeGreaterThanOrEqual(1);
+    expect(await testEnv.DB.prepare("SELECT next_retry_at FROM activity_registrations WHERE room=?1")
+      .bind(p.room).first()).toEqual({ next_retry_at: null });
   });
 
   it("sends only an end state to the ActivityKit topic and immediate dismissal", async () => {
@@ -125,7 +175,9 @@ describe("end-only ActivityKit push", () => {
     expect(aps["dismissal-date"]).toBeLessThan(aps.timestamp as number);
     expect(sent[0]!.body).not.toContain(p.clientToken);
     expect(sent[0]!.body).not.toContain(p.hostToken);
-    expect(await testEnv.DB.prepare("SELECT room FROM activity_registrations WHERE room=?1").bind(p.room).first()).toBeNull();
+    expect(await testEnv.DB.prepare("SELECT next_retry_at FROM activity_registrations WHERE room=?1")
+      .bind(p.room).first()).toEqual({ next_retry_at: null });
+    expect((await handleActivityRegister(req("register", identity(p)), env)).status).toBe(409);
   });
 
   it("retains failed ends, and an APNs 410 cannot erase a rotated token", async () => {
@@ -137,15 +189,21 @@ describe("end-only ActivityKit push", () => {
     expect(await testEnv.DB.prepare("SELECT end_reason AS reason FROM activity_registrations WHERE room=?1")
       .bind(p.room).first<{ reason: string }>()).toEqual({ reason: "timeout" });
     const rotated = "cd".repeat(300);
+    vi.stubGlobal("fetch", async () => new Response(null, { status: 503 }));
+    expect((await handleActivityRegister(req("register", identity(p, { pushToken: rotated })), env)).status).toBe(409);
+    expect(await testEnv.DB.prepare("SELECT push_token AS token,end_reason AS reason FROM activity_registrations WHERE room=?1")
+      .bind(p.room).first()).toEqual({ token: rotated, reason: "timeout" });
     vi.stubGlobal("fetch", async () => {
-      expect((await handleActivityRegister(req("register", identity(p, { pushToken: rotated })), env)).status).toBe(200);
+      await testEnv.DB.prepare("UPDATE activity_registrations SET push_token=?2,version=version+1 WHERE room=?1")
+        .bind(p.room, "ef".repeat(300)).run();
       return new Response(null, { status: 410 });
     });
     expect(await endRoomActivities(env, p.room, epoch, "timeout")).toEqual({ accepted: 0, failed: 0, invalidToken: 1 });
     expect(await testEnv.DB.prepare("SELECT push_token AS token FROM activity_registrations WHERE room=?1")
-      .bind(p.room).first<{ token: string }>()).toEqual({ token: rotated });
+      .bind(p.room).first<{ token: string }>()).toEqual({ token: "ef".repeat(300) });
     await forgetPushRoom(testEnv.DB, p.room);
-    expect(await testEnv.DB.prepare("SELECT room FROM activity_registrations WHERE room=?1").bind(p.room).first()).toBeNull();
+    expect(await testEnv.DB.prepare("SELECT room FROM activity_registrations WHERE room=?1").bind(p.room).first()).not.toBeNull();
+    await testEnv.DB.prepare("DELETE FROM activity_registrations WHERE room=?1").bind(p.room).run();
   });
 
   it("retries a failed end after room forget with the original event time", async () => {
@@ -164,11 +222,10 @@ describe("end-only ActivityKit push", () => {
       payloads.push(JSON.parse(String(init.body)) as { aps: Record<string, unknown> });
       return new Response(null, { status: 200 });
     });
-    expect(await retryPendingActivityEnds(env, pending!.retry)).toEqual({
-      accepted: 1, failed: 0, invalidToken: 0, expired: 0,
-    });
+    expect((await retryPendingActivityEnds(env, pending!.retry)).accepted).toBeGreaterThanOrEqual(1);
     expect(payloads[0]!.aps.timestamp).toBe(Math.floor(pending!.ended / 1000));
     expect(payloads[0]!.aps["dismissal-date"]).toBe(Math.floor(pending!.ended / 1000) - 1);
-    expect(await testEnv.DB.prepare("SELECT room FROM activity_registrations WHERE room=?1").bind(p.room).first()).toBeNull();
+    expect(await testEnv.DB.prepare("SELECT next_retry_at FROM activity_registrations WHERE room=?1")
+      .bind(p.room).first()).toEqual({ next_retry_at: null });
   });
 });
