@@ -1,0 +1,36 @@
+== bundle
+FarsideWidgets.appex
+== app signature and entitlements
+Identifier=com.roshan.PocketDesk.Remote
+Signature size=4819
+Authority=Apple Development: dewminaimalsha2003@gmail.com (2X93YVJ4G4)
+Authority=Apple Worldwide Developer Relations Certification Authority
+Authority=Apple Root CA
+TeamIdentifier=39HM2X8GS6
+{
+  "application-identifier" => "39HM2X8GS6.com.roshan.PocketDesk.Remote"
+  "com.apple.developer.team-identifier" => "39HM2X8GS6"
+  "get-task-allow" => true
+}
+== extension signature and entitlements
+Identifier=com.roshan.PocketDesk.Remote.Widgets
+TeamIdentifier=39HM2X8GS6
+{
+  "application-identifier" => "39HM2X8GS6.com.roshan.PocketDesk.Remote.Widgets"
+  "com.apple.developer.team-identifier" => "39HM2X8GS6"
+  "get-task-allow" => true
+}
+== profile
+    "application-identifier" => "39HM2X8GS6.*"
+  "ExpirationDate" => 2027-06-22 13:21:09 +0000
+  "Name" => "iOS Team Provisioning Profile: *"
+  "TeamName" => "Roshan Dewmina Imalsha Silva Pulle"
+    "application-identifier" => "39HM2X8GS6.*"
+  "Name" => "iOS Team Provisioning Profile: *"
+== Info.plist keys
+  "CFBundleDisplayName" => "Farside"
+  "CFBundleIdentifier" => "com.roshan.PocketDesk.Remote"
+      "CFBundleURLSchemes" => [
+  "NSSupportsLiveActivities" => true
+  "CFBundleIdentifier" => "com.roshan.PocketDesk.Remote.Widgets"
+    "NSExtensionPointIdentifier" => "com.apple.widgetkit-extension"

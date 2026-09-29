@@ -1,0 +1,41 @@
+v7-device started 06:21:34
+v7-device exit=0 finished 06:21:57
+    Provisioning Profile: "iOS Team Provisioning Profile: *"
+    Signing Identity:     "Apple Development: dewminaimalsha2003@gmail.com (2X93YVJ4G4)"
+** BUILD SUCCEEDED ** [20.552 sec]
+free KB: 11859460
+v7-host-build started 06:21:57
+v7-host-build exit=0 finished 06:22:06
+** BUILD SUCCEEDED ** [8.682 sec]
+free KB: 11844564
+v7-core-build started 06:22:06
+v7-core-build exit=0 finished 06:22:14
+    Signing Identity:     "Sign to Run Locally"
+** TEST BUILD SUCCEEDED ** [6.382 sec]
+free KB: 11951812
+xctest full bundle started 06:22:14
+xctest full bundle exit=0 finished 06:23:15
+	 Executed 412 tests, with 3 tests skipped and 0 failures (0 unexpected) in 60.927 (60.964) seconds
+v7-host-ui started 06:23:15
+v7-host-ui exit=0 finished 06:23:35
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.042 (0.042) seconds
+	 Executed 6 tests, with 0 failures (0 unexpected) in 10.422 (10.423) seconds
+	 Executed 6 tests, with 0 failures (0 unexpected) in 4.798 (4.800) seconds
+    Signing Identity:     "Sign to Run Locally"
+** TEST SUCCEEDED ** [18.792 sec]
+free KB: 11941756
+v7-unit started 06:23:35
+v7-unit exit=0 finished 06:24:50
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.436 (0.439) seconds
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.161 (0.164) seconds
+	 Executed 8 tests, with 0 failures (0 unexpected) in 3.172 (3.176) seconds
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.010 (0.014) seconds
+** TEST SUCCEEDED ** [70.712 sec]
+free KB: 11902312
+v7-build-for-testing started 06:24:51
+v7-build-for-testing exit=0 finished 06:24:56
+** TEST BUILD SUCCEEDED ** [2.331 sec]
+free KB: 11896768
+routing agent-needs-you started 06:24:56
+routing agent-needs-you exit=0 finished 06:27:19
+routing agent-needs-you-unknown-agent agent-malformed-id agent-wrong-category agent-needs-you:actions started 06:27:19

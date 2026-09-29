@@ -1,0 +1,23 @@
+v4-ui-si started 04:48:22
+v4-ui-si exit=0 finished 04:53:49
+	 Executed 7 tests, with 0 failures (0 unexpected) in 72.306 (72.401) seconds
+	 Executed 7 tests, with 0 failures (0 unexpected) in 72.306 (72.403) seconds
+	 Executed 7 tests, with 0 failures (0 unexpected) in 72.306 (72.408) seconds
+** TEST SUCCEEDED ** [160.742 sec]
+free KB: 13536836
+v4-springboard started 04:53:49
+v4-springboard exit=65 finished 05:01:13
+	 Executed 4 tests, with 5 failures (0 unexpected) in 336.336 (336.570) seconds
+	 Executed 4 tests, with 5 failures (0 unexpected) in 336.336 (336.574) seconds
+	 Executed 4 tests, with 5 failures (0 unexpected) in 336.336 (336.576) seconds
+** TEST FAILED **
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/LiveActivityUITests.swift:100: error: -[RemotePhoneUITests.LiveActivityUITests testEveryStateShowsInTheIslandAndExpands] : XCTAssertTrue failed - island: live should say "Holding your Ma
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/LiveActivityUITests.swift:102: error: -[RemotePhoneUITests.LiveActivityUITests testEveryStateShowsInTheIslandAndExpands] : XCTAssertEqual failed: ("false") is not equal to ("true") - isl
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/LiveActivityUITests.swift:113: error: -[RemotePhoneUITests.LiveActivityUITests testEveryStateShowsInTheIslandAndExpands] : XCTAssertTrue failed - live: the island shows the activity
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/LiveActivityUITests.swift:151: error: -[RemotePhoneUITests.LiveActivityUITests testSpotlightOffersTheApp] : XCTAssertTrue failed - Spotlight opens with a search field
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/LiveActivityUITests.swift:152: error: -[RemotePhoneUITests.LiveActivityUITests testSpotlightOffersTheApp] : Failed to get matching snapshot: No matches found for first query match sequen
+free KB: 12117644
+v4-build-for-testing started 05:01:13
+v4-build-for-testing exit=0 finished 05:01:21
+free KB: 12027012
+routing started 05:01:21
