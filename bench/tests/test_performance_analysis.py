@@ -3,10 +3,10 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from contextlib import redirect_stdout
 from io import StringIO
 import json
-from unittest.mock import patch
 
 
 BENCH = pathlib.Path(__file__).resolve().parents[1]
@@ -134,6 +134,15 @@ class SummaryWindowTests(unittest.TestCase):
 
 
 class RecordingCadenceTests(unittest.TestCase):
+    def test_failed_recording_analysis_has_nonzero_exit(self):
+        with patch.object(recording, "source_times", side_effect=RuntimeError("unreadable recording")):
+            self.assertEqual(recording.main(["sample=missing.mp4"]), 2)
+
+    def test_invalid_recording_window_is_rejected_before_reading(self):
+        with patch.object(recording, "source_times") as source:
+            self.assertEqual(recording.main(["sample=missing.mp4", "--dur=-1"]), 2)
+            source.assert_not_called()
+
     def test_fps_uses_intervals_not_frame_count(self):
         values = [index / 60 for index in range(61)]
         result = recording.cadence_stats(values)

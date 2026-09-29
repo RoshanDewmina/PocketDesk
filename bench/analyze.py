@@ -90,6 +90,9 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     start = next((float(arg.split("=", 1)[1]) for arg in argv if arg.startswith("--start=")), 2)
     duration = next((float(arg.split("=", 1)[1]) for arg in argv if arg.startswith("--dur=")), 25)
+    if not math.isfinite(start) or start < 0 or not math.isfinite(duration) or duration <= 0:
+        print("error: --start must be finite and nonnegative; --dur must be finite and positive", file=sys.stderr)
+        return 2
     specs = [arg for arg in argv if not arg.startswith("--")]
     if not specs:
         print(__doc__)
@@ -136,7 +139,7 @@ def main(argv=None):
             if motion["fps"] > source["fps"] * 1.02:
                 print(f"  warning: motion cadence exceeds recording cadence; inspect PTS/window pairing")
     print("motion cadence is recording-limited content evidence; physical latency needs camera calibration")
-    return 0
+    return 2 if any(error or source is None for _, source, _, error in rows) else 0
 
 
 if __name__ == "__main__":
