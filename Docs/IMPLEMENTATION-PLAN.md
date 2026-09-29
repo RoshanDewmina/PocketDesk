@@ -1,17 +1,19 @@
-# Remaining app recovery — 29 September 2026, after build .6
+# Remaining app recovery — 29 September 2026, after Connect crash fix .7
 
 Roshan explicitly requested continuing the remaining Farside work with subagents. Baseline `4860999` is clean and both native apps are installed. Scope now includes completing and independently reviewing the existing backend and StoreKit branches, integrated verification, and available native acceptance. Public deployment, purchases, store submission, website and social work remain separate.
 
 | Package | Owner | Current state |
 |---|---|---|
-| Backend session ownership and revocation | `/root/performance_recovery`, Sol/high, existing `backend-workers` | Fix atomic device-room ownership, authorization after TURN issuance, immediate forget revocation, durable revocation retries; regression tests and independent review required |
+| Backend session ownership and revocation | `/root/performance_recovery`, Sol/high, existing `backend-workers` | Merged reviewed `4912553`; atomic room ownership, device-specific revocation, durable TURN revocation retries, fail-closed credential renewal, and purchase-versioned refund handling. Parent reran typecheck and all 98 workerd tests in main: pass. Production deployment remains separate |
 | StoreKit purchase/access completion | `/root/farside_claude_history`, Sol/high, existing `storekit` | Recover interrupted checks, identify/fix implementation gaps, scoped tests and independent review required; no real purchases |
 | Integration, native runtime and docs | Parent | Main checkout only; serialize heavy builds; integrate reviewed changes, update installed clients if required |
 | Scope inventory | `/root/farside_codex_history`, read-only | Completed: native physical feel/performance, real remote/relay renewal, notification beta wiring and HEVC measurement remain distinct gates |
 
 Connect crash priority: build .6 exhausted the physical iPhone main-thread stack while Swift instantiated NativeSessionView metadata. Parent split the unchanged modifier chain behind three stable AnyView boundaries. Sol independent source review approved. Signed build .7 is installed; opt-in real-device regression passed two Connect/Controls/Settings/End cycles (1 test, 28.0 seconds, zero failures). Test runner initially failed installation because this repository defaults code signing off; explicit development signing corrected the test launch. Physical controls became enabled with fresh video; no Mac clicks or text were injected. Receipts: `work/connect-crash/`.
 
-Live preflight: Mac host reports Ready, paired phone and both Screen Recording/Accessibility grants retained. iPhone Mirroring timed out on two connection attempts, so physical interaction acceptance is currently unavailable. The existing private service reports renewal enabled with nine renewals; `/ready` returns 503 solely because relay is not configured. This supersedes older assumptions that its bundle has not been updated, but does not establish public relay readiness or a measured physical soak. Receipt: `work/remaining-recovery/private-service-readiness.json`. Existing configuration and pairing were unchanged.
+Backend integration receipt: `work/remaining-recovery/integrated/backend-{typecheck,tests}.log`; 98/98 tests in main. Existing databases require additive migration `Backend/migrations/0002_purchase_order.sql` before deploying this source. No existing private service or database was replaced. The free-LAN/paid-internet rule is not fully enforced by withholding ICE servers: public/VPN direct candidates need a native route gate before release. Shared protocol and contract prose now state that gap.
+
+Live preflight: Mac host reports Ready, paired phone and both Screen Recording/Accessibility grants retained. iPhone Mirroring automation was unreliable; the signed physical XCTest above subsequently verified Connect and live control admission. Full gesture and task acceptance remains pending. The existing private service reports renewal enabled with nine renewals; `/ready` returns 503 solely because relay is not configured. This supersedes older assumptions that its bundle has not been updated, but does not establish public relay readiness or a measured physical soak. Receipt: `work/remaining-recovery/private-service-readiness.json`. Existing configuration and pairing were unchanged.
 
 # Active Codex recovery — 29 September 2026
 
