@@ -54,7 +54,9 @@ final class SessionRenewalIntegrationTests: XCTestCase {
     @MainActor
     private func connectedPair(_ url: String, name: String, advertisesRenewal: Bool = true) async throws -> (RemoteCoordinator, RemoteCoordinator) {
         let host = RemoteCoordinator(isHost: true, store: Trust(), advertisesRenewal: advertisesRenewal)
+        host.allowLegacyPrivateRoute = true
         let phone = RemoteCoordinator(isHost: false, store: Trust(), advertisesRenewal: advertisesRenewal)
+        phone.allowLegacyPrivateRoute = true
         let invitation = try host.createPair(server: url, name: name)
         host.start()
         try await waitFor("host registered") { host.hostRegistered }
