@@ -119,6 +119,11 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var streamSummaryLines: [String] = []
     /// Route and network round trip from the latest stream statistics, for the dock caption.
     @Published private(set) var link: LinkSummary?
+    /// G4: the part of the display the frames cover, as the Mac last reported it; nil for the whole display.
+    @Published private(set) var captureRegion: CaptureRegion?
+    private var viewportReporter = ViewportReporter()
+    private var viewportSendTask: Task<Void, Never>?
+    private var nativeScreenPixels: PixelSize?
     @Published var streamQuality: StreamQuality = .sharp {
         didSet {
             if oldValue != streamQuality { qualityRequestedAt = ProcessInfo.processInfo.systemUptime }
@@ -396,6 +401,80 @@ final class PhoneRemoteModel: ObservableObject {
         if inputProbe != nil { return true }
         #endif
         return hostFeatures.contains(feature)
+    }
+
+    // MARK: Viewport capture (G4)
+
+    /// The Mac crops its capture to the phone's viewport and reports the region it streams.
+    var viewportCaptureSupported: Bool { hostFeatures.contains(SessionFeature.viewportCapture) }
+
+    /// The active crop, for the dock caption and the statistics overlay.
+    var cropSummary: CropSummary? { CropSummary(captureRegion, displaySize: sourceSize) }
+
+    /// The session view reports every change of what it shows; `settled` when a gesture has ended.
+    func viewportChanged(_ request: ViewportCaptureRequest?, settled: Bool = false) {
+        viewportReporter.update(request)
+        sendViewportChange(settled: settled, at: ProcessInfo.processInfo.systemUptime)
+    }
+
+    /// Everything a phone heartbeat carries. The viewport rides along only after the Mac advertised
+    /// viewport capture, so an older Mac receives what it always did, plus `screenPixels`, which it ignores.
+    func heartbeatAction(clock: ClockProbe? = nil,
+                         at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> RemoteAction {
+        let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize, at: now) : nil
+        return RemoteAction(action: "heartbeat", epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
+                            streamQuality: appliedStreamQuality == nil ? nil : streamQuality, clock: clock,
+                            screenPixels: screenPixels(), viewport: viewport)
+    }
+
+    /// The phone's screen in device pixels, read once a window scene exists.
+    func screenPixels() -> PixelSize? {
+        if let nativeScreenPixels { return nativeScreenPixels }
+        let screen = UIApplication.shared.connectedScenes.lazy.compactMap { ($0 as? UIWindowScene)?.screen }.first
+        nativeScreenPixels = screen.flatMap { Self.screenPixels(nativeBounds: $0.nativeBounds) }
+        return nativeScreenPixels
+    }
+
+    static func screenPixels(nativeBounds: CGRect) -> PixelSize? {
+        let width = nativeBounds.width.rounded(), height = nativeBounds.height.rounded()
+        guard width.isFinite, height.isFinite, width >= 1, height >= 1, width <= 16_384, height <= 16_384 else {
+            return nil
+        }
+        return PixelSize(width: Int(width), height: Int(height))
+    }
+
+    /// The region the frames cover after a `capture` status: nil, the whole display, for whole-display
+    /// capture, a status about another geometry or a malformed region.
+    static func croppedRegion(_ region: CaptureRegion?, statusEpoch: UInt64, geometryEpoch: UInt64) -> CaptureRegion? {
+        guard let region, !region.isWholeDisplay, statusEpoch == geometryEpoch,
+              (try? region.validate()) != nil else { return nil }
+        return region
+    }
+
+    private func sendViewportChange(settled: Bool, at now: TimeInterval) {
+        guard viewportCaptureSupported, connection.connected else { return }
+        switch viewportReporter.nextSend(settled: settled, at: now) {
+        case .none:
+            return
+        case .at(let time):
+            scheduleViewportChange(at: time)
+        case .now:
+            viewportSendTask?.cancel()
+            viewportSendTask = nil
+            let action = heartbeatAction(at: now)
+            if action.viewport != nil { _ = connection.sendControl(action) }
+        }
+    }
+
+    private func scheduleViewportChange(at time: TimeInterval) {
+        guard viewportSendTask == nil else { return }
+        let delay = max(0, time - ProcessInfo.processInfo.systemUptime)
+        viewportSendTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.viewportSendTask = nil
+            self.sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
+        }
     }
 
     #if DEBUG
@@ -1024,6 +1103,10 @@ final class PhoneRemoteModel: ObservableObject {
             if !captureHealthy { pointerLocator.clear(); release() }
             if let display = action.display, display != currentDisplayID { currentDisplayID = display }
             if displaySelectionSupported && !displaysRequested { requestDisplays() }
+            let region = Self.croppedRegion(action.captureRegion, statusEpoch: action.epoch,
+                                            geometryEpoch: geometryEpoch)
+            if region != captureRegion { captureRegion = region }
+            sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
         case "geometry":
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             guard action.epoch != geometryEpoch else { return }
@@ -1034,6 +1117,7 @@ final class PhoneRemoteModel: ObservableObject {
             }
             pointerOverlay.reset(sourceSize: sourceSize)
             geometryEpoch = action.epoch
+            captureRegion = nil
             fresh = false
             captureHealthy = false
             lastFrame = 0
@@ -1129,10 +1213,7 @@ final class PhoneRemoteModel: ObservableObject {
             heartbeatsSent &+= 1
             let probesClock = heartbeatsSent % 2 == 0 && StreamDebug.enabled
             let probe = probesClock ? registerClockProbe() : nil
-            _ = connection.sendControl(RemoteAction(action: "heartbeat", epoch: geometryEpoch,
-                pointerSync: pointerOverlay.advertisement(),
-                streamQuality: appliedStreamQuality == nil ? nil : streamQuality,
-                clock: probe))
+            _ = connection.sendControl(heartbeatAction(clock: probe, at: now))
         }
         pointerOverlay.refresh()
         if !rememberedDisplayApplied && !displays.isEmpty && canControl { applyRememberedDisplay() }
@@ -1170,6 +1251,10 @@ final class PhoneRemoteModel: ObservableObject {
         appliedStreamQuality = nil
         streamSummaryLines = []
         link = nil
+        captureRegion = nil
+        viewportSendTask?.cancel()
+        viewportSendTask = nil
+        viewportReporter.sessionEnded()
         qualityRequestedAt = nil
         pointerLocator.clear()
         pointerOverlay.reset(sourceSize: sourceSize)
@@ -1214,6 +1299,27 @@ final class PhoneRemoteModel: ObservableObject {
         clipboard.cancel()
         resumeWatchdog?.cancel(); resumeWatchdog = nil
     }
+}
+
+/// A cropped capture for the dock caption and the statistics overlay, e.g. "crop 1280×720 · 2.0×":
+/// the stream's pixel size and how many times smaller than the display its region is per side, by area,
+/// so a crop along one axis reads the same as an even one.
+struct CropSummary: Equatable {
+    var outputWidth: Int
+    var outputHeight: Int
+    var factor: Double
+
+    init?(_ region: CaptureRegion?, displaySize: CGSize) {
+        guard let region, !region.isWholeDisplay, region.width > 0, region.height > 0,
+              displaySize.width > 0, displaySize.height > 0 else { return nil }
+        outputWidth = region.outputWidth
+        outputHeight = region.outputHeight
+        factor = (Double(displaySize.width * displaySize.height) / (region.width * region.height)).squareRoot()
+    }
+
+    private var factorText: String { String(format: "%.1f", factor) }
+    var caption: String { "crop \(outputWidth)×\(outputHeight) · \(factorText)×" }
+    var spoken: String { "picture cropped to \(outputWidth) by \(outputHeight), \(factorText) times" }
 }
 
 /// Route, round trip and received picture for the dock caption, and the negotiated codec level
@@ -1298,13 +1404,19 @@ struct RemoteVideoSurface: UIViewRepresentable {
     var sourceSize: CGSize = .zero
     /// Width of the picture on screen in device pixels, for the "displayed" legibility score.
     var displayedPixelWidth: CGFloat = 0
+    /// G4: the frames of a cropped capture span their region exactly, whatever the stream's aspect.
+    var fillsFrame = false
     let onFrame: () -> Void
+
+    static func contentMode(fillsFrame: Bool) -> UIView.ContentMode {
+        fillsFrame ? .scaleToFill : .scaleAspectFit
+    }
 
     func makeCoordinator() -> FrameObserver { FrameObserver(onFrame: onFrame) }
 
     func makeUIView(context: Context) -> RTCMTLVideoView {
         let view = RTCMTLVideoView(frame: .zero)
-        view.videoContentMode = .scaleAspectFit
+        view.videoContentMode = Self.contentMode(fillsFrame: fillsFrame)
         context.coordinator.track = track
         context.coordinator.view = view
         context.coordinator.presentation = VideoPresentationProbe.install(on: view)
@@ -1315,6 +1427,8 @@ struct RemoteVideoSurface: UIViewRepresentable {
     }
 
     func updateUIView(_ view: RTCMTLVideoView, context: Context) {
+        let mode = Self.contentMode(fillsFrame: fillsFrame)
+        if view.videoContentMode != mode { view.videoContentMode = mode }
         context.coordinator.presentation?.counters = counters
         configureStatistics(context.coordinator)
         if context.coordinator.track !== track {

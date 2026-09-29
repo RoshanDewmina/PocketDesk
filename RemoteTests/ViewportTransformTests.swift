@@ -483,3 +483,413 @@ final class ViewportTransformTests: XCTestCase {
         XCTAssertEqual(transform.contentRect.width, 507, accuracy: 0.000_1)
     }
 }
+
+/// G4 viewport capture: what the phone asks the Mac to capture, where a cropped stream's frames are drawn,
+/// and that the Mac point under a finger is the one the frame shows there. Expected values come from the
+/// definitions of Fit, Fill and a region's placement, not from the helpers under test.
+final class ViewportCaptureGeometryTests: XCTestCase {
+    private struct Device {
+        let name: String
+        let canvas: CGSize
+        let insets: ViewportInsets
+        let displayScale: CGFloat
+    }
+
+    private let devices = [
+        Device(name: "iPhone portrait", canvas: CGSize(width: 402, height: 874),
+               insets: ViewportInsets(top: 62, bottom: 34), displayScale: 3),
+        Device(name: "iPhone landscape", canvas: CGSize(width: 874, height: 402),
+               insets: ViewportInsets(left: 62, bottom: 21, right: 62), displayScale: 3),
+        Device(name: "iPad portrait", canvas: CGSize(width: 834, height: 1210),
+               insets: ViewportInsets(top: 24, bottom: 20), displayScale: 2),
+        Device(name: "iPad landscape", canvas: CGSize(width: 1210, height: 834),
+               insets: ViewportInsets(top: 24, bottom: 20), displayScale: 2)
+    ]
+    private let displays = [CGSize(width: 1470, height: 956), CGSize(width: 1920, height: 1080),
+                            CGSize(width: 2560, height: 1440)]
+    private let macBookAir = CGSize(width: 1470, height: 956)
+
+    // MARK: What the phone asks for
+
+    func testWholeDisplayRectIsTheDisplayInPoints() {
+        XCTAssertEqual(ViewportTransform.wholeDisplayRect(for: CGSize(width: 2560, height: 1440)),
+                       CGRect(x: 0, y: 0, width: 2560, height: 1440))
+        XCTAssertEqual(ViewportTransform.wholeDisplayRect(for: .zero), .zero)
+        XCTAssertEqual(ViewportTransform.wholeDisplayRect(for: CGSize(width: -1, height: 900)), .zero)
+        XCTAssertEqual(ViewportTransform.wholeDisplayRect(for: CGSize(width: CGFloat.nan, height: 900)), .zero)
+        XCTAssertEqual(ViewportTransform.wholeDisplayRect(for: CGSize(width: 1440, height: CGFloat.infinity)), .zero)
+    }
+
+    func testFitAndBaselineFillAskForTheWholeDisplayAtTheirOnScreenPixels() throws {
+        for device in devices {
+            for display in displays {
+                for mode in [ViewportMode.fit, .fill] {
+                    let context = "\(device.name) \(mode) \(display)"
+                    let view = ViewportTransform(sourceSize: display, canvasSize: device.canvas, mode: mode,
+                                                 safeInsets: device.insets)
+                    let safe = safeRect(device)
+                    let scale = mode == .fit
+                        ? min(safe.width / display.width, safe.height / display.height)
+                        : max(device.canvas.width / display.width, device.canvas.height / display.height)
+                    let request = try XCTUnwrap(view.captureRequest(displayScale: device.displayScale), context)
+                    XCTAssertTrue(view.requestsWholeDisplay, context)
+                    XCTAssertEqual(request.rect, CGRect(origin: .zero, size: display), context)
+                    XCTAssertEqual(request.displaySize, display, context)
+                    XCTAssertEqual(Double(request.pixelWidth), Double(display.width * scale * device.displayScale),
+                                   accuracy: 0.500_001, context)
+                    XCTAssertEqual(Double(request.pixelHeight), Double(display.height * scale * device.displayScale),
+                                   accuracy: 0.500_001, context)
+                    XCTAssertEqual(request.zoom, Double(scale * device.displayScale), accuracy: 0.000_051, context)
+                    XCTAssertNoThrow(try request.region(epoch: 1).validate(), context)
+                }
+            }
+        }
+    }
+
+    func testZoomedFillAsksForExactlyTheVisiblePartAtTheScreensPixels() throws {
+        for device in devices {
+            for display in displays {
+                for zoom: CGFloat in [1.5, 2, 3] {
+                    let context = "\(device.name) \(display) \(zoom)×"
+                    var view = ViewportTransform(sourceSize: display, canvasSize: device.canvas, mode: .fill,
+                                                 safeInsets: device.insets)
+                    view.setZoom(zoom, anchoredAt: CGPoint(x: device.canvas.width * 0.37,
+                                                           y: device.canvas.height * 0.61))
+                    let content = view.contentRect
+                    XCTAssertLessThanOrEqual(content.minX, 0, "zoomed Fill still covers the canvas, \(context)")
+                    XCTAssertLessThanOrEqual(content.minY, 0, context)
+                    XCTAssertGreaterThanOrEqual(content.maxX, device.canvas.width, context)
+                    XCTAssertGreaterThanOrEqual(content.maxY, device.canvas.height, context)
+                    let request = try XCTUnwrap(view.captureRequest(displayScale: device.displayScale), context)
+                    XCTAssertFalse(view.requestsWholeDisplay, context)
+                    let expected = CGRect(x: -content.minX / view.scale, y: -content.minY / view.scale,
+                                          width: device.canvas.width / view.scale,
+                                          height: device.canvas.height / view.scale)
+                    assertRect(request.rect, expected, accuracy: 1 / ViewportTransform.captureQuantum + 1e-9, context)
+                    XCTAssertTrue(CGRect(origin: .zero, size: display).contains(request.rect), context)
+                    XCTAssertEqual(Double(request.pixelWidth), Double(device.canvas.width * device.displayScale),
+                                   accuracy: 1, "a zoomed view asks for the screen's own pixels, \(context)")
+                    XCTAssertEqual(Double(request.pixelHeight), Double(device.canvas.height * device.displayScale),
+                                   accuracy: 1, context)
+                    XCTAssertEqual(request.zoom, Double(view.scale * device.displayScale), accuracy: 0.000_051, context)
+                    XCTAssertNoThrow(try request.region(epoch: 2).validate(), context)
+
+                    let corner = CGPoint(x: device.canvas.width, y: device.canvas.height)
+                    let topLeft = try XCTUnwrap(DirectTouchMapping.sourcePoint(for: .zero, in: view), context)
+                    let bottomRight = try XCTUnwrap(DirectTouchMapping.sourcePoint(for: corner, in: view), context)
+                    let tolerance = 2 / DirectTouchMapping.quantum
+                    XCTAssertEqual(topLeft.x, request.rect.minX, accuracy: tolerance, "moveTo convention, \(context)")
+                    XCTAssertEqual(topLeft.y, request.rect.minY, accuracy: tolerance, context)
+                    XCTAssertEqual(bottomRight.x, request.rect.maxX, accuracy: tolerance, context)
+                    XCTAssertEqual(bottomRight.y, request.rect.maxY, accuracy: tolerance, context)
+                }
+            }
+        }
+    }
+
+    func testFitZoomedOnOneAxisKeepsTheOtherAxisWhole() throws {
+        let device = devices[0]
+        let display = CGSize(width: 1920, height: 1080)
+        var view = ViewportTransform(sourceSize: display, canvasSize: device.canvas, mode: .fit,
+                                     safeInsets: device.insets)
+        let safe = safeRect(device)
+        view.setZoom(2, anchoredAt: CGPoint(x: safe.midX, y: safe.midY))
+        let scale = 2 * min(safe.width / display.width, safe.height / display.height)
+        XCTAssertEqual(view.scale, scale, accuracy: 1e-12)
+        XCTAssertLessThan(display.height * scale, device.canvas.height, "the picture is shorter than the screen")
+        let request = try XCTUnwrap(view.captureRequest(displayScale: 3))
+        XCTAssertEqual(request.rect.minY, 0)
+        XCTAssertEqual(request.rect.height, 1080)
+        XCTAssertEqual(request.rect.width, device.canvas.width / scale, accuracy: 1 / ViewportTransform.captureQuantum)
+        XCTAssertEqual(request.rect.midX, 960, accuracy: 1 / ViewportTransform.captureQuantum)
+        XCTAssertEqual(request.pixelWidth, 1206)
+        XCTAssertEqual(Double(request.pixelHeight), Double(1080 * scale * 3), accuracy: 0.500_001)
+    }
+
+    func testPinchedFillBelowItsSizeAsksForTheWholeDisplayEvenWhileCropped() throws {
+        let device = devices[1]
+        var view = ViewportTransform(sourceSize: macBookAir, canvasSize: device.canvas, mode: .fill,
+                                     safeInsets: device.insets)
+        view.setZoom(0.8, anchoredAt: CGPoint(x: 437, y: 201))
+        XCTAssertEqual(view.zoom, 0.8, accuracy: 1e-12)
+        XCTAssertTrue(view.isCropped, "the display is still taller than the landscape screen")
+        let request = try XCTUnwrap(view.captureRequest(displayScale: 3))
+        XCTAssertEqual(request.rect, CGRect(origin: .zero, size: macBookAir))
+        XCTAssertEqual(Double(request.pixelWidth), Double(macBookAir.width * view.scale * 3), accuracy: 0.500_001)
+    }
+
+    func testRotationAsksAgainForTheNewScreen() throws {
+        let portrait = devices[0], landscape = devices[1]
+        var view = ViewportTransform(sourceSize: macBookAir, canvasSize: portrait.canvas, mode: .fill,
+                                     safeInsets: portrait.insets)
+        let safe = safeRect(portrait)
+        view.setZoom(2, anchoredAt: CGPoint(x: safe.midX, y: safe.midY))
+        let tall = try XCTUnwrap(view.captureRequest(displayScale: 3))
+        view.resize(sourceSize: macBookAir, canvasSize: landscape.canvas, safeInsets: landscape.insets)
+        let wide = try XCTUnwrap(view.captureRequest(displayScale: 3))
+        XCTAssertEqual(tall.rect.width / tall.rect.height, 402.0 / 874.0, accuracy: 0.01)
+        XCTAssertEqual(wide.rect.width / wide.rect.height, 874.0 / 402.0, accuracy: 0.01)
+        XCTAssertEqual(Double(tall.pixelWidth), 1206, accuracy: 1)
+        XCTAssertEqual(Double(tall.pixelHeight), 2622, accuracy: 1)
+        XCTAssertEqual(Double(wide.pixelWidth), 2622, accuracy: 1)
+        XCTAssertEqual(Double(wide.pixelHeight), 1206, accuracy: 1)
+        for request in [tall, wide] {
+            XCTAssertTrue(CGRect(origin: .zero, size: macBookAir).contains(request.rect))
+            XCTAssertNoThrow(try request.region(epoch: 3).validate())
+        }
+    }
+
+    func testNoRequestWithoutADisplayACanvasOrAScale() {
+        let screen = CGSize(width: 402, height: 874)
+        XCTAssertNil(ViewportTransform(sourceSize: macBookAir, canvasSize: .zero).captureRequest(displayScale: 3))
+        XCTAssertNil(ViewportTransform(sourceSize: .zero, canvasSize: screen).captureRequest(displayScale: 3))
+        let view = ViewportTransform(sourceSize: macBookAir, canvasSize: screen)
+        for scale: CGFloat in [0, -1, .nan, .infinity] {
+            XCTAssertNil(view.captureRequest(displayScale: scale), "display scale \(scale)")
+        }
+        XCTAssertNotNil(view.captureRequest(displayScale: 3))
+    }
+
+    func testNonIntegerScalesStayInsideTheDisplayOnTheQuantum() throws {
+        let display = CGSize(width: 1512.5, height: 982.25)
+        for device in devices {
+            for displayScale: CGFloat in [2, 2.608, 3, 3.0001] {
+                for zoom: CGFloat in [1.37, 2.71] {
+                    for mode in [ViewportMode.fit, .fill] {
+                        let context = "\(device.name) \(mode) \(zoom)× @\(displayScale)"
+                        var view = ViewportTransform(sourceSize: display, canvasSize: device.canvas, mode: mode,
+                                                     safeInsets: device.insets)
+                        view.setZoom(zoom, anchoredAt: CGPoint(x: device.canvas.width * 0.21 + 0.3,
+                                                               y: device.canvas.height * 0.83 - 0.7))
+                        let request = try XCTUnwrap(view.captureRequest(displayScale: displayScale), context)
+                        XCTAssertTrue(CGRect(origin: .zero, size: display).contains(request.rect), context)
+                        if !view.requestsWholeDisplay {
+                            for edge in [request.rect.minX, request.rect.minY, request.rect.maxX, request.rect.maxY] {
+                                let steps = edge * ViewportTransform.captureQuantum
+                                XCTAssertEqual(steps, steps.rounded(), "1/64 pt steps, \(context)")
+                            }
+                        }
+                        let pixelsPerPoint = Double(view.scale * displayScale)
+                        XCTAssertEqual(Double(request.pixelWidth), Double(request.rect.width) * pixelsPerPoint,
+                                       accuracy: 0.500_001, context)
+                        XCTAssertEqual(Double(request.pixelHeight), Double(request.rect.height) * pixelsPerPoint,
+                                       accuracy: 0.500_001, context)
+                        XCTAssertEqual(request.zoom, pixelsPerPoint, accuracy: 0.000_051, context)
+                        XCTAssertNoThrow(try request.region(epoch: 9).validate(), context)
+                    }
+                }
+            }
+        }
+    }
+
+    func testExtremeDisplaysStillMakeAValidRegion() throws {
+        let screen = CGSize(width: 402, height: 874)
+        let strip = ViewportTransform(sourceSize: CGSize(width: 20_000, height: 1_000), canvasSize: screen,
+                                      mode: .fill)
+        let wide = try XCTUnwrap(strip.captureRequest(displayScale: 3))
+        XCTAssertEqual(wide.pixelWidth, 16_384, "52,440 px is capped to the largest size the Mac accepts")
+        XCTAssertEqual(wide.pixelHeight, 2_622)
+        XCTAssertNoThrow(try wide.region(epoch: 1).validate())
+
+        let huge = ViewportTransform(sourceSize: CGSize(width: 16_000, height: 9_000), canvasSize: screen, mode: .fit)
+        let small = try XCTUnwrap(huge.captureRequest(displayScale: 1))
+        XCTAssertEqual(small.zoom, ViewportRegion.zoomRange.lowerBound, "0.025 px per point is raised to the minimum")
+        XCTAssertEqual(small.pixelWidth, 402)
+        XCTAssertNoThrow(try small.region(epoch: 1).validate())
+    }
+
+    // MARK: Where the frames are drawn
+
+    func testWholeDisplayCaptureKeepsTodaysPlacement() {
+        let whole = CaptureRegion(epoch: 0, x: 100, y: 50, width: 10, height: 10, outputWidth: 64, outputHeight: 64)
+        for device in devices {
+            for mode in [ViewportMode.fit, .fill] {
+                for zoom: CGFloat in [1, 2.2] {
+                    var view = ViewportTransform(sourceSize: macBookAir, canvasSize: device.canvas, mode: mode,
+                                                 safeInsets: device.insets)
+                    view.setZoom(zoom, anchoredAt: CGPoint(x: device.canvas.width * 0.3,
+                                                           y: device.canvas.height * 0.4))
+                    let context = "\(device.name) \(mode) \(zoom)×"
+                    let container = CGRect(origin: .zero, size: view.contentRect.size)
+                    XCTAssertEqual(view.framePlacement(for: nil), view.contentRect, context)
+                    XCTAssertEqual(view.framePlacement(for: whole), view.contentRect,
+                                   "epoch 0 is the whole display whatever its rect says, \(context)")
+                    XCTAssertEqual(view.picturePlacement(for: nil), container, context)
+                    XCTAssertEqual(view.picturePlacement(for: whole), container, context)
+                }
+            }
+        }
+    }
+
+    func testCroppedFramesLandWhereTheirRegionBelongs() {
+        let device = devices[1]
+        var view = ViewportTransform(sourceSize: macBookAir, canvasSize: device.canvas, mode: .fill,
+                                     safeInsets: device.insets)
+        view.setZoom(2.4, anchoredAt: CGPoint(x: 300.5, y: 180.25))
+        let region = CaptureRegion(epoch: 12, x: 300.5, y: 120.25, width: 735, height: 478,
+                                   outputWidth: 1784, outputHeight: 1161)
+        let content = view.contentRect
+        let scale = content.width / macBookAir.width
+        let expected = CGRect(x: content.minX + 300.5 * scale, y: content.minY + 120.25 * scale,
+                              width: 735 * scale, height: 478 * scale)
+        assertRect(view.framePlacement(for: region), expected, accuracy: 1e-9, "on the canvas")
+        assertRect(view.picturePlacement(for: region), expected.offsetBy(dx: -content.minX, dy: -content.minY),
+                   accuracy: 1e-9, "in the picture container")
+        assertRect(view.viewRect(fromSource: region.rect), expected, accuracy: 1e-9, "viewRect")
+        assertRect(view.sourceRect(fromView: expected), region.rect, accuracy: 1e-9, "round trip")
+
+        let full = CaptureRegion(epoch: 3, x: 0, y: 0, width: 1470, height: 956, outputWidth: 2622, outputHeight: 1705)
+        assertRect(view.framePlacement(for: full), content, accuracy: 1e-9, "a whole-display region with an epoch")
+        XCTAssertEqual(view.viewRect(fromSource: CGRect(x: CGFloat.nan, y: 0, width: 1, height: 1)), .zero)
+        XCTAssertEqual(view.sourceRect(fromView: CGRect(x: 0, y: CGFloat.infinity, width: 1, height: 1)), .zero)
+    }
+
+    func testTheMacPointUnderAFingerIsTheOneTheFrameShowsThere() {
+        let fractions = [
+            CGRect(x: 0.25, y: 0.2, width: 0.5, height: 0.5),
+            CGRect(x: 0.6, y: 0.55, width: 0.4, height: 0.45),
+            CGRect(x: -0.02, y: -0.03, width: 0.4, height: 0.3),
+            CGRect(x: 0.1, y: 0.1, width: 0.001, height: 0.001),
+            CGRect(x: 0, y: 0, width: 1, height: 1)
+        ]
+        let output = CGSize(width: 1784, height: 1161)
+        let display = macBookAir
+        for device in devices {
+            for mode in [ViewportMode.fit, .fill] {
+                for zoom: CGFloat in [1, 2.5] {
+                    var view = ViewportTransform(sourceSize: display, canvasSize: device.canvas, mode: mode,
+                                                 safeInsets: device.insets)
+                    view.setZoom(zoom, anchoredAt: CGPoint(x: device.canvas.width * 0.45,
+                                                           y: device.canvas.height * 0.55))
+                    for fraction in fractions {
+                        let rect = CGRect(x: fraction.minX * display.width, y: fraction.minY * display.height,
+                                          width: fraction.width * display.width,
+                                          height: fraction.height * display.height)
+                        let region = CaptureRegion(epoch: 21, x: Double(rect.minX), y: Double(rect.minY),
+                                                   width: Double(rect.width), height: Double(rect.height),
+                                                   outputWidth: Int(output.width), outputHeight: Int(output.height))
+                        let context = "\(device.name) \(mode) \(zoom)× region \(fraction)"
+                        let frame = view.framePlacement(for: region)
+                        let shown = frame.intersection(CGRect(origin: .zero, size: device.canvas))
+                        guard !shown.isNull, shown.width > 0, shown.height > 0 else { continue }
+                        for i in 0...8 {
+                            for j in 0...8 {
+                                let touch = CGPoint(x: shown.minX + shown.width * CGFloat(i) / 8,
+                                                    y: shown.minY + shown.height * CGFloat(j) / 8)
+                                // The frame is stretched over its placement, so this pixel is under the finger…
+                                let pixel = CGPoint(x: (touch.x - frame.minX) / frame.width * output.width,
+                                                    y: (touch.y - frame.minY) / frame.height * output.height)
+                                // …and it shows this Mac point.
+                                let shows = CGPoint(x: rect.minX + pixel.x / output.width * rect.width,
+                                                    y: rect.minY + pixel.y / output.height * rect.height)
+                                let inside = shows.x > 1e-6 && shows.x < display.width - 1e-6
+                                    && shows.y > 1e-6 && shows.y < display.height - 1e-6
+                                guard let hit = DirectTouchMapping.sourcePoint(for: touch, in: view) else {
+                                    XCTAssertFalse(inside, "a touch on the Mac picture must land, \(context) \(touch)")
+                                    continue
+                                }
+                                let tolerance = 1 / DirectTouchMapping.quantum + 1e-6
+                                XCTAssertEqual(hit.x, shows.x, accuracy: tolerance, "\(context) \(touch)")
+                                XCTAssertEqual(hit.y, shows.y, accuracy: tolerance, "\(context) \(touch)")
+                                let pointer = view.viewPoint(fromSource: shows)
+                                XCTAssertEqual(pointer.x, touch.x, accuracy: 1e-6, "pointer under finger, \(context)")
+                                XCTAssertEqual(pointer.y, touch.y, accuracy: 1e-6, "pointer under finger, \(context)")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    func testAnOldFrameMovesWithThePanUntilTheMacEchoesAnother() throws {
+        let device = devices[1]
+        var view = ViewportTransform(sourceSize: macBookAir, canvasSize: device.canvas, mode: .fill,
+                                     safeInsets: device.insets)
+        view.setZoom(2, anchoredAt: CGPoint(x: 437, y: 201))
+        let asked = try XCTUnwrap(view.captureRequest(displayScale: 3))
+        let margin: CGFloat = 40
+        let echoed = CaptureRegion(epoch: 1, x: Double(asked.rect.minX - margin), y: Double(asked.rect.minY - margin),
+                                   width: Double(asked.rect.width + 2 * margin),
+                                   height: Double(asked.rect.height + 2 * margin),
+                                   outputWidth: 2862, outputHeight: 1446)
+        let before = view.framePlacement(for: echoed)
+        let offset = view.offset
+        view.pan(by: CGSize(width: -60, height: 25))
+        XCTAssertEqual(view.offset.x - offset.x, -60, accuracy: 1e-9)
+        XCTAssertEqual(view.offset.y - offset.y, 25, accuracy: 1e-9)
+        let after = view.framePlacement(for: echoed)
+        XCTAssertEqual(after.minX, before.minX - 60, accuracy: 1e-9, "the frame moves with the picture")
+        XCTAssertEqual(after.minY, before.minY + 25, accuracy: 1e-9)
+        XCTAssertEqual(after.width, before.width, accuracy: 1e-9)
+        XCTAssertEqual(after.height, before.height, accuracy: 1e-9)
+        let asking = try XCTUnwrap(view.captureRequest(displayScale: 3))
+        XCTAssertNotEqual(asking.rect, asked.rect, "the phone now asks for another region")
+        XCTAssertNotEqual(after, view.viewRect(fromSource: asking.rect), "but frames stay on the region they show")
+    }
+
+    func testPlacementFollowsTheEchoedRectWhateverItsEpoch() {
+        var view = ViewportTransform(sourceSize: macBookAir, canvasSize: devices[2].canvas, mode: .fill,
+                                     safeInsets: devices[2].insets)
+        view.setZoom(1.9, anchoredAt: CGPoint(x: 400, y: 600))
+        let older = CaptureRegion(epoch: 5, x: 100, y: 80, width: 600, height: 400,
+                                  outputWidth: 1800, outputHeight: 1200)
+        var newer = older
+        newer.epoch = 9
+        XCTAssertEqual(view.framePlacement(for: older), view.framePlacement(for: newer))
+        var moved = older
+        moved.x = 140
+        XCTAssertEqual(view.framePlacement(for: moved).minX - view.framePlacement(for: older).minX, 40 * view.scale,
+                       accuracy: 1e-9)
+        var whole = older
+        whole.epoch = 0
+        XCTAssertEqual(view.framePlacement(for: whole), view.contentRect)
+    }
+
+    func testRegionEdgesLandExactlyOnThePictureEdges() {
+        let display = CGSize(width: 1512.5, height: 982.25)
+        for device in devices {
+            var view = ViewportTransform(sourceSize: display, canvasSize: device.canvas, mode: .fill,
+                                         safeInsets: device.insets)
+            view.setZoom(1.73, anchoredAt: CGPoint(x: device.canvas.width * 0.6, y: device.canvas.height * 0.3))
+            let content = view.contentRect
+            let corner = CaptureRegion(epoch: 4, x: 1512.5 - 100.25, y: 982.25 - 50.5, width: 100.25, height: 50.5,
+                                       outputWidth: 301, outputHeight: 152)
+            let placed = view.framePlacement(for: corner)
+            XCTAssertEqual(placed.maxX, content.maxX, accuracy: 1e-9, device.name)
+            XCTAssertEqual(placed.maxY, content.maxY, accuracy: 1e-9, device.name)
+            let origin = CaptureRegion(epoch: 4, x: 0, y: 0, width: 1, height: 1, outputWidth: 3, outputHeight: 3)
+            XCTAssertEqual(view.framePlacement(for: origin).origin, content.origin, device.name)
+            XCTAssertEqual(view.framePlacement(for: origin).width, view.scale, accuracy: 1e-12, "one point, one scale")
+        }
+    }
+
+    func testMiniMapPlacementScalesEachAxisOnItsOwn() {
+        let map = CGRect(x: 0, y: 0, width: 150, height: 97.5)
+        let rect = CGRect(x: 367.5, y: 239, width: 735, height: 478)
+        let placed = ViewportTransform.placement(of: rect, displaySize: macBookAir, in: map)
+        XCTAssertEqual(placed.minX, 37.5, accuracy: 1e-9)
+        XCTAssertEqual(placed.width, 75, accuracy: 1e-9)
+        XCTAssertEqual(placed.minY, 239 * 97.5 / 956, accuracy: 1e-9)
+        XCTAssertEqual(placed.height, 478 * 97.5 / 956, accuracy: 1e-9)
+        XCTAssertEqual(ViewportTransform.placement(of: rect, displaySize: .zero, in: map), .zero)
+        XCTAssertEqual(ViewportTransform.placement(of: CGRect(x: CGFloat.nan, y: 0, width: 1, height: 1),
+                                                   displaySize: macBookAir, in: map), .zero)
+    }
+
+    // MARK: Helpers
+
+    private func safeRect(_ device: Device) -> CGRect {
+        CGRect(x: device.insets.left, y: device.insets.top,
+               width: device.canvas.width - device.insets.left - device.insets.right,
+               height: device.canvas.height - device.insets.top - device.insets.bottom)
+    }
+
+    private func assertRect(_ rect: CGRect, _ expected: CGRect, accuracy: CGFloat, _ context: String,
+                            file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertEqual(rect.minX, expected.minX, accuracy: accuracy, "\(context) minX", file: file, line: line)
+        XCTAssertEqual(rect.minY, expected.minY, accuracy: accuracy, "\(context) minY", file: file, line: line)
+        XCTAssertEqual(rect.width, expected.width, accuracy: accuracy, "\(context) width", file: file, line: line)
+        XCTAssertEqual(rect.height, expected.height, accuracy: accuracy, "\(context) height", file: file, line: line)
+    }
+}
