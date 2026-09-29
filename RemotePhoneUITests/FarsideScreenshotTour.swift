@@ -26,6 +26,7 @@ final class FarsideScreenshotTour: XCTestCase {
         Shot(name: "error-unreachable", arguments: ["--ui-demo-mac", "--ui-error=unreachable"], wait: 3),
         Shot(name: "error-needs-plan", arguments: ["--ui-demo-mac", "--ui-error=needsPlan"], wait: 3),
         Shot(name: "troubleshoot", arguments: ["--ui-demo-mac", "--ui-troubleshoot"]),
+        Shot(name: "anywhere-paywall", arguments: ["--ui-paywall"], wait: 4),
         Shot(name: "session", arguments: ["--ui-layout-check", "--ui-viewport-fill", "--ui-pointer-preview", "--ui-pointer-accent-preview"]),
         Shot(name: "session-resolution-lock", arguments: ["--ui-layout-check", "--ui-lock-stage=1"]),
         Shot(name: "session-reconnecting", arguments: ["--ui-layout-check", "--ui-viewport-fill", "--ui-reconnecting"]),

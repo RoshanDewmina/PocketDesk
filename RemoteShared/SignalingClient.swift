@@ -17,6 +17,10 @@ struct RelayMessage: Codable {
     var leaseSeconds: Double?
     var renewAfterSeconds: Double?
     var credentialSeconds: Double?
+    /// Phone `register` only: the short-lived Farside Anywhere token from the entitlement service.
+    var entitlement: String?
+    /// `registered` to a phone that listed `remote.1`: "remote" or "local".
+    var access: String?
 }
 
 @MainActor
@@ -30,6 +34,9 @@ final class SignalingClient: SignalingTransport {
     private var generation = UUID()
 
     func connect(invitation: PairInvitation, hostToken: String?, features: [String] = []) throws {
+        try connect(invitation: invitation, hostToken: hostToken, features: features, entitlement: nil)
+    }
+    func connect(invitation: PairInvitation, hostToken: String?, features: [String], entitlement: String?) throws {
         close()
         guard PairInvitation.validServer(invitation.server), let url = URL(string: invitation.server) else { throw RemoteError.invalidPairing }
         let socket = URLSession.shared.webSocketTask(with: url)
@@ -40,7 +47,7 @@ final class SignalingClient: SignalingTransport {
         send(RelayMessage(type: "register", version: 1, role: hostToken == nil ? "client" : "host",
             room: invitation.room, token: hostToken ?? invitation.token,
             clientTokenHash: hostToken == nil ? nil : SecureRandom.digest(invitation.token),
-            features: features.isEmpty ? nil : features))
+            features: features.isEmpty ? nil : features, entitlement: hostToken == nil ? entitlement : nil))
         reader = Task { [weak self, weak socket] in
             guard let socket else { return }
             do {

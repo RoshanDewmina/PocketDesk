@@ -103,6 +103,8 @@ struct HomeView: View {
     @State private var pairedInSheet = false
     @State private var contactRipples: [HalftoneRipple] = []
     @State private var artSize: CGSize = .zero
+    @State private var showPaywall = false
+    @ObservedObject private var anywhere = AnywhereStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -111,7 +113,7 @@ struct HomeView: View {
 
     private var macName: String? { connection.invitation?.name ?? LaunchOptions.demoMacName }
     private var status: MacStatus { MacStatus(connection.status) }
-    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot }
+    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall }
 
     var body: some View {
         GeometryReader { proxy in
@@ -161,7 +163,13 @@ struct HomeView: View {
             TroubleshootSheet(macName: macName ?? "Your Mac", retry: connect)
         }
         .fullScreenCover(item: $friendlyError) { error in
-            FriendlyErrorView(error: error, primary: { resolve(error) }, close: { friendlyError = nil })
+            FriendlyErrorView(error: error, primaryTitle: primaryTitle(for: error), primary: { resolve(error, action: error.action) },
+                              secondary: { if let second = error.secondary { resolve(error, action: second) } },
+                              close: { friendlyError = nil })
+        }
+        .sheet(isPresented: $showPaywall) {
+            AnywherePaywallView(store: anywhere, access: AnywhereAccess.shared)
+                .farsideSheet()
         }
         .confirmationDialog("Forget this Mac?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget Mac", role: .destructive) {
@@ -194,6 +202,7 @@ struct HomeView: View {
                 Button { showTroubleshoot = true } label: { Label("Trouble connecting?", systemImage: "questionmark.circle") }
                 Button { model.pairingEntry = .paste } label: { Label("Paste Pairing Code", systemImage: "doc.on.clipboard") }
                 Button { showDetails = true } label: { Label("Connection Details", systemImage: "network") }
+                Button { showPaywall = true } label: { Label("Farside Anywhere", systemImage: "globe") }
                 if connection.invitation != nil {
                     Divider()
                     Button(role: .destructive) { confirmForget = true } label: {
@@ -229,12 +238,8 @@ struct HomeView: View {
             }
             Spacer(minLength: verticalSizeClass == .compact ? Farside.Space.l : Farside.Space.xl)
             if macName != nil { homeList }
-            Text(planCaption)
-                .farsideCaption()
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity)
+            AnywherePlanRow(store: anywhere) { showPaywall = true }
                 .padding(.top, Farside.Space.m)
-                .accessibilityLabel(planAccessibility)
         }
     }
 
@@ -352,9 +357,6 @@ struct HomeView: View {
         .farsidePlate(Farside.Radius.card, fill: .clear)
     }
 
-    private var planCaption: String { "Free on home Wi-Fi · Anywhere: off" }
-    private var planAccessibility: String { "Plan: free on home Wi-Fi. Anywhere access is off." }
-
     private var lastReached: Date? {
         lastReachedAt > 0 ? Date(timeIntervalSince1970: lastReachedAt) : nil
     }
@@ -364,15 +366,29 @@ struct HomeView: View {
     private func connect() {
         lastFailure = nil
         model.error = ""
-        onboarding.beforeConnect { connection.start() }
+        onboarding.beforeConnect {
+            Task { @MainActor in
+                // Only waits when this phone has Anywhere and its token is due; never more than a few seconds.
+                await AnywhereAccess.shared.prepareForConnection()
+                connection.start()
+            }
+        }
+    }
+
+    /// "Start 7-day free trial" when the person can have one; the paywall shows the full terms first.
+    private func primaryTitle(for error: FriendlyError) -> String? {
+        guard error.action == .seePlans, let trial = anywhere.offers.lazy.compactMap(\.trialPhrase).first else { return nil }
+        return "See the \(trial) free trial"
     }
 
     private func statusChanged(from old: String, to new: String) {
         if MacStatus(new).tone == .busy { lastFailure = nil }
         guard !connection.isRunning, let name = macName,
               let error = FriendlyError.from(status: new, previous: old, macName: name) else { return }
-        lastFailure = error
-        if !covered || friendlyError != nil { friendlyError = error }
+        let shown = FriendlyError.forLocalOnly(error, serviceAskedForAnywhere: connection.entitlementRequired,
+                                               hasPlan: anywhere.entitlement.hasAccess)
+        lastFailure = shown
+        if !covered || friendlyError != nil { friendlyError = shown }
     }
 
     private func showDepartureIfNeeded() {
@@ -384,13 +400,15 @@ struct HomeView: View {
         if friendlyError == nil && !covered { friendlyError = error }
     }
 
-    private func resolve(_ error: FriendlyError) {
+    private func resolve(_ error: FriendlyError, action: FriendlyError.Action) {
         friendlyError = nil
-        switch error.action {
+        switch action {
         case .retry:
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { connect() }
         case .pairAgain:
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { model.pairingEntry = .scan }
+        case .seePlans:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showPaywall = true }
         }
     }
 
@@ -405,6 +423,7 @@ struct HomeView: View {
         if LaunchOptions.has("--ui-pairing-scan") { model.pairingEntry = .scan }
         if LaunchOptions.has("--ui-pairing-paste") { model.pairingEntry = .paste }
         if LaunchOptions.has("--ui-troubleshoot") { showTroubleshoot = true }
+        if LaunchOptions.has("--ui-paywall") { showPaywall = true }
         if let raw = LaunchOptions.value("--ui-status=") {
             connection.status = raw.replacingOccurrences(of: "_", with: " ")
         } else if LaunchOptions.demoMacName != nil && connection.invitation == nil {
@@ -419,7 +438,8 @@ struct HomeView: View {
             "napping": .napping(since: "11:48 PM"), "unreachable": .unreachable(name), "busy": .busy,
             "locked": .locked(since: "11:48 PM"), "needsPlan": .needsPlan, "codeRejected": .codeRejected,
             "declined": .declined, "approvalTimedOut": .approvalTimedOut, "verifyFailed": .verifyFailed,
-            "relayUnavailable": .relayUnavailable, "connectionLost": .connectionLost, "sessionGlitch": .sessionGlitch
+            "relayUnavailable": .relayUnavailable, "connectionLost": .connectionLost, "sessionGlitch": .sessionGlitch,
+            "anywhereUnverified": .anywhereUnverified
         ]
         lastFailure = samples[kind]
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { friendlyError = samples[kind] }

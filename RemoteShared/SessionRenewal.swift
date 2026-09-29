@@ -5,6 +5,9 @@ import Foundation
 /// services and old apps keep working message for message.
 enum SignalingFeature {
     static let renewal = "renew.1"
+    /// Phone: understands `registered.access` and a non-closing `entitlement_required`
+    /// (Backend/ENTITLEMENT-CONTRACT.md §4).
+    static let remoteAccess = "remote.1"
 }
 
 /// What the signaling service offers in `registered` once it agrees to renew this peer's room lease
@@ -113,6 +116,14 @@ protocol SignalingTransport: AnyObject {
     var onMessage: ((RelayMessage) -> Void)? { get set }
     var onClose: (() -> Void)? { get set }
     func connect(invitation: PairInvitation, hostToken: String?, features: [String]) throws
+    /// A phone registration may carry a Farside Anywhere entitlement token; transports that predate it ignore it.
+    func connect(invitation: PairInvitation, hostToken: String?, features: [String], entitlement: String?) throws
     func send(_ message: RelayMessage)
     func close()
+}
+
+extension SignalingTransport {
+    func connect(invitation: PairInvitation, hostToken: String?, features: [String], entitlement: String?) throws {
+        try connect(invitation: invitation, hostToken: hostToken, features: features)
+    }
 }

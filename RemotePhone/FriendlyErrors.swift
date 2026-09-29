@@ -6,15 +6,16 @@ struct FriendlyError: Identifiable, Equatable {
     enum Kind: String {
         case napping, unreachable, busy, locked, switchedUser, needsPlan, codeRejected, declined,
              approvalTimedOut, verifyFailed, keychain, relayUnavailable, connectionLost, sessionGlitch,
-             serviceNotReady, screenSharingOff
+             serviceNotReady, screenSharingOff, anywhereUnverified
     }
 
     enum Action: Equatable {
-        case retry, pairAgain
+        case retry, pairAgain, seePlans
         var title: String {
             switch self {
             case .retry: "Try again"
             case .pairAgain: "Pair again"
+            case .seePlans: "See Farside Anywhere"
             }
         }
     }
@@ -27,6 +28,8 @@ struct FriendlyError: Identifiable, Equatable {
     var tipTitle: String?
     var tip: String?
     var action: Action = .retry
+    /// A quieter second choice under the button.
+    var secondary: Action?
     var footnote: String?
 
     var id: String { kind.rawValue }
@@ -39,7 +42,7 @@ struct FriendlyError: Identifiable, Equatable {
         switch kind {
         case .napping: FarsideArt.nap
         case .locked, .switchedUser, .verifyFailed, .keychain, .declined: FarsideArt.locked
-        case .needsPlan, .relayUnavailable, .serviceNotReady: FarsideArt.anywhere
+        case .needsPlan, .relayUnavailable, .serviceNotReady, .anywhereUnverified: FarsideArt.anywhere
         case .codeRejected: FarsideArt.staleCode
         case .screenSharingOff: FarsideArt.screenOff
         case .unreachable, .busy, .approvalTimedOut, .connectionLost, .sessionGlitch: FarsideArt.unreachable
@@ -52,7 +55,7 @@ struct FriendlyError: Identifiable, Equatable {
         case .napping: "Asleep · wake it to connect"
         case .locked: "Locked · unlock it in person"
         case .switchedUser: "Another user is on it"
-        case .needsPlan: "On another network"
+        case .needsPlan: "Not on this network"
         case .busy: "Still closing the last session"
         case .declined: "Declined on the Mac"
         case .approvalTimedOut: "Not approved in time"
@@ -62,6 +65,7 @@ struct FriendlyError: Identifiable, Equatable {
         case .relayUnavailable, .serviceNotReady: "Relay unavailable"
         case .unreachable, .connectionLost: "Couldn’t reach it"
         case .screenSharingOff: "Screen sharing stopped"
+        case .anywhereUnverified: "Anywhere not confirmed"
         }
     }
 
@@ -106,11 +110,20 @@ struct FriendlyError: Identifiable, Equatable {
                                     message: "Farside is still closing your last session.",
                                     fix: "Try again in a few seconds.")
 
-    static let needsPlan = FriendlyError(kind: .needsPlan, headline: "Anywhere needs a plan", accent: "Anywhere",
-                                         message: "Your Mac is on a different network. Free Farside works on the same Wi-Fi.",
-                                         fix: "Join the same Wi-Fi as your Mac, then try again.",
+    /// A same-network-only attempt failed, or the service said the connection needs Farside Anywhere,
+    /// and this phone has no plan. The Mac may also simply be asleep nearby, so both fixes are named.
+    static let needsPlan = FriendlyError(kind: .needsPlan, headline: "Your Mac isn’t on this network", accent: "isn’t",
+                                         message: "Free Farside connects when your iPhone and Mac share a Wi-Fi network, and your Mac didn’t answer on this one.",
+                                         fix: "If it’s nearby, check it’s awake and on this Wi-Fi. If it’s elsewhere, Farside Anywhere reaches it from any network.",
                                          tipTitle: "Farside Anywhere",
-                                         tip: "Reach your Mac from any network. Coming with the App Store release.")
+                                         tip: "Cellular or any Wi-Fi, with no VPN or port forwarding. Cancel anytime in Settings.",
+                                         action: .seePlans, secondary: .retry)
+
+    /// The phone has a plan, but the service could not confirm it just now.
+    static let anywhereUnverified = FriendlyError(kind: .anywhereUnverified, headline: "Couldn’t confirm Anywhere", accent: "Anywhere",
+                                                  message: "Your plan is active on this iPhone, but Farside’s service couldn’t confirm it just now.",
+                                                  fix: "Check your connection and try again. On your Mac’s Wi-Fi, Farside works without it.",
+                                                  secondary: .seePlans)
 
     static let codeRejected = FriendlyError(kind: .codeRejected, headline: "That code went stale",
                                             message: "Pairing codes last two minutes, and this one didn’t work.",
@@ -149,6 +162,14 @@ struct FriendlyError: Identifiable, Equatable {
     static let sessionGlitch = FriendlyError(kind: .sessionGlitch, headline: "Ended to be safe",
                                              message: "The connection glitched, so Farside ended the session to keep your Mac safe.",
                                              fix: "Reconnect to pick up where you left off.")
+
+    /// The service limited this attempt to the same network (contract §4: a non-closing
+    /// `entitlement_required`) and it then failed to reach the Mac: say what Anywhere would change.
+    static func forLocalOnly(_ error: FriendlyError, serviceAskedForAnywhere: Bool, hasPlan: Bool) -> FriendlyError {
+        let unreached: Set<Kind> = [.unreachable, .connectionLost, .relayUnavailable, .needsPlan]
+        guard error.kind == .needsPlan || (serviceAskedForAnywhere && unreached.contains(error.kind)) else { return error }
+        return hasPlan ? .anywhereUnverified : .needsPlan
+    }
 
     /// Maps a stopped connection's status. `previous` tells an approval timeout from any other.
     static func from(status: String, previous: String?, macName: String) -> FriendlyError? {
@@ -203,7 +224,10 @@ struct FriendlyError: Identifiable, Equatable {
 /// Full-screen friendly error: halftone art, a plain headline, one fix and one button.
 struct FriendlyErrorView: View {
     let error: FriendlyError
+    /// Replaces the action's title, e.g. "See the 7-day free trial" when the person is eligible.
+    var primaryTitle: String?
     var primary: () -> Void
+    var secondary: () -> Void = {}
     var close: () -> Void
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var appeared = false
@@ -237,9 +261,14 @@ struct FriendlyErrorView: View {
         .scrollBounceBehavior(.basedOnSize)
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: Farside.Space.s) {
-                Button(error.action.title, action: primary)
+                Button(primaryTitle ?? error.action.title, action: primary)
                     .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
                     .accessibilityIdentifier("error.primary")
+                if let second = error.secondary {
+                    Button(second.title, action: secondary)
+                        .buttonStyle(FarsideLinkButtonStyle())
+                        .accessibilityIdentifier("error.secondary")
+                }
                 if let footnote = error.footnote {
                     Text(footnote).farsideCaption().multilineTextAlignment(.center)
                 }
