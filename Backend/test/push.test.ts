@@ -161,6 +161,45 @@ describe("pairing-scoped generic APNs alerts", () => {
       .bind(p.room).first()).toBeNull();
   });
 
+  it("never dispatches to an in-flight old pairing and preserves a new pair using the same APNs token", async () => {
+    const env = await configuredEnv();
+    const p = await livePair();
+    const deviceToken = randomHex();
+    const oldHash = await sha256Hex(p.clientToken);
+    const newHash = await sha256Hex(randomHex());
+    let enterSecondCheck!: () => void;
+    let releaseSecondCheck!: () => void;
+    const secondCheckEntered = new Promise<void>(resolve => { enterSecondCheck = resolve; });
+    const secondCheckReleased = new Promise<void>(resolve => { releaseSecondCheck = resolve; });
+    let checks = 0;
+    const gate = {
+      authenticatePush: async () => {
+        if (++checks === 1) return true;
+        enterSecondCheck();
+        await secondCheckReleased;
+        return false;
+      },
+      authenticatePushHash: async () => false,
+    };
+    Object.assign(env, { ROOM: { idFromName: (room: string) => room, get: () => gate } });
+    const pending = register(env, p, registration(deviceToken));
+    await secondCheckEntered;
+    expect(await testEnv.DB.prepare("SELECT pairing_hash AS pairingHash FROM push_registrations WHERE room=?1")
+      .bind(p.room).first()).toEqual({ pairingHash: oldHash });
+    const apns = vi.fn(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", apns);
+    expect((await event(env, p)).status).toBe(503);
+    expect(apns).not.toHaveBeenCalled();
+    // The replacement phone can retain the same opaque APNs address. The old request's
+    // post-auth cleanup must compare the pairing hash as well as token and version.
+    await testEnv.DB.prepare("UPDATE push_registrations SET pairing_hash=?2 WHERE room=?1")
+      .bind(p.room, newHash).run();
+    releaseSecondCheck();
+    expect((await pending).status).toBe(401);
+    expect(await testEnv.DB.prepare("SELECT pairing_hash AS pairingHash FROM push_registrations WHERE room=?1")
+      .bind(p.room).first()).toEqual({ pairingHash: newHash });
+  });
+
   it("a stale phone's cleanup cannot erase a newer push address", async () => {
     const env = await configuredEnv();
     const p = await livePair();
@@ -222,9 +261,9 @@ describe("pairing-scoped generic APNs alerts", () => {
     for (const [room, updatedAt] of [[freshRoom, now], [oldAddressRoom, now - year - 1],
       [expiredRoom, now], [missingRoom, now]] as const) {
       await testEnv.DB.prepare(`INSERT INTO push_registrations
-        (room,device_token,environment,alerts_enabled,time_sensitive,show_agent_name,locale,app_build,os_major,updated_at)
-        VALUES (?1,?2,'sandbox',1,0,0,'en_CA','test',18,?3)`)
-        .bind(room, randomHex(), updatedAt).run();
+        (room,pairing_hash,device_token,environment,alerts_enabled,time_sensitive,show_agent_name,locale,app_build,os_major,updated_at)
+        VALUES (?1,?2,?3,'sandbox',1,0,0,'en_CA','test',18,?4)`)
+        .bind(room, randomHex(), randomHex(), updatedAt).run();
     }
     for (const [room, activityID, nextRetryAt] of [[expiredRoom, "pending-end", now + 60_000],
       [missingRoom, "ended-tombstone", null]] as const) {

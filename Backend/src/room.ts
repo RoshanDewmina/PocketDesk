@@ -72,12 +72,17 @@ class IssuanceRateLimited extends Error {}
 export class RoomDO extends DurableObject<Env> {
   /** A pairing hash survives transient host disconnect so the phone can opt out while offline. */
   async authenticatePush(room: string, clientToken: string): Promise<boolean> {
+    return this.authenticatePushHash(room, await sha256Hex(clientToken));
+  }
+
+  /** Compare a registry row with the room's current phone without exposing its pairing token. */
+  async authenticatePushHash(room: string, clientHash: string): Promise<boolean> {
     const state = this.state();
     if ((state.room !== null && state.room !== room) || state.blocked !== 0) return false;
     const stored = this.ctx.storage.sql.exec<{ client_hash: string }>(
       "SELECT client_hash FROM push_pairing WHERE id=1 AND room=?", room,
     ).toArray()[0];
-    return Boolean(stored && await secureEqual(await sha256Hex(clientToken), stored.client_hash));
+    return Boolean(stored && await secureEqual(clientHash, stored.client_hash));
   }
 
   /** Only the current route epoch may acquire an ActivityKit push address. */
