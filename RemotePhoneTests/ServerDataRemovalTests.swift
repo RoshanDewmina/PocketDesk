@@ -34,6 +34,11 @@ final class ServerDataRemovalTests: XCTestCase {
                                        tokenExpiresAt: Date().addingTimeInterval(3600), issuedAt: Date(),
                                        serviceOrigin: "https://signal.example"))
     }
+    private func pairing(token: String = String(repeating: "b", count: 64)) -> PairInvitation {
+        PairInvitation(server: "wss://signal.example/signal", room: String(repeating: "c", count: 64),
+                       token: token, key: Data(repeating: 7, count: 32),
+                       expires: .distantFuture, name: "Mac")
+    }
 
     func testFailureRetainsProofAndSuppressesRefreshAcrossRelaunch() async throws {
         let tokens = MemoryStore(), pending = MemoryStore(), verifier = Verifier(), remover = Remover()
@@ -81,6 +86,101 @@ final class ServerDataRemovalTests: XCTestCase {
         XCTAssertEqual(verifier.calls, 0)
         XCTAssertThrowsError(try access.cancelRemoval())
         XCTAssertTrue(access.removalPending)
+    }
+
+    func testConfirmedUnlinkKeepsCleanupIdentityAcrossRelaunchWithoutRepeatingServerRequest() async throws {
+        let tokens = MemoryStore(), pending = MemoryStore(), verifier = Verifier(), remover = Remover()
+        try seed(tokens)
+        let original = pairing()
+        let access = make(tokens, pending, verifier)
+        try await access.unlinkDevice(pairing: original, using: remover)
+        XCTAssertEqual(remover.requests.count, 1)
+        XCTAssertTrue(access.removalCompleted)
+        XCTAssertTrue(access.localCleanupPending)
+        XCTAssertFalse(access.phoneConnectionAllowed)
+        let identity = try XCTUnwrap(access.cleanupPairing)
+        XCTAssertEqual(identity.room, original.room)
+        XCTAssertEqual(identity.server, original.server)
+        XCTAssertEqual(identity.tokenDigest, SecureRandom.digest(original.token))
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(identity), as: UTF8.self).contains(original.key.base64EncodedString()))
+
+        let relaunched = make(tokens, pending, verifier)
+        XCTAssertTrue(relaunched.localCleanupPending)
+        await relaunched.prepareForConnection(timeout: 0.01)
+        XCTAssertFalse(relaunched.phoneConnectionAllowed)
+        try await relaunched.unlinkDevice(pairing: pairing(token: String(repeating: "d", count: 64)), using: remover)
+        XCTAssertEqual(remover.requests.count, 1, "A confirmed unlink must not be sent to the server again")
+        XCTAssertThrowsError(try relaunched.acknowledgeLocalCleanup(
+            AnywhereAccess.CleanupPairing(pairing(token: String(repeating: "d", count: 64)))))
+        XCTAssertTrue(relaunched.localCleanupPending)
+        try relaunched.acknowledgeLocalCleanup(identity)
+        XCTAssertFalse(relaunched.localCleanupPending)
+        XCTAssertTrue(relaunched.removalCompleted)
+        XCTAssertFalse(relaunched.phoneConnectionAllowed, "Background reconnect stays suppressed")
+        XCTAssertThrowsError(try relaunched.cancelRemoval(), "Confirmed unlink cannot be cancelled")
+    }
+
+    func testLockedKeychainRecoveryRestoresConfirmedCleanupPhase() async throws {
+        final class LockableStore: PairPersistence {
+            let backing = MemoryStore()
+            var locked = false
+            func save<T: Encodable>(_ value: T) throws {
+                if locked { throw RemoteError.keychain(-25308) }
+                try backing.save(value)
+            }
+            func read<T: Decodable>(_ type: T.Type) throws -> T? {
+                if locked { throw RemoteError.keychain(-25308) }
+                return try backing.read(type)
+            }
+            func delete() throws {
+                if locked { throw RemoteError.keychain(-25308) }
+                try backing.delete()
+            }
+        }
+        let tokens = MemoryStore(), pending = LockableStore(), verifier = Verifier(), remover = Remover()
+        try seed(tokens)
+        let access = AnywhereAccess(source: Source(), makeClient: { _ in verifier },
+                                    deviceID: { String(repeating: "a", count: 64) }, persistence: tokens,
+                                    removalPersistence: pending)
+        access.serviceURL = { URL(string: "https://signal.example") }
+        try await access.unlinkDevice(pairing: pairing(), using: remover)
+        pending.locked = true
+        let relaunched = AnywhereAccess(source: Source(), makeClient: { _ in verifier },
+                                        deviceID: { String(repeating: "a", count: 64) }, persistence: tokens,
+                                        removalPersistence: pending)
+        relaunched.serviceURL = { URL(string: "https://signal.example") }
+        XCTAssertTrue(relaunched.removalRecoveryRequired)
+        XCTAssertFalse(relaunched.phoneConnectionAllowed)
+        XCTAssertThrowsError(try relaunched.recoverRemovalState())
+        await relaunched.prepareForConnection(timeout: 0.01)
+        XCTAssertFalse(relaunched.phoneConnectionAllowed)
+        pending.locked = false
+        try relaunched.recoverRemovalState()
+        XCTAssertTrue(relaunched.localCleanupPending)
+        XCTAssertEqual(remover.requests.count, 1)
+        try relaunched.acknowledgeLocalCleanup(XCTUnwrap(relaunched.cleanupPairing))
+    }
+
+    func testCoordinatorReadsPersistedPairingAndPreservesNewerReplacement() throws {
+        struct LockedStore: PairPersistence {
+            func save<T: Encodable>(_ value: T) throws { throw RemoteError.keychain(-25308) }
+            func read<T: Decodable>(_ type: T.Type) throws -> T? { throw RemoteError.keychain(-25308) }
+            func delete() throws { throw RemoteError.keychain(-25308) }
+        }
+        XCTAssertThrowsError(try RemoteCoordinator(isHost: false, store: LockedStore()).phonePairingForRemoval())
+        let trust = MemoryStore()
+        let original = pairing()
+        let replacement = pairing(token: String(repeating: "d", count: 64))
+        try trust.save(original)
+        let connection = RemoteCoordinator(isHost: false, store: trust)
+        XCTAssertEqual(try connection.phonePairingForRemoval(), original)
+        connection.restore()
+        try trust.save(replacement)
+        let removed = try connection.removePhonePairingIfMatching(
+            room: original.room, server: original.server, tokenDigest: SecureRandom.digest(original.token))
+        XCTAssertFalse(removed)
+        XCTAssertEqual(try trust.read(PairInvitation.self), replacement)
+        XCTAssertEqual(connection.invitation, original, "A stale cleanup must not mutate live pairing state")
     }
 
     func testWrongOriginCannotReceiveSavedProof() async throws {
