@@ -132,7 +132,10 @@ export async function handleSignalUpgrade(request: Request, env: Env): Promise<R
     upstream.accept();
     if (server.readyState !== WebSocket.OPEN) { safeClose(upstream, 1001, "client_gone"); return; }
     relay.attach(upstream, raw as string);
-  })();
+  })().catch(error => {
+    log("gateway_failed", { error: error instanceof Error ? error.message : String(error) });
+    sendErrorAndClose(server, "busy");
+  });
 
   return new Response(null, { status: 101, webSocket: client });
 }

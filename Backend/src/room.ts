@@ -53,26 +53,35 @@ export class RoomDO extends DurableObject<Env> {
     super(ctx, env);
     this.config = loadConfig(env);
     this.provider = turnProviderFromEnv(env);
-    ctx.blockConcurrencyWhile(async () => {
-      ctx.storage.sql.exec(`
-        CREATE TABLE IF NOT EXISTS room (
-          id INTEGER PRIMARY KEY CHECK (id = 1),
-          room TEXT,
-          client_token_hash TEXT,
-          lease_ends_at INTEGER,
-          blocked INTEGER NOT NULL DEFAULT 0,
-          entitlement_id TEXT,
-          last_activity INTEGER NOT NULL DEFAULT 0
-        );
-        INSERT OR IGNORE INTO room (id) VALUES (1);
-        CREATE TABLE IF NOT EXISTS credentials (
-          username TEXT PRIMARY KEY,
-          role TEXT NOT NULL,
-          issued_at INTEGER NOT NULL,
-          expires_at INTEGER NOT NULL
-        );
-      `);
-    });
+    ctx.blockConcurrencyWhile(async () => this.ensureSchema());
+  }
+
+  private ensureSchema(): void {
+    this.ctx.storage.sql.exec(`
+      CREATE TABLE IF NOT EXISTS room (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        room TEXT,
+        client_token_hash TEXT,
+        lease_ends_at INTEGER,
+        blocked INTEGER NOT NULL DEFAULT 0,
+        entitlement_id TEXT,
+        last_activity INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT OR IGNORE INTO room (id) VALUES (1);
+      CREATE TABLE IF NOT EXISTS credentials (
+        username TEXT PRIMARY KEY,
+        role TEXT NOT NULL,
+        issued_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
+    `);
+  }
+
+  /** Wipes everything this room ever stored and leaves the object usable for a later registration. */
+  private async wipe(): Promise<void> {
+    await this.ctx.storage.deleteAll();
+    await this.ctx.storage.deleteAlarm();
+    this.ensureSchema();
   }
 
   // ---- storage helpers -------------------------------------------------------------------
@@ -318,16 +327,19 @@ export class RoomDO extends DurableObject<Env> {
     }
     if (this.ctx.getWebSockets().length === 0 && state.last_activity + IDLE_DELETE_MS <= now) {
       this.revokeAll();
-      await this.ctx.storage.deleteAll();
-      await this.ctx.storage.deleteAlarm();
+      await this.wipe();
       return;
     }
     await this.scheduleAlarm();
   }
 
+  /** The lease ended: the host goes with `room_lifetime_reached` and its client with `host_disconnected`, as before. */
   private expireRoom(host: WebSocket): void {
-    // Closing the host is the single way a lease ends: its close handler clears the room and closes the client.
+    const client = this.peer("client");
+    this.revokeAll();
+    this.update({ client_token_hash: null, lease_ends_at: null, entitlement_id: null });
     this.close(host, 1001, "room_lifetime_reached");
+    if (client) this.close(client, 1001, "host_disconnected");
   }
 
   // ---- registration ------------------------------------------------------------------------
@@ -368,9 +380,10 @@ export class RoomDO extends DurableObject<Env> {
     const renewable = msg.features.has(RENEWAL_FEATURE);
 
     if (msg.role === "host") {
-      if (this.slotTaken("host", ws)) { this.error(ws, "already_connected"); return; }
+      // Authenticate before revealing anything about the room, including whether a host is present.
       if (!msg.clientTokenHash || !(await secureEqual(await sha256Hex(msg.token), room))) { this.error(ws, "unauthorized"); return; }
       if (state.blocked) { this.error(ws, "room_not_approved"); return; }
+      if (this.slotTaken("host", ws)) { this.error(ws, "already_connected"); return; }
       if (!state.room) {
         // First host registration in this object: honour a block recorded in D1 before the object existed.
         try {
@@ -423,7 +436,10 @@ export class RoomDO extends DurableObject<Env> {
       }
       if (ws.readyState !== WebSocket.OPEN) { this.revokeRole("client"); this.revokeRole("host"); return; }
       if (!this.peer("host")) { this.revokeRole("client"); this.revokeRole("host"); this.error(ws, "host_unavailable_or_unauthorized"); return; }
-    } else if (ws.readyState !== WebSocket.OPEN || !this.peer("host")) {
+    } else if (ws.readyState !== WebSocket.OPEN) {
+      return;
+    } else if (!this.peer("host")) {
+      this.error(ws, "host_unavailable_or_unauthorized");
       return;
     }
 
@@ -562,8 +578,7 @@ export class RoomDO extends DurableObject<Env> {
   async forget(): Promise<void> {
     this.revokeAll();
     for (const ws of this.ctx.getWebSockets()) this.close(ws, 1008, "room_forgotten");
-    await this.ctx.storage.deleteAll();
-    await this.ctx.storage.deleteAlarm();
+    await this.wipe();
   }
 
   async snapshot(): Promise<{ hostOnline: boolean; clientOnline: boolean; entitled: boolean; blocked: boolean; liveCredentials: number; leaseEndsAt: number | null }> {

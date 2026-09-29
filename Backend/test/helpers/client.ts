@@ -16,8 +16,12 @@ export type Peer = {
   close(): void;
 };
 
+let socketCounter = 0;
+/** Each test socket gets its own source address so per-IP limits (30 upgrades/min) only trip in the tests that intend it. */
+const nextIp = () => { socketCounter += 1; return `10.${(socketCounter >> 16) & 255}.${(socketCounter >> 8) & 255}.${socketCounter & 255}`; };
+
 export async function open(path = "/signal", headers: Record<string, string> = {}): Promise<Peer> {
-  const response = await SELF.fetch(`https://farside.test${path}`, { headers: { upgrade: "websocket", ...headers } });
+  const response = await SELF.fetch(`https://farside.test${path}`, { headers: { upgrade: "websocket", "cf-connecting-ip": nextIp(), ...headers } });
   if (response.status !== 101 || !response.webSocket) throw new Error(`upgrade failed: ${response.status} ${await response.text()}`);
   const ws = response.webSocket;
   ws.accept();
