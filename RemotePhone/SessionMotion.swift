@@ -12,8 +12,8 @@ struct ReachArt: View, Animatable {
     var cell: CGFloat = 5
     var active = true
     var ripples: [HalftoneRipple] = []
-    /// Shows the gap as a dot-matrix count-down while connecting.
-    var readout = false
+    /// Shows the current connection stage while connecting.
+    var readoutText: String?
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get { AnimatablePair(gap, contact) }
@@ -24,20 +24,16 @@ struct ReachArt: View, Animatable {
         FarsideHalftone(style: HalftoneStyle(cell: cell, dust: 0.05), active: active, ripples: ripples,
                         scene: FarsideArt.reach(gap: gap, contact: contact))
             .overlay(alignment: .bottomTrailing) {
-                if readout {
-                    HStack(alignment: .lastTextBaseline, spacing: 6) {
-                        Text("Gap").farsideCaption()
-                        Text("\(Int(gap.rounded()))")
-                            .font(.custom(Farside.Typeface.dotMatrix, fixedSize: 30))
-                            .foregroundStyle(contact > 0.5 ? Farside.Palette.ember : Farside.Palette.bone)
-                            .monospacedDigit()
-                        Text("cm").farsideCaption()
-                    }
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(Farside.Palette.void)
-                    .padding(.trailing, 24)
-                    .accessibilityHidden(true)
-                    .transition(.opacity)
+                if let readoutText {
+                    Text(readoutText)
+                        .farsideCaption(contact > 0.5 ? Farside.Palette.ember : Farside.Palette.bone)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Farside.Palette.void)
+                        .padding(.trailing, 24)
+                        .accessibilityHidden(true)
+                        .transition(.opacity)
                 }
             }
     }
