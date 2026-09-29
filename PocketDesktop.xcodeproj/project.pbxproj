@@ -405,6 +405,7 @@
 		DDAFF4FE9C4E04D80074BF2F /* HostSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC5305205008EFB73744EAF /* HostSetupView.swift */; };
 		DE7FE97979CA2F745BCEAED5 /* PointerPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550A78C530973E8E5387A23C /* PointerPrediction.swift */; };
 		DEC9F3AC4801A4FE3A1A9681 /* FarsideHalftone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D465DB529F7AFB91CFA9A74 /* FarsideHalftone.swift */; };
+		DF39F581B174DF6507E916CB /* AgentAlertSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D7B6BF70CE8027A12147506 /* AgentAlertSessionTests.swift */; };
 		DF483A1727D31A0C34983603 /* HostMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67CC891F087F9506F67A4C05 /* HostMark.swift */; };
 		DFD89C900407D16F965F51FD /* NativeGestureEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DAC85148D3F395A0D9046A13 /* NativeGestureEngineTests.swift */; };
 		E0761F220535B9D5FFF4AD94 /* VideoCodecPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13D66B889B29B13BDE33779E /* VideoCodecPolicy.swift */; };
@@ -708,6 +709,7 @@
 		8A8764CD274C62102BEC76EB /* DesktopH264Encoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopH264Encoder.swift; sourceTree = "<group>"; };
 		8AF05697B36E188119F45B83 /* PocketDesktopHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketDesktopHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8C56F9095024592E3C8FDBD7 /* FarsideScreenshotTour.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideScreenshotTour.swift; sourceTree = "<group>"; };
+		8D7B6BF70CE8027A12147506 /* AgentAlertSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertSessionTests.swift; sourceTree = "<group>"; };
 		8E4539B888291F193DD3C21E /* CommittedTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommittedTextField.swift; sourceTree = "<group>"; };
 		8E609125CE2A4A1E42653D11 /* E2EMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EMedia.swift; sourceTree = "<group>"; };
 		8F28D4E17D1028952D0B9733 /* RemoteE2ETests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RemoteE2ETests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1084,6 +1086,7 @@
 				28234C5686033270C8CD8B69 /* AbsolutePointerTests.swift */,
 				2CEACADE18D34ACAE6984D81 /* AgentAlertBridgeTests.swift */,
 				14CB53B333C6698EA49C8FB7 /* AgentAlertFrameTests.swift */,
+				8D7B6BF70CE8027A12147506 /* AgentAlertSessionTests.swift */,
 				B6A334F7B8A99B66DD2EFF62 /* AgentHookScriptTests.swift */,
 				17CD4AA27077B3457AE5CAE0 /* BrowserCryptoTests.swift */,
 				E5A4A5C6B82AD42422582E6F /* BrowserPeerTests.swift */,
@@ -2041,6 +2044,7 @@
 				A5F5F589525E8BED0F84F6E6 /* AgentAlertFrame.swift in Sources */,
 				FAB688A0BBC052EAC06D557F /* AgentAlertFrameTests.swift in Sources */,
 				EE0DB9441C134C8360644612 /* AgentAlertGate.swift in Sources */,
+				DF39F581B174DF6507E916CB /* AgentAlertSessionTests.swift in Sources */,
 				28339260F92F452EF8239D51 /* AgentBridgeHTTP.swift in Sources */,
 				FF1BBFF3839BD027A5D88AE3 /* AgentHookScriptTests.swift in Sources */,
 				BA1C0BA7DC6B46312FF2421E /* BrowserCrypto.swift in Sources */,
