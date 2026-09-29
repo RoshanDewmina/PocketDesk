@@ -170,7 +170,7 @@ export async function readinessCounts(db: D1Database, now: number): Promise<Reco
     db.prepare("SELECT COUNT(*) AS n FROM rooms WHERE status = 'blocked'"),
     db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE received_at > ?1").bind(now - DAY),
   ]);
-  const count = (result: D1Result<Record<string, unknown>> | undefined) => Number((result?.results[0] as { n?: number } | undefined)?.n ?? 0);
+  const count = (result: D1Result | undefined) => Number((result?.results[0] as { n?: number } | undefined)?.n ?? 0);
   return {
     activeEntitlements: count(entitlements),
     activeSandboxEntitlements: count(sandbox),
