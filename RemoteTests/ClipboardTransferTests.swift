@@ -180,6 +180,18 @@ final class SessionExtensionProtocolTests: XCTestCase {
         }
     }
 
+    func testSessionExtensionsAndPointerTelemetryRejectEachOthersFields() throws {
+        let sample = PointerSync(videoCursor: true, x: 10, y: 20, visible: true, shape: "arrow", sample: 1)
+        XCTAssertNoThrow(try RemoteAction(action: "pointer", pointerSync: sample).validate())
+        XCTAssertNoThrow(try RemoteAction(action: "capture", x: 1, pointerSync: PointerSync(videoCursor: true),
+                                          features: SessionFeature.host, hostState: "displayAsleep").validate())
+        XCTAssertThrowsError(try RemoteAction(action: "pointer", pointerSync: sample, clipboard: .pull(transfer)).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "pointer", pointerSync: sample, features: ["pause.1"]).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "clipboard", epoch: 3, pointerSync: PointerSync(overlay: true),
+                                              clipboard: .pull(transfer)).validate())
+        XCTAssertThrowsError(try RemoteAction(action: "pause", epoch: 3, pointerSync: PointerSync(move: 1)).validate())
+    }
+
     func testOlderPeersStillDecodeStatusMessagesThatAdvertiseFeatures() throws {
         let capture = RemoteAction(action: "capture", x: 1, epoch: 7, streamQuality: .sharp, features: SessionFeature.host)
         let legacy = try JSONDecoder().decode(LegacyAction.self, from: JSONEncoder().encode(capture))
