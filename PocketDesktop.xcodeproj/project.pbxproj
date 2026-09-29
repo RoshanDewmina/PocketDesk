@@ -344,6 +344,7 @@
 		D83DD218772A67616782600D /* HostPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728339BDDAADF154551B1FE0 /* HostPresentation.swift */; };
 		D8DA2E56BEB9616410A3007A /* ControlProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2DA9B236B9DBE30DD8FF063 /* ControlProtocol.swift */; };
 		D8DD17F466FF7657034CC277 /* HostDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C392AAB2578488DAA1A678 /* HostDiagnostics.swift */; };
+		D930F193401324B337EC652C /* MiniMapVideoTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 605C05707C7B4FBAF453DCE5 /* MiniMapVideoTests.swift */; };
 		DA2D7F477BDBD68CCFA14914 /* ControlProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2DA9B236B9DBE30DD8FF063 /* ControlProtocol.swift */; };
 		DA9CCB565345D64881F0B692 /* MacParityPhoneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B3FB4B05CCF8A594E97A6E /* MacParityPhoneTests.swift */; };
 		DD035669DE7EC8A9DC08CD22 /* HostClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C8A6B76BF8E55AEDB76371 /* HostClipboard.swift */; };
@@ -542,6 +543,7 @@
 		5DD8A198867F1E3881AF6815 /* FarsideDesignTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideDesignTests.swift; sourceTree = "<group>"; };
 		5E8E23E32E29CE19FC8ADCC7 /* PocketDeskRemoteHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketDeskRemoteHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F13F38CA5606DD3291C2DF7 /* FarsideTestPad.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FarsideTestPad.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		605C05707C7B4FBAF453DCE5 /* MiniMapVideoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMapVideoTests.swift; sourceTree = "<group>"; };
 		61439D711D81DE84D4388236 /* SecurityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityTests.swift; sourceTree = "<group>"; };
 		623D4E7C80996C8F073FB4B0 /* DirectTouchMappingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTouchMappingTests.swift; sourceTree = "<group>"; };
 		643A13E08A654E915062CB1B /* SessionContinuity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionContinuity.swift; sourceTree = "<group>"; };
@@ -1018,6 +1020,7 @@
 				35CC0B33A0853F5CB3C47A3D /* CommittedTextTests.swift */,
 				5DD8A198867F1E3881AF6815 /* FarsideDesignTests.swift */,
 				A0B3FB4B05CCF8A594E97A6E /* MacParityPhoneTests.swift */,
+				605C05707C7B4FBAF453DCE5 /* MiniMapVideoTests.swift */,
 				CDCB2DCE29C9A401C6C942C5 /* PhoneClipboardTests.swift */,
 				1540D7EAE8AD57B8441DEEFE /* PhoneParityTests.swift */,
 				9FD721B733C0B127B815248C /* PointerLocatorTests.swift */,
@@ -1742,6 +1745,7 @@
 				1445B77C93CE0CCDE6367589 /* CommittedTextTests.swift in Sources */,
 				42C9EA8EB7BE0521A71B904E /* FarsideDesignTests.swift in Sources */,
 				DA9CCB565345D64881F0B692 /* MacParityPhoneTests.swift in Sources */,
+				D930F193401324B337EC652C /* MiniMapVideoTests.swift in Sources */,
 				C6845830BCD7524063546C0B /* PhoneClipboardTests.swift in Sources */,
 				F81118A4C1C23BC8E9B2BACF /* PhoneParityTests.swift in Sources */,
 				9B974E24C2B6449E959BA72B /* PointerLocatorTests.swift in Sources */,
