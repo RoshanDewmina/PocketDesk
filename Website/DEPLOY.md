@@ -21,7 +21,7 @@ Unsubscribe links in emails: `https://getfarside.com/api/unsubscribe?t=<unsubscr
 
 ```sh
 bunx wrangler@4 login                                   # browser: approve access to the Cloudflare account
-bunx wrangler@4 d1 create farside-waitlist              # copy the database_id into wrangler.jsonc
+bunx wrangler@4 d1 create farside-waitlist --location enam   # done 29 Sep; id is in wrangler.jsonc
 bunx wrangler@4 d1 migrations apply farside-waitlist --remote
 bunx wrangler@4 pages project create farside-site --production-branch main
 openssl rand -hex 32 | bunx wrangler@4 pages secret put RATE_SALT --project-name farside-site
@@ -31,7 +31,7 @@ openssl rand -hex 32 | bunx wrangler@4 pages secret put RATE_SALT --project-name
 
 ```sh
 bun run build                                           # preview: placeholders allowed
-bunx wrangler@4 pages deploy dist --project-name farside-site --branch preview   # → preview.farside-site.pages.dev (noindex)
+bunx wrangler@4 pages deploy dist --project-name farside-site --branch preview   # → https://preview.farside-site-dgk.pages.dev (noindex)
 
 bun run build:strict                                    # production: fails until site.config.ts contacts are filled
 bunx wrangler@4 pages deploy dist --project-name farside-site --branch main

@@ -7,8 +7,7 @@
     {
       "binding": "WAITLIST",
       "database_name": "farside-waitlist",
-      // Replaced with the real id from `wrangler d1 create farside-waitlist` (see DEPLOY.md).
-      "database_id": "00000000-0000-4000-8000-000000000000",
+      "database_id": "8cfabb91-de95-475a-806f-032713deb180",
       "migrations_dir": "migrations"
     }
   ]
