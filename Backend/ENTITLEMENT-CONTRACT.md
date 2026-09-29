@@ -31,7 +31,7 @@ Server checks, in order:
 5. `environment`: `Production` always; `Sandbox` when the deployment allows it (production does, flagged, with tighter rate limits); `Xcode` / `LocalTesting` only on a developer's local `wrangler dev` (never staging or production).
 6. In production, `appAppleId` must equal the configured app Apple ID once it is configured (it is unknown until the App Store Connect record exists).
 7. `revocationDate` absent; `expiresDate` (plus billing-grace allowance already known from notifications) in the future.
-8. Device cap: at most 3 distinct `deviceId`s per subscription (per `originalTransactionId`). A fourth device is refused with `device_limit`; unlinking (§5) frees a slot.
+8. Device cap: at most 3 distinct `deviceId`s per subscription (per `originalTransactionId`); sandbox purchases get 1. A further device is refused with `device_limit`; unlinking (§5) frees a slot, and a slot whose device has not verified for 30 days is reclaimed automatically.
 
 Responses:
 
@@ -50,8 +50,10 @@ Rules for the phone: the server never revokes a token it issued early except thr
 
 - Signed by the server (HMAC-SHA256, key held only server-side). Opaque to the phone; do not parse it.
 - Lifetime: `min(24 h, access end)`, where access end is the later of `expiresDate` and the billing-grace end known to the server. Typical: 24 h.
-- Bound to the `deviceId` that verified and to the subscription. Presenting it from another device is refused.
-- Server-side revocation (refund, revoke, expiry notice, block) takes effect on the next `register` or `renew`, and immediately for a live room (§4).
+- Bound to the `deviceId` that verified, to the subscription and to the deployment that minted it (a staging token is refused by production). On every `register` the server also requires the device to still be linked to the subscription and the subscription to have access, so `forget` (§5) or a refund stops a token at once, not at its expiry.
+- One live room per device: registering with the token in a second room ends the first room's relay (its peers close with `entitlement_revoked`). A phone that reconnects to the same Mac is unaffected.
+- Server-side revocation (refund, revoke, expiry notice, block) takes effect on the next `register` or `renew`, immediately for a live room through a push, and within five minutes through the room's own re-check (§4).
+- A storage outage on the server means `register` proceeds as local-only for that connection; an already established relayed session keeps its credentials.
 
 ## 4. Signaling: additive protocol change (`Docs/REMOTE-PROTOCOL.md`, capability `remote.1`)
 
@@ -61,12 +63,15 @@ Wire messages stay as documented. Additions, all ignored by older apps:
 - `registered` to a peer that listed `remote.1` carries `"access": "remote" | "local"`.
 - `ice`: for a room whose phone is entitled, both peers receive STUN and short-lived TURN servers. The Mac, which registers before the phone, receives a second `ice` message with servers immediately before `peer` `online: true`. For a free room every `ice` carries `"servers": []`.
 - `error` with `"code": "entitlement_required"` is sent to a phone that listed `remote.1` and presented no token, an expired token, a token for another device, or a token whose subscription is no longer active. It is **non-closing**: `registered` (`access: "local"`) and `ice` (`servers: []`) follow and the session proceeds as same-network only. The phone should call `/v1/entitlements/verify` (with its latest transaction) and reconnect if that yields a token.
-- `renewed` for a phone whose entitlement lapsed mid-session carries `"code": "entitlement_required"` and no `servers`; the lease is still extended and the session continues until the credentials in use expire (natural expiry). A refund, revoke or operator block ends the room at once: both sockets close with reason `entitlement_revoked` and every issued relay credential is revoked.
+- `renewed` for a phone whose entitlement lapsed mid-session carries `"code": "entitlement_required"` and no `servers`; the lease is still extended and the session continues until the credentials in use expire (natural expiry). A refund, revoke or operator block ends the room at once: both sockets close with reason `entitlement_revoked` (or `room_not_approved`) and every issued relay credential is revoked.
+- When the entitled phone leaves, the Mac receives `ice` with `"servers": []` after `peer` `online:false`, so its next session starts from the free state until a phone with a valid token joins again.
+- The service may repeat a peer's most recent `ice` message unchanged as a keepalive; peers treat it exactly like the first.
+- Transient service problems close the socket **without** an error frame (close code 1013, reason `busy` or `rate_limited`); the phone's ordinary reconnect handles them.
 - Phones that do not list `remote.1` never receive the new codes and fields; they get `servers: []` and connect only where host candidates reach (same network).
 
 ## 5. `POST /v1/entitlements/forget`
 
-Privacy path ("Remove this Mac and delete server data", `Docs/launch/PRIVACY-POLICY.md`). Body `{"deviceId": "<64 hex>", "entitlementToken": "fe1..."}`. Unlinks that device from its subscription record (frees a device slot). 204 on success, 401 when the token does not match the device, 400/429 as above. The subscription record itself is deleted 90 days after its access end (retention, DESIGN.md §9).
+Privacy path ("Remove this Mac and delete server data", `Docs/launch/PRIVACY-POLICY.md`). Body `{"deviceId": "<64 hex>", "entitlementToken": "fe1..."}`. Unlinks that device from its subscription record (frees a device slot) and invalidates that device's token immediately; a later `verify` from the same device links it again. 204 on success (also when already unlinked), 401 when the token does not match the device, 400/429 as above. The subscription record itself is deleted 90 days after its access end (retention, DESIGN.md §9).
 
 ## 6. `POST /v1/appstore/notifications` (Apple → server)
 
@@ -81,3 +86,4 @@ App Store Server Notifications V2. Body `{"signedPayload": "<JWS>"}`. Both the p
 ## Changelog
 
 - 2026-09-29 v1: initial contract.
+- 2026-09-29 v1.1 (same day, before any client implementation): token also bound to the deployment and to a live device link; `forget` invalidates immediately; one live room per device; sandbox purchases get one device; stale device slots reclaimed after 30 days; Mac receives `ice{servers:[]}` when its entitled phone leaves; keepalive `ice` repeats; bare 1013 closes for transient failures. Request and response shapes of §2 are unchanged.

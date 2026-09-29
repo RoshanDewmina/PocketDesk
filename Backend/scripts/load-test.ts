@@ -14,6 +14,11 @@ const signalsPerRoom = Number(args.get("signals") ?? 10);
 const holdSeconds = Number(args.get("hold") ?? 2);
 const staggerMs = Number(args.get("stagger") ?? 10);
 const token = args.get("token");
+// Per-address limits (30 upgrades and 10 new rooms per minute) would cap a single-machine run at ten rooms, so
+// against a local `wrangler dev` each room presents its own address; Cloudflare overwrites the header in production.
+const localTarget = /^ws:\/\/(127\.0\.0\.1|localhost|\[::1\])[:/]/.test(url);
+const spoofAddresses = (args.get("spoof-ip") ?? (localTarget ? "1" : "0")) === "1";
+let roomIndex = 0;
 
 const hex = (bytes = 32) => Array.from(crypto.getRandomValues(new Uint8Array(bytes)), b => b.toString(16).padStart(2, "0")).join("");
 const sha256 = async (text: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))), b => b.toString(16).padStart(2, "0")).join("");
@@ -21,9 +26,9 @@ const payload = btoa(String.fromCharCode(...new Uint8Array(96).fill(5)));
 
 type Peer = { ws: WebSocket; next: () => Promise<Record<string, unknown>>; send: (v: unknown) => void; closed: Promise<string> };
 
-function peer(): Promise<Peer> {
+function peer(address: string): Promise<Peer> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
+    const ws = spoofAddresses ? new WebSocket(url, { headers: { "cf-connecting-ip": address } } as unknown as string[]) : new WebSocket(url);
     const queue: Record<string, unknown>[] = [];
     const waiters: Array<(v: Record<string, unknown>) => void> = [];
     ws.onmessage = event => { const value = JSON.parse(String(event.data)); const waiter = waiters.shift(); if (waiter) waiter(value); else queue.push(value); };
@@ -46,15 +51,17 @@ type Result = { connectMs: number; rtts: number[]; error?: string; codes: string
 async function runRoom(): Promise<Result> {
   const result: Result = { connectMs: 0, rtts: [], codes: [] };
   const started = performance.now();
+  const index = roomIndex++;
+  const address = `10.${(index >> 16) & 255}.${(index >> 8) & 255}.${index & 255}`;
   try {
     const hostToken = hex(), clientToken = hex();
     const room = await sha256(hostToken), clientTokenHash = await sha256(clientToken);
-    const host = await peer();
+    const host = await peer(address);
     host.send({ type: "register", version: 1, role: "host", room, token: hostToken, clientTokenHash, features: ["renew.1"] });
     const registered = await host.next();
     if (registered.type !== "registered") throw new Error(`host ${String(registered.code)}`);
     await host.next();
-    const client = await peer();
+    const client = await peer(address);
     client.send({ type: "register", version: 1, role: "client", room, token: clientToken, features: token ? ["renew.1", "remote.1"] : ["renew.1"], ...(token ? { entitlement: token } : {}) });
     let message = await client.next();
     while (message.type === "error" && message.code === "entitlement_required") { result.codes.push("entitlement_required"); message = await client.next(); }
@@ -100,6 +107,7 @@ for (const result of results) if (result.error) errors.set(result.error, (errors
 const rtts = ok.flatMap(result => result.rtts);
 console.log(JSON.stringify({
   url,
+  spoofedAddresses: spoofAddresses,
   rooms: roomCount,
   succeeded: ok.length,
   failed: results.length - ok.length,
