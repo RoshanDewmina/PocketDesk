@@ -5,23 +5,97 @@ import VideoToolbox
 
 /// A conservative, process-cached capability gate for the native H.264 Level 5.2 path.
 /// One successful frame proves format/decode compatibility, not sustained 4K60 performance.
+///
+/// A positive result is also cached in UserDefaults, keyed by OS build and hardware model, so later
+/// launches skip the probe; a failed or timed-out probe is never cached and is retried next launch.
+/// `warmUp()` runs the probe on a background queue at launch so the first factory rarely waits.
 enum NativeCodecCapability {
+    enum Outcome: Equatable {
+        case simulator
+        case noHardwareDecode
+        case cached
+        case probed(milliseconds: Int)
+        case probeFailed
+        case timedOut
+
+        var description: String {
+            switch self {
+            case .simulator: return "simulator: level 3.1"
+            case .noHardwareDecode: return "no hardware H.264 decode: level 3.1"
+            case .cached: return "hardware level 5.2 (cached)"
+            case .probed(let ms): return "hardware level 5.2 (probed in \(ms) ms)"
+            case .probeFailed: return "probe failed: level 3.1 this launch"
+            case .timedOut: return "probe timed out: level 3.1 this launch"
+            }
+        }
+    }
+
+    private static let state = ProbeState()
+    static var outcome: Outcome? { state.outcome }
+    static var outcomeDescription: String { outcome?.description ?? "not probed yet" }
+    static let probeTimeout: DispatchTimeInterval = .seconds(3)
+
     static let supportsLevel52: Bool = {
         #if targetEnvironment(simulator)
+        state.outcome = .simulator
         return false
         #else
-        guard VTIsHardwareDecodeSupported(kCMVideoCodecType_H264) else { return false }
+        guard VTIsHardwareDecodeSupported(kCMVideoCodecType_H264) else {
+            state.outcome = .noHardwareDecode
+            return false
+        }
+        if cachedResult() == true {
+            state.outcome = .cached
+            return true
+        }
+        let started = MachClock.nowMs()
         let outcome = ProbeOutcome()
         let group = DispatchGroup()
         group.enter()
         DispatchQueue.global(qos: .utility).async {
-            outcome.set(runProbe())
+            let result = runProbe()
+            outcome.set(result)
+            // A late success still helps the next launch.
+            if result { storeResult(true) }
             group.leave()
         }
-        guard group.wait(timeout: .now() + .seconds(3)) == .success else { return false }
-        return outcome.value
+        guard group.wait(timeout: .now() + probeTimeout) == .success else {
+            state.outcome = .timedOut
+            return false
+        }
+        let value = outcome.value
+        state.outcome = value ? .probed(milliseconds: Int((MachClock.nowMs() - started).rounded())) : .probeFailed
+        return value
         #endif
     }()
+
+    /// Evaluates the probe off the calling thread so a later factory creation finds it done.
+    static func warmUp() {
+        DispatchQueue.global(qos: .userInitiated).async { _ = supportsLevel52 }
+    }
+
+    static var cacheDefaultsKey: String { "PocketDeskLevel52Probe." + systemAndModel }
+
+    static func cachedResult(defaults: UserDefaults = .standard, key: String = cacheDefaultsKey) -> Bool? {
+        defaults.object(forKey: key) == nil ? nil : defaults.bool(forKey: key)
+    }
+
+    /// Only a positive result is stored; negatives are retried on the next launch.
+    static func storeResult(_ value: Bool, defaults: UserDefaults = .standard, key: String = cacheDefaultsKey) {
+        guard value else { return }
+        defaults.set(true, forKey: key)
+    }
+
+    static var systemAndModel: String {
+        var system = utsname()
+        uname(&system)
+        let capacity = MemoryLayout.size(ofValue: system.machine)
+        let machine = withUnsafePointer(to: &system.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: capacity) { String(cString: $0) }
+        }
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion).\(machine)"
+    }
 
     /// Exposed to focused tests so the baked sample's advertised profile and dimensions
     /// are independently checked by CoreMedia, rather than trusting its filename.
@@ -177,4 +251,13 @@ private final class ProbeOutcome: @unchecked Sendable {
     private var result = false
     var value: Bool { lock.lock(); defer { lock.unlock() }; return result }
     func set(_ value: Bool) { lock.lock(); result = value; lock.unlock() }
+}
+
+private final class ProbeState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: NativeCodecCapability.Outcome?
+    var outcome: NativeCodecCapability.Outcome? {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set { lock.lock(); stored = newValue; lock.unlock() }
+    }
 }

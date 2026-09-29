@@ -219,6 +219,8 @@ final class RemoteHostModel: ObservableObject {
         return name.hasSuffix(".app") ? String(name.dropLast(4)) : name
     }()
 
+    private var latestSenderStatistics: StreamStatsReport?
+
     init() {
         controlConsent = HostControlConsentState(isAllowed: preferences.allowControl)
         keepAwakeEnabled = preferences.keepAwake
@@ -228,6 +230,7 @@ final class RemoteHostModel: ObservableObject {
         curtainPreference = preferences.privacyCurtain
         refreshBackgroundStates()
         background.onChange = { [weak self] in self?.refreshBackgroundStates() }
+        NativeCodecCapability.warmUp()
         startWatchdog()
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.active && !self.connection.connected }
         connection.restore()
@@ -640,8 +643,29 @@ final class RemoteHostModel: ObservableObject {
         snapshot.lastSessionDuration = sessionStartedAt.map { Date().timeIntervalSince($0) } ?? lastSessionDuration
         snapshot.route = connection.connected ? connection.diagnostics : nil
         snapshot.streamQuality = capture.appliedQuality?.title
+        snapshot.stream = latestSenderStatistics.map(Self.streamDescription)
         snapshot.events = events.entries
         return HostDiagnosticsReport.render(snapshot)
+    }
+
+    /// Negotiated level, sent size and encoder from the latest sender statistics (G13).
+    static func streamDescription(_ report: StreamStatsReport) -> String {
+        var parts: [String] = []
+        if let width = report.sentWidth, let height = report.sentHeight, width > 0 { parts.append("\(width)×\(height)") }
+        if let codec = report.codec {
+            let level = report.h264ProfileLevel.map { profile -> String in
+                guard profile.count == 6, let byte = UInt8(profile.suffix(2), radix: 16) else { return profile }
+                return "level \(byte / 10).\(byte % 10)"
+            }
+            parts.append([codec.replacingOccurrences(of: "video/", with: ""), level].compactMap { $0 }.joined(separator: " "))
+        }
+        if let encoder = report.encoderImplementation {
+            parts.append(encoder + (report.powerEfficientEncoder == true ? " (hardware)" : ""))
+        }
+        if let fps = report.encodedFPS { parts.append("\(Int(fps.rounded())) fps") }
+        if let latency = report.encodeLatencyMs { parts.append("VT latency \(latency) ms") }
+        parts.append("decoder probe: " + NativeCodecCapability.outcomeDescription)
+        return parts.joined(separator: " · ")
     }
 
     private func refreshBackgroundStates() {
@@ -977,6 +1001,7 @@ final class RemoteHostModel: ObservableObject {
             events.record(.session, "Phone connected")
         }
         captureUnhealthySince = nil
+        peer.onSenderStatistics = { [weak self] report in self?.latestSenderStatistics = report }
         #if DEBUG
         if let e2e = HostE2E.active {
             peer.onStreamStatistics = { [weak e2e] report in e2e?.recordStats(report) }
@@ -1124,6 +1149,13 @@ final class RemoteHostModel: ObservableObject {
         if action.action == "heartbeat" {
             if connection.connected, action.epoch == inputEpoch.value, let quality = action.streamQuality {
                 capture.setQuality(quality)
+            }
+            if let probe = action.clock, !probe.isEcho, (try? probe.validate()) != nil {
+                let received = min(MachClock.nowMs(), connection.media?.controlArrivalMs ?? .infinity)
+                _ = connection.sendControl(RemoteAction(
+                    action: "heartbeat", epoch: action.epoch,
+                    clock: ClockProbe(phoneMs: probe.phoneMs, hostReceivedMs: received, hostSentMs: MachClock.nowMs())
+                ))
             }
             if action.pointerProbe == nil && action.textFocusProbe == nil {
                 pointerTelemetry.phoneHeartbeat(action.pointerSync, epoch: action.epoch,

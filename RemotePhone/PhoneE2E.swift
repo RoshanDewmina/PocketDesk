@@ -232,6 +232,7 @@ final class PhoneE2E: ObservableObject {
             "frames": frames,
             "lastFrameAgeMs": lastFrameAt.map { (now - $0) * 1000 } as Any,
             "stats": lastStats ?? [:],
+            "codecProbe": NativeCodecCapability.outcomeDescription,
             "statsWindows": statsWindows,
             "maxRenderGapMs": maxRenderGapMs,
             "stallsOver1s": stallsOver1s,

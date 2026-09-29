@@ -314,6 +314,11 @@ enum RemoteCaptureConfiguration {
     /// Deeper than ScreenCaptureKit's minimum of three: the idle-refresh copy and the encoder each
     /// hold a surface, and Apple's capture sample uses five to keep a high frame rate without stalls.
     static let queueDepth = 5
+
+    /// A 1/60 floor by default; `.zero` asks ScreenCaptureKit for the display's own cadence (G1).
+    static func minimumFrameInterval(for tuning: StreamTuning) -> CMTime {
+        tuning.captureAtNativeRate ? .zero : CMTime(value: 1, timescale: 60)
+    }
 }
 
 private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
@@ -354,7 +359,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         let fitted = budget?.fitted(width: dimensions.width, height: dimensions.height)
         configuration.width = fitted?.width ?? dimensions.width
         configuration.height = fitted?.height ?? dimensions.height
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        configuration.minimumFrameInterval = RemoteCaptureConfiguration.minimumFrameInterval(for: StreamTuning.current)
         configuration.queueDepth = RemoteCaptureConfiguration.queueDepth
         configuration.showsCursor = showsCursor
         configuration.capturesAudio = false

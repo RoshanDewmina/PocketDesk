@@ -59,6 +59,114 @@ final class RemoteVideoSurfaceTests: XCTestCase {
     }
 
     @MainActor
+    func testRestampingRendererRemembersTheLastSixteenMarkers() throws {
+        let view = RTCMTLVideoView(frame: CGRect(x: 0, y: 0, width: 160, height: 120))
+        let renderer = RestampingRenderer(target: view)
+        let frame = RTCVideoFrame(buffer: try Self.pixelBuffer(), rotation: ._0, timeStampNs: 0)
+        renderer.renderFrame(frame)
+        XCTAssertNil(renderer.newestMarker, "frames forwarded without statistics are not remembered")
+        func marker(_ index: Int) -> BenchMarker? {
+            index % 5 == 4 ? nil : BenchMarker(timeMs: UInt32(1_000 + index), chartSeed: 3, flash: false, motion: true)
+        }
+        var stamps: [Int64] = []
+        for index in 0..<20 {
+            stamps.append(try XCTUnwrap(renderer.renderFrame(frame, marker: marker(index))))
+        }
+        XCTAssertEqual(stamps, stamps.sorted())
+        XCTAssertEqual(Set(stamps).count, stamps.count)
+        let forgotten = stamps.count - RestampingRenderer.rememberedFrames
+        for (index, stamp) in stamps.enumerated() {
+            let remembered = renderer.forwardedFrame(forStamp: stamp)
+            if index < forgotten {
+                XCTAssertNil(remembered, "frame \(index) is older than the ring")
+            } else {
+                XCTAssertEqual(remembered?.marker, marker(index), "frame \(index)")
+                XCTAssertGreaterThan(remembered?.arrivalMs ?? 0, 0)
+            }
+        }
+        XCTAssertNotNil(renderer.forwardedFrame(forStamp: stamps[19]))
+        XCTAssertNil(renderer.marker(forStamp: stamps[19]), "a frame without a readable marker is remembered as nil")
+        XCTAssertNil(renderer.newestMarker)
+        XCTAssertEqual(renderer.marker(forStamp: stamps[18]), marker(18))
+        renderer.forgetMarkers()
+        XCTAssertNil(renderer.forwardedFrame(forStamp: stamps[18]))
+    }
+
+    @MainActor
+    func testObserverReadsTheMarkerOnlyWithStreamStatistics() throws {
+        let view = RTCMTLVideoView(frame: CGRect(x: 0, y: 0, width: 160, height: 120))
+        let observer = FrameObserver(onFrame: {})
+        observer.view = view
+        let marker = BenchMarker(timeMs: 77_777, chartSeed: 0x2ab, flash: true, motion: false)
+        let marked = RTCCVPixelBuffer(pixelBuffer: try Self.markedPixelBuffer(marker))
+        observer.renderFrame(RTCVideoFrame(buffer: marked, rotation: ._0, timeStampNs: 0))
+        XCTAssertNil(observer.forward.newestMarker, "statistics off: nothing is read or remembered")
+        observer.readsMarkers = true
+        observer.renderFrame(RTCVideoFrame(buffer: marked, rotation: ._0, timeStampNs: 0))
+        XCTAssertEqual(observer.forward.newestMarker, marker, "the strip is read from the decoded luma plane")
+        observer.renderFrame(RTCVideoFrame(buffer: try Self.pixelBuffer(), rotation: ._0, timeStampNs: 0))
+        XCTAssertNil(observer.forward.newestMarker, "a frame without a marker is recorded as none")
+        observer.readsMarkers = false
+        XCTAssertNil(observer.forward.newestMarker)
+    }
+
+    @MainActor
+    func testPresentedFrameCarriesTheMarkerOfTheFrameTheViewDrew() throws {
+        let (view, metal, window) = try makeVideoView()
+        defer { window.isHidden = true }
+        let probe = try XCTUnwrap(VideoPresentationProbe.install(on: view), "The probe finds the MTKView")
+        defer { probe.uninstall() }
+        let counters = StreamCounters()
+        probe.counters = counters
+        let presented = PresentedTimes()
+        var fetches = 0
+        probe.drawableProvider = { metalView in
+            fetches += 1
+            let drawable = metalView.currentDrawable
+            drawable?.addPresentedHandler { presented.record($0.presentedTime) }
+            return drawable
+        }
+        let observer = FrameObserver(onFrame: {})
+        observer.view = view
+        observer.presentation = probe
+        observer.setSize(CGSize(width: 432, height: 270))
+
+        // WebRTC creates its Metal renderer (and so a device and drawables) on the first drawn frame.
+        observer.renderFrame(RTCVideoFrame(buffer: try Self.pixelBuffer(), rotation: ._0, timeStampNs: 0))
+        metal.draw()
+        XCTAssertNotNil(metal.device, "The renderer started")
+        XCTAssertEqual(fetches, 0, "Without Stream statistics no drawable is fetched")
+
+        observer.readsMarkers = true
+        metal.draw()
+        XCTAssertEqual(fetches, 0, "No drawable is fetched when no decoded frame is pending")
+
+        let marker = BenchMarker(timeMs: 4_321, chartSeed: 0, flash: false, motion: true)
+        let marked = RTCCVPixelBuffer(pixelBuffer: try Self.markedPixelBuffer(marker))
+        observer.renderFrame(RTCVideoFrame(buffer: marked, rotation: ._0, timeStampNs: 0))
+        metal.draw()
+        XCTAssertEqual(fetches, 1, "One drawable for the one new frame")
+        XCTAssertEqual(observer.forward.marker(forStamp: Self.lastDrawnStamp(of: view)), marker,
+                       "The stamp the view drew maps back to the frame's marker")
+        metal.draw()
+        XCTAssertEqual(fetches, 1, "Redrawing the same frame fetches nothing")
+
+        let deadline = Date().addingTimeInterval(2)
+        while presented.times.isEmpty, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+        guard let time = presented.times.first, time > 0 else {
+            throw XCTSkip("No presented time for the drawable here (\(presented.times)); the handler path ran without a crash")
+        }
+        // The probe's handler was added right after the test's, on the same drawable.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        let snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.markerFrames, 1, "The presented frame reached the counters with its marker")
+        XCTAssertEqual(snapshot.markerDistinct, 1)
+        XCTAssertEqual(snapshot.presentedFrames, 2, "Draw-call accounting is unchanged")
+    }
+
+    @MainActor
     private func makeVideoView() throws -> (RTCMTLVideoView, MTKView, UIWindow) {
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 160, height: 120))
         let view = RTCMTLVideoView(frame: window.bounds)
@@ -89,5 +197,44 @@ final class RemoteVideoSurfaceTests: XCTestCase {
         }
         CVPixelBufferUnlockBaseAddress(buffer, [])
         return RTCCVPixelBuffer(pixelBuffer: buffer)
+    }
+
+    /// An NV12 frame whose luma plane carries the bench strip, drawn by the shared renderer.
+    private static func markedPixelBuffer(_ marker: BenchMarker, width: Int = 432, height: Int = 270) throws -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        let attributes = [kCVPixelBufferIOSurfacePropertiesKey: [:], kCVPixelBufferMetalCompatibilityKey: true] as CFDictionary
+        guard CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                                  attributes, &buffer) == kCVReturnSuccess, let buffer else {
+            throw XCTSkip("pixel buffer allocation failed")
+        }
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        for plane in 0..<2 {
+            memset(CVPixelBufferGetBaseAddressOfPlane(buffer, plane)!, plane == 0 ? 120 : 128,
+                   CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) * CVPixelBufferGetHeightOfPlane(buffer, plane))
+        }
+        let context = try XCTUnwrap(CGContext(data: CVPixelBufferGetBaseAddressOfPlane(buffer, 0), width: width, height: height,
+                                              bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRowOfPlane(buffer, 0),
+                                              space: CGColorSpaceCreateDeviceGray(), bitmapInfo: CGImageAlphaInfo.none.rawValue))
+        // The renderer expects a flipped (top-left) context.
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: 1, y: -1)
+        BenchMarkerRenderer.draw(marker, layout: BenchMarker.layout(width: Double(width), height: Double(height)), in: context)
+        return buffer
+    }
+}
+
+/// Presented times reported to a drawable's handlers, which run off the main thread.
+private final class PresentedTimes: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [CFTimeInterval] = []
+
+    var times: [CFTimeInterval] {
+        lock.lock(); defer { lock.unlock() }
+        return stored
+    }
+
+    func record(_ time: CFTimeInterval) {
+        lock.lock(); stored.append(time); lock.unlock()
     }
 }

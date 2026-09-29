@@ -46,6 +46,16 @@ enum MediaRoute {
         }
         return "Direct"
     }
+
+    /// Finer than `classify`: "lan" (host candidates on both ends), "p2p" (reflexive on either end),
+    /// "relay", or nil while pending.
+    static func detail(selected: Bool, local: String?, remote: String?) -> String? {
+        switch classify(selected: selected, local: local, remote: remote) {
+        case "Relay": return "relay"
+        case "Direct": return local == "host" && remote == "host" ? "lan" : "p2p"
+        default: return nil
+        }
+    }
 }
 
 final class PeerMedia: NSObject {
@@ -59,7 +69,10 @@ final class PeerMedia: NSObject {
     let counters = StreamCounters()
     var captureMaximumDimension: Int?
     /// Phone: the latest sender stages forwarded by the Mac with its capture heartbeat.
-    var remoteHostSummary: HostStreamSummary?
+    var remoteHostSummary: HostStreamSummary? {
+        didSet { remoteHostSummaryAt = ProcessInfo.processInfo.systemUptime }
+    }
+    private var remoteHostSummaryAt: TimeInterval?
     let tuning: StreamTuning
     private(set) var streamQuality: StreamQuality = .balanced
     private var latestHostSummary: HostStreamSummary?
@@ -115,6 +128,15 @@ final class PeerMedia: NSObject {
     private var adaptedSize: (Int, Int)?
     private var closed = false
     private var frameTransform: ((CVPixelBuffer, Int64) -> CVPixelBuffer?)?
+    private let arrivalLock = NSLock()
+    private var lastControlArrivalMs: Double?
+
+    /// Mach ms when the newest control message reached the data channel, before its main-queue hop
+    /// and decoding; the clock probes stamp with this so thread hops do not count as network time.
+    var controlArrivalMs: Double? {
+        arrivalLock.lock(); defer { arrivalLock.unlock() }
+        return lastControlArrivalMs
+    }
 
     var nativeCaptureBudget: H264FrameBudget? {
         guard nativeDesktopCodecs else { return nil }
@@ -132,6 +154,7 @@ final class PeerMedia: NSObject {
         self.nativeDesktopCodecs = nativeDesktopCodecs
         tuning = nativeDesktopCodecs ? StreamTuning.current : .legacy
         super.init()
+        if isHost, nativeDesktopCodecs { DesktopH264Encoder.sharedCounters = counters }
         let configuration = RTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan
         configuration.iceTransportPolicy = forceRelay ? .relay : .all
@@ -266,9 +289,10 @@ final class PeerMedia: NSObject {
     private func configureNativeSender() {
         guard isHost, nativeDesktopCodecs, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return }
         let parameters = sender.parameters
+        let ceiling = tuning.maximumBitrateBps(for: streamQuality)
         for encoding in parameters.encodings {
             encoding.maxFramerate = 60
-            encoding.maxBitrateBps = NSNumber(value: tuning.qualityBitrates ? streamQuality.maximumBitrateBps : 12_000_000)
+            encoding.maxBitrateBps = NSNumber(value: tuning.qualityBitrates ? ceiling : 12_000_000)
         }
         if let preference = tuning.degradationPreference {
             parameters.degradationPreference = NSNumber(value: preference.rawValue)
@@ -276,7 +300,7 @@ final class PeerMedia: NSObject {
         sender.parameters = parameters
         if tuning.qualityBitrates {
             _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: nil,
-                                                 maxBitrateBps: NSNumber(value: streamQuality.maximumBitrateBps * max(1, tuning.bandwidthHeadroom)))
+                                                 maxBitrateBps: NSNumber(value: ceiling * max(1, tuning.bandwidthHeadroom)))
         }
     }
 
@@ -289,16 +313,19 @@ final class PeerMedia: NSObject {
         configureNativeSender()
     }
 
-    /// Seed the bandwidth estimate once the selected route is known to be direct (see
-    /// `BandwidthSeedPolicy`). Relay routes keep libwebrtc's conservative ramp so a metered or
-    /// cellular path is not flooded at start.
-    private func seedBandwidthEstimate(_ stats: StreamStatsReport, route: String) {
-        guard isHost, nativeDesktopCodecs, tuning.qualityBitrates,
-              bandwidthSeed.observe(route: route, estimateKbps: stats.availableOutgoingKbps,
-                                    lossPercent: stats.remoteLossPercent,
-                                    seedKbps: Double(streamQuality.startBitrateBps) / 1000) else { return }
-        _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: NSNumber(value: streamQuality.startBitrateBps),
-                                             maxBitrateBps: NSNumber(value: streamQuality.maximumBitrateBps * max(1, tuning.bandwidthHeadroom)))
+    /// Seed the bandwidth estimate once the selected route is known (see `BandwidthSeedPolicy`).
+    /// Without `routeAwareSeed`, only "Direct" routes are seeded, at the mode's rate, and relay keeps
+    /// libwebrtc's ramp; with it, LAN, internet P2P and relay each get their own start rate.
+    private func seedBandwidthEstimate(_ stats: StreamStatsReport, route: String, detail: String?) {
+        guard isHost, nativeDesktopCodecs, tuning.qualityBitrates else { return }
+        let seedRoute: SeedRoute? = tuning.routeAwareSeed
+            ? SeedRoute.classify(detail: detail, rttMs: stats.rttMs)
+            : (route == "Direct" ? .lan : nil)
+        let seedBps = seedRoute.map { streamQuality.startBitrateBps(for: $0) } ?? streamQuality.startBitrateBps
+        guard bandwidthSeed.observe(eligible: seedRoute != nil, estimateKbps: stats.availableOutgoingKbps,
+                                    lossPercent: stats.remoteLossPercent, seedKbps: Double(seedBps) / 1000) else { return }
+        _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: NSNumber(value: seedBps),
+                                             maxBitrateBps: NSNumber(value: tuning.maximumBitrateBps(for: streamQuality) * max(1, tuning.bandwidthHeadroom)))
     }
 
     /// Host: the encoder ceiling actually applied to the video sender, in kbps.
@@ -390,10 +417,11 @@ final class PeerMedia: NSObject {
         stats.tuning = tuning.summary
         if isHost {
             stats.maxKbps = appliedSenderMaxKbps
-            seedBandwidthEstimate(stats, route: sample.route)
+            seedBandwidthEstimate(stats, route: sample.route, detail: sample.routeDetail)
             latestHostSummary = stats.hostSummary
         } else {
             stats.host = remoteHostSummary
+            stats.hostSummaryAgeMs = remoteHostSummaryAt.map { ((ProcessInfo.processInfo.systemUptime - $0) * 10_000).rounded() / 10 }
         }
         previousSample = sample
         StreamDebug.record(stats)
@@ -479,6 +507,7 @@ extension PeerMedia: RTCDataChannelDelegate {
         }
     }
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        arrivalLock.lock(); lastControlArrivalMs = MachClock.nowMs(); arrivalLock.unlock()
         guard buffer.isBinary, buffer.data.count <= 16384 else {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.channel === dataChannel else { return }

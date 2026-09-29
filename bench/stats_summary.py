@@ -5,12 +5,16 @@ Summarizes the per-second stream statistics that PocketDesk writes when "Stream 
 import json, statistics, sys
 
 FIELDS = {
-    "host": ["captureFPS", "captureLatencyMs", "captureLatencyP90Ms", "captureGapP90Ms", "pushSkipped",
-             "droppedBeforeEncode", "encodedFPS", "encodeMs", "pacerDelayMs", "sentFPS", "sentKbps",
-             "targetKbps", "maxKbps", "availableOutgoingKbps", "keyFrames", "rttMs"],
+    "host": ["captureFPS", "captureLatencyMs", "captureLatencyP90Ms", "captureGapP90Ms", "captureGapMaxMs", "pushSkipped",
+             "droppedBeforeEncode", "encodedFPS", "encodeMs", "encodeLatencyMs", "encodeLatencyP90Ms", "encodeLatencyMaxMs",
+             "encodeInFlightMax", "encodeBytesP50", "keyFrameBytesMax", "rateUpdates", "encoderSessionAgeS",
+             "pacerDelayMs", "sentFPS", "sentKbps", "targetKbps", "maxKbps", "availableOutgoingKbps", "keyFrames", "rttMs"],
     "phone": ["receivedFPS", "decodedFPS", "presentedFPS", "supersededFrames", "assemblyMs", "jitterBufferMs",
-              "decodeMs", "presentLatencyMs", "presentLatencyP90Ms", "renderGapP90Ms", "presentGapP90Ms",
-              "packetLossPercent", "freezes", "rttMs", "inputBufferedPeakBytes", "coalescedMoves"],
+              "decodeMs", "presentLatencyMs", "presentLatencyP90Ms", "renderGapP90Ms", "renderGapMaxMs", "presentGapP90Ms",
+              "markerFrames", "markerDistinctFPS", "glassP50Ms", "glassP95Ms", "glassP99Ms", "glassMaxMs",
+              "clockOffsetMs", "clockUncertaintyMs", "presentedIntervalP50Ms", "presentedIntervalP90Ms",
+              "presentedIntervalMinMs", "presentedAt120Share", "inputToPhotonP50Ms", "inputToPhotonP95Ms",
+              "hostSummaryAgeMs", "packetLossPercent", "freezes", "rttMs", "inputBufferedPeakBytes", "coalescedMoves"],
 }
 
 def percentile(values, fraction):

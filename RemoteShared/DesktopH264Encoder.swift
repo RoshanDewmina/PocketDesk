@@ -22,12 +22,23 @@ struct EncoderRestartPolicy {
     var minimumKbps = 5_000.0
     var settleTime: TimeInterval = 0.75
     var repeatInterval: TimeInterval = 15
+    /// G9: when set, the restart's key frame must fit in this much link time at the target rate,
+    /// judged by the last key frame's size (or `defaultKeyFrameBytes` before one was seen).
+    var keyFrameBudgetMs: Double?
+    var lastKeyFrameBytes: Int?
+    static let defaultKeyFrameBytes = 200_000
 
     private(set) var targetKbps = 0.0
     private(set) var baselineKbps = 0.0
     private var eligibleSince: TimeInterval?
     private var lastRestartAt: TimeInterval?
     private(set) var restarts = 0
+
+    /// Link time the next restart's key frame would take at the current target, in ms.
+    var keyFrameLinkTimeMs: Double? {
+        guard targetKbps > 0 else { return nil }
+        return Double(lastKeyFrameBytes ?? Self.defaultKeyFrameBytes) * 8 / targetKbps
+    }
 
     mutating func sessionStarted(kbps: Double, at time: TimeInterval) {
         targetKbps = max(0, kbps)
@@ -46,6 +57,10 @@ struct EncoderRestartPolicy {
             eligibleSince = nil
             return false
         }
+        if let keyFrameBudgetMs, let linkTime = keyFrameLinkTimeMs, linkTime > keyFrameBudgetMs {
+            eligibleSince = nil
+            return false
+        }
         let since = eligibleSince ?? time
         eligibleSince = since
         guard time - since >= settleTime,
@@ -57,15 +72,57 @@ struct EncoderRestartPolicy {
     }
 }
 
+/// Per-frame bookkeeping for the encoder trace: when each frame went into VideoToolbox and how many
+/// were already inside. Frames are matched back by their capture time (ms); a frame VideoToolbox
+/// drops never calls back and is forgotten after `staleAfterMs`.
+struct EncoderLatencyTrace {
+    struct Sample: Equatable {
+        var latencyMs: Double
+        /// Frames inside the encoder when this one was submitted, this one included.
+        var inFlight: Int
+    }
+
+    var staleAfterMs = 1_000.0
+    private var pending: [(key: Int64, atMs: Double, inFlight: Int)] = []
+
+    var inFlight: Int { pending.count }
+
+    mutating func submitted(key: Int64, atMs: Double) {
+        prune(now: atMs)
+        pending.append((key: key, atMs: atMs, inFlight: pending.count + 1))
+    }
+
+    /// The matching submission, or the oldest one when the key is unknown.
+    mutating func completed(key: Int64, atMs: Double) -> Sample? {
+        prune(now: atMs)
+        guard !pending.isEmpty else { return nil }
+        let index = pending.firstIndex { $0.key == key } ?? 0
+        let entry = pending.remove(at: index)
+        return Sample(latencyMs: max(0, atMs - entry.atMs), inFlight: entry.inFlight)
+    }
+
+    mutating func reset() { pending.removeAll() }
+
+    private mutating func prune(now: Double) {
+        pending.removeAll { now - $0.atMs > staleAfterMs }
+    }
+}
+
 /// libwebrtc's VideoToolbox H.264 encoder plus `EncoderRestartPolicy`. Packetization, rate control,
 /// bitstream format and key-frame handling stay the stock implementation; a restart is the same
 /// release/start sequence libwebrtc itself uses when the resolution changes.
+///
+/// It also feeds the encoder trace: submit → callback latency, frames in flight, bytes per frame,
+/// key-frame size, rate updates and session age, reported through `sharedCounters`.
 final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     /// Benchmark-only trace of rate updates, restarts and key frames; nil in the apps.
     nonisolated(unsafe) static var trace: ((String) -> Void)?
+    /// The native host's stream counters; set by `PeerMedia` when it owns the desktop track.
+    nonisolated(unsafe) static weak var sharedCounters: StreamCounters?
     private let inner: RTCVideoEncoderH264
     private let lock = NSLock()
     private var policy = EncoderRestartPolicy()
+    private var latency = EncoderLatencyTrace()
     private var settings: RTCVideoEncoderSettings?
     private var cores: Int32 = 1
     private var framerate: UInt32 = 60
@@ -82,9 +139,21 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
             inner.setCallback(nil)
             return
         }
-        let wrapped: RTCVideoEncoderCallback = { image, info in
-            if let trace = Self.trace, image.frameType == .videoFrameKey {
+        let wrapped: RTCVideoEncoderCallback = { [weak self] image, info in
+            let now = MachClock.nowMs()
+            let isKey = image.frameType == .videoFrameKey
+            if let trace = Self.trace, isKey {
                 trace("encoded key \(image.buffer.count)B")
+            }
+            if let self {
+                self.lock.lock()
+                let sample = self.latency.completed(key: image.captureTimeMs, atMs: now)
+                if isKey { self.policy.lastKeyFrameBytes = image.buffer.count }
+                self.lock.unlock()
+                if let sample {
+                    Self.sharedCounters?.encoded(latencyMs: sample.latencyMs, bytes: image.buffer.count,
+                                                 isKeyFrame: isKey, inFlight: sample.inFlight)
+                }
             }
             return callback(image, info)
         }
@@ -97,14 +166,19 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         self.settings = settings
         cores = numberOfCores
         if settings.maxFramerate > 0 { framerate = settings.maxFramerate }
+        let tuning = StreamTuning.current
         policy = EncoderRestartPolicy()
+        policy.minimumKbps = tuning.restartFloorKbps
+        policy.keyFrameBudgetMs = tuning.restartKeyFrameBudgetMs
         policy.sessionStarted(kbps: Double(settings.startBitrate), at: ProcessInfo.processInfo.systemUptime)
+        latency.reset()
         lock.unlock()
+        Self.sharedCounters?.encoderSessionStarted()
         return inner.startEncode(with: settings, numberOfCores: numberOfCores)
     }
 
     func release() -> Int {
-        lock.lock(); settings = nil; lock.unlock()
+        lock.lock(); settings = nil; latency.reset(); lock.unlock()
         return inner.release()
     }
 
@@ -113,6 +187,7 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         let restart = settings != nil && policy.shouldRestart(at: ProcessInfo.processInfo.systemUptime)
         let target = UInt32(policy.targetKbps)
         let settings = settings, cores = cores, framerate = framerate, callback = callback
+        if restart { latency.reset() }
         lock.unlock()
         if restart, let settings {
             settings.startBitrate = target
@@ -120,9 +195,13 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
             if inner.startEncode(with: settings, numberOfCores: cores) == 0 {
                 inner.setCallback(callback)
                 _ = inner.setBitrate(target, framerate: framerate)
+                Self.sharedCounters?.encoderSessionStarted()
                 Self.trace?("restarted session at \(target)kbps")
             }
         }
+        lock.lock()
+        latency.submitted(key: frame.timeStampNs / 1_000_000, atMs: MachClock.nowMs())
+        lock.unlock()
         return inner.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes)
     }
 
@@ -131,6 +210,7 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         policy.updateTarget(kbps: Double(bitrateKbit))
         if framerate > 0 { self.framerate = framerate }
         lock.unlock()
+        Self.sharedCounters?.encoderRateUpdated()
         Self.trace?("setBitrate \(bitrateKbit)kbps \(framerate)fps")
         return inner.setBitrate(bitrateKbit, framerate: framerate)
     }

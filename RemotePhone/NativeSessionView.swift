@@ -44,6 +44,7 @@ struct NativeSessionView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         ZStack {
@@ -291,7 +292,10 @@ struct NativeSessionView: View {
             Farside.Palette.void
             let rect = viewport.contentRect
             if let track = connection.remoteVideo, !model.contentConcealed {
-                RemoteVideoSurface(track: track, counters: connection.media?.counters, onFrame: model.frameReceived)
+                RemoteVideoSurface(track: track, counters: connection.media?.counters, statistics: streamStatsEnabled,
+                                   sourceSize: streamStatsEnabled ? model.sourceSize : .zero,
+                                   displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
+                                   onFrame: model.frameReceived)
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
             } else if offlineLayoutCheck {
@@ -663,6 +667,7 @@ struct NativeSessionView: View {
         var parts = [macName]
         if let route = model.link?.route { parts.append(route == "Relay" ? "Relayed" : route) }
         if let rtt = model.link?.roundTripMs { parts.append("\(rtt) ms") }
+        if let size = model.link?.pictureSize { parts.append(size) }
         return parts.joined(separator: " · ")
     }
 
@@ -670,6 +675,7 @@ struct NativeSessionView: View {
         var parts = [macName]
         if let route = model.link?.route { parts.append(route == "Relay" ? "relayed connection" : "direct connection") }
         if let rtt = model.link?.roundTripMs { parts.append("network round trip \(rtt) milliseconds") }
+        if let size = model.link?.pictureSize { parts.append("picture \(size.replacingOccurrences(of: "×", with: " by "))") }
         return parts.joined(separator: ", ")
     }
 
@@ -1497,6 +1503,12 @@ struct NativeSessionView: View {
                 Text(status).font(.footnote).foregroundStyle(Farside.Palette.bone)
                     .listRowBackground(Farside.Palette.panel)
             }
+            if !offlineLayoutCheck {
+                Text(codecDiagnostics)
+                    .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                    .accessibilityIdentifier("remote.codecDiagnostics")
+                    .listRowBackground(Farside.Palette.panel)
+            }
             Toggle("Stream statistics", isOn: $streamStatsEnabled)
                 .toggleStyle(FarsideSwitchStyle())
                 .listRowBackground(Farside.Palette.panel)
@@ -1521,6 +1533,14 @@ struct NativeSessionView: View {
         } header: {
             sectionHeader("Picture")
         }
+    }
+
+    /// Negotiated level, decoder and the level-5.2 capability probe, e.g.
+    /// "H.264 5.2 · hardware decode · hardware level 5.2 (cached)".
+    private var codecDiagnostics: String {
+        [model.link?.codecLevel, model.link?.decoder, NativeCodecCapability.outcomeDescription]
+            .compactMap { $0 }
+            .joined(separator: " · ")
     }
 
     @ViewBuilder private var macPrivacySection: some View {
