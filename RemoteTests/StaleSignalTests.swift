@@ -87,6 +87,35 @@ private final class HostFixture {
 
 @MainActor
 final class StaleSignalTests: XCTestCase {
+    func testOfflineRetiresRouteEpochUntilTheNextPhoneGetsANewOne() throws {
+        let fixture = try HostFixture()
+        fixture.startRegistered()
+        let oldEpoch = String(repeating: "a", count: 32)
+        let newEpoch = String(repeating: "b", count: 32)
+        func route(_ epoch: String) throws -> RelayMessage {
+            let deadline = Int64((Date().timeIntervalSince1970 + 60) * 1000)
+            let json = """
+            {"type":"route","version":1,"room":"\(fixture.invitation.room)","epoch":"\(epoch)","revision":1,"access":"local","expiresAt":\(deadline)}
+            """
+            return try JSONDecoder().decode(RelayMessage.self, from: Data(json.utf8))
+        }
+
+        let oldRoute = try route(oldEpoch)
+        fixture.signaling.deliver(oldRoute)
+        XCTAssertEqual(fixture.host.routePolicyEpoch, oldEpoch)
+        fixture.phoneLeaves()
+        fixture.assertStillListening()
+        XCTAssertNil(fixture.host.routePolicyEpoch)
+
+        fixture.signaling.deliver(oldRoute)
+        XCTAssertEqual(fixture.host.staleMessagesIgnored, 1)
+        XCTAssertNil(fixture.host.routePolicyEpoch)
+        fixture.signaling.deliver(try route(newEpoch))
+        XCTAssertEqual(fixture.host.routePolicyEpoch, newEpoch)
+        fixture.signaling.deliver(RelayMessage(type: "peer", online: true))
+        XCTAssertTrue(fixture.host.isRunning)
+    }
+
     func testALateMessageFromThePreviousPhoneSessionNeverStopsTheMacListening() async throws {
         let fixture = try HostFixture()
         fixture.startRegistered(offer: RenewalOffer(version: 1, leaseSeconds: 1800, renewAfterSeconds: 900))
