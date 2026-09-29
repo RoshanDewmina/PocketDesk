@@ -1,3 +1,4 @@
+import { SELF } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { mintEntitlementToken } from "../src/entitlement/token";
 import { randomHex } from "../src/util";
@@ -83,8 +84,7 @@ describe("POST /v1/entitlements/verify", () => {
     expect(notJson.status).toBe(400);
     const huge = await postJson("/v1/entitlements/verify", { signedTransaction: "x".repeat(40 * 1024), deviceId: randomHex() }, freshIp());
     expect(huge.status).toBe(400);
-    const wrongMethod = await testEnvFetch("/v1/entitlements/verify", "GET");
-    expect(wrongMethod).toBe(404);
+    expect((await SELF.fetch("https://farside.test/v1/entitlements/verify")).status).toBe(404);
   });
 
   it("caps devices per subscription at three and frees a slot on forget", async () => {
@@ -121,8 +121,3 @@ describe("POST /v1/entitlements/verify", () => {
     expect(statuses.slice(6)).toEqual([429, 429]);
   });
 });
-
-async function testEnvFetch(path: string, method: string): Promise<number> {
-  const { SELF } = await import("cloudflare:test");
-  return (await SELF.fetch(`https://farside.test${path}`, { method })).status;
-}

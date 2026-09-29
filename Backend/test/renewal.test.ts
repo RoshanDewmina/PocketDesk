@@ -188,13 +188,22 @@ describe("lease and renewal", () => {
     expect(client.ws.readyState).toBe(WebSocket.OPEN);
   });
 
-  it("unauthenticated sockets time out at the room", async () => {
+  it("a socket that reaches the room and never registers times out there; peers are untouched", async () => {
     const p = await pairing();
-    await connectHost(p);
-    const idle = await open();
-    idle.send(registerMessage(p, "client"));
-    await idle.next(); await idle.next();
+    const host = await connectHost(p);
+    const response = await stub(p.room).fetch("https://room.internal/connect", { headers: { upgrade: "websocket" } });
+    const direct = response.webSocket!;
+    direct.accept();
+    const messages: Record<string, unknown>[] = [];
+    direct.addEventListener("message", event => messages.push(JSON.parse(String(event.data)) as Record<string, unknown>));
+    const closed = new Promise<string>(resolve => direct.addEventListener("close", event => resolve(event.reason)));
+    await advance(6000);
     expect(await runDurableObjectAlarm(stub(p.room))).toBe(true);
-    expect(idle.ws.readyState).toBe(WebSocket.OPEN);
+    expect(await closed).toBe("authentication_timeout");
+    expect(messages).toEqual([{ type: "error", code: "authentication_timeout" }]);
+    expect(host.ws.readyState).toBe(WebSocket.OPEN);
+    const late = await open();
+    late.send(registerMessage(p, "client"));
+    expect((await late.next()).type).toBe("registered");
   });
 });

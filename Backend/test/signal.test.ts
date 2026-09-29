@@ -1,3 +1,4 @@
+import { evictDurableObject } from "cloudflare:test";
 import { beforeAll, describe, expect, it } from "vitest";
 import { mintEntitlementToken } from "../src/entitlement/token";
 import type { RoomDO } from "../src/room";
@@ -249,6 +250,31 @@ describe("entitlement gate (remote.1)", () => {
     expect(host.messages).toEqual([]);
     const retry = await connectClient(p, { features: ["remote.1"], entitlement: token });
     expect(retry.registered.access).toBe("remote");
+  });
+
+  it("a room survives hibernation: peers, entitlement and credentials are restored from attachments and storage", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const p = await pairing();
+    const host = await connectHost(p, { features: ["renew.1"] });
+    const client = await connectClient(p, { features: ["renew.1", "remote.1"], entitlement: token });
+    await host.next(); await host.next(); await client.next();
+
+    await evictDurableObject(rooms().get(rooms().idFromName(p.room)));
+
+    client.send({ type: "signal", payload: payload64(4) });
+    expect((await host.next()).payload).toBe(payload64(4));
+    host.send({ type: "renew" });
+    expect((await host.next()).type).toBe("renewed");
+    expect(await snapshot(p.room)).toMatchObject({ hostOnline: true, clientOnline: true, entitled: true, liveCredentials: 2 });
+    const intruder = await open();
+    intruder.send(registerMessage(p, "client"));
+    expect((await intruder.next()).code).toBe("already_connected");
+
+    client.close();
+    expect(await host.next()).toEqual({ type: "peer", online: false });
+    await sleep(50);
+    expect([...turn.revoked].sort()).toEqual([...turn.issued].sort());
   });
 
   it("the entitlement token is never echoed and rooms never leak identifiers in readiness", async () => {

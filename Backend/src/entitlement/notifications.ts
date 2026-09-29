@@ -52,7 +52,8 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
   }
   log("notification", { type: notificationType, subtype, environment, entitlement: fingerprint(entitlementId) });
   if (!tx || !entitlementId) return "recorded";
-  if (checkTransactionPolicy(tx, config) === "wrong_product" && !config.allowedProductIds.has(tx.productId)) return "recorded";
+  const policy = checkTransactionPolicy(tx, config);
+  if (policy && policy !== "environment_not_accepted") return "recorded";
 
   const existing = await getEntitlement(env.DB, entitlementId);
   const txEnvironment = tx.environment === "LocalTesting" ? "Xcode" : tx.environment;
@@ -63,10 +64,21 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
     case "SUBSCRIBED":
     case "DID_RENEW":
     case "OFFER_REDEEMED":
-    case "DID_CHANGE_RENEWAL_PREF":
     case "REFUND_REVERSED":
     case "RENEWAL_EXTENDED":
+      // A payment happened: the subscription is current again, so any grace period or earlier refund is over.
       await upsertEntitlement(env.DB, { ...base, status: statusFromTransaction({ ...tx, expiresDate: expiresAt }, now), graceUntil: null, revokedAt: null }, now);
+      break;
+    case "DID_CHANGE_RENEWAL_PREF":
+    case "DID_CHANGE_RENEWAL_STATUS":
+    case "PRICE_INCREASE":
+      // Preference changes carry no payment: keep the current access state, refresh product and expiry only.
+      await upsertEntitlement(env.DB, {
+        ...base,
+        status: existing?.status ?? statusFromTransaction({ ...tx, expiresDate: expiresAt }, now),
+        graceUntil: existing?.grace_until ?? null,
+        revokedAt: existing?.revoked_at ?? null,
+      }, now);
       break;
     case "DID_FAIL_TO_RENEW":
       if (subtype === "GRACE_PERIOD" && renewal.gracePeriodExpiresDate) {

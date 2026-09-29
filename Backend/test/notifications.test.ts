@@ -122,6 +122,21 @@ describe("POST /v1/appstore/notifications", () => {
     expect((await row())?.status).toBe("active");
   });
 
+  it("a renewal-preference change during grace keeps the grace period; a new purchase after a refund is valid", async () => {
+    const otid = `p-${randomHex(6)}`;
+    await notification("DID_FAIL_TO_RENEW", { subtype: "GRACE_PERIOD", tx: { originalTransactionId: otid, expiresDate: now - 1000 }, renewal: { gracePeriodExpiresDate: now + 10 * day } });
+    await notification("DID_CHANGE_RENEWAL_PREF", { subtype: "DOWNGRADE", tx: { originalTransactionId: otid, expiresDate: now - 1000 } });
+    expect(await row()).toMatchObject({ status: "grace", grace_until: now + 10 * day });
+
+    const refunded = `q-${randomHex(6)}`;
+    const deviceId = randomHex();
+    await verify({ originalTransactionId: refunded }, deviceId);
+    await notification("REFUND", { tx: { originalTransactionId: refunded, revocationDate: now - 60_000, revocationReason: 1 } });
+    expect((await verify({ originalTransactionId: refunded }, deviceId))).toMatchObject({ entitled: false, reason: "revoked" });
+    const repurchased = await verify({ originalTransactionId: refunded, transactionId: "2000000999999999", purchaseDate: now - 1000, expiresDate: now + 30 * day }, deviceId);
+    expect(repurchased.entitled).toBe(true);
+  });
+
   it("deduplicates by notificationUUID and records unknown types", async () => {
     const uuid = crypto.randomUUID();
     const first = await notification("TEST", { uuid, data: { signedTransactionInfo: undefined, signedRenewalInfo: undefined } });

@@ -73,7 +73,8 @@ export function createCloudflareTurnProvider(config: {
   if (config.apiToken.length !== 64) throw new Error("invalid Cloudflare TURN API token");
   if (!Number.isSafeInteger(config.ttlSeconds) || config.ttlSeconds < 60 || config.ttlSeconds > 86_400) throw new Error("invalid TURN credential TTL");
   if (!Number.isSafeInteger(config.timeoutMs) || config.timeoutMs < 1 || config.timeoutMs > 10_000) throw new Error("invalid TURN provider timeout");
-  const fetcher = config.fetch ?? globalThis.fetch;
+  // Resolved per call so a test that replaces the global fetch after this object was built still applies.
+  const fetcher = (): typeof globalThis.fetch => config.fetch ?? globalThis.fetch;
   const base = config.endpoint ?? "https://rtc.live.cloudflare.com";
   const keyPath = `/v1/turn/keys/${encodeURIComponent(config.keyId)}`;
 
@@ -83,7 +84,7 @@ export function createCloudflareTurnProvider(config: {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), config.timeoutMs);
       try {
-        const response = await fetcher(new URL(`${keyPath}/credentials/generate-ice-servers`, base), {
+        const response = await fetcher()(new URL(`${keyPath}/credentials/generate-ice-servers`, base), {
           method: "POST",
           headers: { authorization: `Bearer ${config.apiToken}`, "content-type": "application/json" },
           body: JSON.stringify({ ttl: config.ttlSeconds }),
@@ -103,7 +104,7 @@ export function createCloudflareTurnProvider(config: {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), config.timeoutMs);
         try {
-          const response = await fetcher(new URL(`${keyPath}/credentials/${encodeURIComponent(username)}/revoke`, base), {
+          const response = await fetcher()(new URL(`${keyPath}/credentials/${encodeURIComponent(username)}/revoke`, base), {
             method: "POST",
             headers: { authorization: `Bearer ${config.apiToken}` },
             signal: controller.signal,

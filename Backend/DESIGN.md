@@ -81,7 +81,7 @@ Sandbox (D5): accepted in production, `environment: "Sandbox"` stored and return
 | `REFUND_REVERSED` | `status=active` |
 | `TEST`, `CONSUMPTION_REQUEST`, everything else | record only |
 
-`POST /v1/admin/appstore/test-notification` asks Apple for a test notification through the App Store Server API (`src/apple/server-api.ts`: ES256 JWT, `aud appstoreconnect-v1`, `bid`, ≤ 60 min) when the In-App Purchase key is configured; the same client re-checks entitlements that are within 48 h of expiry and have had no notification, once a day (cron). Both are optional: without the key the service still works from verify + notifications.
+`POST /v1/admin/appstore/test-notification` asks Apple for a test notification through the App Store Server API (`src/apple/server-api.ts`: ES256 JWT, `aud appstoreconnect-v1`, `bid`, ≤ 60 min) when the In-App Purchase key is configured, and `?token=` reads its delivery status. Optional: without the key the service still works from verify + notifications. A periodic re-check against Apple was considered and left out: it needs a raw transaction id, which conflicts with storing only the HMAC; the 24 h token TTL, verify-on-foreground and notifications bound the exposure instead.
 
 ## 7. TURN
 
@@ -99,7 +99,7 @@ Cloudflare Realtime TURN, `POST https://rtc.live.cloudflare.com/v1/turn/keys/{ke
 | `ENTITLEMENT_HASH_KEY` | same | HMAC key for hashing `originalTransactionId` |
 | `ADMIN_TOKEN` | same | bearer for `/ready` and `/v1/admin/*`, compared constant-time |
 | `APPLE_ROOT_CERTS` | same | comma-separated base64 DER of Apple Root CA - G3 (and optionally G2), obtained by the owner with `bun scripts/apple-roots.ts` from https://www.apple.com/certificateauthority/ |
-| `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_KEY_ID`, `APPLE_IAP_PRIVATE_KEY` | same (optional) | In-App Purchase key from App Store Connect, PKCS#8 PEM; enables test notifications and daily re-checks |
+| `APPLE_IAP_ISSUER_ID`, `APPLE_IAP_KEY_ID`, `APPLE_IAP_PRIVATE_KEY` | same (optional) | In-App Purchase key from App Store Connect, PKCS#8 PEM; enables the test-notification admin route |
 
 Vars (non-secret, per env): `ENVIRONMENT_NAME`, `APP_BUNDLE_ID=com.roshan.PocketDesk.Remote`, `APP_APPLE_ID` (empty until the record exists), `ALLOWED_PRODUCT_IDS`, `ACCEPT_SANDBOX`, `ALLOW_XCODE_TRANSACTIONS` (dev only), `STUN_URLS`, `TURN_CREDENTIAL_TTL_SECONDS`, `ROOM_LEASE_SECONDS`, `MAX_DEVICES_PER_ENTITLEMENT`, `TEST_FORCE_RELAY`. Local development reads the same names from `.dev.vars` (`.dev.vars.example` is the template; the real file is git-ignored).
 
@@ -122,7 +122,7 @@ Structured JSON to Workers Logs only: `event`, `env`, room fingerprint (first 8 
 |---|---|
 | Unpaid relay use | TURN issued only in rooms whose phone presented a valid entitlement token; token bound to device and subscription; D1 status re-read; revoke pushes; account-wide issuance brake; per-credential analytics |
 | Replayed / shared JWS | Device cap per subscription; token bound to the device that verified; sandbox flagged and limited |
-| Forged Apple data | Full chain to a pinned Apple root, OIDs, ES256, bundle/product/environment checks; OCSP not performed (Apple's offline mode) — mitigations: 24 h token TTL, notifications, daily re-check when the IAP key is set, root pins updated by redeploy |
+| Forged Apple data | Full chain to a pinned Apple root, OIDs, ES256, bundle/product/environment checks; OCSP not performed (Apple's offline mode) — mitigations: 24 h token TTL, verify-on-foreground, notifications, root pins updated by redeploy |
 | Room squatting / eviction | A room is its host token hash; duplicates are refused, never evicted; the phone needs the QR secret; E2E envelope stays in the apps |
 | Signaling service reads content | Payloads are AES-GCM sealed by the apps; the service forwards base64 and validates only length and alphabet |
 | Abuse of the HTTP APIs | Size limits (32 KiB bodies, 16 KiB JWS), per-IP and per-device limits, admin bearer compared constant-time, no CORS, no cookies |

@@ -19,6 +19,7 @@ export type TransactionInfo = {
   expiresDate?: number;
   revocationDate?: number;
   signedDate?: number;
+  purchaseDate?: number;
   appAppleId?: number;
 };
 
@@ -36,6 +37,7 @@ export function parseTransactionPayload(payload: Record<string, unknown>): Trans
     expiresDate: optionalNumber(payload.expiresDate),
     revocationDate: optionalNumber(payload.revocationDate),
     signedDate: optionalNumber(payload.signedDate),
+    purchaseDate: optionalNumber(payload.purchaseDate),
     appAppleId: optionalNumber(payload.appAppleId),
   };
 }
@@ -128,7 +130,10 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     const existing = await getEntitlement(env.DB, id);
     // A notification may already know about a later renewal or a grace period; never move access backwards from a stale JWS.
     const expiresAt = Math.max(tx.expiresDate ?? 0, existing?.expires_at ?? 0);
-    const revokedAt = tx.revocationDate ?? existing?.revoked_at ?? null;
+    // A purchase made after a refund is a new, valid subscription even before Apple's SUBSCRIBED notice arrives.
+    const supersedesRefund = existing?.revoked_at !== null && existing?.revoked_at !== undefined &&
+      tx.revocationDate === undefined && (tx.purchaseDate ?? 0) > existing.revoked_at;
+    const revokedAt = tx.revocationDate ?? (supersedesRefund ? null : existing?.revoked_at ?? null);
     let status = statusFromTransaction({ ...tx, expiresDate: expiresAt, revocationDate: revokedAt ?? undefined }, now);
     if (status === "expired" && existing && existing.status === "grace" && (existing.grace_until ?? 0) > now) status = "grace";
     await upsertEntitlement(env.DB, {
