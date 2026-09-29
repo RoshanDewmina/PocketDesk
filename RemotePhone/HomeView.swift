@@ -3,10 +3,19 @@ import SwiftUI
 struct PhoneRemoteView: View {
     @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
+    @StateObject private var onboarding = OnboardingFlow()
+    @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
+    /// A live session stays on screen while it reconnects by itself, so zoom and pan survive a blip.
+    @State private var sessionHeld = false
+
+    private var showsSession: Bool {
+        connection.connected || connection.remoteVideo != nil
+            || (sessionHeld && MacStatus(connection.status).tone == .busy)
+    }
 
     var body: some View {
         Group {
-            if connection.connected || connection.remoteVideo != nil {
+            if showsSession {
                 // A held background session keeps its viewport; the overlay hides every remote pixel.
                 NativeSessionView(model: model, connection: connection, offlineLayoutCheck: false)
                     .overlay {
@@ -17,8 +26,25 @@ struct PhoneRemoteView: View {
             } else if LaunchOptions.layoutCheck {
                 NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true)
             } else {
-                HomeView(model: model, connection: connection)
+                HomeView(model: model, connection: connection, onboarding: onboarding)
             }
+        }
+        .fullScreenCover(item: $onboarding.step) { step in
+            switch step {
+            case .priming(let kind):
+                PermissionPrimingView(kind: kind, onContinue: onboarding.primingFinished)
+            case .coach:
+                GestureCoachView(onFinish: onboarding.coachFinished)
+            }
+        }
+        .onChange(of: connection.connected) { _, connected in
+            if connected {
+                lastReachedAt = Date().timeIntervalSince1970
+                sessionHeld = true
+            }
+        }
+        .onChange(of: connection.status) { _, status in
+            if !connection.connected && MacStatus(status).tone != .busy { sessionHeld = false }
         }
     }
 }
@@ -30,143 +56,348 @@ enum LaunchOptions {
     static var viewportOverride: ViewportMode? {
         has("--ui-viewport-fit") ? .fit : has("--ui-viewport-fill") ? .fill : nil
     }
+    /// UI tests and screenshots never get surprise onboarding screens.
+    static var suppressesOnboarding: Bool {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("--ui-") }
+        #else
+        false
+        #endif
+    }
 
-    private static func has(_ argument: String) -> Bool {
+    static func has(_ argument: String) -> Bool {
         #if DEBUG
         ProcessInfo.processInfo.arguments.contains(argument)
         #else
         false
         #endif
     }
+
+    static func value(_ prefix: String) -> String? {
+        #if DEBUG
+        ProcessInfo.processInfo.arguments.first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+        #else
+        nil
+        #endif
+    }
 }
 
 struct HomeView: View {
+    static let lastReachedKey = "lastReachedAt"
+
     @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
+    @ObservedObject var onboarding: OnboardingFlow
     @State private var showDetails = false
+    @State private var showTroubleshoot = false
     @State private var confirmForget = false
+    @State private var friendlyError: FriendlyError?
+    @State private var lastFailure: FriendlyError?
+    @State private var shownNotice: String?
+    @State private var pairedInSheet = false
+    @State private var contactRipples: [HalftoneRipple] = []
+    @State private var artSize: CGSize = .zero
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var typeSize
 
     private var macName: String? { connection.invitation?.name ?? LaunchOptions.demoMacName }
+    private var status: MacStatus { MacStatus(connection.status) }
+    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot }
 
     var body: some View {
-        NavigationStack {
+        GeometryReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 0) {
                     header
+                    gapArt
                     if let macName {
-                        MacCard(name: macName, status: MacStatus(connection.status),
-                                connect: { connection.start() }, cancel: model.disconnect)
+                        MacCard(name: macName, status: status, failure: status.tone == .idle ? lastFailure : nil,
+                                notice: model.macNotice, lastReached: lastReached)
+                        connectControl
                     } else {
-                        addMacCard
+                        emptyState
                     }
-                    if let notice = model.macNotice {
-                        Label(notice, systemImage: "moon.zzz")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
+                    if !model.error.isEmpty && macName != nil {
+                        FarsideNotice(message: model.error, tone: .caution)
+                            .padding(.top, Farside.Space.m)
                     }
-                    if !model.error.isEmpty {
-                        Label(model.error, systemImage: "exclamationmark.triangle.fill")
-                            .font(.callout)
-                            .foregroundStyle(PhoneTheme.caution)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Label("Keep your Mac awake and unlocked while you use PocketDesk. Away access needs the remote service.",
-                          systemImage: "info.circle")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: Farside.Space.xl)
+                    if macName != nil { homeList }
+                    Text(planCaption)
+                        .farsideCaption()
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, Farside.Space.m)
+                        .accessibilityLabel(planAccessibility)
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, 32)
+                .padding(.bottom, Farside.Space.m)
                 .frame(maxWidth: 560, alignment: .leading)
                 .frame(maxWidth: .infinity)
+                .frame(minHeight: proxy.size.height, alignment: .top)
             }
             .scrollBounceBehavior(.basedOnSize)
-            .background(PhoneTheme.background.ignoresSafeArea())
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { moreMenu } }
             .accessibilityIdentifier("phone.home")
         }
-        .sheet(item: $model.pairingEntry) { entry in
-            PairingSheet(model: model, entry: entry)
+        .background(FarsideBackground())
+        .sheet(item: $model.pairingEntry, onDismiss: pairingDismissed) { entry in
+            PairingSheet(model: model, entry: entry, replacing: connection.invitation?.name) { pairedInSheet = true }
         }
         .sheet(isPresented: $showDetails) {
             ConnectionDetailsSheet(connection: connection)
         }
+        .sheet(isPresented: $showTroubleshoot) {
+            TroubleshootSheet(macName: macName ?? "Your Mac", retry: connect)
+        }
+        .fullScreenCover(item: $friendlyError) { error in
+            FriendlyErrorView(error: error, primary: { resolve(error) }, close: { friendlyError = nil })
+        }
         .confirmationDialog("Forget this Mac?", isPresented: $confirmForget, titleVisibility: .visible) {
-            Button("Forget Mac", role: .destructive) { connection.revoke() }
+            Button("Forget Mac", role: .destructive) {
+                connection.revoke()
+                lastReachedAt = 0
+                lastFailure = nil
+            }
         } message: {
             Text("You’ll need to scan a new pairing code on your Mac to connect again.")
         }
+        .onChange(of: connection.status) { old, new in statusChanged(from: old, to: new) }
+        .onChange(of: model.macNotice) { _, _ in showDepartureIfNeeded() }
+        .onAppear {
+            showDepartureIfNeeded()
+            if macName != nil && connection.invitation != nil { onboarding.offerCoach() }
+            #if DEBUG
+            applyDebugState()
+            #endif
+        }
     }
+
+    // MARK: Sections
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("PocketDesk")
-                .font(PhoneTheme.titleFont)
-                .accessibilityAddTraits(.isHeader)
-            Text(macName == nil ? "Your Mac, within reach." : "Pick up where you left off.")
-                .font(.title3)
-                .foregroundStyle(.secondary)
+        HStack(alignment: .center) {
+            FarsideWordmark(size: 28)
+            Spacer()
+            Menu {
+                Button { onboarding.replayCoach() } label: { Label("How to steer", systemImage: "hand.draw") }
+                Button { showTroubleshoot = true } label: { Label("Trouble connecting?", systemImage: "questionmark.circle") }
+                Button { model.pairingEntry = .paste } label: { Label("Paste Pairing Code", systemImage: "doc.on.clipboard") }
+                Button { showDetails = true } label: { Label("Connection Details", systemImage: "network") }
+                if connection.invitation != nil {
+                    Divider()
+                    Button(role: .destructive) { confirmForget = true } label: {
+                        Label("Forget This Mac", systemImage: "trash")
+                    }
+                }
+            } label: {
+                Text("?")
+                    .font(.headline)
+                    .foregroundStyle(Farside.Palette.ash)
+                    .frame(width: 38, height: 38)
+                    .overlay(Circle().strokeBorder(Farside.Palette.line2, lineWidth: 1))
+                    .frame(width: 44, height: 44)
+                    .contentShape(.rect)
+            }
+            .accessibilityLabel("Help and more")
         }
-        .padding(.top, 4)
+        .padding(.top, Farside.Space.xs)
     }
 
-    private var addMacCard: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "laptopcomputer.and.iphone")
-                .font(.system(size: 52, weight: .regular))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(PhoneTheme.tint)
-                .padding(.top, 8)
-                .accessibilityHidden(true)
-            VStack(spacing: 8) {
-                Text("Add your Mac")
-                    .font(.title2.weight(.semibold))
-                Text("On your Mac, open PocketDesk and click Pair a phone. Then scan the code it shows.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
+    private var gapArt: some View {
+        let busy = status.tone == .busy
+        return ReachArt(gap: gapTarget, contact: status.inContact ? 1 : 0,
+                        cell: horizontalSizeClass == .regular ? 4.5 : 3.6, active: !covered,
+                        ripples: contactRipples, readout: busy)
+            .animation(reduceMotion ? nil : Farside.Motion.easeOut(0.9), value: gapTarget)
+            .animation(reduceMotion ? nil : Farside.Motion.easeOut(0.6), value: busy)
+            .frame(height: horizontalSizeClass == .regular ? 250 : 200)
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { artSize = $0 }
+            .padding(.horizontal, -20)
+            .overlay(alignment: .bottom) {
+                if !busy {
+                    Text(gapCaption)
+                        .farsideCaption()
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Farside.Palette.void)
+                        .accessibilityHidden(true)
+                }
             }
-            VStack(spacing: 6) {
+            .onChange(of: status.inContact) { _, contact in
+                guard contact, artSize != .zero else { return }
+                contactRipples = [HalftoneRipple(center: ReachArt.meetingPoint(in: artSize), date: Date())]
+            }
+            .sensoryFeedback(.impact(weight: .medium), trigger: status.inContact, condition: { _, contact in contact })
+    }
+
+    /// The art's gap follows the connection: reaching the service, the Mac answering, the picture opening.
+    private var gapTarget: CGFloat {
+        guard macName != nil else { return 64 }
+        switch status.progress {
+        case 1: return 18
+        case 2: return 8
+        case 3: return 2
+        default: return 34
+        }
+    }
+
+    private var gapCaption: String {
+        macName == nil ? "Gap · nobody paired yet" : "Gap · one tap wide"
+    }
+
+    @ViewBuilder private var connectControl: some View {
+        VStack(alignment: .leading, spacing: Farside.Space.s) {
+            if status.needsApproval {
+                Label("On your Mac, choose Allow.", systemImage: "checkmark.shield")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(Farside.Palette.bone)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .farsidePlate(Farside.Radius.control, fill: Farside.Palette.panel2, stroke: Farside.Palette.line2)
+            }
+            if status.tone == .busy {
+                Button(action: model.disconnect) {
+                    Text("Cancel connection")
+                }
+                .buttonStyle(FarsideSecondaryButtonStyle(height: 60))
+            } else {
+                Button(action: connect) { ConnectPillLabel() }
+                    .buttonStyle(ConnectPillStyle())
+                    .accessibilityLabel("Connect")
+                    .accessibilityHint("Closes the gap: opens your Mac’s screen on this iPhone")
+                    .accessibilityIdentifier("home.connect")
+            }
+        }
+        .padding(.top, Farside.Space.m)
+    }
+
+    private var emptyState: some View {
+        VStack(alignment: .leading, spacing: Farside.Space.m) {
+            FarsideHeading("Your Mac is far. Your reach isn’t.", accent: "isn’t", size: 32)
+            Text("Install Farside on your Mac, choose Pair a phone in its menu bar, then scan the code it shows.")
+                .font(.body)
+                .foregroundStyle(Farside.Palette.ash)
+                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: Farside.Space.xs) {
                 Button { model.pairingEntry = .scan } label: {
                     Label("Scan pairing code", systemImage: "qrcode.viewfinder")
-                        .frame(maxWidth: .infinity)
                 }
-                .buttonStyle(.glassProminent)
-                .controlSize(.large)
+                .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
+                .accessibilityLabel("Scan pairing code")
                 Button("Paste a pairing code") { model.pairingEntry = .paste }
-                    .buttonStyle(.borderless)
-                    .frame(minHeight: 44)
+                    .buttonStyle(FarsideLinkButtonStyle())
+            }
+            .padding(.top, Farside.Space.xs)
+            if !model.error.isEmpty {
+                FarsideNotice(message: model.error, tone: .caution)
             }
         }
-        .padding(24)
-        .frame(maxWidth: .infinity)
-        .background(PhoneTheme.card, in: .rect(cornerRadius: 28, style: .continuous))
+        .padding(.top, Farside.Space.m)
     }
 
-    private var moreMenu: some View {
-        Menu {
+    private var homeList: some View {
+        VStack(spacing: 0) {
             Button { model.pairingEntry = .scan } label: {
-                Label(macName == nil ? "Pair a Mac" : "Pair Again", systemImage: "qrcode.viewfinder")
+                HomeRow(title: "Pair another Mac", trailing: "plus")
             }
-            Button { model.pairingEntry = .paste } label: {
-                Label("Paste Pairing Code", systemImage: "doc.on.clipboard")
+            .buttonStyle(.plain)
+            Rectangle().fill(Farside.Palette.line).frame(height: 1)
+            Button { onboarding.replayCoach() } label: {
+                HomeRow(title: "How to steer · 40 sec", trailing: "arrow.right")
             }
-            Button { showDetails = true } label: {
-                Label("Connection Details", systemImage: "network")
-            }
-            if connection.invitation != nil {
-                Divider()
-                Button(role: .destructive) { confirmForget = true } label: {
-                    Label("Forget Mac", systemImage: "trash")
-                }
-            }
-        } label: {
-            Image(systemName: "ellipsis")
+            .buttonStyle(.plain)
+            .accessibilityLabel("How to steer, 40 seconds")
         }
-        .accessibilityLabel("More")
+        .farsidePlate(Farside.Radius.card, fill: .clear)
+    }
+
+    private var planCaption: String { "Free on home Wi-Fi · Anywhere: off" }
+    private var planAccessibility: String { "Plan: free on home Wi-Fi. Anywhere access is off." }
+
+    private var lastReached: Date? {
+        lastReachedAt > 0 ? Date(timeIntervalSince1970: lastReachedAt) : nil
+    }
+
+    // MARK: Behaviour
+
+    private func connect() {
+        lastFailure = nil
+        model.error = ""
+        onboarding.beforeConnect { connection.start() }
+    }
+
+    private func statusChanged(from old: String, to new: String) {
+        if MacStatus(new).tone == .busy { lastFailure = nil }
+        guard !connection.isRunning, let name = macName,
+              let error = FriendlyError.from(status: new, previous: old, macName: name) else { return }
+        lastFailure = error
+        if !covered || friendlyError != nil { friendlyError = error }
+    }
+
+    private func showDepartureIfNeeded() {
+        guard let notice = model.macNotice, notice != shownNotice, !connection.isRunning else { return }
+        shownNotice = notice
+        guard let presence = MacDeparture(notice: notice) else { return }
+        let error = FriendlyError.from(presence: presence.kind, at: presence.time)
+        lastFailure = error
+        if friendlyError == nil && !covered { friendlyError = error }
+    }
+
+    private func resolve(_ error: FriendlyError) {
+        friendlyError = nil
+        switch error.action {
+        case .retry:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { connect() }
+        case .pairAgain:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { model.pairingEntry = .scan }
+        }
+    }
+
+    private func pairingDismissed() {
+        guard pairedInSheet else { return }
+        pairedInSheet = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { onboarding.afterPairing() }
+    }
+
+    #if DEBUG
+    private func applyDebugState() {
+        if LaunchOptions.has("--ui-pairing-scan") { model.pairingEntry = .scan }
+        if LaunchOptions.has("--ui-pairing-paste") { model.pairingEntry = .paste }
+        if LaunchOptions.has("--ui-troubleshoot") { showTroubleshoot = true }
+        if let raw = LaunchOptions.value("--ui-status=") {
+            connection.status = raw.replacingOccurrences(of: "_", with: " ")
+        } else if LaunchOptions.demoMacName != nil && connection.invitation == nil {
+            connection.status = "Ready to connect"
+        }
+        if LaunchOptions.has("--ui-last-reached") {
+            lastReachedAt = Calendar.current.date(bySettingHour: 23, minute: 48, second: 0, of: Date())?.timeIntervalSince1970 ?? 0
+        }
+        guard let kind = LaunchOptions.value("--ui-error=") else { return }
+        let name = macName ?? "MacBook Air"
+        let samples: [String: FriendlyError] = [
+            "napping": .napping(since: "11:48 PM"), "unreachable": .unreachable(name), "busy": .busy,
+            "locked": .locked(since: "11:48 PM"), "needsPlan": .needsPlan, "codeRejected": .codeRejected,
+            "declined": .declined, "approvalTimedOut": .approvalTimedOut, "verifyFailed": .verifyFailed,
+            "relayUnavailable": .relayUnavailable, "connectionLost": .connectionLost, "sessionGlitch": .sessionGlitch
+        ]
+        lastFailure = samples[kind]
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { friendlyError = samples[kind] }
+    }
+    #endif
+}
+
+/// The Mac's own account of why it left, parsed from the notice the model wrote.
+private struct MacDeparture {
+    let kind: HostPresence
+    let time: String?
+
+    init?(notice: String) {
+        if notice.contains("went to sleep") { kind = .sleeping }
+        else if notice.contains("was locked") { kind = .locked }
+        else if notice.contains("Another user") { kind = .switchedUser }
+        else { return nil }
+        time = notice.range(of: #"\d{1,2}[:.]\d{2}(\s?[AaPp]\.?[Mm]\.?)?"#, options: .regularExpression).map { String(notice[$0]) }
     }
 }
 
@@ -175,105 +406,178 @@ struct MacStatus: Equatable {
     let text: String
     let tone: Tone
     let needsApproval: Bool
+    /// The Mac has answered: the handshake, approval or media setup is under way.
+    let inContact: Bool
+    /// 0 idle, 1 reaching the service, 2 the Mac answered, 3 opening the picture.
+    let progress: Int
 
     init(_ raw: String) {
         switch raw {
         case "Ready to connect", "Disconnected", "Not connected":
-            self.init(text: "Ready to connect", tone: .idle)
+            self.init(text: "Paired · ready when you are", tone: .idle)
         case "Approve this phone on your Mac":
-            self.init(text: "Approve this iPhone on your Mac", tone: .busy, needsApproval: true)
+            self.init(text: "Approve this iPhone on your Mac", tone: .busy, needsApproval: true, inContact: true, progress: 2)
+        case "new", "checking", "connected", "completed":
+            self.init(text: "Opening the picture", tone: .busy, inContact: true, progress: 3)
+        case "disconnected", "failed", "closed":
+            // Raw media states are transient; the coordinator follows each with a retry or a reason.
+            self.init(text: "Reconnecting", tone: .busy, progress: 1)
         default:
-            if raw.hasPrefix("Connecting") || raw.hasPrefix("Authenticating") {
-                self.init(text: raw, tone: .busy)
+            if raw.hasPrefix("Connecting securely") {
+                self.init(text: "Connecting securely", tone: .busy, progress: 1)
+            } else if raw.hasPrefix("Authenticating") {
+                self.init(text: FriendlyError.cardStatus(raw), tone: .busy, inContact: true, progress: 2)
+            } else if raw.hasPrefix("Connecting live desktop") {
+                self.init(text: FriendlyError.cardStatus(raw), tone: .busy, inContact: true, progress: 3)
             } else if raw.contains("retrying") {
-                self.init(text: raw, tone: .busy)
+                self.init(text: "Reconnecting", tone: .busy, progress: 1)
+            } else if raw.hasPrefix("Pairing removed") || raw.hasPrefix("Pair with your Mac") {
+                self.init(text: "Not paired", tone: .idle)
             } else {
-                self.init(text: raw, tone: .caution)
+                let friendly = FriendlyError.from(status: raw, previous: nil, macName: "Your Mac")
+                self.init(text: friendly?.shortStatus ?? raw, tone: .caution)
             }
         }
     }
 
-    private init(text: String, tone: Tone, needsApproval: Bool = false) {
+    private init(text: String, tone: Tone, needsApproval: Bool = false, inContact: Bool = false, progress: Int = 0) {
         self.text = text
         self.tone = tone
         self.needsApproval = needsApproval
+        self.inContact = inContact
+        self.progress = progress
     }
 
-    var color: Color {
+    var dot: LiveDot.State {
         switch tone {
-        case .idle: .secondary
-        case .busy: PhoneTheme.busy
-        case .caution: PhoneTheme.caution
+        case .idle: .idle
+        case .busy: inContact ? .live : .busy
+        case .caution: .attention
         }
     }
 }
 
-/// A saved-device card, after Apple Home accessory tiles and Find My device sheets.
+/// The saved Mac: name, one honest status line, last reached, and an abstract halftone screen.
 struct MacCard: View {
     let name: String
     let status: MacStatus
-    let connect: () -> Void
-    let cancel: () -> Void
+    var failure: FriendlyError?
+    var notice: String?
+    var lastReached: Date?
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            let layout = typeSize.isAccessibilitySize
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 12))
-                : AnyLayout(HStackLayout(alignment: .center, spacing: 14))
-            layout {
-                Image(systemName: "laptopcomputer")
-                    .font(.title2)
-                    .foregroundStyle(PhoneTheme.tint)
-                    .frame(width: 54, height: 54)
-                    .background(PhoneTheme.tint.opacity(0.12), in: .circle)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(name)
-                        .font(.title3.weight(.semibold))
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(Farside.Palette.bone)
                         .fixedSize(horizontal: false, vertical: true)
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        if status.tone == .busy {
-                            ProgressView().controlSize(.mini)
-                        } else {
-                            StatusDot(color: status.color)
-                        }
-                        Text(status.text)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                    Text("Paired with this iPhone")
+                        .font(.subheadline)
+                        .foregroundStyle(Farside.Palette.ash)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        LiveDot(state: failure == nil ? status.dot : .attention)
+                            .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+                        Text(statusLine)
+                            .farsideCaption(Farside.Palette.bone)
                             .fixedSize(horizontal: false, vertical: true)
                     }
+                    .padding(.top, 10)
                     .accessibilityElement(children: .combine)
+                    .accessibilityLabel("Status: \(statusLine)")
                 }
-                if !typeSize.isAccessibilitySize { Spacer(minLength: 0) }
-            }
-            if status.needsApproval {
-                Label("Check your Mac and click Approve.", systemImage: "checkmark.shield")
-                    .font(.callout)
-                    .foregroundStyle(.primary)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(PhoneTheme.busy.opacity(0.14), in: .rect(cornerRadius: 14, style: .continuous))
-            }
-            if status.tone == .busy {
-                Button(action: cancel) {
-                    Text("Cancel connection").frame(maxWidth: .infinity)
+                if !typeSize.isAccessibilitySize {
+                    Spacer(minLength: 0)
+                    FarsideHalftone(style: HalftoneStyle(cell: 2.5, dotScale: 1.15, dust: 0), animated: false,
+                                    scene: FarsideArt.macThumbnail)
+                        .frame(width: 104, height: 66)
+                        .background(Color.black)
+                        .clipShape(.rect(cornerRadius: 10, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Farside.Palette.line2, lineWidth: 1))
                 }
-                .buttonStyle(.glass)
-                .controlSize(.large)
-            } else {
-                Button(action: connect) {
-                    Text("Connect")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.glassProminent)
-                .controlSize(.large)
             }
+            Rectangle().fill(Farside.Palette.line).frame(height: 1)
+            HStack(alignment: .firstTextBaseline) {
+                Text(lastReachedText).farsideCaption()
+                Spacer(minLength: 8)
+                if lastReached != nil { Text("We won’t ask why").farsideCaption() }
+            }
+            .accessibilityElement(children: .combine)
         }
-        .padding(20)
-        .background(PhoneTheme.card, in: .rect(cornerRadius: 28, style: .continuous))
+        .padding(18)
+        .farsidePlate()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("home.mac")
+    }
+
+    private var statusLine: String {
+        if let failure, status.tone != .busy { return failure.shortStatus }
+        return status.text
+    }
+
+    private var lastReachedText: String {
+        guard let lastReached else { return "Not reached yet" }
+        let time = lastReached.formatted(date: .omitted, time: .shortened)
+        if Calendar.current.isDateInToday(lastReached) { return "Last reached \(time)" }
+        if Calendar.current.isDateInYesterday(lastReached) { return "Last reached yesterday \(time)" }
+        return "Last reached \(lastReached.formatted(.dateTime.month(.abbreviated).day()))"
+    }
+}
+
+/// "Connect · Closes the gap" with the ember arrow in an ink circle.
+private struct ConnectPillLabel: View {
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Connect")
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Farside.Palette.ink)
+                Text("Closes the gap")
+                    .farsideCaption(Farside.Palette.inkMuted)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "arrow.right")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Farside.Palette.ember)
+                .frame(width: 60, height: 60)
+                .background(Farside.Palette.ink, in: .circle)
+        }
+        .padding(.leading, 28)
+        .padding(.trailing, 9)
+        .frame(maxWidth: .infinity, minHeight: 78)
+    }
+}
+
+private struct ConnectPillStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(Farside.Palette.bone.opacity(configuration.isPressed ? 0.85 : 1), in: .capsule)
+            .shadow(color: Farside.Palette.bone.opacity(0.16), radius: 24)
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .animation(Farside.Motion.easeOut(Farside.Motion.micro), value: configuration.isPressed)
+    }
+}
+
+private struct HomeRow: View {
+    let title: String
+    let trailing: String
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.body)
+                .foregroundStyle(Farside.Palette.bone)
+            Spacer()
+            Image(systemName: trailing)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Farside.Palette.ash)
+                .accessibilityHidden(true)
+        }
+        .padding(.horizontal, 18)
+        .frame(minHeight: 52)
+        .contentShape(.rect)
     }
 }
 
@@ -284,32 +588,45 @@ private struct ConnectionDetailsSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Route") {
+                Section {
                     Text(connection.diagnostics)
                         .font(.footnote.monospaced())
+                        .foregroundStyle(Farside.Palette.bone)
                         .textSelection(.enabled)
+                        .listRowBackground(Farside.Palette.panel)
+                } header: {
+                    Text("Route").farsideCaption()
                 }
                 Section {
                     Toggle("Relay-only test", isOn: Binding(get: { connection.forceRelay },
                                                               set: { connection.forceRelay = $0 }))
+                        .toggleStyle(FarsideSwitchStyle())
                         .disabled(connection.connected)
+                        .listRowBackground(Farside.Palette.panel)
                 } footer: {
                     Text("For testing the relay route. Leave off for normal use.")
+                        .foregroundStyle(Farside.Palette.ash)
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Farside.Palette.void2)
             .navigationTitle("Connection Details")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
+        .tint(Farside.Palette.bone)
         .presentationDetents([.medium, .large])
+        .farsideSheet()
     }
 }
 
+/// What the screen shows after Farside returns from the background: hidden, reconnecting or ended.
 struct ConcealedRemoteView: View {
     @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     private enum Presentation { case hidden, reconnecting, reconnectFailed, ended }
 
@@ -329,74 +646,61 @@ struct ConcealedRemoteView: View {
         switch presentation {
         case .hidden: "Screen hidden"
         case .reconnecting: "Reconnecting…"
-        case .reconnectFailed: "Couldn’t reconnect"
+        case .reconnectFailed: "Could not reconnect"
         case .ended: "Session ended"
         }
     }
 
     private var message: String {
         switch presentation {
-        case .hidden: "PocketDesk hides your Mac’s screen while it’s in the background."
+        case .hidden: "Farside hides your Mac’s screen while it’s in the background."
         case .reconnecting: "Resuming your session with \(macName). Your pairing is kept."
         case .reconnectFailed: model.macNotice ?? MacStatus(connection.status).text
-        case .ended: "PocketDesk hid your Mac’s screen while it was in the background. Reconnect to continue."
+        case .ended: "Farside hid your Mac’s screen while it was in the background. Reconnect to continue."
         }
     }
 
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer(minLength: 0)
-            Group {
-                if presentation == .reconnecting {
-                    ProgressView().controlSize(.large)
-                } else {
-                    Image(systemName: "eye.slash")
-                        .font(.system(size: 34, weight: .medium))
-                        .foregroundStyle(PhoneTheme.tint)
-                }
-            }
-            .frame(width: 76, height: 76)
-            .background(PhoneTheme.tint.opacity(0.12), in: .circle)
-            .accessibilityHidden(true)
-            VStack(spacing: 8) {
-                Text(title)
-                    .font(.title2.weight(.semibold))
-                Text(message)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-            VStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
+            FarsideHalftone(style: HalftoneStyle(cell: 5, dust: 0.04),
+                            scene: presentation == .reconnecting ? FarsideArt.reach(gap: 10, contact: 0.6) : FarsideArt.hidden)
+                .frame(height: verticalSizeClass == .compact ? 120 : 240)
+                .padding(.horizontal, -Farside.Space.l)
+            FarsideHeading(title, size: 34)
+                .padding(.top, Farside.Space.xs)
+            Text(message)
+                .font(.body)
+                .foregroundStyle(Farside.Palette.ash)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, Farside.Space.s)
+            Spacer(minLength: Farside.Space.l)
+            VStack(spacing: Farside.Space.xs) {
                 switch presentation {
                 case .hidden:
                     EmptyView()
                 case .reconnecting:
                     Button(action: model.dismissConcealment) {
-                        Text("Cancel").frame(maxWidth: .infinity)
+                        Text("Cancel")
                     }
-                    .buttonStyle(.glass)
-                    .controlSize(.large)
+                    .buttonStyle(FarsideSecondaryButtonStyle())
                 case .reconnectFailed, .ended:
                     if canReconnect {
                         Button(action: model.reconnect) {
-                            Text("Reconnect").frame(maxWidth: .infinity)
+                            Text("Reconnect")
                         }
-                        .buttonStyle(.glassProminent)
-                        .controlSize(.large)
+                        .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
                     }
                     Button(action: model.dismissConcealment) {
-                        Text("Return to PocketDesk").frame(maxWidth: .infinity)
+                        Text("Return to Farside")
                     }
-                    .buttonStyle(.glass)
-                    .controlSize(.large)
+                    .buttonStyle(FarsideSecondaryButtonStyle())
                 }
             }
         }
-        .padding(24)
-        .frame(maxWidth: 520)
+        .padding(Farside.Space.l)
+        .frame(maxWidth: 560)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(PhoneTheme.background.ignoresSafeArea())
+        .background(FarsideBackground())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.concealed")
     }

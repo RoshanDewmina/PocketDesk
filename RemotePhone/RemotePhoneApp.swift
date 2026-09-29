@@ -11,7 +11,8 @@ struct RemotePhoneApp: App {
     var body: some Scene {
         WindowGroup {
             PhoneRemoteView(model: model, connection: model.connection)
-                .tint(PhoneTheme.tint)
+                .tint(Farside.Palette.bone)
+                .preferredColorScheme(.dark)
                 .onAppear { model.sceneChanged(phase) }
                 .onChange(of: phase) { _, value in model.sceneChanged(value) }
         }
@@ -101,6 +102,8 @@ final class PhoneRemoteModel: ObservableObject {
     private var pointerLocatorSupported = false
     @Published private(set) var appliedStreamQuality: StreamQuality?
     @Published private(set) var streamSummaryLines: [String] = []
+    /// Route and network round trip from the latest stream statistics, for the dock caption.
+    @Published private(set) var link: LinkSummary?
     @Published var streamQuality: StreamQuality = .sharp {
         didSet {
             if oldValue != streamQuality { qualityRequestedAt = ProcessInfo.processInfo.systemUptime }
@@ -109,7 +112,7 @@ final class PhoneRemoteModel: ObservableObject {
     private var qualityRequestedAt: TimeInterval?
 
     var streamQualityStatus: String? {
-        guard let appliedStreamQuality else { return "Picture quality needs the updated Mac companion." }
+        guard let appliedStreamQuality else { return "Update Farside on your Mac to change picture quality." }
         guard appliedStreamQuality != streamQuality else { return nil }
         let elapsed = ProcessInfo.processInfo.systemUptime - (qualityRequestedAt ?? ProcessInfo.processInfo.systemUptime)
         return elapsed < 3 ? "Switching to \(streamQuality.title)…"
@@ -138,6 +141,8 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var sourceSize = CGSize(width: 1440, height: 900)
     @Published private(set) var inputRevision: UInt64 = 0
     @Published private(set) var acceptedClicks: UInt64 = 0
+    /// Which click the last accepted one was ("click", "right" or "double"), for the contact ripple.
+    private(set) var lastAcceptedClick = "click"
     @Published private(set) var autoKeyboardRevision: UInt64 = 0
     @Published private(set) var nativeInteractionSupported = false
     @Published private(set) var doubleClickInterval: TimeInterval = 0.5
@@ -176,6 +181,7 @@ final class PhoneRemoteModel: ObservableObject {
                     Task { @MainActor in
                         guard let self, let peer, self.connection.media === peer else { return }
                         self.streamSummaryLines = report.summaryLines
+                        self.link = LinkSummary(report)
                     }
                 }
             }
@@ -210,8 +216,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     var textLimitMessage: String? {
         guard !draft.isEmpty else { return nil }
-        if draft.utf8.count > 4_096 { return "Text is limited to 4,096 UTF-8 bytes." }
-        if draft.utf16.count > 1_024 { return "Text is limited to 1,024 UTF-16 units." }
+        if draft.utf8.count > 4_096 || draft.utf16.count > 1_024 { return "That’s too long to send at once. Send it in two parts." }
         return nil
     }
 
@@ -254,7 +259,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     private var clipboardUnavailableMessage: String {
         if !connection.connected { return "Connect to your Mac to use the clipboard." }
-        if !clipboardSupported { return "Clipboard needs the updated PocketDesk on your Mac." }
+        if !clipboardSupported { return "Clipboard needs the updated Farside on your Mac." }
         if !controlAllowed { return "Your Mac is view-only, so the clipboard is off." }
         return "The clipboard is unavailable right now."
     }
@@ -345,6 +350,7 @@ final class PhoneRemoteModel: ObservableObject {
             pointerSync: pointerSync, textFocusProbe: focusProbe))
         if !accepted { textFocusProbe.invalidate() }
         if accepted && isClick {
+            lastAcceptedClick = name == "click" && (count ?? 1) >= 2 ? "double" : name
             acceptedClicks &+= 1
             if hapticsEnabled { clickFeedback.impactOccurred(intensity: 1.0) }
         }
@@ -770,7 +776,7 @@ final class PhoneRemoteModel: ObservableObject {
         let time = date.formatted(date: .omitted, time: .shortened)
         switch presence {
         case .sleeping: return "Your Mac went to sleep at \(time). Wake it to reconnect."
-        case .locked: return "Your Mac was locked at \(time). PocketDesk can’t unlock it; unlock it in person to reconnect."
+        case .locked: return "Your Mac was locked at \(time). Farside can’t unlock it; unlock it in person to reconnect."
         case .switchedUser: return "Another user started using your Mac at \(time)."
         case .displayAsleep: return "Your Mac’s display is asleep."
         }
@@ -852,6 +858,7 @@ final class PhoneRemoteModel: ObservableObject {
         pointerLocatorSupported = false
         appliedStreamQuality = nil
         streamSummaryLines = []
+        link = nil
         qualityRequestedAt = nil
         pointerLocator.clear()
         pointerOverlay.reset(sourceSize: sourceSize)
@@ -882,6 +889,18 @@ final class PhoneRemoteModel: ObservableObject {
         departureReason = nil
         clipboard.cancel()
         resumeWatchdog?.cancel(); resumeWatchdog = nil
+    }
+}
+
+/// Route and round trip for the dock caption. Network RTT, not end-to-end latency.
+struct LinkSummary: Equatable {
+    var route: String?
+    var roundTripMs: Int?
+
+    init?(_ report: StreamStatsReport) {
+        route = report.route.flatMap { $0 == "Direct" || $0 == "Relay" ? $0 : nil }
+        roundTripMs = report.rttMs.map { Int($0.rounded()) }
+        guard route != nil || roundTripMs != nil else { return nil }
     }
 }
 

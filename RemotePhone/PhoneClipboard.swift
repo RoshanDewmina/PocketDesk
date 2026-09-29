@@ -210,7 +210,7 @@ final class PhoneClipboard: ObservableObject {
         case .empty: "Your Mac’s clipboard has no text."
         case .unsupported: "Only text can be copied from your Mac for now."
         case .tooLarge: "Your Mac’s clipboard is larger than 256 KB, so it wasn’t copied."
-        case .denied: "macOS is blocking PocketDesk from reading the clipboard. Allow it in Privacy & Security on your Mac."
+        case .denied: "macOS is blocking Farside from reading the clipboard. Allow it in Privacy & Security on your Mac."
         case .unchanged: "Nothing new was copied. Select text on your Mac first."
         case .notAllowed: "Your Mac isn’t allowing control right now, so its clipboard wasn’t shared."
         case .busy: "Your Mac didn’t return its clipboard in time. Check your Mac for a prompt."
