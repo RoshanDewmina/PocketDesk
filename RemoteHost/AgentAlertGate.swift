@@ -47,8 +47,8 @@ struct AgentAlertGate {
 enum AgentAlertDisposition: String, Equatable, Sendable {
     /// Told the phone over the live control channel.
     case forwarded
-    /// Sent as a push to a phone that has no live session.
-    case pushed
+    /// APNs accepted a push request; iOS display is not confirmed.
+    case pushed = "accepted_by_apns"
     case duplicate
     case rateLimited = "rate_limited"
     /// No phone is paired with this Mac.

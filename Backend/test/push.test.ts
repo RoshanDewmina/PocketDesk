@@ -1,0 +1,144 @@
+import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
+import { forgetPushRoom, handlePushEvent, handlePushRegister, handlePushRemove, handlePushReport, purgePushRetention } from "../src/push";
+import { randomHex, sha256Hex } from "../src/util";
+import { connectHost, pairing, sleep, testEnv, type Pairing } from "./helpers/client";
+import { installTurnMock } from "./helpers/turn-mock";
+
+beforeAll(() => { installTurnMock(); });
+afterEach(() => { vi.unstubAllGlobals(); });
+
+const req = (path: string, body: unknown) => new Request(`https://farside.test/v1/push/${path}`, {
+  method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+});
+const registration = (deviceToken = randomHex(), enabled = true) => ({
+  deviceToken, environment: "sandbox", alertsEnabled: enabled, timeSensitive: false,
+  showAgentName: false, locale: "en_CA", appBuild: "20260929.1", osMajor: 18, updatedAt: Math.floor(Date.now() / 1000),
+});
+const register = (env: Env, p: Pairing, value: unknown) =>
+  handlePushRegister(req("register", { room: p.room, token: p.clientToken, registration: value }), env);
+const event = (env: Env, p: Pairing, id = `h_${randomHex(6)}`, overrides: Record<string, unknown> = {}) =>
+  handlePushEvent(req("event", { room: p.room, hostToken: p.hostToken, id, kind: "claude_code",
+    event: "needs_user", sessionHash: "aabbccdd", raisedAt: Math.floor(Date.now() / 1000), ...overrides }), env);
+
+async function configuredEnv(): Promise<Env> {
+  const keys = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
+  const bytes = new Uint8Array(await crypto.subtle.exportKey("pkcs8", keys.privateKey) as ArrayBuffer);
+  const pem = `-----BEGIN PRIVATE KEY-----\n${btoa(String.fromCharCode(...bytes))}\n-----END PRIVATE KEY-----`;
+  return Object.assign({ ...testEnv }, {
+    APNS_TEAM_ID: "ABCDEFGHIJ", APNS_KEY_ID: "ABCDEFGHIJ", APNS_PRIVATE_KEY: pem,
+  });
+}
+
+async function livePair(): Promise<Pairing> {
+  const p = await pairing();
+  await connectHost(p);
+  await sleep(30); // room enrollment is scheduled after host registration
+  return p;
+}
+
+describe("pairing-scoped generic APNs alerts", () => {
+  it("rejects unknown rooms, wrong proofs, and wrong APNs environment before storing an address", async () => {
+    const env = await configuredEnv();
+    const unknown = await pairing();
+    expect((await register(env, unknown, registration())).status).toBe(401);
+    const p = await livePair();
+    const wrong = await handlePushRegister(req("register", {
+      room: p.room, token: randomHex(), registration: registration(),
+    }), env);
+    expect(wrong.status).toBe(401);
+    expect((await event(env, p, undefined, { hostToken: randomHex() })).status).toBe(401);
+    expect((await register(env, p, { ...registration(), environment: "production" })).status).toBe(400);
+    expect((await register(env, p, { ...registration(), deviceToken: "bad" })).status).toBe(400);
+    expect(await testEnv.DB.prepare("SELECT room FROM push_registrations WHERE room=?1").bind(p.room).first()).toBeNull();
+  });
+
+  it("fails closed without APNs credentials or phone opt-in", async () => {
+    const p = await livePair();
+    const missing = Object.assign({ ...testEnv }, { APNS_TEAM_ID: "", APNS_KEY_ID: "", APNS_PRIVATE_KEY: "" });
+    expect((await register(missing, p, registration())).status).toBe(503);
+    const env = await configuredEnv();
+    expect((await register(env, p, registration(randomHex(), false))).status).toBe(200);
+    expect((await event(env, p)).status).toBe(409);
+  });
+
+  it("sends only generic fields, reports actions, and holds duplicates", async () => {
+    const env = await configuredEnv();
+    const p = await livePair();
+    expect((await register(env, p, registration())).status).toBe(200);
+    const sent: { url: string; body: string; headers: Headers }[] = [];
+    vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+      sent.push({ url, body: String(init.body), headers: new Headers(init.headers) });
+      return new Response(null, { status: 200 });
+    });
+    const id = `h_${randomHex(6)}`;
+    const answer = await event(env, p, id);
+    expect(answer.status).toBe(202);
+    expect(await answer.json()).toEqual({ state: "accepted" });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.url).toContain("api.sandbox.push.apple.com");
+    const payload = JSON.parse(sent[0]!.body) as Record<string, unknown>;
+    expect(payload).toMatchObject({ hid: id, aps: { alert: { "title-loc-args": ["An agent"] } } });
+    expect(sent[0]!.body).not.toContain(p.hostToken);
+    expect(sent[0]!.body).not.toContain(p.clientToken);
+    expect(sent[0]!.headers.get("apns-topic")).toBe(testEnv.APP_BUNDLE_ID);
+    const duplicate = await event(env, p);
+    expect(await duplicate.json()).toEqual({ state: "held" });
+    expect(sent).toHaveLength(1);
+    const report = await handlePushReport(req("report", {
+      room: p.room, token: p.clientToken, helpRequestID: id, action: "snoozed",
+      at: Math.floor(Date.now() / 1000),
+    }), env);
+    expect(report.status).toBe(200);
+    expect(await testEnv.DB.prepare("SELECT action FROM push_reports WHERE room=?1 AND id=?2")
+      .bind(p.room, id).first<{ action: string }>()).toEqual({ action: "snoozed" });
+    await purgePushRetention(testEnv.DB, Date.now() + 16 * 60_000);
+    expect(await testEnv.DB.prepare("SELECT id FROM push_events WHERE room=?1 AND id=?2")
+      .bind(p.room, id).first()).toBeNull();
+    expect(await testEnv.DB.prepare("SELECT id FROM push_reports WHERE room=?1 AND id=?2")
+      .bind(p.room, id).first()).toBeNull();
+  });
+
+  it("a delayed APNs 410 and a delayed old-token removal cannot erase a rotated registration", async () => {
+    const env = await configuredEnv();
+    const p = await livePair();
+    const oldToken = randomHex();
+    const newToken = randomHex();
+    expect((await register(env, p, registration(oldToken))).status).toBe(200);
+    vi.stubGlobal("fetch", async () => {
+      expect((await register(env, p, registration(newToken))).status).toBe(200);
+      return new Response(null, { status: 410 });
+    });
+    expect((await event(env, p)).status).toBe(503);
+    expect((await handlePushRemove(req("remove", {
+      room: p.room, token: p.clientToken, deviceToken: oldToken,
+    }), env)).status).toBe(204);
+    expect(await testEnv.DB.prepare("SELECT device_token AS token FROM push_registrations WHERE room=?1")
+      .bind(p.room).first<{ token: string }>()).toEqual({ token: newToken });
+    await forgetPushRoom(testEnv.DB, p.room);
+    expect(await testEnv.DB.prepare("SELECT room FROM push_registrations WHERE room=?1").bind(p.room).first()).toBeNull();
+  });
+
+  it("allows offline opt-out but rejects the old pairing after a host re-pairs", async () => {
+    const env = await configuredEnv();
+    const p = await pairing();
+    const host = await connectHost(p);
+    await sleep(30);
+    expect((await register(env, p, registration())).status).toBe(200);
+    host.close();
+    await host.closed;
+    const address = await testEnv.DB.prepare("SELECT device_token AS token FROM push_registrations WHERE room=?1")
+      .bind(p.room).first<{ token: string }>();
+    expect(address).not.toBeNull();
+    expect((await handlePushRemove(req("remove", {
+      room: p.room, token: p.clientToken, deviceToken: address!.token,
+    }), env)).status).toBe(204);
+    expect((await register(env, p, registration())).status).toBe(200);
+    const newerToken = randomHex();
+    const replacement = { ...p, clientToken: newerToken, clientTokenHash: await sha256Hex(newerToken) };
+    await connectHost(replacement);
+    await sleep(30);
+    expect(await testEnv.DB.prepare("SELECT room FROM push_registrations WHERE room=?1").bind(p.room).first()).toBeNull();
+    expect((await register(env, p, registration())).status).toBe(401);
+    expect((await register(env, replacement, registration())).status).toBe(200);
+  });
+});

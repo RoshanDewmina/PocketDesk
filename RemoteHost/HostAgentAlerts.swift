@@ -2,8 +2,8 @@ import Foundation
 
 /// The Mac's side of agent alerts: switches the bridge on and off, decides what each alert becomes, and
 /// hands it to the phone. Off until the person turns it on, and it forwards only a kind, a request id and
-/// a time. When a phone session is live the alert travels over the control channel; otherwise it would
-/// go out as a push, and that path is a stub until an APNs key and Farside's push service exist.
+/// a time. When a phone session is live the alert travels over the control channel; otherwise the
+/// pairing-scoped service may hand a generic alert to APNs.
 @MainActor
 final class HostAgentAlerts: ObservableObject {
     struct Record: Equatable {
@@ -112,7 +112,7 @@ final class HostAgentAlerts: ObservableObject {
         }
         switch await push.deliver(alert) {
         case .sent:
-            record("Pushed to your iPhone that \(alert.kind.displayName) needs you")
+            record("Notification accepted for your iPhone: \(alert.kind.displayName) needs you")
             return .pushed
         case .unavailable(let reason):
             record("Could not reach a phone that is not in a session: \(reason)")
@@ -152,7 +152,7 @@ final class HostAgentAlerts: ObservableObject {
         let outcome: String
         switch last.disposition {
         case .forwarded: outcome = "told your iPhone"
-        case .pushed: outcome = "pushed to your iPhone"
+        case .pushed: outcome = "notification accepted for your iPhone"
         case .duplicate: outcome = "already told"
         case .rateLimited: outcome = "held back: too many this hour"
         case .noPhone: outcome = "no phone is paired"
@@ -215,5 +215,70 @@ final class HostAgentAlerts: ObservableObject {
           }
         }
         """
+    }
+}
+
+/// APNs acceptance is the only positive result. It cannot prove that iOS displayed a notification.
+actor HTTPAgentPushRelay: AgentPushRelay {
+    private let url: URL
+    private let room: String
+    private let hostToken: String
+    private let session: URLSession
+
+    init?(baseURL: URL, room: String, hostToken: String) {
+        guard baseURL.scheme == "https", baseURL.host != nil, baseURL.user == nil,
+              baseURL.password == nil, baseURL.query == nil, baseURL.fragment == nil,
+              baseURL.path.isEmpty || baseURL.path == "/",
+              SecureRandom.isToken(room), SecureRandom.isToken(hostToken),
+              SecureRandom.digest(hostToken) == room else { return nil }
+        url = baseURL.appendingPathComponent("v1/push/event")
+        self.room = room
+        self.hostToken = hostToken
+        session = URLSession(configuration: .ephemeral, delegate: AgentPushNoRedirect(), delegateQueue: nil)
+    }
+
+    func deliver(_ alert: AgentAlert) async -> AgentPushOutcome {
+        guard alert.kind == .claudeCode || alert.kind == .codex,
+              alert.event == .needsUser,
+              alert.id.hasPrefix("h_"),
+              alert.id.count == 14,
+              AgentAlert.isSessionHash(alert.sessionHash) else {
+            return .unavailable("This agent event cannot use push.")
+        }
+        let body: [String: Any] = [
+            "room": room, "hostToken": hostToken, "id": alert.id,
+            "kind": alert.kind.rawValue, "event": alert.event.rawValue,
+            "sessionHash": alert.sessionHash,
+            "raisedAt": Int(alert.raisedAt.timeIntervalSince1970.rounded())
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else {
+            return .unavailable("Could not prepare agent alert.")
+        }
+        var request = URLRequest(url: url, timeoutInterval: 12)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.url == url,
+                  http.statusCode == 202,
+                  let result = try? JSONSerialization.jsonObject(with: data) as? [String: String] else {
+                return .unavailable("Push service did not accept this notification.")
+            }
+            switch result["state"] {
+            case "accepted": return .sent
+            case "held": return .unavailable("The service held back a repeated or excess alert.")
+            default: return .unavailable("Push service did not accept this notification.")
+            }
+        } catch {
+            return .unavailable("Push service is unavailable.")
+        }
+    }
+}
+
+private final class AgentPushNoRedirect: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }

@@ -1,10 +1,12 @@
 import { adminRoom, adminTestNotification, forgetRoom, health, isAdmin, ready } from "./admin";
+import { handleActivityRegister, handleActivityRemove, purgeActivityRetention } from "./activity";
 import { loadConfig } from "./config";
 import { handleNotification } from "./entitlement/notifications";
 import { purgeRetention } from "./entitlement/store";
 import { handleForget, handleVerify } from "./entitlement/verify";
 import { handleSignalUpgrade } from "./gateway";
 import { log, logError } from "./log";
+import { handlePushEvent, handlePushRegister, handlePushRemove, handlePushReport, purgePushRetention } from "./push";
 import { json } from "./util";
 
 export { RoomDO } from "./room";
@@ -28,6 +30,12 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
     if (path === "/v1/entitlements/forget") return handleForget(request, env, config);
     if (path === "/v1/appstore/notifications") return handleNotification(request, env, config);
     if (path === "/v1/rooms/forget") return forgetRoom(request, env);
+    if (path === "/v1/push/register") return handlePushRegister(request, env);
+    if (path === "/v1/push/remove") return handlePushRemove(request, env);
+    if (path === "/v1/push/event") return handlePushEvent(request, env);
+    if (path === "/v1/push/report") return handlePushReport(request, env);
+    if (path === "/v1/activity/register") return handleActivityRegister(request, env);
+    if (path === "/v1/activity/remove") return handleActivityRemove(request, env);
   }
 
   if (path === "/ready" || path.startsWith("/v1/admin/")) {
@@ -58,6 +66,8 @@ export default {
     ctx.waitUntil((async () => {
       try {
         const purged = await purgeRetention(env.DB, Date.now());
+        await purgePushRetention(env.DB, Date.now());
+        await purgeActivityRetention(env.DB, Date.now());
         log("retention_purge", { cron: controller.cron, ...purged });
       } catch (error) {
         logError("retention_purge_failed", error);

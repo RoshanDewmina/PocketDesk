@@ -4,9 +4,7 @@ import UserNotifications
 
 /// What the person answered, ready to tell the service that holds the request.
 ///
-/// Push delivery needs a service that keeps help requests (SYSTEM-INTEGRATIONS.md section 6), and none
-/// exists yet, so nothing is sent. The responses are kept in order so the day that service exists the
-/// phone already says the right thing, and tests can read exactly what would be sent.
+/// The report contains only a request id, fixed action, and time. It cannot approve a Mac request.
 struct AgentAlertResponse: Equatable {
     enum Kind: String { case opened, snoozed, declined, dismissed }
     var helpRequestID: String
@@ -15,14 +13,82 @@ struct AgentAlertResponse: Equatable {
 }
 
 @MainActor
+protocol AgentAlertReportSink: AnyObject {
+    func submit(_ response: AgentAlertResponse) async -> Bool
+}
+
+@MainActor
+final class UnconfiguredAgentAlertReportSink: AgentAlertReportSink {
+    func submit(_ response: AgentAlertResponse) async -> Bool { false }
+}
+
+/// Reports a notification action with the phone's pairing proof, never the screen key.
+@MainActor
+final class HTTPAgentAlertReportSink: AgentAlertReportSink {
+    private let url: URL
+    private let invitation: () -> PairInvitation?
+    private let session: URLSession
+
+    init?(baseURL: URL, invitation: @escaping () -> PairInvitation?) {
+        guard baseURL.scheme == "https", baseURL.host != nil, baseURL.user == nil,
+              baseURL.password == nil, baseURL.query == nil, baseURL.fragment == nil,
+              baseURL.path.isEmpty || baseURL.path == "/" else { return nil }
+        url = baseURL.appendingPathComponent("v1/push/report")
+        self.invitation = invitation
+        session = URLSession(configuration: .ephemeral, delegate: AgentReportNoRedirect(), delegateQueue: nil)
+    }
+
+    func submit(_ response: AgentAlertResponse) async -> Bool {
+        guard let pair = invitation(), SecureRandom.isToken(pair.room), SecureRandom.isToken(pair.token) else { return false }
+        let body: [String: Any] = [
+            "room": pair.room, "token": pair.token, "helpRequestID": response.helpRequestID,
+            "action": response.kind.rawValue, "at": Int(response.at.timeIntervalSince1970.rounded())
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return false }
+        var request = URLRequest(url: url, timeoutInterval: 12)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = data
+        do {
+            let (data, answer) = try await session.data(for: request)
+            guard let http = answer as? HTTPURLResponse, http.url == url, http.statusCode == 200,
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return false }
+            return object["state"] == "recorded"
+        } catch { return false }
+    }
+}
+
+private final class AgentReportNoRedirect: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+@MainActor
 final class AgentAlertReports {
     static let shared = AgentAlertReports()
     private(set) var queued: [AgentAlertResponse] = []
     static let capacity = 32
+    var sink: any AgentAlertReportSink = UnconfiguredAgentAlertReportSink() {
+        didSet { Task { await flush() } }
+    }
+    private var flushing = false
 
     func record(_ response: AgentAlertResponse) {
         queued.append(response)
         if queued.count > Self.capacity { queued.removeFirst(queued.count - Self.capacity) }
+        Task { await flush() }
+    }
+
+    func flush() async {
+        guard !flushing else { return }
+        flushing = true
+        defer { flushing = false }
+        while let first = queued.first {
+            guard await sink.submit(first) else { return }
+            if !queued.isEmpty, queued[0] == first { queued.removeFirst() }
+        }
     }
 }
 

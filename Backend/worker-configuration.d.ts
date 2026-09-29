@@ -33,6 +33,9 @@ interface __BaseEnv_Env {
 	APPLE_IAP_ISSUER_ID: string;
 	APPLE_IAP_KEY_ID: string;
 	APPLE_IAP_PRIVATE_KEY: string;
+	APNS_TEAM_ID?: string;
+	APNS_KEY_ID?: string;
+	APNS_PRIVATE_KEY?: string;
 	ROOM: DurableObjectNamespace<import("./src/index").RoomDO>;
 }
 declare namespace Cloudflare {
@@ -72,6 +75,9 @@ declare namespace Cloudflare {
 		APPLE_IAP_ISSUER_ID: string;
 		APPLE_IAP_KEY_ID: string;
 		APPLE_IAP_PRIVATE_KEY: string;
+		APNS_TEAM_ID?: string;
+		APNS_KEY_ID?: string;
+		APNS_PRIVATE_KEY?: string;
 		ROOM: DurableObjectNamespace<import("./src/index").RoomDO>;
 	}
 	interface ProductionEnv {
@@ -106,6 +112,9 @@ declare namespace Cloudflare {
 		APPLE_IAP_ISSUER_ID: string;
 		APPLE_IAP_KEY_ID: string;
 		APPLE_IAP_PRIVATE_KEY: string;
+		APNS_TEAM_ID?: string;
+		APNS_KEY_ID?: string;
+		APNS_PRIVATE_KEY?: string;
 		ROOM: DurableObjectNamespace<import("./src/index").RoomDO>;
 	}
 	interface Env extends __BaseEnv_Env {}
