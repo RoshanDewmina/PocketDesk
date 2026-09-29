@@ -6,6 +6,7 @@ import io
 from pathlib import Path
 import plistlib
 import runpy
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -18,8 +19,8 @@ MAC_DEBUG_KEY = 'com.apple.security.get-task-allow'
 IOS_DEBUG_KEY = 'get-task-allow'
 
 
-class ArchiveDebugEntitlementTests(unittest.TestCase):
-    def validate(self, platform, debug_entitlements):
+class ArchiveFixture(unittest.TestCase):
+    def validate(self, platform, debug_entitlements=None, *, mutate=None, service_ready=None):
         with tempfile.TemporaryDirectory(prefix='farside-archive-fixture-') as directory:
             app = Path(directory) / 'Farside.app'
             mac = platform == 'mac'
@@ -30,9 +31,10 @@ class ArchiveDebugEntitlementTests(unittest.TestCase):
             info = {
                 'CFBundleIdentifier': 'com.roshan.PocketDesk.RemoteHost' if mac else 'com.roshan.PocketDesk.Remote',
                 'CFBundleShortVersionString': '1.0',
+                'CFBundleVersion': '20260929.11',
                 'NSLocalNetworkUsageDescription': 'Connect to your paired Mac.',
             }
-            entitlements = dict(debug_entitlements)
+            entitlements = dict(debug_entitlements or {})
             if mac:
                 info.update({
                     'PocketDeskServiceURL': 'wss://signal.getfarside.com/signal',
@@ -40,13 +42,27 @@ class ArchiveDebugEntitlementTests(unittest.TestCase):
                     'SUFeedURL': 'https://getfarside.com/mac/appcast.xml',
                 })
             else:
-                info['FarsideAPNSEnvironment'] = 'production'
+                info.update({
+                    'FarsideAPNSEnvironment': 'production',
+                    'FarsideServiceBaseURL': 'https://signal.getfarside.com',
+                    'FarsideServiceReady': 'NO',
+                })
                 entitlements.update({
                     'aps-environment': 'production',
                     'com.apple.developer.associated-domains': ['applinks:getfarside.com'],
                 })
+                widget = app / 'PlugIns/FarsideWidgets.appex'
+                widget.mkdir(parents=True)
+                (widget / 'Info.plist').write_bytes(plistlib.dumps({
+                    'CFBundleIdentifier': 'com.roshan.PocketDesk.Remote.Widgets',
+                    'CFBundleShortVersionString': info['CFBundleShortVersionString'],
+                    'CFBundleVersion': info['CFBundleVersion'],
+                }))
+                (widget / 'PrivacyInfo.xcprivacy').write_bytes(plistlib.dumps({'NSPrivacyTracking': False}))
             info_path = app / 'Contents/Info.plist' if mac else app / 'Info.plist'
             info_path.write_bytes(plistlib.dumps(info))
+            if mutate:
+                mutate(app, info_path)
 
             def codesign(command, **kwargs):
                 if command == ['codesign', '-d', '--entitlements', ':-', str(app)]:
@@ -56,7 +72,10 @@ class ArchiveDebugEntitlementTests(unittest.TestCase):
                 raise AssertionError(f'Unexpected external command: {command}')
 
             output = io.StringIO()
-            with patch.object(sys, 'argv', [str(VALIDATOR), str(app)]), \
+            argv = [str(VALIDATOR), str(app)]
+            if service_ready is not None:
+                argv += ['--service-ready', service_ready]
+            with patch.object(sys, 'argv', argv), \
                     patch('subprocess.run', side_effect=codesign) as signing, \
                     contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as exit_result:
                 runpy.run_path(str(VALIDATOR), run_name='__main__')
@@ -69,6 +88,8 @@ class ArchiveDebugEntitlementTests(unittest.TestCase):
         self.assertIn('Distribution enables get-task-allow', output)
         self.assertIn('Archive metadata checks FAILED', output)
 
+
+class ArchiveDebugEntitlementTests(ArchiveFixture):
     def test_mac_debug_entitlement_is_rejected(self):
         for platform in ('mac', 'ios'):
             with self.subTest(platform=platform):
@@ -96,6 +117,83 @@ class ArchiveDebugEntitlementTests(unittest.TestCase):
                                  {MAC_DEBUG_KEY: 'YES', IOS_DEBUG_KEY: False}):
                 with self.subTest(platform=platform, entitlements=entitlements):
                     self.assert_rejected(platform, entitlements)
+
+
+class ArchiveMetadataTests(ArchiveFixture):
+    @staticmethod
+    def change_info(changes):
+        def mutate(_app, info_path):
+            info = plistlib.loads(info_path.read_bytes())
+            for key, value in changes.items():
+                if value is None:
+                    info.pop(key, None)
+                else:
+                    info[key] = value
+            info_path.write_bytes(plistlib.dumps(info))
+        return mutate
+
+    @staticmethod
+    def change_widget(changes):
+        def mutate(app, _info_path):
+            path = app / 'PlugIns/FarsideWidgets.appex/Info.plist'
+            info = plistlib.loads(path.read_bytes())
+            info.update(changes)
+            path.write_bytes(plistlib.dumps(info))
+        return mutate
+
+    def assert_invalid(self, platform, reason, *, mutate=None, service_ready=None):
+        code, output = self.validate(platform, mutate=mutate, service_ready=service_ready)
+        self.assertEqual(code, 1, output)
+        self.assertIn(reason, output)
+
+    def test_platform_specific_bundle_identity(self):
+        for platform, wrong_id in (('mac', 'com.roshan.PocketDesk.Remote'),
+                                   ('ios', 'com.roshan.PocketDesk.RemoteHost')):
+            with self.subTest(platform=platform):
+                self.assert_invalid(platform, 'Unexpected bundle identity for archive platform',
+                                    mutate=self.change_info({'CFBundleIdentifier': wrong_id}))
+
+    def test_phone_verification_url_is_exact(self):
+        for url in ('https://signal-staging.getfarside.com', 'https://other.example',
+                    'https://user:secret@signal.getfarside.com', 'https://signal.getfarside.com/verify',
+                    'http://signal.getfarside.com', ''):
+            with self.subTest(url=url):
+                self.assert_invalid('ios', 'Unexpected phone verification service URL',
+                                    mutate=self.change_info({'FarsideServiceBaseURL': url}))
+
+    def test_readiness_accepts_only_exact_boolean_or_build_string(self):
+        for expected, values in (('no', (False, 'NO')), ('yes', (True, 'YES'))):
+            for value in values:
+                with self.subTest(expected=expected, value=value):
+                    code, output = self.validate('ios', mutate=self.change_info({'FarsideServiceReady': value}),
+                                                 service_ready=expected)
+                    self.assertEqual(code, 0, output)
+                    self.assertIn('phone purchases disabled' if expected == 'no'
+                                  else 'phone readiness marker matches yes', output)
+
+    def test_readiness_rejects_absent_malformed_and_wrong_mode(self):
+        cases = (('no', None), ('no', True), ('no', 'YES'), ('no', 'no'), ('no', 'false'),
+                 ('no', '0'), ('no', 0), ('no', 1), ('no', '$(FARSIDE_SERVICE_READY)'),
+                 ('yes', False), ('yes', 'NO'), ('yes', 'yes'), ('yes', 1))
+        for expected, value in cases:
+            with self.subTest(expected=expected, value=value):
+                self.assert_invalid('ios', 'Phone service readiness does not match expected value',
+                                    mutate=self.change_info({'FarsideServiceReady': value}),
+                                    service_ready=expected)
+
+    def test_widget_identity_version_build_and_manifest(self):
+        cases = (
+            ('Missing Farside widget extension', lambda app, _info: shutil.rmtree(app / 'PlugIns/FarsideWidgets.appex')),
+            ('Unexpected Farside widget bundle identity', self.change_widget({'CFBundleIdentifier': 'other.widget'})),
+            ('Farside widget CFBundleShortVersionString differs from phone', self.change_widget({'CFBundleShortVersionString': '0.9'})),
+            ('Farside widget CFBundleVersion differs from phone', self.change_widget({'CFBundleVersion': '20260929.10'})),
+            ('Invalid Farside widget Info.plist', lambda app, _info: (app / 'PlugIns/FarsideWidgets.appex/Info.plist').write_bytes(b'not a plist')),
+            ('Missing Farside widget privacy manifest', lambda app, _info: (app / 'PlugIns/FarsideWidgets.appex/PrivacyInfo.xcprivacy').unlink()),
+            ('Invalid Farside widget privacy manifest', lambda app, _info: (app / 'PlugIns/FarsideWidgets.appex/PrivacyInfo.xcprivacy').write_bytes(b'not a plist')),
+        )
+        for reason, mutate in cases:
+            with self.subTest(reason=reason):
+                self.assert_invalid('ios', reason, mutate=mutate)
 
 
 if __name__ == '__main__':
