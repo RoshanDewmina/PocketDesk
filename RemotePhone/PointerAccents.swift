@@ -21,15 +21,19 @@ struct PointerAccentView: View {
     var body: some View {
         ZStack {
             if let render = model.render {
-                let tip = viewport.viewPoint(fromSource: render.point)
+                // Picture-container coordinates, like the pointer glyph, so accents stay on the pointer
+                // while the camera eases; a pointer move never carries the camera's animation.
+                let tip = PointerOverlayView.picturePoint(render.point, scale: viewport.scale)
                 if haloVisible || holding || preview {
                     SettleHalo(diameter: size.arrowHeight * 1.9, solid: holding)
                         .position(tip)
+                        .transaction(value: render.point) { $0.disablesAnimations = true }
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.6)))
                 }
                 if let contact {
                     ContactRipple(serial: contact.serial, kind: contact.kind, frozen: preview)
-                        .position(viewport.viewPoint(fromSource: contact.source))
+                        .position(PointerOverlayView.picturePoint(contact.source, scale: viewport.scale))
+                        .transaction(value: render.point) { $0.disablesAnimations = true }
                 }
             }
         }

@@ -145,7 +145,24 @@ class E2ETestCase: XCTestCase {
         if let voiceTranscript { arguments += ["--farside-e2e-voice-transcript", voiceTranscript] }
         app.launchArguments = arguments
         app.launchEnvironment = ["FARSIDE_E2E": "1", "FARSIDE_E2E_DIR": E2EPaths.root, "FARSIDE_E2E_RUN_ID": config.runID]
+        // iOS can start the app by itself (a background launch or prewarm) and then bring that copy
+        // forward instead of starting ours, so it runs without these arguments, outside E2E mode.
+        _ = try? harness.request("phone.terminate", timeout: 20)
         app.launch()
+        if !phoneEnteredE2EMode(within: 12) {
+            recorder.note("the phone came up outside E2E mode (a copy iOS had started without the launch arguments); relaunched it once")
+            _ = try? harness.request("phone.terminate", timeout: 20)
+            app.launch()
+        }
+    }
+
+    private func phoneEnteredE2EMode(within seconds: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if !phone.state.isEmpty { return true }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        return false
     }
 
     /// Reaches a live session with control, pairing through the paste flow if needed.
@@ -390,6 +407,60 @@ class E2ETestCase: XCTestCase {
             return path
         }
         try E2ETouchSynthesizer.perform(paths, name: "two-finger scroll")
+    }
+
+    /// Three-finger swipe in any direction. `staggered` lands the fingers 50 and 90 ms apart with
+    /// the first drifting 6 pt meanwhile, as real hands do.
+    func threeFingerSwipe(by delta: CGVector, staggered: Bool) throws {
+        try requireSynthesizer()
+        let region = strokeRegion
+        let center = CGPoint(x: region.midX, y: region.midY)
+        let travelStart = staggered ? 0.12 : 0.03
+        let duration = 0.3
+        let fingers: [(dx: Double, dy: Double, down: Double)] = [(-48, -20, 0), (0, 0, staggered ? 0.05 : 0),
+                                                                 (48, 20, staggered ? 0.09 : 0)]
+        let paths = fingers.enumerated().map { index, finger -> E2ETouchPath in
+            let start = CGPoint(x: center.x - delta.dx / 2 + finger.dx, y: center.y - delta.dy / 2 + finger.dy)
+            let path = E2ETouchPath(point: start, atOffset: finger.down)
+            var origin = start
+            if staggered && index == 0 {
+                origin = CGPoint(x: start.x + 6, y: start.y)
+                path.move(to: origin, atOffset: 0.03)
+            }
+            for step in 1...12 {
+                let fraction = CGFloat(step) / 12
+                path.move(to: CGPoint(x: origin.x + delta.dx * fraction, y: origin.y + delta.dy * fraction),
+                          atOffset: travelStart + duration * Double(fraction))
+            }
+            path.lift(atOffset: travelStart + duration + 0.03)
+            return path
+        }
+        try E2ETouchSynthesizer.perform(paths, name: staggered ? "staggered three-finger swipe" : "three-finger swipe")
+    }
+
+    /// Two-finger scroll that rests mid-way, as when reading before scrolling on.
+    func twoFingerScrollWithRest(center: CGPoint, first: CGVector, rest: TimeInterval, then second: CGVector) throws {
+        try requireSynthesizer()
+        let steps = 12
+        let paths = [-36.0, 36.0].map { dx -> E2ETouchPath in
+            let start = CGPoint(x: center.x + dx, y: center.y)
+            let path = E2ETouchPath(point: start, atOffset: 0)
+            for index in 1...steps {
+                let fraction = CGFloat(index) / CGFloat(steps)
+                path.move(to: CGPoint(x: start.x + first.dx * fraction, y: start.y + first.dy * fraction),
+                          atOffset: 0.03 + 0.3 * Double(fraction))
+            }
+            let mid = CGPoint(x: start.x + first.dx, y: start.y + first.dy)
+            let resume = 0.33 + rest
+            for index in 1...steps {
+                let fraction = CGFloat(index) / CGFloat(steps)
+                path.move(to: CGPoint(x: mid.x + second.dx * fraction, y: mid.y + second.dy * fraction),
+                          atOffset: resume + 0.3 * Double(fraction))
+            }
+            path.lift(atOffset: resume + 0.36)
+            return path
+        }
+        try E2ETouchSynthesizer.perform(paths, name: "two-finger scroll with a rest")
     }
 
     /// Three-finger horizontal swipe: left or right, as a Mac trackpad Space switch.

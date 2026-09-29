@@ -60,6 +60,9 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.metrics["settleSeconds"] = Date().timeIntervalSince(settleStart)
         recorder.check("resolution and quality settled", settled, samples.last ?? "no samples")
         checkPictureVisible("after pairing")
+        if let pointer = host.pointer, let display = host.display, !display.contains(pointer) {
+            throw E2EFailure("The Mac pointer is on another display (pointer \(pointer), captured display \(display)), so the phone correctly draws none. Move it onto the captured display and leave the Mac alone during the run. \(host.summary())")
+        }
         try waitFor("phone drawing the Mac pointer from telemetry", timeout: 10) {
             let pointer = phone.state.object("pointer")
             return pointer.bool("hostSupported") && pointer.bool("drawn")
@@ -488,6 +491,70 @@ final class RemoteE2ETests: E2ETestCase {
         tapCanvas()
         try expectHostInput("click", since: before) { $0.string("target") == "fullscreenButton" }
         try expectPadEvent("fullscreenButton", since: before, "Test Pad full-screen button pressed")
+    }
+
+    // MARK: g. Three-finger swipes in every direction, and a scroll that rests mid-way
+
+    /// Stub host: each three-finger swipe, landed together or staggered with drift, sends exactly
+    /// one ⌃-arrow and nothing else. Both hosts: fingers resting mid-scroll keep the stream alive
+    /// (zero-distance keep-alives), so the scroll after the rest is still accepted.
+    /// On the real host the input fence refuses ⌃↑/⌃↓ and ⌃←/⌃→ would switch Spaces (scenario e
+    /// covers that), so the swipe half runs against the stub only.
+    func test_g_ThreeFingerSwipesAndScrollRest() throws {
+        try requireSynthesizer()
+        launchPhone()
+        try ensureConnected()
+        try prepareTestPad()
+
+        if config.isStub {
+            let swipes: [(CGVector, String, String)] = [
+                (CGVector(dx: -150, dy: 0), "right", "left"), (CGVector(dx: 150, dy: 0), "left", "right"),
+                (CGVector(dx: 0, dy: -150), "up", "up"), (CGVector(dx: 0, dy: 150), "down", "down")
+            ]
+            for staggered in [false, true] {
+                for (delta, key, direction) in swipes {
+                    pause(0.7)
+                    let before = marks()
+                    try threeFingerSwipe(by: delta, staggered: staggered)
+                    try expectHostInput("key", since: before) {
+                        $0.string("key") == key && ($0["modifiers"] as? [String]) == ["control"]
+                    }
+                    pause(0.5)
+                    let lines = host.input.since(before.host).filter { $0.bool("accepted") }
+                    let keys = lines.filter { $0.string("action") == "key" }
+                    let leaked = lines.filter { ["click", "right", "double", "middle", "dragDown", "text"].contains($0.string("action") ?? "") }
+                    recorder.check("three-finger swipe \(direction)\(staggered ? ", staggered landing" : "") sends ⌃\(key) once",
+                                   keys.count == 1 && leaked.isEmpty, "keys=\(keys.count) leaked=\(leaked.map { $0.string("action") ?? "?" })")
+                }
+            }
+        } else {
+            recorder.note("real host: swipes are covered by scenario e; only the resting scroll runs here")
+        }
+
+        let scrollArea = try element("scroll")
+        try steerPointer(to: CGPoint(x: scrollArea.midX, y: scrollArea.midY), label: "scroll")
+        if !config.isStub { try pad.command("scrollTo", ["y": 900]) }
+        pause(0.8)
+        let before = marks()
+        try ensureTestPadClear(relocate: false)
+        let region = strokeRegion
+        try twoFingerScrollWithRest(center: CGPoint(x: region.midX, y: region.midY + 40),
+                                    first: CGVector(dx: 0, dy: -70), rest: 1.0, then: CGVector(dx: 0, dy: -70))
+        try expectHostInput("scroll", since: before, timeout: 8) { $0.string("phase") == "ended" }
+        let scrolls = host.input.since(before.host).filter { $0.string("action") == "scroll" }
+        let isKeepAlive: (JSONObject) -> Bool = {
+            $0.string("phase") == "changed" && ($0.double("dx") ?? 1) == 0 && ($0.double("dy") ?? 1) == 0
+        }
+        let lastKeepAlive = scrolls.lastIndex(where: isKeepAlive)
+        let resumed = lastKeepAlive.map { index in
+            scrolls[(index + 1)...].contains { $0.string("phase") == "changed" && !isKeepAlive($0) && $0.bool("accepted") }
+        } ?? false
+        recorder.check("resting fingers keep the scroll stream alive",
+                       scrolls.filter(isKeepAlive).count >= 2 && scrolls.filter(isKeepAlive).allSatisfy { $0.bool("accepted") },
+                       "\(scrolls.filter(isKeepAlive).count) keep-alives over a 1 s rest")
+        recorder.check("scrolling after the rest continues the same stream", resumed)
+        recorder.check("the stream still ends cleanly",
+                       scrolls.contains { $0.string("phase") == "ended" && $0.bool("accepted") })
     }
 
     // MARK: f. Soak

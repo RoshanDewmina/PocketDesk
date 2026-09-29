@@ -405,6 +405,10 @@ final class RemoteInputDriver {
                 if phase == "ended" || phase == "cancelled" {
                     retireScroll(stream)
                     activeScroll = nil
+                } else if phase == "changed" && input.x == 0 && input.y == 0 {
+                    // Fingers resting mid-scroll: keep the stream alive, post nothing.
+                    outcome.accepted = true
+                    break
                 }
             }
             let point = clamped(eventSink.pointerLocation(), to: bounds)
@@ -550,9 +554,11 @@ final class RemoteInputDriver {
         "jisYen": 93, "jisUnderscore": 94, "jisKeypadComma": 95, "jisEisu": 102, "jisKana": 104
     ]
 
-    /// Flags a Mac keyboard itself sets on these keys: Fn for function and navigation keys,
-    /// numeric pad for the keypad. Existing keys keep their original, flag-free events.
+    /// Flags a Mac keyboard itself sets on these keys: Fn and numeric pad for arrows, Fn for
+    /// function and navigation keys, numeric pad for the keypad. The system hotkeys for Mission
+    /// Control and Spaces (⌃ plus an arrow) only match an arrow that carries Fn.
     static func intrinsicFlags(for key: String) -> CGEventFlags {
+        if ["left", "right", "up", "down"].contains(key) { return [.maskSecondaryFn, .maskNumericPad] }
         if key.hasPrefix("keypad") { return .maskNumericPad }
         if ["forwardDelete", "home", "end", "pageUp", "pageDown", "help"].contains(key) { return .maskSecondaryFn }
         if key.count > 1, key.hasPrefix("f"), Int(key.dropFirst()) != nil { return .maskSecondaryFn }

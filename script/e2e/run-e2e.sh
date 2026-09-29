@@ -31,7 +31,7 @@ Usage: script/e2e/run-e2e.sh (--host-app PATH | --self-test) [options]
   --host-app PATH       Installed Debug host to drive (bundle com.roshan.PocketDesk.RemoteHost).
                         A second, isolated E2E instance is launched; the running host is untouched.
   --self-test           Drive the synthetic stub host instead (proves the harness; no real input).
-  --scenarios LIST      Comma list of a,b,c,d,e,f (d = d1..d5; d1..d5 also accepted). Default: all.
+  --scenarios LIST      Comma list of a,b,c,d,e,f,g (d = d1..d5; d1..d5 also accepted). Default: all.
   --repeat N            Run the selected scenarios N times (default 1).
   --soak-seconds S      Scenario f duration in seconds (default 1200 = 20 min).
   --long                Scenario f runs 45 min, past the 30-minute room lease; any disconnect fails.
@@ -50,7 +50,7 @@ EOF
 
 HOST_APP=""
 SELF_TEST=0
-SCENARIO_ARG="a,b,c,d,e,f"
+SCENARIO_ARG="a,b,c,d,e,g,f"
 REPEAT=1
 SOAK=1200
 ROOM_LIFETIME=""
@@ -96,14 +96,15 @@ typeset -A METHOD=(
   d4 test_d4_SignalingRestart
   d5 test_d5_WatchdogRelaunch
   e test_e_FullScreenSpaces
+  g test_g_ThreeFingerSwipesAndScrollRest
   f test_f_Soak
 )
-typeset -A LIMIT=( a 360 b 600 c 480 d1 300 d2 360 d3 600 d4 360 d5 480 e 480 f $(( SOAK + 900 )) )
+typeset -A LIMIT=( a 360 b 600 c 480 d1 300 d2 360 d3 600 d4 360 d5 480 e 480 g 480 f $(( SOAK + 900 )) )
 SCENARIOS=()
 for item in ${(s:,:)SCENARIO_ARG}; do
   case $item in
     d) SCENARIOS+=(d1 d2 d3 d4 d5) ;;
-    a|b|c|d1|d2|d3|d4|d5|e|f) SCENARIOS+=($item) ;;
+    a|b|c|d1|d2|d3|d4|d5|e|f|g) SCENARIOS+=($item) ;;
     *) print -u2 "Unknown scenario: $item"; exit 2 ;;
   esac
 done
@@ -155,7 +156,10 @@ preflight() {
     local executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$HOST_APP/Contents/Info.plist")
     HOST_EXEC="$HOST_APP/Contents/MacOS/$executable"
     # A Release build has no E2E hooks and would start as a normal host with the real pairing.
-    grep -q -a -- "FARSIDE_E2E_SIGNAL_URL" "$HOST_EXEC" \
+    # Xcode's Debug builds keep the app's code in <executable>.debug.dylib beside a small stub.
+    local hook_binaries=("$HOST_EXEC")
+    [[ -f "$HOST_EXEC.debug.dylib" && ! -L "$HOST_EXEC.debug.dylib" ]] && hook_binaries+=("$HOST_EXEC.debug.dylib")
+    grep -q -a -- "FARSIDE_E2E_SIGNAL_URL" "${hook_binaries[@]}" \
       || die "$HOST_APP has no E2E hooks (not a Debug build of this branch); refusing to launch it"
     WATCHDOG_EXEC="$HOST_APP/Contents/MacOS/FarsideWatchdog"
     if [[ ! -x $WATCHDOG_EXEC ]] || ! grep -q -a -- "FARSIDE_E2E_LAUNCH_ID" "$WATCHDOG_EXEC"; then
@@ -578,6 +582,12 @@ serve_requests() {
       testpad.activate)
         if ensure_testpad && activate_testpad; then reply "$id" true "Test Pad activated"
         else reply "$id" false "Test Pad unavailable"; fi ;;
+      phone.terminate)
+        # Only the phone app on this harness's own simulator. A copy iOS started by itself
+        # (background launch, prewarm) has no E2E arguments and must not be brought forward.
+        local phone_before=$(phone_pid)
+        xcrun simctl terminate "$UDID" "$PHONE_BUNDLE_ID" >/dev/null 2>&1 || true
+        reply "$id" true "phone app ${phone_before:+(pid $phone_before) }terminated" ;;
       mark)
         log "MARK $(jget "$done_file" .label)"; reply "$id" true "marked" ;;
       *)
@@ -625,6 +635,8 @@ prepare_for() {
   activate_testpad
   local covered=$(jget "$ROOT/testpad-state.json" '.coveredBy | if type == "array" then join(", ") else . end')
   [[ -n $covered ]] && log "Test Pad currently covered by: $covered (the scenario relocates it or fails)"
+  local pointer_off=$(host_state 'if (.pointer and .display) then (.pointer.x < .display.x or .pointer.y < .display.y or .pointer.x >= .display.x + .display.width or .pointer.y >= .display.y + .display.height) else false end')
+  [[ $pointer_off == true ]] && log "WARNING: the Mac pointer is on another display than the captured one (pointer $(host_state '.pointer | "\(.x),\(.y)"'), display $(host_state '.display | "\(.x),\(.y) \(.width)x\(.height)"')); leave the Mac alone during the run"
   return 0
 }
 

@@ -38,6 +38,7 @@ struct NativeSessionView: View {
     @State private var miniMapToken = 0
     @ObservedObject private var peripherals = HardwarePeripherals.shared
     @AppStorage(PointerSizePreference.key) private var pointerSize: PointerSizePreference = .medium
+    @AppStorage(PointerFollowStyle.key) private var followStyle: PointerFollowStyle = .smooth
     @AppStorage(StreamDebug.defaultsKey) private var streamStatsEnabled = false
     @AppStorage(StreamDebug.markerReadingKey) private var markerReadingEnabled = true
     @AppStorage(StreamTuning.legacyDefaultsKey) private var legacyStreamTuning = false
@@ -292,25 +293,29 @@ struct NativeSessionView: View {
         ZStack(alignment: .topLeading) {
             Farside.Palette.void
             let rect = viewport.contentRect
-            if let track = connection.remoteVideo, !model.contentConcealed {
-                RemoteVideoSurface(track: track, counters: connection.media?.counters,
-                                   statistics: streamStatsEnabled && markerReadingEnabled,
-                                   sourceSize: streamStatsEnabled ? model.sourceSize : .zero,
-                                   displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
-                                   onFrame: model.frameReceived)
-                    .frame(width: rect.width, height: rect.height)
-                    .position(x: rect.midX, y: rect.midY)
-            } else if offlineLayoutCheck {
-                DesktopPreview(size: model.sourceSize)
-                    .scaleEffect(viewport.scale, anchor: .topLeading)
-                    .frame(width: rect.width, height: rect.height, alignment: .topLeading)
-                    .position(x: rect.midX, y: rect.midY)
+            // The picture and the pointer share one placement, so an eased camera pan can never
+            // separate them: the pointer is positioned in picture points inside this container.
+            ZStack(alignment: .topLeading) {
+                if let track = connection.remoteVideo, !model.contentConcealed {
+                    RemoteVideoSurface(track: track, counters: connection.media?.counters,
+                                       statistics: streamStatsEnabled && markerReadingEnabled,
+                                       sourceSize: streamStatsEnabled ? model.sourceSize : .zero,
+                                       displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
+                                       onFrame: model.frameReceived)
+                        .frame(width: rect.width, height: rect.height)
+                } else if offlineLayoutCheck {
+                    DesktopPreview(size: model.sourceSize)
+                        .scaleEffect(viewport.scale, anchor: .topLeading)
+                        .frame(width: rect.width, height: rect.height, alignment: .topLeading)
+                }
+                PointerOverlayView(model: model.pointerOverlay, viewport: viewport, size: pointerSize)
+                PointerAccentView(model: model.pointerOverlay, viewport: viewport, size: pointerSize,
+                                  acceptedClicks: model.acceptedClicks,
+                                  clickKind: ContactRipple.Kind(action: model.lastAcceptedClick), holding: model.dragging,
+                                  preview: offlineLayoutCheck && LaunchOptions.has("--ui-pointer-accent-preview"))
             }
-            PointerOverlayView(model: model.pointerOverlay, viewport: viewport, size: pointerSize)
-            PointerAccentView(model: model.pointerOverlay, viewport: viewport, size: pointerSize,
-                              acceptedClicks: model.acceptedClicks,
-                              clickKind: ContactRipple.Kind(action: model.lastAcceptedClick), holding: model.dragging,
-                              preview: offlineLayoutCheck && LaunchOptions.has("--ui-pointer-accent-preview"))
+            .frame(width: rect.width, height: rect.height, alignment: .topLeading)
+            .position(x: rect.midX, y: rect.midY)
             #if DEBUG
             if offlineLayoutCheck && LaunchOptions.has("--ui-pointer-gallery") {
                 PointerGlyphGallery(size: pointerSize)
@@ -1613,10 +1618,18 @@ struct NativeSessionView: View {
             .foregroundStyle(Farside.Palette.bone)
             .accessibilityIdentifier("remote.pointerSize")
             .listRowBackground(Farside.Palette.panel)
+            Picker("Follow the pointer", selection: $followStyle) {
+                ForEach(PointerFollowStyle.allCases) { style in
+                    Text(style.title).tag(style)
+                }
+            }
+            .foregroundStyle(Farside.Palette.bone)
+            .accessibilityIdentifier("remote.pointerFollow")
+            .listRowBackground(Farside.Palette.panel)
         } header: {
             sectionHeader("Feel")
         } footer: {
-            Text("Your iPhone draws the Mac pointer at this size at every zoom level. An older Mac companion shows its streamed pointer instead.")
+            Text("Your iPhone draws the Mac pointer at this size at every zoom level. An older Mac companion shows its streamed pointer instead. While zoomed in, Smooth eases the picture after the pointer near an edge, Rigid moves it exactly with your finger, and Off leaves panning to two fingers and the mini map.")
                 .foregroundStyle(Farside.Palette.ash)
         }
     }
@@ -1687,13 +1700,13 @@ struct NativeSessionView: View {
     }
 
     private func follow(_ point: CGPoint) {
-        guard model.canControl, !model.dragging, !keyboardOpen, !showControls, !panMode,
+        guard followStyle.follows, model.canControl, !model.dragging, !keyboardOpen, !showControls, !panMode,
               !model.privacyShield, !model.contentConcealed else { return }
         let usable = PointerFollowLayout.usableRect(safeRect: viewport.safeRect,
                                                    canvasFrame: canvasFrame,
                                                    dockFrame: dockFrame)
-        withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
-            _ = viewport.reveal(sourcePoint: point, in: usable)
+        withAnimation(followStyle.animation(reduceMotion: reduceMotion)) {
+            _ = viewport.reveal(sourcePoint: point, in: usable, margin: followStyle.margin)
         }
     }
 

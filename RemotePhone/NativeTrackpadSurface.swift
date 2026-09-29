@@ -149,6 +149,10 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
 
     override var canBecomeFirstResponder: Bool { true }
 
+    /// iOS reads this from the first responder. Its three-finger undo/redo swipes, copy/paste
+    /// pinches and editing-bar tap would otherwise compete with the Mac's three-finger gestures.
+    override var editingInteractionConfiguration: UIEditingInteractionConfiguration { .none }
+
     func setKeyboardFocus(_ wanted: Bool) {
         wantsKeyboardFocus = wanted
         if wanted {

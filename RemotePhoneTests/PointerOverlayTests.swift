@@ -86,6 +86,75 @@ final class PointerOverlayTests: XCTestCase {
         XCTAssertEqual(model.render?.point, CGPoint(x: 799, y: 599))
     }
 
+    func testDisplayLinkAsksForProMotionWhileMovingAndReleasesItWhenIdle() {
+        let model = makeModel()
+        model.hostCapability(PointerSync(videoCursor: false))
+        model.receive(sample(1, x: 300, y: 300, videoCursor: false))
+        XCTAssertNil(model.displayLink, "Nothing to animate while the pointer rests")
+
+        model.localMove(ordinal: model.reserveMoveOrdinal()!, delta: CGSize(width: 3, height: 0), follow: false)
+        let link = try! XCTUnwrap(model.displayLink, "A moving pointer runs a display link")
+        XCTAssertEqual(link.preferredFrameRateRange.preferred, 120)
+        XCTAssertEqual(link.preferredFrameRateRange.minimum, 80)
+        XCTAssertEqual(link.preferredFrameRateRange.maximum, 120)
+
+        now += PointerOverlayModel.motionLinger / 2
+        model.refresh()
+        XCTAssertTrue(model.displayLink === link, "The link stays while motion is recent")
+        now += PointerOverlayModel.motionLinger
+        model.refresh()
+        XCTAssertNil(model.displayLink, "Idle: the link is released so the display can relax")
+    }
+
+    func testTrailingSamplesDuringAStallNeverMoveThePointerBackwards() {
+        let model = makeModel()
+        model.hostCapability(PointerSync(videoCursor: false))
+        model.receive(sample(1, x: 100, y: 100, videoCursor: false))
+        var applied: UInt64 = 0
+        var xs: [CGFloat] = []
+        // 120 Hz finger for 400 ms; telemetry stalls between 100 and 250 ms, then the queued
+        // samples land in a burst, each one reporting a cursor two moves behind its acknowledgement.
+        var queued: [PointerSync] = []
+        var sampleNumber: UInt64 = 1
+        for step in 1...48 {
+            now += 1.0 / 120.0
+            let ordinal = model.reserveMoveOrdinal()!
+            model.localMove(ordinal: ordinal, delta: CGSize(width: 4, height: 0), follow: false)
+            applied = ordinal
+            if step % 2 == 0 {
+                sampleNumber += 1
+                let hostX = 100 + Double(max(0, Int(applied) - 2)) * 4
+                let sync = sample(sampleNumber, x: hostX, y: 100, videoCursor: false, applied: applied)
+                let stalled = (12...30).contains(step)
+                if stalled { queued.append(sync) }
+                else {
+                    for late in queued { model.receive(late) }
+                    queued.removeAll()
+                    model.receive(sync)
+                }
+            }
+            xs.append(model.render!.point.x)
+            XCTAssertNotNil(model.render, "The pointer is drawn throughout a 150 ms stall")
+            XCTAssertEqual(model.advertisement(), PointerSync(overlay: true), "A short stall is not stale telemetry")
+        }
+        for (a, b) in zip(xs, xs.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(b, a, "Drawn x went backwards: \(xs)")
+        }
+        XCTAssertEqual(xs.last!, 100 + 48 * 4, "Prediction stays authoritative while the finger moves")
+    }
+
+    func testFollowStylesOfferSmoothRigidAndOff() {
+        XCTAssertEqual(PointerFollowStyle.allCases, [.smooth, .rigid, .off])
+        XCTAssertNotNil(PointerFollowStyle.smooth.animation(reduceMotion: false))
+        XCTAssertNil(PointerFollowStyle.smooth.animation(reduceMotion: true), "Reduce Motion pans without easing")
+        XCTAssertNil(PointerFollowStyle.rigid.animation(reduceMotion: false))
+        XCTAssertTrue(PointerFollowStyle.rigid.follows)
+        XCTAssertFalse(PointerFollowStyle.off.follows)
+        XCTAssertGreaterThan(PointerFollowStyle.smooth.margin, PointerFollowStyle.rigid.margin,
+                             "Eased panning needs room for the pointer to lead the picture")
+        XCTAssertEqual(PointerFollowStyle(rawValue: "smooth"), .smooth)
+    }
+
     func testGlyphPlacementPutsTheHotSpotOnThePointAtEverySize() {
         for size in PointerSizePreference.allCases {
             for shape in [PointerShape.arrow, .iBeam, .pointingHand, .resizeLeftRight] {
