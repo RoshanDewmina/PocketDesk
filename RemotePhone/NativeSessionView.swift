@@ -207,7 +207,13 @@ struct NativeSessionView: View {
             if offlineLayoutCheck && LaunchOptions.has("--ui-controls-check") { openControls() }
             if offlineLayoutCheck && LaunchOptions.has("--ui-controls-settings") {
                 openControls()
-                if controlsAsOverlay { showOverlaySettings = true } else { controlsPath = [.settings] }
+                let page = LaunchOptions.value("--ui-controls-page=").flatMap(ControlsPage.named)
+                if controlsAsOverlay {
+                    showOverlaySettings = true
+                    controlsPath = page.map { [$0] } ?? []
+                } else {
+                    controlsPath = [.settings] + (page.map { [$0] } ?? [])
+                }
             }
             if offlineLayoutCheck, let hold = LaunchOptions.value("--ui-hold-preview=") {
                 model.previewHoldForTesting(explicit: hold == "explicit")
@@ -1145,8 +1151,10 @@ struct NativeSessionView: View {
     // MARK: - Controls panel
 
     /// Pages pushed inside Controls. The key panel is the root.
-    private enum ControlsPage: Hashable {
+    private enum ControlsPage: String, Hashable, CaseIterable {
         case settings, display, picture, pointer, touch, view, clipboard, keyboard, steer, diagnostics
+
+        static func named(_ name: String) -> ControlsPage? { ControlsPage(rawValue: name) }
     }
 
     /// iPhone portrait shows Controls as a short sheet with the trackpad live above it. A sheet in

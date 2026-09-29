@@ -38,6 +38,8 @@ final class FarsideScreenshotTour: XCTestCase {
                                            "--ui-viewport-fill", "--ui-pointer-preview", "--ui-controls-check"]),
         Shot(name: "controls-settings", arguments: ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
                                                     "--ui-viewport-fill", "--ui-controls-settings"]),
+        Shot(name: "controls-settings-pointer", arguments: ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
+                                                            "--ui-viewport-fill", "--ui-controls-settings", "--ui-controls-page=pointer"]),
         Shot(name: "hold-finger", arguments: ["--ui-layout-check", "--ui-viewport-fill", "--ui-pointer-preview",
                                               "--ui-hold-preview=finger"]),
         Shot(name: "hold-explicit", arguments: ["--ui-layout-check", "--ui-viewport-fill", "--ui-pointer-preview",
@@ -48,6 +50,8 @@ final class FarsideScreenshotTour: XCTestCase {
         Shot(name: "landscape-dock", arguments: ["--ui-layout-check", "--ui-viewport-fit", "--ui-dock-open"], landscape: true),
         Shot(name: "landscape-dictation", arguments: ["--ui-layout-check", "--ui-voice-preview-check"], landscape: true),
         Shot(name: "landscape-keyboard", arguments: ["--ui-layout-check", "--ui-viewport-fill", "--ui-keyboard-check"], landscape: true, wait: 3),
+        Shot(name: "landscape-controls-settings", arguments: ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
+                                                              "--ui-viewport-fill", "--ui-controls-settings"], landscape: true),
         Shot(name: "landscape-controls", arguments: ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
                                                      "--ui-viewport-fill", "--ui-pointer-preview", "--ui-controls-check"], landscape: true),
         Shot(name: "landscape-coach", arguments: ["--ui-coach"], landscape: true)
