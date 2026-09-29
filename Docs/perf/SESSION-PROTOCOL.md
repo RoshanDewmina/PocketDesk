@@ -45,6 +45,24 @@ Second phone at 240 fps slow motion, Mac clock and iPhone clock in frame for 5 s
 
 Undo any switch with `defaults delete com.roshan.PocketDesk.RemoteHost <key>` and relaunch the host.
 
+## Run D: observer effect (2 × 60 s, motion on)
+
+The instruments themselves touch the frame path: with Stream statistics on, the phone reads the marker strip on the decode thread and takes the drawable before WebRTC's draw. Compare the same 60 s of motion with statistics **on** and **off**; the Mac's own log (`~/Library/Caches/PocketDeskStreamStats.jsonl`, `bench/stats_summary.py --last=60`) records encoded/sent fps and RTT in both cases, and a 30 s phone screen recording run through `bench/analyze.py` gives the delivered cadence in both. If the stats-on run shows lower cadence or more superseded frames, the marker reading is the suspect (a phone-side "marker off while stats on" switch is a code follow-up).
+
+## Mandatory last step: clear every experiment key
+
+Experiment switches live in the host's user defaults and would silently change Roshan's normal sessions if left behind. After the session, on the Mac:
+
+```
+for key in PocketDeskLegacyStreamTuning PocketDeskCaptureNativeRate PocketDeskRouteAwareSeed \
+           PocketDeskRestartFloorKbps PocketDeskRestartKeyFrameBudgetMs PocketDeskEncoderCeilingKbps; do
+  defaults delete com.roshan.PocketDesk.RemoteHost "$key" 2>/dev/null
+done
+defaults read com.roshan.PocketDesk.RemoteHost | grep -c "PocketDeskCaptureNativeRate\|PocketDeskRouteAwareSeed\|PocketDeskRestart\|PocketDeskEncoderCeiling\|PocketDeskLegacyStreamTuning"
+```
+
+The count must print `0`. Relaunch the host, connect once, and check that the `tuning` field of the next stats sample (phone overlay first lines, or the Mac log's last line) reads exactly `playout 0-0ms · mode bitrates · keep resolution · encoder restart · max refresh`: nothing after "max refresh". On the phone, switch Stream statistics off and leave "Previous stream tuning" off. Prefer launch arguments (`-PocketDeskEncoderCeilingKbps 12000` on the host's command line) over `defaults write` for future A/Bs; they cannot outlive the process.
+
 ## Screenshots
 
 `script/perf/legibility.sh --marker screenshot.png` scores a phone screenshot of the chart (the seed is read from the marker strip in Fit view; pass `--seed 0x…` otherwise). Score the Test Pad's own PNG (`bench.snapshot`) the same way for the Vision ceiling.
