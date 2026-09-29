@@ -275,6 +275,7 @@ final class RemoteHostModel: ObservableObject {
         startWatchdog()
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.active && !self.connection.connected }
         connection.restore()
+        connection.startAllowed = { [weak self] in self?.serverRemovalPending == false }
         connection.onAuthenticated = { [weak self] in self?.phoneConnected() }
         connection.onEnded = { [weak self] in
             self?.endCapture()
