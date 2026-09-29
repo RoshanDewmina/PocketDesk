@@ -46,6 +46,7 @@ struct PhoneRemoteView: View {
         .onChange(of: connection.status) { _, status in
             if !connection.connected && MacStatus(status).tone != .busy { sessionHeld = false }
         }
+        .modifier(E2EStateProbeModifier())
     }
 }
 
@@ -56,10 +57,11 @@ enum LaunchOptions {
     static var viewportOverride: ViewportMode? {
         has("--ui-viewport-fit") ? .fit : has("--ui-viewport-fill") ? .fill : nil
     }
-    /// UI tests and screenshots never get surprise onboarding screens.
+    /// UI tests, screenshots and E2E harness runs never get surprise onboarding screens
+    /// (permission priming, gesture coach).
     static var suppressesOnboarding: Bool {
         #if DEBUG
-        ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("--ui-") }
+        ProcessInfo.processInfo.arguments.contains { $0.hasPrefix("--ui-") || $0 == E2E.launchArgument }
         #else
         false
         #endif

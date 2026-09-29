@@ -13,7 +13,7 @@ struct RemoteHostApp: App {
         appDelegate.configure { model.stopForTermination() }
         appDelegate.onLaunch = {
             HostAppActivation.shared.start()
-            if model.needsSetup { HostAppActivation.shared.bringForward() }
+            if model.needsSetup && !Self.e2eActive { HostAppActivation.shared.bringForward() }
         }
         appDelegate.onReopen = {
             HostAppActivation.shared.showSetupOrSettings(needsSetup: model.needsSetup)
@@ -26,7 +26,7 @@ struct RemoteHostApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentSize)
-        .defaultLaunchBehavior(model.needsSetup ? .presented : .suppressed)
+        .defaultLaunchBehavior(model.needsSetup && !Self.e2eActive ? .presented : .suppressed)
         .restorationBehavior(.disabled)
 
         Settings {
@@ -42,6 +42,15 @@ struct RemoteHostApp: App {
                 .accessibilityLabel("Farside, \(model.status.title)")
         }
         .menuBarExtraStyle(.window)
+    }
+
+    /// The E2E harness host never presents setup or takes focus from the Farside Test Pad.
+    private static var e2eActive: Bool {
+        #if DEBUG
+        HostE2E.active != nil
+        #else
+        false
+        #endif
     }
 }
 
