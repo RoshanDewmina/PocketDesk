@@ -176,6 +176,7 @@
 		9832BD9AC10BA73350B97EEA /* SessionContinuity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 643A13E08A654E915062CB1B /* SessionContinuity.swift */; };
 		9844445D5D4128BB3001B11B /* PointerTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70754EB2A998CAF466237F4F /* PointerTelemetry.swift */; };
 		98A1E3E786B0D5E82BD70758 /* StreamTuning.swift in Sources */ = {isa = PBXBuildFile; fileRef = E36FFD3DA225862D411FE682 /* StreamTuning.swift */; };
+		99FC381EA7EC56C30231ACD8 /* FarsideScreenshotTour.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C56F9095024592E3C8FDBD7 /* FarsideScreenshotTour.swift */; };
 		9A19AC3434D8E9167C18AB35 /* NativeCodecCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7E6B1B2D48610494416341 /* NativeCodecCapability.swift */; };
 		9A63E32E5C3DDF74A6F0E069 /* ViewportTransform.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5598D7CD9CA98C9C794406BF /* ViewportTransform.swift */; };
 		9A7D8537812EEE39DAE71231 /* BrowserPeerStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 173805F45FB3C845B4C84B82 /* BrowserPeerStore.swift */; };
@@ -431,6 +432,7 @@
 		878E8C2656F76F79E1128C2E /* MediaDiagnosticsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaDiagnosticsTests.swift; sourceTree = "<group>"; };
 		8A8764CD274C62102BEC76EB /* DesktopH264Encoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesktopH264Encoder.swift; sourceTree = "<group>"; };
 		8AF05697B36E188119F45B83 /* PocketDesktopHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketDesktopHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8C56F9095024592E3C8FDBD7 /* FarsideScreenshotTour.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideScreenshotTour.swift; sourceTree = "<group>"; };
 		8E4539B888291F193DD3C21E /* CommittedTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommittedTextField.swift; sourceTree = "<group>"; };
 		90D90505BF498BF2C1FA801F /* HostReadiness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostReadiness.swift; sourceTree = "<group>"; };
 		9211D8B9DD746165FF31BB31 /* Pairing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Pairing.swift; sourceTree = "<group>"; };
@@ -729,6 +731,7 @@
 			isa = PBXGroup;
 			children = (
 				43CA8C2354F26641D43EB6D9 /* FarsideRedesignUITests.swift */,
+				8C56F9095024592E3C8FDBD7 /* FarsideScreenshotTour.swift */,
 				78393E114806ACFDD6DDF0BB /* PointerOverlayUITests.swift */,
 				7E0861848B93929EDE7B10C1 /* SessionLayoutTests.swift */,
 			);
@@ -1254,6 +1257,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				63A95FB32A150E8864B6E683 /* FarsideRedesignUITests.swift in Sources */,
+				99FC381EA7EC56C30231ACD8 /* FarsideScreenshotTour.swift in Sources */,
 				787BE9A65A00AAF5B74AA9C6 /* PointerOverlayUITests.swift in Sources */,
 				88C196609E8E921FE6B1CB1D /* SessionLayoutTests.swift in Sources */,
 			);

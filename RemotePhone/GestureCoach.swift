@@ -24,6 +24,8 @@ final class OnboardingFlow: ObservableObject {
         #if DEBUG
         if LaunchOptions.has("--ui-coach") { step = .coach }
         if LaunchOptions.has("--ui-priming-network") { step = .priming(.localNetwork) }
+        if LaunchOptions.has("--ui-priming-mic") { step = .priming(.microphone) }
+        if LaunchOptions.has("--ui-priming-camera") { step = .priming(.camera) }
         #endif
     }
 
@@ -362,7 +364,12 @@ struct GestureCoachView: View {
             }
         }
         .background(FarsideBackground())
-        .onAppear { coach.start() }
+        .onAppear {
+            coach.start()
+            #if DEBUG
+            for _ in 0..<(LaunchOptions.value("--ui-coach-lesson=").flatMap(Int.init) ?? 0) { coach.advance() }
+            #endif
+        }
         .sensoryFeedback(.selection, trigger: coach.passed, condition: { _, passed in passed })
         .sensoryFeedback(.impact(weight: .heavy), trigger: coach.ripple?.serial)
         .accessibilityElement(children: .contain)
