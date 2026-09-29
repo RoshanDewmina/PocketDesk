@@ -599,6 +599,10 @@ Lost-device handling is unresolved for a user away from the Mac. Retain revoke-a
 
 Payment, if introduced, needs localized prices, verified entitlement, restore, pending/canceled/refunded states, clear companion-app requirements, and a clean session shutdown at any usage limit. No billing implementation should precede the product/value decision.
 
+### Home connection readout — 29 September 2026
+
+Roshan chose “Skip distance; show connection status” in the coordinated Farside chat. Replace the decorative “Gap … cm” counter with the actual connection stage. Keep the Reach contact animation as illustration; it must not imply measured physical distance. No distance-ranging feature or new location/Bluetooth permission is part of this change.
+
 ### Mac Settings design follow-up — 29 September 2026
 
 - [ ] Align Mac Settings more closely with the Farside website and mobile app: compare typography, spacing, surfaces, buttons and status treatments against the current Reach design system (`design/FARSIDE-DESIGN-SYSTEM.md`). Preserve native Mac accessibility and clear destructive-action confirmation. Requested by Roshan alongside the wider two-column Settings layout; the broader visual redesign is a follow-up task.
