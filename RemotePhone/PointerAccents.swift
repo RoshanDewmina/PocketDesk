@@ -28,7 +28,7 @@ struct PointerAccentView: View {
                         .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.6)))
                 }
                 if let contact {
-                    ContactRipple(serial: contact.serial, kind: contact.kind)
+                    ContactRipple(serial: contact.serial, kind: contact.kind, frozen: preview)
                         .position(viewport.viewPoint(fromSource: contact.source))
                 }
             }
@@ -141,6 +141,8 @@ struct ContactRipple: View {
 
     let serial: Int
     var kind: Kind = .click
+    /// Holds the first moment of the contact for previews and screenshots.
+    var frozen = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var first = false
     @State private var second = false
@@ -167,11 +169,12 @@ struct ContactRipple: View {
     private func ring(expanded: Bool, size: CGFloat) -> some View {
         Circle()
             .strokeBorder(Farside.Palette.ember, lineWidth: 2)
-            .frame(width: expanded ? size : 12, height: expanded ? size : 12)
+            .frame(width: expanded ? size : (frozen ? size * 0.42 : 12), height: expanded ? size : (frozen ? size * 0.42 : 12))
             .opacity(expanded ? 0 : 1)
     }
 
     private func play() {
+        guard !frozen else { return }
         first = false
         second = false
         let motion = reduceMotion ? Animation.easeOut(duration: 0.45) : Farside.Motion.easeOut(0.7)

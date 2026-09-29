@@ -282,7 +282,8 @@ struct NativeSessionView: View {
     @ViewBuilder private var topPills: some View {
         VStack(spacing: 8) {
             if (!offlineLayoutCheck && !connection.connected) || LaunchOptions.has("--ui-reconnecting") {
-                ReconnectPill(macName: macName, end: model.disconnect)
+                ReconnectPill(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "your Mac",
+                              end: model.disconnect)
                     .transition(.opacity)
             }
             if streamStatsEnabled && !model.streamSummaryLines.isEmpty {
@@ -643,7 +644,7 @@ struct NativeSessionView: View {
                 .accessibilityHint("Presses Command-C on your Mac, then copies the selection to this iPhone")
             }
             HStack {
-                Text("Text only · up to 256 KB").farsideCaption()
+                Text("Text · 256 KB max").farsideCaption()
                 Spacer(minLength: 8)
                 Button("Get Mac clipboard") { model.fetchMacClipboard() }
                     .buttonStyle(FarsideLinkButtonStyle())

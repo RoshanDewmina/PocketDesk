@@ -100,6 +100,7 @@ struct HomeView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var macName: String? { connection.invitation?.name ?? LaunchOptions.demoMacName }
@@ -108,38 +109,40 @@ struct HomeView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    header
-                    gapArt
-                    if let macName {
-                        MacCard(name: macName, status: status, failure: status.tone == .idle ? lastFailure : nil,
-                                notice: model.macNotice, lastReached: lastReached)
-                        connectControl
-                    } else {
-                        emptyState
+            if verticalSizeClass == .compact {
+                // Landscape phone: art on the left, the Mac and Connect always in view on the right.
+                HStack(alignment: .top, spacing: Farside.Space.l) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        header
+                        gapArt(fullBleed: false)
+                        Spacer(minLength: 0)
                     }
-                    if !model.error.isEmpty && macName != nil {
-                        FarsideNotice(message: model.error, tone: .caution)
-                            .padding(.top, Farside.Space.m)
+                    .frame(maxWidth: .infinity)
+                    ScrollView {
+                        homeColumn.padding(.top, Farside.Space.s)
                     }
-                    Spacer(minLength: Farside.Space.xl)
-                    if macName != nil { homeList }
-                    Text(planCaption)
-                        .farsideCaption()
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, Farside.Space.m)
-                        .accessibilityLabel(planAccessibility)
+                    .scrollBounceBehavior(.basedOnSize)
+                    .frame(maxWidth: 440)
+                    .accessibilityIdentifier("phone.home")
                 }
                 .padding(.horizontal, 20)
-                .padding(.bottom, Farside.Space.m)
-                .frame(maxWidth: 560, alignment: .leading)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: proxy.size.height, alignment: .top)
+                .padding(.bottom, Farside.Space.xs)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        header
+                        gapArt(fullBleed: true)
+                        homeColumn
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, Farside.Space.m)
+                    .frame(maxWidth: 560, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: proxy.size.height, alignment: .top)
+                }
+                .scrollBounceBehavior(.basedOnSize)
+                .accessibilityIdentifier("phone.home")
             }
-            .scrollBounceBehavior(.basedOnSize)
-            .accessibilityIdentifier("phone.home")
         }
         .background(FarsideBackground())
         .sheet(item: $model.pairingEntry, onDismiss: pairingDismissed) { entry in
@@ -205,16 +208,40 @@ struct HomeView: View {
         .padding(.top, Farside.Space.xs)
     }
 
-    private var gapArt: some View {
+    @ViewBuilder private var homeColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let macName {
+                MacCard(name: macName, status: status, failure: status.tone == .idle ? lastFailure : nil,
+                        notice: model.macNotice, lastReached: lastReached)
+                connectControl
+            } else {
+                emptyState
+            }
+            if !model.error.isEmpty && macName != nil {
+                FarsideNotice(message: model.error, tone: .caution)
+                    .padding(.top, Farside.Space.m)
+            }
+            Spacer(minLength: verticalSizeClass == .compact ? Farside.Space.l : Farside.Space.xl)
+            if macName != nil { homeList }
+            Text(planCaption)
+                .farsideCaption()
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.top, Farside.Space.m)
+                .accessibilityLabel(planAccessibility)
+        }
+    }
+
+    private func gapArt(fullBleed: Bool) -> some View {
         let busy = status.tone == .busy
         return ReachArt(gap: gapTarget, contact: status.inContact ? 1 : 0,
                         cell: horizontalSizeClass == .regular ? 4.5 : 3.6, active: !covered,
                         ripples: contactRipples, readout: busy)
             .animation(reduceMotion ? nil : Farside.Motion.easeOut(0.9), value: gapTarget)
             .animation(reduceMotion ? nil : Farside.Motion.easeOut(0.6), value: busy)
-            .frame(height: horizontalSizeClass == .regular ? 250 : 200)
+            .frame(height: verticalSizeClass == .compact ? 230 : (horizontalSizeClass == .regular ? 250 : 200))
             .onGeometryChange(for: CGSize.self) { $0.size } action: { artSize = $0 }
-            .padding(.horizontal, -20)
+            .padding(.horizontal, fullBleed ? -20 : 0)
             .overlay(alignment: .bottom) {
                 if !busy {
                     Text(gapCaption)

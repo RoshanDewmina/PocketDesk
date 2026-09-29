@@ -195,16 +195,22 @@ extension FarsideArt {
         let w = layers.size.width, h = layers.size.height
         let c = layers.bone
         radial(c, at: CGPoint(x: w * 0.5, y: h * 0.5), radius: w * 0.5, from: 0.1, to: 0)
-        let center = CGPoint(x: w * 0.5, y: h * 0.52)
-        c.setStrokeColor(gray: 0.88, alpha: 1)
-        c.setLineWidth(12)
+        // A closed eye: one lid curve and five short lashes.
+        let center = CGPoint(x: w * 0.5, y: h * 0.42)
+        let radius: CGFloat = 150
+        let lid = CGPoint(x: center.x, y: center.y - radius * 0.72)
+        c.setStrokeColor(gray: 0.92, alpha: 1)
+        c.setLineWidth(9)
         c.setLineCap(.round)
-        c.addArc(center: CGPoint(x: center.x, y: center.y - 70), radius: 120, startAngle: .pi * 0.28, endAngle: .pi * 0.72, clockwise: false)
+        c.addArc(center: lid, radius: radius, startAngle: .pi * 0.26, endAngle: .pi * 0.74, clockwise: false)
         c.strokePath()
+        c.setLineWidth(7)
         for index in -2...2 {
-            let x = center.x + CGFloat(index) * 38
-            c.move(to: CGPoint(x: x, y: center.y + 46 - abs(CGFloat(index)) * 8))
-            c.addLine(to: CGPoint(x: x + CGFloat(index) * 6, y: center.y + 66 - abs(CGFloat(index)) * 8))
+            let angle = CGFloat.pi / 2 + CGFloat(index) * 0.2
+            let start = CGPoint(x: lid.x + cos(angle) * radius, y: lid.y + sin(angle) * radius)
+            let end = CGPoint(x: lid.x + cos(angle) * (radius + 26), y: lid.y + sin(angle) * (radius + 26))
+            c.move(to: start)
+            c.addLine(to: end)
             c.strokePath()
         }
     }
