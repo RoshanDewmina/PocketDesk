@@ -53,6 +53,53 @@ final class SystemIntegrationsUITests: XCTestCase {
         attach("Alerts and Lock Screen settings")
     }
 
+    /// The real switch: off to on goes through the phone's explanation and then iOS's question, and back.
+    /// It takes no defaults from the command line, because a command-line default beats what the app writes.
+    @MainActor
+    func testTheSwitchTurnsAlertsOnThroughPrimingAndIOSAndOffAgain() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-seed-pairing=Studio Mac", "--ui-x", "--ui-agent-settings"]
+        app.launch()
+        let toggle = element(app, "agent.settings.alerts")
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        let sendTest = element(app, "agent.settings.test")
+
+        func waitForValue(_ expected: String, _ message: String) {
+            let matches = NSPredicate(format: "value == %@", expected)
+            expectation(for: matches, evaluatedWith: toggle)
+            waitForExpectations(timeout: 15) { error in
+                if error != nil { XCTFail(message) }
+            }
+        }
+
+        if toggle.value as? String == "1" {
+            toggle.tap()
+            waitForValue("0", "The switch turns off")
+        }
+        XCTAssertFalse(sendTest.isEnabled, "Nothing to test while alerts are off")
+
+        toggle.tap()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let continueButton = app.buttons["Continue"]
+        if continueButton.waitForExistence(timeout: 4) {
+            attach("Priming before iOS asks")
+            continueButton.tap()
+        }
+        let allow = springboard.buttons["Allow"]
+        if allow.waitForExistence(timeout: 6) {
+            attach("iOS asks")
+            allow.tap()
+        }
+        waitForValue("1", "Alerts turn on once iOS allows them")
+        XCTAssertTrue(sendTest.waitForExistence(timeout: 5))
+        XCTAssertTrue(sendTest.isEnabled, "Send test alert works once alerts are on")
+        attach("Alerts on")
+
+        toggle.tap()
+        waitForValue("0", "The switch turns alerts off again")
+        XCTAssertFalse(sendTest.isEnabled)
+    }
+
     @MainActor
     func testNotificationPrimingExplainsBeforeIOSAsks() {
         let app = launch(["--ui-priming-notifications"])
