@@ -119,11 +119,30 @@ struct MiniMapPointerSource<Content: View>: View {
 }
 
 /// The live picture at mini map size: a second renderer on the same track, present only while
-/// the mini map is on screen.
+/// the mini map is on screen. Like the main picture, frames reach the Metal view only through
+/// `RestampingRenderer`: tuned streams stamp every frame 0, which RTCMTLVideoView would skip.
 struct MiniMapVideo: UIViewRepresentable {
     let track: RTCVideoTrack
 
-    final class Coordinator { var track: RTCVideoTrack? }
+    final class Coordinator {
+        var track: RTCVideoTrack?
+        let renderer = RestampingRenderer()
+
+        /// Points the restamping renderer at the view; the track only ever sees the renderer.
+        func connect(_ view: RTCMTLVideoView, to track: RTCVideoTrack) {
+            renderer.target = view
+            guard self.track !== track else { return }
+            self.track?.remove(renderer)
+            track.add(renderer)
+            self.track = track
+        }
+
+        func disconnect() {
+            track?.remove(renderer)
+            track = nil
+            renderer.target = nil
+        }
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -131,20 +150,15 @@ struct MiniMapVideo: UIViewRepresentable {
         let view = RTCMTLVideoView(frame: .zero)
         view.videoContentMode = .scaleAspectFit
         view.isUserInteractionEnabled = false
-        track.add(view)
-        context.coordinator.track = track
+        context.coordinator.connect(view, to: track)
         return view
     }
 
     func updateUIView(_ view: RTCMTLVideoView, context: Context) {
-        guard context.coordinator.track !== track else { return }
-        context.coordinator.track?.remove(view)
-        track.add(view)
-        context.coordinator.track = track
+        context.coordinator.connect(view, to: track)
     }
 
     static func dismantleUIView(_ view: RTCMTLVideoView, coordinator: Coordinator) {
-        coordinator.track?.remove(view)
-        coordinator.track = nil
+        coordinator.disconnect()
     }
 }
