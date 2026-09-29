@@ -269,9 +269,9 @@ final class PointerSamplingTests: XCTestCase {
         host.phoneHeartbeat(PointerSync(overlay: true), at: 1)
         let bridged = host.sample(observed: CGPoint(x: 48, y: 60), shape: .arrow, videoCursor: false, at: 1.01)
         XCTAssertEqual(bridged?.x, 50)
-        let settled = host.sample(observed: CGPoint(x: 48, y: 60), shape: .arrow, videoCursor: false, at: 1.2)
+        let settled = host.sample(observed: CGPoint(x: 48, y: 60), shape: .arrow, videoCursor: false, at: 1.6)
         XCTAssertEqual(settled?.x, 48, "After the settle window the observed position is authoritative")
-        let away = host.sample(observed: nil, shape: .arrow, videoCursor: false, at: 1.25)
+        let away = host.sample(observed: nil, shape: .arrow, videoCursor: false, at: 1.65)
         XCTAssertEqual(away?.visible, false)
         XCTAssertEqual(away?.x, 48, "Last known position is kept for continuity")
 
@@ -295,8 +295,10 @@ final class PointerSamplingTests: XCTestCase {
 
         host.phoneHeartbeat(PointerSync(overlay: true), at: 2)
         host.moveInjected(at: CGPoint(x: 300, y: 100), now: 2)
-        XCTAssertEqual(host.sample(observed: CGPoint(x: 205, y: 100), shape: .arrow, videoCursor: false, at: 2.14)?.x, 300)
-        XCTAssertEqual(host.sample(observed: CGPoint(x: 205, y: 100), shape: .arrow, videoCursor: false, at: 2.16)?.x, 205,
+        XCTAssertEqual(host.sample(observed: CGPoint(x: 205, y: 100), shape: .arrow, videoCursor: false, at: 2.45)?.x, 300,
+                       "A cursor still hundreds of milliseconds behind is bridged")
+        host.phoneHeartbeat(PointerSync(overlay: true), at: 2.5)
+        XCTAssertEqual(host.sample(observed: CGPoint(x: 205, y: 100), shape: .arrow, videoCursor: false, at: 2.55)?.x, 205,
                        "Bridging is bounded by the settle window")
     }
 }
