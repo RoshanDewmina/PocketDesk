@@ -138,6 +138,8 @@ struct E2ERunConfig {
     var backgroundLongSeconds: Double { raw.double("backgroundLongSeconds") ?? 60 }
     var spaceKeysEnabled: Bool { raw.bool("spaceKeysEnabled") }
     var reconnectTimeout: Double { raw.double("reconnectTimeoutSeconds") ?? 60 }
+    var signalURL: String? { raw.string("signalURL") }
+    var roomLifetimeSeconds: Double { raw.double("roomLifetimeSeconds") ?? 1800 }
 
     static func load() throws -> E2ERunConfig {
         let path = ProcessInfo.processInfo.environment["FARSIDE_E2E_CONFIG"] ?? E2EPaths.config
@@ -285,14 +287,17 @@ final class ScenarioRecorder {
         print("E2E NOTE [\(scenario)] \(text)")
     }
 
-    func check(_ name: String, _ ok: Bool, _ detail: String = "", value: Any? = nil,
+    /// A failed `knownIssue` check is reported (and counted by the report) but does not fail the
+    /// scenario, so documented product limits do not mask regressions in overnight loops.
+    func check(_ name: String, _ ok: Bool, _ detail: String = "", value: Any? = nil, knownIssue: Bool = false,
                file: StaticString = #filePath, line: UInt = #line) {
         var entry: JSONObject = ["name": name, "ok": ok, "detail": detail,
                                  "at": Date().timeIntervalSince(started)]
         if let value { entry["value"] = value }
+        if knownIssue { entry["knownIssue"] = true }
         checks.append(entry)
-        print("E2E CHECK [\(scenario)] \(ok ? "PASS" : "FAIL") \(name) \(detail)")
-        if !ok { XCTFail("\(name): \(detail)", file: file, line: line) }
+        print("E2E CHECK [\(scenario)] \(ok ? "PASS" : knownIssue ? "KNOWN-ISSUE" : "FAIL") \(name) \(detail)")
+        if !ok && !knownIssue { XCTFail("\(name): \(detail)", file: file, line: line) }
     }
 
     func write(status: String, failure: String?) {

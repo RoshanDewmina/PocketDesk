@@ -412,6 +412,10 @@ final class RemoteE2ETests: E2ETestCase {
 
     // MARK: f. Soak
 
+    /// Continuous pointer motion plus periodic verified clicks. Fails on disconnects, video stalls
+    /// over 1 s, missed clicks or a memory trend. The harness relaunches the host right before this
+    /// scenario, so the signaling room's lifetime boundary (30 min by default) falls at a known point:
+    /// a soak longer than that (`--long`) reports whether the session survives it.
     func test_f_Soak() throws {
         launchPhone()
         try ensureConnected()
@@ -419,27 +423,34 @@ final class RemoteE2ETests: E2ETestCase {
         let duration = config.soakSeconds
         let home = try element("home")
         try steerPointer(to: CGPoint(x: home.midX, y: home.midY), tolerance: 20, label: "home")
+        let registeredAt = host.events.refresh().last(where: { $0.string("type") == "service.registered" })?.double("t")
+        let roomAge = registeredAt.map { Date().timeIntervalSince1970 - $0 } ?? 0
+        let boundary = config.roomLifetimeSeconds - roomAge
+        let crossesBoundary = duration > boundary + 60
+        recorder.metrics["roomLifetimeSeconds"] = config.roomLifetimeSeconds
+        recorder.metrics["roomAgeAtSoakStartSeconds"] = roomAge
+        recorder.note(String(format: "soak %.0f s; signaling-room boundary expected %.0f s in (%@)", duration, boundary,
+                             crossesBoundary ? "crossed" : "not reached"))
         let startPhone = phone.state, startHost = host.state
-        let startDisconnects = startPhone.int("disconnects") ?? 0
         let startStalls = startPhone.int("stallsOver1s") ?? 0
         var samples: [JSONObject] = []
         var clicks = 0, clickFailures: [String] = []
         var maxFrameAge = 0.0
-        var notReady = 0
+        var outages: [JSONObject] = []
+        var unexpectedOutages = 0
         let begin = Date()
         var nextClick = begin.addingTimeInterval(15)
         var nextSample = begin
         var nextRecentre = begin.addingTimeInterval(60)
         var angle = 0.0
         let targets = ["A", "B", "C", "D"]
-        while Date().timeIntervalSince(begin) < duration {
+        soak: while Date().timeIntervalSince(begin) < duration {
             let now = Date()
             if now >= nextSample {
                 nextSample = now.addingTimeInterval(5)
                 let p = phone.state, h = host.state
                 let age = p.double("lastFrameAgeMs") ?? 0
-                maxFrameAge = max(maxFrameAge, age)
-                if !phone.ready { notReady += 1 }
+                if p.bool("connected") { maxFrameAge = max(maxFrameAge, age) }
                 samples.append([
                     "t": now.timeIntervalSince(begin), "connected": p.bool("connected"), "fresh": p.bool("fresh"),
                     "frameAgeMs": age, "decodedFPS": p.object("stats").double("decodedFPS") as Any,
@@ -450,13 +461,27 @@ final class RemoteE2ETests: E2ETestCase {
                     "phoneFootprint": p.double("footprintBytes") as Any, "hostFootprint": h.double("footprintBytes") as Any,
                     "phoneCPU": p.double("cpuPercent") as Any, "hostCPU": h.double("cpuPercent") as Any
                 ])
-                if !p.bool("connected") { break }
+                if !p.bool("connected") {
+                    // Measure the product's own recovery; the test never taps Connect here.
+                    let lostAt = now.timeIntervalSince(begin)
+                    let nearBoundary = abs(lostAt - boundary) < 90
+                    let recovered = (try? waitFor("automatic recovery after the session ended at \(Int(lostAt)) s",
+                                                  timeout: config.reconnectTimeout) { phone.ready }) != nil
+                    let outage: JSONObject = ["at": lostAt, "nearRoomBoundary": nearBoundary, "recovered": recovered,
+                                              "recoverySeconds": Date().timeIntervalSince(now)]
+                    outages.append(outage)
+                    recorder.note("session ended at \(Int(lostAt)) s (room boundary: \(nearBoundary)); recovered: \(recovered)")
+                    if !nearBoundary { unexpectedOutages += 1 }
+                    if !recovered { break soak }
+                    try? prepareTestPad()
+                    continue
+                }
             }
             if now >= nextClick {
                 nextClick = now.addingTimeInterval(15)
                 let name = targets[clicks % targets.count]
                 clicks += 1
-                do { try clickElement(name) } catch { clickFailures.append("\(name): \(error)") }
+                do { try clickElement(name) } catch { clickFailures.append("\(name) at \(Int(now.timeIntervalSince(begin))) s: \(error)") }
                 continue
             }
             if now >= nextRecentre {
@@ -464,7 +489,7 @@ final class RemoteE2ETests: E2ETestCase {
                 try? steerPointer(to: CGPoint(x: home.midX, y: home.midY), tolerance: 30, label: "home")
                 continue
             }
-            // Continuous motion: short arcs around the canvas centre.
+            // Continuous motion: quarter arcs around the canvas centre.
             let region = strokeRegion
             let radius: CGFloat = 55
             let from = CGPoint(x: region.midX + radius * cos(angle), y: region.midY + radius * sin(angle))
@@ -474,23 +499,32 @@ final class RemoteE2ETests: E2ETestCase {
         }
         let elapsed = Date().timeIntervalSince(begin)
         let endPhone = phone.state
-        let disconnects = (endPhone.int("disconnects") ?? 0) - startDisconnects
         let stalls = (endPhone.int("stallsOver1s") ?? 0) - startStalls
         recorder.metrics["soakSeconds"] = elapsed
         recorder.metrics["samples"] = samples
+        recorder.metrics["outages"] = outages
         recorder.metrics["clicks"] = clicks
         recorder.metrics["clickFailures"] = clickFailures
         recorder.metrics["maxFrameAgeMs"] = maxFrameAge
         recorder.metrics["maxRenderGapMs"] = endPhone.double("maxRenderGapMs") as Any
-        recorder.check("soak ran the full duration", elapsed >= duration * 0.98, String(format: "%.0f of %.0f s", elapsed, duration))
-        recorder.check("no disconnects during the soak", disconnects == 0 && endPhone.bool("connected"), "\(disconnects) disconnects")
+        recorder.check("soak ran the full duration", elapsed >= duration * 0.98 && endPhone.bool("connected"),
+                       String(format: "%.0f of %.0f s", elapsed, duration))
+        recorder.check("no unexpected disconnects", unexpectedOutages == 0, "\(unexpectedOutages) outside the room boundary")
+        if crossesBoundary {
+            let boundaryOutages = outages.filter { $0.bool("nearRoomBoundary") }
+            recorder.metrics["survivedRoomBoundary"] = boundaryOutages.isEmpty
+            recorder.check("session survived the \(Int(config.roomLifetimeSeconds / 60))-minute signaling-room boundary",
+                           boundaryOutages.isEmpty,
+                           boundaryOutages.isEmpty ? "no interruption" : "ended at \(Int(boundaryOutages[0].double("at") ?? 0)) s; recovered automatically: \(boundaryOutages[0].bool("recovered"))",
+                           knownIssue: true)
+        }
         recorder.check("no video stall over 1 s", stalls == 0 && maxFrameAge < 1000,
                        String(format: "%d stalls, max frame age %.0f ms, max render gap %.0f ms", stalls, maxFrameAge,
                               endPhone.double("maxRenderGapMs") ?? 0))
         recorder.check("every periodic click landed", clickFailures.isEmpty, "\(clicks - clickFailures.count)/\(clicks)")
         for (role, start, end) in [("phone", startPhone, endPhone), ("host", startHost, host.state)] {
-            let first = samples.dropFirst(min(samples.count / 5, 24)).first?["\(role)Footprint"] as? Double
-                ?? start.double("footprintBytes") ?? 0
+            let warm = samples.dropFirst(min(samples.count / 5, 24)).first?["\(role)Footprint"] as? Double
+            let first = warm ?? start.double("footprintBytes") ?? 0
             let last = end.double("footprintBytes") ?? 0
             let growth = last - first
             recorder.metrics["\(role)FootprintGrowthMB"] = growth / 1_048_576

@@ -84,7 +84,10 @@ class E2ETestCase: XCTestCase {
 
     // MARK: Phone app
 
+    private var launchedVoiceTranscript: String?
+
     func launchPhone(reset: Bool = false, voiceTranscript: String? = nil) {
+        launchedVoiceTranscript = voiceTranscript
         var arguments = ["--farside-e2e"]
         if let token = E2EFile.text(E2EPaths.token), token.count == 64 { arguments += ["--farside-e2e-token", token] }
         if reset { arguments.append("--farside-e2e-reset-pairing") }
@@ -98,6 +101,16 @@ class E2ETestCase: XCTestCase {
     func ensureConnected(timeout: TimeInterval = 120) throws {
         let deadline = Date().addingTimeInterval(timeout)
         var lastAction = Date.distantPast
+        try waitFor("phone E2E state after launch", timeout: 20) { !phone.state.isEmpty }
+        let initial = phone.state
+        let stalePairing = initial.bool("paired") && (
+            (config.signalURL != nil && initial.string("invitationServer") != config.signalURL)
+            || (host.state.string("launchID") != nil && !host.state.bool("paired")))
+        if stalePairing {
+            recorder.note("phone kept a pairing from another run; relaunching it with a reset")
+            launchPhone(reset: true, voiceTranscript: launchedVoiceTranscript)
+            try waitFor("phone E2E state after reset", timeout: 20) { !phone.state.isEmpty }
+        }
         while Date() < deadline {
             if phone.ready { return }
             dismissSystemAlerts()
