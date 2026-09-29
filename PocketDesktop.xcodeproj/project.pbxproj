@@ -211,6 +211,7 @@
 		78748F326831A5D95E98A193 /* HostPairingPreflight.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8133C275FA11793AF24286F5 /* HostPairingPreflight.swift */; };
 		787BE9A65A00AAF5B74AA9C6 /* PointerOverlayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78393E114806ACFDD6DDF0BB /* PointerOverlayUITests.swift */; };
 		78B8A5A364FC79E9A79B864B /* DesktopPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B47A3584507A2F653CE0816 /* DesktopPreview.swift */; };
+		7A4AA293F3E6E1657573F987 /* IntentsSystemUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D983698FC779098613FA35E /* IntentsSystemUITests.swift */; };
 		7A50311CBA58C8C500DDB3F0 /* HostApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8AE50D1FC982D390284FAC5 /* HostApp.swift */; };
 		7AC72DF301CEDCA7FE08214E /* HostCursorShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41949CA17D55D44290A6D3B3 /* HostCursorShape.swift */; };
 		7AE0850348773CAE0A130223 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 513FF8FEFD7A0B2837228F8E /* WebRTC */; };
@@ -612,6 +613,7 @@
 		5C40ABFFA6F1CBB2F7E05DC6 /* StreamStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamStatistics.swift; sourceTree = "<group>"; };
 		5C66DD577EE47D01D2F1DA6C /* StreamLoopbackBenchmarkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamLoopbackBenchmarkTests.swift; sourceTree = "<group>"; };
 		5D2741327895DC2D7B32A3A2 /* AgentNotifications.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentNotifications.swift; sourceTree = "<group>"; };
+		5D983698FC779098613FA35E /* IntentsSystemUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentsSystemUITests.swift; sourceTree = "<group>"; };
 		5DD8A198867F1E3881AF6815 /* FarsideDesignTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideDesignTests.swift; sourceTree = "<group>"; };
 		5E8E23E32E29CE19FC8ADCC7 /* PocketDeskRemoteHost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PocketDeskRemoteHost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		5F13F38CA5606DD3291C2DF7 /* FarsideTestPad.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FarsideTestPad.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1075,6 +1077,7 @@
 				578EF156F79B236F46430BE1 /* AgentAlertPushUITests.swift */,
 				43CA8C2354F26641D43EB6D9 /* FarsideRedesignUITests.swift */,
 				8C56F9095024592E3C8FDBD7 /* FarsideScreenshotTour.swift */,
+				5D983698FC779098613FA35E /* IntentsSystemUITests.swift */,
 				1FB8BE569165581EBDCAA0F8 /* LiveActivityUITests.swift */,
 				78393E114806ACFDD6DDF0BB /* PointerOverlayUITests.swift */,
 				7E0861848B93929EDE7B10C1 /* SessionLayoutTests.swift */,
@@ -1784,6 +1787,7 @@
 				9E23F3D7A556F4C76DF28DEF /* AgentAlertPushUITests.swift in Sources */,
 				63A95FB32A150E8864B6E683 /* FarsideRedesignUITests.swift in Sources */,
 				99FC381EA7EC56C30231ACD8 /* FarsideScreenshotTour.swift in Sources */,
+				7A4AA293F3E6E1657573F987 /* IntentsSystemUITests.swift in Sources */,
 				07E4F97F49032903044C83C7 /* LiveActivityUITests.swift in Sources */,
 				787BE9A65A00AAF5B74AA9C6 /* PointerOverlayUITests.swift in Sources */,
 				88C196609E8E921FE6B1CB1D /* SessionLayoutTests.swift in Sources */,
