@@ -190,8 +190,38 @@ protocol PairPersistence {
     func delete() throws
 }
 
+#if os(macOS)
+// Kept injectable so removal can be checked without touching a real Keychain.
+struct PairStoreSecurityCalls {
+    let copyMatching: ([String: Any]) -> (OSStatus, Any?)
+    let delete: ([String: Any]) -> OSStatus
+
+    static let live = Self(
+        copyMatching: { search in
+            var output: CFTypeRef?
+            let status = SecItemCopyMatching(search as CFDictionary, &output)
+            return (status, output)
+        },
+        delete: { SecItemDelete($0 as CFDictionary) }
+    )
+}
+
+enum PairStoreDeletionError: Error, Equatable {
+    case invalidPersistentReference
+    case recordRemains
+}
+#endif
+
 struct PairStore: PairPersistence {
     let account: String
+#if os(macOS)
+    let security: PairStoreSecurityCalls
+
+    init(account: String, security: PairStoreSecurityCalls = .live) {
+        self.account = account
+        self.security = security
+    }
+#endif
     private var query: [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "PocketDesk.Remote.Trust.v1", kSecAttrAccount as String: account]
     }
@@ -216,7 +246,47 @@ struct PairStore: PairPersistence {
         return try JSONDecoder().decode(type, from: data)
     }
     func delete() throws {
+#if os(macOS)
+        var lookup = query
+        lookup[kSecReturnPersistentRef as String] = true
+        lookup[kSecMatchLimit as String] = kSecMatchLimitOne
+        let (lookupStatus, output) = security.copyMatching(lookup)
+        if lookupStatus == errSecItemNotFound {
+            try requireAbsent()
+            return
+        }
+        guard lookupStatus == errSecSuccess else { throw RemoteError.keychain(lookupStatus) }
+        guard let reference = output as? Data, !reference.isEmpty, reference.count <= 4_096 else {
+            throw PairStoreDeletionError.invalidPersistentReference
+        }
+
+        // The returned opaque reference identifies just the selected item.
+        // Do not carry return options or attributes into a delete query.
+        let exactDelete: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecMatchItemList as String: [reference]
+        ]
+        let deleteStatus = security.delete(exactDelete)
+        if deleteStatus == errSecItemNotFound {
+            try requireAbsent()
+            return
+        }
+        guard deleteStatus == errSecSuccess else { throw RemoteError.keychain(deleteStatus) }
+        try requireAbsent()
+#else
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw RemoteError.keychain(status) }
+#endif
     }
+
+#if os(macOS)
+    private func requireAbsent() throws {
+        // Recheck the original class/service/account query. A stale reference or
+        // duplicate record must not turn a partial removal into success.
+        let (status, _) = security.copyMatching(query)
+        if status == errSecItemNotFound { return }
+        if status == errSecSuccess { throw PairStoreDeletionError.recordRemains }
+        throw RemoteError.keychain(status)
+    }
+#endif
 }
