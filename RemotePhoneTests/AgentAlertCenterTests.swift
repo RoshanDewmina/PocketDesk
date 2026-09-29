@@ -233,6 +233,54 @@ final class AgentAlertCenterTests: XCTestCase {
 }
 
 @MainActor
+final class AgentAlertReportsTests: XCTestCase {
+    @MainActor
+    private final class Sink: AgentAlertReportSink {
+        var results: [AgentAlertReportResult] = []
+        var attempted: [String] = []
+        func submit(_ response: AgentAlertResponse) async -> AgentAlertReportResult {
+            attempted.append(response.helpRequestID)
+            return results.isEmpty ? .recorded : results.removeFirst()
+        }
+    }
+
+    private func reports(now: Date) -> (AgentAlertReports, Sink) {
+        let reports = AgentAlertReports()
+        let invitation = PairInvitation(server: "wss://signal.example.test/signal",
+                                        room: String(repeating: "a", count: 64),
+                                        token: String(repeating: "b", count: 64),
+                                        key: Data(repeating: 1, count: 32), expires: .distantFuture, name: "Test Mac")
+        reports.configure(target: PushPairingTarget(invitation: invitation))
+        reports.now = { now }
+        let sink = Sink()
+        reports.sink = sink
+        return (reports, sink)
+    }
+
+    func testExpiredHeadIsDroppedBeforeFreshReport() async {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let (reports, sink) = reports(now: now)
+        reports.record(AgentAlertResponse(helpRequestID: "h_expired", kind: .opened,
+                                          at: now.addingTimeInterval(-901)))
+        reports.record(AgentAlertResponse(helpRequestID: "h_fresh", kind: .opened, at: now))
+        await reports.flush()
+        XCTAssertEqual(sink.attempted, ["h_fresh"])
+        XCTAssertTrue(reports.queued.isEmpty)
+    }
+
+    func testUnknownEventDoesNotStarveLaterReport() async {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let (reports, sink) = reports(now: now)
+        sink.results = [.discard, .recorded]
+        reports.record(AgentAlertResponse(helpRequestID: "h_live_control", kind: .opened, at: now))
+        reports.record(AgentAlertResponse(helpRequestID: "h_fresh", kind: .opened, at: now))
+        await reports.flush()
+        XCTAssertEqual(sink.attempted, ["h_live_control", "h_fresh"])
+        XCTAssertTrue(reports.queued.isEmpty)
+    }
+}
+
+@MainActor
 final class PushRegistrarTests: XCTestCase {
     private final class PendingStore: PairPersistence {
         var data: Data?
@@ -254,13 +302,13 @@ final class PushRegistrarTests: XCTestCase {
     private final class RetrySink: PushRegistrationSink {
         var shouldConfirm = false
         var registrations: [String] = []
-        var removals: [String] = []
+        var disables = 0
         func submit(_ registration: PushRegistration) async -> PushSubmission {
             registrations.append(registration.deviceToken)
             return .sent
         }
-        func remove(deviceToken: String) async -> PushSubmission {
-            removals.append(deviceToken)
+        func disableAlerts() async -> PushSubmission {
+            disables += 1
             return shouldConfirm ? .sent : .notSent("offline")
         }
     }
@@ -273,7 +321,7 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertNil(PushPairingTarget(invitation: invitation(server: "wss://user@signal.example.test/signal")))
     }
 
-    func testPairSwitchRetainsOldRemovalIdentityAndUsesNewOriginForRegistration() async throws {
+    func testPairSwitchRetainsOldDisableIdentityAndUsesNewOriginForRegistration() async throws {
         let defaults = makeTestDefaults("PushRegistrarPairSwitch")
         AgentAlertPreferences(defaults: defaults).alertsEnabled = true
         let store = PendingStore()
@@ -292,10 +340,9 @@ final class PushRegistrarTests: XCTestCase {
 
         registrar.configure(invitation: newInvitation)
         await registrar.submit()
-        let pending = try XCTUnwrap(store.read([PendingPushRemoval].self)?.first)
+        let pending = try XCTUnwrap(store.read([PendingPushDisable].self)?.first)
         XCTAssertEqual(pending.target, old)
-        XCTAssertEqual(pending.deviceToken, "a1")
-        XCTAssertEqual(oldSink.removals.last, "a1")
+        XCTAssertGreaterThan(oldSink.disables, 0)
         XCTAssertNil(registrar.deviceToken, "A new pairing waits for a fresh APNs callback")
 
         registrar.received(token: Data([0xB2]))
@@ -303,10 +350,10 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertEqual(registrar.target, next)
         XCTAssertEqual(newSink.registrations.last, "b2")
         XCTAssertFalse(oldSink.registrations.contains("b2"))
-        XCTAssertTrue(newSink.removals.isEmpty)
+        XCTAssertEqual(newSink.disables, 0)
     }
 
-    func testTheTokenIsStoredHexOnThePhoneAndForgottenOnRequest() {
+    func testCurrentTokenStaysInMemoryAndOptOutPersistsOnlyPairingProof() {
         let defaults = makeTestDefaults("PushRegistrarTests")
         AgentAlertPreferences(defaults: defaults).alertsEnabled = true
         let store = PendingStore()
@@ -319,7 +366,10 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertNil(defaults.string(forKey: "push.deviceToken"), "The current APNs token stays in memory only")
         registrar.forget()
         XCTAssertNil(registrar.deviceToken)
-        XCTAssertEqual(try? store.read([PendingPushRemoval].self)?.first?.deviceToken, "00ab0fff")
+        XCTAssertEqual(try? store.read([PendingPushDisable].self)?.first?.target,
+                       PushPairingTarget(invitation: invitation()))
+        XCTAssertFalse(String(decoding: store.data ?? Data(), as: UTF8.self).contains("00ab0fff"),
+                       "The current APNs address is never cached for opt-out")
         XCTAssertEqual(registrar.status, .idle)
     }
 
@@ -354,7 +404,7 @@ final class PushRegistrarTests: XCTestCase {
         if case .failed = registrar.status {} else { XCTFail("A failed registration is reported") }
     }
 
-    func testOptOutKeepsOnlyADeletionTokenUntilTheServiceConfirmsRemoval() async {
+    func testOptOutRetriesWithPairingProofWithoutAnyDeviceToken() async {
         let defaults = makeTestDefaults("PushRegistrarRemoval")
         AgentAlertPreferences(defaults: defaults).alertsEnabled = true
         let store = PendingStore()
@@ -362,14 +412,44 @@ final class PushRegistrarTests: XCTestCase {
         let sink = RetrySink()
         registrar.sinkForTarget = { _ in sink }
         registrar.configure(invitation: invitation())
-        registrar.received(token: Data([0xAB, 0xCD]))
         AgentAlertPreferences(defaults: defaults).alertsEnabled = false
         registrar.forget()
         await registrar.submit()
         XCTAssertNil(registrar.deviceToken)
-        XCTAssertEqual(try? store.read([PendingPushRemoval].self)?.first?.deviceToken, "abcd")
-        sink.shouldConfirm = true
+        XCTAssertEqual(try? store.read([PendingPushDisable].self)?.first?.target,
+                       PushPairingTarget(invitation: invitation()))
+        XCTAssertGreaterThan(sink.disables, 0)
+        let relaunched = PushRegistrar(defaults: defaults, environmentOverride: "sandbox", removalStore: store)
+        let nextSink = RetrySink()
+        nextSink.shouldConfirm = true
+        relaunched.sinkForTarget = { _ in nextSink }
+        await relaunched.submit()
+        XCTAssertNil(relaunched.deviceToken, "The retry succeeds before APNs returns a new address")
+        XCTAssertGreaterThan(nextSink.disables, 0)
+        XCTAssertNil(try? store.read([PendingPushDisable].self))
+    }
+
+    func testReenableCancelsOldDisableBeforeNewRegistration() async {
+        let defaults = makeTestDefaults("PushRegistrarReenable")
+        let preferences = AgentAlertPreferences(defaults: defaults)
+        preferences.alertsEnabled = true
+        let store = PendingStore()
+        let registrar = PushRegistrar(defaults: defaults, environmentOverride: "sandbox", removalStore: store)
+        let sink = RetrySink()
+        registrar.sinkForTarget = { _ in sink }
+        registrar.configure(invitation: invitation())
+        registrar.received(token: Data([0x01]))
         await registrar.submit()
-        XCTAssertNil(try? store.read([PendingPushRemoval].self))
+
+        preferences.alertsEnabled = false
+        registrar.forget()
+        XCTAssertNotNil(try? store.read([PendingPushDisable].self)?.first)
+        preferences.alertsEnabled = true
+        registrar.received(token: Data([0x02]))
+        await registrar.submit()
+
+        XCTAssertNil(try? store.read([PendingPushDisable].self))
+        XCTAssertEqual(sink.disables, 0, "A queued old opt-out cannot erase the newly enabled address")
+        XCTAssertEqual(sink.registrations.last, "02")
     }
 }

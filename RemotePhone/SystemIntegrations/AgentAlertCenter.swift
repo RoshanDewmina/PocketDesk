@@ -14,12 +14,14 @@ struct AgentAlertResponse: Equatable {
 
 @MainActor
 protocol AgentAlertReportSink: AnyObject {
-    func submit(_ response: AgentAlertResponse) async -> Bool
+    func submit(_ response: AgentAlertResponse) async -> AgentAlertReportResult
 }
+
+enum AgentAlertReportResult: Equatable { case recorded, discard, retry }
 
 @MainActor
 final class UnconfiguredAgentAlertReportSink: AgentAlertReportSink {
-    func submit(_ response: AgentAlertResponse) async -> Bool { false }
+    func submit(_ response: AgentAlertResponse) async -> AgentAlertReportResult { .retry }
 }
 
 /// Reports a notification action with the phone's pairing proof, never the screen key.
@@ -35,22 +37,26 @@ final class HTTPAgentAlertReportSink: AgentAlertReportSink {
         session = URLSession(configuration: .ephemeral, delegate: AgentReportNoRedirect(), delegateQueue: nil)
     }
 
-    func submit(_ response: AgentAlertResponse) async -> Bool {
+    func submit(_ response: AgentAlertResponse) async -> AgentAlertReportResult {
         let body: [String: Any] = [
             "room": target.room, "token": target.token, "helpRequestID": response.helpRequestID,
             "action": response.kind.rawValue, "at": Int(response.at.timeIntervalSince1970.rounded())
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return false }
+        guard let data = try? JSONSerialization.data(withJSONObject: body) else { return .retry }
         var request = URLRequest(url: url, timeoutInterval: 12)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = data
         do {
             let (data, answer) = try await session.data(for: request)
-            guard let http = answer as? HTTPURLResponse, http.url == url, http.statusCode == 200,
-                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return false }
-            return object["state"] == "recorded"
-        } catch { return false }
+            guard let http = answer as? HTTPURLResponse, http.url == url,
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: String] else { return .retry }
+            if http.statusCode == 200, object["state"] == "recorded" { return .recorded }
+            // The authenticated service returns 404 for an event that never existed or expired.
+            // Live-control alerts have no service event, so this answer is terminal for this report.
+            if http.statusCode == 404, object["error"] == "unknown_event" { return .discard }
+            return .retry
+        } catch { return .retry }
     }
 }
 
@@ -70,6 +76,8 @@ final class AgentAlertReports {
     private(set) var target: PushPairingTarget?
     private var flushing = false
     private var flushRequested = false
+    var now: () -> Date = Date.init
+    private static let eventLifetime: TimeInterval = 15 * 60
 
     func configure(target next: PushPairingTarget?) {
         guard next != target else { return }
@@ -98,9 +106,14 @@ final class AgentAlertReports {
             }
         }
         while let first = queued.first {
+            if target != nil, now().timeIntervalSince(first.at) >= Self.eventLifetime {
+                queued.removeFirst()
+                continue
+            }
             let capturedSink = sink
             let capturedTarget = target
-            guard await capturedSink.submit(first) else { return }
+            let result = await capturedSink.submit(first)
+            guard result != .retry else { return }
             guard sink === capturedSink, target == capturedTarget else { return }
             if !queued.isEmpty, queued[0] == first { queued.removeFirst() }
         }

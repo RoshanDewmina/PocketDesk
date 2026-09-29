@@ -25,11 +25,11 @@ enum PushSubmission: Equatable {
 @MainActor
 protocol PushRegistrationSink: AnyObject {
     func submit(_ registration: PushRegistration) async -> PushSubmission
-    func remove(deviceToken: String) async -> PushSubmission
+    func disableAlerts() async -> PushSubmission
 }
 
 extension PushRegistrationSink {
-    func remove(deviceToken: String) async -> PushSubmission { .notSent("Push removal is not configured.") }
+    func disableAlerts() async -> PushSubmission { .notSent("Push removal is not configured.") }
 }
 
 /// Safe default until the app installs its HTTPS registry sink.
@@ -59,8 +59,8 @@ final class HTTPPushRegistrationSink: PushRegistrationSink {
         return await request("register", payload: ["registration": object])
     }
 
-    func remove(deviceToken: String) async -> PushSubmission {
-        await request("remove", payload: ["deviceToken": deviceToken])
+    func disableAlerts() async -> PushSubmission {
+        await request("preferences", payload: ["alertsEnabled": false])
     }
 
     private func request(_ path: String, payload: [String: Any]) async -> PushSubmission {
@@ -78,7 +78,7 @@ final class HTTPPushRegistrationSink: PushRegistrationSink {
             guard let http = response as? HTTPURLResponse, http.url == request.url else {
                 return .notSent("Push service did not confirm the request.")
             }
-            if http.statusCode == (path == "remove" ? 204 : 200) { return .sent }
+            if http.statusCode == 200 { return .sent }
             return .notSent("Push service did not confirm the request.")
         } catch { return .notSent("Push service is unavailable. Try again later.") }
     }
@@ -92,10 +92,9 @@ private final class PushNoRedirect: NSObject, URLSessionTaskDelegate {
 }
 
 /// Retains the current APNs address only in memory and syncs explicit preferences with the
-/// pairing-scoped service. A failed removal remains in Keychain for the next launch.
-struct PendingPushRemoval: Codable, Hashable {
+/// pairing-scoped service. A failed opt-out keeps only the old pairing proof in Keychain.
+struct PendingPushDisable: Codable, Hashable {
     let target: PushPairingTarget
-    let deviceToken: String
 }
 
 @MainActor
@@ -119,7 +118,8 @@ final class PushRegistrar: ObservableObject {
     private static let tokenKey = "push.deviceToken"
     private static let pendingRemovalKey = "push.pendingRemoval"
     private var currentToken: String?
-    private var volatileRemovals: [PendingPushRemoval] = []
+    private var volatileRemovals: [PendingPushDisable] = []
+    private var normalizedPending = false
     private var inFlight: Task<Void, Never>?
     private var submissionSequence = 0
 
@@ -162,7 +162,7 @@ final class PushRegistrar: ObservableObject {
         guard next != target else { return }
         let hadPair = target != nil
         status = .idle
-        if hadPair { stageCurrentRemoval() }
+        if hadPair { stageCurrentDisable() }
         target = next
         if hadPair { currentToken = nil }
         Task { await submit() }
@@ -174,22 +174,22 @@ final class PushRegistrar: ObservableObject {
 
     func forget() {
         status = .idle
-        stageCurrentRemoval()
+        stageCurrentDisable()
         lastSubmission = nil
         Task { await submit() }
     }
 
-    private func stageCurrentRemoval() {
-        guard let target, let deviceToken = currentToken else { currentToken = nil; return }
-        let pending = PendingPushRemoval(target: target, deviceToken: deviceToken)
+    private func stageCurrentDisable() {
+        guard let target else { currentToken = nil; return }
+        let pending = PendingPushDisable(target: target)
         currentToken = nil
         do {
-            var saved = try removalStore.read([PendingPushRemoval].self) ?? []
+            var saved = try removalStore.read([PendingPushDisable].self) ?? []
             if !saved.contains(pending) { saved.append(pending) }
             try removalStore.save(saved)
         } catch {
             if !volatileRemovals.contains(pending) { volatileRemovals.append(pending) }
-            status = .failed("Push removal could not be saved. Unlock this iPhone and retry.")
+            status = .failed("Alert opt-out could not be saved. Unlock this iPhone and retry.")
         }
     }
 
@@ -225,24 +225,48 @@ final class PushRegistrar: ObservableObject {
     }
 
     private func syncOnce() async {
-        let saved: [PendingPushRemoval]
-        do { saved = try removalStore.read([PendingPushRemoval].self) ?? [] }
+        var saved: [PendingPushDisable]
+        do { saved = try removalStore.read([PendingPushDisable].self) ?? [] }
         catch {
-            status = .failed("Push removal is waiting for Keychain. Unlock this iPhone and retry.")
+            status = .failed("Alert opt-out is waiting for Keychain. Unlock this iPhone and retry.")
             return
+        }
+        if !normalizedPending, !saved.isEmpty {
+            // This also strips the device-token field from cleanup records written by the
+            // earlier beta adapter; the pairing proof alone is sufficient now.
+            do { try removalStore.save(saved); normalizedPending = true }
+            catch {
+                status = .failed("Alert opt-out is waiting for Keychain. Unlock this iPhone and retry.")
+                return
+            }
+        }
+        // Re-enabling the same pairing supersedes an offline opt-out. Remove its retry before a
+        // fresh registration so an old retry can never erase the newly enabled address.
+        if AgentAlertPreferences(defaults: defaults).alertsEnabled, let target {
+            let keep = saved.filter { $0.target != target }
+            if keep.count != saved.count {
+                do {
+                    if keep.isEmpty { try removalStore.delete() } else { try removalStore.save(keep) }
+                    saved = keep
+                } catch {
+                    status = .failed("Alert preferences are waiting for Keychain. Unlock this iPhone and retry.")
+                    return
+                }
+            }
+            volatileRemovals.removeAll { $0.target == target }
         }
         var removalFailed = false
         for pending in Array(Set(saved + volatileRemovals)) {
-            let result = await sinkForTarget(pending.target).remove(deviceToken: pending.deviceToken)
+            let result = await sinkForTarget(pending.target).disableAlerts()
             lastSubmission = result
             if result == .sent {
                 do {
-                    var current = try removalStore.read([PendingPushRemoval].self) ?? []
+                    var current = try removalStore.read([PendingPushDisable].self) ?? []
                     current.removeAll { $0 == pending }
                     if current.isEmpty { try removalStore.delete() } else { try removalStore.save(current) }
                     volatileRemovals.removeAll { $0 == pending }
                 } catch {
-                    status = .failed("Push removal was confirmed, but local cleanup needs Keychain.")
+                    status = .failed("Alert opt-out was confirmed, but local cleanup needs Keychain.")
                     removalFailed = true
                 }
             } else { removalFailed = true }
@@ -262,7 +286,7 @@ final class PushRegistrar: ObservableObject {
               AgentAlertPreferences(defaults: defaults).alertsEnabled else { return }
         lastSubmission = result
         switch result {
-        case .sent: status = removalFailed ? .failed("An older pairing still needs push removal.") : .registered
+        case .sent: status = removalFailed ? .failed("An older pairing still needs alert opt-out.") : .registered
         case .notSent(let reason): status = .failed(reason)
         }
     }
@@ -302,8 +326,7 @@ final class AgentPushIntegration {
     }
 
     private func refresh(force: Bool = false) {
-        let removalBlocked = AnywhereAccess.shared.removalPending || AnywhereAccess.shared.removalRecoveryRequired
-        let mayRegister = !removalBlocked && model?.connection.startAllowed?() != false
+        let mayRegister = AnywhereAccess.shared.phoneConnectionAllowed && model?.connection.startAllowed?() != false
         let invitation = mayRegister ? model?.connection.invitation : nil
         let next = invitation.flatMap(PushPairingTarget.init)
         let pairChanged = next != currentTarget
@@ -319,11 +342,14 @@ final class AgentPushIntegration {
         let changed = previousPreferences.map {
             $0.enabled != current.enabled || $0.timeSensitive != current.timeSensitive || $0.showName != current.showName
         } ?? true
+        let firstPreferenceRead = previousPreferences == nil
         let wasEnabled = previousPreferences?.enabled ?? false
         previousPreferences = current
 
         if !current.enabled {
-            if wasEnabled { PushRegistrar.shared.forget() }
+            // After a relaunch APNs may not have returned any token. The current pairing proof is
+            // enough to disable the server registration that a previous launch left behind.
+            if wasEnabled || pairChanged || firstPreferenceRead { PushRegistrar.shared.forget() }
         } else if next != nil && (pairChanged || !wasEnabled || force) {
             // APNs may rotate the opaque token; each active launch asks iOS for the current one.
             UIApplication.shared.registerForRemoteNotifications()
