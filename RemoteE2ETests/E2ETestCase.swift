@@ -233,8 +233,17 @@ class E2ETestCase: XCTestCase {
     var canvas: XCUIElement { app.descendants(matching: .any)["remote.canvas"].firstMatch }
 
     /// Screen region where strokes and taps land on the desktop canvas, clear of the dock.
-    var strokeRegion: CGRect {
+    /// The on-screen part of the canvas. In fill or zoomed modes the trackpad surface is as large as
+    /// the Mac picture and extends past the screen edges, so its frame alone can place touches off-screen.
+    var visibleCanvas: CGRect {
         let frame = canvas.frame
+        let window = app.windows.firstMatch.frame
+        let visible = window.width > 0 ? frame.intersection(window) : frame
+        return visible.isNull || visible.width < 40 ? frame : visible
+    }
+
+    var strokeRegion: CGRect {
+        let frame = visibleCanvas
         let viewport = phone.state.object("viewport")
         var region = frame.insetBy(dx: 40, dy: 0)
         region.origin.y = frame.minY + 90
@@ -265,8 +274,21 @@ class E2ETestCase: XCTestCase {
     }
 
     func twoFingerTapCanvas() {
+        let region = strokeRegion
+        let point = CGPoint(x: region.midX, y: region.minY + region.height * 0.3)
+        if E2ETouchSynthesizer.isAvailable() {
+            let paths = [-22.0, 22.0].map { dx -> E2ETouchPath in
+                let path = E2ETouchPath(point: CGPoint(x: point.x + dx, y: point.y), atOffset: 0)
+                path.lift(atOffset: 0.08)
+                return path
+            }
+            if (try? E2ETouchSynthesizer.perform(paths, name: "two-finger tap")) != nil {
+                lastTap = (Date(), point)
+                return
+            }
+        }
         canvas.twoFingerTap()
-        lastTap = (Date(), CGPoint(x: canvas.frame.midX, y: canvas.frame.midY))
+        lastTap = (Date(), point)
     }
 
     /// A drag that begins near a recent tap would become the double-tap-drag gesture.

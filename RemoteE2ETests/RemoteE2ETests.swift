@@ -155,7 +155,7 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.check("pinch sent no clicks or scrolls to the Mac", leaked.isEmpty, "\(leaked.count) inputs")
 
         let viewportBefore = phone.state.object("viewport").rect("contentRect") ?? .zero
-        let canvasFrame = canvas.frame
+        let canvasFrame = visibleCanvas
         let candidates = ["D", "A", "dragField", "text"]
         var target: (String, CGPoint)?
         for name in candidates {
