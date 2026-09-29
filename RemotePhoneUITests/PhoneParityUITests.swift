@@ -165,10 +165,11 @@ final class PhoneParityUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.space.rawValue, modifierFlags: [.control, .option])
         app.typeKey("h", modifierFlags: [.control, .option])
         app.typeKey("4", modifierFlags: [.control, .option])
+        app.typeKey("m", modifierFlags: [.control, .option])
         app.typeKey("z", modifierFlags: [.command, .shift])
         let entries = probeEntries(app, after: mark)
         for expected in ["key tab command", "key space command", "key h command", "key 4 command+shift",
-                         "key z command+shift"] {
+                         "key m command", "key z command+shift"] {
             XCTAssertTrue(entries.contains(expected), "\(expected) missing from \(entries)")
         }
     }
@@ -190,8 +191,17 @@ final class PhoneParityUITests: XCTestCase {
             let stayed = app.buttons["Show controls"].waitForExistence(timeout: 3)
             let after = stayed ? probeEntries(app, after: mark) : []
             report.append("⌘\(key.uppercased()): \(stayed ? "Farside stayed open" : "Farside left the screen"); menu \(setup); after \(after)")
-            XCTAssertTrue(stayed, "⌘\(key.uppercased()) must not close or minimize Farside; menu \(setup)")
-            if stayed { XCTAssertTrue(after.contains("key \(key) command"), "⌘\(key.uppercased()) reaches the Mac: \(after)") }
+            let check = {
+                XCTAssertTrue(stayed, "⌘\(key.uppercased()) must not close or minimize Farside; menu \(setup)")
+                if stayed { XCTAssertTrue(after.contains("key \(key) command"), "⌘\(key.uppercased()) reaches the Mac: \(after)") }
+            }
+            if key == "m" && UIDevice.current.userInterfaceIdiom == .pad {
+                // Strict: the day iPadOS lets an app have ⌘M, this reports an unexpected pass.
+                XCTExpectFailure("iPadOS 27 minimizes Farside on ⌘M before the app sees the key (no key command is even asked, while ⌘W is), so it is system-owned like ⌘H; ⌃⌥M sends ⌘M to the Mac",
+                                 failingBlock: check)
+            } else {
+                check()
+            }
         }
         let note = XCTAttachment(string: report.joined(separator: "\n"))
         note.name = "Window shortcut probe"
