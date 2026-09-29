@@ -35,7 +35,9 @@ final class DisplaySelectionProtocolTests: XCTestCase {
             RemoteAction(action: "display", epoch: 1, interaction: NativeInteraction(token: "t"), display: 2),
             RemoteAction(action: "click", epoch: 1, display: 2),
             RemoteAction(action: "heartbeat", epoch: 1, displays: [builtIn]),
-            RemoteAction(action: "capture", displays: [builtIn])
+            RemoteAction(action: "capture", displays: [builtIn]),
+            RemoteAction(action: "displays", epoch: 1,
+                         agentAlert: AgentAlertFrame(id: "a1", kind: .claudeCode, event: .needsUser, raisedAt: Date()))
         ]
         for action in invalid {
             XCTAssertThrowsError(try action.validate(), "\(action.action) \(String(describing: action.display))")
