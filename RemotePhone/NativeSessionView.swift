@@ -1049,8 +1049,8 @@ struct NativeSessionView: View {
         NavigationStack {
             ScrollViewReader { proxy in
                 Form {
-                    pointerSection
                     viewSection
+                    pointerSection
                     clipboardSection
                     gesturesSection
                     workspaceSection
@@ -1168,19 +1168,20 @@ struct NativeSessionView: View {
                              selection: Binding(get: { viewport.mode }, set: { setMode($0) }))
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
-            LabeledContent {
-                Text(zoomDescription)
-                    .font(Farside.Typeface.caption(.body))
-                    .monospacedDigit()
-                    .foregroundStyle(Farside.Palette.bone)
-                    .accessibilityLabel("Current zoom")
-                    .accessibilityValue(String(format: "%.1f", Double(viewport.zoom)))
-            } label: {
-                Text("Zoom").foregroundStyle(Farside.Palette.bone)
+            VStack(spacing: 2) {
+                LabeledContent {
+                    Text(zoomDescription)
+                        .font(Farside.Typeface.caption(.body))
+                        .monospacedDigit()
+                        .foregroundStyle(Farside.Palette.bone)
+                        .accessibilityLabel("Current zoom")
+                        .accessibilityValue(String(format: "%.1f", Double(viewport.zoom)))
+                } label: {
+                    Text("Zoom").foregroundStyle(Farside.Palette.bone)
+                }
+                zoomSlider
             }
             .listRowBackground(Farside.Palette.panel)
-            zoomSlider
-                .listRowBackground(Farside.Palette.panel)
             Button {
                 showControls = false
                 setInteractionMode(!panMode)
@@ -1192,7 +1193,7 @@ struct NativeSessionView: View {
         } header: {
             sectionHeader("View")
         } footer: {
-            Text("Fill uses the whole screen. Fit keeps the entire display inside the safe area. In View, drag to move, pinch to zoom, or double-tap to switch between close-up and Fit.")
+            Text("Fill uses the whole screen; Fit shows all of it. In View, drag, pinch or double-tap to look around.")
                 .foregroundStyle(Farside.Palette.ash)
         }
     }
