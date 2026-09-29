@@ -161,6 +161,37 @@ final class NativeInputSafetyTests: XCTestCase {
         XCTAssertFalse(driver.handle(scroll("b", "changed", y: 3), upgraded: true, now: 5.7).accepted)
     }
 
+    func testLaggingCursorDoesNotLoseMotionOrPullClicksBack() {
+        // WindowServer applies each posted event only when the next one arrives (one event late).
+        let recorder = NativeInputRecorder()
+        recorder.lagsByOneEvent = true
+        let driver = configuredDriver(recorder)
+        var now = 10.0
+        for _ in 1...10 {
+            now += 1.0 / 120.0
+            XCTAssertTrue(driver.handle(action("move", count: 1, x: 5), upgraded: true, now: now).accepted)
+        }
+        XCTAssertEqual(driver.lastPoint, CGPoint(x: 150, y: 100), "Ten moves of five land fifty away, not on a stale base")
+        XCTAssertEqual(recorder.mouseEvents.last?.point, CGPoint(x: 150, y: 100))
+        now += 0.05
+        XCTAssertTrue(driver.handle(action("click", count: 1), upgraded: true, now: now).accepted)
+        XCTAssertEqual(recorder.mouseEvents.suffix(2).map(\.point), [CGPoint(x: 150, y: 100), CGPoint(x: 150, y: 100)],
+                       "A tap right after a move clicks where the move went, not where the cursor still reads")
+
+        // A physical mouse moved the cursor somewhere the driver never posted: trust it.
+        recorder.pointer = CGPoint(x: 20, y: 30)
+        now += 0.01
+        XCTAssertTrue(driver.handle(action("move", count: 1, x: 5), upgraded: true, now: now).accepted)
+        XCTAssertEqual(driver.lastPoint, CGPoint(x: 25, y: 30))
+
+        // After a pause the cursor is read again even if it sits on an old post.
+        recorder.lagsByOneEvent = false
+        recorder.pointer = CGPoint(x: 150, y: 100)
+        now += RemoteInputDriver.pointerChainWindow + 0.01
+        XCTAssertTrue(driver.handle(action("move", count: 1, x: 5), upgraded: true, now: now).accepted)
+        XCTAssertEqual(driver.lastPoint, CGPoint(x: 155, y: 100))
+    }
+
     func testRetiredIdentityWindowDoesNotExhaustLongSession() {
         let recorder = NativeInputRecorder()
         let driver = configuredDriver(recorder)
@@ -200,11 +231,22 @@ private final class NativeInputRecorder {
     var pointer = CGPoint(x: 100, y: 100)
     var mouseEvents: [RemoteInputEventSink.MouseEvent] = []
     var scrolls: [(Double, Double)] = []
+    /// Simulates WindowServer applying a posted pointer event only when the next one is posted.
+    var lagsByOneEvent = false
+    private var pendingPointer: CGPoint?
 
     var sink: RemoteInputEventSink {
         RemoteInputEventSink(
             pointerLocation: { [weak self] in self?.pointer ?? .zero },
-            mouseSequence: { [weak self] events in self?.mouseEvents.append(contentsOf: events); return true },
+            mouseSequence: { [weak self] events in
+                guard let self else { return true }
+                self.mouseEvents.append(contentsOf: events)
+                if self.lagsByOneEvent, let last = events.last {
+                    if let pending = self.pendingPointer { self.pointer = pending }
+                    self.pendingPointer = last.point
+                }
+                return true
+            },
             scroll: { [weak self] _, x, y in self?.scrolls.append((x, y)); return true },
             scrollDetailed: { [weak self] _, x, y, _ in self?.scrolls.append((x, y)); return true },
             text: { _ in true },
