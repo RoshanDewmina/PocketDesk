@@ -6,14 +6,16 @@ case "$mode" in run|--verify|--build) ;; *) print -u2 'Usage: build_and_run.sh [
 receipt="${POCKETDESK_RECEIPTS:-$PWD/outputs/host-run-$(date -u +%Y%m%dT%H%M%SZ)}"
 mkdir -p "$receipt"
 receipt="${receipt:A}"
-built="$PWD/outputs/RemoteBuild/Build/Products/Debug/PocketDeskRemoteHost.app"
+derived="${POCKETDESK_DERIVED_DATA:-$PWD/outputs/RemoteBuild}"
+derived="${derived:A}"
+built="$derived/Build/Products/Debug/PocketDeskRemoteHost.app"
 installed='/Applications/PocketDesk Host.app'
 executable='PocketDeskRemoteHost'
 bundle_id='com.roshan.PocketDesk.RemoteHost'
 
 # A failed build leaves the installed app running.
 xcodegen generate > "$receipt/project-generation.log" 2>&1
-xcodebuild -project PocketDesktop.xcodeproj -scheme PocketDeskRemoteHost -configuration Debug -derivedDataPath outputs/RemoteBuild build > "$receipt/host-build.log" 2>&1
+xcodebuild -project PocketDesktop.xcodeproj -scheme PocketDeskRemoteHost -configuration Debug -derivedDataPath "$derived" build > "$receipt/host-build.log" 2>&1
 if [[ "$mode" == --build ]]; then
   print "Mac build passed. Receipts: $receipt"
   exit 0
