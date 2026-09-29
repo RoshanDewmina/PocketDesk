@@ -1,0 +1,52 @@
+v3-device started 03:39:57
+v3-device exit=65 finished 03:47:17
+** BUILD FAILED **
+error: There is no XCFramework found at '/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/build/DD/SourcePackages/artifacts/webrtc/WebRTC/WebRTC.xcframework'. (in target 'PocketDeskRemote' from project 'PocketDesktop')
+error: There is no XCFramework found at '/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/build/DD/SourcePackages/artifacts/webrtc/WebRTC/WebRTC.xcframework'. (in target 'WebRTC-product' from project 'WebRTC')
+free KB: 23700824
+v3-core started 03:47:17
+v3b-device started 03:48:13
+v3-core exit=65 finished 03:59:15
+Swift/ContiguousArrayBuffer.swift:695: Fatal error: Index out of range
+free KB: 18735512
+v3-host-build started 03:59:15
+v3b-device exit=0 finished 03:59:49
+    Provisioning Profile: "iOS Team Provisioning Profile: *"
+    Signing Identity:     "Apple Development: dewminaimalsha2003@gmail.com (2X93YVJ4G4)"
+** BUILD SUCCEEDED ** [25.125 sec]
+v3-host-build exit=0 finished 04:00:22
+** BUILD SUCCEEDED ** [10.930 sec]
+free KB: 18325376
+v3-host-ui started 04:00:22
+v3-host-ui exit=0 finished 04:01:14
+free KB: 17898004
+v3-ui-si started 04:01:14
+v4-core-build started 04:05:07
+v3-ui-si exit=65 finished 04:07:18
+	 Executed 7 tests, with 1 failure (0 unexpected) in 136.354 (136.448) seconds
+	 Executed 7 tests, with 1 failure (0 unexpected) in 136.354 (136.459) seconds
+	 Executed 7 tests, with 1 failure (0 unexpected) in 136.354 (136.468) seconds
+** TEST FAILED **
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/SystemIntegrationsUITests.swift:61: error: -[RemotePhoneUITests.SystemIntegrationsUITests testNotificationPrimingExplainsBeforeIOSAsks] : XCTAssertTrue failed - One Continue, per the HIG pre-alert pattern
+free KB: 15516716
+v3-intents started 04:07:18
+v4-core-build exit=0 finished 04:18:16
+** TEST BUILD SUCCEEDED ** [12.287 sec]
+v3-intents exit=65 finished 04:30:36
+	 Executed 3 tests, with 3 failures (3 unexpected) in 67.026 (67.082) seconds
+	 Executed 3 tests, with 3 failures (3 unexpected) in 67.026 (67.088) seconds
+	 Executed 3 tests, with 3 failures (3 unexpected) in 67.026 (67.091) seconds
+** TEST FAILED **
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/IntentsSystemUITests.swift:22: error: -[RemotePhoneUITests.IntentsSystemUITests testTheMacParameterOffersTheOnePairedMacByName] : failed: caught error: "Error Domain=AppIntentsServicesSecurityErrorDomain Code=803 "Unable to run internal tests on a Customer build" UserInfo={NSLocalizedD
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/IntentsSystemUITests.swift:33: error: -[RemotePhoneUITests.IntentsSystemUITests testIsMyMacAwakeAnswersWithAStateAndNeverOpensASession] : failed: caught error: "Error Domain=AppIntentsServicesSecurityErrorDomain Code=803 "Unable to run internal tests on a Customer build" UserInfo={NSLo
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/IntentsSystemUITests.swift:47: error: -[RemotePhoneUITests.IntentsSystemUITests testEndSessionRunsWithNoSessionAndSaysSo] : failed: caught error: "Error Domain=AppIntentsServicesSecurityErrorDomain Code=803 "Unable to run internal tests on a Customer build" UserInfo={NSLocalizedDescrip
+free KB: 14518368
+v3-springboard started 04:30:36
+v3-springboard exit=65 finished 04:45:42
+	 Executed 4 tests, with 1 failure (0 unexpected) in 242.498 (243.246) seconds
+	 Executed 4 tests, with 1 failure (0 unexpected) in 242.498 (243.247) seconds
+	 Executed 4 tests, with 1 failure (0 unexpected) in 242.498 (243.258) seconds
+** TEST FAILED **
+/Users/roshansilva/Documents/ChatGPT/Saas/PocketDesk/.claude/worktrees/agent-a752967d0e530c55c/RemotePhoneUITests/LiveActivityUITests.swift:149: error: -[RemotePhoneUITests.LiveActivityUITests testSpotlightOffersTheApp] : Failed to tap "spotlight-pill" Other: Find single matching element. Multiple matching elements found for <XCUIElementQuery: 0x1066e3610>.
+free KB: 13439004
+ALL DONE 04:45:42
