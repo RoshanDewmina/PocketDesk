@@ -8,10 +8,10 @@ Cloudflare Pages project `farside-site` serves `dist/` plus two Pages Functions 
 
 | Result | JSON (`Content-Type: application/json`) | Form post |
 |---|---|---|
-| Joined (also repeat sign-ups and honeypot hits) | 200 `{"ok":true}` | 303 → `/?joined=1#beta` |
-| Bad address | 400 `{"ok":false,"error":"invalid_email"}` | 303 → `/?joined=0&error=invalid_email#beta` |
-| More than 5 tries per IP in 10 minutes | 429 `rate_limited`, `Retry-After: 600` | 303 → `…error=rate_limited#beta` |
-| Cross-site post | 403 `forbidden` | 303 → `…error=forbidden#beta` |
+| Joined (also repeat sign-ups and honeypot hits) | 200 `{"ok":true}` | 303 → `/?joined=1#joined` |
+| Bad address | 400 `{"ok":false,"error":"invalid_email"}` | 303 → `/?joined=0&error=invalid_email#join-error-invalid_email` |
+| More than 5 tries per IP in 10 minutes | 429 `rate_limited`, `Retry-After: 600` | 303 → `…#join-error-rate_limited` |
+| Cross-site post | 403 `forbidden` | 303 → `…#join-error-forbidden` |
 
 `source` is `[a-z0-9_-]{1,40}` (for example `home`, `x-bio`, `ig-bio`); anything else is stored as `site`. The consent version stored with each row is `CONSENT` in `functions/api/waitlist.ts`; bump it whenever the wording beside the form changes. The wording must say what people will get (a beta invite and launch news) and that they can unsubscribe at any time.
 

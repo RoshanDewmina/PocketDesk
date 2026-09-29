@@ -91,6 +91,7 @@ function respond(outcome: Outcome, wantsJson: boolean): Response {
     const status = { invalid_email: 400, rate_limited: 429, forbidden: 403, too_large: 413 }[outcome];
     return json(status, { ok: false, error: outcome }, outcome === "rate_limited" ? { "Retry-After": String(WINDOW_SECONDS) } : {});
   }
-  if (outcome === "joined") return redirect("/?joined=1#beta");
-  return redirect(`/?joined=0&error=${outcome}#beta`);
+  if (outcome === "joined") return redirect("/?joined=1#joined");
+  // The page is static, so each outcome has its own anchored message that CSS :target reveals.
+  return redirect(`/?joined=0&error=${outcome}#join-error-${outcome}`);
 }
