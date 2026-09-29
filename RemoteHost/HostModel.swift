@@ -85,6 +85,10 @@ final class RemoteHostModel: ObservableObject {
     #endif
     private let input = RemoteInputDriver()
     private let capture = RemoteCapture()
+    /// G12: one per capture session while the ladder switch is on.
+    private var loadMonitor: HostLoadMonitor?
+    private var ladderState: LadderState?
+    private var busyState: BusyState?
     private let keepAwake = HostKeepAwake()
     private let remoteAccessAwake = HostKeepAwake(backend: .idleSystem)
     private let displayWake = HostDisplayWake()
@@ -1006,7 +1010,10 @@ final class RemoteHostModel: ObservableObject {
             events.record(.session, "Phone connected")
         }
         captureUnhealthySince = nil
-        peer.onSenderStatistics = { [weak self] report in self?.latestSenderStatistics = report }
+        peer.onSenderStatistics = { [weak self, weak peer] report in
+            self?.latestSenderStatistics = report
+            if let peer { self?.observeLoad(report, peer: peer) }
+        }
         #if DEBUG
         if let e2e = HostE2E.active {
             peer.onStreamStatistics = { [weak e2e] report in e2e?.recordStats(report) }
@@ -1075,6 +1082,7 @@ final class RemoteHostModel: ObservableObject {
                     _ = self.capture.stop(ifOwnedBy: owner)
                     return
                 }
+                self.beginLoadMonitor(peer: peer)
             } catch is CancellationError {
                 return
             } catch {
@@ -1118,6 +1126,7 @@ final class RemoteHostModel: ObservableObject {
         input.enabled = false
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
+        endLoadMonitor()
         _ = capture.stop()
         updatePowerAssertions()
         reconcileCurtain()
@@ -1337,6 +1346,41 @@ final class RemoteHostModel: ObservableObject {
         ))
     }
 
+    // MARK: Ladder and busy state (G12)
+
+    private func beginLoadMonitor(peer: PeerMedia) {
+        ladderState = nil
+        busyState = nil
+        loadMonitor = StreamTuning.current.ladder ? HostLoadMonitor(targetFPS: peer.targetFPS) : nil
+    }
+
+    private func endLoadMonitor() {
+        loadMonitor = nil
+        ladderState = nil
+        busyState = nil
+        capture.setLadder(nil)
+    }
+
+    /// Every host statistics second runs the ladder; a rung change is applied at the capture and both
+    /// changes go to the phone on the next capture status.
+    private func observeLoad(_ report: StreamStatsReport, peer: PeerMedia) {
+        guard var monitor = loadMonitor, connection.connected else { return }
+        let process = ProcessInfo.processInfo
+        let longEdge = (ladderState?.rung ?? 0) == 0 ? [report.sentWidth, report.sentHeight].compactMap { $0 }.max() : nil
+        let sample = HostLoadSample(report: report, targetFPS: peer.targetFPS, longEdge: longEdge,
+                                    hostThermalState: HostLoadMonitor.thermalName(process.thermalState),
+                                    lowPowerMode: process.isLowPowerModeEnabled)
+        let change = monitor.tick(sample: sample, at: process.systemUptime)
+        loadMonitor = monitor
+        if let ladder = change.ladder {
+            ladderState = ladder
+            capture.setLadder(ladder)
+            events.record(.session, "Ladder rung \(ladder.rung): \(ladder.fps) fps × \(ladder.sizeFraction) (\(ladder.reason ?? "headroom"))")
+        }
+        if let busy = change.busy { busyState = busy }
+        if change.ladder != nil || change.busy != nil { sendCaptureHealth(captureHealthy) }
+    }
+
     /// A switched-off experiment is not advertised, so the phone never sends what the host would ignore.
     private static var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
@@ -1363,7 +1407,7 @@ final class RemoteHostModel: ObservableObject {
             hostStream: connection.media?.takeHostSummary(),
             curtain: curtainState.rawValue, hostEvent: event,
             display: capturedDisplayID, agentAlert: alert,
-            captureRegion: capture.appliedCaptureRegion
+            captureRegion: capture.appliedCaptureRegion, ladder: ladderState, busy: busyState
         ))
         if sent && event != nil { recoveryNoticeDelivered = true }
         if sent && alert != nil { agentAlertOutbox.removeFirst() }
@@ -1463,6 +1507,7 @@ final class RemoteHostModel: ObservableObject {
         pointerTelemetry.end()
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
+        endLoadMonitor()
         _ = capture.stop()
         updatePowerAssertions()
         reconcileCurtain()
@@ -1541,6 +1586,7 @@ final class RemoteHostModel: ObservableObject {
         captureHealthy = false
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
+        endLoadMonitor()
         _ = capture.stop()
         sendCaptureHealth(false, presence: presence)
         unavailabilityTeardown?.cancel()

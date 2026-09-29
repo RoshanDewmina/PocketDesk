@@ -128,6 +128,7 @@ final class RemoteCapture {
     private var requestedViewport: ViewportRegion?
     /// The display the requested viewport's points refer to.
     private var viewportDisplayID: CGDirectDisplayID?
+    private var requestedLadder: LadderState?
     private var captureStarted = false
     private var qualityUpdateTask: Task<Void, Never>?
     private var exclusionGeneration: UInt64 = 0
@@ -154,6 +155,15 @@ final class RemoteCapture {
         requestedViewport = viewport
         guard captureStarted, let session else { return }
         session.requestViewport(viewport)
+    }
+
+    /// G12: the ladder's rung is applied at the capture (frame interval and output size), so the
+    /// encoder never sees frames it would have to drop; nil is rung 0. Cleared by `stop()`.
+    func setLadder(_ state: LadderState?) {
+        guard state != requestedLadder else { return }
+        requestedLadder = state
+        guard captureStarted, let session else { return }
+        session.requestLadder(state)
     }
 
     /// Only a client drawing its own pointer may hide it. Every capture starts with it shown.
@@ -255,6 +265,7 @@ final class RemoteCapture {
         appliedClientLongEdge = nil
         requestedViewport = nil
         viewportDisplayID = nil
+        requestedLadder = nil
         appliedCaptureRegion = nil
         resetCursor()
         captureStarted = false
@@ -433,6 +444,14 @@ enum RemoteCaptureConfiguration {
         return CapturePixelDimensions(width: fitted.width, height: fitted.height)
     }
 
+    /// G12: a size rung shrinks the whole-display output linearly, to whole macroblocks.
+    static func scaled(_ size: CapturePixelDimensions, by fraction: Double?) -> CapturePixelDimensions {
+        guard let fraction, fraction.isFinite, fraction > 0, fraction < 1 else { return size }
+        let block = ViewportCapturePolicy.macroblock
+        func shrink(_ value: Int) -> Int { max(block, Int(Double(value) * fraction) / block * block) }
+        return CapturePixelDimensions(width: shrink(size.width), height: shrink(size.height))
+    }
+
     /// A crop (G4) sets `sourceRect` and its own output size, and fills the output exactly: its
     /// macroblock alignment leaves its aspect up to a few percent off the output's, and the default
     /// aspect-preserving fit would letterbox the picture and shift it against the rect the phone maps
@@ -463,6 +482,9 @@ private struct CaptureInputs: Equatable {
     var quality: StreamQuality
     var showsCursor: Bool
     var clientLongEdge: Int?
+    /// G12: a rung below the session rate, and a picture fraction below 1; nil at rung 0.
+    var ladderFPS: Int? = nil
+    var sizeFraction: Double? = nil
 }
 
 private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
@@ -538,13 +560,16 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     /// A new quality or client cap resets the held output and re-derives the crop in the same update.
     func updateQuality(_ quality: StreamQuality, showsCursor: Bool, clientLongEdge: Int?) async -> Bool {
-        let inputs = CaptureInputs(quality: quality, showsCursor: showsCursor, clientLongEdge: clientLongEdge)
-        return await withCheckedContinuation { continuation in
+        await withCheckedContinuation { continuation in
             queue.async { [self] in
                 guard !stopping else {
                     continuation.resume(returning: false)
                     return
                 }
+                var inputs = requested
+                inputs.quality = quality
+                inputs.showsCursor = showsCursor
+                inputs.clientLongEdge = clientLongEdge
                 if inputs.quality != requested.quality || inputs.clientLongEdge != requested.clientLongEdge {
                     heldOutputInvalid = true
                 }
@@ -552,6 +577,21 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
                 waiters.append { continuation.resume(returning: $0) }
                 handle(gate.request(at: CACurrentMediaTime(), immediate: true))
             }
+        }
+    }
+
+    /// A rung change goes out without the viewport wait; a size step resets the held crop output so
+    /// the crop is re-derived for the new picture in the same update.
+    func requestLadder(_ state: LadderState?) {
+        queue.async { [self] in
+            guard !stopping else { return }
+            var inputs = requested
+            inputs.ladderFPS = state.flatMap { $0.fps < targetFPS ? $0.fps : nil }
+            inputs.sizeFraction = state.flatMap { $0.sizeFraction < 1 ? $0.sizeFraction : nil }
+            guard inputs != requested else { return }
+            if inputs.sizeFraction != requested.sizeFraction { heldOutputInvalid = true }
+            requested = inputs
+            handle(gate.request(at: CACurrentMediaTime(), immediate: true))
         }
     }
 
@@ -594,7 +634,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         waiters = []
         let previous = heldOutputInvalid ? nil : appliedRegion
         heldOutputInvalid = false
-        guard let output = RemoteCaptureConfiguration.outputSize(
+        // The pixel budget stays the session rate's: a slower rung must not grow the picture.
+        guard let whole = RemoteCaptureConfiguration.outputSize(
             contentSize: geometry.size, pointPixelScale: geometry.pointPixelScale, quality: inputs.quality,
             budget: peer?.nativeCaptureBudget, fps: targetFPS, clientLongEdge: inputs.clientLongEdge, tuning: tuning
         ) else {
@@ -602,6 +643,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             completeConfigurationUpdate(succeeded: false)
             return
         }
+        let output = RemoteCaptureConfiguration.scaled(whole, by: inputs.sizeFraction)
         let region = ViewportCapturePolicy.region(for: viewport, display: geometry, output: output, tuning: tuning,
                                                   previous: previous)
         let geometryChanges = ViewportCapturePolicy.needsReconfiguration(from: appliedRegion, to: region)
@@ -611,7 +653,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             return
         }
         let configuration = RemoteCaptureConfiguration.streamConfiguration(
-            output: output, region: region, showsCursor: inputs.showsCursor, fps: targetFPS,
+            output: output, region: region, showsCursor: inputs.showsCursor,
+            fps: min(targetFPS, inputs.ladderFPS ?? targetFPS),
             displayRefreshHz: displayRefreshHz, tuning: tuning
         )
         stream.updateConfiguration(configuration) { [self] error in

@@ -121,6 +121,9 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var link: LinkSummary?
     /// G4: the part of the display the frames cover, as the Mac last reported it; nil for the whole display.
     @Published private(set) var captureRegion: CaptureRegion?
+    /// G12: the Mac's own account of its load, for the pill; nil from a Mac without the ladder.
+    @Published private(set) var busy: BusyState?
+    private(set) var ladder: LadderState?
     private var viewportReporter = ViewportReporter()
     private var viewportSendTask: Task<Void, Never>?
     private var nativeScreenPixels: PixelSize?
@@ -1106,6 +1109,8 @@ final class PhoneRemoteModel: ObservableObject {
             let region = Self.croppedRegion(action.captureRegion, statusEpoch: action.epoch,
                                             geometryEpoch: geometryEpoch)
             if region != captureRegion { captureRegion = region }
+            if action.busy != busy { busy = action.busy }
+            ladder = action.ladder
             sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
         case "geometry":
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
@@ -1118,6 +1123,8 @@ final class PhoneRemoteModel: ObservableObject {
             pointerOverlay.reset(sourceSize: sourceSize)
             geometryEpoch = action.epoch
             captureRegion = nil
+            busy = nil
+            ladder = nil
             fresh = false
             captureHealthy = false
             lastFrame = 0
@@ -1252,6 +1259,8 @@ final class PhoneRemoteModel: ObservableObject {
         streamSummaryLines = []
         link = nil
         captureRegion = nil
+        busy = nil
+        ladder = nil
         viewportSendTask?.cancel()
         viewportSendTask = nil
         viewportReporter.sessionEnded()

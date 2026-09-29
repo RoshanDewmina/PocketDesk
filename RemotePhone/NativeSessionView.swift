@@ -373,6 +373,10 @@ struct NativeSessionView: View {
                               end: model.disconnect)
                     .transition(.opacity)
             }
+            if connection.connected, let busy = model.busy, busy.isVisible {
+                MacBusyPill(state: busy, device: UIDevice.current.model)
+                    .transition(.opacity)
+            }
             if streamStatsEnabled && !model.streamSummaryLines.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     let lines = model.streamSummaryLines + [model.cropSummary?.caption].compactMap { $0 }
