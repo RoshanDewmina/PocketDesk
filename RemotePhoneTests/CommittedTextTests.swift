@@ -5,6 +5,19 @@ import UIKit
 
 @MainActor
 final class CommittedTextTests: XCTestCase {
+    func testKeyboardDockOnlyInterceptsTouchesInsideItsHostedPanel() {
+        let dock = KeyboardDockPassthroughView(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
+        let panel = UIControl(frame: CGRect(x: 0, y: 520, width: 390, height: 290))
+        dock.addSubview(panel)
+
+        XCTAssertFalse(dock.point(inside: CGPoint(x: 195, y: 300), with: nil),
+                       "Transparent dock space must leave the Mac canvas interactive")
+        XCTAssertTrue(dock.point(inside: CGPoint(x: 195, y: 600), with: nil),
+                      "The visible keyboard panel must keep its controls interactive")
+        panel.isHidden = true
+        XCTAssertFalse(dock.point(inside: CGPoint(x: 195, y: 600), with: nil))
+    }
+
     func testVoiceAcknowledgmentNeverClearsTypedDraftEvenWhenIdentical() {
         let voice = PendingText(requestID: "voice", payload: "same words", origin: .voice, sentAt: 1)
         let typed = PendingText(requestID: "typed", payload: "same words", origin: .draft, sentAt: 1)

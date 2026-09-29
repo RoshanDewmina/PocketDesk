@@ -439,6 +439,96 @@ final class PhoneParityUITests: XCTestCase {
         }
     }
 
+    // MARK: - Software keyboard recovery
+
+    @MainActor
+    func testAutomaticKeyboardFirstOpenAndReopenKeepChromeVisibleInPortrait() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
+                               "--ui-viewport-fit", "--ui-auto-keyboard-preview-check"]
+        app.launch()
+
+        assertKeyboardChromeAndCanvasAreUsable(app, context: "first portrait automatic open")
+        attachScreenshot("Keyboard first open - portrait")
+
+        let hide = app.buttons["remote.keyboard.hide"]
+        hide.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(hide.waitForNonExistence(timeout: 5))
+        let handle = app.buttons["Show controls"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+
+        handle.doubleTap()
+        assertKeyboardChromeAndCanvasAreUsable(app, context: "portrait reopen without rotation")
+        attachScreenshot("Keyboard reopened without rotation - portrait")
+    }
+
+    @MainActor
+    func testAutomaticKeyboardFirstOpenKeepsChromeVisibleInInitialLandscape() {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-probe-quiet",
+                               "--ui-viewport-fit", "--ui-auto-keyboard-preview-check"]
+        app.launch()
+
+        let window = app.windows.firstMatch
+        let landscape = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in window.exists && window.frame.width > window.frame.height },
+            object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [landscape], timeout: 5), .completed,
+                       "The app must launch in landscape before the first keyboard open")
+        assertKeyboardChromeAndCanvasAreUsable(app, context: "first landscape automatic open")
+        attachScreenshot("Keyboard first open - initial landscape")
+
+        let hide = app.buttons["remote.keyboard.hide"]
+        hide.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(hide.waitForNonExistence(timeout: 5))
+        let handle = app.buttons["Show controls"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+        handle.doubleTap()
+        assertKeyboardChromeAndCanvasAreUsable(app, context: "landscape reopen without rotation")
+        XCTAssertGreaterThan(window.frame.width, window.frame.height,
+                             "The recovery must not depend on rotating away and back")
+        attachScreenshot("Keyboard reopened without rotation - landscape")
+    }
+
+    @MainActor
+    private func assertKeyboardChromeAndCanvasAreUsable(
+        _ app: XCUIApplication, context: String, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        let field = app.textViews["remote.text"].firstMatch
+        let hide = app.buttons["remote.keyboard.hide"]
+        let keyboard = app.keyboards.firstMatch
+        for (element, name) in [(field, "draft"), (hide, "Hide keyboard"), (keyboard, "software keyboard")] {
+            let visible = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "exists == true AND hittable == true"), object: element)
+            XCTAssertEqual(XCTWaiter.wait(for: [visible], timeout: 5), .completed,
+                           "\(context): \(name) must be visible and hittable", file: file, line: line)
+        }
+
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.frame.contains(field.frame), "\(context): draft must stay on screen", file: file, line: line)
+        XCTAssertTrue(window.frame.contains(hide.frame), "\(context): Hide must stay on screen", file: file, line: line)
+        XCTAssertLessThanOrEqual(field.frame.maxY, keyboard.frame.minY + 2,
+                                 "\(context): keyboard must not cover the draft", file: file, line: line)
+        XCTAssertLessThanOrEqual(hide.frame.maxY, keyboard.frame.minY + 2,
+                                 "\(context): keyboard must not cover Hide", file: file, line: line)
+
+        let panelTop = min(field.frame.minY, hide.frame.minY)
+        XCTAssertGreaterThan(panelTop - window.frame.minY, 30,
+                             "\(context): the Mac canvas must retain a usable strip", file: file, line: line)
+        let visibleCanvasY = window.frame.minY + (panelTop - window.frame.minY) * 0.55
+        let point = window.coordinate(withNormalizedOffset: CGVector(
+            dx: 0.78, dy: (visibleCanvasY - window.frame.minY) / window.frame.height))
+        let mark = probeMark(app)
+        point.tap()
+        XCTAssertTrue(probeEntries(app, after: mark).contains("click 1"),
+                      "\(context): transparent dock space must still deliver a canvas click", file: file, line: line)
+        XCTAssertTrue(field.isHittable && hide.isHittable && keyboard.exists,
+                      "\(context): using the visible canvas must not lose keyboard chrome", file: file, line: line)
+    }
+
     // MARK: - Helpers
 
     @MainActor
