@@ -9,7 +9,11 @@ enum DebugLaunchSeeds {
     /// One invitation per process, so the model, the intents and Shortcuts all agree on the Mac's id.
     static let invitation: PairInvitation? = {
         guard let name = LaunchOptions.value("--ui-seed-pairing="), !name.isEmpty else { return nil }
-        return try? HostPair.create(server: "ws://127.0.0.1:9/signal", name: name).invitation
+        // Fixed throwaway proof lets simctl sample pushes bind to this UI-only pairing. Port 9
+        // refuses signaling; no device pairing or server account can use this launch seed.
+        return PairInvitation(server: "ws://127.0.0.1:9/signal", room: String(repeating: "a", count: 64),
+                              token: String(repeating: "b", count: 64), key: Data(repeating: 1, count: 32),
+                              expires: .distantFuture, name: name)
     }()
 
     /// A store that starts with the seeded invitation and forgets it when the app quits.
@@ -30,8 +34,10 @@ enum DebugLaunchSeeds {
         if LaunchOptions.has("--ui-request-notifications") { Task { @MainActor in _ = await alerts.requestAndEnable() } }
         if LaunchOptions.has("--ui-agent-settings") { alerts.showsSettings = true }
         if let spec = LaunchOptions.value("--ui-agent-alert=") {
+            let identity = alertPreviewIdentity ?? String(repeating: "a", count: 64)
             let parts = spec.split(separator: ":").map(String.init)
-            var payload = AgentAlertPayload(helpRequestID: "h_ui01", kind: AgentKind(wire: parts.first), threadID: "mac-ui",
+            var payload = AgentAlertPayload(helpRequestID: "h_ui01", kind: AgentKind(wire: parts.first),
+                                            pairingIdentity: identity, threadID: "mac-ui",
                                             interruption: .timeSensitive)
             let options = Set(parts.dropFirst())
             payload.isTest = options.contains("test")
@@ -43,6 +49,11 @@ enum DebugLaunchSeeds {
             let payload = AgentAlertPayload(helpRequestID: "h_ui02", kind: AgentKind(wire: spec), threadID: "mac-ui")
             alerts.showBanner(AgentAlertPresentation(payload: payload, receivedAt: Date()))
         }
+    }
+
+    static var alertPreviewIdentity: String? {
+        guard LaunchOptions.value("--ui-agent-alert=") != nil else { return nil }
+        return invitation?.notificationIdentity ?? String(repeating: "a", count: 64)
     }
 
     /// Starts a labelled sample Live Activity, held in one state for captures, or walking through all:

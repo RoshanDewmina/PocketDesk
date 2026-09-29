@@ -11,6 +11,7 @@ final class AgentAlertCenterTests: XCTestCase {
     private var registered = 0
     private var unregistered = 0
     private let clock = Date(timeIntervalSince1970: 1_790_000_000)
+    private let pairingIdentity = String(repeating: "a", count: 64)
 
     override func setUp() {
         super.setUp()
@@ -19,6 +20,7 @@ final class AgentAlertCenterTests: XCTestCase {
         reports = AgentAlertReports()
         center = AgentAlertCenter(center: fake, defaults: defaults, reports: reports)
         center.now = { [clock] in clock }
+        center.currentPairingIdentity = { [pairingIdentity] in pairingIdentity }
         registered = 0
         unregistered = 0
         center.registerForRemoteNotifications = { [unowned self] in registered += 1 }
@@ -26,7 +28,8 @@ final class AgentAlertCenterTests: XCTestCase {
     }
 
     private func payload(_ id: String = "h_20af", kind: AgentKind = .claudeCode, reminder: Bool = false) -> AgentAlertPayload {
-        AgentAlertPayload(helpRequestID: id, kind: kind, threadID: "mac-7f3a", interruption: .timeSensitive, isReminder: reminder)
+        AgentAlertPayload(helpRequestID: id, kind: kind, pairingIdentity: pairingIdentity,
+                          threadID: "mac-7f3a", interruption: .timeSensitive, isReminder: reminder)
     }
 
     // MARK: Preferences
@@ -152,6 +155,8 @@ final class AgentAlertCenterTests: XCTestCase {
         XCTAssertEqual(request.content.relevanceScore, 0.3)
         let routed = try XCTUnwrap(AgentAlertPayload(userInfo: request.content.userInfo))
         XCTAssertEqual(routed.helpRequestID, "h_20af")
+        XCTAssertEqual(routed.pairingIdentity, pairingIdentity,
+                       "Snooze must keep the original pairing rather than bind a later Mac")
         XCTAssertTrue(routed.isReminder)
     }
 
@@ -230,6 +235,29 @@ final class AgentAlertCenterTests: XCTestCase {
         XCTAssertFalse(center.wasDeclined("h_0"), "Old answers roll off")
         XCTAssertEqual(reports.queued.count, AgentAlertReports.capacity)
     }
+
+    func testOldOrUnboundNotificationCannotReportOrOpenReplacementMac() async {
+        var old = payload("h_old")
+        old.pairingIdentity = String(repeating: "b", count: 64)
+        await center.respond(.open, to: old, deliveredAt: clock, notificationIdentifier: "old")
+        XCTAssertEqual(center.presentation?.payload, old)
+        XCTAssertFalse(center.isCurrentPairing(old))
+        XCTAssertTrue(reports.queued.isEmpty)
+        XCTAssertTrue(fake.removedDelivered.contains("old"))
+        await center.respond(.snooze, to: old, deliveredAt: clock, notificationIdentifier: "old")
+        XCTAssertTrue(fake.added.isEmpty)
+        old.pairingIdentity = nil
+        await center.respond(.notNow, to: old, deliveredAt: clock, notificationIdentifier: nil)
+        XCTAssertFalse(center.wasDeclined("h_old"))
+    }
+
+    func testNotificationActionBeforePairingAttachKeepsItsIdentityForLaterReport() async {
+        center.currentPairingIdentity = nil
+        await center.respond(.notNow, to: payload("h_cold"), deliveredAt: clock, notificationIdentifier: "cold")
+        XCTAssertEqual(reports.queued.first?.helpRequestID, "h_cold")
+        XCTAssertEqual(reports.queued.first?.pairingIdentity, pairingIdentity)
+        XCTAssertTrue(fake.removedDelivered.contains("cold"))
+    }
 }
 
 @MainActor
@@ -257,25 +285,64 @@ final class AgentAlertReportsTests: XCTestCase {
         return (reports, sink)
     }
 
-    func testExpiredHeadIsDroppedBeforeFreshReport() async {
+    func testExpiredHeadIsDroppedBeforeFreshReport() async throws {
         let now = Date(timeIntervalSince1970: 1_790_000_000)
         let (reports, sink) = reports(now: now)
-        reports.record(AgentAlertResponse(helpRequestID: "h_expired", kind: .opened,
+        let identity = try XCTUnwrap(reports.target?.notificationIdentity)
+        reports.record(AgentAlertResponse(helpRequestID: "h_expired", pairingIdentity: identity, kind: .opened,
                                           at: now.addingTimeInterval(-901)))
-        reports.record(AgentAlertResponse(helpRequestID: "h_fresh", kind: .opened, at: now))
+        reports.record(AgentAlertResponse(helpRequestID: "h_fresh", pairingIdentity: identity, kind: .opened, at: now))
         await reports.flush()
         XCTAssertEqual(sink.attempted, ["h_fresh"])
         XCTAssertTrue(reports.queued.isEmpty)
     }
 
-    func testUnknownEventDoesNotStarveLaterReport() async {
+    func testUnknownEventDoesNotStarveLaterReport() async throws {
         let now = Date(timeIntervalSince1970: 1_790_000_000)
         let (reports, sink) = reports(now: now)
         sink.results = [.discard, .recorded]
-        reports.record(AgentAlertResponse(helpRequestID: "h_live_control", kind: .opened, at: now))
-        reports.record(AgentAlertResponse(helpRequestID: "h_fresh", kind: .opened, at: now))
+        let identity = try XCTUnwrap(reports.target?.notificationIdentity)
+        reports.record(AgentAlertResponse(helpRequestID: "h_live_control", pairingIdentity: identity, kind: .opened, at: now))
+        reports.record(AgentAlertResponse(helpRequestID: "h_fresh", pairingIdentity: identity, kind: .opened, at: now))
         await reports.flush()
         XCTAssertEqual(sink.attempted, ["h_live_control", "h_fresh"])
+        XCTAssertTrue(reports.queued.isEmpty)
+    }
+
+    func testColdLaunchKeepsOnlyMatchingPairingAnswers() async throws {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let reports = AgentAlertReports()
+        reports.now = { now }
+        let invitation = PairInvitation(server: "wss://signal.example.test/signal",
+                                        room: String(repeating: "a", count: 64),
+                                        token: String(repeating: "b", count: 64),
+                                        key: Data(repeating: 1, count: 32), expires: .distantFuture, name: "Test Mac")
+        let target = try XCTUnwrap(PushPairingTarget(invitation: invitation))
+        reports.record(.init(helpRequestID: "h_matching", pairingIdentity: target.notificationIdentity,
+                             kind: .opened, at: now))
+        reports.record(.init(helpRequestID: "h_old", pairingIdentity: String(repeating: "c", count: 64),
+                             kind: .opened, at: now))
+        XCTAssertEqual(reports.queued.count, 2, "A cold-launch action waits for pairing configuration")
+        reports.configure(target: target)
+        let sink = Sink()
+        reports.sink = sink
+        await reports.flush()
+        XCTAssertEqual(sink.attempted, ["h_matching"])
+        XCTAssertTrue(reports.queued.isEmpty)
+    }
+
+    func testPairSwitchDiscardsQueuedOldAnswer() async throws {
+        let now = Date(timeIntervalSince1970: 1_790_000_000)
+        let (reports, oldSink) = reports(now: now)
+        oldSink.results = [.retry]
+        let old = try XCTUnwrap(reports.target)
+        reports.record(.init(helpRequestID: "h_old", pairingIdentity: old.notificationIdentity,
+                             kind: .opened, at: now))
+        let newInvitation = PairInvitation(server: "wss://signal.example.test/signal",
+                                           room: String(repeating: "c", count: 64),
+                                           token: String(repeating: "d", count: 64),
+                                           key: Data(repeating: 1, count: 32), expires: .distantFuture, name: "New Mac")
+        reports.configure(target: PushPairingTarget(invitation: newInvitation))
         XCTAssertTrue(reports.queued.isEmpty)
     }
 }
@@ -316,6 +383,9 @@ final class PushRegistrarTests: XCTestCase {
     func testOnlyHTTPSOriginFromExactPairedServerIsAccepted() {
         let expected = PushPairingTarget(invitation: invitation(server: "wss://signal.example.test/signal"))
         XCTAssertEqual(expected?.origin.absoluteString, "https://signal.example.test")
+        XCTAssertEqual(expected?.notificationIdentity,
+                       "bb4e6754bace2ee18161742a1bfbab72ac3865454f5f00951e7523912d1e7122",
+                       "The phone must match the backend's authoritative room and pairing-hash formula")
         XCTAssertNil(PushPairingTarget(invitation: invitation(server: "ws://127.0.0.1/signal")))
         XCTAssertNil(PushPairingTarget(invitation: invitation(server: "wss://signal.example.test/other")))
         XCTAssertNil(PushPairingTarget(invitation: invitation(server: "wss://user@signal.example.test/signal")))
@@ -416,6 +486,9 @@ final class PushRegistrarTests: XCTestCase {
         registrar.forget()
         await registrar.submit()
         XCTAssertNil(registrar.deviceToken)
+        if case .failed(let message) = registrar.status {
+            XCTAssertTrue(message.contains("pending"), "An offline tokenless opt-out must stay visible as unfinished")
+        } else { XCTFail("A failed tokenless opt-out cannot appear idle") }
         XCTAssertEqual(try? store.read([PendingPushDisable].self)?.first?.target,
                        PushPairingTarget(invitation: invitation()))
         XCTAssertGreaterThan(sink.disables, 0)

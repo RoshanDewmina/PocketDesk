@@ -41,6 +41,14 @@ struct PushPairingTarget: Codable, Hashable {
     let token: String
     let origin: URL
 
+    /// Opaque APNs identity for this exact room and phone proof. Neither proof nor origin travels
+    /// in the notification payload; the service derives the same value from its pairing hash.
+    var notificationIdentity: String { Self.notificationIdentity(room: room, token: token) }
+
+    static func notificationIdentity(room: String, token: String) -> String {
+        SecureRandom.digest(room + ":" + SecureRandom.digest(token))
+    }
+
     init?(invitation: PairInvitation) {
         guard SecureRandom.isToken(invitation.room), SecureRandom.isToken(invitation.token),
               let origin = Self.origin(for: invitation.server) else { return nil }
@@ -76,6 +84,10 @@ struct PushPairingTarget: Codable, Hashable {
         parts.path = ""
         return parts.url
     }
+}
+
+extension PairInvitation {
+    var notificationIdentity: String { PushPairingTarget.notificationIdentity(room: room, token: token) }
 }
 
 struct HostPair: Codable {

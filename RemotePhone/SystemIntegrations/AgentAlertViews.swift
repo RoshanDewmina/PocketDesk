@@ -18,9 +18,11 @@ struct AgentAlertSheet: View {
     private var name: String { center.preferences.showAgentName ? payload.kind.displayName : AgentKind.genericName }
     private var declined: Bool { center.wasDeclined(item.id) }
     private var old: Bool { item.freshness(at: center.now()) == .old }
+    private var pairingExpired: Bool { !payload.isTest && !center.isCurrentPairing(payload) }
 
     private var headline: String {
         if payload.isTest { return "Test alert received." }
+        if pairingExpired { return "This alert has expired." }
         return "\(name) needs you."
     }
 
@@ -28,6 +30,7 @@ struct AgentAlertSheet: View {
 
     private var message: String {
         if payload.isTest { return "Notifications work. Nothing on your Mac is stuck." }
+        if pairingExpired { return "This alert belongs to a different or removed Mac pairing. It can’t open your current Mac." }
         if declined { return "You said not now to this one. It may still be waiting." }
         if payload.isReminder { return "Still waiting on you." }
         if old { return "This was asked a while ago. It may have ended, but you can still take a look." }
@@ -55,7 +58,7 @@ struct AgentAlertSheet: View {
                 Text(meta)
                     .farsideCaption()
                     .padding(.top, Farside.Space.s)
-                if sessionLive && !payload.isTest {
+                if sessionLive && !payload.isTest && !pairingExpired {
                     FarsideNotice(message: "You’re already on your Mac.", tone: .info)
                         .padding(.top, Farside.Space.m)
                 }
@@ -71,7 +74,7 @@ struct AgentAlertSheet: View {
                 Button(primaryTitle, action: primary)
                     .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
                     .accessibilityIdentifier("agent.alert.open")
-                if !payload.isTest && !declined {
+                if !payload.isTest && !declined && !pairingExpired {
                     Button("Not now", action: notNow)
                         .buttonStyle(FarsideSecondaryButtonStyle())
                         .accessibilityIdentifier("agent.alert.notNow")
@@ -89,12 +92,12 @@ struct AgentAlertSheet: View {
     }
 
     private var primaryTitle: String {
-        if payload.isTest { return "Done" }
+        if payload.isTest || pairingExpired { return "Done" }
         return sessionLive ? "Back to your Mac" : "Open your Mac"
     }
 
     private func primary() {
-        if payload.isTest || sessionLive { close() } else { openMac() }
+        if payload.isTest || pairingExpired || sessionLive { close() } else { openMac() }
     }
 
     private func notNow() {

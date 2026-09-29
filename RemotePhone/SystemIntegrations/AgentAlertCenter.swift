@@ -8,6 +8,7 @@ import UserNotifications
 struct AgentAlertResponse: Equatable {
     enum Kind: String { case opened, snoozed, declined, dismissed }
     var helpRequestID: String
+    var pairingIdentity: String
     var kind: Kind
     var at: Date
 }
@@ -38,6 +39,7 @@ final class HTTPAgentAlertReportSink: AgentAlertReportSink {
     }
 
     func submit(_ response: AgentAlertResponse) async -> AgentAlertReportResult {
+        guard response.pairingIdentity == target.notificationIdentity else { return .discard }
         let body: [String: Any] = [
             "room": target.room, "token": target.token, "helpRequestID": response.helpRequestID,
             "action": response.kind.rawValue, "at": Int(response.at.timeIntervalSince1970.rounded())
@@ -81,8 +83,9 @@ final class AgentAlertReports {
 
     func configure(target next: PushPairingTarget?) {
         guard next != target else { return }
-        // An old notification answer cannot be attributed to a newly paired Mac.
-        queued.removeAll()
+        // Cold-launch actions may arrive before SwiftUI configures the pairing. Keep only answers
+        // explicitly bound to this exact target; never transplant an old or legacy answer.
+        queued.removeAll { $0.pairingIdentity != next?.notificationIdentity }
         target = next
         if let next { sink = HTTPAgentAlertReportSink(target: next) }
         else { sink = UnconfiguredAgentAlertReportSink() }
@@ -90,6 +93,8 @@ final class AgentAlertReports {
     }
 
     func record(_ response: AgentAlertResponse) {
+        guard SecureRandom.isToken(response.pairingIdentity),
+              target == nil || target?.notificationIdentity == response.pairingIdentity else { return }
         queued.append(response)
         if queued.count > Self.capacity { queued.removeFirst(queued.count - Self.capacity) }
         Task { await flush() }
@@ -106,6 +111,7 @@ final class AgentAlertReports {
             }
         }
         while let first = queued.first {
+            guard first.pairingIdentity == target?.notificationIdentity else { return }
             if target != nil, now().timeIntervalSince(first.at) >= Self.eventLifetime {
                 queued.removeFirst()
                 continue
@@ -167,6 +173,8 @@ final class AgentAlertCenter: ObservableObject {
     var now: () -> Date = { Date() }
     var registerForRemoteNotifications: () -> Void = {}
     var unregisterForRemoteNotifications: () -> Void = {}
+    /// The current in-memory pairing, even for a local-only control-channel alert.
+    var currentPairingIdentity: (() -> String?)? { didSet { objectWillChange.send() } }
 
     private let defaults: UserDefaults
     private var bannerTask: Task<Void, Never>?
@@ -269,12 +277,22 @@ final class AgentAlertCenter: ObservableObject {
     /// A tap, an action button or a swipe-away on a "needs you" notification.
     func respond(_ action: Action, to payload: AgentAlertPayload, deliveredAt: Date, notificationIdentifier: String?) async {
         let id = payload.helpRequestID
+        let boundBeforeAttach = currentPairingIdentity == nil &&
+            payload.pairingIdentity.map(SecureRandom.isToken) == true
+        guard payload.isTest || boundBeforeAttach || isCurrentPairing(payload) else {
+            // A delayed notification can outlive its Mac pairing. Let the person see that it is
+            // stale, but never snooze, report, or connect it through a replacement pairing.
+            if action == .open { open(payload, deliveredAt: deliveredAt) }
+            center.removePending([AgentNotification.reminderIdentifier(for: id)])
+            if let notificationIdentifier { center.removeDelivered([notificationIdentifier]) }
+            return
+        }
         switch action {
         case .open:
-            reports.record(.init(helpRequestID: id, kind: .opened, at: now()))
+            report(.opened, payload: payload)
             open(payload, deliveredAt: deliveredAt)
         case .snooze:
-            reports.record(.init(helpRequestID: id, kind: .snoozed, at: now()))
+            report(.snoozed, payload: payload)
             if let notificationIdentifier { center.removeDelivered([notificationIdentifier]) }
             // One reminder per request: a second Snooze is quietly the same as dismissing.
             guard !wasSnoozed(id), !wasDeclined(id) else { return }
@@ -285,7 +303,7 @@ final class AgentAlertCenter: ObservableObject {
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: AgentNotification.snoozeDelay, repeats: false))
             _ = await center.add(request)
         case .notNow:
-            reports.record(.init(helpRequestID: id, kind: .declined, at: now()))
+            report(.declined, payload: payload)
             remember(id, in: Self.declinedKey)
             center.removePending([AgentNotification.reminderIdentifier(for: id)])
             if let notificationIdentifier { center.removeDelivered([notificationIdentifier]) }
@@ -293,8 +311,19 @@ final class AgentAlertCenter: ObservableObject {
             if banner?.id == id { banner = nil }
         case .dismissed:
             // A swipe is not a decision: the agent is still waiting and the app still lists it.
-            reports.record(.init(helpRequestID: id, kind: .dismissed, at: now()))
+            report(.dismissed, payload: payload)
         }
+    }
+
+    func isCurrentPairing(_ payload: AgentAlertPayload) -> Bool {
+        guard let identity = payload.pairingIdentity, SecureRandom.isToken(identity) else { return false }
+        return identity == currentPairingIdentity?()
+    }
+
+    private func report(_ kind: AgentAlertResponse.Kind, payload: AgentAlertPayload) {
+        guard !payload.isTest, let identity = payload.pairingIdentity else { return }
+        reports.record(.init(helpRequestID: payload.helpRequestID, pairingIdentity: identity,
+                             kind: kind, at: now()))
     }
 
     func open(_ payload: AgentAlertPayload, deliveredAt: Date) {
@@ -304,7 +333,8 @@ final class AgentAlertCenter: ObservableObject {
 
     /// From a link that names only the request. The link carries no agent name, so it says "An agent".
     func open(linkedRequest id: String) {
-        open(AgentAlertPayload(helpRequestID: id, kind: .other), deliveredAt: now())
+        open(AgentAlertPayload(helpRequestID: id, kind: .other,
+                               pairingIdentity: currentPairingIdentity?()), deliveredAt: now())
     }
 
     /// An alert the Mac sent over the control channel, which only exists while a session is live. With the
@@ -316,7 +346,8 @@ final class AgentAlertCenter: ObservableObject {
               !seenFromMac.contains(frame.id) else { return }
         seenFromMac.append(frame.id)
         if seenFromMac.count > 32 { seenFromMac.removeFirst(seenFromMac.count - 32) }
-        let payload = AgentAlertPayload(helpRequestID: frame.id, kind: frame.agentKind)
+        let payload = AgentAlertPayload(helpRequestID: frame.id, kind: frame.agentKind,
+                                        pairingIdentity: currentPairingIdentity?())
         if isForeground() {
             showBanner(AgentAlertPresentation(payload: payload, receivedAt: frame.raisedDate))
         } else {
