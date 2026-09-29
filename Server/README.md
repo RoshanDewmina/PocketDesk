@@ -82,7 +82,7 @@ Rules:
 - Approval is checked on every renewal in addition to the audit loop. Revoking a room still ends both peers within `APPROVAL_AUDIT_INTERVAL_MS`, a renewal cannot revive it, and no credential is issued for a revoked room or delivered to a peer that has left.
 - Credentials refresh at a third of their TTL, so a peer has time for one failed round and an ICE restart before the credential in use can expire. Refreshes count against `TURN_CREDENTIAL_ISSUES_PER_MINUTE` and the provider timeout, and a peer cannot force an earlier one.
 - Superseded credentials are deliberately not revoked early. An existing relay allocation stays bound to the credential it was created with until an ICE restart replaces it, so revoking it would cut live media. They expire on their TTL and are all revoked when the peer disconnects (Stop Sharing, network loss, revocation, shutdown).
-- Peers that do not negotiate the feature keep the original behavior: the room closes `ROOM_LIFETIME_SECONDS` after the Mac registered.
+- Peers that do not negotiate the feature keep the original messages, and a room in which nobody renews keeps the original lifetime: it closes `ROOM_LIFETIME_SECONDS` after the Mac registered. One renewing peer is enough to keep it alive.
 - `GET /ready` reports `renewal.enabled`, `renewal.leaseSeconds` and counters for renewals and credential refreshes, without any room ID or credential.
 
 To check a running service, open a session and watch `renewal.renewals` grow. For an accelerated test of the refresh path, run a private service with `ROOM_LIFETIME_SECONDS=300` and `TURN_CREDENTIAL_TTL_SECONDS=600`: credentials then refresh every 200 seconds.
