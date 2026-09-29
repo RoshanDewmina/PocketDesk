@@ -200,7 +200,11 @@ final class RemoteCoordinator: ObservableObject {
                 let opened: ProtectedMessage
                 do { opened = try cipher.open(payload, sender: isHost ? "client" : "host") }
                 catch { throw RemoteError.stale }
-                try receiveProtected(opened)
+                do { try receiveProtected(opened) }
+                catch RemoteError.stale { throw RemoteError.stale }
+                // A registered Mac's job is to keep listening: a current message that breaks the protocol
+                // ends this phone's session, not the registration. A phone still fails closed.
+                catch where isHost && hostRegistered && !stopped { peerDisconnected() }
             case "error":
                 let code = message.code ?? "unavailable"
                 // The service answers a signal for a peer that already left with a non-closing
@@ -225,10 +229,7 @@ final class RemoteCoordinator: ObservableObject {
             // session that already ended, a replay, or a message sealed with another key. Rejecting
             // it means not acting on it, never tearing down the connection it was aimed at.
             staleMessagesIgnored += 1
-        } catch {
-            if isHost, !stopped, hostRegistered { peerDisconnected() }
-            else { fail("Secure connection failed. Reconnect or pair again on your Mac.") }
-        }
+        } catch { fail("Secure connection failed. Reconnect or pair again on your Mac.") }
     }
     private func receiveProtected(_ message: ProtectedMessage) throws {
         if isHost, message.kind == "request" {
