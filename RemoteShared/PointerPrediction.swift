@@ -7,10 +7,18 @@ import CoreGraphics
 /// acceleration) and clamps it to the display, so the phone replays unacknowledged moves
 /// with the same per-step clamp on top of the latest authoritative sample. Residual error
 /// (physical mouse, app warps, rejected or lost moves) is blended out instead of snapping.
+///
+/// Reconciliation is forward-only while the finger moves: a sample that trails the finger
+/// (the host's cursor lagging its own acknowledgements under load, or samples queued behind a
+/// radio stall and landing in a burst) is remembered but never pulls the drawn pointer back
+/// against the finger. The held residual is released when the finger reverses towards it or
+/// `motionHold` after the finger rests, and it vanishes on its own when the host catches up.
 struct PointerPredictor {
     static let correctionTimeConstant: TimeInterval = 0.045
     static let snapDistance: CGFloat = 64
     static let pendingLimit = 512
+    /// How long after the last local move a trailing sample is still treated as host lag.
+    static let motionHold: TimeInterval = 0.2
 
     /// A relative delta, or an absolute placement (`moveTo`) that replaces the replayed point.
     private struct Pending { let ordinal: UInt64; let delta: CGSize; var target: CGPoint? = nil }
@@ -23,6 +31,11 @@ struct PointerPredictor {
     private var nextOrdinal: UInt64 = 1
     private var correction = CGVector.zero
     private var correctionAt: TimeInterval = 0
+    /// True while `correction` is a trailing sample held in place rather than decaying.
+    private(set) var holdingCorrection = false
+    private(set) var lastLocalMoveAt: TimeInterval = -.infinity
+    /// Recent finger direction, an exponentially weighted sum of local deltas.
+    private var motion = CGVector.zero
 
     init(bounds: CGSize) { self.bounds = bounds }
 
@@ -36,11 +49,18 @@ struct PointerPredictor {
     }
 
     /// Call only for a move the control channel accepted for sending.
-    mutating func applyLocalMove(ordinal: UInt64, delta: CGSize) {
+    mutating func applyLocalMove(ordinal: UInt64, delta: CGSize, at now: TimeInterval = 0) {
         guard delta.width.isFinite, delta.height.isFinite else { return }
         pending.append(Pending(ordinal: ordinal, delta: delta))
         if pending.count > Self.pendingLimit { pending.removeFirst(pending.count - Self.pendingLimit) }
         if let predicted { self.predicted = clamp(CGPoint(x: predicted.x + delta.width, y: predicted.y + delta.height)) }
+        lastLocalMoveAt = now
+        motion = CGVector(dx: motion.dx * 0.6 + delta.width, dy: motion.dy * 0.6 + delta.height)
+        // The finger turning back towards the host's position is no longer being pulled against.
+        if holdingCorrection, delta.width * correction.dx + delta.height * correction.dy < 0 {
+            holdingCorrection = false
+            correctionAt = now
+        }
     }
 
     /// Call only for an absolute placement the control channel accepted for sending. The host
@@ -51,6 +71,8 @@ struct PointerPredictor {
         if pending.count > Self.pendingLimit { pending.removeFirst(pending.count - Self.pendingLimit) }
         predicted = clamp(point)
         correction = .zero
+        holdingCorrection = false
+        motion = .zero
     }
 
     mutating func receive(point: CGPoint, applied: UInt64?, at now: TimeInterval) {
@@ -69,24 +91,44 @@ struct PointerPredictor {
             }
         }
         predicted = replayed
-        if let before, hypot(before.x - replayed.x, before.y - replayed.y) <= Self.snapDistance {
-            correction = CGVector(dx: before.x - replayed.x, dy: before.y - replayed.y)
-            correctionAt = now
+        guard let before else {
+            correction = .zero
+            holdingCorrection = false
+            return
+        }
+        let residual = CGVector(dx: before.x - replayed.x, dy: before.y - replayed.y)
+        // The residual points from the sample to what is drawn. Along the finger's direction it
+        // means the sample trails the finger: blending it would drag the pointer backwards.
+        let trailsFinger = now - lastLocalMoveAt < Self.motionHold
+            && residual.dx * motion.dx + residual.dy * motion.dy > 0
+        if trailsFinger {
+            correction = residual
+            holdingCorrection = true
+        } else if hypot(residual.dx, residual.dy) <= Self.snapDistance {
+            correction = residual
+            holdingCorrection = false
         } else {
             correction = .zero
+            holdingCorrection = false
         }
+        correctionAt = now
     }
 
     func displayed(at now: TimeInterval) -> CGPoint? {
         guard let predicted else { return nil }
-        let decay = Self.decay(since: correctionAt, now: now)
+        let decay = decayFactor(at: now)
         return CGPoint(x: predicted.x + correction.dx * decay, y: predicted.y + correction.dy * decay)
     }
 
-    /// True while the blended correction is still visibly moving the pointer.
+    /// True while a correction is still pending: either blending visibly or held until the finger rests.
     func correcting(at now: TimeInterval) -> Bool {
-        let decay = Self.decay(since: correctionAt, now: now)
-        return hypot(correction.dx, correction.dy) * decay > 0.05
+        hypot(correction.dx, correction.dy) * decayFactor(at: now) > 0.05
+    }
+
+    /// A held correction starts decaying `motionHold` after the last local move.
+    private func decayFactor(at now: TimeInterval) -> CGFloat {
+        let start = holdingCorrection ? max(correctionAt, lastLocalMoveAt + Self.motionHold) : correctionAt
+        return Self.decay(since: start, now: now)
     }
 
     private static func decay(since start: TimeInterval, now: TimeInterval) -> CGFloat {

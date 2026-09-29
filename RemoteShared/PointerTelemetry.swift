@@ -78,8 +78,10 @@ enum PointerShape: String, CaseIterable, Equatable {
 struct HostPointerTelemetryPolicy {
     static let capabilityLifetime: TimeInterval = 1.0
     static let keepalive: TimeInterval = 0.25
-    /// A just-posted move can precede WindowServer's cursor update; report the injected point meanwhile.
-    static let injectionSettle: TimeInterval = 0.05
+    /// A just-posted move precedes WindowServer's cursor update, by well over 50 ms on a loaded Mac.
+    /// Report the injected point until the observed cursor reaches it or this much time passes.
+    static let injectionSettle: TimeInterval = 0.15
+    static let injectionTolerance: CGFloat = 0.5
     /// After falling back to the captured cursor, wait before hiding it again to avoid capture churn.
     static let rehideCooldown: TimeInterval = 2.0
 
@@ -136,7 +138,10 @@ struct HostPointerTelemetryPolicy {
         guard streaming(at: now) else { return nil }
         var point = observed
         if let injection, now >= injection.at, now - injection.at < Self.injectionSettle {
-            point = injection.point
+            let caughtUp = observed.map {
+                hypot($0.x - injection.point.x, $0.y - injection.point.y) <= Self.injectionTolerance
+            } ?? false
+            if caughtUp { self.injection = nil } else { point = injection.point }
         }
         if let point, point.x.isFinite, point.y.isFinite { lastKnown = point }
         let snapshot = Snapshot(x: Self.quantized(lastKnown.x), y: Self.quantized(lastKnown.y),
