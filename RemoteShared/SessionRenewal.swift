@@ -4,6 +4,7 @@ import Foundation
 /// peer asked for it, and a peer only sends the matching message after receiving that offer, so old
 /// services and old apps keep working message for message.
 enum SignalingFeature {
+    static let route = "route.1"
     static let renewal = "renew.1"
     /// Phone: understands `registered.access` and a non-closing `entitlement_required`
     /// (Backend/ENTITLEMENT-CONTRACT.md §4).

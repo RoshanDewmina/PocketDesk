@@ -3,6 +3,7 @@ import { HEX64, isRecord } from "./util";
 export const PROTOCOL_VERSION = 1;
 export const RENEWAL_FEATURE = "renew.1";
 export const REMOTE_FEATURE = "remote.1";
+export const ROUTE_FEATURE = "route.1";
 
 export const MAX_FRAME_BYTES = 256 * 1024;
 export const MAX_JSON_CHARS = 200 * 1024;
@@ -46,6 +47,7 @@ export type ErrorCode =
   | "authentication_timeout"
   | "registration_pending"
   | "entitlement_required"
+  | "upgrade_required"
   | "busy";
 
 export type ParsedFrame =

@@ -21,6 +21,32 @@ struct RelayMessage: Codable {
     var entitlement: String?
     /// `registered` to a phone that listed `remote.1`: "remote" or "local".
     var access: String?
+    /// Server-authenticated route.1 policy, received only on this signaling WSS connection.
+    var epoch: String?
+    var revision: Int?
+    var expiresAt: Int64?
+}
+
+struct ServerRoutePolicy: Equatable {
+    enum Access: String { case local, remote }
+    let room: String
+    let epoch: String
+    let revision: Int
+    let access: Access
+    let expiresAt: Date
+
+    static func accept(_ message: RelayMessage, room: String, previous: ServerRoutePolicy?, now: Date = Date()) -> Self? {
+        guard message.type == "route", message.version == 1, message.room == room,
+              let epoch = message.epoch, epoch.count == 32,
+              epoch.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }),
+              let revision = message.revision, revision > (previous?.revision ?? 0),
+              previous == nil || previous?.epoch == epoch,
+              let accessText = message.access, let access = Access(rawValue: accessText),
+              let milliseconds = message.expiresAt, milliseconds > 0 else { return nil }
+        let deadline = Date(timeIntervalSince1970: TimeInterval(milliseconds) / 1000)
+        guard deadline > now, deadline.timeIntervalSince(now) <= 86_400 else { return nil }
+        return Self(room: room, epoch: epoch, revision: revision, access: access, expiresAt: deadline)
+    }
 }
 
 @MainActor
