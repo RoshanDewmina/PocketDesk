@@ -58,6 +58,52 @@ enum MediaRoute {
     }
 }
 
+/// The video sender's rate settings (G5). `maxFramerate` follows the session rate, lowered by the
+/// ladder's rung; above 60 fps `highRefreshNoAdaptation` turns WebRTC's own degradation off
+/// (`maintainFramerateAndResolution`, the header's successor to `disabled`) so the app's ladder
+/// decides. At 60 this is exactly the tuned policy: 60 fps and `tuning.degradationPreference`.
+struct SenderRateParameters: Equatable {
+    var maxFramerate: Int
+    var degradationPreference: RTCDegradationPreference?
+
+    static func make(targetFPS: Int, tuning: StreamTuning, ladderFPS: Int? = nil) -> SenderRateParameters {
+        let target = max(1, targetFPS)
+        let noAdaptation = target > CaptureRatePolicy.standardFPS && tuning.highRefreshNoAdaptation
+        return SenderRateParameters(maxFramerate: min(target, max(1, ladderFPS ?? target)),
+                                    degradationPreference: noAdaptation ? .maintainFramerateAndResolution
+                                                                        : tuning.degradationPreference)
+    }
+}
+
+/// What the host's video source adapts captured frames to: the receiver's H.264 level fitted at
+/// the session rate (rung 0), scaled by the ladder's size fraction and dropped to its rate. Never
+/// above the rung-0 size; even dimensions. Nil when there is nothing to adapt (no level budget and
+/// no ladder), which leaves frames untouched as before.
+struct SenderOutputFormat: Equatable {
+    var width: Int
+    var height: Int
+    var fps: Int
+
+    static func make(width: Int, height: Int, budget: H264FrameBudget?, targetFPS: Int,
+                     ladder: LadderState?) -> SenderOutputFormat? {
+        let target = max(1, targetFPS)
+        let step = ladder.flatMap { $0.fps < target || $0.sizeFraction < 1 ? $0 : nil }
+        let base: (width: Int, height: Int)
+        if let budget {
+            base = budget.fitted(width: width, height: height, fps: target)
+        } else if step != nil, width >= 2, height >= 2 {
+            base = (width, height)
+        } else {
+            return nil
+        }
+        guard let step else { return SenderOutputFormat(width: base.width, height: base.height, fps: target) }
+        let fraction = step.sizeFraction.isFinite ? min(1, max(0.1, step.sizeFraction)) : 1
+        func scaled(_ edge: Int) -> Int { min(edge, max(2, Int((Double(edge) * fraction).rounded(.down)) & ~1)) }
+        return SenderOutputFormat(width: scaled(base.width), height: scaled(base.height),
+                                  fps: min(target, max(1, step.fps)))
+    }
+}
+
 final class PeerMedia: NSObject {
     var onSignal: ((MediaSignal) -> Void)?
     var onRemoteVideo: ((RTCVideoTrack) -> Void)?
@@ -125,7 +171,8 @@ final class PeerMedia: NSObject {
     private static let restartGrace: TimeInterval = 15
     private let captureLock = NSLock()
     private var receivingBudget: H264FrameBudget?
-    private var adaptedSize: (Int, Int)?
+    private var adaptedFormat: SenderOutputFormat?
+    private var appliedRate: SenderRateParameters?
     private var closed = false
     private var frameTransform: ((CVPixelBuffer, Int64) -> CVPixelBuffer?)?
     private let arrivalLock = NSLock()
@@ -267,7 +314,7 @@ final class PeerMedia: NSObject {
                 guard let self, !self.closed, error == nil else { self?.onState?("failed"); return }
                 self.captureLock.lock()
                 self.receivingBudget = H264FrameBudget.receivingLimit(sdp: sdp)
-                self.adaptedSize = nil
+                self.adaptedFormat = nil
                 self.captureLock.unlock()
                 self.remoteDescriptionReady = true
                 self.remoteDescriptionsApplied += 1
@@ -290,29 +337,70 @@ final class PeerMedia: NSObject {
         guard isHost, nativeDesktopCodecs, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return }
         let parameters = sender.parameters
         let ceiling = tuning.maximumBitrateBps(for: streamQuality)
+        let rate = currentSenderRate
         for encoding in parameters.encodings {
-            encoding.maxFramerate = 60
+            encoding.maxFramerate = NSNumber(value: rate.maxFramerate)
             encoding.maxBitrateBps = NSNumber(value: tuning.qualityBitrates ? ceiling : 12_000_000)
         }
-        if let preference = tuning.degradationPreference {
+        if let preference = rate.degradationPreference {
             parameters.degradationPreference = NSNumber(value: preference.rawValue)
+        } else if appliedRate?.degradationPreference != nil {
+            parameters.degradationPreference = nil
         }
         sender.parameters = parameters
+        appliedRate = rate
         if tuning.qualityBitrates {
             _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: nil,
                                                  maxBitrateBps: NSNumber(value: ceiling * max(1, tuning.bandwidthHeadroom)))
         }
     }
 
-    /// G5: the capture session's target rate and display (W1 applies them to the sender).
+    /// G5: the capture session's target rate and display. Written on the main queue under
+    /// `captureLock`, because `pushFrame` reads the rate and the ladder on the capture queue.
     private(set) var targetFPS = CaptureRatePolicy.standardFPS
     private(set) var displayRefreshHz: Double?
     private(set) var captureDisplay: String?
+    /// G12: the rung last applied with `applyLadder`, nil after a capture (re)start.
+    private(set) var ladderState: LadderState?
+    /// Host: what the Mac reports on `capture` status, copied into every statistics sample.
+    var busyState: BusyState?
+    var captureRegion: CaptureRegion?
 
+    private var currentSenderRate: SenderRateParameters {
+        SenderRateParameters.make(targetFPS: targetFPS, tuning: tuning, ladderFPS: ladderState?.fps)
+    }
+
+    /// Host, main queue: the capture session's rate (on every capture start, including a display
+    /// switch). Clears the ladder to rung 0 and re-applies the sender when the rate settings change.
     func applyCaptureRate(targetFPS: Int, displayRefreshHz: Double?, display: String?) {
-        self.targetFPS = targetFPS
+        let fps = max(1, targetFPS)
+        captureLock.lock()
+        if fps != self.targetFPS { adaptedFormat = nil }
+        self.targetFPS = fps
+        ladderState = nil
+        captureLock.unlock()
         self.displayRefreshHz = displayRefreshHz
         captureDisplay = display
+        reconfigureSenderRate()
+    }
+
+    /// Host, main queue: one ladder rung (G12). The rate goes to the sender's `maxFramerate` and the
+    /// source adapter, the size fraction scales the adapted picture; the encoder session is not
+    /// restarted (a size step still re-initialises it inside libwebrtc, with a key frame). Rung 0,
+    /// the session rate at full size, is exactly the format `applyCaptureRate` set.
+    func applyLadder(_ state: LadderState) {
+        var applied = state
+        applied.fps = min(targetFPS, max(1, state.fps))
+        applied.sizeFraction = state.sizeFraction.isFinite ? min(1, max(0.1, state.sizeFraction)) : 1
+        captureLock.lock()
+        ladderState = applied
+        captureLock.unlock()
+        reconfigureSenderRate()
+    }
+
+    private func reconfigureSenderRate() {
+        guard !closed, remoteDescriptionReady, currentSenderRate != appliedRate else { return }
+        configureNativeSender()
     }
 
     /// Host: the picture mode the capture session actually applied. Updates the encoder ceiling
@@ -345,6 +433,12 @@ final class PeerMedia: NSObject {
         return sender.parameters.encodings.first?.maxBitrateBps.map { $0.doubleValue / 1000 }
     }
 
+    /// Host: the frame-rate cap actually applied to the video sender.
+    var appliedSenderMaxFramerate: Int? {
+        guard isHost, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return nil }
+        return sender.parameters.encodings.first?.maxFramerate?.intValue
+    }
+
     /// Host: the degradation preference actually applied to the video sender.
     var appliedDegradationPreference: RTCDegradationPreference? {
         guard isHost, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return nil }
@@ -375,12 +469,13 @@ final class PeerMedia: NSObject {
         let output: CVPixelBuffer
         if let frameTransform { guard let transformed = frameTransform(buffer, timeStampNs) else { return }; output = transformed }
         else { output = buffer }
-        if nativeDesktopCodecs, let budget = receivingBudget {
-            let fitted = budget.fitted(width: CVPixelBufferGetWidth(output), height: CVPixelBufferGetHeight(output))
-            if adaptedSize?.0 != fitted.width || adaptedSize?.1 != fitted.height {
-                source.adaptOutputFormat(toWidth: Int32(fitted.width), height: Int32(fitted.height), fps: 60)
-                adaptedSize = (fitted.width, fitted.height)
-            }
+        if nativeDesktopCodecs,
+           let format = SenderOutputFormat.make(width: CVPixelBufferGetWidth(output),
+                                                height: CVPixelBufferGetHeight(output), budget: receivingBudget,
+                                                targetFPS: targetFPS, ladder: ladderState),
+           format != adaptedFormat {
+            source.adaptOutputFormat(toWidth: Int32(format.width), height: Int32(format.height), fps: Int32(format.fps))
+            adaptedFormat = format
         }
         source.capturer(capturer, didCapture: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: output), rotation: ._0, timeStampNs: timeStampNs))
         counters.pushed()
@@ -426,7 +521,17 @@ final class PeerMedia: NSObject {
                                       current: sample, counters: previousSample == nil ? nil : counts)
         stats.captureMaximumDimension = captureMaximumDimension
         stats.tuning = tuning.summary
+        stats.thermalState = ProcessInfo.processInfo.thermalState.rawValue
+        stats.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
         if isHost {
+            if nativeDesktopCodecs {
+                stats.targetFPS = targetFPS
+                stats.displayRefreshHz = displayRefreshHz
+                stats.captureDisplay = captureDisplay
+                stats.ladder = ladderState
+                stats.busy = busyState
+                stats.captureRegion = captureRegion
+            }
             stats.maxKbps = appliedSenderMaxKbps
             seedBandwidthEstimate(stats, route: sample.route, detail: sample.routeDetail)
             latestHostSummary = stats.hostSummary

@@ -367,6 +367,7 @@
 		AA4534AC6F3437537258B96E /* ViewportRegion.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD89B2973968093ABD8587D3 /* ViewportRegion.swift */; };
 		AA6E7E411B1BDF6D30C11D92 /* PhoneE2E.swift in Sources */ = {isa = PBXBuildFile; fileRef = 422AD8614A5B863A7FEA397A /* PhoneE2E.swift */; };
 		AA805402F78286185E94FD73 /* BrowserCrypto.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA9B09F48D37728D1E9AF553 /* BrowserCrypto.swift */; };
+		AAA175B1520A3A637B8ABAC4 /* CaptureRateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8A77F41833DB0D19DBDBFC8 /* CaptureRateTests.swift */; };
 		AB09BB68E242576DFDD419B1 /* HostE2EInputFence.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0D3322BAED26602BE46F4B4 /* HostE2EInputFence.swift */; };
 		ABDB435608503C3232F5CAAC /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412B04FA6976C7A9157CAECE /* SignalingClient.swift */; };
 		AC1D7174A3ECFA356ED75F25 /* FarsideHalftone.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D465DB529F7AFB91CFA9A74 /* FarsideHalftone.swift */; };
@@ -854,6 +855,7 @@
 		C4522B2D9BDF2090F6D80728 /* FarsideWatchdog */ = {isa = PBXFileReference; includeInIndex = 0; path = FarsideWatchdog; sourceTree = BUILT_PRODUCTS_DIR; };
 		C812181590DE874E58758A35 /* VideoCodecPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoCodecPolicyTests.swift; sourceTree = "<group>"; };
 		C81ED752BB30213C1E58EBF4 /* StreamWireTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamWireTests.swift; sourceTree = "<group>"; };
+		C8A77F41833DB0D19DBDBFC8 /* CaptureRateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureRateTests.swift; sourceTree = "<group>"; };
 		C8AE50D1FC982D390284FAC5 /* HostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostApp.swift; sourceTree = "<group>"; };
 		C8FA26A1189200ABA8338712 /* TouchInputMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchInputMode.swift; sourceTree = "<group>"; };
 		CB33A6416891A0F0EE699654 /* E2ETouchSynthesizer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = E2ETouchSynthesizer.h; sourceTree = "<group>"; };
@@ -1197,6 +1199,7 @@
 				17CD4AA27077B3457AE5CAE0 /* BrowserCryptoTests.swift */,
 				E5A4A5C6B82AD42422582E6F /* BrowserPeerTests.swift */,
 				72DE368D956186BDF569C427 /* BrowserRelayPolicyTests.swift */,
+				C8A77F41833DB0D19DBDBFC8 /* CaptureRateTests.swift */,
 				7485A47A6290AA2F83D600A9 /* ClipboardTransferTests.swift */,
 				A39F6C34FCD735936A12A317 /* ClockSyncTests.swift */,
 				623D4E7C80996C8F073FB4B0 /* DirectTouchMappingTests.swift */,
@@ -2218,6 +2221,7 @@
 				51A2755E7805D2ED3B887764 /* BrowserRelayPolicyTests.swift in Sources */,
 				2DDE4B32394326DA9C6F8C73 /* BusyState.swift in Sources */,
 				23BA44AA1CA8377837EF2F11 /* CaptureRatePolicy.swift in Sources */,
+				AAA175B1520A3A637B8ABAC4 /* CaptureRateTests.swift in Sources */,
 				890832638ED9E892E72ED894 /* ClipboardTransfer.swift in Sources */,
 				52F237103173A65310D1DA73 /* ClipboardTransferTests.swift in Sources */,
 				B223E9B74D83BE1BF3D378DC /* ClockSync.swift in Sources */,
