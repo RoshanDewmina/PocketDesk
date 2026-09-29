@@ -23,6 +23,8 @@ struct NativeTrackpadSurface: UIViewRepresentable {
     var onPointerMotionEnded: () -> Void
     var onHardwareKey: (String, [String]) -> Bool = { _, _ in false }
     var onHardwareModifiers: ([String]) -> Void = { _ in }
+    /// DEBUG probe only: every raw key UIKit delivers, to diagnose keys that never arrive.
+    var onKeyDiagnostic: ((String) -> Void)? = nil
 
     func makeUIView(context: Context) -> NativeTrackpadInputView {
         let view = NativeTrackpadInputView()
@@ -44,6 +46,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
         view.keyboard.send = onHardwareKey
         view.keyboard.modifiersChanged = onHardwareModifiers
         view.keyboard.remapEnabled = { remapShortcuts }
+        view.keyDiagnostic = onKeyDiagnostic
         view.setHidesSystemPointer(hardwarePointer)
         view.setKeyboardFocus(keyboardFocus)
         view.updateAccessibility(panMode: panMode, direct: direct, middleClick: middleClickAvailable)
@@ -59,6 +62,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     var hardwareKeys = false {
         didSet { if !hardwareKeys { keyboard.releaseAll() } }
     }
+    var keyDiagnostic: ((String) -> Void)?
     private struct Contact { let id: UInt64; var point: CGPoint }
     private var contacts: [ObjectIdentifier: Contact] = [:]
     private var pointerButtons: [ObjectIdentifier: HardwarePointerRouter.Button] = [:]
@@ -163,9 +167,47 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         return super.resignFirstResponder()
     }
 
+    /// iOS gives Escape to the focus and dismissal systems, and iPadOS's window commands (⌘W close,
+    /// ⌘M minimize, ⌘Q quit, ⌘N new window) to itself, before any press handler. Key commands with
+    /// priority on the first responder get them first, so they reach the Mac instead of closing
+    /// Farside. Shortcuts iPadOS keeps even from these (⌘Tab, ⌘Space, ⌘H) use the ⌃⌥ stand-ins.
+    override var keyCommands: [UIKeyCommand]? {
+        hardwareKeys ? Self.priorityCommands : nil
+    }
+
+    static let priorityCommands: [UIKeyCommand] = {
+        let modifiers: [UIKeyModifierFlags] = [.command, .shift, .alternate, .control]
+        var combinations: [UIKeyModifierFlags] = [[]]
+        for modifier in modifiers { combinations += combinations.map { $0.union(modifier) } }
+        var commands = combinations.map { flags in
+            UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: flags, action: #selector(priorityKeyCommand(_:)))
+        }
+        for input in Self.windowCommandInputs {
+            commands.append(UIKeyCommand(input: input, modifierFlags: .command, action: #selector(priorityKeyCommand(_:))))
+            commands.append(UIKeyCommand(input: input, modifierFlags: [.command, .shift], action: #selector(priorityKeyCommand(_:))))
+            commands.append(UIKeyCommand(input: input, modifierFlags: [.command, .alternate], action: #selector(priorityKeyCommand(_:))))
+        }
+        commands.forEach { $0.wantsPriorityOverSystemBehavior = true }
+        return commands
+    }()
+
+    static let windowCommandInputs = ["w", "m", "q", "n", ","]
+
+    @objc private func priorityKeyCommand(_ command: UIKeyCommand) {
+        keyDiagnostic?("command \(command.input ?? "nil")")
+        guard hardwareKeys, let input = command.input,
+              let usage = input == UIKeyCommand.inputEscape ? HardwareKeyMap.escape : HardwareKeyMap.usage(forCharacter: input)
+        else { return }
+        keyboard.commandPressed(usage: usage, flags: command.modifierFlags)
+    }
+
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         var unhandled = Set<UIPress>()
         for press in presses {
+            if let key = press.key, let keyDiagnostic, HardwareKeyMap.name(forHIDUsage: key.keyCode.rawValue) == nil,
+               !HardwareKeyMap.isModifier(key.keyCode.rawValue) {
+                keyDiagnostic("unmapped 0x\(String(key.keyCode.rawValue, radix: 16)) \(key.charactersIgnoringModifiers.unicodeScalars.map { String($0.value, radix: 16) })")
+            }
             guard hardwareKeys, let key = press.key,
                   keyboard.pressBegan(usage: key.keyCode.rawValue, flags: key.modifierFlags, at: press.timestamp)
             else { unhandled.insert(press); continue }

@@ -30,6 +30,14 @@ final class InputProbe: ObservableObject {
         actions.removeAll()
     }
 
+    /// A diagnostic line that is not a control action (for example a key UIKit delivered that
+    /// has no Mac equivalent).
+    func note(_ text: String) {
+        sequence += 1
+        entries.append("\(sequence) note \(text)")
+        if entries.count > 40 { entries.removeFirst(entries.count - 40) }
+    }
+
     var lastSequence: Int { sequence }
 
     /// Compact, stable text: `moveTo 720.0 450.0`, `click 2`, `key w command+shift`.
@@ -77,7 +85,8 @@ struct InputProbeTargets: View {
                 .accessibilityElement()
                 .accessibilityIdentifier("probe.target.\(index)")
                 .accessibilityLabel("Probe target \(index)")
-                .accessibilityValue("x\(Int(source.x)) y\(Int(source.y))")
+                // Verbatim: a localized key would group digits ("x1,296").
+                .accessibilityValue(Text(verbatim: "x\(Int(source.x)) y\(Int(source.y))"))
         }
     }
 }

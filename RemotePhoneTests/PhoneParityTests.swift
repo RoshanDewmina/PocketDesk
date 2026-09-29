@@ -1,0 +1,126 @@
+import XCTest
+import UIKit
+@testable import PocketDeskRemote
+
+/// Phone-side glue for hardware keyboards, direct touch and the display picker. The shared
+/// logic behind these (key map, remaps, repeat, pointer router, mapping) is tested on macOS.
+@MainActor
+final class HardwareKeyboardRouterTests: XCTestCase {
+    private var sent: [String] = []
+    private var modifiers: [[String]] = []
+
+    private func makeRouter(remap: Bool = true) -> HardwareKeyboardRouter {
+        let router = HardwareKeyboardRouter()
+        router.send = { [unowned self] key, mods in
+            self.sent.append(([key] + mods).joined(separator: " "))
+            return true
+        }
+        router.modifiersChanged = { [unowned self] in self.modifiers.append($0) }
+        router.remapEnabled = { remap }
+        return router
+    }
+
+    func testKeysTravelByPositionWithTheirModifiers() {
+        let router = makeRouter()
+        XCTAssertTrue(router.pressBegan(usage: 0x06, flags: .command, at: 1))
+        XCTAssertTrue(router.pressEnded(usage: 0x06, flags: []))
+        XCTAssertTrue(router.pressBegan(usage: 0x50, flags: [.shift, .alternate], at: 2))
+        XCTAssertTrue(router.pressEnded(usage: 0x50, flags: []))
+        XCTAssertEqual(sent, ["c command", "left shift option"])
+    }
+
+    func testModifierKeysAloneSendNothingButAreTrackedForClicks() {
+        let router = makeRouter()
+        XCTAssertTrue(router.pressBegan(usage: 0xE3, flags: .command, at: 1))
+        XCTAssertEqual(sent, [])
+        XCTAssertEqual(router.heldModifiers, ["command"])
+        XCTAssertEqual(modifiers.last, ["command"])
+        _ = router.pressEnded(usage: 0xE3, flags: [])
+        XCTAssertEqual(router.heldModifiers, [])
+    }
+
+    func testCapsLockShiftsLettersAndRemapsReservedShortcuts() {
+        let router = makeRouter()
+        _ = router.pressBegan(usage: 0x04, flags: .alphaShift, at: 1)
+        _ = router.pressEnded(usage: 0x04, flags: .alphaShift)
+        _ = router.pressBegan(usage: 0x2B, flags: [.control, .alternate], at: 2)
+        _ = router.pressEnded(usage: 0x2B, flags: [])
+        XCTAssertEqual(sent, ["a shift", "tab command"])
+
+        let plain = makeRouter(remap: false)
+        sent = []
+        _ = plain.pressBegan(usage: 0x2B, flags: [.control, .alternate], at: 3)
+        XCTAssertEqual(sent, ["tab option control"])
+    }
+
+    func testUnknownKeysGoBackToUIKitAndEscapeCommandsSendOnce() {
+        let router = makeRouter()
+        XCTAssertFalse(router.pressBegan(usage: 0x65, flags: [], at: 1), "Menu key: not for the Mac")
+        router.commandPressed(usage: HardwareKeyMap.escape, flags: .shift)
+        XCTAssertEqual(sent, ["escape shift"])
+    }
+
+    func testReleaseAllClearsModifiers() {
+        let router = makeRouter()
+        _ = router.pressBegan(usage: 0xE1, flags: .shift, at: 1)
+        router.releaseAll()
+        XCTAssertEqual(router.heldModifiers, [])
+        XCTAssertEqual(modifiers.last, [])
+    }
+}
+
+@MainActor
+final class CanvasKeyCommandTests: XCTestCase {
+    func testEscapeHasPriorityKeyCommandsOnlyWhileKeysGoToTheMac() {
+        let view = NativeTrackpadInputView()
+        XCTAssertTrue(view.canBecomeFirstResponder, "The canvas takes key presses without a text field")
+        XCTAssertNil(view.keyCommands, "No commands while hardware keys are off")
+        view.hardwareKeys = true
+        let commands = view.keyCommands ?? []
+        XCTAssertTrue(commands.allSatisfy(\.wantsPriorityOverSystemBehavior))
+        XCTAssertTrue(commands.allSatisfy { $0.discoverabilityTitle == nil }, "Never listed in the shortcut overlay")
+        let escape = commands.filter { $0.input == UIKeyCommand.inputEscape }
+        XCTAssertEqual(escape.count, 16, "Escape with every combination of ⌘⇧⌥⌃")
+        XCTAssertEqual(Set(escape.map(\.modifierFlags.rawValue)).count, 16)
+        for input in ["w", "m", "q", "n", ","] {
+            XCTAssertTrue(commands.contains { $0.input == input && $0.modifierFlags == .command },
+                          "⌘\(input) goes to the Mac, not to Farside's window")
+        }
+        XCTAssertEqual(HardwareKeyMap.usage(forCharacter: "w"), 0x1A)
+        XCTAssertEqual(HardwareKeyMap.usage(forCharacter: ","), 0x36)
+        XCTAssertEqual(HardwareKeyMap.name(forHIDUsage: HardwareKeyMap.usage(forCharacter: "q")!), "q")
+    }
+}
+
+@MainActor
+final class DirectTouchModelTests: XCTestCase {
+    func testDirectTouchNeedsAbsolutePointerFromTheMac() {
+        let model = PhoneRemoteModel()
+        XCTAssertFalse(model.absolutePointerSupported)
+        XCTAssertFalse(model.pointTo(CGPoint(x: 10, y: 10)), "An older Mac never receives moveTo")
+        XCTAssertFalse(model.middleClick())
+        XCTAssertFalse(model.hardwareKey("a", modifiers: []), "No session, nothing is sent")
+        XCTAssertFalse(model.gesture(.pointTo(CGPoint(x: 1, y: 1))), "Canvas points must be mapped by the session first")
+        XCTAssertTrue(model.displays.isEmpty)
+        XCTAssertFalse(model.selectDisplay(2))
+    }
+
+    func testTouchModeDefaultsToTrackpad() {
+        UserDefaults.standard.removeObject(forKey: TouchInputMode.key)
+        XCTAssertEqual(TouchInputMode(rawValue: UserDefaults.standard.string(forKey: TouchInputMode.key) ?? "trackpad"), .trackpad)
+        XCTAssertEqual(TouchInputMode.allCases.map(\.title), ["Trackpad", "Direct"])
+    }
+
+    func testPointerWarpJumpsTheDrawnPointer() {
+        var now: TimeInterval = 50
+        let overlay = PointerOverlayModel(clock: { now })
+        overlay.reset(sourceSize: CGSize(width: 1440, height: 900))
+        overlay.hostCapability(PointerSync(videoCursor: true))
+        overlay.receive(PointerSync(videoCursor: false, x: 100, y: 100, visible: true, shape: "arrow", applied: 0, sample: 1))
+        now += 0.01
+        let ordinal = overlay.reserveMoveOrdinal()
+        XCTAssertNotNil(ordinal)
+        overlay.localWarp(ordinal: ordinal, to: CGPoint(x: 700, y: 420))
+        XCTAssertEqual(overlay.render?.point, CGPoint(x: 700, y: 420))
+    }
+}

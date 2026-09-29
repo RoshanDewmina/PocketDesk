@@ -33,15 +33,17 @@ struct MiniMapView<Thumbnail: View>: View {
                 .fill(Farside.Palette.void.opacity(0.5), style: FillStyle(eoFill: true))
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
+                // Positioned (not offset), with its accessibility applied before placement, so
+                // VoiceOver and tests see the outline where it is drawn.
                 RoundedRectangle(cornerRadius: 3, style: .continuous)
                     .strokeBorder(Farside.Palette.bone, lineWidth: 1.5)
                     .frame(width: visible.width, height: visible.height)
-                    .offset(x: visible.minX, y: visible.minY)
-                    .allowsHitTesting(false)
                     .accessibilityElement()
                     .accessibilityIdentifier("remote.minimap.viewport")
                     .accessibilityLabel("Visible area")
                     .accessibilityValue(description(of: viewport.visibleSourceRect))
+                    .position(x: visible.midX, y: visible.midY)
+                    .allowsHitTesting(false)
                 if let pointer {
                     let point = layout.mapPoint(forSourcePoint: pointer)
                     Circle()
