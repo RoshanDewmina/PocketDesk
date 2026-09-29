@@ -2,6 +2,11 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- OFF by default. Nothing here is in a normal build, because each key needs an explicit App ID
+	     with the capability registered, and a build signed with Xcode's wildcard development profile
+	     fails to sign with any of them. Turn them all on together with FARSIDE_ENABLE_PUSH=YES, after
+	     the steps in design/SYSTEM-INTEGRATIONS-REPORT.md ("Turning push on"). -->
+
 	<!-- Push Notifications. Xcode swaps "development" for "production" when signing for distribution. -->
 	<key>aps-environment</key>
 	<string>development</string>

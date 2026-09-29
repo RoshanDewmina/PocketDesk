@@ -135,6 +135,32 @@ final class LiveActivityUITests: XCTestCase {
         }
     }
 
+    /// App Shortcuts are what Spotlight offers for the app. The system indexes them on its own schedule, so
+    /// this attaches what it shows and asserts only that the app itself is found.
+    @MainActor
+    func testSpotlightOffersTheApp() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-seed-pairing=Studio Mac", "--ui-x"]
+        app.launch()
+        Thread.sleep(forTimeInterval: 3)
+        toHomeScreen(settle: 2.0)
+        let pill = springboard.otherElements["spotlight-pill"]
+        XCTAssertTrue(pill.waitForExistence(timeout: 5), "The Home Screen has its search pill")
+        pill.tap()
+        let field = springboard.searchFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "Spotlight opens with a search field")
+        field.typeText("Farside")
+        Thread.sleep(forTimeInterval: 4)
+        attach("spotlight-farside")
+        attachTree("spotlight-farside-tree")
+        XCTAssertTrue(springboard.staticTexts["Farside"].firstMatch.waitForExistence(timeout: 5), "Spotlight finds the app")
+        for shortcut in ["Connect to Mac", "End session", "Is my Mac awake?"] {
+            let found = springboard.staticTexts[shortcut].firstMatch.exists
+            add(XCTAttachment(string: "\(shortcut): \(found ? "shown" : "not shown yet")"))
+        }
+        springboard.buttons["Cancel"].firstMatch.tap()
+    }
+
     /// The button runs `EndSessionIntent` for a phone that is locked and an app that is in the background.
     @MainActor
     func testTheEndButtonEndsTheActivityFromTheLockScreen() throws {

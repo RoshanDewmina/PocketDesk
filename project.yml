@@ -95,6 +95,9 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Farside
         INFOPLIST_FILE: RemotePhone/Info.plist
+        # Push, Time Sensitive and Associated Domains need an explicit App ID, which the wildcard
+        # development profile cannot provide. Off by default so a device build signs; on with
+        # FARSIDE_ENABLE_PUSH=YES once the App ID exists (design/SYSTEM-INTEGRATIONS-REPORT.md).
         CODE_SIGN_ENTITLEMENTS: $(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))
         FARSIDE_ENABLE_PUSH: 'NO'
         FARSIDE_ENTITLEMENTS_NO: ''

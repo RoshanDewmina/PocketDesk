@@ -308,6 +308,19 @@ final class AgentAlertBridgeTests: XCTestCase {
         XCTAssertEqual(status(request()), 200, "A stalled client did not block the next one")
     }
 
+    func testASlowHandlerIsNotCutOffByTheReadDeadline() async throws {
+        bridge.stop()
+        let received = self.received!
+        bridge = AgentAlertBridge(directory: directory, readDeadline: 0.3) { alert in
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            received.mutate { $0.append(alert) }
+            return .pushed
+        }
+        try await bridge.start()
+        XCTAssertEqual(status(request()), 200, "The read deadline is for reading a request, not for the answer")
+        XCTAssertEqual(received.value.count, 1)
+    }
+
     // MARK: Raw client
 
     /// One connection: write, optionally wait, read until the server closes.
