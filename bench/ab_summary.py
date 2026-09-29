@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """Usage: ab_summary.py LABEL=phone-export.jsonl [LABEL=... ] [--last=SECONDS] [--rows=START:END]
-                     [--min-fps=30] [--motion=DISTINCT_FPS] [--all]
+                     [--from=ISO8601] [--to=ISO8601] [--min-fps=30]
+                     [--motion=DISTINCT_FPS] [--all]
 One row per phone statistics export (Controls → Picture → Export statistics log), for A/B runs:
 the active tuning, the Mac's encoder trace (from the embedded host summary), delivered and
-presented cadence, the per-second arrival-gap signature, the bench marker's glass-to-glass and
+presented cadence, the per-second arrival-gap signature, the bench marker's uncalibrated latency and
 the latest legibility score. Windows with decoded fps below --min-fps (connect, idle) are skipped
-for the cadence and gap columns. Samples are one per second with no timestamp, so --rows cuts a
-run by sample index (0-based, END exclusive) counted from the export's first sample. The glass and
-cadence columns use only motion windows (marker distinct fps ≥ --motion, default 20): an idle
-picture re-pushes the last marker, so its glass figure is the frame's age, not latency; --all
-keeps every active window instead."""
-import json, os, statistics, sys
+for the cadence and gap columns. ``--from``/``--to`` use a sample's ISO-8601 or numeric ``at``
+timestamp; legacy logs need ``--rows`` (zero-based, END exclusive). Marker latency uses only
+motion windows (marker distinct fps ≥ --motion, default 20), with a valid clock uncertainty. An
+idle picture re-pushes the last marker, so its marker age is never reported as latency. ``--all``
+widens cadence windows only. Camera calibration is a separate physical evidence gate."""
+import json, math, os, statistics, sys
+
+from align_exports import parse_time, row_time
 
 
 def load(path):
@@ -46,19 +49,65 @@ def fmt(value, digits=1):
     return "–" if value is None else (f"{value:.{digits}f}" if isinstance(value, float) else str(value))
 
 
-def summarize(label, rows, min_fps, motion_fps):
+def time_option(args, name):
+    prefix = f"--{name}="
+    raw = next((arg.split("=", 1)[1] for arg in args if arg.startswith(prefix)), None)
+    if raw is None:
+        return None
+    parsed = parse_time(raw)
+    if parsed is None:
+        raise ValueError(f"invalid --{name} timestamp: {raw!r}")
+    return parsed
+
+
+def select_time(rows, start=None, end=None):
+    if start is None and end is None:
+        return rows
+    selected = []
+    for row in rows:
+        value = row_time(row)
+        if value is None:
+            continue
+        if start is not None and value < start:
+            continue
+        if end is not None and value >= end:
+            continue
+        selected.append(row)
+    return selected
+
+
+def select_last(rows, seconds):
+    times = [row_time(row) for row in rows]
+    present = [value for value in times if value is not None]
+    if present:
+        return [row for row, value in zip(rows, times)
+                if value is not None and value >= max(present) - seconds]
+    # Legacy logs were sampled once per second, so retain the historical approximation.
+    return rows[-int(seconds):]
+
+
+def summarize(label, rows, min_fps, motion_fps, all_active=False):
     hosts = [r.get("host") or {} for r in rows]
-    active = [r for r in rows if num(r.get("decodedFPS")) and r["decodedFPS"] >= min_fps]
-    if motion_fps is not None and any(num(r.get("markerDistinctFPS")) for r in active):
-        active = [r for r in active if num(r.get("markerDistinctFPS")) and r["markerDistinctFPS"] >= motion_fps]
+    cadence = [r for r in rows if num(r.get("decodedFPS")) and r["decodedFPS"] >= min_fps]
+    marker_min = max(0.000001, motion_fps)
+    marker_motion = [r for r in cadence
+                     if num(r.get("markerDistinctFPS")) and r["markerDistinctFPS"] >= marker_min]
+    clocked_motion = [r for r in marker_motion
+                      if num(r.get("clockUncertaintyMs"))
+                      and math.isfinite(r["clockUncertaintyMs"])
+                      and r["clockUncertaintyMs"] >= 0]
+    cadence_report = cadence if all_active else marker_motion
     tunings = sorted({r.get("tuning") for r in rows if r.get("tuning")})
-    gap_windows = [r for r in active if num(r.get("renderGapMaxMs"))]
+    gap_windows = [r for r in cadence_report if num(r.get("renderGapMaxMs"))]
     gap_share = (sum(1 for r in gap_windows if r["renderGapMaxMs"] >= 80) / len(gap_windows)) if gap_windows else None
     legibility = next((r["legibility"] for r in reversed(rows) if isinstance(r.get("legibility"), dict)), None)
     return {
         "run": label,
         "samples": len(rows),
-        "motion s": len(active),
+        "cadence s": len(cadence_report),
+        "marker motion s": len(marker_motion),
+        "clocked marker s": len(clocked_motion),
+        "sample time": ("present" if any(row_time(r) is not None for r in rows) else "missing"),
         "tuning": "; ".join(tunings) or "?",
         "route": next((r.get("routeDetail") or r.get("route") for r in reversed(rows) if r.get("route")), "?"),
         "size": next((f"{r.get('receivedWidth')}x{r.get('receivedHeight')}" for r in reversed(rows) if r.get("receivedWidth")), "?"),
@@ -69,28 +118,38 @@ def summarize(label, rows, min_fps, motion_fps):
         "rate upd/s p50": med([h.get("rateUpdates") for h in hosts]),
         "key KB max": (max([h.get("keyFrameBytesMax") for h in hosts if num(h.get("keyFrameBytesMax"))] or [0]) // 1024) or None,
         "limit cpu %": (100 * sum(1 for h in hosts if h.get("qualityLimitation") == "cpu") / len(hosts)) if hosts else None,
-        "decoded p50": med([r.get("decodedFPS") for r in active]),
-        "shown p50": med([r.get("presentedFPS") for r in active]),
-        "superseded/s": med([r.get("supersededFrames") for r in active]),
-        "gap max p50": med([r.get("renderGapMaxMs") for r in active]),
+        "decoded p50": med([r.get("decodedFPS") for r in cadence_report]),
+        "shown p50": med([r.get("presentedFPS") for r in cadence_report]),
+        "superseded/s": med([r.get("supersededFrames") for r in cadence_report]),
+        "gap max p50": med([r.get("renderGapMaxMs") for r in cadence_report]),
         "gap≥80ms %": None if gap_share is None else 100 * gap_share,
         "rtt p50/p90": f"{fmt(med([r.get('rttMs') for r in rows]))}/{fmt(pct([r.get('rttMs') for r in rows], 0.9))}",
-        "glass p50/p95": f"{fmt(med([r.get('glassP50Ms') for r in active]))}/{fmt(pct([r.get('glassP95Ms') for r in active], 0.5))}",
-        "±clock": med([r.get("clockUncertaintyMs") for r in rows]),
-        "distinct/s": med([r.get("markerDistinctFPS") for r in active]),
-        "shownΔ p50/p90": f"{fmt(med([r.get('presentedIntervalP50Ms') for r in active]))}/{fmt(med([r.get('presentedIntervalP90Ms') for r in active]))}",
-        "120Hz %": (100 * med([r.get("presentedAt120Share") for r in active])) if med([r.get("presentedAt120Share") for r in active]) is not None else None,
+        "marker p50/p95 uncal": f"{fmt(med([r.get('glassP50Ms') for r in clocked_motion]))}/{fmt(pct([r.get('glassP95Ms') for r in clocked_motion], 0.5))}",
+        "±clock": med([r.get("clockUncertaintyMs") for r in clocked_motion]),
+        "distinct/s": med([r.get("markerDistinctFPS") for r in marker_motion]),
+        "shownΔ p50/p90": f"{fmt(med([r.get('presentedIntervalP50Ms') for r in cadence_report]))}/{fmt(med([r.get('presentedIntervalP90Ms') for r in cadence_report]))}",
+        "120Hz %": (100 * med([r.get("presentedAt120Share") for r in cadence_report])) if med([r.get("presentedAt120Share") for r in cadence_report]) is not None else None,
+        "physical latency": "needs camera calibration",
         "click→photon p50": med([r.get("inputToPhotonP50Ms") for r in rows]),
         "CER 11pt/13pt": f"{fmt(legibility['cer'].get('11pt'))}/{fmt(legibility['cer'].get('13pt'))} ({legibility.get('surface')} +{legibility.get('ageMs', 0) / 1000:.1f}s)" if legibility else "–",
     }
 
 
-def main():
-    args = sys.argv[1:]
+def main(argv=None):
+    args = list(sys.argv[1:] if argv is None else argv)
     last = next((float(a.split("=")[1]) for a in args if a.startswith("--last=")), None)
     min_fps = next((float(a.split("=")[1]) for a in args if a.startswith("--min-fps=")), 30)
-    motion_fps = None if "--all" in args else next(
-        (float(a.split("=")[1]) for a in args if a.startswith("--motion=")), 20)
+    motion_fps = next((float(a.split("=")[1]) for a in args if a.startswith("--motion=")), 20)
+    all_active = "--all" in args
+    try:
+        time_start = time_option(args, "from")
+        time_end = time_option(args, "to")
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if time_start is not None and time_end is not None and time_start >= time_end:
+        print("error: --from must be earlier than --to", file=sys.stderr)
+        return 2
     window = next((a.split("=")[1] for a in args if a.startswith("--rows=")), None)
     runs = []
     for arg in args:
@@ -98,22 +157,24 @@ def main():
             continue
         label, _, path = arg.partition("=")
         rows = load(path or label)
+        rows = select_time(rows, time_start, time_end)
         if window:
-            start, _, end = window.partition(":")
-            rows = rows[int(start or 0):int(end) if end else None]
+            row_start, _, row_end = window.partition(":")
+            rows = rows[int(row_start or 0):int(row_end) if row_end else None]
         if last:
-            rows = rows[-int(last):]
+            rows = select_last(rows, last)
         if rows:
-            runs.append(summarize(label, rows, min_fps, motion_fps))
+            runs.append(summarize(label, rows, min_fps, motion_fps, all_active))
     if not runs:
         print(__doc__)
-        return
+        return 2
     keys = list(runs[0].keys())
     width = max(len(k) for k in keys)
     print(f"{'':{width}}  " + "  ".join(f"{r['run']:>18}" for r in runs))
     for key in keys[1:]:
         print(f"{key:{width}}  " + "  ".join(f"{fmt(r[key]):>18}" for r in runs))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
