@@ -6,7 +6,7 @@ This is the current engineering preparation record. Older launch research remain
 
 - Farside phone app: `com.roshan.PocketDesk.Remote`, iPhone and iPad, iOS/iPadOS 26 or later.
 - Mac companion: `com.roshan.PocketDesk.RemoteHost`, Apple silicon and macOS 26 or later. Keep the installed development filename `PocketDesk Host.app` to preserve its permission identity.
-- Marketing version 1.0. Both host and actual iPhone 17 now have signed `20260929.11` from integrated `d50c8da`. The host update preserved its designated requirement and both runtime grants. Native removal now persists sharing off on failure, confirms authoritative absence before success, and exposes a safe retry footer/status diagnostic; explicit new pairing honors the selected service. Fresh staging pairing and exact-build physical acceptance are pending in the coordinated chat.
+- Marketing version 1.0. Both host and actual iPhone 17 now have signed `20260929.11` from integrated `d50c8da`. The host update preserved its designated requirement and both runtime grants. Native removal now persists sharing off on failure, confirms authoritative absence before success, and exposes a safe retry footer/status diagnostic; explicit new pairing honors the selected service. Physical `.11` removal safely retained the pair and kept sharing Off after `delete:-25244`; successful local deletion remains open. Explicit replacement displayed a fresh staging QR, but human scanning/approval and exact-build physical acceptance are pending in the coordinated chat.
 - Preserve the recorded individual-seller decision and existing subscription product identifiers. Never infer or enter missing legal/contact details from these engineering notes.
 
 ## Review description draft
