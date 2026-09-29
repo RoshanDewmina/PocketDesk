@@ -226,6 +226,7 @@
 		D83DD218772A67616782600D /* HostPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 728339BDDAADF154551B1FE0 /* HostPresentation.swift */; };
 		D8DA2E56BEB9616410A3007A /* ControlProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2DA9B236B9DBE30DD8FF063 /* ControlProtocol.swift */; };
 		D8DD17F466FF7657034CC277 /* HostDiagnostics.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4C392AAB2578488DAA1A678 /* HostDiagnostics.swift */; };
+		DA9CCB565345D64881F0B692 /* MacParityPhoneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0B3FB4B05CCF8A594E97A6E /* MacParityPhoneTests.swift */; };
 		DD035669DE7EC8A9DC08CD22 /* HostClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 13C8A6B76BF8E55AEDB76371 /* HostClipboard.swift */; };
 		DDAFF4FE9C4E04D80074BF2F /* HostSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABC5305205008EFB73744EAF /* HostSetupView.swift */; };
 		DF483A1727D31A0C34983603 /* HostMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 67CC891F087F9506F67A4C05 /* HostMark.swift */; };
@@ -421,6 +422,7 @@
 		9F31D1E535A3D1FAC3F46962 /* BrowserPeerController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPeerController.swift; sourceTree = "<group>"; };
 		9F36886E8EE8AABEF8D4DF81 /* RemoteCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteCoordinator.swift; sourceTree = "<group>"; };
 		9FD721B733C0B127B815248C /* PointerLocatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointerLocatorTests.swift; sourceTree = "<group>"; };
+		A0B3FB4B05CCF8A594E97A6E /* MacParityPhoneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacParityPhoneTests.swift; sourceTree = "<group>"; };
 		A1A9CB4348526C909CF253F1 /* PeerMedia.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerMedia.swift; sourceTree = "<group>"; };
 		A593A7B4C48E7D3D37FCF976 /* RemotePhoneUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = RemotePhoneUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A80921367AA2D6A17ED291F5 /* HostSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostSettingsView.swift; sourceTree = "<group>"; };
@@ -743,6 +745,7 @@
 			isa = PBXGroup;
 			children = (
 				35CC0B33A0853F5CB3C47A3D /* CommittedTextTests.swift */,
+				A0B3FB4B05CCF8A594E97A6E /* MacParityPhoneTests.swift */,
 				CDCB2DCE29C9A401C6C942C5 /* PhoneClipboardTests.swift */,
 				9FD721B733C0B127B815248C /* PointerLocatorTests.swift */,
 				937D90E11178ACE1E39BCE49 /* PointerOverlayTests.swift */,
@@ -1259,6 +1262,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1445B77C93CE0CCDE6367589 /* CommittedTextTests.swift in Sources */,
+				DA9CCB565345D64881F0B692 /* MacParityPhoneTests.swift in Sources */,
 				C6845830BCD7524063546C0B /* PhoneClipboardTests.swift in Sources */,
 				9B974E24C2B6449E959BA72B /* PointerLocatorTests.swift in Sources */,
 				4D7F0237C42712DC42936B7E /* PointerOverlayTests.swift in Sources */,
