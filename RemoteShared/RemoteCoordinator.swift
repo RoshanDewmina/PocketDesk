@@ -198,6 +198,11 @@ final class RemoteCoordinator: ObservableObject {
     }
     /// Completes an already confirmed phone unlink without deleting a replacement pairing.
     /// The persistent read is authoritative: a locked Keychain must remain retryable.
+    func phonePairingForRemoval() throws -> PairInvitation? {
+        guard !isHost else { return nil }
+        return try store.read(PairInvitation.self) ?? invitation
+    }
+
     func removePhonePairingIfMatching(room: String, server: String, tokenDigest: String) throws -> Bool {
         guard !isHost else { return false }
         func matches(_ pair: PairInvitation) -> Bool {
