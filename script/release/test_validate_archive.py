@@ -26,7 +26,7 @@ class ArchiveFixture(unittest.TestCase):
             mac = platform == 'mac'
             resources = app / 'Contents/Resources' if mac else app
             resources.mkdir(parents=True)
-            (resources / 'PrivacyInfo.xcprivacy').touch()
+            (resources / 'PrivacyInfo.xcprivacy').write_bytes(plistlib.dumps({'NSPrivacyTracking': False}))
             (resources / 'ThirdPartyNotices.txt').touch()
             info = {
                 'CFBundleIdentifier': 'com.roshan.PocketDesk.RemoteHost' if mac else 'com.roshan.PocketDesk.Remote',
@@ -194,6 +194,56 @@ class ArchiveMetadataTests(ArchiveFixture):
         for reason, mutate in cases:
             with self.subTest(reason=reason):
                 self.assert_invalid('ios', reason, mutate=mutate)
+
+    def test_missing_main_privacy_manifest_is_rejected(self):
+        for platform in ('mac', 'ios'):
+            with self.subTest(platform=platform):
+                def mutate(app, _info_path):
+                    resources = app / 'Contents/Resources' if platform == 'mac' else app
+                    (resources / 'PrivacyInfo.xcprivacy').unlink()
+                self.assert_invalid(platform, 'Missing privacy manifest', mutate=mutate)
+
+    def test_invalid_privacy_manifests_are_rejected(self):
+        invalid = (
+            ('empty', b''),
+            ('malformed', b'not a plist'),
+            ('truncated XML', b'<?xml version="1.0"?><plist><dict>'),
+            ('truncated binary', b'bplist00'),
+            ('XML array', plistlib.dumps([], fmt=plistlib.FMT_XML)),
+            ('binary array', plistlib.dumps([], fmt=plistlib.FMT_BINARY)),
+            ('XML scalar', plistlib.dumps('text', fmt=plistlib.FMT_XML)),
+            ('binary scalar', plistlib.dumps(False, fmt=plistlib.FMT_BINARY)),
+            ('directory', None),
+        )
+        for platform, widget in (('mac', False), ('ios', False), ('ios', True)):
+            for case, content in invalid:
+                with self.subTest(platform=platform, widget=widget, case=case):
+                    def mutate(app, _info_path):
+                        resources = (app / 'PlugIns/FarsideWidgets.appex' if widget else
+                                     app / 'Contents/Resources' if platform == 'mac' else app)
+                        manifest = resources / 'PrivacyInfo.xcprivacy'
+                        if content is None:
+                            manifest.unlink()
+                            manifest.mkdir()
+                        else:
+                            manifest.write_bytes(content)
+                    reason = ('Invalid Farside widget privacy manifest' if widget
+                              else 'Invalid privacy manifest')
+                    self.assert_invalid(platform, reason, mutate=mutate)
+
+    def test_xml_and_binary_dictionary_privacy_manifests_are_accepted(self):
+        for platform in ('mac', 'ios'):
+            for format in (plistlib.FMT_XML, plistlib.FMT_BINARY):
+                with self.subTest(platform=platform, format=format):
+                    def mutate(app, _info_path):
+                        resources = app / 'Contents/Resources' if platform == 'mac' else app
+                        manifest = plistlib.dumps({'NSPrivacyTracking': False}, fmt=format)
+                        (resources / 'PrivacyInfo.xcprivacy').write_bytes(manifest)
+                        if platform == 'ios':
+                            (app / 'PlugIns/FarsideWidgets.appex/PrivacyInfo.xcprivacy').write_bytes(manifest)
+                    code, output = self.validate(platform, mutate=mutate)
+                    self.assertEqual(code, 0, output)
+                    self.assertIn('Archive metadata checks passed', output)
 
 
 if __name__ == '__main__':

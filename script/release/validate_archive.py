@@ -7,6 +7,18 @@ import pathlib
 import plistlib
 import subprocess
 import sys
+from xml.parsers.expat import ExpatError
+
+
+def validate_privacy_manifest(path, label, errors):
+    if not path.exists():
+        errors.append('Missing ' + label)
+        return
+    try:
+        if not isinstance(plistlib.loads(path.read_bytes()), dict):
+            raise ValueError('privacy manifest must be a dictionary')
+    except (OSError, ValueError, plistlib.InvalidFileException, ExpatError):
+        errors.append('Invalid ' + label)
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('app', type=pathlib.Path)
@@ -26,7 +38,7 @@ if identifier != expected_identifier:
     errors.append('Unexpected bundle identity for archive platform')
 if info.get('CFBundleShortVersionString') != '1.0': errors.append('Release version must be 1.0')
 resources = app / 'Contents/Resources' if mac else app
-if not (resources / 'PrivacyInfo.xcprivacy').exists(): errors.append('Missing privacy manifest')
+validate_privacy_manifest(resources / 'PrivacyInfo.xcprivacy', 'privacy manifest', errors)
 if not (resources / 'ThirdPartyNotices.txt').exists(): errors.append('Missing dependency notices')
 if not info.get('NSLocalNetworkUsageDescription'): errors.append('Missing local network explanation')
 if mac:
@@ -61,15 +73,7 @@ else:
             for key in ('CFBundleShortVersionString', 'CFBundleVersion'):
                 if widget_info.get(key) != info.get(key) or not info.get(key):
                     errors.append('Farside widget ' + key + ' differs from phone')
-    manifest = widget / 'PrivacyInfo.xcprivacy'
-    if not manifest.exists():
-        errors.append('Missing Farside widget privacy manifest')
-    else:
-        try:
-            if not isinstance(plistlib.loads(manifest.read_bytes()), dict):
-                raise ValueError('privacy manifest must be a dictionary')
-        except (OSError, ValueError, plistlib.InvalidFileException):
-            errors.append('Invalid Farside widget privacy manifest')
+    validate_privacy_manifest(widget / 'PrivacyInfo.xcprivacy', 'Farside widget privacy manifest', errors)
 result = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(app)], capture_output=True)
 if result.returncode: errors.append('Could not read signed entitlements')
 verified = subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], capture_output=True)
