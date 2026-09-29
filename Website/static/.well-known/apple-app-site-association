@@ -1,0 +1,8 @@
+{
+  "applinks": {
+    "details": [{
+      "appIDs": ["39HM2X8GS6.com.roshan.PocketDesk.Remote"],
+      "components": [{"/": "/open"}, {"/": "/open/*"}, {"/": "/help/*"}, {"/": "/session"}]
+    }]
+  }
+}

@@ -30,6 +30,10 @@
 /llms.txt
   Content-Type: text/plain; charset=utf-8
 
+# Apple fetches this extensionless file directly; its response must be JSON with no redirect.
+/.well-known/apple-app-site-association
+  Content-Type: application/json
+
 # Keep the *.pages.dev hostnames out of search results; only the custom domain should be indexed.
 https://:project.pages.dev/*
   X-Robots-Tag: noindex

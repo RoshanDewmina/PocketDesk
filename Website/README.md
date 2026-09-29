@@ -18,6 +18,8 @@ Static marketing site for Farside, built to `design/FARSIDE-DESIGN-SYSTEM.md` an
 
 Also generated: `sitemap.xml`, `robots.txt`, `llms.txt`, `site.webmanifest`, `_headers`, `_redirects`, favicon set, one 1200×630 Open Graph card per main page.
 
+The app association is copied to `dist/.well-known/apple-app-site-association` without an extension. The exact-path `_headers` rule serves it as `application/json`; there is no redirect. It names only the signed phone app and `/open`, `/open/*`, `/help/*`, and `/session`, matching `RemotePhone/SystemIntegrations/FarsideRoute.swift`. The build checks that its source matches `Docs/launch/apple-app-site-association` byte for byte and keeps this route list bounded. The chosen HTTPS domain still needs to serve and pass Apple's live association check before universal links can work on a phone.
+
 ## Commands (bun only)
 
 ```sh
