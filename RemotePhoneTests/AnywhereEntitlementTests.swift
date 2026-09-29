@@ -633,12 +633,14 @@ final class AnywhereAccessTests: XCTestCase {
         let transport = RecordingTransport()
         let connection = try pairedPhone(transport)
         connection.start()
-        XCTAssertEqual(transport.registrations.last?.features, [SignalingFeature.renewal], "Unchanged until Anywhere is attached")
+        XCTAssertEqual(transport.registrations.last?.features, [SignalingFeature.renewal, SignalingFeature.route],
+                       "Route policy is required even before Anywhere is attached")
         XCTAssertEqual(transport.registrations.last?.entitlement, .some(nil))
         connection.advertisesRemoteAccess = true
         connection.entitlementToken = { "fe1.t.s" }
         connection.start()
-        XCTAssertEqual(transport.registrations.last?.features, [SignalingFeature.renewal, "remote.1"])
+        XCTAssertEqual(transport.registrations.last?.features,
+                       [SignalingFeature.renewal, SignalingFeature.route, SignalingFeature.remoteAccess])
         XCTAssertEqual(transport.registrations.last?.entitlement, "fe1.t.s")
         connection.entitlementToken = { nil }
         connection.start()
@@ -651,7 +653,7 @@ final class AnywhereAccessTests: XCTestCase {
         XCTAssertFalse(plain.contains("entitlement"), "Absent, not null, without a plan")
     }
 
-    func testEntitlementRequiredIsNonClosingAndTheSessionGoesOnLocally() async throws {
+    func testEntitlementRequiredWaitsForFreshLocalRouteWithoutClosing() async throws {
         let transport = FakeSignalingTransport()
         transport.replies = [
             RelayMessage(type: "error", code: "entitlement_required"),
@@ -663,8 +665,15 @@ final class AnywhereAccessTests: XCTestCase {
         connection.start()
         try await Task.sleep(for: .milliseconds(100))
         XCTAssertTrue(connection.entitlementRequired)
+        XCTAssertNil(connection.serviceAccess, "A legacy registered.access hint cannot authorize a route")
+        XCTAssertNil(connection.media, "Empty ICE cannot start media before local proof")
+        let room = try XCTUnwrap(connection.invitation?.room)
+        transport.onMessage?(RelayMessage(type: "route", version: 1, room: room, access: "local",
+                                          epoch: String(repeating: "a", count: 32), revision: 1,
+                                          expiresAt: Int64(Date().addingTimeInterval(30).timeIntervalSince1970 * 1_000)))
         XCTAssertEqual(connection.serviceAccess, "local")
-        XCTAssertTrue(connection.isRunning, "Same-network sessions continue")
+        XCTAssertNil(connection.media, "A local policy still needs the physical-link proof and handshake")
+        XCTAssertTrue(connection.isRunning, "The non-closing error leaves the phone ready to prove a local route")
         XCTAssertEqual(connection.status, "Connecting securely…")
         XCTAssertEqual(transport.closeCount, 0, "The error closed nothing")
         connection.start()
