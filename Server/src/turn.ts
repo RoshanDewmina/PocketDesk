@@ -10,6 +10,8 @@ export type IceServer = {
 
 export type TurnCredentialProvider = {
   readonly kind: 'coturn' | 'cloudflare';
+  /** How long each issued credential stays valid. The signaling service schedules refreshes from it. */
+  readonly ttlSeconds?: number;
   issue(context: { room: string; role: PeerRole }): Promise<IceServer[]>;
   revoke?(servers: IceServer[]): Promise<void>;
 };
@@ -91,6 +93,7 @@ export function createCoturnProvider(config: {
   const now = config.now ?? Date.now;
   return {
     kind: 'coturn',
+    ttlSeconds: config.ttlSeconds,
     async issue() {
       const username = `${Math.floor(now() / 1000) + config.ttlSeconds}:${randomUUID()}`;
       return [{
@@ -124,6 +127,7 @@ export function createCloudflareTurnProvider(config: {
 
   return {
     kind: 'cloudflare',
+    ttlSeconds: config.ttlSeconds,
     async issue() {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), config.timeoutMs);

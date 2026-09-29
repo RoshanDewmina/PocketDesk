@@ -63,6 +63,10 @@ test('preflight fails closed on unsafe bind, lifetimes, approval file, Keychain 
   expect(levelOf(await failing({ NODE_ENV: 'development' }), 'node_env')).toEqual(['fail']);
   expect(levelOf(await failing({ TURN_PROVIDER: undefined }), 'turn_provider')).toEqual(['fail']);
   expect(levelOf(await failing({ ROOM_LIFETIME_SECONDS: '3600' }), 'room_lifetime')).toEqual(['fail']);
+  expect(levelOf(await failing({}), 'session_renewal')).toEqual(['pass']);
+  expect(levelOf(await failing({ SESSION_RENEWAL: '1' }), 'session_renewal')).toEqual(['pass']);
+  expect(levelOf(await failing({ SESSION_RENEWAL: '0' }), 'session_renewal')).toEqual(['warn']);
+  expect(levelOf(await failing({ SESSION_RENEWAL: 'false' }), 'session_renewal')).toEqual(['warn']);
   expect(levelOf(await failing({ TURN_CREDENTIAL_TTL_SECONDS: '43200', ROOM_LIFETIME_SECONDS: '3600' }), 'credential_ttl')).toEqual(['warn']);
   expect(levelOf(await failing({ MAX_PEERS: '64' }), 'max_peers')).toEqual(['warn']);
   expect(levelOf(await failing({ TURN_CREDENTIAL_ISSUES_PER_MINUTE: '60' }), 'issue_rate')).toEqual(['warn']);

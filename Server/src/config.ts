@@ -38,9 +38,11 @@ export function loadServiceConfig(
   const approvalAuditMs = integer(env, 'APPROVAL_AUDIT_INTERVAL_MS', 1000, 100, 5000);
   const roomLifetimeSeconds = integer(env, 'ROOM_LIFETIME_SECONDS', 1800, 60, 86_400);
   if (providerTimeoutMs >= authTimeoutMs) throw new Error('TURN_PROVIDER_TIMEOUT_MS must be lower than AUTH_TIMEOUT_MS');
+  // Peers that do not renew end at the lease, so it must end before their credentials do.
   if (roomLifetimeSeconds >= credentialTTLSeconds) {
     throw new Error('ROOM_LIFETIME_SECONDS must be lower than TURN_CREDENTIAL_TTL_SECONDS');
   }
+  const sessionRenewal = env.SESSION_RENEWAL === undefined ? true : flag(env, 'SESSION_RENEWAL');
   const allowedRooms = list(env.ALLOWED_ROOMS);
   if (allowedRooms.some(room => !token.test(room)) || new Set(allowedRooms).size !== allowedRooms.length) {
     throw new Error('ALLOWED_ROOMS must contain unique comma-separated 64-character lowercase hex room IDs');
@@ -107,6 +109,8 @@ export function loadServiceConfig(
     messagesPerSecond: integer(env, 'MESSAGES_PER_SECOND', 100, 2, 1000),
     credentialIssuesPerMinute: integer(env, 'TURN_CREDENTIAL_ISSUES_PER_MINUTE', 12, 2, 120),
     maxRoomLifetimeMs: roomLifetimeSeconds * 1000,
+    credentialTTLSeconds,
+    sessionRenewal,
     approvalAuditMs,
     testForceRelay,
   };
