@@ -46,10 +46,17 @@ final class BenchPad: NSObject {
         view.flash.pad = self
     }
 
+    private static func activate() {
+        NSApp.activate()
+        NSRunningApplication.current.activate(options: [.activateIgnoringOtherApps])
+    }
+
     func start() {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(view)
-        NSApp.activate()
+        Self.activate()
+        // Keys from the phone go to the frontmost app; a launch from a terminal may leave that app in front.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { if !NSApp.isActive { Self.activate() } }
         NSApp.presentationOptions = [.hideDock, .hideMenuBar]
         view.needsLayout = true
         view.layoutSubtreeIfNeeded()
