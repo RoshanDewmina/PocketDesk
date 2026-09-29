@@ -108,6 +108,7 @@ The primary user is the owner of the Mac. Helping someone else, team administrat
 | D31 | New visual direction: dithered, dystopian, cinematic brand; Paperwash no longer the app's style | 28 Sep. Concepts in `design/farside-round1/` per `DITHER-BRIEF.md`; dither is the brand layer and UI text/controls stay crisp and legible. Higgsfield generation only after a concept is chosen |
 | D32 | Concept **21 · Reach** is the Farside brand and product design; redesign the iPhone/iPad app, Mac companion and website to it | 28 Sep, chosen by Roshan. Dark only for 1.0; SF Pro/SF Mono for everyday UI with Doto and Instrument Serif accents; static website on Cloudflare Pages (deploy after the domain is bought). Design source of truth: `design/FARSIDE-DESIGN-SYSTEM.md`; tokens in `RemoteShared/FarsideTheme.swift` |
 | D33 | Run the Higgsfield hero look test (≈21–45 credits) before the credit reset around 6 Oct | 28 Sep, approved by Roshan. Follow the cheapest-first-test in `Docs/launch/VIDEO-PLAYBOOK.md`; hard cap 45 credits; anything more needs a new approval |
+| D34 | Pointer follow defaults to **Smooth** | 29 Sep, chosen by Roshan. The phone draws the pointer 1:1 with the finger; near an edge the picture eases after it and settles in about 0.2 s. Rigid and Off stay available in Controls → Feel. The website hero demo matches this behaviour |
 
 ### Work scenarios that guide the designs
 
