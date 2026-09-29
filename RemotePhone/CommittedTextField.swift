@@ -1,6 +1,79 @@
 import SwiftUI
 import UIKit
 
+/// Hosts SwiftUI keyboard chrome above UIKit's keyboard layout guide. The guide updates in the same
+/// layout pass that presents the software keyboard, avoiding a stale SwiftUI keyboard safe-area
+/// proposal when the contained editor becomes first responder immediately after insertion.
+struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
+    private let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    func makeUIViewController(context: Context) -> Controller {
+        Controller(content: content)
+    }
+
+    func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.update(content)
+    }
+
+    @MainActor
+    final class Controller: UIViewController {
+        private let host: UIHostingController<Content>
+
+        init(content: Content) {
+            host = UIHostingController(rootView: content)
+            super.init(nibName: nil, bundle: nil)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func loadView() {
+            view = KeyboardDockPassthroughView()
+        }
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            view.backgroundColor = .clear
+            host.view.backgroundColor = .clear
+            host.view.translatesAutoresizingMaskIntoConstraints = false
+            host.sizingOptions = .intrinsicContentSize
+            addChild(host)
+            view.addSubview(host.view)
+            host.didMove(toParent: self)
+
+            let safe = view.safeAreaLayoutGuide
+            NSLayoutConstraint.activate([
+                host.view.leadingAnchor.constraint(equalTo: safe.leadingAnchor),
+                host.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
+                host.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
+            ])
+        }
+
+        func update(_ content: Content) {
+            host.rootView = content
+            host.view.invalidateIntrinsicContentSize()
+        }
+    }
+}
+
+/// The dock's controller covers the session so its keyboard guide sees the window. Only the hosted
+/// panel itself accepts touches; the rest of that transparent view passes through to the Mac canvas.
+final class KeyboardDockPassthroughView: UIView {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        guard !isHidden, alpha > 0.01, isUserInteractionEnabled else { return false }
+        return subviews.reversed().contains { child in
+            guard !child.isHidden, child.alpha > 0.01, child.isUserInteractionEnabled else { return false }
+            return child.point(inside: child.convert(point, from: self), with: event)
+        }
+    }
+}
+
 /// A draft-only text view that exposes completed IME text without forwarding keystrokes.
 struct CommittedTextField: UIViewRepresentable {
     @Binding var text: String

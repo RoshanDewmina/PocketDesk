@@ -103,8 +103,14 @@ struct NativeSessionView: View {
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.92, anchor: .bottomTrailing)))
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if keyboardOpen { keyboardBar }
+        .overlay {
+            if keyboardOpen {
+                KeyboardLayoutDock { keyboardBar }
+                    // SwiftUI must not also move the dock for the keyboard. UIKit's keyboard
+                    // layout guide owns that one offset and updates it on first presentation,
+                    // interactive dismissal and rotation.
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
+            }
         }
         .overlay {
             if model.privacyShield { privacyShield }
