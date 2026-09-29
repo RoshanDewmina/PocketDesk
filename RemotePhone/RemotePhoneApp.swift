@@ -68,6 +68,7 @@ struct TextFocusProbeGate {
 final class PhoneRemoteModel: ObservableObject {
     let connection = RemoteCoordinator(isHost: false)
     let pointerLocator = PointerLocator()
+    let pointerOverlay = PointerOverlayModel()
     private var pointerLocatorSupported = false
     @Published private(set) var appliedStreamQuality: StreamQuality?
     @Published private(set) var streamSummaryLines: [String] = []
@@ -206,7 +207,7 @@ final class PhoneRemoteModel: ObservableObject {
                            count: Int? = nil, hold: String? = nil,
                            phase: String? = nil, stream: String? = nil,
                            text: String = "", key: String = "", modifiers: [String] = [],
-                           probeTextFocus: Bool = false) -> Bool {
+                           probeTextFocus: Bool = false, pointerSync: PointerSync? = nil) -> Bool {
         textFocusProbe.invalidate()
         guard canControl else { return false }
         let focusProbe = probeTextFocus && nativeInteractionSupported && !dragging && activeHold == nil
@@ -219,7 +220,7 @@ final class PhoneRemoteModel: ObservableObject {
         if isClick && hapticsEnabled { clickFeedback.prepare() }
         let accepted = connection.sendControl(RemoteAction(action: name, x: x, y: y,
             text: text, key: key, modifiers: modifiers, epoch: geometryEpoch, interaction: envelope,
-            textFocusProbe: focusProbe))
+            pointerSync: pointerSync, textFocusProbe: focusProbe))
         if !accepted { textFocusProbe.invalidate() }
         if accepted && isClick {
             acceptedClicks &+= 1
@@ -232,8 +233,15 @@ final class PhoneRemoteModel: ObservableObject {
     func gesture(_ command: NativeGestureCommand) -> Bool {
         switch command {
         case .move(let delta):
-            let accepted = sendInput("move", x: delta.width, y: delta.height)
-            if accepted && !dragging { pointerLocator.moved(at: ProcessInfo.processInfo.systemUptime) }
+            let ordinal = pointerOverlay.reserveMoveOrdinal()
+            let accepted = sendInput("move", x: delta.width, y: delta.height,
+                                     pointerSync: ordinal.map { PointerSync(move: $0) })
+            if accepted {
+                pointerOverlay.localMove(ordinal: ordinal, delta: delta, follow: !dragging)
+                if !dragging && !pointerOverlay.hostSupported {
+                    pointerLocator.moved(at: ProcessInfo.processInfo.systemUptime)
+                }
+            }
             return accepted
         case .scroll(let delta, let phase, let stream):
             pointerLocator.clear()
@@ -436,12 +444,15 @@ final class PhoneRemoteModel: ObservableObject {
             if action.epoch == geometryEpoch, canControl, pointerLocatorSupported {
                 pointerLocator.receive(action, at: ProcessInfo.processInfo.systemUptime, sourceSize: sourceSize)
             }
+        case "pointer":
+            if action.epoch == geometryEpoch, let sync = action.pointerSync { pointerOverlay.receive(sync) }
         case "capture":
             appliedStreamQuality = action.streamQuality
             if action.streamQuality != nil, action.streamQuality != streamQuality, qualityRequestedAt == nil {
                 qualityRequestedAt = ProcessInfo.processInfo.systemUptime
             }
             pointerLocatorSupported = action.pointerLocatorSupported == true
+            pointerOverlay.hostCapability(action.pointerSync)
             if let interaction = action.interaction, interaction.version == 1 {
                 nativeInteractionSupported = true
                 inputToken = interaction.token
@@ -458,6 +469,7 @@ final class PhoneRemoteModel: ObservableObject {
             if action.x.isFinite, action.y.isFinite, action.x > 0, action.y > 0 {
                 sourceSize = CGSize(width: action.x, height: action.y)
             }
+            pointerOverlay.reset(sourceSize: sourceSize)
             geometryEpoch = action.epoch
             fresh = false
             captureHealthy = false
@@ -504,7 +516,8 @@ final class PhoneRemoteModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 let now = ProcessInfo.processInfo.systemUptime
-                if let probe = self.pointerLocator.poll(at: now, available: self.canControl && self.pointerLocatorSupported) {
+                let probing = self.canControl && self.pointerLocatorSupported && !self.pointerOverlay.hostSupported
+                if let probe = self.pointerLocator.poll(at: now, available: probing) {
                     _ = self.connection.sendControl(RemoteAction(action: "heartbeat", epoch: self.geometryEpoch, pointerProbe: probe))
                 }
             }
@@ -519,8 +532,10 @@ final class PhoneRemoteModel: ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         if connection.connected {
             _ = connection.sendControl(RemoteAction(action: "heartbeat", epoch: geometryEpoch,
+                pointerSync: pointerOverlay.advertisement(),
                 streamQuality: appliedStreamQuality == nil ? nil : streamQuality))
         }
+        pointerOverlay.refresh()
         if fresh && now - lastFrame > 2 {
             fresh = false
             pointerLocator.clear()
@@ -556,6 +571,7 @@ final class PhoneRemoteModel: ObservableObject {
         streamSummaryLines = []
         qualityRequestedAt = nil
         pointerLocator.clear()
+        pointerOverlay.reset(sourceSize: sourceSize)
         timer?.invalidate()
         timer = nil
         fresh = false

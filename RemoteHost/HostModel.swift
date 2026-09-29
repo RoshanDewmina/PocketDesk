@@ -56,6 +56,7 @@ final class RemoteHostModel: ObservableObject {
     private var captureHealthy = false
     private var capturedDisplayID: CGDirectDisplayID?
     private var pointerLocator = HostPointerLocator()
+    private let pointerTelemetry = HostPointerTelemetry()
     private var displayRefreshTask: Task<Void, Never>?
     private var displayRefreshGeneration = HostPermissionRefreshGeneration()
     private var terminating = false
@@ -159,6 +160,14 @@ final class RemoteHostModel: ObservableObject {
         }
         capture.onFailure = { [weak self] in self?.captureFailed() }
         capture.onHealth = { [weak self] healthy in self?.captureHealthChanged(healthy) }
+        pointerTelemetry.send = { [weak self] action in self?.connection.sendControl(action) ?? false }
+        pointerTelemetry.setCaptureShowsCursor = { [weak self] shows in self?.capture.setShowsCursor(shows) }
+        pointerTelemetry.captureShowsCursor = { [weak self] in self?.capture.cursorInVideo ?? true }
+        capture.onCursorVisibility = { [weak self] shows in
+            guard let self else { return }
+            self.pointerTelemetry.captureCursorChanged(showsCursor: shows)
+            self.sendCaptureHealth(self.captureHealthy)
+        }
         for name in [NSWorkspace.willSleepNotification, NSWorkspace.sessionDidResignActiveNotification, NSWorkspace.screensDidSleepNotification] {
             observers.append(NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
                 Task { @MainActor in
@@ -565,6 +574,7 @@ final class RemoteHostModel: ObservableObject {
         captureHealthy = false
         input.enabled = false
         advanceEpoch()
+        pointerTelemetry.begin(displayFrame: display.frame, epoch: inputEpoch.value)
 
         lifecycleTimer?.invalidate()
         lifecycleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -627,6 +637,7 @@ final class RemoteHostModel: ObservableObject {
         captureHealthy = false
         capturedDisplayID = nil
         pointerLocator.reset()
+        pointerTelemetry.end()
         input.enabled = false
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
@@ -661,10 +672,15 @@ final class RemoteHostModel: ObservableObject {
             if connection.connected, action.epoch == inputEpoch.value, let quality = action.streamQuality {
                 capture.setQuality(quality)
             }
+            if action.pointerProbe == nil && action.textFocusProbe == nil {
+                pointerTelemetry.phoneHeartbeat(action.pointerSync, epoch: action.epoch,
+                                                at: ProcessInfo.processInfo.systemUptime)
+            }
             receivePointerProbe(action)
             return
         }
 
+        pointerTelemetry.moveProcessed(action)
         guard Self.userInputActions.contains(action.action), inputEpoch.accepts(action) else {
             if inputFreshness.upgraded || action.interaction != nil {
                 stop()
@@ -702,6 +718,9 @@ final class RemoteHostModel: ObservableObject {
             captureHealthy: captureHealthy
         )
         let outcome = input.handle(action, upgraded: admission == .upgraded, now: now)
+        if action.action == "move", outcome.accepted {
+            pointerTelemetry.moveInjected(globalPoint: input.lastPoint, at: now)
+        }
         if admission == .upgraded, action.action == "dragDown", !outcome.accepted,
            let notice = inputFreshness.rejectedDragDownNotice(
                 action, activeHold: input.externalHoldID
@@ -801,7 +820,8 @@ final class RemoteHostModel: ObservableObject {
         )
         _ = connection.sendControl(RemoteAction(
             action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
-            interaction: capability, pointerLocatorSupported: true, streamQuality: capture.appliedQuality
+            interaction: capability, pointerLocatorSupported: true,
+            pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality
         ))
     }
 

@@ -178,7 +178,7 @@ final class RemoteInputDriver {
     private var heldClickCount: Int64 = 1
     private var lastClick = 0.0
     private var clicks: Int64 = 0
-    private var lastPoint = CGPoint.zero
+    private(set) var lastPoint = CGPoint.zero
     private var lastButton: CGMouseButton?
     private var lastSemanticPoint: CGPoint?
     private var activeScroll: String?
