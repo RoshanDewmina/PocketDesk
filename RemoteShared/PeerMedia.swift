@@ -58,6 +58,12 @@ final class PeerMedia: NSObject {
     var onSenderStatistics: ((StreamStatsReport) -> Void)?
     let counters = StreamCounters()
     var captureMaximumDimension: Int?
+    /// Phone: the latest sender stages forwarded by the Mac with its capture heartbeat.
+    var remoteHostSummary: HostStreamSummary?
+    let tuning: StreamTuning
+    private(set) var streamQuality: StreamQuality = .balanced
+    private var latestHostSummary: HostStreamSummary?
+    private var bandwidthSeed = BandwidthSeedPolicy()
     private let isHost: Bool
     private let nativeDesktopCodecs: Bool
     private var previousSample: StreamStatsSample?
@@ -66,11 +72,13 @@ final class PeerMedia: NSObject {
     private var statisticsTimer: Timer?
     private var statisticsPending = false
     private static let factory: RTCPeerConnectionFactory = {
+        StreamTuning.prepareRuntime()
         RTCInitializeSSL()
         return RTCPeerConnectionFactory(encoderFactory: PocketDeskVideoEncoderFactory(),
                                         decoderFactory: PocketDeskVideoDecoderFactory())
     }()
     private static let compatibleFactory: RTCPeerConnectionFactory = {
+        StreamTuning.prepareRuntime()
         RTCInitializeSSL()
         let encoder = RTCDefaultVideoEncoderFactory()
         if let h264 = encoder.supportedCodecs().first(where: { $0.name == "H264" }) { encoder.preferredCodec = h264 }
@@ -102,6 +110,7 @@ final class PeerMedia: NSObject {
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true) {
         self.isHost = isHost
         self.nativeDesktopCodecs = nativeDesktopCodecs
+        tuning = nativeDesktopCodecs ? StreamTuning.current : .legacy
         super.init()
         let configuration = RTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan
@@ -175,9 +184,55 @@ final class PeerMedia: NSObject {
         let parameters = sender.parameters
         for encoding in parameters.encodings {
             encoding.maxFramerate = 60
-            encoding.maxBitrateBps = 12_000_000
+            encoding.maxBitrateBps = NSNumber(value: tuning.qualityBitrates ? streamQuality.maximumBitrateBps : 12_000_000)
+        }
+        if let preference = tuning.degradationPreference {
+            parameters.degradationPreference = NSNumber(value: preference.rawValue)
         }
         sender.parameters = parameters
+        if tuning.qualityBitrates {
+            _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: nil,
+                                                 maxBitrateBps: NSNumber(value: streamQuality.maximumBitrateBps * max(1, tuning.bandwidthHeadroom)))
+        }
+    }
+
+    /// Host: the picture mode the capture session actually applied. Updates the encoder ceiling
+    /// without restarting the stream.
+    func applyStreamQuality(_ quality: StreamQuality) {
+        guard quality != streamQuality else { return }
+        streamQuality = quality
+        guard !closed, remoteDescriptionReady else { return }
+        configureNativeSender()
+    }
+
+    /// Seed the bandwidth estimate once the selected route is known to be direct (see
+    /// `BandwidthSeedPolicy`). Relay routes keep libwebrtc's conservative ramp so a metered or
+    /// cellular path is not flooded at start.
+    private func seedBandwidthEstimate(_ stats: StreamStatsReport, route: String) {
+        guard isHost, nativeDesktopCodecs, tuning.qualityBitrates,
+              bandwidthSeed.observe(route: route, estimateKbps: stats.availableOutgoingKbps,
+                                    lossPercent: stats.remoteLossPercent,
+                                    seedKbps: Double(streamQuality.startBitrateBps) / 1000) else { return }
+        _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: NSNumber(value: streamQuality.startBitrateBps),
+                                             maxBitrateBps: NSNumber(value: streamQuality.maximumBitrateBps * max(1, tuning.bandwidthHeadroom)))
+    }
+
+    /// Host: the encoder ceiling actually applied to the video sender, in kbps.
+    var appliedSenderMaxKbps: Double? {
+        guard isHost, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return nil }
+        return sender.parameters.encodings.first?.maxBitrateBps.map { $0.doubleValue / 1000 }
+    }
+
+    /// Host: the degradation preference actually applied to the video sender.
+    var appliedDegradationPreference: RTCDegradationPreference? {
+        guard isHost, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return nil }
+        return sender.parameters.degradationPreference.flatMap { RTCDegradationPreference(rawValue: $0.intValue) }
+    }
+
+    /// Host: the newest sender summary, returned once so the capture heartbeat forwards each sample once.
+    func takeHostSummary() -> HostStreamSummary? {
+        defer { latestHostSummary = nil }
+        return latestHostSummary
     }
 
     func sendControl(_ data: Data) -> Bool {
@@ -247,6 +302,14 @@ final class PeerMedia: NSObject {
         var stats = StreamStatsReport(role: isHost ? "host" : "phone", previous: previousSample,
                                       current: sample, counters: previousSample == nil ? nil : counts)
         stats.captureMaximumDimension = captureMaximumDimension
+        stats.tuning = tuning.summary
+        if isHost {
+            stats.maxKbps = appliedSenderMaxKbps
+            seedBandwidthEstimate(stats, route: sample.route)
+            latestHostSummary = stats.hostSummary
+        } else {
+            stats.host = remoteHostSummary
+        }
         previousSample = sample
         StreamDebug.record(stats)
         onStreamStatistics?(stats)

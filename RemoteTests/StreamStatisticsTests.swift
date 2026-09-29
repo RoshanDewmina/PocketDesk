@@ -142,6 +142,91 @@ final class StreamStatisticsTests: XCTestCase {
     }
 }
 
+final class StreamStageStatisticsTests: XCTestCase {
+    func testSenderStagesComeFromPacerAndSourceCounters() {
+        func entries(at seconds: Double, source: Double, encoded: Double, packets: Double,
+                     sendDelay: Double, retransmitted: Double) -> [StreamStatsEntry] {
+            [
+                StreamStatsEntry(id: "OT1", type: "outbound-rtp", values: [
+                    "kind": "video" as NSString, "framesEncoded": encoded as NSNumber,
+                    "packetsSent": packets as NSNumber, "totalPacketSendDelay": sendDelay as NSNumber,
+                    "retransmittedPacketsSent": retransmitted as NSNumber, "mediaSourceId": "S1" as NSString
+                ], timestamp: seconds),
+                StreamStatsEntry(id: "S1", type: "media-source", values: [
+                    "kind": "video" as NSString, "frames": source as NSNumber
+                ], timestamp: seconds)
+            ]
+        }
+        let first = StreamStatsSample(entries: entries(at: 0, source: 0, encoded: 0, packets: 0, sendDelay: 0, retransmitted: 0))
+        let second = StreamStatsSample(entries: entries(at: 1, source: 60, encoded: 57, packets: 400,
+                                                       sendDelay: 0.8, retransmitted: 2))
+        let report = StreamStatsReport(role: "host", previous: first, current: second, counters: nil)
+        XCTAssertEqual(report.pacerDelayMs, 2)
+        XCTAssertEqual(report.droppedBeforeEncode, 3)
+        XCTAssertEqual(report.retransmittedPackets, 2)
+    }
+
+    func testReceiverAssemblyAndPresentationStages() {
+        func entries(at seconds: Double, assembled: Double, assembly: Double) -> [StreamStatsEntry] {
+            [StreamStatsEntry(id: "IT1", type: "inbound-rtp", values: [
+                "kind": "video" as NSString, "framesAssembledFromMultiplePackets": assembled as NSNumber,
+                "totalAssemblyTime": assembly as NSNumber
+            ], timestamp: seconds)]
+        }
+        let counters = StreamCounters()
+        counters.setDisplayMaxFPS(120)
+        for index in 0..<60 { counters.presented(latencyMs: Double(index % 10), at: Double(index) / 60) }
+        counters.superseded(2)
+        counters.superseded(0)
+        var snapshot = counters.drain(inputBufferedBytes: 0, at: 1)
+        snapshot.interval = 1
+        let report = StreamStatsReport(role: "phone",
+                                       previous: StreamStatsSample(entries: entries(at: 0, assembled: 0, assembly: 0)),
+                                       current: StreamStatsSample(entries: entries(at: 1, assembled: 50, assembly: 0.1)),
+                                       counters: snapshot)
+        XCTAssertEqual(report.assemblyMs, 2)
+        XCTAssertEqual(report.presentedFPS, 60)
+        XCTAssertEqual(report.supersededFrames, 2)
+        XCTAssertEqual(report.presentLatencyMs, 4)
+        XCTAssertEqual(report.presentLatencyP90Ms, 8)
+        XCTAssertEqual(report.displayMaxFPS, 120)
+        XCTAssertEqual(counters.drain(inputBufferedBytes: nil, at: 2).displayMaxFPS, 120, "the refresh rate persists")
+    }
+
+    func testCaptureLatencyAndGapsSeparateCompleteFromIdleFrames() {
+        let counters = StreamCounters()
+        counters.captured(idle: false, displayLatencyMs: 6, at: 0)
+        counters.captured(idle: false, displayLatencyMs: 8, at: 0.0167)
+        counters.captured(idle: false, displayLatencyMs: 30, at: 0.1167)
+        counters.captured(idle: true, displayLatencyMs: 500, at: 0.2)
+        var snapshot = counters.drain(inputBufferedBytes: nil, at: 1)
+        snapshot.interval = 1
+        let report = StreamStatsReport(role: "host", previous: nil,
+                                       current: StreamStatsSample(entries: []), counters: snapshot)
+        XCTAssertEqual(report.captureFPS, 3)
+        XCTAssertEqual(report.captureIdleFPS, 1)
+        XCTAssertEqual(report.captureLatencyMs, 8)
+        XCTAssertEqual(report.captureLatencyP90Ms, 30)
+        XCTAssertEqual(report.captureGapMaxMs ?? 0, 100, accuracy: 0.5)
+    }
+}
+
+final class LatencyWindowTests: XCTestCase {
+    func testPercentilesAndBoundedCapacity() {
+        var window = LatencyWindow()
+        for value in 1...10 { window.record(Double(value)) }
+        window.record(.nan)
+        window.record(-1)
+        let summary = window.drain()
+        XCTAssertEqual(summary.count, 10)
+        XCTAssertEqual(summary.p50, 5)
+        XCTAssertEqual(summary.p90, 9)
+        for _ in 0..<(LatencyWindow.capacity + 10) { window.record(1) }
+        XCTAssertEqual(window.drain().count, LatencyWindow.capacity)
+        XCTAssertEqual(window.drain().count, 0)
+    }
+}
+
 final class FrameCadenceWindowTests: XCTestCase {
     func testGapPercentilesDescribeDeliveredCadence() {
         var window = FrameCadenceWindow()

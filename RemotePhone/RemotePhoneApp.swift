@@ -671,6 +671,7 @@ final class PhoneRemoteModel: ObservableObject {
             hostFeatures = Set(action.features ?? [])
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
             if let hostPresence, hostPresence != .displayAsleep { departureReason = hostPresence }
+            if let hostStream = action.hostStream { connection.media?.remoteHostSummary = hostStream }
             appliedStreamQuality = action.streamQuality
             if action.streamQuality != nil, action.streamQuality != streamQuality, qualityRequestedAt == nil {
                 qualityRequestedAt = ProcessInfo.processInfo.systemUptime
@@ -839,6 +840,7 @@ final class PhoneRemoteModel: ObservableObject {
 
 struct RemoteVideoSurface: UIViewRepresentable {
     let track: RTCVideoTrack
+    var counters: StreamCounters?
     let onFrame: () -> Void
 
     func makeCoordinator() -> FrameObserver { FrameObserver(onFrame: onFrame) }
@@ -848,12 +850,15 @@ struct RemoteVideoSurface: UIViewRepresentable {
         view.videoContentMode = .scaleAspectFit
         context.coordinator.track = track
         context.coordinator.view = view
+        context.coordinator.presentation = VideoPresentationProbe.install(on: view)
+        context.coordinator.presentation?.counters = counters
         track.add(view)
         track.add(context.coordinator)
         return view
     }
 
     func updateUIView(_ view: RTCMTLVideoView, context: Context) {
+        context.coordinator.presentation?.counters = counters
         if context.coordinator.track !== track {
             context.coordinator.track?.remove(view)
             context.coordinator.track?.remove(context.coordinator)
@@ -867,15 +872,21 @@ struct RemoteVideoSurface: UIViewRepresentable {
         coordinator.track?.remove(view)
         coordinator.track?.remove(coordinator)
         coordinator.track = nil
+        coordinator.presentation?.uninstall()
+        coordinator.presentation = nil
     }
 }
 
 final class FrameObserver: NSObject, RTCVideoRenderer {
     var track: RTCVideoTrack?
     weak var view: RTCMTLVideoView?
+    var presentation: VideoPresentationProbe? {
+        didSet { lock.lock(); tracker = presentation?.tracker; lock.unlock() }
+    }
     let onFrame: () -> Void
     private let lock = NSLock()
     private var last = 0.0
+    private var tracker: PresentationTracker?
 
     init(onFrame: @escaping () -> Void) {
         self.onFrame = onFrame
@@ -889,7 +900,9 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
         let now = ProcessInfo.processInfo.systemUptime
         let notify = now - last > 0.25
         if notify { last = now }
+        let tracker = tracker
         lock.unlock()
+        tracker?.frameArrived(at: now)
         if notify {
             DispatchQueue.main.async { [weak self] in self?.onFrame() }
         }

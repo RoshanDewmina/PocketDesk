@@ -853,7 +853,8 @@ final class RemoteHostModel: ObservableObject {
             action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: true,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
-            features: SessionFeature.host, hostState: state?.rawValue
+            features: SessionFeature.host, hostState: state?.rawValue,
+            hostStream: connection.media?.takeHostSummary()
         ))
     }
 
