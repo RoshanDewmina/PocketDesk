@@ -79,8 +79,20 @@ struct NativeSessionView: View {
         .overlay(alignment: .top) { topPills }
         #if DEBUG
         .overlay(alignment: .topLeading) {
-            if let probe = model.inputProbe, !LaunchOptions.has("--ui-probe-quiet") {
-                InputProbeOverlay(probe: probe).padding(.top, 60).padding(.leading, 12)
+            if let probe = model.inputProbe {
+                if LaunchOptions.has("--ui-probe-quiet") {
+                    // Quiet screenshot checks still need the probe value to verify that a tap
+                    // crossed transparent chrome and reached the real input surface.
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .allowsHitTesting(false)
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityIdentifier("remote.inputProbe")
+                        .accessibilityLabel("Input probe")
+                        .accessibilityValue(probe.entries.joined(separator: " | "))
+                } else {
+                    InputProbeOverlay(probe: probe).padding(.top, 60).padding(.leading, 12)
+                }
             }
         }
         #endif
