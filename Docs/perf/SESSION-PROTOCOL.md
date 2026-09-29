@@ -49,6 +49,28 @@ Undo any switch with `defaults delete com.roshan.PocketDesk.RemoteHost <key>` an
 
 The instruments themselves touch the frame path: with Stream statistics on, the phone reads the marker strip on the decode thread and takes the drawable before WebRTC's draw. Compare the same 60 s of motion with statistics **on** and **off**; the Mac's own log (`~/Library/Caches/PocketDeskStreamStats.jsonl`, `bench/stats_summary.py --last=60`) records encoded/sent fps and RTT in both cases, and a 30 s phone screen recording run through `bench/analyze.py` gives the delivered cadence in both. If the stats-on run shows lower cadence or more superseded frames, the marker reading is the suspect. With the follow-up branch installed, the cleaner A/B is Stream statistics on with **Read bench marker** on vs off (Controls → Picture): both runs then record every field except the marker-derived ones.
 
+## Build .5 (G5, G4, ladder): 120 fps on the ASUS
+
+Source: Roshan's ASUS VG32VQ1B, 2560×1440 at 1×. Set it to **120 Hz** (System Settings → Displays → ASUS → Refresh rate: 120 Hertz), not 144: sampling 120 fps from 144 Hz vsyncs gives uneven 6.9/13.9 ms gaps. Make it the main display for the bench window (Displays → Arrange, drag the menu bar onto it) or pick it from the phone (Controls → Display). Every stats sample now carries `captureDisplay` ("2560×1440 @1x 120Hz"), `targetFPS`, `hostThermalState` and `lowPowerMode`; copy them into the notebook entry with `uptime` before and after. The overlay's first lines must read `640c34`, `2560×1440`, `120Hz`, `target 120`.
+
+Runs E (120 fps), each 60–90 s in the still / motion / taps pattern, Sharper, Fill:
+
+| Run | Mac | Read |
+|---|---|---|
+| E1 120 default | ASUS at 120 Hz, no keys | capture fps, `Mac encode … fps`, presented fps, `distinct …/s`, `glass p50/p95`, `Mac VT lat p90`, `in-flight`, capture gap median |
+| E2 60 control | `PocketDeskHighRefreshCapture -bool NO`, same display | the same; E1 − E2 is the 120 effect |
+| E3 144 judder | ASUS at 144 Hz, no keys (capture thinned to 120) | `shownΔ p90`, `gap max`, capture gap median vs 8.3 ms |
+| E4 WebRTC adaptation | `PocketDeskHighRefreshNoAdaptation -bool NO` at 120 Hz | whether libwebrtc's overuse detector cuts the rate (`limit cpu`, encode fps < 100) |
+| E5 whole-display | `PocketDeskViewportCapture -bool NO`, phone zoomed to reading size (≈2×) | encode fps and VT lat on the full 3.7 MP vs E1's crop at the same zoom |
+| E6 no client cap | `PocketDeskCapToClientPixels -bool NO` at Fit | picture size and VT lat vs E1 |
+| E7 newest frame wins | `PocketDeskEncoderMaxInFlight -int 1` at 120 Hz | VT lat p90, `in-flight`, dropped-at-submit per second, presented fps |
+
+Pass marks at 120 (research checklist §2c plus the brief's targets): ≥115 distinct frames/s delivered **and** ≥115 presented/s during motion, taken from the marker, not from the requested rate; capture gap median 8.3 ± 0.5 ms; VT lat p90 ≤ 6 ms with `in-flight` ≤ 1; glass p50 ≤ 40 ms and p95 ≤ 60 ms; 11 pt legibility no worse than the 60 fps run; `limit` none; ladder at rung 0 for the whole run. Reading a failure: encode fps < 100 → encoder (compare E5/E7); encode ≥ 115 but presented < 100 → phone or link (`gap max`, superseded); glass p95 > 60 with the rest passing → link.
+
+Runs F (busy Mac, ladder), 60 s motion each at 120 Hz, one load at a time (research §4c.5): (a) a second VideoToolbox session, `ffmpeg -f lavfi -i testsrc2=s=3840x2160:r=60 -c:v hevc_videotoolbox -realtime 1 -f null -`; (b) a Simulator animation; (c) iPhone Mirroring open; (d) an `xcodebuild`. Start the load 15 s into the run and stop it at 40 s. Read: time from load start to the first ladder step (target ≤ 3 s), the rung sequence and reasons (`ladder` field), the pill's text on the phone, whether pixels were kept while an fps step was enough, and the step-up time after the load stops (target ≤ 12 s). F0: `PocketDeskLadder -bool NO` under load (d) as the control; expect the 38 fps episodes of the baseline and no pill.
+
+Afterwards set the ASUS back to Roshan's usual refresh rate and run the cleanup below.
+
 ## Mandatory last step: clear every experiment key
 
 Experiment switches live in the host's user defaults and would silently change Roshan's normal sessions if left behind. After the session, on the Mac:
@@ -56,10 +78,12 @@ Experiment switches live in the host's user defaults and would silently change R
 ```
 for key in PocketDeskLegacyStreamTuning PocketDeskCaptureNativeRate PocketDeskRouteAwareSeed \
            PocketDeskRestartFloorKbps PocketDeskRestartKeyFrameBudgetMs PocketDeskEncoderCeilingKbps \
-           PocketDeskLevel52ProbeCache; do
+           PocketDeskLevel52ProbeCache PocketDeskHighRefreshCapture PocketDeskTargetFPS \
+           PocketDeskHighRefreshNoAdaptation PocketDeskCapToClientPixels PocketDeskViewportCapture \
+           PocketDeskLadder PocketDeskEncoderMaxInFlight; do
   defaults delete com.roshan.PocketDesk.RemoteHost "$key" 2>/dev/null
 done
-defaults read com.roshan.PocketDesk.RemoteHost | grep -c "PocketDeskCaptureNativeRate\|PocketDeskRouteAwareSeed\|PocketDeskRestart\|PocketDeskEncoderCeiling\|PocketDeskLegacyStreamTuning\|PocketDeskLevel52ProbeCache"
+defaults read com.roshan.PocketDesk.RemoteHost | grep -c "PocketDeskCaptureNativeRate\|PocketDeskRouteAwareSeed\|PocketDeskRestart\|PocketDeskEncoderCeiling\|PocketDeskLegacyStreamTuning\|PocketDeskLevel52ProbeCache\|PocketDeskHighRefresh\|PocketDeskTargetFPS\|PocketDeskCapToClientPixels\|PocketDeskViewportCapture\|PocketDeskLadder\|PocketDeskEncoderMaxInFlight"
 ```
 
 (The list is `StreamTuning.experimentKeys` in code; the host's diagnostics report also shows the active `Stream tuning` line once the follow-up branch is in.)

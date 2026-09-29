@@ -49,9 +49,13 @@ struct StreamTuning: Equatable {
     var highRefreshCapture = true
     /// G5 test override for the target rate (30…120), regardless of the display.
     var targetFPSOverride: Int?
-    /// G5: in 120 mode, turn WebRTC's degradation off so its 8.3 ms interval cannot cut the rate on
-    /// VideoToolbox's latency; the app's own ladder decides instead.
-    var highRefreshNoAdaptation = false
+    /// G5: in 120 mode, turn WebRTC's degradation off: its overuse detector trips at 200 % of the frame
+    /// interval for a hardware encoder (16.7 ms at 120 fps, just above VideoToolbox's good 14.7 ms
+    /// state), so it would cut the rate on every queueing spike; the app's own ladder decides instead.
+    var highRefreshNoAdaptation = true
+    /// Newest frame wins: drop a frame at submit while this many are already inside VideoToolbox
+    /// (Chrome Remote Desktop keeps one pending). Nil lets frames queue as today.
+    var encoderMaxInFlight: Int?
     /// Cap the capture long edge to the client's advertised screen pixels (reduction only).
     var capToClientPixels = true
     /// G4: crop the capture to the phone's reported viewport (`SessionFeature.viewportCapture`).
@@ -83,11 +87,12 @@ struct StreamTuning: Equatable {
     static let capToClientPixelsKey = "PocketDeskCapToClientPixels"
     static let viewportCaptureKey = "PocketDeskViewportCapture"
     static let ladderKey = "PocketDeskLadder"
+    static let encoderMaxInFlightKey = "PocketDeskEncoderMaxInFlight"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
-                                 viewportCaptureKey, ladderKey]
+                                 viewportCaptureKey, ladderKey, encoderMaxInFlightKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -145,6 +150,10 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: ladderKey) != nil {
             tuning.ladder = defaults.bool(forKey: ladderKey)
         }
+        if defaults.object(forKey: encoderMaxInFlightKey) != nil {
+            let limit = defaults.integer(forKey: encoderMaxInFlightKey)
+            tuning.encoderMaxInFlight = (1...8).contains(limit) ? limit : nil
+        }
         return tuning
     }
 
@@ -182,10 +191,11 @@ struct StreamTuning: Equatable {
         if !cacheLevel52Probe { parts.append("no probe cache") }
         if !highRefreshCapture { parts.append("60 fps only") }
         if let targetFPSOverride { parts.append("target \(targetFPSOverride) fps") }
-        if highRefreshNoAdaptation { parts.append("no adaptation at 120") }
+        if !highRefreshNoAdaptation { parts.append("webrtc adaptation at 120") }
         if !capToClientPixels { parts.append("no client cap") }
         if !viewportCapture { parts.append("whole-display capture") }
         if !ladder { parts.append("no ladder") }
+        if let encoderMaxInFlight { parts.append("max in-flight \(encoderMaxInFlight)") }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
 

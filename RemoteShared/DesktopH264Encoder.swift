@@ -87,6 +87,12 @@ struct EncoderLatencyTrace {
 
     var inFlight: Int { pending.count }
 
+    /// Frames submitted within the last `windowMs` that have not called back: the gate for dropping
+    /// at submit, short enough that a frame VideoToolbox silently drops does not hold it shut.
+    func pending(withinMs windowMs: Double, now: Double) -> Int {
+        pending.reduce(0) { now - $1.atMs <= windowMs ? $0 + 1 : $0 }
+    }
+
     mutating func submitted(key: Int64, atMs: Double) {
         prune(now: atMs)
         pending.append((key: key, atMs: atMs, inFlight: pending.count + 1))
@@ -132,6 +138,8 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     private var cores: Int32 = 1
     private var framerate: UInt32 = 60
     private var callback: RTCVideoEncoderCallback?
+    private var maxInFlight: Int?
+    static let inFlightWindowMs = 250.0
 
     init(codecInfo: RTCVideoCodecInfo) {
         inner = RTCVideoEncoderH264(codecInfo: codecInfo)
@@ -176,6 +184,7 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         policy.minimumKbps = tuning.restartFloorKbps
         policy.keyFrameBudgetMs = tuning.restartKeyFrameBudgetMs
         policy.sessionStarted(kbps: Double(settings.startBitrate), at: ProcessInfo.processInfo.systemUptime)
+        maxInFlight = tuning.encoderMaxInFlight
         latency.reset()
         lock.unlock()
         Self.sharedCounters?.encoderSessionStarted()
@@ -193,7 +202,16 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         let target = UInt32(policy.targetKbps)
         let settings = settings, cores = cores, framerate = framerate, callback = callback
         if restart { latency.reset() }
+        let now = MachClock.nowMs()
+        let queued = maxInFlight.map { limit in
+            (limit, latency.pending(withinMs: Self.inFlightWindowMs, now: now))
+        }
         lock.unlock()
+        if let (limit, count) = queued, count >= limit, !Self.requestsKeyFrame(frameTypes) {
+            Self.sharedCounters?.droppedBeforeEncode()
+            Self.trace?("dropped at submit, \(count) in flight")
+            return 0
+        }
         if restart, let settings {
             settings.startBitrate = target
             _ = inner.release()
@@ -218,6 +236,10 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         Self.sharedCounters?.encoderRateUpdated()
         Self.trace?("setBitrate \(bitrateKbit)kbps \(framerate)fps")
         return inner.setBitrate(bitrateKbit, framerate: framerate)
+    }
+
+    private static func requestsKeyFrame(_ frameTypes: [NSNumber]) -> Bool {
+        frameTypes.contains { $0.intValue == RTCFrameType.videoFrameKey.rawValue }
     }
 
     func implementationName() -> String { inner.implementationName() }
