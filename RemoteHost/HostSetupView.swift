@@ -95,10 +95,10 @@ struct HostSetupRail: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let scene = HostHalftoneScene.setupRail(reach: page.rawValue,
-                                                contact: page == .ready && state.status.isSessionLive)
+        let scene = HostArtScene.setupRail(reach: page.rawValue,
+                                           contact: page == .ready && state.status.isSessionLive)
         ZStack(alignment: .bottomLeading) {
-            HostHalftoneArt(scene: scene)
+            HostArt(scene)
                 .id(scene)
                 .transition(.opacity)
             VStack(spacing: 6) {

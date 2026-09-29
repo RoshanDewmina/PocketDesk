@@ -169,7 +169,7 @@ struct HostPopoverStrip: View {
 
     var body: some View {
         ZStack(alignment: .bottomLeading) {
-            HostHalftoneArt(scene: .popoverStrip(mood))
+            HostArt(.popoverStrip(presentation.mood))
             HStack(spacing: 8) {
                 if presentation.mood == .live { HostLiveDot() }
                 Text(presentation.headline)
@@ -187,14 +187,5 @@ struct HostPopoverStrip: View {
         .background(Farside.Palette.void)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(presentation.headline)
-    }
-
-    private var mood: HostHalftoneMood {
-        switch presentation.mood {
-        case .live: .live
-        case .calm: .calm
-        case .paused: .paused
-        case .attention: .attention
-        }
     }
 }

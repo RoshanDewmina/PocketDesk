@@ -46,48 +46,16 @@ struct HostMarkView: View {
     }
 }
 
-/// Lowercase "farside" in dots. Doto replaces it once the face is bundled.
+/// Lowercase "farside" in Doto.
 struct HostWordmark: View {
     var height: CGFloat = 14
 
-    private static let glyphs: [Character: [String]] = [
-        "f": ["..##.", ".#...", "####.", ".#...", ".#...", ".#...", ".#..."],
-        "a": [".....", ".....", ".###.", "....#", ".####", "#...#", ".####"],
-        "r": [".....", ".....", "#.##.", "##..#", "#....", "#....", "#...."],
-        "s": [".....", ".....", ".####", "#....", ".###.", "....#", "####."],
-        "i": ["..#..", ".....", ".##..", "..#..", "..#..", "..#..", ".###."],
-        "d": ["....#", "....#", ".####", "#...#", "#...#", "#...#", ".####"],
-        "e": [".....", ".....", ".###.", "#...#", "#####", "#....", ".###."]
-    ]
-
     var body: some View {
-        Group {
-            if HostType.hasDotMatrix {
-                Text(verbatim: "farside")
-                    .font(Farside.Typeface.display(height * 1.6))
-                    .foregroundStyle(Farside.Palette.bone)
-            } else {
-                let pitch = height / 7
-                let letters = Array("farside")
-                Canvas { context, _ in
-                    for (index, letter) in letters.enumerated() {
-                        let originX = CGFloat(index * 6) * pitch
-                        for (row, line) in (Self.glyphs[letter] ?? []).enumerated() {
-                            for (column, cell) in line.enumerated() where cell == "#" {
-                                let radius = pitch * 0.42
-                                let rect = CGRect(x: originX + (CGFloat(column) + 0.5) * pitch - radius,
-                                                  y: (CGFloat(row) + 0.5) * pitch - radius,
-                                                  width: radius * 2, height: radius * 2)
-                                context.fill(Path(ellipseIn: rect), with: .color(Farside.Palette.bone))
-                            }
-                        }
-                    }
-                }
-                .frame(width: CGFloat(letters.count * 6 - 1) * pitch, height: height)
-            }
-        }
-        .accessibilityElement()
-        .accessibilityLabel("Farside")
+        Text(verbatim: "farside")
+            .font(HostType.display(height * 1.6))
+            .foregroundStyle(Farside.Palette.bone)
+            .accessibilityElement()
+            .accessibilityLabel("Farside")
     }
 }
 

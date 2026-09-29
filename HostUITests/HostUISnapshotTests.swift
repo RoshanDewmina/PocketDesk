@@ -94,40 +94,30 @@ final class HostUISnapshotTests: XCTestCase {
         }
     }
 
-    func testHalftoneArtKeepsTextPlatesClearAndEmberForContact() {
+    func testArtStillFrameKeepsTheCaptionCornerClearAndEmberForContact() throws {
         let strip = CGSize(width: 360, height: 96)
-        for mood in [HostHalftoneMood.live, .calm, .paused, .attention] {
-            let field = HostHalftoneField(scene: .popoverStrip(mood), size: strip, cell: 2)
-            var ember = 0, bone = 0, underCaption = 0
-            for row in 0..<field.rows {
-                for column in 0..<field.columns {
-                    let ink = field.ink(column: column, row: row)
-                    if ink == .ember { ember += 1 }
-                    if ink == .bone { bone += 1 }
-                    let center = CGPoint(x: (CGFloat(column) + 0.5) * 2, y: (CGFloat(row) + 0.5) * 2)
-                    if ink != .none, center.x < strip.width * 0.72, center.y > strip.height * 0.62 { underCaption += 1 }
-                }
-            }
-            XCTAssertEqual(ember > 0, mood == .live, "Ember only while live: \(mood)")
-            XCTAssertGreaterThan(bone, 50, "The strip has art: \(mood)")
-            XCTAssertEqual(underCaption, 0, "No dots under the caption plate: \(mood)")
+        for mood in [HostPopoverPresentation.Mood.live, .calm, .paused, .attention] {
+            let art = HostArt(.popoverStrip(mood)).frame(width: strip.width, height: strip.height)
+                .background(Farside.Palette.void)
+            let bitmap = try render("art-strip-\(mood)", art, fixedSize: strip, write: false)
+            let scale = CGFloat(bitmap.pixelsWide) / strip.width
+            let whole = CGRect(origin: .zero, size: strip)
+            XCTAssertGreaterThan(count(in: bitmap, frame: whole, scale: scale, step: 1) { isDot($0) }, 100, "The strip has art: \(mood)")
+            XCTAssertEqual(count(in: bitmap, frame: whole, scale: scale, step: 1) { isEmber($0) } > 0, mood == .live,
+                           "Ember only while live: \(mood)")
+            XCTAssertEqual(count(in: bitmap, frame: HostArtScenes.captionPlate(in: strip), scale: scale, step: 1) { isDot($0) }, 0,
+                           "No dots where the caption plate sits: \(mood)")
         }
 
+        let rail = CGSize(width: 280, height: 520)
         for (reach, contact) in [(0, false), (3, false), (3, true)] {
-            let field = HostHalftoneField(scene: .setupRail(reach: reach, contact: contact),
-                                          size: CGSize(width: 280, height: 520), cell: 2)
-            var ember = 0
-            for row in 0..<field.rows {
-                for column in 0..<field.columns where field.ink(column: column, row: row) == .ember { ember += 1 }
-            }
+            let art = HostArt(.setupRail(reach: reach, contact: contact)).frame(width: rail.width, height: rail.height)
+                .background(Color.black)
+            let bitmap = try render("art-rail", art, fixedSize: rail, write: false)
+            let scale = CGFloat(bitmap.pixelsWide) / rail.width
+            let ember = count(in: bitmap, frame: CGRect(origin: .zero, size: rail), scale: scale, step: 1) { isEmber($0) }
             XCTAssertEqual(ember > 0, contact, "Rail ember only at contact (reach \(reach))")
         }
-
-        let image = HostHalftoneRenderer.image(scene: .popoverStrip(.calm), size: strip, cell: 2, scale: 2)
-        XCTAssertEqual(image?.width, 720)
-        XCTAssertEqual(image?.height, 192)
-        XCTAssertTrue(image === HostHalftoneRenderer.image(scene: .popoverStrip(.calm), size: strip, cell: 2, scale: 2),
-                      "Still art is drawn once and cached")
     }
 
     func testSetupSteps() throws {
@@ -215,7 +205,8 @@ final class HostUISnapshotTests: XCTestCase {
     // MARK: Rendering
 
     @discardableResult
-    private func render<V: View>(_ name: String, _ view: V, fixedSize: CGSize? = nil) throws -> NSBitmapImageRep {
+    private func render<V: View>(_ name: String, _ view: V, fixedSize: CGSize? = nil,
+                                 write: Bool = true) throws -> NSBitmapImageRep {
         guard let appearance = NSAppearance(named: .darkAqua) else { throw XCTSkip("No dark appearance") }
         let host = NSHostingView(rootView: view.environment(\.colorScheme, .dark))
         host.appearance = appearance
@@ -231,7 +222,7 @@ final class HostUISnapshotTests: XCTestCase {
         host.cacheDisplay(in: host.bounds, to: bitmap)
         XCTAssertGreaterThan(bitmap.pixelsWide, 100, name)
         XCTAssertGreaterThan(bitmap.pixelsHigh, 40, name)
-        if let outputDirectory, let png = bitmap.representation(using: .png, properties: [:]) {
+        if write, let outputDirectory, let png = bitmap.representation(using: .png, properties: [:]) {
             try FileManager.default.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
             try png.write(to: outputDirectory.appendingPathComponent("farside-mac-\(name).png"))
         }
@@ -245,22 +236,28 @@ final class HostUISnapshotTests: XCTestCase {
         return bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB)
     }
 
-    private func count(in bitmap: NSBitmapImageRep, frame: CGRect, scale: CGFloat, where test: (NSColor) -> Bool) -> Int {
+    private func count(in bitmap: NSBitmapImageRep, frame: CGRect, scale: CGFloat, step: CGFloat = 0.5,
+                       where test: (NSColor) -> Bool) -> Int {
         var total = 0
         var y = frame.minY
         while y < frame.maxY {
             var x = frame.minX
             while x < frame.maxX {
                 if let color = pixel(bitmap, CGPoint(x: x, y: y), scale: scale), test(color) { total += 1 }
-                x += 0.5
+                x += step
             }
-            y += 0.5
+            y += step
         }
         return total
     }
 
     private func isEmber(_ color: NSColor) -> Bool {
         color.redComponent > 0.85 && color.greenComponent > 0.2 && color.greenComponent < 0.5 && color.blueComponent < 0.3
+    }
+
+    /// A lit dot on the void: anything clearly brighter than the ground.
+    private func isDot(_ color: NSColor) -> Bool {
+        0.2126 * color.redComponent + 0.7152 * color.greenComponent + 0.0722 * color.blueComponent > 0.2
     }
 
     private func luminance(_ bitmap: NSBitmapImageRep, point: CGPoint, scale: CGFloat) -> CGFloat {

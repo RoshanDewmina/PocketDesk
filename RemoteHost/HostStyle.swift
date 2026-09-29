@@ -22,20 +22,19 @@ enum HostTheme {
     }
 }
 
-/// Everyday text is SF Pro and SF Mono. Doto and Instrument Serif Italic are accents; until their
-/// OFL files are bundled with the host, SF Pro Semibold and New York Italic stand in.
+/// Everyday text is SF Pro and SF Mono. Doto and Instrument Serif Italic are the two accents, bundled
+/// with the app under the SIL OFL 1.1 and registered by `HostFonts`.
 enum HostType {
-    static let hasDotMatrix = NSFont(name: Farside.Typeface.dotMatrix, size: 12) != nil
-    static let hasSerifAccent = NSFont(name: Farside.Typeface.serifItalic, size: 12) != nil
-
     /// Display words only (28 pt and larger); keep punctuation in `punctuation(_:)`.
     static func display(_ size: CGFloat) -> Font {
-        hasDotMatrix ? Farside.Typeface.display(size) : .system(size: size * 0.94, weight: .semibold)
+        HostFonts.registerBundledFonts()
+        return Farside.Typeface.display(size)
     }
 
     /// The one italic accent word in a heading.
     static func accent(_ size: CGFloat) -> Font {
-        hasSerifAccent ? Farside.Typeface.accent(size * 1.1) : .system(size: size * 1.02, design: .serif).italic()
+        HostFonts.registerBundledFonts()
+        return Farside.Typeface.accent(size * 1.1)
     }
 
     static func punctuation(_ size: CGFloat) -> Font { .system(size: size * 0.94, weight: .semibold) }
@@ -43,13 +42,40 @@ enum HostType {
     static func caption(_ size: CGFloat = 11) -> Font { .system(size: size, weight: .medium, design: .monospaced) }
 }
 
+/// The accent faces ship in `Contents/Resources` (the same files as the phone's `RemotePhone/Fonts`) and
+/// are registered by code, for this process only, rather than through `ATSApplicationFontsPath`:
+/// the host's Info.plist is generated from build settings and stays untouched, the exact files are
+/// named so a missing one is reported instead of silently falling back to the system font, and the
+/// unit tests run this same path (an Info.plist key only applies to the launched app).
 enum HostFonts {
-    /// Registers any font files shipped in the app bundle for this process.
-    static func registerBundledFonts(in bundle: Bundle = .main) {
-        let urls = ["ttf", "otf"].flatMap { bundle.urls(forResourcesWithExtension: $0, subdirectory: nil) ?? [] }
-        guard !urls.isEmpty else { return }
-        CTFontManagerRegisterFontURLs(urls as CFArray, .process, true, nil)
+    static let bundledFiles = ["Doto-Variable.ttf", "InstrumentSerif-Italic.ttf"]
+
+    private final class BundleToken {}
+
+    /// Where the accent faces are found: the app bundle, or the test bundle that contains this code.
+    static func bundledURLs() -> [URL] {
+        let bundles = [Bundle.main, Bundle(for: BundleToken.self)]
+        return bundledFiles.compactMap { file in
+            bundles.lazy.compactMap { $0.url(forResource: file, withExtension: nil) }.first
+        }
     }
+
+    /// Registers the accent faces once per process; safe to call from anywhere, any number of times.
+    /// Returns whether every bundled file was found and registered.
+    @discardableResult
+    static func registerBundledFonts() -> Bool { registered }
+
+    private static let registered: Bool = {
+        let urls = bundledURLs()
+        guard urls.count == bundledFiles.count else { return false }
+        var failed = false
+        CTFontManagerRegisterFontURLs(urls as CFArray, .process, true) { errors, _ in
+            let alreadyRegistered = Int(CTFontManagerError.alreadyRegistered.rawValue)
+            if (errors as? [NSError])?.contains(where: { $0.code != alreadyRegistered }) == true { failed = true }
+            return true
+        }
+        return !failed
+    }()
 }
 
 extension Text {
@@ -89,22 +115,38 @@ struct HostHeading: View {
             .accessibilityAddTraits(.isHeader)
     }
 
+    /// Doto sets the words and every space, so the gaps keep one rhythm; punctuation is set in SF because
+    /// Doto draws it badly, and only the accent word itself is Instrument Serif.
     private var attributed: AttributedString {
         parts.reduce(into: AttributedString()) { heading, part in
-            var run: AttributedString
             switch part {
             case .display(let words):
-                run = AttributedString(words)
-                run.font = HostType.display(size)
-            case .accent(let word):
-                run = AttributedString(word)
-                run.font = HostType.accent(size)
+                heading += run(words, HostType.display(size))
+            case .accent(let text):
+                for piece in Self.spaced(text) { heading += run(piece.text, piece.isSpace ? HostType.display(size) : HostType.accent(size)) }
             case .plain(let text):
-                run = AttributedString(text)
-                run.font = HostType.punctuation(size)
+                for piece in Self.spaced(text) { heading += run(piece.text, piece.isSpace ? HostType.display(size) : HostType.punctuation(size)) }
             }
-            heading += run
         }
+    }
+
+    private func run(_ text: String, _ font: Font) -> AttributedString {
+        var run = AttributedString(text)
+        run.font = font
+        return run
+    }
+
+    /// Text cut into alternating runs of whitespace and everything else.
+    private static func spaced(_ text: String) -> [(text: String, isSpace: Bool)] {
+        var pieces: [(text: String, isSpace: Bool)] = []
+        for character in text {
+            if pieces.last?.isSpace == character.isWhitespace {
+                pieces[pieces.count - 1].text.append(character)
+            } else {
+                pieces.append((String(character), character.isWhitespace))
+            }
+        }
+        return pieces
     }
 }
 
