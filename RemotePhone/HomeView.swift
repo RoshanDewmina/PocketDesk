@@ -57,6 +57,9 @@ enum LaunchOptions {
     static var viewportOverride: ViewportMode? {
         has("--ui-viewport-fit") ? .fit : has("--ui-viewport-fill") ? .fill : nil
     }
+    static var touchModeOverride: TouchInputMode? {
+        has("--ui-touch-direct") ? .direct : has("--ui-touch-trackpad") ? .trackpad : nil
+    }
     /// UI tests, screenshots and E2E harness runs never get surprise onboarding screens
     /// (permission priming, gesture coach).
     static var suppressesOnboarding: Bool {

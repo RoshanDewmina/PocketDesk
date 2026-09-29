@@ -82,7 +82,10 @@ final class NativeInputSafetyTests: XCTestCase {
         XCTAssertTrue(driver.handle(action("click", count: 2), upgraded: true).accepted)
         XCTAssertEqual(recorder.mouseEvents.suffix(2).map(\.count), [2, 2])
         XCTAssertFalse(driver.handle(action("right", count: 2), upgraded: true).accepted)
-        XCTAssertFalse(driver.handle(action("click", count: 3), upgraded: true).accepted)
+        XCTAssertTrue(driver.handle(action("click", count: 3), upgraded: true).accepted,
+                      "A hardware triple click continues the double at the same place")
+        XCTAssertFalse(driver.handle(action("click", count: 3), upgraded: true).accepted,
+                       "A triple cannot repeat without a new double")
     }
 
     func testSecondTouchDragKeepsCountAndExactHoldIdentity() {

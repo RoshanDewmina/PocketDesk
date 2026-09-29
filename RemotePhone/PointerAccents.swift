@@ -125,15 +125,16 @@ struct SettleHalo: View {
 }
 
 /// The ember contact at the pointer tip: a dot and an expanding ring for a click, two concentric
-/// rings for a right-click, and two quick rings for a double-click.
+/// rings for a right-click, two quick rings for a double-click and one tight ring for a middle click.
 struct ContactRipple: View {
     enum Kind {
-        case click, secondary, double
+        case click, secondary, double, middle
 
         init(action: String) {
             switch action {
             case "right": self = .secondary
             case "double": self = .double
+            case "middle": self = .middle
             default: self = .click
             }
         }
@@ -149,8 +150,8 @@ struct ContactRipple: View {
 
     var body: some View {
         ZStack {
-            ring(expanded: first, size: 110)
-            if kind != .click {
+            ring(expanded: first, size: kind == .middle ? 64 : 110)
+            if kind == .secondary || kind == .double {
                 ring(expanded: second, size: kind == .secondary ? 70 : 110)
             }
             Circle()
@@ -179,7 +180,7 @@ struct ContactRipple: View {
         second = false
         let motion = reduceMotion ? Animation.easeOut(duration: 0.45) : Farside.Motion.easeOut(0.7)
         withAnimation(motion) { first = true }
-        guard kind != .click else { return }
+        guard kind == .secondary || kind == .double else { return }
         withAnimation(motion.delay(kind == .secondary ? 0.07 : 0.16)) { second = true }
     }
 }

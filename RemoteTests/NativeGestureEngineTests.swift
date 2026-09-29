@@ -283,35 +283,46 @@ final class NativeGestureEngineTests: XCTestCase {
     }
 }
 
-private final class CommandLog {
+final class CommandLog {
     var zoomToggles: [CGPoint] = []
     var navigation: [(factor: CGFloat, anchor: CGPoint, translation: CGSize)] = []
     var workspaceSwipes: [NativeSwipeDirection] = []
     var clicks: [Int] = []
     var secondary = 0
+    var middle = 0
     var moves: [CGSize] = []
+    var points: [CGPoint] = []
     var scrollPhases: [String] = []
     var zooms = 0
     var zoomEnds = 0
     var pans = 0
     var dragBegins = 0
+    var dragCounts: [Int] = []
     var dragEnds = 0
     var acceptDrag = true
+    /// Rejects `pointTo` for points matching this predicate, as a letterbox band would.
+    var rejectPoint: (CGPoint) -> Bool = { _ in false }
+    /// Every command in order, for checking that the pointer moves before it clicks.
+    var trace: [String] = []
 
     func record(_ command: NativeGestureCommand) -> Bool {
         switch command {
-        case .zoomToggle(let anchor): zoomToggles.append(anchor)
-        case .navigate(let factor, let anchor, let translation): navigation.append((factor, anchor, translation))
-        case .workspaceSwipe(let direction): workspaceSwipes.append(direction)
-        case .click(let count): clicks.append(count)
-        case .secondaryClick: secondary += 1
-        case .move(let delta): moves.append(delta)
-        case .scroll(_, let phase, _): scrollPhases.append(phase)
-        case .zoom: zooms += 1
-        case .zoomEnded: zoomEnds += 1
-        case .pan: pans += 1
-        case .dragBegan: dragBegins += 1; return acceptDrag
-        case .dragEnded: dragEnds += 1
+        case .zoomToggle(let anchor): zoomToggles.append(anchor); trace.append("zoomToggle")
+        case .navigate(let factor, let anchor, let translation): navigation.append((factor, anchor, translation)); trace.append("navigate")
+        case .workspaceSwipe(let direction): workspaceSwipes.append(direction); trace.append("workspace")
+        case .click(let count): clicks.append(count); trace.append("click\(count)")
+        case .secondaryClick: secondary += 1; trace.append("right")
+        case .middleClick: middle += 1; trace.append("middle")
+        case .move(let delta): moves.append(delta); trace.append("move")
+        case .pointTo(let point):
+            guard !rejectPoint(point) else { trace.append("pointTo-rejected"); return false }
+            points.append(point); trace.append("pointTo")
+        case .scroll(_, let phase, _): scrollPhases.append(phase); trace.append("scroll-\(phase)")
+        case .zoom: zooms += 1; trace.append("zoom")
+        case .zoomEnded: zoomEnds += 1; trace.append("zoomEnded")
+        case .pan: pans += 1; trace.append("pan")
+        case .dragBegan(_, let count): dragBegins += 1; dragCounts.append(count); trace.append("dragBegan\(count)"); return acceptDrag
+        case .dragEnded: dragEnds += 1; trace.append("dragEnded")
         }
         return true
     }

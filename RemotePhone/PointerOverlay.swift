@@ -96,6 +96,14 @@ final class PointerOverlayModel: ObservableObject {
         followUpdates.send(point)
     }
 
+    /// Jumps the drawn pointer to an absolute placement (direct touch or a hardware pointer).
+    /// The finger or the iPad pointer is already there, so the camera never follows it.
+    func localWarp(ordinal: UInt64?, to point: CGPoint) {
+        guard let ordinal else { return }
+        predictor.applyLocalWarp(ordinal: ordinal, to: point)
+        refresh()
+    }
+
     func advertisement() -> PointerSync? { policy.advertisement(at: clock()) }
 
     func refresh() {

@@ -1,0 +1,438 @@
+import XCTest
+
+/// Phone and iPad parity with Workbench: direct touch, middle click, hardware keyboard and
+/// pointer passthrough, the mini map and the display picker. Input runs against the offline
+/// fixture with `--ui-input-probe`, which admits input locally and records the exact control
+/// actions the phone would send; nothing reaches a Mac.
+final class PhoneParityUITests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+    }
+
+    override func tearDown() {
+        XCUIDevice.shared.orientation = .portrait
+        super.tearDown()
+    }
+
+    // MARK: - Direct touch
+
+    @MainActor
+    func testTouchSettingOffersTrackpadAndDirectAndPersists() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "--ui-touch-trackpad"]
+        launchOffline(app)
+        let canvas = app.descendants(matching: .any)["remote.canvas"].firstMatch
+        XCTAssertEqual(canvas.label, "Remote desktop trackpad", "Trackpad is the default")
+        openControls(app)
+        let direct = app.buttons["Direct"]
+        scrollControls(app, to: direct)
+        XCTAssertTrue(app.buttons["Trackpad"].isSelected)
+        direct.tap()
+        XCTAssertTrue(direct.isSelected)
+        let footer = app.staticTexts["remote.touchMode.footer"]
+        XCTAssertTrue(footer.label.contains("tap exactly where you want to click"), footer.label)
+        attachScreenshot("Touch setting - Direct")
+        app.buttons["Done"].tap()
+        XCTAssertEqual(canvas.label, "Remote desktop, direct touch")
+        app.terminate()
+
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit"]
+        launchOffline(app)
+        XCTAssertEqual(app.descendants(matching: .any)["remote.canvas"].firstMatch.label,
+                       "Remote desktop, direct touch", "The touch style is remembered")
+        openControls(app)
+        scrollControls(app, to: app.buttons["Trackpad"])
+        app.buttons["Trackpad"].tap()
+        XCTAssertTrue(app.buttons["Trackpad"].isSelected)
+    }
+
+    @MainActor
+    func testDirectTapsLandOnTheTouchedMacPointAtFitFillZoomAndLandscape() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "--ui-touch-direct"]
+        launchOffline(app)
+        assertTargetsHitExactly(app, context: "Fit portrait")
+        attachScreenshot("Direct touch - Fit portrait with probe targets")
+
+        setZoom(app, sliderPosition: 0.12)
+        assertTargetsHitExactly(app, context: "Zoomed portrait")
+
+        rotate(app, to: .landscapeLeft)
+        assertTargetsHitExactly(app, context: "Zoomed landscape")
+        attachScreenshot("Direct touch - zoomed landscape")
+
+        revealDock(app)
+        app.buttons["Fill screen"].firstMatch.tap()
+        collapseDock(app)
+        assertTargetsHitExactly(app, context: "Fill landscape")
+        rotate(app, to: .portrait)
+        assertTargetsHitExactly(app, context: "Fill portrait")
+    }
+
+    @MainActor
+    func testDirectDragTwoFingerRightClickAndThreeFingerMiddleClick() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "--ui-touch-direct"]
+        launchOffline(app)
+        // (0.5, 0.4) and (0.3, 0.6) of the Mac display: both visible in Fit.
+        let start = app.descendants(matching: .any)["probe.target.7"].firstMatch
+        let end = app.descendants(matching: .any)["probe.target.11"].firstMatch
+        XCTAssertTrue(start.waitForExistence(timeout: 3))
+        var mark = probeMark(app)
+        start.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .press(forDuration: 0.1, thenDragTo: end.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+        let drag = probeEntries(app, after: mark)
+        let pressed = drag.first(where: { $0.hasPrefix("moveTo") }).flatMap(point)
+        let expected = sourceValue(start)
+        XCTAssertNotNil(pressed, "\(drag)")
+        XCTAssertEqual(pressed?.x ?? 0, expected?.x ?? -1, accuracy: 12, "The press lands where the finger went down: \(drag)")
+        XCTAssertEqual(pressed?.y ?? 0, expected?.y ?? -1, accuracy: 12)
+        XCTAssertTrue(drag.contains("dragDown 1"), "\(drag)")
+        XCTAssertTrue(drag.last?.hasPrefix("dragUp") == true || drag.last == "release", "\(drag)")
+        XCTAssertFalse(drag.contains { $0.hasPrefix("click") }, "A drag is not a click: \(drag)")
+
+        let canvas = app.descendants(matching: .any)["remote.canvas"].firstMatch
+        mark = probeMark(app)
+        canvas.twoFingerTap()
+        let right = probeEntries(app, after: mark)
+        XCTAssertEqual(Array(right.suffix(2)).map { $0.components(separatedBy: " ").first ?? "" }, ["moveTo", "right"],
+                       "Two fingers right-click what is under them: \(right)")
+
+        mark = probeMark(app)
+        canvas.tap(withNumberOfTaps: 1, numberOfTouches: 3)
+        let middle = probeEntries(app, after: mark)
+        XCTAssertEqual(middle.last, "middle 1", "\(middle)")
+    }
+
+    @MainActor
+    func testTrackpadTapClicksWithoutMovingThePointer() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "--ui-touch-trackpad"]
+        launchOffline(app)
+        let mark = probeMark(app)
+        app.descendants(matching: .any)["probe.target.7"].firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let entries = probeEntries(app, after: mark)
+        XCTAssertEqual(entries.last, "click 1")
+        XCTAssertFalse(entries.contains { $0.hasPrefix("moveTo") })
+    }
+
+    // MARK: - Hardware keyboard
+
+    @MainActor
+    func testHardwareKeysReachTheMacWithModifiersWithoutTheSoftwareKeyboard() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "--ui-touch-trackpad"]
+        launchOffline(app)
+        primeHardwareKeyboard(app)
+        let mark = probeMark(app)
+        app.typeKey("a", modifierFlags: [])
+        app.typeKey("c", modifierFlags: .command)
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.leftArrow.rawValue, modifierFlags: .shift)
+        app.typeKey("7", modifierFlags: [])
+        app.typeKey("e", modifierFlags: [.option, .control])
+        app.typeKey(XCUIKeyboardKey.F5.rawValue, modifierFlags: [])
+        app.typeKey(XCUIKeyboardKey.forwardDelete.rawValue, modifierFlags: [])
+        let entries = probeEntries(app, after: mark)
+        for expected in ["key a", "key c command", "key escape", "key left shift", "key 7",
+                         "key e control+option", "key f5", "key forwardDelete"] {
+            XCTAssertTrue(entries.contains(expected), "\(expected) missing from \(entries)")
+        }
+        XCTAssertFalse(app.keyboards.firstMatch.exists, "A hardware keyboard never raises the on-screen keyboard")
+        attachScreenshot("Hardware keys - probe log")
+    }
+
+    @MainActor
+    func testReservedShortcutsRemapAndCommandShortcutsPassThrough() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit"]
+        launchOffline(app)
+        primeHardwareKeyboard(app)
+        let mark = probeMark(app)
+        app.typeKey(XCUIKeyboardKey.tab.rawValue, modifierFlags: [.control, .option])
+        app.typeKey(XCUIKeyboardKey.space.rawValue, modifierFlags: [.control, .option])
+        app.typeKey("h", modifierFlags: [.control, .option])
+        app.typeKey("4", modifierFlags: [.control, .option])
+        app.typeKey("w", modifierFlags: .command)
+        app.typeKey("m", modifierFlags: .command)
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        let entries = probeEntries(app, after: mark)
+        for expected in ["key tab command", "key space command", "key h command", "key 4 command+shift",
+                         "key z command+shift"] {
+            XCTAssertTrue(entries.contains(expected), "\(expected) missing from \(entries)")
+        }
+        // Record which window commands this iPadOS lets through, for the report.
+        let passed = ["key w command", "key m command"].filter(entries.contains)
+        let note = XCTAttachment(string: "Command shortcuts that reached Farside: \(passed); all entries: \(entries)")
+        note.name = "Reserved shortcut probe"
+        note.lifetime = .keepAlways
+        add(note)
+    }
+
+    @MainActor
+    func testKeysGoToTheDraftWhileTheKeyboardBarIsOpenAndNeverTwice() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fill"]
+        launchOffline(app)
+        primeHardwareKeyboard(app)
+        app.buttons["Show controls"].doubleTap()
+        let field = app.textViews.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        let mark = probeMark(app)
+        field.typeText("hi")
+        XCTAssertEqual(field.value as? String, "hi")
+        XCTAssertTrue(probeEntries(app, after: mark).filter { $0.hasPrefix("key") }.isEmpty,
+                      "Typing into the draft must not also press keys on the Mac")
+        app.buttons["Hide keyboard"].tap()
+        XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 5))
+        let after = probeMark(app)
+        app.typeKey("b", modifierFlags: [])
+        // A slow synthesized press may auto-repeat, exactly as a held key would; nothing else may appear.
+        let keys = probeEntries(app, after: after).filter { $0.hasPrefix("key") }
+        XCTAssertEqual(keys.first, "key b", "Closing the bar hands the hardware keyboard back to the Mac")
+        XCTAssertEqual(Set(keys), ["key b"], "\(keys)")
+    }
+
+    // MARK: - Hardware pointer (iPad)
+
+    @MainActor
+    func testMouseFollowsClicksRightClicksAndScrollsOnIPad() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Pointer passthrough is iPadOS only")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "--ui-touch-trackpad"]
+        launchOffline(app)
+        let target = app.descendants(matching: .any)["probe.target.7"].firstMatch
+        XCTAssertTrue(target.waitForExistence(timeout: 3))
+        let centre = target.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let expected = sourceValue(target)!
+
+        var mark = probeMark(app)
+        centre.hover()
+        let hover = probeEntries(app, after: mark).last(where: { $0.hasPrefix("moveTo") }).flatMap(point)
+        XCTAssertNotNil(hover, "Hovering moves the Mac pointer: \(probeEntries(app, after: mark))")
+        XCTAssertEqual(hover?.x ?? 0, expected.x, accuracy: 6)
+        XCTAssertEqual(hover?.y ?? 0, expected.y, accuracy: 6)
+
+        mark = probeMark(app)
+        centre.click()
+        var entries = probeEntries(app, after: mark)
+        XCTAssertEqual(entries.last, "click 1", "\(entries)")
+
+        Thread.sleep(forTimeInterval: 0.6)
+        mark = probeMark(app)
+        centre.rightClick()
+        entries = probeEntries(app, after: mark)
+        XCTAssertTrue(entries.last == "right 1" || entries.last == "click 1 control", "\(entries)")
+
+        mark = probeMark(app)
+        centre.scroll(byDeltaX: 0, deltaY: -120)
+        entries = probeEntries(app, after: mark)
+        XCTAssertTrue(entries.contains { $0.hasPrefix("scroll began") }, "\(entries)")
+        XCTAssertTrue(entries.contains { $0.hasPrefix("scroll ended") || $0.hasPrefix("scroll cancelled") }, "\(entries)")
+        attachScreenshot("iPad pointer passthrough - probe log")
+    }
+
+    // MARK: - Helpers
+
+    @MainActor
+    private func assertTargetsHitExactly(_ app: XCUIApplication, context: String,
+                                         file: StaticString = #filePath, line: UInt = #line) {
+        let window = app.windows.firstMatch.frame
+        // Stay clear of the dock handle, the top notices and the probe's own overlay.
+        let usable = window.insetBy(dx: 12, dy: 0).divided(atDistance: 70, from: .minYEdge).remainder
+            .divided(atDistance: 90, from: .maxYEdge).remainder
+        let overlay = app.descendants(matching: .any)["remote.inputProbe"].firstMatch.frame
+            .union(app.buttons["remote.inputProbe.clear"].frame).insetBy(dx: -16, dy: -16)
+        let targets = (0..<20).map { app.descendants(matching: .any)["probe.target.\($0)"].firstMatch }
+        let onScreen = targets.filter {
+            let centre = CGPoint(x: $0.frame.midX, y: $0.frame.midY)
+            return $0.exists && usable.contains(centre) && !overlay.contains(centre)
+        }
+        // Up to five spread across what is visible keeps the run short.
+        let stride = max(1, onScreen.count / 5)
+        let visible = Swift.stride(from: 0, to: onScreen.count, by: stride).map { onScreen[$0] }.prefix(5)
+        guard visible.count >= 2, let a = visible.first, let b = visible.last,
+              let sa = sourceValue(a), let sb = sourceValue(b) else {
+            return XCTFail("\(context): need two visible probe targets", file: file, line: line)
+        }
+        // Two screen points, expressed in Mac points at the current zoom.
+        let perPoint = max(abs(sb.x - sa.x) / max(abs(b.frame.midX - a.frame.midX), 1),
+                           abs(sb.y - sa.y) / max(abs(b.frame.midY - a.frame.midY), 1))
+        let tolerance = 2 * perPoint
+        for target in visible {
+            let mark = probeMark(app)
+            target.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            let entries = probeEntries(app, after: mark)
+            guard let expected = sourceValue(target),
+                  let moved = entries.first(where: { $0.hasPrefix("moveTo") }).flatMap(point) else {
+                XCTFail("\(context): no moveTo for \(target.identifier): \(entries)", file: file, line: line)
+                continue
+            }
+            XCTAssertEqual(moved.x, expected.x, accuracy: tolerance, "\(context) \(target.identifier) x", file: file, line: line)
+            XCTAssertEqual(moved.y, expected.y, accuracy: tolerance, "\(context) \(target.identifier) y", file: file, line: line)
+            XCTAssertEqual(entries.last, "click 1", "\(context): a tap clicks where it lands", file: file, line: line)
+            // Let the double-click window pass so the next target is a fresh single tap.
+            Thread.sleep(forTimeInterval: 0.55)
+        }
+    }
+
+    private func point(_ entry: String) -> CGPoint? {
+        let parts = entry.components(separatedBy: " ")
+        guard parts.count >= 3, let x = Double(parts[1]), let y = Double(parts[2]) else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+
+    /// Probe targets carry their Mac point as "x1296 y135".
+    private func sourceValue(_ element: XCUIElement) -> CGPoint? {
+        guard let raw = element.value else { return nil }
+        let parts = String(describing: raw).components(separatedBy: " ")
+        guard parts.count == 2, parts[0].hasPrefix("x"), parts[1].hasPrefix("y"),
+              let x = Double(parts[0].dropFirst()), let y = Double(parts[1].dropFirst()) else { return nil }
+        return CGPoint(x: x, y: y)
+    }
+
+    /// The first hardware key on a fresh simulator makes iOS ask which layout the keyboard has.
+    /// Press Shift alone (Farside sends nothing for a bare modifier) and answer the question.
+    @MainActor
+    private func primeHardwareKeyboard(_ app: XCUIApplication) {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let monitor = addUIInterruptionMonitor(withDescription: "Hardware keyboard detected") { alert in
+            let buttons = alert.buttons.allElementsBoundByIndex.filter(\.exists)
+            guard let button = buttons.first(where: { ["Done", "OK", "Continue"].contains($0.label) }) ?? buttons.last
+            else { return false }
+            button.tap()
+            return true
+        }
+        app.typeKey(XCUIKeyboardKey.shift.rawValue, modifierFlags: [])
+        let alert = springboard.alerts.firstMatch
+        if alert.waitForExistence(timeout: 2) {
+            let buttons = alert.buttons.allElementsBoundByIndex.filter(\.exists)
+            (buttons.first(where: { ["Done", "OK", "Continue"].contains($0.label) }) ?? buttons.last)?.tap()
+            _ = alert.waitForNonExistence(timeout: 3)
+        }
+        removeUIInterruptionMonitor(monitor)
+    }
+
+    /// Raw probe entries: "`sequence` description".
+    @MainActor
+    private func rawProbe(_ app: XCUIApplication) -> [(sequence: Int, text: String)] {
+        let probe = app.descendants(matching: .any)["remote.inputProbe"].firstMatch
+        guard probe.waitForExistence(timeout: 3), let value = probe.value as? String, !value.isEmpty else { return [] }
+        return value.components(separatedBy: " | ").compactMap { entry in
+            let parts = entry.split(separator: " ", maxSplits: 1)
+            guard parts.count == 2, let sequence = Int(parts[0]) else { return nil }
+            return (sequence, String(parts[1]))
+        }
+    }
+
+    /// The newest sequence number, so a check can read only what its own action produced.
+    @MainActor
+    private func probeMark(_ app: XCUIApplication) -> Int {
+        rawProbe(app).map(\.sequence).max() ?? 0
+    }
+
+    @MainActor
+    private func probeEntries(_ app: XCUIApplication, after mark: Int) -> [String] {
+        rawProbe(app).filter { $0.sequence > mark }.map(\.text)
+    }
+
+    /// Controls is a long sheet; rows further down are only created once scrolled into view.
+    @MainActor
+    private func scrollControls(_ app: XCUIApplication, to element: XCUIElement) {
+        let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch
+        for _ in 0..<8 where !(element.exists && element.isHittable) { content.swipeUp() }
+        XCTAssertTrue(element.waitForExistence(timeout: 3))
+        waitUntilStill(element)
+    }
+
+    @MainActor
+    private func setZoom(_ app: XCUIApplication, sliderPosition: CGFloat) {
+        openControls(app)
+        let zoom = app.sliders["Zoom level"]
+        let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch
+        for _ in 0..<4 where !(zoom.exists && zoom.isHittable) { content.swipeUp() }
+        XCTAssertTrue(zoom.waitForExistence(timeout: 3))
+        zoom.adjust(toNormalizedSliderPosition: sliderPosition)
+        app.buttons["Done"].tap()
+        collapseDock(app)
+    }
+
+    @MainActor
+    private func openControls(_ app: XCUIApplication) {
+        revealDock(app)
+        let controls = app.buttons["Controls"].firstMatch
+        XCTAssertTrue(controls.waitForExistence(timeout: 5))
+        controls.tap()
+        let content = app.descendants(matching: .any)["remote.controls.content"].firstMatch
+        XCTAssertTrue(content.waitForExistence(timeout: 5))
+        let done = app.buttons["Done"]
+        if done.waitForExistence(timeout: 3) { waitUntilStill(done) }
+    }
+
+    @MainActor
+    private func revealDock(_ app: XCUIApplication) {
+        if app.buttons["Hide controls"].exists { return }
+        let handle = app.buttons["Show controls"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 5))
+        handle.swipeUp()
+        let hide = app.buttons["Hide controls"]
+        XCTAssertTrue(hide.waitForExistence(timeout: 5))
+        waitUntilStill(hide)
+    }
+
+    /// The dock arrives on a spring; tapping while it still moves can land on the row below.
+    @MainActor
+    private func waitUntilStill(_ element: XCUIElement) {
+        var previous = element.frame
+        for _ in 0..<20 {
+            Thread.sleep(forTimeInterval: 0.15)
+            let current = element.frame
+            if abs(current.minY - previous.minY) < 0.5 && abs(current.minX - previous.minX) < 0.5 { return }
+            previous = current
+        }
+    }
+
+    @MainActor
+    private func collapseDock(_ app: XCUIApplication) {
+        let hide = app.buttons["Hide controls"].firstMatch
+        guard hide.waitForExistence(timeout: 2) else { return }
+        hide.swipeDown()
+        XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
+    private func rotate(_ app: XCUIApplication, to orientation: UIDeviceOrientation) {
+        XCUIDevice.shared.orientation = orientation
+        let window = app.windows.firstMatch
+        let landscape = orientation.isLandscape
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            (window.frame.width > window.frame.height) == landscape
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [ready], timeout: 5), .completed, "The app must finish rotating")
+        Thread.sleep(forTimeInterval: 0.6)
+    }
+
+    @MainActor
+    private func attachScreenshot(_ name: String) {
+        let screenshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
+    @MainActor
+    private func launchOffline(_ app: XCUIApplication) {
+        app.launch()
+        let showControls = app.buttons["Show controls"]
+        if showControls.waitForExistence(timeout: 3) { return }
+        let returnButton = app.buttons["Return to Farside"]
+        guard returnButton.waitForExistence(timeout: 5) else {
+            return XCTFail("Offline fixture must open directly or offer explicit privacy recovery")
+        }
+        returnButton.tap()
+        XCTAssertTrue(showControls.waitForExistence(timeout: 5))
+    }
+}
