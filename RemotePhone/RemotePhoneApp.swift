@@ -1546,22 +1546,24 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
         guard let frame else { return }
         lock.lock()
         let reading = markerReading
+        let tracker = tracker
         lock.unlock()
+        let register: (RestampingRenderer.ForwardedFrame) -> Void = { forwarded in
+            tracker?.frameWillForward(stampNs: forwarded.stampNs, atMs: forwarded.arrivalMs)
+        }
         if reading {
             let decoded = (frame.buffer as? RTCCVPixelBuffer).flatMap { DecodedLuma($0) }
             let marker = decoded?.readMarker()
-            forward.renderFrame(frame, marker: marker)
+            forward.renderFrame(frame, marker: marker, beforeForward: register)
             if let decoded { legibility.frameArrived(decoded.pixelBuffer, visible: decoded.visible, marker: marker) }
         } else {
-            forward.renderFrame(frame)
+            forward.renderFrame(frame, beforeForward: register)
         }
         lock.lock()
         let now = ProcessInfo.processInfo.systemUptime
         let notify = now - last > 0.25
         if notify { last = now }
-        let tracker = tracker
         lock.unlock()
-        tracker?.frameArrived(at: now)
         if notify {
             DispatchQueue.main.async { [weak self] in self?.onFrame() }
         }
@@ -1571,10 +1573,8 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
         guard let presentation else { return }
         if readsMarkers {
             presentation.markerForStamp = { [forward] in forward.marker(forStamp: $0) }
-            presentation.newestMarker = { [forward] in forward.newestMarker }
         } else {
             presentation.markerForStamp = nil
-            presentation.newestMarker = nil
         }
     }
 }
@@ -1633,6 +1633,7 @@ final class RestampingRenderer: NSObject, RTCVideoRenderer {
     static let rememberedFrames = 16
 
     weak var target: RTCMTLVideoView?
+    private let handoffLock = NSLock()
     private let lock = NSLock()
     private var lastStampNs: Int64 = 0
     private var forwarded: [ForwardedFrame] = []
@@ -1654,7 +1655,21 @@ final class RestampingRenderer: NSObject, RTCVideoRenderer {
     /// Returns the stamp the frame was forwarded with.
     @discardableResult
     func renderFrame(_ frame: RTCVideoFrame?, marker: BenchMarker?) -> Int64? {
-        forward(frame, remember: true, marker: marker)
+        forward(frame, remember: true, marker: marker, beforeForward: nil)
+    }
+
+    /// Registers the exact identity before handing the frame to RTCMTLVideoView. The callback
+    /// must remain lightweight because WebRTC invokes this method on its decode thread.
+    @discardableResult
+    func renderFrame(_ frame: RTCVideoFrame?, marker: BenchMarker?,
+                     beforeForward: (ForwardedFrame) -> Void) -> Int64? {
+        forward(frame, remember: true, marker: marker, beforeForward: beforeForward)
+    }
+
+    /// Registers an unmarked frame before handing it to RTCMTLVideoView.
+    @discardableResult
+    func renderFrame(_ frame: RTCVideoFrame?, beforeForward: (ForwardedFrame) -> Void) -> Int64? {
+        forward(frame, remember: false, marker: nil, beforeForward: beforeForward)
     }
 
     func forwardedFrame(forStamp stampNs: Int64) -> ForwardedFrame? {
@@ -1677,15 +1692,27 @@ final class RestampingRenderer: NSObject, RTCVideoRenderer {
 
     @discardableResult
     private func forward(_ frame: RTCVideoFrame?, remember: Bool, marker: BenchMarker?) -> Int64? {
+        forward(frame, remember: remember, marker: marker, beforeForward: nil)
+    }
+
+    @discardableResult
+    private func forward(_ frame: RTCVideoFrame?, remember: Bool, marker: BenchMarker?,
+                         beforeForward: ((ForwardedFrame) -> Void)?) -> Int64? {
         guard let frame, let target else { return nil }
+        // Preserve stamp/registration/view handoff order if WebRTC changes decode threads.
+        // This lock ends when renderFrame returns; it is never held through an MTK draw.
+        handoffLock.lock(); defer { handoffLock.unlock() }
+        guard target.isEnabled else { return nil }
         lock.lock()
         let stampNs = max(Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000), lastStampNs + 1)
         lastStampNs = stampNs
+        let forwardedFrame = ForwardedFrame(stampNs: stampNs, marker: marker, arrivalMs: MachClock.nowMs())
         if remember {
             if forwarded.count == Self.rememberedFrames { forwarded.removeFirst() }
-            forwarded.append(ForwardedFrame(stampNs: stampNs, marker: marker, arrivalMs: MachClock.nowMs()))
+            forwarded.append(forwardedFrame)
         }
         lock.unlock()
+        beforeForward?(forwardedFrame)
         target.renderFrame(RTCVideoFrame(buffer: frame.buffer, rotation: frame.rotation, timeStampNs: stampNs))
         return stampNs
     }

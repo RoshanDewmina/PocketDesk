@@ -4,43 +4,76 @@ import UIKit
 /// Counts decoded frames that reach a draw call and those replaced before one did.
 /// Thread-safe: frames arrive on WebRTC's decode thread, draws run on the main thread.
 final class PresentationTracker: @unchecked Sendable {
-    private let lock = NSLock()
-    private var pending = 0
-    private var newestArrival: TimeInterval = 0
+    private struct PendingFrame {
+        let stampNs: Int64
+        let arrivalMs: Double
+    }
 
-    func frameArrived(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
-        lock.lock(); pending += 1; newestArrival = time; lock.unlock()
+    private static let pendingLimit = 256
+    private let lock = NSLock()
+    private var pending: [PendingFrame] = []
+    private var discardedBeforePending = 0
+
+    /// Registers the restamped identity before RTCMTLVideoView receives the frame.
+    func frameWillForward(stampNs: Int64, atMs: Double = MachClock.nowMs()) {
+        lock.lock()
+        if pending.count == Self.pendingLimit {
+            pending.removeFirst()
+            discardedBeforePending += 1
+        }
+        pending.append(PendingFrame(stampNs: stampNs, arrivalMs: atMs))
+        lock.unlock()
     }
 
     /// A decoded frame arrived since the last draw.
     var hasPending: Bool {
         lock.lock(); defer { lock.unlock() }
-        return pending > 0
+        return !pending.isEmpty
     }
 
-    /// Returns the delay from the newest decoded frame to this draw and how many older
-    /// decoded frames it replaced unseen, or nil when no new frame arrived since the last draw.
-    func drew(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) -> (latencyMs: Double, superseded: Int)? {
+    /// Returns a sample only when RTCMTLVideoView confirms the exact stamp it completed.
+    /// Frames registered after that stamp remain pending for a later draw.
+    func drew(stampNs: Int64, atMs: Double = MachClock.nowMs()) -> (latencyMs: Double, superseded: Int)? {
         lock.lock(); defer { lock.unlock() }
-        guard pending > 0 else { return nil }
-        let result = (max(0, (time - newestArrival) * 1000), pending - 1)
-        pending = 0
+        guard let index = pending.firstIndex(where: { $0.stampNs == stampNs }) else { return nil }
+        let frame = pending[index]
+        let result = (max(0, atMs - frame.arrivalMs), discardedBeforePending + index)
+        pending.removeFirst(index + 1)
+        discardedBeforePending = 0
         return result
     }
 }
 
-/// The bench marker of a frame handed to a drawable's presented handler. The handler is added
-/// before WebRTC draws, and the drawn frame is only known afterwards, so the marker is filled in
-/// once the draw returns (long before the drawable reaches the display).
+/// Rendezvous between a drawable's presented handler and the exact completed WebRTC stamp.
+/// An unrecognized or unavailable stamp never resolves, so it cannot become a presentation sample.
 final class PresentedFrameMarker: @unchecked Sendable {
     private let lock = NSLock()
+    private var resolved = false
     private var stored: BenchMarker?
-    /// Simulator only: reports the frame at draw time, since no presented handler exists there.
-    var reportOnDrawn: ((BenchMarker?) -> Void)?
+    private var waiting: ((BenchMarker?) -> Void)?
 
-    var marker: BenchMarker? {
-        get { lock.lock(); defer { lock.unlock() }; return stored }
-        set { lock.lock(); stored = newValue; lock.unlock() }
+    func resolve(marker: BenchMarker?) {
+        lock.lock()
+        resolved = true
+        stored = marker
+        let callback = waiting
+        waiting = nil
+        lock.unlock()
+        callback?(marker)
+    }
+
+    /// Runs only after the draw has been matched to an exact registered stamp. The drawable may
+    /// present before or after that match, so the two events rendezvous here without guessing.
+    func whenResolved(_ callback: @escaping (BenchMarker?) -> Void) {
+        lock.lock()
+        if resolved {
+            let marker = stored
+            lock.unlock()
+            callback(marker)
+        } else {
+            waiting = callback
+            lock.unlock()
+        }
     }
 }
 
@@ -59,16 +92,15 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
     let tracker = PresentationTracker()
     private weak var renderer: (any MTKViewDelegate)?
     private weak var metalView: MTKView?
-    private weak var videoView: UIView?
-    private var readsDrawnStamp = false
+    /// Compatibility-gated because WebRTC does not publish the completed stamp in its header.
+    /// M153 updates `lastFrameTimeNs` only after the Metal renderer accepts the frame.
+    var drawnStampReader: (() -> Int64?)?
     var counters: StreamCounters?
     private var reportedRate = false
     private var chosenFramesPerSecond: Int?
 
     /// Stream statistics: the bench marker of the frame forwarded with this stamp.
     var markerForStamp: ((Int64) -> BenchMarker?)?
-    /// Stream statistics fallback when the video view's drawn stamp cannot be read.
-    var newestMarker: (() -> BenchMarker?)?
     /// MTKView creates its drawable lazily and WebRTC's renderer then presents that same one.
     var drawableProvider: (MTKView) -> (any MTLDrawable)? = { $0.currentDrawable }
 
@@ -79,9 +111,13 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
         let probe = VideoPresentationProbe()
         probe.renderer = renderer
         probe.metalView = metalView
-        probe.videoView = videoView
-        // A missing key would raise through KVC, so only read it when the view really has it.
-        probe.readsDrawnStamp = videoView.responds(to: NSSelectorFromString(drawnStampKey))
+        // A missing key would raise through KVC, so only install a reader when the shipped
+        // RTCMTLVideoView exposes the M153 compatibility selector.
+        if videoView.responds(to: NSSelectorFromString(drawnStampKey)) {
+            probe.drawnStampReader = { [weak videoView] in
+                (videoView?.value(forKey: Self.drawnStampKey) as? NSNumber)?.int64Value
+            }
+        }
         if StreamTuning.current.presentAtDisplayMaximum {
             metalView.preferredFramesPerSecond = preferredFramesPerSecond
             probe.chosenFramesPerSecond = preferredFramesPerSecond
@@ -111,10 +147,7 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         let presentation = observePresentation(in: view)
         renderer?.draw(in: view)
-        if let presentation {
-            presentation.marker = drawnMarker()
-            presentation.reportOnDrawn?(presentation.marker)
-        }
+        let drawnStamp = drawnStampReader?()
         // WebRTC's Metal renderer sets 30 fps on the view when it starts on the first frame.
         if let chosen = chosenFramesPerSecond, view.preferredFramesPerSecond != chosen {
             view.preferredFramesPerSecond = chosen
@@ -123,7 +156,15 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
             reportedRate = true
             counters?.setDisplayMaxFPS(min(screen.maximumFramesPerSecond, view.preferredFramesPerSecond))
         }
-        guard let presented = tracker.drew() else { return }
+        guard let drawnStamp, let presented = tracker.drew(stampNs: drawnStamp) else { return }
+        if let presentation {
+            presentation.resolve(marker: markerForStamp?(drawnStamp))
+            #if targetEnvironment(simulator)
+            presentation.whenResolved { [weak counters] marker in
+                counters?.presentedFrame(atMs: MachClock.nowMs(), marker: marker)
+            }
+            #endif
+        }
         counters?.presented(latencyMs: presented.latencyMs)
         counters?.superseded(presented.superseded)
     }
@@ -131,28 +172,22 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
     /// Only for a new decoded frame: fetching a drawable with nothing to draw would hold one of
     /// the two drawables and stall the next real frame.
     private func observePresentation(in view: MTKView) -> PresentedFrameMarker? {
-        guard markerForStamp != nil, let counters, tracker.hasPending,
+        guard drawnStampReader != nil, markerForStamp != nil, let counters, tracker.hasPending,
               let drawable = drawableProvider(view) else { return nil }
         let frame = PresentedFrameMarker()
         #if targetEnvironment(simulator)
         // The simulator's Metal has no presented handler; the draw call stands in for the display time.
         _ = drawable
-        frame.reportOnDrawn = { marker in counters.presentedFrame(atMs: MachClock.nowMs(), marker: marker) }
         #else
         drawable.addPresentedHandler { presented in
             guard presented.presentedTime > 0 else { return }
-            counters.presentedFrame(atMs: MachClock.milliseconds(fromMediaTime: presented.presentedTime),
-                                    marker: frame.marker)
+            let presentedAtMs = MachClock.milliseconds(fromMediaTime: presented.presentedTime)
+            frame.whenResolved { marker in
+                counters.presentedFrame(atMs: presentedAtMs, marker: marker)
+            }
         }
         #endif
         return frame
     }
 
-    private func drawnMarker() -> BenchMarker? {
-        guard readsDrawnStamp, let videoView,
-              let stamp = (videoView.value(forKey: Self.drawnStampKey) as? NSNumber)?.int64Value else {
-            return newestMarker?()
-        }
-        return markerForStamp?(stamp)
-    }
 }

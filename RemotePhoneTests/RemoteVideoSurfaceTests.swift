@@ -42,6 +42,40 @@ final class RemoteVideoSurfaceTests: XCTestCase {
     }
 
     @MainActor
+    func testM153CompletedStampAdvancesOnlyAfterTheMetalDelegateDraws() throws {
+        let (view, metal, window) = try makeVideoView()
+        defer { window.isHidden = true }
+        XCTAssertTrue(view.responds(to: NSSelectorFromString(VideoPresentationProbe.drawnStampKey)),
+                      "WebRTC M153 must expose the compatibility stamp")
+        let renderer = RestampingRenderer(target: view)
+        let frame = RTCVideoFrame(buffer: try Self.pixelBuffer(), rotation: ._0, timeStampNs: 0)
+        let stamp = try XCTUnwrap(renderer.renderFrame(frame, marker: nil))
+        XCTAssertNotEqual(Self.lastDrawnStamp(of: view), stamp,
+                          "handing off a candidate is not evidence that the delegate drew it")
+        metal.draw()
+        XCTAssertEqual(Self.lastDrawnStamp(of: view), stamp,
+                       "M153 records the exact stamp only after its Metal draw path completes")
+    }
+
+    @MainActor
+    func testRendererRegistersTheRestampBeforeRenderReturnsAndSkipsDisabledView() throws {
+        let view = RTCMTLVideoView(frame: CGRect(x: 0, y: 0, width: 160, height: 120))
+        let renderer = RestampingRenderer(target: view)
+        let frame = RTCVideoFrame(buffer: try Self.pixelBuffer(), rotation: ._0, timeStampNs: 0)
+        var registeredStamp: Int64?
+        let returnedStamp = renderer.renderFrame(frame, beforeForward: { forwarded in
+            registeredStamp = forwarded.stampNs
+        })
+        XCTAssertEqual(registeredStamp, returnedStamp,
+                       "the exact identity is registered synchronously before the handoff returns")
+
+        view.isEnabled = false
+        registeredStamp = nil
+        XCTAssertNil(renderer.renderFrame(frame, beforeForward: { registeredStamp = $0.stampNs }))
+        XCTAssertNil(registeredStamp, "a view that rejects rendering does not create false pressure")
+    }
+
+    @MainActor
     func testRendererStartKeepsTheRefreshRateThePresentationChose() throws {
         try XCTSkipUnless(StreamTuning.current.presentAtDisplayMaximum, "Only the tuned presentation chooses a refresh rate")
         let (view, metal, window) = try makeVideoView()
