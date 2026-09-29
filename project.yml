@@ -129,6 +129,8 @@ targets:
     sources:
       - RemoteHost
       - RemoteShared
+      # Doto and Instrument Serif Italic with their OFL texts: the phone's files, one copy for both apps.
+      - RemotePhone/Fonts
       - path: RemoteWatchdog/LaunchAgent/com.roshan.PocketDesk.RemoteHost.watchdog.plist
         buildPhase:
           copyFiles:
@@ -190,6 +192,7 @@ targets:
     deploymentTarget: '26.0'
     sources:
       - HostUITests
+      - RemotePhone/Fonts
       - RemoteShared/Pairing.swift
       - RemoteShared/FarsideTheme.swift
       - RemoteHost/HostReadiness.swift

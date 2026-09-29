@@ -8,9 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		005F0E21A9B5F115D059E52E /* HostViewState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F688011A8DDECAEAAE11132 /* HostViewState.swift */; };
+		006FD13C8DD71202ABAF0D69 /* OFL-Doto.txt in Resources */ = {isa = PBXBuildFile; fileRef = D6F48E835098ABC5915960B7 /* OFL-Doto.txt */; };
+		025C7C5ACA218DE7AC3619BE /* HostFontTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CFD458C84A077F4138460ED7 /* HostFontTests.swift */; };
 		0294E4CBC7A3396E6DFF2FA6 /* HostAppActivation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66CE61B858A64288AAC8E996 /* HostAppActivation.swift */; };
 		0415CEC7677796015EFDC52C /* AppInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5142AFDB1530E8B98F5E3902 /* AppInteractionTests.swift */; };
 		0440A8D3B2DF1D0165E67650 /* SignalingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 412B04FA6976C7A9157CAECE /* SignalingClient.swift */; };
+		05B83FF88FF2B47142BE36CB /* OFL-InstrumentSerif.txt in Resources */ = {isa = PBXBuildFile; fileRef = E0FE88048602D763A8C0CE7D /* OFL-InstrumentSerif.txt */; };
 		09D42CC262D64665FAA405F2 /* HostHalftoneArt.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1631676BBB416905D4181D4 /* HostHalftoneArt.swift */; };
 		0A243A970FA454D211B3BC18 /* HostPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14A1D74AFB97B3703E07FED7 /* HostPresentationTests.swift */; };
 		0AA3E7B82C175F3DCB6133E7 /* PointerPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550A78C530973E8E5387A23C /* PointerPrediction.swift */; };
@@ -67,10 +70,12 @@
 		2F3363724CEA1E409B7E83CA /* PocketDeskStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E3A80162075BC6B8C142A82 /* PocketDeskStyle.swift */; };
 		30C0A1E23D89935E9502F8E0 /* RemoteInputDriver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BA581AB036A468F69A1BE38 /* RemoteInputDriver.swift */; };
 		314AAE99E511F7A92CA675C5 /* HostPermissionState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 147A5E06CF33E961BEBB437B /* HostPermissionState.swift */; };
+		31C5E1F1AD6F55A44E5CE79C /* Doto-Variable.ttf in Resources */ = {isa = PBXBuildFile; fileRef = DBA567B99D97A0694C1C3235 /* Doto-Variable.ttf */; };
 		326E7C209D3B279481835545 /* StreamWireTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C81ED752BB30213C1E58EBF4 /* StreamWireTests.swift */; };
 		334ABA9B7C8740E62AC92B14 /* FarsideTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */; };
 		34B0D6BABFC0B2ABDD34D6DB /* StreamQualityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B1A621E30D5EBB91E5AF5AC /* StreamQualityTests.swift */; };
 		35A5776CE6228B27C9FAFCBF /* HostWatchdogReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8662E553866FF233B18209B4 /* HostWatchdogReporter.swift */; };
+		372BC56F8E3AE0181015B6E3 /* Doto-Variable.ttf in Resources */ = {isa = PBXBuildFile; fileRef = DBA567B99D97A0694C1C3235 /* Doto-Variable.ttf */; };
 		38C2D63BDD52FFD6313C5463 /* NativeTrackpadSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CD8798C3462294A16F7DE09 /* NativeTrackpadSurface.swift */; };
 		39FB2DF172B4D842A666431A /* RemoteCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = 924606EF7002CFDE239145B3 /* RemoteCapture.swift */; };
 		3A125B5A398D4FE509C6EB47 /* SessionRenewal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FFA4B68F5D8B2568395C232 /* SessionRenewal.swift */; };
@@ -107,6 +112,7 @@
 		590BB61F304E8433502AE3E3 /* ViewportTransform.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5598D7CD9CA98C9C794406BF /* ViewportTransform.swift */; };
 		5AA061CF0059AD5D6805E8D9 /* DesktopH264Encoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A8764CD274C62102BEC76EB /* DesktopH264Encoder.swift */; };
 		5BA5000E4CCFFD9BE9E0A8E6 /* StreamStatisticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86F35696F9CC17369CF1F761 /* StreamStatisticsTests.swift */; };
+		5FBEBFD28234599DD19C4ABE /* OFL-Doto.txt in Resources */ = {isa = PBXBuildFile; fileRef = D6F48E835098ABC5915960B7 /* OFL-Doto.txt */; };
 		5FFD66A68938F2CDCC7BFF23 /* StreamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDB43E9A47D0C0BFAB1B5988 /* StreamWire.swift */; };
 		60A632834CC838A23FD97E90 /* BrowserMediaSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 962EDBF53CBBC8769AA77997 /* BrowserMediaSession.swift */; };
 		612F9849D1C4A9127D15DB09 /* BrowserPeerController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F31D1E535A3D1FAC3F46962 /* BrowserPeerController.swift */; };
@@ -122,6 +128,7 @@
 		69C6E52AE6F23B982B354DE0 /* VideoPresentationProbeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54604090E4607DFCC6F5FA74 /* VideoPresentationProbeTests.swift */; };
 		69DF4A56FD106D73BDA8BB85 /* NativeGestureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EBEF9617A31797FAF4B8D81 /* NativeGestureEngine.swift */; };
 		6A943413A0C969DBBCEF3106 /* RemoteCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F36886E8EE8AABEF8D4DF81 /* RemoteCoordinator.swift */; };
+		6B1FA9A88AE9CDD496C3E02B /* InstrumentSerif-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 07BAEBDDD3DC6F74B4F10274 /* InstrumentSerif-Italic.ttf */; };
 		6B2FE715EF8AC2D65B61F3A6 /* SessionLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10107405AE87CFAB89018C7 /* SessionLifecycleTests.swift */; };
 		6B67E276F174051A483976BF /* StreamQuality.swift in Sources */ = {isa = PBXBuildFile; fileRef = E68E0D2431AB187AE68C1ED2 /* StreamQuality.swift */; };
 		6C02328E45758E98A8213A96 /* WatchdogSupervisor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 501A7623D6DF439FE46B32FD /* WatchdogSupervisor.swift */; };
@@ -176,8 +183,10 @@
 		948C0665A363D8B22B2DF821 /* HostWatchdogState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD40D734BD76517695211C26 /* HostWatchdogState.swift */; };
 		949D0523E9E1290EBD666F7F /* BrowserFrameMarker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB6DA47FDA33D0407262019B /* BrowserFrameMarker.swift */; };
 		95393C93E3B885BF2B176BB4 /* HostModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3113E7FFC8DA6DCE50ED6ACC /* HostModel.swift */; };
+		95FA159720FEB75FA1C770E8 /* InstrumentSerif-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 07BAEBDDD3DC6F74B4F10274 /* InstrumentSerif-Italic.ttf */; };
 		96A553176C01BC12F4EBB6CE /* HostKeepAwake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29800B2341E92E0C9C977718 /* HostKeepAwake.swift */; };
 		96DF9C4755A3A2F2FB89F419 /* PointerLocation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 057F364921B27FECBF6A058E /* PointerLocation.swift */; };
+		97B3D76221476F1787A0CFC6 /* OFL-InstrumentSerif.txt in Resources */ = {isa = PBXBuildFile; fileRef = E0FE88048602D763A8C0CE7D /* OFL-InstrumentSerif.txt */; };
 		9814B4590E2A1C3E4E030771 /* PointerPrediction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 550A78C530973E8E5387A23C /* PointerPrediction.swift */; };
 		9832BD9AC10BA73350B97EEA /* SessionContinuity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 643A13E08A654E915062CB1B /* SessionContinuity.swift */; };
 		9844445D5D4128BB3001B11B /* PointerTelemetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70754EB2A998CAF466237F4F /* PointerTelemetry.swift */; };
@@ -485,6 +494,7 @@
 		CDB43E9A47D0C0BFAB1B5988 /* StreamWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamWire.swift; sourceTree = "<group>"; };
 		CDCB2DCE29C9A401C6C942C5 /* PhoneClipboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneClipboardTests.swift; sourceTree = "<group>"; };
 		CE2406BCA00220ED02C01518 /* NativeInputSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeInputSafetyTests.swift; sourceTree = "<group>"; };
+		CFD458C84A077F4138460ED7 /* HostFontTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostFontTests.swift; sourceTree = "<group>"; };
 		D09A7FB39F9390BCD37EAEB1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		D0F8CA7B8BEAF31928685E31 /* ScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannerView.swift; sourceTree = "<group>"; };
 		D1D8D7257177BB3F021DAFED /* VoiceInputController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceInputController.swift; sourceTree = "<group>"; };
@@ -628,6 +638,7 @@
 		250B91D8FA1EF1D8A8410EEB /* HostUITests */ = {
 			isa = PBXGroup;
 			children = (
+				CFD458C84A077F4138460ED7 /* HostFontTests.swift */,
 				7F3CA9843FDDB78974EEAD51 /* HostUISnapshotTests.swift */,
 			);
 			path = HostUITests;
@@ -909,6 +920,7 @@
 			buildConfigurationList = AF4496E51E4E0E3B8928AE6E /* Build configuration list for PBXNativeTarget "HostUISnapshotTests" */;
 			buildPhases = (
 				348FEA8F2B70210837E49E5E /* Sources */,
+				1648E206131FAF08131EE119 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -1201,11 +1213,26 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1648E206131FAF08131EE119 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				372BC56F8E3AE0181015B6E3 /* Doto-Variable.ttf in Resources */,
+				6B1FA9A88AE9CDD496C3E02B /* InstrumentSerif-Italic.ttf in Resources */,
+				5FBEBFD28234599DD19C4ABE /* OFL-Doto.txt in Resources */,
+				97B3D76221476F1787A0CFC6 /* OFL-InstrumentSerif.txt in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F3635E90A22FD4C5DDAB6532 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				49DF6E402282EDA7F1F37FF3 /* Assets.xcassets in Resources */,
+				31C5E1F1AD6F55A44E5CE79C /* Doto-Variable.ttf in Resources */,
+				95FA159720FEB75FA1C770E8 /* InstrumentSerif-Italic.ttf in Resources */,
+				006FD13C8DD71202ABAF0D69 /* OFL-Doto.txt in Resources */,
+				05B83FF88FF2B47142BE36CB /* OFL-InstrumentSerif.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1255,6 +1282,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				7D5D90BB4AD2AE8B4479E81C /* FarsideTheme.swift in Sources */,
+				025C7C5ACA218DE7AC3619BE /* HostFontTests.swift in Sources */,
 				F87CB1A35F5EE5F1B9D13D37 /* HostHalftoneArt.swift in Sources */,
 				0D577136EF48C4A712834CB8 /* HostMark.swift in Sources */,
 				314AAE99E511F7A92CA675C5 /* HostPermissionState.swift in Sources */,
