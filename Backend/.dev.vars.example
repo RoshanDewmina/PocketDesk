@@ -1,0 +1,14 @@
+# Copy to .dev.vars for `wrangler dev` (git-ignored). Same names as the deployed secrets (DESIGN.md §8).
+# Generate keys with: openssl rand -hex 32
+ENTITLEMENT_TOKEN_KEY=
+ENTITLEMENT_HASH_KEY=
+ADMIN_TOKEN=
+# Cloudflare Realtime TURN key (dashboard → Realtime → TURN). Leave empty to run without relay.
+CLOUDFLARE_TURN_KEY_ID=
+CLOUDFLARE_TURN_KEY_API_TOKEN=
+# Comma-separated base64 DER roots from https://www.apple.com/certificateauthority/ (bun scripts/apple-roots.ts).
+APPLE_ROOT_CERTS=
+# Optional: App Store Connect In-App Purchase key for test notifications and daily re-checks.
+APPLE_IAP_ISSUER_ID=
+APPLE_IAP_KEY_ID=
+APPLE_IAP_PRIVATE_KEY=
