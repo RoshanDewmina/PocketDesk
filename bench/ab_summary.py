@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Usage: ab_summary.py LABEL=phone-export.jsonl [LABEL=... ] [--last=SECONDS] [--min-fps=30]
+"""Usage: ab_summary.py LABEL=phone-export.jsonl [LABEL=... ] [--last=SECONDS] [--rows=START:END]
+                     [--min-fps=30] [--motion=DISTINCT_FPS] [--all]
 One row per phone statistics export (Controls → Picture → Export statistics log), for A/B runs:
 the active tuning, the Mac's encoder trace (from the embedded host summary), delivered and
 presented cadence, the per-second arrival-gap signature, the bench marker's glass-to-glass and
 the latest legibility score. Windows with decoded fps below --min-fps (connect, idle) are skipped
-for the cadence and gap columns."""
+for the cadence and gap columns. Samples are one per second with no timestamp, so --rows cuts a
+run by sample index (0-based, END exclusive) counted from the export's first sample. The glass and
+cadence columns use only motion windows (marker distinct fps ≥ --motion, default 20): an idle
+picture re-pushes the last marker, so its glass figure is the frame's age, not latency; --all
+keeps every active window instead."""
 import json, os, statistics, sys
 
 
@@ -41,9 +46,11 @@ def fmt(value, digits=1):
     return "–" if value is None else (f"{value:.{digits}f}" if isinstance(value, float) else str(value))
 
 
-def summarize(label, rows, min_fps):
+def summarize(label, rows, min_fps, motion_fps):
     hosts = [r.get("host") or {} for r in rows]
     active = [r for r in rows if num(r.get("decodedFPS")) and r["decodedFPS"] >= min_fps]
+    if motion_fps is not None and any(num(r.get("markerDistinctFPS")) for r in active):
+        active = [r for r in active if num(r.get("markerDistinctFPS")) and r["markerDistinctFPS"] >= motion_fps]
     tunings = sorted({r.get("tuning") for r in rows if r.get("tuning")})
     gap_windows = [r for r in active if num(r.get("renderGapMaxMs"))]
     gap_share = (sum(1 for r in gap_windows if r["renderGapMaxMs"] >= 80) / len(gap_windows)) if gap_windows else None
@@ -51,6 +58,7 @@ def summarize(label, rows, min_fps):
     return {
         "run": label,
         "samples": len(rows),
+        "motion s": len(active),
         "tuning": "; ".join(tunings) or "?",
         "route": next((r.get("routeDetail") or r.get("route") for r in reversed(rows) if r.get("route")), "?"),
         "size": next((f"{r.get('receivedWidth')}x{r.get('receivedHeight')}" for r in reversed(rows) if r.get("receivedWidth")), "?"),
@@ -81,16 +89,22 @@ def main():
     args = sys.argv[1:]
     last = next((float(a.split("=")[1]) for a in args if a.startswith("--last=")), None)
     min_fps = next((float(a.split("=")[1]) for a in args if a.startswith("--min-fps=")), 30)
+    motion_fps = None if "--all" in args else next(
+        (float(a.split("=")[1]) for a in args if a.startswith("--motion=")), 20)
+    window = next((a.split("=")[1] for a in args if a.startswith("--rows=")), None)
     runs = []
     for arg in args:
         if arg.startswith("--"):
             continue
         label, _, path = arg.partition("=")
         rows = load(path or label)
+        if window:
+            start, _, end = window.partition(":")
+            rows = rows[int(start or 0):int(end) if end else None]
         if last:
             rows = rows[-int(last):]
         if rows:
-            runs.append(summarize(label, rows, min_fps))
+            runs.append(summarize(label, rows, min_fps, motion_fps))
     if not runs:
         print(__doc__)
         return
