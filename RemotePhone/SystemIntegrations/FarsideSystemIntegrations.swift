@@ -12,16 +12,26 @@ final class FarsideSystemIntegrations {
     let activity: SessionActivityController
     /// The paired Mac as the Live Activity names it: an opaque id and the name. Tests replace it.
     var macIdentity: () -> (macId: String, name: String)? = { nil }
+    /// Wired to `RemoteCoordinator.routePolicyEpoch` after the route.1 integration lands. Nil keeps
+    /// Live Activities local and is the fail-closed behavior in builds without an authenticated epoch.
+    var activityRouteEpoch: () -> String? = { nil }
+    var activityPushEnvironment: () -> SessionActivityPushEnvironment? = {
+        SessionActivityPushEnvironment.configured()
+    }
     private(set) weak var model: PhoneRemoteModel?
     private var observers: Set<AnyCancellable> = []
     private var advertisedRoom: String?
+    private var lastActivityPushPairing: SessionActivityPushPairing?
     private var lastSnapshot: SessionSnapshot?
     private var lastSessionActivityChoice = true
 
-    init(activity: SessionActivityController? = nil) {
-        let controller = activity ?? SessionActivityController(client: ActivityKitSessionClient())
+    init(activity: SessionActivityController? = nil,
+         activityPushSink: any SessionActivityPushSink = HTTPSessionActivityPushSink()) {
+        let controller = activity ?? SessionActivityController(
+            client: ActivityKitSessionClient(pushSink: activityPushSink))
         self.activity = controller
         controller.identity = { [weak self] in self?.macIdentity() }
+        controller.pushPairing = { [weak self] in self?.currentActivityPushPairing() }
     }
 
     func attach(_ model: PhoneRemoteModel) {
@@ -29,6 +39,7 @@ final class FarsideSystemIntegrations {
         self.model = model
         observers.removeAll()
         lastSnapshot = nil
+        lastActivityPushPairing = nil
         SessionIntentBridge.shared.handler = self
         MacStatusService.shared.currentSession = { [weak model] in
             guard let model else { return (false, false) }
@@ -73,10 +84,25 @@ final class FarsideSystemIntegrations {
     private func modelChanged(force: Bool = false) {
         guard let model else { return }
         pairingMayHaveChanged()
+        let pushPairing = currentActivityPushPairing()
+        let pushChanged = pushPairing != lastActivityPushPairing
+        if pushChanged {
+            lastActivityPushPairing = pushPairing
+            activity.pushContextDidChange()
+        }
         let snapshot = model.sessionSnapshot
-        guard force || snapshot != lastSnapshot else { return }
+        guard force || pushChanged || snapshot != lastSnapshot else { return }
         lastSnapshot = snapshot
         activity.apply(snapshot)
+    }
+
+    private func currentActivityPushPairing() -> SessionActivityPushPairing? {
+        guard let invitation = model?.connection.invitation,
+              let epoch = activityRouteEpoch(), let environment = activityPushEnvironment() else { return nil }
+        let pairingID = PairedMacs.opaqueID(room: invitation.room)
+        return SessionActivityPushPairing(server: invitation.server, room: invitation.room,
+                                          token: invitation.token, routeEpoch: epoch,
+                                          pairingID: pairingID, environment: environment)
     }
 
     /// Siri and Shortcuts learn the Mac's name for spoken parameters, so tell them when it changes.

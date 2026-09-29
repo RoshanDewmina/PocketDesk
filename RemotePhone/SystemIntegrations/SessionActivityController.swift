@@ -13,33 +13,85 @@ protocol SessionActivityClient: AnyObject {
     func end(reason: FarsideSessionAttributes.EndReason) async
     /// Ends every session activity this client did not start: leftovers from a crash or an earlier launch.
     func endStrays() async
+    /// Supplies the exact authenticated route context for this start. Test clients and local-only
+    /// clients ignore it; previews always pass nil.
+    func setPushPairing(_ pairing: SessionActivityPushPairing?)
+}
+
+extension SessionActivityClient {
+    func setPushPairing(_ pairing: SessionActivityPushPairing?) {}
 }
 
 @MainActor
 final class ActivityKitSessionClient: SessionActivityClient {
     private var activity: Activity<FarsideSessionAttributes>?
+    private let push: SessionActivityPushLifecycle
+    private let pushSink: any SessionActivityPushSink
+    private var pushPairing: SessionActivityPushPairing?
+    private var pushScope: SessionActivityPushScope?
+    private var tokenTask: Task<Void, Never>?
+    private var stateTask: Task<Void, Never>?
     private let log = Logger(subsystem: "com.roshan.PocketDesk.Remote", category: "live-activity")
 
+    init(pushSink: any SessionActivityPushSink = UnavailableSessionActivityPushSink()) {
+        self.pushSink = pushSink
+        self.push = SessionActivityPushLifecycle(sink: pushSink)
+    }
+
     var isEnabled: Bool { ActivityAuthorizationInfo().areActivitiesEnabled }
+
+    func setPushPairing(_ pairing: SessionActivityPushPairing?) {
+        pushPairing = pairing
+    }
 
     func start(attributes: FarsideSessionAttributes, state: FarsideSessionAttributes.ContentState,
                staleDate: Date?) async -> Bool {
         if let previous = activity {
             activity = nil
+            stopPushObservers()
+            if let pushScope { self.pushScope = nil; await push.finish(pushScope) }
             await previous.end(nil, dismissalPolicy: .immediate)
         }
         do {
-            // No push token yet: nothing can push to this activity until the service exists. When it
-            // does, request with `.token` and forward `pushTokenUpdates` to it.
-            activity = try Activity.request(attributes: attributes,
-                                            content: ActivityContent(state: state, staleDate: staleDate),
-                                            pushType: nil)
+            let remoteEnd = Self.allowsRemoteEnd(attributes: attributes,
+                                                  sinkConfigured: pushSink.isConfigured,
+                                                  pairing: pushPairing)
+            let content = ActivityContent(state: state, staleDate: staleDate)
+            let started: Activity<FarsideSessionAttributes>
+            let remotelyEndable: Bool
+            if remoteEnd {
+                do {
+                    started = try Activity.request(attributes: attributes, content: content, pushType: .token)
+                    remotelyEndable = true
+                } catch {
+                    // Push capability is optional. Preserve the existing local Live Activity when
+                    // the device refuses a token-enabled request for any reason.
+                    started = try Activity.request(attributes: attributes, content: content, pushType: nil)
+                    remotelyEndable = false
+                }
+            } else {
+                started = try Activity.request(attributes: attributes, content: content, pushType: nil)
+                remotelyEndable = false
+            }
+            activity = started
+            if remotelyEndable, let pairing = pushPairing {
+                let scope = await push.begin(pairing: pairing, activityID: started.id,
+                                             sessionID: attributes.sessionId)
+                pushScope = scope
+                observePushToken(for: started, scope: scope, seed: started.pushToken)
+                observeState(for: started, scope: scope)
+            }
             log.info("Live Activity started in phase \(state.phase.rawValue, privacy: .public), preview: \(attributes.isPreview)")
             return true
         } catch {
             log.error("Live Activity was not started: \(error.localizedDescription, privacy: .public)")
             return false
         }
+    }
+
+    static func allowsRemoteEnd(attributes: FarsideSessionAttributes, sinkConfigured: Bool,
+                                pairing: SessionActivityPushPairing?) -> Bool {
+        !attributes.isPreview && sinkConfigured && pairing != nil
     }
 
     func update(state: FarsideSessionAttributes.ContentState, staleDate: Date?) async {
@@ -49,6 +101,8 @@ final class ActivityKitSessionClient: SessionActivityClient {
     func end(reason: FarsideSessionAttributes.EndReason) async {
         guard let activity else { return }
         self.activity = nil
+        stopPushObservers()
+        if let pushScope { self.pushScope = nil; await push.finish(pushScope) }
         await SessionActivityStore.end(activity, reason: reason)
     }
 
@@ -56,6 +110,41 @@ final class ActivityKitSessionClient: SessionActivityClient {
         for other in Activity<FarsideSessionAttributes>.activities where other.id != activity?.id {
             await other.end(nil, dismissalPolicy: .immediate)
         }
+    }
+
+    private func observePushToken(for activity: Activity<FarsideSessionAttributes>,
+                                  scope: SessionActivityPushScope, seed: Data?) {
+        tokenTask = Task { [weak self] in
+            if let seed, !Task.isCancelled, let self {
+                await self.push.receive(token: seed, for: scope)
+            }
+            for await token in activity.pushTokenUpdates {
+                guard !Task.isCancelled, let self else { return }
+                await self.push.receive(token: token, for: scope)
+            }
+        }
+    }
+
+    private func observeState(for activity: Activity<FarsideSessionAttributes>,
+                              scope: SessionActivityPushScope) {
+        stateTask = Task { [weak self] in
+            for await state in activity.activityStateUpdates {
+                guard !Task.isCancelled, let self else { return }
+                switch state {
+                case .ended, .dismissed:
+                    await self.push.finish(scope)
+                    if self.pushScope == scope { self.pushScope = nil; self.stopPushObservers() }
+                    return
+                case .pending, .active, .stale: continue
+                @unknown default: continue
+                }
+            }
+        }
+    }
+
+    private func stopPushObservers() {
+        tokenTask?.cancel(); tokenTask = nil
+        stateTask?.cancel(); stateTask = nil
     }
 }
 
@@ -78,6 +167,8 @@ final class SessionActivityController {
     var preferences: () -> AgentAlertPreferences = { AgentAlertPreferences() }
     /// The paired Mac: an opaque id and its name. Nil when nothing is paired.
     var identity: () -> (macId: String, name: String)? = { nil }
+    /// Nil unless the current pairing is on an authenticated route epoch and APNs environment.
+    var pushPairing: () -> SessionActivityPushPairing? = { nil }
     var now: () -> Date = { Date() }
     /// A drop shorter than this never shows "Reconnecting".
     var reconnectDelay: TimeInterval = 1.5
@@ -145,6 +236,8 @@ final class SessionActivityController {
             sessionId: String(UUID().uuidString.prefix(8)).lowercased(),
             startedAtUnix: startedAtUnix,
             preview: nil)
+        let pairing = pushPairing()
+        client.setPushPairing(pairing?.pairingID == identity.macId ? pairing : nil)
         await client.endStrays()
         let ok = await client.start(attributes: attributes, state: state,
                                     staleDate: SessionActivityMachine.staleDate(for: state, now: started))
@@ -154,6 +247,22 @@ final class SessionActivityController {
     /// A launch has no session, so any session activity still showing is a leftover: end it.
     func reconcileOnLaunch() async {
         await client.endStrays()
+    }
+
+    /// A different pairing or authenticated route epoch must never inherit the previous activity's
+    /// APNs registration. End locally first; the following model snapshot may start a fresh one.
+    func pushContextDidChange() {
+        guard machine.hasActivity else { return }
+        generation += 1
+        let previous = chain
+        chain = Task { @MainActor [weak self] in
+            await previous?.value
+            guard let self else { return }
+            self.machine.activityWasEnded()
+            self.stopKeepAlive()
+            self.client.setPushPairing(nil)
+            await self.client.end(reason: .user)
+        }
     }
 
     // MARK: Keep alive
@@ -199,6 +308,7 @@ final class SessionActivityController {
                 sessionId: "preview",
                 startedAtUnix: Int(started.timeIntervalSince1970) - 754,
                 preview: true)
+            self.client.setPushPairing(nil)
             let steps: [(FarsideSessionAttributes.ContentState, TimeInterval)]
             if let phase {
                 steps = [(Self.previewState(phase, now: started), 0)]
