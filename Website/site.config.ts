@@ -44,10 +44,10 @@ export const config = {
   SITE_URL: (process.env.SITE_URL ?? PRODUCTION_SITE_URL).replace(/\/+$/, ""),
 
   contact: {
-    supportEmail: null,
-    privacyEmail: null,
-    securityEmail: null,
-    betaEmail: null,
+    supportEmail: "support@getfarside.com",
+    privacyEmail: "privacy@getfarside.com",
+    securityEmail: "security@getfarside.com",
+    betaEmail: "beta@getfarside.com",
     phone: null,
     postalAddress: null,
     legalName: null,
