@@ -239,7 +239,7 @@ class E2ETestCase: XCTestCase {
                           atOffset: 0.04 + duration * Double(fraction))
             }
             path.lift(atOffset: 0.08 + duration)
-            try E2ETouchSynthesizer.performPaths([path], name: "stroke")
+            try E2ETouchSynthesizer.perform([path], name: "stroke")
         } else {
             screen(start).press(forDuration: 0.02, thenDragTo: screen(CGPoint(x: start.x + delta.dx, y: start.y + delta.dy)),
                                 withVelocity: XCUIGestureVelocity(speed), thenHoldForDuration: 0)
@@ -260,7 +260,7 @@ class E2ETestCase: XCTestCase {
             path.lift(atOffset: 0.06 + duration)
             return path
         }
-        try E2ETouchSynthesizer.performPaths(paths, name: "two-finger scroll")
+        try E2ETouchSynthesizer.perform(paths, name: "two-finger scroll")
     }
 
     /// Three-finger horizontal swipe: left or right, as a Mac trackpad Space switch.
@@ -281,7 +281,7 @@ class E2ETestCase: XCTestCase {
             path.lift(atOffset: 0.06 + duration)
             return path
         }
-        try E2ETouchSynthesizer.performPaths(paths, name: "three-finger swipe")
+        try E2ETouchSynthesizer.perform(paths, name: "three-finger swipe")
     }
 
     /// Tap, then touch again and hold within the double-click interval, then move: a Mac drag.
@@ -300,7 +300,7 @@ class E2ETestCase: XCTestCase {
                       atOffset: 0.6 + 0.9 * Double(fraction))
         }
         hold.lift(atOffset: 1.65)
-        try E2ETouchSynthesizer.performPaths([tap, hold], name: "double-tap drag")
+        try E2ETouchSynthesizer.perform([tap, hold], name: "double-tap drag")
         lastTap = (Date(), point)
     }
 
