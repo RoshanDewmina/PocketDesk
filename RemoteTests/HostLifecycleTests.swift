@@ -3,6 +3,85 @@ import AppKit
 import ScreenCaptureKit
 
 final class HostLifecycleTests: XCTestCase {
+    func testFirstNewResolutionFrameBeforeCompletionCanRefreshAnIdleDesktop() {
+        let before = region(width: 2560, height: 1656)
+        let after = region(width: 1920, height: 1232)
+        // The new .complete output arrives first. Then the configuration completion runs,
+        // followed by fresh .idle status: there need not be another changed desktop frame.
+        var cached: CapturePixelDimensions? = CapturePixelDimensions(width: 1920, height: 1232)
+        if CaptureFrameCachePolicy.shouldDiscard(
+            cachedDimensions: cached, frameArrivedDuringUpdate: true,
+            cachedDisplayTime: 1100, updateRequestedAt: 1000, previous: before, next: after
+        ) { cached = nil }
+        var health = CaptureHealthState()
+        health.observe(.idle, at: 1)
+        let idleRefresh = health.isHealthy(at: 1.4) ? cached : nil
+        XCTAssertEqual(idleRefresh, CapturePixelDimensions(width: 1920, height: 1232),
+                       "Keep the first new-size frame when completion follows output")
+        XCTAssertFalse(health.isHealthy(at: 1.801), "Retaining a frame must not extend source freshness")
+    }
+
+    func testNewResolutionMatchingAnOlderCacheIsNotEvidenceOfNewOutput() {
+        // An A→B→A size cycle may leave A in the cache when B produced no frame. Matching
+        // the requested size alone cannot make that historical A frame current again.
+        XCTAssertTrue(CaptureFrameCachePolicy.shouldDiscard(
+            cachedDimensions: CapturePixelDimensions(width: 1280, height: 816), frameArrivedDuringUpdate: false,
+            cachedDisplayTime: 1100, updateRequestedAt: 1000,
+            previous: region(width: 1920, height: 1232), next: region(width: 1280, height: 816)))
+    }
+
+    func testDelayedPreRequestFrameCannotResurrectAnOlderCropWithMatchingNewSize() {
+        // A prior crop Y produced A. After switching to crop X at size B, an A→B→A
+        // resolution update for X receives Y's delayed A callback before completion.
+        // Its callback arrival and dimensions match, but its display event predates X's request.
+        let before = region(width: 1920, height: 1232), after = region(width: 1280, height: 816)
+        let matchingSize = CapturePixelDimensions(width: 1280, height: 816)
+        for displayTime: UInt64 in [900, 0] {
+            XCTAssertTrue(CaptureFrameCachePolicy.shouldDiscard(
+                cachedDimensions: matchingSize, frameArrivedDuringUpdate: true,
+                cachedDisplayTime: displayTime, updateRequestedAt: 1000, previous: before, next: after),
+                "Delayed or timestamp-unknown output cannot prove current source coverage")
+        }
+        XCTAssertFalse(CaptureFrameCachePolicy.shouldDiscard(
+            cachedDimensions: matchingSize, frameArrivedDuringUpdate: true,
+            cachedDisplayTime: 1100, updateRequestedAt: 1000, previous: before, next: after),
+            "A post-request display event at the new size can be retained for the unchanged source")
+    }
+
+    func testConfigurationCompletionRejectsOldSizedAndMissingFrames() {
+        let before = region(width: 1920, height: 1232), after = region(width: 1280, height: 816)
+        for cached in [CapturePixelDimensions(width: 1920, height: 1232), nil] {
+            XCTAssertTrue(CaptureFrameCachePolicy.shouldDiscard(
+                cachedDimensions: cached, frameArrivedDuringUpdate: true,
+                cachedDisplayTime: 1100, updateRequestedAt: 1000, previous: before, next: after))
+        }
+    }
+
+    func testChangedCropCannotReuseAFrameFromDimensionsAlone() {
+        let before = CaptureRegion(epoch: 1, x: 10, y: 20, width: 600, height: 400,
+                                   outputWidth: 1200, outputHeight: 800)
+        for output in [CapturePixelDimensions(width: 1200, height: 800), CapturePixelDimensions(width: 900, height: 600)] {
+            let moved = CaptureRegion(epoch: 1, x: 30, y: 20, width: 600, height: 400,
+                                      outputWidth: output.width, outputHeight: output.height)
+            XCTAssertTrue(CaptureFrameCachePolicy.shouldDiscard(
+                cachedDimensions: output, frameArrivedDuringUpdate: true,
+                cachedDisplayTime: 1100, updateRequestedAt: 1000, previous: before, next: moved),
+                          "Even a new-sized buffer cannot identify a changed source rectangle")
+        }
+    }
+
+    func testOneDimensionChangeCanIdentifyNewOutputWithoutChangingSourceCoverage() {
+        let before = region(width: 1280, height: 816), after = region(width: 1278, height: 816)
+        XCTAssertFalse(CaptureFrameCachePolicy.shouldDiscard(
+            cachedDimensions: CapturePixelDimensions(width: 1278, height: 816), frameArrivedDuringUpdate: true,
+            cachedDisplayTime: 1100, updateRequestedAt: 1000,
+            previous: before, next: after))
+    }
+
+    private func region(width: Int, height: Int) -> CaptureRegion {
+        CaptureRegion(epoch: 0, x: 0, y: 0, width: 1280, height: 832, outputWidth: width, outputHeight: height)
+    }
+
     func testCaptureHealthUsesSourceStatusAndExpires() {
         var health = CaptureHealthState()
         XCTAssertFalse(health.isHealthy(at: 0))
