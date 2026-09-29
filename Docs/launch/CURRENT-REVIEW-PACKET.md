@@ -6,7 +6,7 @@ This is the current engineering preparation record. Older launch research remain
 
 - Farside phone app: `com.roshan.PocketDesk.Remote`, iPhone and iPad, iOS/iPadOS 26 or later.
 - Mac companion: `com.roshan.PocketDesk.RemoteHost`, Apple silicon and macOS 26 or later. Keep the installed development filename `PocketDesk Host.app` to preserve its permission identity.
-- Marketing version 1.0. The wider Settings build installed on this Mac is host `20260929.9`, from integrated `a4f9420`; the paired physical phone remains `.8` during isolated input repairs. Subsequent route/notification changes are not installed acceptance builds.
+- Marketing version 1.0. Both host and actual iPhone 17 now have signed `20260929.10` from integrated `f68c912`. The host update preserved its designated requirement and both runtime grants. Fresh staging pairing and exact-build physical acceptance are pending in the coordinated chat.
 - Preserve the recorded individual-seller decision and existing subscription product identifiers. Never infer or enter missing legal/contact details from these engineering notes.
 
 ## Review description draft
@@ -31,7 +31,7 @@ Agent alerts are an optional beta for blocking Claude Code and Codex permission 
 
 ## Exact remaining submission inputs and acceptance
 
-- Read-only account inventory confirms staging D1 and staging health. A fresh remote migration inventory shows `0002_purchase_order.sql` and `0003_agent_push.sql` are both unapplied; health does not establish current billing/push readiness. The staging bundle passes a local dry run, with no deployment. Production D1, numeric Apple app ID, production verification settings and a compatible `route.1` deployment remain to be prepared and approved. The old private development service is not proof of public route enforcement.
+- Read-only account inventory confirms staging D1 and staging health. The human-approved staging transition applied `0002_purchase_order.sql` and `0003_agent_push.sql` and deployed backend source `8dca833` as Worker version `ae445b1b-8b93-409d-9bc3-ff719d72e283`; schema and health pass. Independent disposable-room protocol acceptance passed 53/53 assertions and normal fixture cleanup returned 204. Exact-build physical native acceptance remains separate. Production D1, numeric Apple app ID and production verification settings remain to be prepared and approved. The old private development service is not proof of public route enforcement.
 - The owner confirmed domain/DNS ownership and active paid Apple Developer membership. Capability/profile/key inventory still needs the signed-in portal. Do not create or submit those changes without the historical action-time confirmation.
 - Existing local signing inventory has Apple Development, not Developer ID Application or a verified Apple Distribution archive. A Developer ID transition must be tested separately from the installed permission-preserving development update.
 - A fresh staging secret-name inventory confirms APNs provider credentials are absent. Matching App ID capabilities, AASA hosting, signed environments and real suspended delivery remain unverified. Do not claim push is live from unit tests.
@@ -43,4 +43,4 @@ Agent alerts are an optional beta for blocking Claude Code and Codex permission 
 
 Local preparation commands and fail-closed configuration checks are in `script/release/README.md`. Source/test/install receipts are under `work/launch-preparation/`; physical input receipts are maintained by the coordinated Farside chat until integrated into this ledger.
 
-Final local checks: backend 127/127, core 682 executed with three skips and no failures, phone components 297/297, StoreKit 14 passed plus one optional screenshot skip, both keyboard UI checks and all four targeted iPad shortcut checks passed, and the final Mac host build passed. These do not replace exact installed-build acceptance. See [the unapplied staging transition](STAGING-TRANSITION.md) for the next approval gate.
+Final local checks: backend 127/127, core 682 executed with three skips and no failures, phone components 297/297, StoreKit 14 passed plus one optional screenshot skip, both keyboard UI checks and all four targeted iPad shortcut checks passed, and the final Mac host build passed. These do not replace exact installed-build acceptance. See [the approved staging transition](STAGING-TRANSITION.md) for the staging receipt and remaining gates.
