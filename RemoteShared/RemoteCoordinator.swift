@@ -23,6 +23,7 @@ final class RemoteCoordinator: ObservableObject {
     private let relay: any SignalingTransport
     private let renewalScheduler: any RenewalScheduler
     private let advertisesRenewal: Bool
+    private let handshakeTimeoutNanoseconds: UInt64
     private var renewalPlan: RenewalPlan?
     private var renewalTask: Task<Void, Never>?
     /// Renewal replies accepted, refreshed credentials applied, and ICE restarts started (host only)
@@ -30,6 +31,8 @@ final class RemoteCoordinator: ObservableObject {
     private(set) var renewalCount = 0
     private(set) var credentialRefreshCount = 0
     private(set) var iceRestartCount = 0
+    /// Inbound signaling that belonged to no current session and was dropped instead of acted on.
+    private(set) var staleMessagesIgnored = 0
     private var cipher: SignalCipher?
     private var registeredInvitation: PairInvitation?
     private var request = ""
@@ -65,13 +68,15 @@ final class RemoteCoordinator: ObservableObject {
         registrationStableNanoseconds: UInt64 = 5_000_000_000,
         signaling: (any SignalingTransport)? = nil,
         renewalScheduler: any RenewalScheduler = SystemRenewalScheduler(),
-        advertisesRenewal: Bool = true
+        advertisesRenewal: Bool = true,
+        handshakeTimeoutNanoseconds: UInt64 = 20_000_000_000
     ) {
         self.isHost = isHost
         self.store = store ?? PairStore(account: isHost ? "host" : "phone")
         self.relay = signaling ?? SignalingClient()
         self.renewalScheduler = renewalScheduler
         self.advertisesRenewal = advertisesRenewal
+        self.handshakeTimeoutNanoseconds = handshakeTimeoutNanoseconds
         self.retryLimit = max(0, retryLimit)
         self.retryBaseNanoseconds = retryBaseNanoseconds
         self.sessionLossRetryLimit = sessionLossRetryLimit.map { max(0, $0) }
@@ -192,9 +197,15 @@ final class RemoteCoordinator: ObservableObject {
                 }
             case "signal":
                 guard let cipher, let payload = message.payload else { throw RemoteError.invalidMessage }
-                try receiveProtected(cipher.open(payload, sender: isHost ? "client" : "host"))
+                let opened: ProtectedMessage
+                do { opened = try cipher.open(payload, sender: isHost ? "client" : "host") }
+                catch { throw RemoteError.stale }
+                try receiveProtected(opened)
             case "error":
                 let code = message.code ?? "unavailable"
+                // The service answers a signal for a peer that already left with a non-closing
+                // error. It is a late message from a session that is over, not a service failure.
+                if code == "peer_unavailable" { staleMessagesIgnored += 1; return }
                 let serviceError = "Connection service: \(code). Check the Mac and retry."
                 // A freshly stopped phone may still occupy the server's client slot
                 // for a moment. Retry within the existing bound; never evict it.
@@ -209,7 +220,15 @@ final class RemoteCoordinator: ObservableObject {
                 }
             default: throw RemoteError.invalidMessage
             }
-        } catch { fail("Secure connection failed. Reconnect or pair again on your Mac.") }
+        } catch RemoteError.stale {
+            // Not from the current pairing, session or handshake: a trailing candidate from a phone
+            // session that already ended, a replay, or a message sealed with another key. Rejecting
+            // it means not acting on it, never tearing down the connection it was aimed at.
+            staleMessagesIgnored += 1
+        } catch {
+            if isHost, !stopped, hostRegistered { peerDisconnected() }
+            else { fail("Secure connection failed. Reconnect or pair again on your Mac.") }
+        }
     }
     private func receiveProtected(_ message: ProtectedMessage) throws {
         if isHost, message.kind == "request" {
@@ -229,7 +248,7 @@ final class RemoteCoordinator: ObservableObject {
                   message.sequence == 0, !proofReceived else { throw RemoteError.stale }
             proofReceived = true
             if hostPair?.paired == true { acceptSession() }
-            else { awaitingApproval = true; status = "Approve this phone on your Mac"; setTimeout(seconds: 60) }
+            else { awaitingApproval = true; status = "Approve this phone on your Mac"; setTimeout(nanoseconds: 60_000_000_000) }
             return
         }
         guard guardState != nil else { throw RemoteError.stale }
@@ -321,12 +340,16 @@ final class RemoteCoordinator: ObservableObject {
             relay.send(RelayMessage(type: "signal", payload: try cipher.seal(message, sender: isHost ? "host" : "client")))
         } catch { fail(error.localizedDescription) }
     }
-    private func setTimeout(seconds: UInt64 = 20) {
+    private func setTimeout(nanoseconds: UInt64? = nil) {
         timeout?.cancel()
+        let wait = nanoseconds ?? handshakeTimeoutNanoseconds
         timeout = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
-            guard !Task.isCancelled else { return }
-            self?.fail("Connection timed out. Check that the Mac is awake and the service is reachable.")
+            try? await Task.sleep(nanoseconds: wait)
+            guard !Task.isCancelled, let self else { return }
+            // A registered Mac keeps listening when one phone's attempt stalls; only a Mac that never
+            // reached the service, or a phone, reports the timeout as a failure.
+            if self.isHost, self.hostRegistered, !self.stopped { self.peerDisconnected() }
+            else { self.fail("Connection timed out. Check that the Mac is awake and the service is reachable.") }
         }
     }
 
