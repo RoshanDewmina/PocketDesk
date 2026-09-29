@@ -196,6 +196,19 @@ if (!/^Sitemap: https?:\/\/.+\/sitemap\.xml$/m.test(robots)) fail("robots.txt: n
 const llms = await Bun.file(join(DIST, "llms.txt")).text();
 if (!llms.startsWith("# Farside")) fail("llms.txt: must start with '# Farside'");
 const headers = await Bun.file(join(DIST, "_headers")).text();
+const associationPath = ".well-known/apple-app-site-association";
+const association = Bun.file(join(DIST, associationPath));
+if (!(await association.exists())) fail(`${associationPath}: missing from dist`);
+else {
+  const expected = await Bun.file(join(import.meta.dir, "../static", associationPath)).text();
+  if ((await association.text()) !== expected) fail(`${associationPath}: output differs from approved source`);
+}
+if (!/^\/\.well-known\/apple-app-site-association\n  Content-Type: application\/json$/m.test(headers)) {
+  fail("_headers: AASA needs an exact-path application/json rule");
+}
+if (/^\/\.well-known\/apple-app-site-association\s+\S+/m.test(await Bun.file(join(DIST, "_redirects")).text())) {
+  fail("_redirects: AASA must not redirect");
+}
 for (const [path, s] of scans) {
   for (const css of s.styles) {
     const hash = `sha256-${new Bun.CryptoHasher("sha256").update(css).digest("base64")}`;

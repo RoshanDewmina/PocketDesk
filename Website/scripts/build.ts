@@ -4,7 +4,7 @@
 //   bun run build:strict     → fails while any required placeholder in site.config.ts is unfilled
 //   SITE_URL=https://… bun run build   → one-off origin override
 
-import { cp, mkdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { config, missingRequired, pendingLaunch } from "../site.config";
 import { faviconSvg } from "../src/lib/mark";
@@ -16,6 +16,21 @@ import { PAGES } from "../src/pages/registry";
 export const ROOT = join(import.meta.dir, "..");
 export const DIST = join(ROOT, "dist");
 const STATIC = join(ROOT, "static");
+const ASSOCIATION = ".well-known/apple-app-site-association";
+const ASSOCIATION_PATHS = ["/open", "/open/*", "/help/*", "/session"];
+
+async function verifyAssociationSource() {
+  const source = await readFile(join(STATIC, ASSOCIATION), "utf8");
+  const launch = await readFile(join(ROOT, "../Docs/launch/apple-app-site-association"), "utf8");
+  if (source !== launch) throw new Error("Website AASA differs from Docs/launch/apple-app-site-association");
+  const details = JSON.parse(source)?.applinks?.details;
+  if (!Array.isArray(details) || details.length !== 1 ||
+      JSON.stringify(details[0]?.appIDs) !== JSON.stringify(["39HM2X8GS6.com.roshan.PocketDesk.Remote"]) ||
+      JSON.stringify(details[0]?.components?.map((entry: { "/"?: string }) => entry["/"])) !== JSON.stringify(ASSOCIATION_PATHS) ||
+      details[0].components.some((entry: object) => Object.keys(entry).length !== 1)) {
+    throw new Error("Website AASA must contain only the approved Farside app ID and routes");
+  }
+}
 
 const ENTRIES = ["home", "site"] as const;
 
@@ -72,6 +87,10 @@ function headersFile(styleHash: string) {
   Cache-Control: public, max-age=86400
 /llms.txt
   Content-Type: text/plain; charset=utf-8
+
+# Apple fetches this extensionless file directly; its response must be JSON with no redirect.
+/.well-known/apple-app-site-association
+  Content-Type: application/json
 
 # Keep the *.pages.dev hostnames out of search results; only the custom domain should be indexed.
 https://:project.pages.dev/*
@@ -279,6 +298,7 @@ async function ogVersions(): Promise<Record<string, string>> {
 
 export async function build(opts: { outDir?: string; quiet?: boolean } = {}) {
   const out = opts.outDir ?? DIST;
+  await verifyAssociationSource();
   await rm(out, { recursive: true, force: true });
   await mkdir(join(out, "assets"), { recursive: true });
 
