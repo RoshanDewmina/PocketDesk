@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { endRoomActivities } from "./activity";
 import { isPublicEnvironment, loadConfig, type Config } from "./config";
 import { claimDeviceRoom, entitlementForDevice, hasAccess, restoreDeviceRoom, roomStatus, touchRoom } from "./entitlement/store";
 import { environmentLetter, verifyEntitlementToken } from "./entitlement/token";
@@ -100,6 +101,7 @@ export class RoomDO extends DurableObject<Env> {
   private readonly byteCounters = new WeakMap<WebSocket, WindowCounter>();
   private readonly issueCounter = new WindowCounter(ROOM_ISSUES_PER_MINUTE, 60_000);
   private readonly renewalPending = new WeakSet<WebSocket>();
+  private activityEndDrain: Promise<void> | undefined;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -144,6 +146,10 @@ export class RoomDO extends DurableObject<Env> {
         room TEXT NOT NULL,
         client_hash TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS activity_ends (
+        epoch TEXT PRIMARY KEY, room TEXT NOT NULL, reason TEXT NOT NULL,
+        next_attempt INTEGER NOT NULL, ended_at INTEGER NOT NULL
+      );
     `);
     // Existing Durable Objects have the v1 table. Additive migration leaves pairings intact.
     const columns = new Set(this.ctx.storage.sql.exec<{ name: string }>("PRAGMA table_info(room)").toArray().map(row => row.name));
@@ -155,7 +161,8 @@ export class RoomDO extends DurableObject<Env> {
   /** Removes room data. Pending TURN usernames survive until revocation is confirmed or their TTL expires. */
   private async wipe(): Promise<void> {
     const blocked = this.state().blocked;
-    if (this.pendingRevocations().length > 0) {
+    this.ctx.storage.sql.exec("DELETE FROM push_pairing");
+    if (this.pendingRevocations().length > 0 || this.ctx.storage.sql.exec("SELECT epoch FROM activity_ends LIMIT 1").toArray().length > 0) {
       this.ctx.storage.sql.exec("DELETE FROM credentials WHERE revoke_pending = 0");
       this.ctx.storage.sql.exec("DELETE FROM room");
       this.ctx.storage.sql.exec("INSERT INTO room (id, blocked) VALUES (1, ?)", blocked);
@@ -296,6 +303,8 @@ export class RoomDO extends DurableObject<Env> {
     }
     const nextRevoke = this.ctx.storage.sql.exec<{ at: number | null }>("SELECT MIN(next_revoke_at) AS at FROM credentials WHERE revoke_pending = 1").one().at;
     if (nextRevoke !== null) next = Math.min(next ?? Infinity, nextRevoke);
+    const nextActivity = this.ctx.storage.sql.exec<{ at: number | null }>("SELECT MIN(next_attempt) AS at FROM activity_ends").one().at;
+    if (nextActivity !== null) next = Math.min(next ?? Infinity, nextActivity);
     if (next === undefined && this.openSockets().length === 0) next = now + IDLE_DELETE_MS;
     if (next === undefined) {
       await this.ctx.storage.deleteAlarm();
@@ -328,6 +337,7 @@ export class RoomDO extends DurableObject<Env> {
       this.keepalive(state, now);
     }
     this.retryRevocations(now);
+    await this.drainActivityEnds().catch(error => logError("activity_end_queue_failed", error));
     if (this.openSockets().length === 0 && state.last_activity + IDLE_DELETE_MS <= now) {
       this.revokeAll();
       await this.wipe();
@@ -623,6 +633,7 @@ export class RoomDO extends DurableObject<Env> {
   private dropPeer(ws: WebSocket): void {
     const attachment = this.detach(ws);
     if (!attachment.authenticated || !attachment.role) return;
+    this.queueActivityEnd(attachment.role === "host" ? "macStopped" : "user");
     this.revokeRole(attachment.role);
     if (attachment.role === "host") {
       this.update({ client_token_hash: null, lease_ends_at: null, entitlement_id: null, entitled_device: null, recheck_at: null, ice_host: null, ice_client: null, route_epoch: null, route_expires_at: null });
@@ -650,6 +661,7 @@ export class RoomDO extends DurableObject<Env> {
 
   /** The lease ended: the host goes with `room_lifetime_reached` and its client with `host_disconnected`, as before. */
   private expireRoom(host: WebSocket): void {
+    this.queueActivityEnd("timeout");
     const client = this.peer("client");
     this.revokeAll();
     this.update({ client_token_hash: null, lease_ends_at: null, entitlement_id: null, entitled_device: null, recheck_at: null, ice_host: null, ice_client: null, route_epoch: null, route_expires_at: null });
@@ -731,7 +743,11 @@ export class RoomDO extends DurableObject<Env> {
         "SELECT client_hash FROM push_pairing WHERE id=1 AND room=?", room,
       ).toArray()[0];
       if (previousPush && previousPush.client_hash !== msg.clientTokenHash) {
-        try { await forgetPushRoom(this.env.DB, room); }
+        try {
+          await this.drainActivityEnds();
+          if (this.ctx.storage.sql.exec("SELECT epoch FROM activity_ends LIMIT 1").toArray().length) throw new Error("activity_end_pending");
+          await forgetPushRoom(this.env.DB, room);
+        }
         catch {
           this.close(ws, 1013, "push_cleanup_unavailable");
           return;
@@ -976,7 +992,38 @@ export class RoomDO extends DurableObject<Env> {
 
   // ---- operator / system RPC ------------------------------------------------------------------
 
+  /** Persist before clearing the session, so a D1 outage cannot lose suspended-phone termination. */
+  private queueActivityEnd(reason: "macStopped" | "timeout" | "user" | "error"): void {
+    const state = this.state();
+    if (!state.room || !state.route_epoch || state.route_expires_at === null) return;
+    const endedAt = Date.now();
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO activity_ends (epoch,room,reason,next_attempt,ended_at) VALUES (?,?,?,?,?)",
+      state.route_epoch, state.room, reason, endedAt, endedAt);
+    this.ctx.waitUntil(this.drainActivityEnds().catch(error => logError("activity_end_queue_failed", error))
+      .finally(() => this.scheduleAlarm()));
+  }
+
+  private drainActivityEnds(): Promise<void> {
+    if (this.activityEndDrain) return this.activityEndDrain;
+    const work = this.deliverActivityEnds();
+    this.activityEndDrain = work;
+    void work.finally(() => { if (this.activityEndDrain === work) this.activityEndDrain = undefined; }).catch(() => {});
+    return work;
+  }
+
+  private async deliverActivityEnds(): Promise<void> {
+    const rows = this.ctx.storage.sql.exec<{ epoch: string; room: string; reason: "macStopped" | "timeout" | "user" | "error"; ended_at: number }>(
+      "SELECT epoch,room,reason,ended_at FROM activity_ends WHERE next_attempt<=?", Date.now()).toArray();
+    for (const row of rows) {
+      // D1 owns bounded APNs retries once this call has durably marked the end event.
+      this.ctx.storage.sql.exec("UPDATE activity_ends SET next_attempt=? WHERE epoch=?", Date.now() + 60_000, row.epoch);
+      await endRoomActivities(this.env, row.room, row.epoch, row.reason, row.ended_at);
+      this.ctx.storage.sql.exec("DELETE FROM activity_ends WHERE epoch=?", row.epoch);
+    }
+  }
+
   private terminate(reason: string): void {
+    this.queueActivityEnd(reason === "route_expired" ? "timeout" : "error");
     this.revokeAll();
     for (const ws of this.ctx.getWebSockets()) {
       this.detach(ws);
@@ -1016,6 +1063,11 @@ export class RoomDO extends DurableObject<Env> {
     this.update({ blocked: 1 });
     this.ctx.storage.sql.exec("DELETE FROM push_pairing");
     this.terminate("room_not_approved");
+    // Preserve unmarked activity addresses while a queued end is waiting on D1.
+    await this.drainActivityEnds();
+    if (this.ctx.storage.sql.exec("SELECT epoch FROM activity_ends LIMIT 1").toArray().length) throw new Error("activity_end_pending");
+    const room = this.state().room;
+    if (room) await forgetPushRoom(this.env.DB, room);
     await this.scheduleAlarm();
   }
 
@@ -1024,11 +1076,16 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   async forget(): Promise<void> {
+    this.queueActivityEnd("user");
     this.revokeAll();
     for (const ws of this.ctx.getWebSockets()) {
       this.detach(ws);
       this.close(ws, 1008, "room_forgotten");
     }
+    await this.drainActivityEnds();
+    if (this.ctx.storage.sql.exec("SELECT epoch FROM activity_ends LIMIT 1").toArray().length) throw new Error("activity_end_pending");
+    const room = this.state().room;
+    if (room) await forgetPushRoom(this.env.DB, room);
     await this.wipe();
     await this.scheduleAlarm();
   }

@@ -2,7 +2,7 @@ import { beforeAll, afterEach, describe, expect, it, vi } from "vitest";
 import { endRoomActivities, handleActivityRegister, handleActivityRemove, retryPendingActivityEnds } from "../src/activity";
 import { forgetPushRoom } from "../src/push";
 import { randomHex } from "../src/util";
-import { connectClient, connectHost, pairing, sleep, testEnv, type Pairing } from "./helpers/client";
+import { connectClient, connectHost, pairing, postJson, sleep, testEnv, type Pairing } from "./helpers/client";
 import { installTurnMock } from "./helpers/turn-mock";
 
 beforeAll(() => { installTurnMock(); });
@@ -56,10 +56,34 @@ describe("end-only ActivityKit push", () => {
     expect((await handleActivityRegister(req("register", identity(p, { routeEpoch: randomHex(16) })), env)).status).toBe(401);
     phone.close();
     await host.next();
+    await expect.poll(async () => (await testEnv.DB.prepare(
+      "SELECT end_reason FROM activity_registrations WHERE room=?1").bind(p.room).first<{ end_reason: string }>())?.end_reason).toBe("user");
     expect((await handleActivityRegister(req("register", current), env)).status).toBe(401);
     host.close();
     await host.closed;
     expect((await handleActivityRemove(req("remove", current), env)).status).toBe(204);
+  });
+
+  it("queues suspended activity termination before room deletion and retains failed APNs delivery", async () => {
+    const p = await pairing();
+    const host = await connectHost(p, { features: ["route.1"] });
+    const phone = await connectClient(p, { features: ["route.1"] });
+    const route = await phone.next();
+    await host.next(); await phone.next(); await host.next();
+    await sleep(30);
+    const env = Object.assign({ ...await envForEpoch(p) }, { ROOM: testEnv.ROOM }) as Env;
+    const current = identity(p, { routeEpoch: route.epoch });
+    expect((await handleActivityRegister(req("register", current), env)).status).toBe(200);
+    const response = await postJson("/v1/rooms/forget", { room: p.room, token: p.hostToken });
+    expect(response.status).toBe(204);
+    expect((await host.closed).reason).toBe("room_forgotten");
+    expect((await phone.closed).reason).toBe("room_forgotten");
+    const row = await testEnv.DB.prepare("SELECT end_reason,end_at,next_retry_at FROM activity_registrations WHERE room=?1")
+      .bind(p.room).first<{ end_reason: string; end_at: number; next_retry_at: number }>();
+    expect(row?.end_reason).toBe("user");
+    expect(row!.next_retry_at).toBeGreaterThan(row!.end_at);
+    expect(await testEnv.DB.prepare("SELECT id FROM rooms WHERE id=?1").bind(p.room).first()).toBeNull();
+    await testEnv.DB.prepare("DELETE FROM activity_registrations WHERE room=?1").bind(p.room).run();
   });
 
   it("rejects a stale epoch, wrong proof, and malformed opaque token", async () => {

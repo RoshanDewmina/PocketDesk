@@ -143,12 +143,14 @@ function count(result: ReturnType<typeof emptyResult>, outcome: EndOutcome): voi
 /** The caller captures the old route epoch before clearing it. Failed sends stay pending for retry. */
 export async function endRoomActivities(
   env: Env, room: string, routeEpoch: string, reason: "macStopped" | "timeout" | "user" | "error",
+  endedAt: number = Date.now(),
 ): Promise<{ accepted: number; failed: number; invalidToken: number }> {
   if (!HEX64.test(room) || !EPOCH.test(routeEpoch) || !REASONS.has(reason)) throw new Error("invalid_activity_end");
   const now = Date.now();
+  if (!Number.isSafeInteger(endedAt) || endedAt <= 0 || endedAt > now) throw new Error("invalid_activity_end_time");
   await env.DB.prepare(`UPDATE activity_registrations
     SET end_reason=?3, end_at=?4, next_retry_at=?4, attempts=0
-    WHERE room=?1 AND route_epoch=?2 AND end_reason IS NULL`).bind(room, routeEpoch, reason, now).run();
+    WHERE room=?1 AND route_epoch=?2 AND end_reason IS NULL`).bind(room, routeEpoch, reason, endedAt).run();
   await env.DB.prepare(`DELETE FROM activity_registrations
     WHERE room=?1 AND route_epoch=?2 AND end_at IS NOT NULL AND end_at<=?3`)
     .bind(room, routeEpoch, now - END_RETRY_LIFETIME).run();
