@@ -20,7 +20,19 @@ final class RemoteCoordinator: ObservableObject {
     private(set) var invitation: PairInvitation?
     private let isHost: Bool
     private let store: any PairPersistence
-    private let relay = SignalingClient()
+    private let relay: any SignalingTransport
+    private let renewalScheduler: any RenewalScheduler
+    private let advertisesRenewal: Bool
+    private let handshakeTimeoutNanoseconds: UInt64
+    private var renewalPlan: RenewalPlan?
+    private var renewalTask: Task<Void, Never>?
+    /// Renewal replies accepted, refreshed credentials applied, and ICE restarts started (host only)
+    /// since this coordinator was created. Diagnostics and tests read them.
+    private(set) var renewalCount = 0
+    private(set) var credentialRefreshCount = 0
+    private(set) var iceRestartCount = 0
+    /// Inbound signaling that belonged to no current session and was dropped instead of acted on.
+    private(set) var staleMessagesIgnored = 0
     private var cipher: SignalCipher?
     private var registeredInvitation: PairInvitation?
     private var request = ""
@@ -53,10 +65,18 @@ final class RemoteCoordinator: ObservableObject {
         retryBaseNanoseconds: UInt64 = 500_000_000,
         sessionLossRetryLimit: Int? = nil,
         maximumRetryDelayNanoseconds: UInt64? = nil,
-        registrationStableNanoseconds: UInt64 = 5_000_000_000
+        registrationStableNanoseconds: UInt64 = 5_000_000_000,
+        signaling: (any SignalingTransport)? = nil,
+        renewalScheduler: any RenewalScheduler = SystemRenewalScheduler(),
+        advertisesRenewal: Bool = true,
+        handshakeTimeoutNanoseconds: UInt64 = 20_000_000_000
     ) {
         self.isHost = isHost
         self.store = store ?? PairStore(account: isHost ? "host" : "phone")
+        self.relay = signaling ?? SignalingClient()
+        self.renewalScheduler = renewalScheduler
+        self.advertisesRenewal = advertisesRenewal
+        self.handshakeTimeoutNanoseconds = handshakeTimeoutNanoseconds
         self.retryLimit = max(0, retryLimit)
         self.retryBaseNanoseconds = retryBaseNanoseconds
         self.sessionLossRetryLimit = sessionLossRetryLimit.map { max(0, $0) }
@@ -106,11 +126,13 @@ final class RemoteCoordinator: ObservableObject {
             if resetRetryBudget { retryCount = 0; recoveringLiveSession = false }
             stopped = false
             retry?.cancel(); retry = nil
+            cancelRenewal()
             resetSession()
             cipher = try SignalCipher(key: invitation.key, room: invitation.room)
             status = "Connecting securely…"
             registeredInvitation = invitation
-            try relay.connect(invitation: invitation, hostToken: hostPair?.hostToken)
+            try relay.connect(invitation: invitation, hostToken: hostPair?.hostToken,
+                              features: advertisesRenewal ? [SignalingFeature.renewal] : [])
             setTimeout()
         } catch { fail(error.localizedDescription) }
     }
@@ -127,6 +149,7 @@ final class RemoteCoordinator: ObservableObject {
     }
     func stop() {
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
+        cancelRenewal()
         relay.close(); registeredInvitation = nil; resetSession(); status = "Disconnected"
     }
     /// Connected, connecting, or waiting to retry.
@@ -154,6 +177,9 @@ final class RemoteCoordinator: ObservableObject {
                     hostRegistered = true; timeout?.cancel(); status = "Ready for your paired phone"
                     resetRetryBudgetAfterStableRegistration()
                 }
+                beginRenewal(message.renew)
+            case "renewed":
+                receiveRenewal(message)
             case "ice":
                 servers = message.servers ?? []
                 guard servers.count <= 8, servers.allSatisfy({ $0.urls.count <= 8 }),
@@ -171,9 +197,19 @@ final class RemoteCoordinator: ObservableObject {
                 }
             case "signal":
                 guard let cipher, let payload = message.payload else { throw RemoteError.invalidMessage }
-                try receiveProtected(cipher.open(payload, sender: isHost ? "client" : "host"))
+                let opened: ProtectedMessage
+                do { opened = try cipher.open(payload, sender: isHost ? "client" : "host") }
+                catch { throw RemoteError.stale }
+                do { try receiveProtected(opened) }
+                catch RemoteError.stale { throw RemoteError.stale }
+                // A registered Mac's job is to keep listening: a current message that breaks the protocol
+                // ends this phone's session, not the registration. A phone still fails closed.
+                catch where isHost && hostRegistered && !stopped { peerDisconnected() }
             case "error":
                 let code = message.code ?? "unavailable"
+                // The service answers a signal for a peer that already left with a non-closing
+                // error. It is a late message from a session that is over, not a service failure.
+                if code == "peer_unavailable" { staleMessagesIgnored += 1; return }
                 let serviceError = "Connection service: \(code). Check the Mac and retry."
                 // A freshly stopped phone may still occupy the server's client slot
                 // for a moment. Retry within the existing bound; never evict it.
@@ -188,6 +224,11 @@ final class RemoteCoordinator: ObservableObject {
                 }
             default: throw RemoteError.invalidMessage
             }
+        } catch RemoteError.stale {
+            // Not from the current pairing, session or handshake: a trailing candidate from a phone
+            // session that already ended, a replay, or a message sealed with another key. Rejecting
+            // it means not acting on it, never tearing down the connection it was aimed at.
+            staleMessagesIgnored += 1
         } catch { fail("Secure connection failed. Reconnect or pair again on your Mac.") }
     }
     private func receiveProtected(_ message: ProtectedMessage) throws {
@@ -208,7 +249,7 @@ final class RemoteCoordinator: ObservableObject {
                   message.sequence == 0, !proofReceived else { throw RemoteError.stale }
             proofReceived = true
             if hostPair?.paired == true { acceptSession() }
-            else { awaitingApproval = true; status = "Approve this phone on your Mac"; setTimeout(seconds: 60) }
+            else { awaitingApproval = true; status = "Approve this phone on your Mac"; setTimeout(nanoseconds: 60_000_000_000) }
             return
         }
         guard guardState != nil else { throw RemoteError.stale }
@@ -300,12 +341,16 @@ final class RemoteCoordinator: ObservableObject {
             relay.send(RelayMessage(type: "signal", payload: try cipher.seal(message, sender: isHost ? "host" : "client")))
         } catch { fail(error.localizedDescription) }
     }
-    private func setTimeout(seconds: UInt64 = 20) {
+    private func setTimeout(nanoseconds: UInt64? = nil) {
         timeout?.cancel()
+        let wait = nanoseconds ?? handshakeTimeoutNanoseconds
         timeout = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
-            guard !Task.isCancelled else { return }
-            self?.fail("Connection timed out. Check that the Mac is awake and the service is reachable.")
+            try? await Task.sleep(nanoseconds: wait)
+            guard !Task.isCancelled, let self else { return }
+            // A registered Mac keeps listening when one phone's attempt stalls; only a Mac that never
+            // reached the service, or a phone, reports the timeout as a failure.
+            if self.isHost, self.hostRegistered, !self.stopped { self.peerDisconnected() }
+            else { self.fail("Connection timed out. Check that the Mac is awake and the service is reachable.") }
         }
     }
 
@@ -343,6 +388,7 @@ final class RemoteCoordinator: ObservableObject {
         // The first event already closed the old transport and scheduled a retry.
         guard retry == nil else { return }
         if connected && sessionLossRetryLimit != nil { recoveringLiveSession = true }
+        cancelRenewal()
         relay.close(); registeredInvitation = nil; resetSession()
         let limit = recoveringLiveSession ? max(retryLimit, sessionLossRetryLimit ?? retryLimit) : retryLimit
         guard retryCount < limit else {
@@ -364,11 +410,86 @@ final class RemoteCoordinator: ObservableObject {
     }
     private func fail(_ message: String) {
         stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false
+        cancelRenewal()
         relay.close(); registeredInvitation = nil; resetSession(); status = message
+    }
+
+    // MARK: Lease and credential renewal
+    //
+    // The signaling service ends a room that is not renewed, and ends a relay allocation whose
+    // credentials expire. When the service offers renewal, this keeps both alive for as long as the
+    // session is connected: it sends `renew` on the schedule the service asks for, applies fresh relay
+    // credentials to the live connection, and, on a relayed route, restarts ICE so the media moves to
+    // a new allocation while the old one keeps carrying it. Everything here is best effort. If the
+    // service stops answering, the room ends as it always did and the reconnect logic takes over.
+
+    private func beginRenewal(_ offer: RenewalOffer?) {
+        cancelRenewal()
+        guard advertisesRenewal, let offer, offer.version == 1, offer.renewAfterSeconds.isFinite,
+              offer.renewAfterSeconds > 0 else { return }
+        renewalPlan = RenewalPlan(offer: offer, now: renewalScheduler.now())
+        scheduleRenewal()
+    }
+
+    private func cancelRenewal() {
+        renewalTask?.cancel(); renewalTask = nil
+        renewalPlan = nil
+    }
+
+    private func scheduleRenewal() {
+        renewalTask?.cancel(); renewalTask = nil
+        guard let plan = renewalPlan else { return }
+        let scheduler = renewalScheduler
+        let delay = plan.delay(from: scheduler.now())
+        renewalTask = Task { [weak self] in
+            do { try await scheduler.sleep(seconds: delay) } catch { return }
+            guard !Task.isCancelled else { return }
+            self?.sendRenewal()
+        }
+    }
+
+    private func sendRenewal() {
+        guard var plan = renewalPlan, !stopped else { return }
+        plan.attemptStarted(at: renewalScheduler.now())
+        renewalPlan = plan
+        scheduleRenewal()
+        relay.send(RelayMessage(type: "renew"))
+    }
+
+    private func receiveRenewal(_ message: RelayMessage) {
+        guard var plan = renewalPlan, let renewAfter = message.renewAfterSeconds, renewAfter.isFinite else { return }
+        let now = renewalScheduler.now()
+        var fresh: [ICEServerConfiguration]?
+        if let servers = message.servers {
+            guard servers.count <= 8, servers.allSatisfy({ $0.urls.count <= 8 }), NativeRelayPolicy.hasRelay(servers) else {
+                plan.attemptFailed(at: now)
+                renewalPlan = plan
+                scheduleRenewal()
+                return
+            }
+            fresh = servers
+        }
+        plan.renewed(RenewalOutcome(leaseSeconds: message.leaseSeconds, renewAfterSeconds: renewAfter,
+                                    credentialSeconds: fresh == nil ? nil : message.credentialSeconds,
+                                    softFailure: message.code), at: now)
+        renewalPlan = plan
+        renewalCount += 1
+        if let fresh { applyRefreshedServers(fresh) }
+        scheduleRenewal()
+    }
+
+    private func applyRefreshedServers(_ fresh: [ICEServerConfiguration]) {
+        servers = fresh
+        hasRelay = true
+        credentialRefreshCount += 1
+        guard let media, media.updateICEServers(fresh) else { return }
+        if isHost, connected, media.needsRelayRefresh, media.restartICE() { iceRestartCount += 1 }
     }
 
     #if DEBUG
     func simulateTransportLossForTesting() { connectionLost() }
+    var iceServersForTesting: [ICEServerConfiguration] { servers }
+    var renewalPlanForTesting: RenewalPlan? { renewalPlan }
     #endif
 }
 

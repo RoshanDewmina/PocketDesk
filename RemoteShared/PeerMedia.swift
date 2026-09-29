@@ -91,6 +91,17 @@ final class PeerMedia: NSObject {
     private var video: RTCVideoTrack?
     private var remoteDescriptionReady = false
     private var candidates: [RTCIceCandidate] = []
+    private let forceRelay: Bool
+    private var lastRoute = "Route pending"
+    private var restartPending = false
+    private var restartGraceUntil: TimeInterval = 0
+    /// How many times fresh relay credentials were applied to the live connection.
+    private(set) var iceConfigurationUpdates = 0
+    /// How many ICE restarts this side started or answered.
+    private(set) var iceRestarts = 0
+    /// Remote descriptions applied so far: 1 after the first connection, one more per completed renegotiation.
+    private(set) var remoteDescriptionsApplied = 0
+    private static let restartGrace: TimeInterval = 15
     private let captureLock = NSLock()
     private var receivingBudget: H264FrameBudget?
     private var adaptedSize: (Int, Int)?
@@ -109,6 +120,7 @@ final class PeerMedia: NSObject {
 
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true) {
         self.isHost = isHost
+        self.forceRelay = forceRelay
         self.nativeDesktopCodecs = nativeDesktopCodecs
         tuning = nativeDesktopCodecs ? StreamTuning.current : .legacy
         super.init()
@@ -134,6 +146,50 @@ final class PeerMedia: NSObject {
             DispatchQueue.main.async { self?.setLocal(description, error: error) }
         }
     }
+    /// True while the connection may depend on a TURN allocation, so refreshed credentials only help
+    /// once ICE gathers again.
+    var needsRelayRefresh: Bool {
+        #if DEBUG
+        if let routeOverrideForTesting { return routeOverrideForTesting == "Relay" }
+        #endif
+        return forceRelay || lastRoute == "Relay"
+    }
+
+    #if DEBUG
+    /// Loopback tests cannot produce a real relay route; this stands in for one.
+    var routeOverrideForTesting: String?
+    #endif
+
+    /// Applies fresh relay credentials to the live connection without touching the media. They take
+    /// effect the next time ICE gathers, which is the next restart from either side.
+    @discardableResult
+    func updateICEServers(_ servers: [ICEServerConfiguration]) -> Bool {
+        guard !closed, let connection else { return false }
+        let configuration = connection.configuration
+        configuration.iceServers = servers.map {
+            RTCIceServer(urlStrings: $0.urls, username: $0.username ?? "", credential: $0.credential ?? "")
+        }
+        guard connection.setConfiguration(configuration) else { return false }
+        iceConfigurationUpdates += 1
+        return true
+    }
+
+    /// Host only: starts a new ICE generation with the credentials now in the configuration. The old
+    /// candidate pair keeps carrying the media until the new one is confirmed, so nothing is dropped.
+    @discardableResult
+    func restartICE() -> Bool {
+        guard isHost, !closed, let connection else { return false }
+        guard remoteDescriptionReady, connection.signalingState == .stable else { restartPending = true; return false }
+        restartPending = false
+        restartGraceUntil = ProcessInfo.processInfo.systemUptime + Self.restartGrace
+        iceRestarts += 1
+        // Candidates for the new generation can arrive before the answer is applied; hold them.
+        remoteDescriptionReady = false
+        connection.restartIce()
+        offer()
+        return true
+    }
+
     private func setLocal(_ description: RTCSessionDescription?, error: Error?) {
         guard !closed, let description, error == nil else { onState?("failed"); return }
         connection?.setLocalDescription(description) { [weak self] error in
@@ -149,13 +205,29 @@ final class PeerMedia: NSObject {
         if signal.kind == "candidate" {
             guard let candidate = signal.candidate, candidate.utf8.count <= 8192, let line = signal.line, line >= 0, line < 16 else { onState?("failed"); return }
             let value = RTCIceCandidate(sdp: candidate, sdpMLineIndex: line, sdpMid: signal.mid)
-            if remoteDescriptionReady { connection.add(value) { [weak self] error in if error != nil { DispatchQueue.main.async { self?.onState?("failed") } } } }
+            if remoteDescriptionReady {
+                connection.add(value) { [weak self] error in
+                    guard error != nil else { return }
+                    DispatchQueue.main.async {
+                        guard let self else { return }
+                        // A late candidate from the ICE generation a restart just replaced is expected.
+                        if ProcessInfo.processInfo.systemUptime < self.restartGraceUntil { return }
+                        self.onState?("failed")
+                    }
+                }
+            }
             else if candidates.count < 128 { candidates.append(value) }
             else { onState?("failed") }
             return
         }
         guard ["offer", "answer"].contains(signal.kind), let sdp = signal.sdp, sdp.utf8.count <= 96 * 1024,
               sdp.contains("a=fingerprint:sha-256 ") else { onState?("failed"); return }
+        if signal.kind == "offer", remoteDescriptionReady {
+            iceRestarts += 1
+            restartGraceUntil = ProcessInfo.processInfo.systemUptime + Self.restartGrace
+        }
+        // Candidates that follow a renegotiation must wait for its description, not race it.
+        remoteDescriptionReady = false
         connection.setRemoteDescription(RTCSessionDescription(type: signal.kind == "offer" ? .offer : .answer, sdp: sdp)) { [weak self] error in
             DispatchQueue.main.async {
                 guard let self, !self.closed, error == nil else { self?.onState?("failed"); return }
@@ -164,6 +236,7 @@ final class PeerMedia: NSObject {
                 self.adaptedSize = nil
                 self.captureLock.unlock()
                 self.remoteDescriptionReady = true
+                self.remoteDescriptionsApplied += 1
                 self.configureNativeSender()
                 for candidate in self.candidates { self.connection?.add(candidate, completionHandler: { _ in }) }
                 self.candidates.removeAll()
@@ -283,6 +356,7 @@ final class PeerMedia: NSObject {
                 let localType = local?.values["candidateType"] as? String
                 let remoteType = remote?.values["candidateType"] as? String
                 let route = MediaRoute.classify(selected: pair != nil, local: localType, remote: remoteType)
+                self.lastRoute = route
                 let rtp = stats.values.first { ($0.type == "inbound-rtp" || $0.type == "outbound-rtp") && ($0.values["kind"] as? String == "video" || $0.values["mediaType"] as? String == "video") }
                 let codec = (rtp?.values["codecId"] as? String).flatMap { stats[$0]?.values["mimeType"] as? String } ?? "codec pending"
                 let fps = (rtp?.values["framesPerSecond"] as? NSNumber).map { String(format: "%.0f fps", $0.doubleValue) } ?? "fps pending"
@@ -335,7 +409,13 @@ final class PeerMedia: NSObject {
     }
 }
 extension PeerMedia: RTCPeerConnectionDelegate {
-    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {
+        guard stateChanged == .stable else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.closed, self.restartPending else { return }
+            self.restartICE()
+        }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
         if let track = stream.videoTracks.first {
             DispatchQueue.main.async { [weak self] in self?.observeRemoteVideo(track); self?.onRemoteVideo?(track) }
@@ -345,7 +425,13 @@ extension PeerMedia: RTCPeerConnectionDelegate {
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
         if [.failed, .disconnected, .closed].contains(newState) {
-            DispatchQueue.main.async { [weak self] in self?.onState?(newState == .failed ? "failed" : newState == .closed ? "closed" : "disconnected") }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                // An ICE restart can report a passing `disconnected` while the new pair is checked;
+                // a real failure still ends the session through `failed`.
+                if newState == .disconnected, ProcessInfo.processInfo.systemUptime < self.restartGraceUntil { return }
+                self.onState?(newState == .failed ? "failed" : newState == .closed ? "closed" : "disconnected")
+            }
         }
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}

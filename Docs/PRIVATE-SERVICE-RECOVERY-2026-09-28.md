@@ -13,6 +13,8 @@ The phone displayed “Connection interrupted · retrying…” and the host exh
 
 The standalone bundle avoids a background service depending on access to a Documents checkout. Rebuild and deliberately redeploy this bundle when changing service source; host and phone builds do not update it automatically.
 
+**Redeploying after a service change (for example session renewal, 29 September 2026).** Session renewal only takes effect once this bundle is rebuilt and the job restarted; until then the apps behave as before and sessions still end at the 30-minute lease. From the integrated checkout's `Server/` directory: `bun build src/index.ts --target=bun --outfile "$HOME/Library/Application Support/PocketDesk/signaling-service.js"`, then `launchctl kickstart -k gui/$(id -u)/com.roshan.pocketdesk.signaling`. The build command was checked by bundling to a scratch path and serving a real renewal exchange from that bundle with the same kind of environment; the installed bundle was not touched. Verify with `curl -s http://127.0.0.1:18787/ready`: the `renewal` object should show `"enabled":true`, and `renewals` grows during a session.
+
 ## Observed checks
 
 Loopback health returned HTTP200 with protocol1. Trusted HTTPS1.1 WebSocket upgrade on the existing private route returned101, followed by the expected timeout for an unauthenticated probe. A curl HTTP2 upgrade probe returned502 and is not a valid WebSocket acceptance check.

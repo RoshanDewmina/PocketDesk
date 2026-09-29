@@ -157,7 +157,11 @@ export async function preflightRelay(env: SecretEnvironment, options: PreflightO
   const room = numberFrom(env, 'ROOM_LIFETIME_SECONDS', 1800);
   if (ttl > 86_400 / 4) checks.push(warn('credential_ttl', `credential TTL of ${ttl}s is long; revocation on disconnect is the primary cleanup`));
   else checks.push(pass('credential_ttl', `credential TTL ${ttl}s`));
-  checks.push(room < ttl ? pass('room_lifetime', `room lifetime ${room}s is below the credential TTL`) : fail('room_lifetime', 'ROOM_LIFETIME_SECONDS must be lower than TURN_CREDENTIAL_TTL_SECONDS'));
+  checks.push(room < ttl ? pass('room_lifetime', `room lease ${room}s is below the credential TTL; apps that do not renew end here`) : fail('room_lifetime', 'ROOM_LIFETIME_SECONDS must be lower than TURN_CREDENTIAL_TTL_SECONDS'));
+  const renewal = env.SESSION_RENEWAL;
+  checks.push(renewal === '0' || renewal === 'false'
+    ? warn('session_renewal', 'SESSION_RENEWAL is off: every session ends when its room lease does')
+    : pass('session_renewal', 'session renewal is on: apps that support it renew the lease and relay credentials while connected'));
 
   const peers = numberFrom(env, 'MAX_PEERS', 256);
   checks.push(peers <= 16 ? pass('max_peers', `MAX_PEERS=${peers}`) : warn('max_peers', `MAX_PEERS=${peers} is high for a single-owner relay`));
