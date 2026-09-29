@@ -274,6 +274,23 @@ struct HostPreferences {
         nonmutating set { defaults.set(newValue, forKey: Key.serviceAddress) }
     }
 
+    /// Diagnostics identify the public deployment without printing a private service address.
+    static func serviceEnvironment(for server: String?) -> String {
+        guard let server, PairInvitation.validServer(server), let url = URL(string: server), let host = url.host else { return "not configured" }
+        guard url.scheme?.lowercased() == "wss", url.port == nil || url.port == 443,
+              url.path == "/signal", url.query == nil, url.fragment == nil else { return "private or custom" }
+        switch host.lowercased() {
+        case "signal-staging.getfarside.com": return "staging"
+        case "signal.getfarside.com": return "production"
+        default: return "private or custom"
+        }
+    }
+
+    /// An explicit new pairing uses the selected service; an existing connection keeps its saved service.
+    static func resolvePairingServiceAddress(saved: String?, preference: String?, bundled: String?) -> String? {
+        resolveServiceAddress(saved: preference, preference: saved, bundled: bundled)
+    }
+
     static func resolveServiceAddress(saved: String?, preference: String?, bundled: String?) -> String? {
         for candidate in [saved, preference, bundled] {
             if let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines),

@@ -358,6 +358,7 @@
 		948FAA2FB9C5F28EEEB1951B /* FarsideTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4FF6FDDF86840B0B358BB424 /* FarsideTheme.swift */; };
 		949D0523E9E1290EBD666F7F /* BrowserFrameMarker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB6DA47FDA33D0407262019B /* BrowserFrameMarker.swift */; };
 		95393C93E3B885BF2B176BB4 /* HostModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3113E7FFC8DA6DCE50ED6ACC /* HostModel.swift */; };
+		95611D3A81414A5EE0B3983F /* LocalPairRemovalTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5AFC4950CD075934B1A7926B /* LocalPairRemovalTests.swift */; };
 		95FA159720FEB75FA1C770E8 /* InstrumentSerif-Italic.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 07BAEBDDD3DC6F74B4F10274 /* InstrumentSerif-Italic.ttf */; };
 		96212E0B7B217BC0F559115C /* ClockSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A39F6C34FCD735936A12A317 /* ClockSyncTests.swift */; };
 		96A553176C01BC12F4EBB6CE /* HostKeepAwake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29800B2341E92E0C9C977718 /* HostKeepAwake.swift */; };
@@ -801,6 +802,7 @@
 		57B016EC93DD7E70F9174455 /* SessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTests.swift; sourceTree = "<group>"; };
 		57D071716ABDF44FABDFD124 /* BenchMarkerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BenchMarkerTests.swift; sourceTree = "<group>"; };
 		5AC95A3A887C76B4B1C9D375 /* PushRegistrar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushRegistrar.swift; sourceTree = "<group>"; };
+		5AFC4950CD075934B1A7926B /* LocalPairRemovalTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalPairRemovalTests.swift; sourceTree = "<group>"; };
 		5B45BA3810586D5E7548CC90 /* PointerLocationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PointerLocationTests.swift; sourceTree = "<group>"; };
 		5BF108FC3F2E87B367E0B4DA /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		5C40ABFFA6F1CBB2F7E05DC6 /* StreamStatistics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamStatistics.swift; sourceTree = "<group>"; };
@@ -1326,6 +1328,7 @@
 				B0170A2D76EFEED481C56663 /* HostTextFocusTests.swift */,
 				974AF3B4503C231C4C9DEC57 /* LadderPolicyTests.swift */,
 				D5591B56762CE04D5AC9EEF5 /* LegibilityChartTests.swift */,
+				5AFC4950CD075934B1A7926B /* LocalPairRemovalTests.swift */,
 				BAD7253B278A70C8495130D7 /* LocalRoutePolicyTests.swift */,
 				878E8C2656F76F79E1128C2E /* MediaDiagnosticsTests.swift */,
 				FC9405BBE17BCA377B41C425 /* MiniMapTests.swift */,
@@ -2498,6 +2501,7 @@
 				0ACD812F42DA39A1571AB6D4 /* LegibilityChartTests.swift in Sources */,
 				E96592126176BA97596607BE /* LegibilityScore.swift in Sources */,
 				065C4128E3DC9F803BA7F3E2 /* LocalLinkProof.swift in Sources */,
+				95611D3A81414A5EE0B3983F /* LocalPairRemovalTests.swift in Sources */,
 				393B34B3BB8953E9AEFC8D9F /* LocalRoutePolicyTests.swift in Sources */,
 				212398EEED7EA8E02E0943D3 /* MacReachabilityProbe.swift in Sources */,
 				6E1F8DA02F3E685040441468 /* MachClock.swift in Sources */,
@@ -2881,7 +2885,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20260929.10;
+				CURRENT_PROJECT_VERSION = 20260929.11;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				FARSIDE_APNS_ENVIRONMENT = development;
 				FARSIDE_ENABLE_PUSH = NO;
@@ -2921,7 +2925,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 20260929.10;
+				CURRENT_PROJECT_VERSION = 20260929.11;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				ENABLE_HARDENED_RUNTIME = YES;
 				FARSIDE_UPDATE_PUBLIC_KEY = "";
@@ -3131,7 +3135,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 20260929.10;
+				CURRENT_PROJECT_VERSION = 20260929.11;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				ENABLE_HARDENED_RUNTIME = YES;
 				FARSIDE_UPDATE_PUBLIC_KEY = "";
@@ -3195,7 +3199,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20260929.10;
+				CURRENT_PROJECT_VERSION = 20260929.11;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FarsideWidgets/Info.plist;
@@ -3221,7 +3225,7 @@
 				CODE_SIGN_ENTITLEMENTS = "$(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))";
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20260929.10;
+				CURRENT_PROJECT_VERSION = 20260929.11;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				FARSIDE_APNS_ENVIRONMENT = production;
 				FARSIDE_ENABLE_PUSH = YES;
@@ -3436,7 +3440,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 20260929.10;
+				CURRENT_PROJECT_VERSION = 20260929.11;
 				DEVELOPMENT_TEAM = 39HM2X8GS6;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = FarsideWidgets/Info.plist;

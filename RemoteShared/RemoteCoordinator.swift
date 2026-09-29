@@ -36,6 +36,8 @@ final class RemoteCoordinator: ObservableObject {
     var media: PeerMedia?
     private(set) var hostPair: HostPair?
     private(set) var invitation: PairInvitation?
+    /// Sanitized mutation phase and Security status only; never pairing data.
+    private(set) var pairingRemovalFailure: String?
     private let isHost: Bool
     private let store: any PairPersistence
     private let relay: any SignalingTransport
@@ -199,10 +201,32 @@ final class RemoteCoordinator: ObservableObject {
         acceptSession()
     }
     func reject() { fail("Pairing was declined on the Mac") }
-    func revoke() {
+    @discardableResult
+    func revoke() -> Bool {
+        pairingRemovalFailure = nil
         stop()
-        do { try store.delete(); hostPair = nil; invitation = nil; status = "Pairing removed. Old credentials no longer work." }
-        catch { status = error.localizedDescription }
+        var phase = "delete"
+        do {
+            try store.delete()
+            phase = "verify"
+            let pairingRemains: Bool
+            if isHost { pairingRemains = try store.read(HostPair.self) != nil }
+            else { pairingRemains = try store.read(PairInvitation.self) != nil }
+            guard !pairingRemains else {
+                pairingRemovalFailure = "verify:record-remains"
+                status = "Pairing could not be removed. Try removing it again."
+                return false
+            }
+            hostPair = nil; invitation = nil
+            status = "Pairing removed. Old credentials no longer work."
+            return true
+        } catch {
+            if let remoteError = error as? RemoteError, case let .keychain(code) = remoteError {
+                pairingRemovalFailure = "\(phase):\(code)"
+            } else { pairingRemovalFailure = "\(phase):failed" }
+            status = error.localizedDescription
+            return false
+        }
     }
     /// Completes an already confirmed phone unlink without deleting a replacement pairing.
     /// The persistent read is authoritative: a locked Keychain must remain retryable.

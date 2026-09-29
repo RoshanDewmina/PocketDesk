@@ -44,12 +44,12 @@ struct HostSettingsView: View {
         .confirmationDialog("Remove your paired phone locally?", isPresented: $confirmingRemoval) {
             Button("Remove Phone", role: .destructive, action: actions.removePhone)
         } message: {
-            Text("It will no longer be able to connect. This removes local pairing, not server records. Use Server Data for server removal.")
+            Text("It will no longer be able to connect. This removes local pairing, not server records. Use Server Data for server removal. It doesn’t cancel an Apple subscription.")
         }
     }
 
     private var phoneSection: some View {
-        HostSettingsSection("Phone") {
+        HostSettingsSection("Phone", footer: state.localPairRemovalMessage) {
             phoneRow
         }
     }

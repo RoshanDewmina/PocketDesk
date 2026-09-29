@@ -81,6 +81,8 @@ struct HostDiagnosticsSnapshot {
     var keepAwake = false
     var displayCount = 0
     var detail: String?
+    var localPairRemovalFailure: String?
+    var serviceEnvironment = "not configured"
 
     var curtainPreference = false
     var curtainState = "off"
@@ -135,6 +137,8 @@ enum HostDiagnosticsReport {
         row("Sharing on", yes(s.sharingWanted))
         row("Sharing active", yes(s.sharingActive))
         row("Phone paired", yes(s.phonePaired))
+        row("Service environment", s.serviceEnvironment)
+        if let failure = s.localPairRemovalFailure { row("Local pairing removal", failure) }
         row("Phone connected", yes(s.phoneConnected))
         row("Mouse and keyboard control", yes(s.controlEffective))
         row("Keep awake while sharing", yes(s.keepAwake))

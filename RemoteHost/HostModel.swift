@@ -52,6 +52,7 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var serverRemovalPending = false
     @Published private(set) var serverRemovalMessage: String?
     @Published private(set) var active = false
+    @Published private(set) var localPairRemovalMessage: String?
     @Published private(set) var wantsSharing: Bool
     @Published private(set) var screenRecordingPermission: HostPermissionStatus = .unchecked
     @Published private(set) var accessibilityPermission: HostPermissionStatus = .unchecked
@@ -244,7 +245,8 @@ final class RemoteHostModel: ObservableObject {
             pairingDeferred: pairingDeferred,
             serverRemovalBusy: serverRemovalBusy,
             serverRemovalPending: serverRemovalPending,
-            serverRemovalMessage: serverRemovalMessage
+            serverRemovalMessage: serverRemovalMessage,
+            localPairRemovalMessage: localPairRemovalMessage
         )
     }
 
@@ -431,7 +433,11 @@ final class RemoteHostModel: ObservableObject {
 
     func beginPairing() {
         guard removalAllowsSharing else { return }
-        guard let serviceAddress else { objectWillChange.send(); return }
+        guard let serviceAddress = HostPreferences.resolvePairingServiceAddress(
+            saved: connection.invitation?.server,
+            preference: preferences.serviceAddress,
+            bundled: Bundle.main.object(forInfoDictionaryKey: "PocketDeskServiceURL") as? String
+        ) else { objectWillChange.send(); return }
         guard !browserSession.controller.running else { detail = "Browser access is on. Stop it before pairing a phone."; return }
         guard canPair, let display = validatedSelectedDisplay() else {
             detail = "Farside needs Screen Recording and a display to share before pairing."
@@ -447,6 +453,7 @@ final class RemoteHostModel: ObservableObject {
                 }
             ) else { return }
             preferences.serviceAddress = serviceAddress
+            localPairRemovalMessage = nil
             pairingCode = try invitation.code()
             pairingExpires = invitation.expires
             pairingExpired = false
@@ -584,9 +591,16 @@ final class RemoteHostModel: ObservableObject {
 
     func revoke() {
         guard removalAllowsSharing else { return }
-        if browserSession.controller.running { connection.revoke(); clearPairingCode(); return }
-        stop()
-        connection.revoke()
+        localPairRemovalMessage = nil
+        // Keep a failed local deletion from silently restarting its retained pairing.
+        cancelTimedPause()
+        wantsSharing = false
+        preferences.sharingEnabled = false
+        if !browserSession.controller.running { stop() }
+        let removed = connection.revoke()
+        localPairRemovalMessage = removed
+            ? "Phone pairing removed from this Mac."
+            : "Couldn’t confirm removal. Phone sharing is off. Unlock this Mac and retry Remove."
         clearPairingCode()
         pairingRequested = false
     }
@@ -826,6 +840,8 @@ final class RemoteHostModel: ObservableObject {
         snapshot.keepAwake = keepAwakeEnabled
         snapshot.displayCount = displays.count
         snapshot.detail = detail
+        snapshot.localPairRemovalFailure = connection.pairingRemovalFailure
+        snapshot.serviceEnvironment = HostPreferences.serviceEnvironment(for: connection.invitation?.server)
         snapshot.curtainPreference = curtainPreference
         snapshot.curtainState = curtainState.rawValue
         snapshot.recoveredThisLaunch = watchdog?.assessment.recoveredFromUnexpectedExit ?? false
@@ -1954,6 +1970,7 @@ extension RemoteHostModel {
         return [
             "status": "\(status)",
             "coordinatorStatus": connection.status,
+            "localPairRemovalFailure": connection.pairingRemovalFailure ?? "none",
             "diagnostics": connection.diagnostics,
             "hostRegistered": connection.hostRegistered,
             "connected": connection.connected,

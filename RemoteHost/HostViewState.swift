@@ -67,6 +67,7 @@ struct HostViewState: Equatable {
     var serverRemovalBusy = false
     var serverRemovalPending = false
     var serverRemovalMessage: String?
+    var localPairRemovalMessage: String?
     var macOSMajor = HostSystemSettingsPane.currentMacOSMajor
 
     var controlNeedsAccessibility: Bool { allowControl && !accessibility.isGranted }

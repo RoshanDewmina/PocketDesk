@@ -181,6 +181,9 @@ final class HostUISnapshotTests: XCTestCase {
     }
 
     func testSettings() throws {
+        try render("settings-removal-retry", HostSettingsView(state: ready(.paused) {
+            $0.localPairRemovalMessage = "Couldn’t confirm removal. Phone sharing is off. Unlock this Mac and retry Remove."
+        }, actions: .preview))
         try render("settings", HostSettingsView(state: ready(.ready), actions: .preview))
         try render("settings-live-two-displays", HostSettingsView(state: ready(.controlling) {
             $0.displays = [HostDisplayOption(id: 1, name: "Built-in Retina Display"),

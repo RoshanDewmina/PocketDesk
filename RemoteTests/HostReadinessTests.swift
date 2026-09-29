@@ -109,6 +109,21 @@ final class HostReadinessTests: XCTestCase {
                        "Stop Sharing must survive quitting and reopening the host")
     }
 
+    func testNewPairingUsesSelectedServiceWithoutChangingCurrentConnection() {
+        let saved = "wss://saved.example/signal"
+        let staging = "wss://signal-staging.getfarside.com/signal"
+        XCTAssertEqual(HostPreferences.serviceEnvironment(for: staging), "staging")
+        XCTAssertEqual(HostPreferences.serviceEnvironment(for: "wss://signal-staging.getfarside.com:8443/signal"), "private or custom")
+        XCTAssertEqual(HostPreferences.serviceEnvironment(for: "wss://signal-staging.getfarside.com:443/signal"), "staging")
+        XCTAssertEqual(HostPreferences.serviceEnvironment(for: saved), "private or custom")
+        XCTAssertEqual(HostPreferences.serviceEnvironment(for: nil), "not configured")
+        XCTAssertEqual(HostPreferences.resolveServiceAddress(saved: saved, preference: staging, bundled: nil), saved)
+        XCTAssertEqual(HostPreferences.resolvePairingServiceAddress(saved: saved, preference: staging, bundled: nil), staging)
+        XCTAssertEqual(HostPreferences.resolvePairingServiceAddress(saved: saved, preference: "http://invalid.example", bundled: nil), saved)
+        XCTAssertEqual(HostPreferences.resolvePairingServiceAddress(saved: nil, preference: "http://invalid.example", bundled: staging), staging)
+        XCTAssertNil(HostPreferences.resolvePairingServiceAddress(saved: nil, preference: "http://invalid.example", bundled: nil))
+    }
+
     func testServiceAddressUsesFirstValidSource() {
         XCTAssertEqual(HostPreferences.resolveServiceAddress(
             saved: "wss://saved.example/signal", preference: "wss://pref.example/signal", bundled: nil),
