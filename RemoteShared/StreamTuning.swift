@@ -54,6 +54,10 @@ struct StreamTuning: Equatable {
     var highRefreshNoAdaptation = false
     /// Cap the capture long edge to the client's advertised screen pixels (reduction only).
     var capToClientPixels = true
+    /// G4: crop the capture to the phone's reported viewport (`SessionFeature.viewportCapture`).
+    var viewportCapture = true
+    /// G12: let the ladder step the rate and size down under load and report the busy state.
+    var ladder = true
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -77,10 +81,13 @@ struct StreamTuning: Equatable {
     static let targetFPSKey = "PocketDeskTargetFPS"
     static let highRefreshNoAdaptationKey = "PocketDeskHighRefreshNoAdaptation"
     static let capToClientPixelsKey = "PocketDeskCapToClientPixels"
+    static let viewportCaptureKey = "PocketDeskViewportCapture"
+    static let ladderKey = "PocketDeskLadder"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
-                                 highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey]
+                                 highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
+                                 viewportCaptureKey, ladderKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -132,6 +139,12 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: capToClientPixelsKey) != nil {
             tuning.capToClientPixels = defaults.bool(forKey: capToClientPixelsKey)
         }
+        if defaults.object(forKey: viewportCaptureKey) != nil {
+            tuning.viewportCapture = defaults.bool(forKey: viewportCaptureKey)
+        }
+        if defaults.object(forKey: ladderKey) != nil {
+            tuning.ladder = defaults.bool(forKey: ladderKey)
+        }
         return tuning
     }
 
@@ -171,6 +184,8 @@ struct StreamTuning: Equatable {
         if let targetFPSOverride { parts.append("target \(targetFPSOverride) fps") }
         if highRefreshNoAdaptation { parts.append("no adaptation at 120") }
         if !capToClientPixels { parts.append("no client cap") }
+        if !viewportCapture { parts.append("whole-display capture") }
+        if !ladder { parts.append("no ladder") }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
 
