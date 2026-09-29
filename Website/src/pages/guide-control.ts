@@ -81,7 +81,7 @@ export function controlGuidePage(assets: Assets) {
   const body = html`${guideHero({
     crumbs,
     cap: "Guide · Control your Mac from your iPhone",
-    title: html`Control your Mac from your <em>iPhone.</em>`,
+    title: html`Control your Mac from your iPhone.`,
     lead: html`Farside shows your Mac’s real screen on your iPhone and turns the glass into a trackpad. Setup is a few steps and no account. Here’s the whole thing, start to finish.`,
     meta: "About 4 minutes to read",
   })}

@@ -43,7 +43,7 @@ export function trackpadGuidePage(assets: Assets) {
   const body = html`${guideHero({
     crumbs,
     cap: "Guide · iPhone as a Mac trackpad",
-    title: html`Use your iPhone as a Mac <em>trackpad.</em>`,
+    title: html`Use your iPhone as a Mac trackpad.`,
     lead: html`Farside turns the whole iPhone screen into a trackpad for your Mac. Slide to move the pointer, tap to click, two fingers to scroll. You feel every click, and the pointer is big enough to find.`,
     meta: "About 3 minutes to read",
   })}

@@ -8,7 +8,7 @@ import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { config, missingRequired, pendingLaunch } from "../site.config";
 import { faviconSvg } from "../src/lib/mark";
-import { ARTS, SHOTS } from "../src/pages/images";
+import { ARTS, PHOTOS, SHOTS } from "../src/pages/images";
 import type { Assets, ImgAsset } from "../src/pages/layout";
 import { OG, ogFile } from "../src/pages/og";
 import { PAGES } from "../src/pages/registry";
@@ -263,6 +263,25 @@ async function images(out: string): Promise<Record<string, ImgAsset>> {
       names.push(`/assets/img/${name}`);
     }
     map[s.key] = { src: names[0]!, src2x: names[1]!, w: m.w, h: m.h };
+  }
+  // Real app screenshots at several widths, for srcset with width descriptors.
+  for (const p of PHOTOS) {
+    const files: [number, string][] = [];
+    for (const width of p.widths) {
+      const src = Bun.file(join(STATIC, `img/${p.key}-${width}.webp`));
+      if (!(await src.exists())) throw new Error(`missing static/img/${p.key}-${width}.webp`);
+      const data = await src.arrayBuffer();
+      const name = `${p.key}-${width}-${hash8(data)}.webp`;
+      await Bun.write(join(out, "assets/img", name), data);
+      files.push([width, `/assets/img/${name}`]);
+    }
+    map[p.key] = {
+      src: files[0]![1],
+      src2x: files[files.length - 1]![1],
+      w: p.w,
+      h: p.h,
+      srcset: files.map(([w, u]) => `${u} ${w}w`).join(", "),
+    };
   }
   return map;
 }

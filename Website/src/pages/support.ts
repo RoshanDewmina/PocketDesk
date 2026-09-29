@@ -6,7 +6,7 @@ import { config } from "../../site.config";
 import { html, type Html } from "../lib/html";
 import { ownerComment, pageHero } from "./doc";
 import { figure, gestureTable } from "./guide";
-import { betaHref, detail, email, icon, ogUrl, page, type Assets } from "./layout";
+import { detail, email, icon, ogUrl, page, type Assets } from "./layout";
 import { breadcrumbs, faqPage, graph, howTo, webPage, type QA } from "./schema";
 
 const R = config.requirements;
@@ -175,7 +175,6 @@ const billing = html`<ul>
 </ul>`;
 
 function contact(): Html {
-  const beta = betaHref();
   return html`<div class="contact-card">
   <dl>
     <div><dt>Email</dt><dd>${email("support")}</dd></div>
@@ -186,7 +185,7 @@ function contact(): Html {
   </dl>
 </div>
 <p>To help us help you, include what you tried, what the message said, your Mac and iPhone or iPad models, their macOS and iOS versions, and whether both were on the same network. Please don’t send passwords or screenshots of private content.</p>
-${beta ? html`<p>Want to test new builds early? <a href="${beta}">Join the beta</a>.</p>` : ""}`;
+<p>Want to test new builds early? <a href="/#beta">Join the beta</a>.</p>`;
 }
 
 const MSG_QAS: QA[] = MESSAGES.map((m) => ({
@@ -211,7 +210,7 @@ export function supportPage(assets: Assets) {
 ${pageHero({
   crumbs,
   cap: "Support",
-  title: html`Help is <em>near.</em>`,
+  title: html`Help is near.`,
   lead: html`Setup steps, how to steer, what every message in the app means, and how to reach a person. Most fixes are <b>one step</b>.`,
 })}
 <div class="w">

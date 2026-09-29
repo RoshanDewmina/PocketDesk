@@ -45,7 +45,7 @@ export function remoteGuidePage(assets: Assets) {
   const body = html`${guideHero({
     crumbs,
     cap: "Guide · Remote desktop for Mac",
-    title: html`Remote desktop for your <em>Mac.</em>`,
+    title: html`Remote desktop for your Mac.`,
     lead: html`A remote desktop app shows a computer’s screen on another device and lets you control it. Farside does that for one thing only: your own Mac, from your iPhone or iPad.`,
     meta: "About 4 minutes to read",
   })}

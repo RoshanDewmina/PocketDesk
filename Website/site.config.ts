@@ -87,6 +87,29 @@ export const config = {
     yearlyAmount: "49.99",
   },
 
+  /**
+   * The beta sign-up form (#beta on the home page). Every "Join the beta" button leads there.
+   * `action` is the Pages Function from the infra branch (Website/DEPLOY.md): JSON or plain form posts,
+   * fields email, source (page name) and company (honeypot, always empty).
+   */
+  waitlist: {
+    action: "/api/waitlist",
+  },
+
+  /** Short marketing lines that need the owner's sign-off before launch. */
+  copy: {
+    /** Label of every beta button (header, hero, guides, form). */
+    cta: "Join the beta",
+    /** Under the hero button. No dates until the launch date is public (`bun run check` blocks them). */
+    availability: "Coming soon to the App Store.",
+    /**
+     * Beside the sign-up button. Canada's anti-spam law (CASL) needs it: what people get and that they can
+     * unsubscribe. The backend stores a consent version (CONSENT in functions/api/waitlist.ts): bump it
+     * whenever this wording changes.
+     */
+    consent: "We’ll email you a beta invite and launch news. Unsubscribe anytime.",
+  },
+
   /** Planned minimum OS versions (STORE-LISTING.md). */
   requirements: {
     mac: "macOS 26 or later",
@@ -95,8 +118,8 @@ export const config = {
   },
 
   /** Last content review of the legal pages. */
-  legalUpdated: "28 September 2026",
-  lastmod: "2026-09-28",
+  legalUpdated: "29 September 2026",
+  lastmod: "2026-09-29",
 };
 
 export const isPlaceholderSiteUrl = () => config.SITE_URL === PLACEHOLDER_SITE_URL;

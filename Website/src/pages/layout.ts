@@ -5,7 +5,7 @@ import { markSvg } from "../lib/mark";
 
 export { FONTS_URL };
 
-export type ImgAsset = { src: string; src2x: string; w: number; h: number };
+export type ImgAsset = { src: string; src2x: string; w: number; h: number; srcset?: string };
 
 export type Assets = {
   /** The whole stylesheet, inlined in every page (no render-blocking request; allowed by its CSP hash). */
@@ -118,9 +118,8 @@ export function guideCards(except?: string): Html {
 
 const NAV: [string, string, PageMeta["current"]?][] = [
   ["/#how", "How it works"],
-  ["/#features", "Features"],
   ["/#pricing", "Pricing"],
-  ["/compare", "Compare", "compare"],
+  ["/#faq", "FAQ"],
   ["/support", "Support", "support"],
 ];
 
@@ -134,10 +133,10 @@ function header(meta: PageMeta): Html {
     <a class="brand" href="/" aria-label="Farside home">${raw(markSvg(18))}<span class="wm" aria-hidden="true">farside</span></a>
     <nav class="nav-desk" aria-label="Main">${navLinks(meta.current)}</nav>
     <div class="bar-r">
-      <a class="pill" href="/#beta">Join the beta</a>
+      <a class="pill" href="/#beta">${config.copy.cta}</a>
       <details class="nav-mob">
         <summary aria-label="Menu">${icon.menu}</summary>
-        <nav aria-label="Main menu">${navLinks(meta.current)}<a href="/#faq">FAQ</a></nav>
+        <nav aria-label="Main menu">${navLinks(meta.current)}</nav>
       </details>
     </div>
   </div>
@@ -153,17 +152,20 @@ const SOCIAL: [keyof typeof config.social, string][] = [
 
 function footer(): Html {
   const owner = config.contact.legalName ?? "Farside";
+  const social = SOCIAL.filter(([key]) => config.social[key]);
+  const support = config.contact.supportEmail;
   return html`<footer class="site-footer">
   <div class="w">
-    <p class="foot-wm" aria-hidden="true">farside<span class="pd">.</span></p>
-    <p class="foot-tag">Your Mac is far. <span>Your reach isn’t.</span></p>
+    <div class="foot-top">
+      <a class="brand" href="/" aria-label="Farside home">${raw(markSvg(18))}<span class="wm" aria-hidden="true">farside</span></a>
+      <p class="foot-tag">Your Mac is far. Your reach isn’t.</p>
+    </div>
     <nav class="foot-nav" aria-label="Footer">
-      <div><h2>Product</h2><ul role="list">
+      <div><h2>Farside</h2><ul role="list">
         <li><a href="/#how">How it works</a></li>
-        <li><a href="/#features">Features</a></li>
         <li><a href="/#pricing">Pricing</a></li>
-        <li><a href="/#agents">Agent alerts (beta)</a></li>
         <li><a href="/#faq">FAQ</a></li>
+        <li><a href="/#beta">${config.copy.cta}</a></li>
       </ul></div>
       <div><h2>Guides</h2><ul role="list">
         ${GUIDES.map(([href, t]) => html`<li><a href="${href}">${t}</a></li>`)}
@@ -171,26 +173,29 @@ function footer(): Html {
       <div><h2>Help</h2><ul role="list">
         <li><a href="/support">Support</a></li>
         <li><a href="/support#messages">What a message means</a></li>
-        <li><a href="/#beta">Join the beta</a></li>
+        ${support ? html`<li><a href="mailto:${support}">${support}</a></li>` : ""}
         <li><a href="/privacy">Privacy policy</a></li>
         <li><a href="/terms">Terms of use (draft)</a></li>
       </ul></div>
-      <div><h2>Follow</h2><ul role="list">
-        ${SOCIAL.map(([key, label]) => {
-          const href = config.social[key];
-          return href
-            ? html`<li><a href="${href}" rel="me noopener">${label}</a></li>`
-            : html`<li><span class="placeholder">${label} (coming soon)</span></li>`;
-        })}
-        <li><p>${email("support")}</p></li>
-      </ul></div>
+      ${social.length
+        ? html`<div><h2>Follow</h2><ul role="list">${social.map(([key, label]) => html`<li><a href="${config.social[key]!}" rel="me noopener">${label}</a></li>`)}</ul></div>`
+        : ""}
     </nav>
     <div class="foot-fine">
-      <p>© 2026 ${owner}. Farside is in beta. No cookies, no analytics, no ads on this site.</p>
+      <p>© 2026 ${owner}. No cookies, no analytics and no ads on this site.</p>
       <p>Apple, Mac, iPhone, iPad and App Store are trademarks of Apple Inc., registered in the U.S. and other countries and regions. Farside is not affiliated with Apple. Other product names belong to their owners.</p>
     </div>
   </div>
 </footer>`;
+}
+
+/** Page name sent with a beta sign-up (the waitlist `source` field: [a-z0-9_-]). */
+const GUIDE_PATHS = new Set(["/control-mac-from-iphone", "/iphone-as-mac-trackpad", "/remote-desktop-for-mac"]);
+function sourceName(meta: PageMeta): string {
+  if (meta.path === "/") return "home";
+  if (GUIDE_PATHS.has(meta.path)) return "guide";
+  const name = meta.path.replace(/^\//, "").replace(/[^a-z0-9_-]/g, "");
+  return name || "site";
 }
 
 // ---------- document ----------
@@ -239,7 +244,7 @@ export function page(meta: PageMeta, assets: Assets, body: Html): string {
 <meta name="twitter:image" content="${img}">
 <meta name="twitter:image:alt" content="${imgAlt}">${banner}${ld}
 </head>
-<body${raw(meta.bodyClass ? ` class="${esc(meta.bodyClass)}"` : "")}>
+<body${raw(meta.bodyClass ? ` class="${esc(meta.bodyClass)}"` : "")} data-src="${sourceName(meta)}">
 <a class="skip" href="#main">Skip to content</a>
 ${header(meta)}
 <main id="main" tabindex="-1">
