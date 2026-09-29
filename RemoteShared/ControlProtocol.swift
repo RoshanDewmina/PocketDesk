@@ -12,11 +12,13 @@ struct RemoteAction: Codable {
     var pointerLocatorSupported: Bool? = nil
     var pointerProbe: String? = nil
     var pointerLocation: PointerLocation? = nil
+    var pointerSync: PointerSync? = nil
     var streamQuality: StreamQuality? = nil
     var textFocusProbe: String? = nil
     var textFocusEditable: Bool? = nil
 
     func validate() throws {
+        if try validatePointerSync() { return }
         try interaction?.validate()
         try pointerLocation?.validate()
         if let textFocusProbe {

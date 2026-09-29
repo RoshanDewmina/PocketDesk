@@ -26,6 +26,7 @@ struct NativeSessionView: View {
     @State private var zoomBadgeToken = 0
     @State private var revision: UInt64 = 0
     @AppStorage("pointerSensitivity") private var sensitivity = 1.0
+    @AppStorage(PointerSizePreference.key) private var pointerSize: PointerSizePreference = .medium
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -99,6 +100,11 @@ struct NativeSessionView: View {
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
         .onAppear {
             #if DEBUG
+            if offlineLayoutCheck && ProcessInfo.processInfo.arguments.contains("--ui-pointer-preview") {
+                model.pointerOverlay.showPreview(.init(point: CGPoint(x: model.sourceSize.width * 0.42,
+                                                                      y: model.sourceSize.height * 0.38),
+                                                       shape: .arrow))
+            }
             if offlineLayoutCheck && ProcessInfo.processInfo.arguments.contains("--ui-voice-preview-check") {
                 voiceInput.loadNonRecordingPreview(String(repeating: "A long spoken note stays readable while the insert action remains in reach. ", count: 12))
                 showVoiceInput = true
@@ -137,6 +143,7 @@ struct NativeSessionView: View {
             scheduleGeometry()
         }
         .onReceive(model.pointerLocator.followUpdates, perform: follow)
+        .onReceive(model.pointerOverlay.followUpdates, perform: follow)
         .privacySensitive()
     }
 
@@ -154,7 +161,12 @@ struct NativeSessionView: View {
                     .frame(width: rect.width, height: rect.height, alignment: .topLeading)
                     .position(x: rect.midX, y: rect.midY)
             }
-            PointerLocatorOverlay(locator: model.pointerLocator, viewport: viewport)
+            PointerOverlayView(model: model.pointerOverlay, viewport: viewport, size: pointerSize)
+            #if DEBUG
+            if offlineLayoutCheck && ProcessInfo.processInfo.arguments.contains("--ui-pointer-gallery") {
+                PointerGlyphGallery(size: pointerSize)
+            }
+            #endif
         }
         .allowsHitTesting(false)
     }
@@ -850,8 +862,16 @@ struct NativeSessionView: View {
                 }
                 .accessibilityLabel("Pointer sensitivity")
             }
+            Picker("Pointer size", selection: $pointerSize) {
+                ForEach(PointerSizePreference.allCases) { size in
+                    Text(size.title).tag(size)
+                }
+            }
+            .accessibilityIdentifier("remote.pointerSize")
         } header: {
             Text("Feel")
+        } footer: {
+            Text("Your iPhone draws the Mac pointer at this size at every zoom level. An older Mac companion shows its streamed pointer instead.")
         }
     }
 

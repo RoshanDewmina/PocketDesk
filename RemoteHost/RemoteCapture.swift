@@ -83,11 +83,19 @@ final class RemoteCapture {
     var onFailure: (() -> Void)?
     var onHealth: ((Bool) -> Void)?
     var onQuality: ((StreamQuality) -> Void)?
+    /// Reports changes to `cursorInVideo`.
+    var onCursorVisibility: ((Bool) -> Void)?
     private(set) var appliedQuality: StreamQuality?
+    private(set) var appliedShowsCursor = true
+    /// True only while every upcoming frame includes the cursor: false as soon as hiding is
+    /// requested, true again only once showing is applied. A client drawing its own pointer
+    /// therefore sees a brief duplicate at a transition, never a missing pointer.
+    var cursorInVideo: Bool { appliedShowsCursor && requestedShowsCursor }
 
     private var ownership = ScopedCaptureOwner()
     private var session: RemoteCaptureSession?
     private var requestedQuality: StreamQuality = .balanced
+    private var requestedShowsCursor = true
     private var captureStarted = false
     private var qualityUpdateTask: Task<Void, Never>?
 
@@ -97,12 +105,22 @@ final class RemoteCapture {
         scheduleQualityUpdate()
     }
 
+    /// Only a client drawing its own pointer may hide it. Every capture starts with it shown.
+    func setShowsCursor(_ shows: Bool) {
+        guard shows != requestedShowsCursor else { return }
+        let before = cursorInVideo
+        requestedShowsCursor = shows
+        notifyCursor(changedFrom: before)
+        scheduleQualityUpdate()
+    }
+
     func start(display: SCDisplay, peer: PeerMedia) async throws -> UInt64 {
         let owner = ownership.begin()
         qualityUpdateTask?.cancel()
         qualityUpdateTask = nil
         captureStarted = false
         appliedQuality = nil
+        resetCursor()
         let previous = session
         session = nil
         await previous?.stop()
@@ -154,6 +172,7 @@ final class RemoteCapture {
         qualityUpdateTask = nil
         requestedQuality = .balanced
         appliedQuality = nil
+        resetCursor()
         captureStarted = false
         let previous = session
         session = nil
@@ -163,7 +182,7 @@ final class RemoteCapture {
 
     private func scheduleQualityUpdate() {
         guard qualityUpdateTask == nil, captureStarted, let session,
-              requestedQuality != appliedQuality else { return }
+              requestedQuality != appliedQuality || requestedShowsCursor != appliedShowsCursor else { return }
         let owner = ownership.current
         qualityUpdateTask = Task { [weak self] in
             await self?.applyRequestedQuality(to: session, owner: owner)
@@ -172,19 +191,43 @@ final class RemoteCapture {
 
     private func applyRequestedQuality(to target: RemoteCaptureSession, owner: UInt64) async {
         while !Task.isCancelled, ownership.owns(owner), session === target,
-              let appliedQuality, requestedQuality != appliedQuality {
+              let appliedQuality,
+              requestedQuality != appliedQuality || requestedShowsCursor != appliedShowsCursor {
             let quality = requestedQuality
-            let succeeded = await target.updateQuality(quality)
+            let showsCursor = requestedShowsCursor
+            let succeeded = await target.updateQuality(quality, showsCursor: showsCursor)
             guard !Task.isCancelled, ownership.owns(owner), session === target else { break }
             if succeeded {
-                self.appliedQuality = quality
-                onQuality?(quality)
-            } else if requestedQuality == quality {
+                if quality != appliedQuality {
+                    self.appliedQuality = quality
+                    onQuality?(quality)
+                }
+                let before = cursorInVideo
+                appliedShowsCursor = showsCursor
+                notifyCursor(changedFrom: before)
+            } else if requestedQuality == quality && requestedShowsCursor == showsCursor {
+                if requestedShowsCursor != appliedShowsCursor {
+                    // Keep reporting what frames really contain; the caller may retry later.
+                    let before = cursorInVideo
+                    requestedShowsCursor = appliedShowsCursor
+                    notifyCursor(changedFrom: before)
+                }
                 break
             }
         }
         guard ownership.owns(owner), session === target else { return }
         qualityUpdateTask = nil
+    }
+
+    private func resetCursor() {
+        let before = cursorInVideo
+        requestedShowsCursor = true
+        appliedShowsCursor = true
+        notifyCursor(changedFrom: before)
+    }
+
+    private func notifyCursor(changedFrom before: Bool) {
+        if cursorInVideo != before { onCursorVisibility?(cursorInVideo) }
     }
 }
 
@@ -204,7 +247,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     init(display: SCDisplay, peer: PeerMedia, quality: StreamQuality) throws {
         let filter = SCContentFilter(display: display, excludingWindows: [])
-        guard let configuration = Self.configuration(for: filter, quality: quality, budget: peer.nativeCaptureBudget) else {
+        guard let configuration = Self.configuration(for: filter, quality: quality, showsCursor: true,
+                                                     budget: peer.nativeCaptureBudget) else {
             throw CaptureSizingError.invalidSource
         }
         self.filter = filter
@@ -213,8 +257,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         self.stream = SCStream(filter: filter, configuration: configuration, delegate: self)
     }
 
-    private static func configuration(for filter: SCContentFilter,
-                                      quality: StreamQuality, budget: H264FrameBudget?) -> SCStreamConfiguration? {
+    private static func configuration(for filter: SCContentFilter, quality: StreamQuality,
+                                      showsCursor: Bool, budget: H264FrameBudget?) -> SCStreamConfiguration? {
         guard let dimensions = CapturePixelDimensions.fitted(
             contentSize: filter.contentRect.size,
             pointPixelScale: Double(filter.pointPixelScale), quality: quality
@@ -225,15 +269,16 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         configuration.height = fitted?.height ?? dimensions.height
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
         configuration.queueDepth = 3
-        configuration.showsCursor = true
+        configuration.showsCursor = showsCursor
         configuration.capturesAudio = false
         configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         return configuration
     }
 
-    func updateQuality(_ quality: StreamQuality) async -> Bool {
+    func updateQuality(_ quality: StreamQuality, showsCursor: Bool) async -> Bool {
         let stopped = queue.sync { stopping }
-        guard !stopped, let configuration = Self.configuration(for: filter, quality: quality, budget: peer?.nativeCaptureBudget) else {
+        guard !stopped, let configuration = Self.configuration(for: filter, quality: quality, showsCursor: showsCursor,
+                                                               budget: peer?.nativeCaptureBudget) else {
             return false
         }
         do {
