@@ -1,3 +1,17 @@
+# Active Codex recovery — 29 September 2026
+
+User explicitly requested recovery of the latest Claude Code/Codex conversations, subagent fan-out and completion of Farside app work. Recovered Claude coding session `ec632039-cbe8-4dc5-acc9-9bd5d44783a1` and companion fork `1433a11f-eb91-4433-8035-0e86b5b1824a`; both were interrupted by quota, not completed. Main baseline `0f776e1`, clean. Latest native scope: approved Controls A, repair pointer jumps/click placement, display-aware frame rate, phone-pixel cap, viewport capture and adaptive quality ladder. Preserve physical performance claims as unverified until measured. Website/social/portal work is separate from this native recovery.
+
+| Package | Owner / checkout | State |
+|---|---|---|
+| Controls A | `/root/farside_claude_history`, GPT-6 Sol/high; existing `landing-controls` worktree | Recover interrupted phone tests, four portrait UI tests and E2E compile; first exclusive Xcode slot; no main merge/install |
+| Performance W1–W5 | `/root/performance_recovery`, GPT-6 Sol/high; existing `perf-120fps` worktree | Review existing `10065ce`, resolve one failed renewal test and interrupted phone tests; preserve intended feature defaults; second Xcode slot |
+| Pointer touchdown | Parent; existing `pointer-touchdown-jump` worktree | `00cfe41`: inherited reproducer fails before fix; 46 gesture/direct-touch tests pass after; independent review pending |
+| Host pointer placement | Parent; existing `pointer-host-chain-landing` worktree | Review recovered chain/fence/telemetry changes and reset boundaries before integration |
+| Integrated verification/install | Parent; main checkout only | Pending package checks and independent reviews; preserve stable host identity and pairing |
+
+Only one heavy Xcode/simulator runner at a time under `/tmp/farside-xcodebuild.lock`. No other agent build processes remained at recovery. Native workers are Sol; no Astra coding/review worker. Read-only history discovery preceded repository model instructions. Existing unfinished worktrees and dirty files preserved. Global Claude inventory: 8 parent and 73 subagent records for this date, 0 unresolved matching records; only Farside conversations were read for scope. Historical entries below remain dated receipts.
+
 # Automatic keyboard after clicking an input — 28 September 2026
 
 User requests natural keyboard opening on focused Mac input. Recovery baseline03884a3 is committed/installed; service supervision and physical reconnect verified. Parent owns additive optional textFocusProbe/textFocusEditable protocol fields, validation tests, project generation/version20260928.11, integration, installs and docs. /root/encoder_research owns host one-shot AX probe, exact accepted click point and host policy tests. /root/phone owns nonce/epoch/freshness gate, phone keyboard presentation and focused tests. /root/ui_review independently reviews final changes. Workers remain GPT6Sol/high, noAstra. Preserveexistingdirtywork andauthentication.
