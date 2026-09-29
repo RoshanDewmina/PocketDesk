@@ -184,10 +184,15 @@ final class AgentAlertBridge: @unchecked Sendable {
             return
         }
         openConnections += 1
-        let exchange = Exchange(connection: connection, bridge: self)
-        connection.stateUpdateHandler = { [weak self, weak exchange] state in
+        let exchange = Exchange(connection: connection, bridge: self, queue: queue)
+        // A failed connection is cancelled here, and only `.cancelled` releases its slot: it follows
+        // every failure and every finished reply exactly once, so the cap cannot be counted away.
+        connection.stateUpdateHandler = { [weak self, weak exchange, weak connection] state in
             switch state {
-            case .cancelled, .failed:
+            case .failed:
+                exchange?.abandon()
+                connection?.cancel()
+            case .cancelled:
                 self?.openConnections -= 1
                 exchange?.abandon()
             default:
@@ -202,15 +207,18 @@ final class AgentAlertBridge: @unchecked Sendable {
     /// Everything about one request, on the bridge's queue.
     private final class Exchange {
         private let connection: NWConnection
-        private unowned let bridge: AgentAlertBridge
+        /// Weak: switching Agent alerts off releases the bridge while a request may still be in flight.
+        private weak var bridge: AgentAlertBridge?
+        private let queue: DispatchQueue
         private var buffer = Data()
         private var finished = false
         /// The request has been read and handed to the handler, so the read deadline no longer applies.
         private var handling = false
 
-        init(connection: NWConnection, bridge: AgentAlertBridge) {
+        init(connection: NWConnection, bridge: AgentAlertBridge, queue: DispatchQueue) {
             self.connection = connection
             self.bridge = bridge
+            self.queue = queue
         }
 
         func receive() {
@@ -253,6 +261,9 @@ final class AgentAlertBridge: @unchecked Sendable {
         }
 
         private func route(_ request: AgentBridgeHTTP.Request) {
+            guard let bridge else {
+                return finish(.serviceUnavailable, json: AgentBridgeHTTP.body("state", AgentAlertDisposition.disabled.rawValue))
+            }
             let port = bridge.currentPort
             if AgentBridgeGuard.looksLikeBrowser(request.headers) || !AgentBridgeGuard.hostIsLocal(request.headers["host"], port: port) {
                 return finish(.forbidden, json: AgentBridgeHTTP.body("error", "forbidden"))
@@ -289,11 +300,13 @@ final class AgentAlertBridge: @unchecked Sendable {
             }
             let alert = AgentAlert(id: AgentAlert.makeID(), kind: AgentKind(wire: body.agent?.kind), event: event,
                                    sessionHash: hash, raisedAt: Date())
-            let handler = bridge.handler
+            guard let handler = bridge?.handler else {
+                return finish(.serviceUnavailable, json: AgentBridgeHTTP.body("state", AgentAlertDisposition.disabled.rawValue))
+            }
             handling = true
             Task { [self] in
                 let disposition = await handler(alert)
-                bridge.queue.async { [self] in
+                queue.async { [self] in
                     finish(Self.status(for: disposition), json: AgentBridgeHTTP.body("state", disposition.rawValue))
                 }
             }

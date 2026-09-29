@@ -321,6 +321,29 @@ final class AgentAlertBridgeTests: XCTestCase {
         XCTAssertEqual(received.value.count, 1)
     }
 
+    func testSwitchingAlertsOffWhileAnAnswerIsPendingDoesNotCrash() async throws {
+        bridge.stop()
+        var local: AgentAlertBridge? = AgentAlertBridge(directory: directory, readDeadline: 3) { _ in
+            try? await Task.sleep(nanoseconds: 600_000_000)
+            return .forwarded
+        }
+        try await local!.start()
+        let port = local!.port
+        let text = request().replacingOccurrences(of: "127.0.0.1:\(self.port)", with: "127.0.0.1:\(port)")
+            .replacingOccurrences(of: "Bearer \(bridge.token)", with: "Bearer \(local!.token)")
+        let answer = LockedBox("")
+        let done = expectation(description: "the hook gets an answer")
+        DispatchQueue.global().async {
+            answer.value = Self.send(text, toPort: port)
+            done.fulfill()
+        }
+        try await Task.sleep(nanoseconds: 200_000_000)
+        local?.stop()
+        local = nil
+        await fulfillment(of: [done], timeout: 5)
+        XCTAssertTrue(answer.value.hasPrefix("HTTP/1.1 "), "Got: \(answer.value.prefix(40))")
+    }
+
     // MARK: Raw client
 
     /// One connection: write, optionally wait, read until the server closes.
