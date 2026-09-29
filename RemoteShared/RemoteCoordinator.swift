@@ -317,6 +317,10 @@ final class RemoteCoordinator: ObservableObject {
                 // The service answers a signal for a peer that already left with a non-closing
                 // error. It is a late message from a session that is over, not a service failure.
                 if code == "peer_unavailable" { staleMessagesIgnored += 1; return }
+                if code == "upgrade_required" {
+                    fail("Update Farside on both your Mac and phone to connect to this service.")
+                    return
+                }
                 // Non-closing: `registered` (access "local") and an empty `ice` follow.
                 if !isHost, code == "entitlement_required" { entitlementRequired = true; return }
                 let serviceError = "Connection service: \(code). Check the Mac and retry."
