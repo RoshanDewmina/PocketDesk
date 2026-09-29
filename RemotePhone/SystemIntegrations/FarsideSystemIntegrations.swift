@@ -12,8 +12,7 @@ final class FarsideSystemIntegrations {
     let activity: SessionActivityController
     /// The paired Mac as the Live Activity names it: an opaque id and the name. Tests replace it.
     var macIdentity: () -> (macId: String, name: String)? = { nil }
-    /// Wired to `RemoteCoordinator.routePolicyEpoch` after the route.1 integration lands. Nil keeps
-    /// Live Activities local and is the fail-closed behavior in builds without an authenticated epoch.
+    /// Only an admitted route may register a server-ended activity. Nil keeps the activity local.
     var activityRouteEpoch: () -> String? = { nil }
     var activityPushEnvironment: () -> SessionActivityPushEnvironment? = {
         SessionActivityPushEnvironment.configured()
@@ -37,6 +36,7 @@ final class FarsideSystemIntegrations {
     func attach(_ model: PhoneRemoteModel) {
         guard self.model !== model else { return }
         self.model = model
+        activityRouteEpoch = { [weak model] in model?.connection.routePolicyEpoch }
         observers.removeAll()
         lastSnapshot = nil
         lastActivityPushPairing = nil
