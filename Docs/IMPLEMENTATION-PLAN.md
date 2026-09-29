@@ -1,3 +1,11 @@
+# Hands-on testing deferred; signed .12 source readiness — 29 September 2026
+
+The human asked the coordinated chat to save all hands-on testing for later and focus unfinished preparation. No more phone tasks or physical acceptance are requested in this phase. The .11 portrait Connect/video/automatic-keyboard/draft-controls result is user-reported; exact Test Pad text delivery and gesture/performance results remain uncorroborated. Both installed apps remain .11.
+
+Integrated candidate source `fdaff65` now passes **694 core checks, three optional skips, zero failures**. Signed development Mac and generic iPhone builds `20260929.12` pass; both signatures verify, and the candidate Mac matches the installed host's designated requirement. The initial direct identity-script invocation returned 126 because that repository script is not executable; invoking its existing zsh interpreter passed without changing permissions. The failed receipt is retained. Purchases are disabled and the phone has no signed APNs/associated-domain entitlement. No candidate was installed or launched; these are development build-readiness checks, not distribution archives or a physical `-25244` repair. Installs and actual deletion/relaunch acceptance await coordinated resumption. Receipt: `work/staging-transition-20260929/keychain-reference-removal/build12-readiness-receipt.json`.
+
+The coordinated chat owns isolated associated-domain hosting preparation, preflight-input validation and safe offline hook checks. Root owns native versions/builds, shared contracts and integration. No production/DNS/portal/provider mutation is implied by this phase.
+
 # Physical staging pairing and next source candidates — 29 September 2026
 
 Human scanning completed in the coordinated chat. Actual `.11` host diagnostics confirm Ready/paired, **staging**, Screen Recording and Accessibility Allowed, no watchdog restart and zero sessions at capture. This proves staging pairing/readiness, not delivered video or input. The coordinated chat owns actual phone/Test Pad acceptance; all heavy testing and installs are held during that phase. Receipt: `work/staging-transition-20260929/host-after-staging-pairing.txt`.
