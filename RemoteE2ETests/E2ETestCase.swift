@@ -145,7 +145,24 @@ class E2ETestCase: XCTestCase {
         if let voiceTranscript { arguments += ["--farside-e2e-voice-transcript", voiceTranscript] }
         app.launchArguments = arguments
         app.launchEnvironment = ["FARSIDE_E2E": "1", "FARSIDE_E2E_DIR": E2EPaths.root, "FARSIDE_E2E_RUN_ID": config.runID]
+        // iOS can start the app by itself (a background launch or prewarm) and then bring that copy
+        // forward instead of starting ours, so it runs without these arguments, outside E2E mode.
+        _ = try? harness.request("phone.terminate", timeout: 20)
         app.launch()
+        if !phoneEnteredE2EMode(within: 12) {
+            recorder.note("the phone came up outside E2E mode (a copy iOS had started without the launch arguments); relaunched it once")
+            _ = try? harness.request("phone.terminate", timeout: 20)
+            app.launch()
+        }
+    }
+
+    private func phoneEnteredE2EMode(within seconds: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            if !phone.state.isEmpty { return true }
+            Thread.sleep(forTimeInterval: 0.5)
+        }
+        return false
     }
 
     /// Reaches a live session with control, pairing through the paste flow if needed.

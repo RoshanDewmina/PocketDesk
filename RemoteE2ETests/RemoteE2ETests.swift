@@ -60,6 +60,9 @@ final class RemoteE2ETests: E2ETestCase {
         recorder.metrics["settleSeconds"] = Date().timeIntervalSince(settleStart)
         recorder.check("resolution and quality settled", settled, samples.last ?? "no samples")
         checkPictureVisible("after pairing")
+        if let pointer = host.pointer, let display = host.display, !display.contains(pointer) {
+            throw E2EFailure("The Mac pointer is on another display (pointer \(pointer), captured display \(display)), so the phone correctly draws none. Move it onto the captured display and leave the Mac alone during the run. \(host.summary())")
+        }
         try waitFor("phone drawing the Mac pointer from telemetry", timeout: 10) {
             let pointer = phone.state.object("pointer")
             return pointer.bool("hostSupported") && pointer.bool("drawn")

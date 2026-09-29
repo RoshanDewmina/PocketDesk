@@ -582,6 +582,12 @@ serve_requests() {
       testpad.activate)
         if ensure_testpad && activate_testpad; then reply "$id" true "Test Pad activated"
         else reply "$id" false "Test Pad unavailable"; fi ;;
+      phone.terminate)
+        # Only the phone app on this harness's own simulator. A copy iOS started by itself
+        # (background launch, prewarm) has no E2E arguments and must not be brought forward.
+        local phone_before=$(phone_pid)
+        xcrun simctl terminate "$UDID" "$PHONE_BUNDLE_ID" >/dev/null 2>&1 || true
+        reply "$id" true "phone app ${phone_before:+(pid $phone_before) }terminated" ;;
       mark)
         log "MARK $(jget "$done_file" .label)"; reply "$id" true "marked" ;;
       *)
@@ -629,6 +635,8 @@ prepare_for() {
   activate_testpad
   local covered=$(jget "$ROOT/testpad-state.json" '.coveredBy | if type == "array" then join(", ") else . end')
   [[ -n $covered ]] && log "Test Pad currently covered by: $covered (the scenario relocates it or fails)"
+  local pointer_off=$(host_state 'if (.pointer and .display) then (.pointer.x < .display.x or .pointer.y < .display.y or .pointer.x >= .display.x + .display.width or .pointer.y >= .display.y + .display.height) else false end')
+  [[ $pointer_off == true ]] && log "WARNING: the Mac pointer is on another display than the captured one (pointer $(host_state '.pointer | "\(.x),\(.y)"'), display $(host_state '.display | "\(.x),\(.y) \(.width)x\(.height)"')); leave the Mac alone during the run"
   return 0
 }
 
