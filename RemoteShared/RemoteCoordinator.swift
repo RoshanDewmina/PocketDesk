@@ -196,6 +196,24 @@ final class RemoteCoordinator: ObservableObject {
         do { try store.delete(); hostPair = nil; invitation = nil; status = "Pairing removed. Old credentials no longer work." }
         catch { status = error.localizedDescription }
     }
+    /// Completes an already confirmed phone unlink without deleting a replacement pairing.
+    /// The persistent read is authoritative: a locked Keychain must remain retryable.
+    func removePhonePairingIfMatching(room: String, server: String, tokenDigest: String) throws -> Bool {
+        guard !isHost else { return false }
+        func matches(_ pair: PairInvitation) -> Bool {
+            pair.room == room && pair.server == server && SecureRandom.digest(pair.token) == tokenDigest
+        }
+        if let saved = try store.read(PairInvitation.self) {
+            guard matches(saved) else { return false }
+            try store.delete()
+        }
+        if let current = invitation, matches(current) {
+            stop()
+            invitation = nil
+            status = "Pairing removed. Pair again to connect."
+        }
+        return true
+    }
     func stop() {
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
         routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
