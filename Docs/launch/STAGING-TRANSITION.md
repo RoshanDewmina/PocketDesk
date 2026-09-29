@@ -1,6 +1,6 @@
 # Staging transition for native acceptance — 29 September 2026
 
-Approved through the human “continue” in the coordinated Farside chat, verified against its preceding staging-transition final. Applied on 29 September 2026 to existing staging resources only. Both migrations passed; schema inventory and health passed. Independent disposable-room protocol acceptance passed 53/53 assertions; disposable cleanup returned 204. Both signed native `.10` builds from integrated `f68c912` are installed/launched. Host identity and actual runtime grants were preserved. Fresh staging pairing and physical acceptance remain pending.
+Approved through the human “continue” in the coordinated Farside chat, verified against its preceding staging-transition final. Applied on 29 September 2026 to existing staging resources only. Both migrations passed; schema inventory and health passed. Independent disposable-room protocol acceptance passed 53/53 assertions; disposable cleanup returned 204. Both signed native `.11` builds from integrated `d50c8da` are installed/launched after the reviewed local-removal and selected-service fixes. Host identity and actual runtime grants were preserved. Fresh staging pairing and physical acceptance remain pending.
 
 Backend source `8dca8339c6015c061d90fba2986f4fa4c5da75b6`; Worker version `ae445b1b-8b93-409d-9bc3-ff719d72e283`. Previous version `f6e256f3-9263-494c-9353-c985dcd45a8b` and D1 recovery bookmark are retained in `work/staging-transition-20260929/`. No production or new paid resource was created.
 
