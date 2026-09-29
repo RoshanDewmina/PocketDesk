@@ -93,6 +93,7 @@ targets:
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: PocketDesk
+        INFOPLIST_FILE: RemotePhone/Info.plist
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Discover and connect securely to your paired Mac.
         INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing code shown on your Mac.

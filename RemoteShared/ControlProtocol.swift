@@ -20,8 +20,13 @@ struct RemoteAction: Codable {
     var clipboard: ClipboardFrame? = nil
     var features: [String]? = nil
     var hostState: String? = nil
+    /// Sender-side stream stages for the phone's optional statistics overlay. Older phones ignore it.
+    var hostStream: HostStreamSummary? = nil
 
     func validate() throws {
+        // Before the extension early returns, so no other action can carry an unchecked summary.
+        try hostStream?.validate()
+        guard hostStream == nil || action == "capture" else { throw RemoteError.invalidMessage }
         if try validateSessionExtension() { return }
         if try validatePointerSync() { return }
         try interaction?.validate()

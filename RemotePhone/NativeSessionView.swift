@@ -27,6 +27,8 @@ struct NativeSessionView: View {
     @State private var revision: UInt64 = 0
     @AppStorage("pointerSensitivity") private var sensitivity = 1.0
     @AppStorage(PointerSizePreference.key) private var pointerSize: PointerSizePreference = .medium
+    @AppStorage(StreamDebug.defaultsKey) private var streamStatsEnabled = false
+    @AppStorage(StreamTuning.legacyDefaultsKey) private var legacyStreamTuning = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.scenePhase) private var scenePhase
@@ -166,7 +168,7 @@ struct NativeSessionView: View {
             PhoneTheme.letterbox
             let rect = viewport.contentRect
             if let track = connection.remoteVideo, !model.contentConcealed {
-                RemoteVideoSurface(track: track, onFrame: model.frameReceived)
+                RemoteVideoSurface(track: track, counters: connection.media?.counters, onFrame: model.frameReceived)
                     .frame(width: rect.width, height: rect.height)
                     .position(x: rect.midX, y: rect.midY)
             } else if offlineLayoutCheck {
@@ -211,16 +213,16 @@ struct NativeSessionView: View {
 
     @ViewBuilder private var topPills: some View {
         VStack(spacing: 8) {
-            if StreamDebug.enabled && !model.streamSummaryLines.isEmpty {
-                VStack(alignment: .leading, spacing: 3) {
-                    ForEach(Array(model.streamSummaryLines.prefix(3).enumerated()), id: \.offset) { _, line in
-                        Text(line)
+            if streamStatsEnabled && !model.streamSummaryLines.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(model.streamSummaryLines.enumerated()), id: \.offset) { _, line in
+                        Text(line).lineLimit(1).minimumScaleFactor(0.7)
                     }
                 }
-                .font(.system(size: 10, design: .monospaced))
+                .font(.system(size: 9.5, design: .monospaced))
                 .foregroundStyle(.white)
                 .padding(8)
-                .frame(maxWidth: 320, alignment: .leading)
+                .frame(maxWidth: 380, alignment: .leading)
                 .background(.black.opacity(0.78), in: .rect(cornerRadius: 10))
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
@@ -986,6 +988,17 @@ struct NativeSessionView: View {
                 .font(.footnote).foregroundStyle(.secondary)
             if !offlineLayoutCheck, let status = model.streamQualityStatus {
                 Text(status).font(.footnote).foregroundStyle(PhoneTheme.caution)
+            }
+            Toggle("Stream statistics", isOn: $streamStatsEnabled)
+            if streamStatsEnabled {
+                Text("Shows per-stage timing over the picture and records it on this iPhone for export.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if let log = StreamDebug.logFileURL {
+                    ShareLink(item: log) { Label("Export statistics log", systemImage: "square.and.arrow.up") }
+                }
+                Toggle("Previous stream tuning", isOn: $legacyStreamTuning)
+                Text("For comparison tests. Applies after PocketDesk is closed and reopened.")
+                    .font(.footnote).foregroundStyle(.secondary)
             }
         } header: {
             Text("Picture")

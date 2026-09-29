@@ -94,6 +94,7 @@ final class RemoteCapture {
 
     private var ownership = ScopedCaptureOwner()
     private var session: RemoteCaptureSession?
+    private weak var streamPeer: PeerMedia?
     private var requestedQuality: StreamQuality = .balanced
     private var requestedShowsCursor = true
     private var captureStarted = false
@@ -121,6 +122,7 @@ final class RemoteCapture {
         captureStarted = false
         appliedQuality = nil
         resetCursor()
+        streamPeer = nil
         let previous = session
         session = nil
         await previous?.stop()
@@ -149,6 +151,8 @@ final class RemoteCapture {
             guard ownership.owns(owner), session === next else { throw CancellationError() }
             captureStarted = true
             appliedQuality = initialQuality
+            streamPeer = peer
+            peer.applyStreamQuality(initialQuality)
             onQuality?(initialQuality)
             scheduleQualityUpdate()
             return owner
@@ -174,6 +178,7 @@ final class RemoteCapture {
         appliedQuality = nil
         resetCursor()
         captureStarted = false
+        streamPeer = nil
         let previous = session
         session = nil
         guard let previous else { return nil }
@@ -200,6 +205,7 @@ final class RemoteCapture {
             if succeeded {
                 if quality != appliedQuality {
                     self.appliedQuality = quality
+                    streamPeer?.applyStreamQuality(quality)
                     onQuality?(quality)
                 }
                 let before = cursorInVideo
@@ -231,8 +237,33 @@ final class RemoteCapture {
     }
 }
 
+/// Converts ScreenCaptureKit's `displayTime` (mach absolute time) into display→callback delay.
+enum CaptureTiming {
+    private static let timebase: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
+
+    static func milliseconds(fromMachTicks ticks: UInt64) -> Double {
+        Double(ticks) * Double(timebase.numer) / Double(timebase.denom) / 1_000_000
+    }
+
+    static func displayLatencyMs(displayTime: UInt64, now: UInt64 = mach_absolute_time()) -> Double? {
+        guard displayTime > 0, now >= displayTime else { return nil }
+        let latency = milliseconds(fromMachTicks: now - displayTime)
+        return latency < 1_000 ? latency : nil
+    }
+}
+
+enum RemoteCaptureConfiguration {
+    /// Deeper than ScreenCaptureKit's minimum of three: the idle-refresh copy and the encoder each
+    /// hold a surface, and Apple's capture sample uses five to keep a high frame rate without stalls.
+    static let queueDepth = 5
+}
+
 private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
-    private let queue = DispatchQueue(label: "PocketDesk.capture")
+    private let queue = DispatchQueue(label: "PocketDesk.capture", qos: .userInteractive)
     private var stream: SCStream!
     private var peer: PeerMedia?
     private var timer: DispatchSourceTimer?
@@ -268,7 +299,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         configuration.width = fitted?.width ?? dimensions.width
         configuration.height = fitted?.height ?? dimensions.height
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
-        configuration.queueDepth = 3
+        configuration.queueDepth = RemoteCaptureConfiguration.queueDepth
         configuration.showsCursor = showsCursor
         configuration.capturesAudio = false
         configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
@@ -337,7 +368,11 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
         let now = CACurrentMediaTime()
         health.observe(status, at: now)
-        if status == .complete || status == .idle { peer?.counters.captured(idle: status == .idle) }
+        if status == .complete || status == .idle {
+            let displayTime = (attachments.first?[.displayTime] as? NSNumber)?.uint64Value ?? 0
+            peer?.counters.captured(idle: status == .idle,
+                                    displayLatencyMs: CaptureTiming.displayLatencyMs(displayTime: displayTime))
+        }
         guard status == .complete,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer),
               peer != nil else { return }

@@ -32,7 +32,9 @@ final class PocketDeskVideoEncoderFactory: NSObject, RTCVideoEncoderFactory {
         NativeCodecCapability.supportsLevel52 ? H264LevelPolicy.codecs(fallback.supportedCodecs()) : fallback.supportedCodecs()
     }
     func createEncoder(_ info: RTCVideoCodecInfo) -> (any RTCVideoEncoder)? {
-        if info.name == kRTCVideoCodecH264Name { return RTCVideoEncoderH264(codecInfo: info) }
+        if info.name == kRTCVideoCodecH264Name {
+            return StreamTuning.current.encoderRestart ? DesktopH264Encoder(codecInfo: info) : RTCVideoEncoderH264(codecInfo: info)
+        }
         return fallback.createEncoder(info)
     }
 }
