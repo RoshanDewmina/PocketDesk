@@ -161,6 +161,131 @@ final class NativeInputSafetyTests: XCTestCase {
         XCTAssertFalse(driver.handle(scroll("b", "changed", y: 3), upgraded: true, now: 5.7).accepted)
     }
 
+    func testLaggingCursorDoesNotLoseMotionOrPullClicksBack() {
+        // WindowServer applies each posted event only when the next one arrives (one event late).
+        let recorder = NativeInputRecorder()
+        recorder.lagsByOneEvent = true
+        let driver = configuredDriver(recorder)
+        var now = 10.0
+        for _ in 1...10 {
+            now += 1.0 / 120.0
+            XCTAssertTrue(driver.handle(action("move", count: 1, x: 5), upgraded: true, now: now).accepted)
+        }
+        XCTAssertEqual(driver.lastPoint, CGPoint(x: 150, y: 100), "Ten moves of five land fifty away, not on a stale base")
+        XCTAssertEqual(recorder.mouseEvents.last?.point, CGPoint(x: 150, y: 100))
+        now += 0.05
+        XCTAssertTrue(driver.handle(action("click", count: 1), upgraded: true, now: now).accepted)
+        XCTAssertEqual(recorder.mouseEvents.suffix(2).map(\.point), [CGPoint(x: 150, y: 100), CGPoint(x: 150, y: 100)],
+                       "A tap right after a move clicks where the move went, not where the cursor still reads")
+
+        // A physical mouse moved the cursor somewhere the driver never posted: trust it.
+        recorder.pointer = CGPoint(x: 20, y: 30)
+        now += 0.01
+        XCTAssertTrue(driver.handle(action("move", count: 1, x: 5), upgraded: true, now: now).accepted)
+        XCTAssertEqual(driver.lastPoint, CGPoint(x: 25, y: 30))
+
+        // After a pause the cursor is read again even if it sits on an old post.
+        recorder.lagsByOneEvent = false
+        recorder.pointer = CGPoint(x: 150, y: 100)
+        now += RemoteInputDriver.pointerChainWindow + 0.01
+        XCTAssertTrue(driver.handle(action("move", count: 1, x: 5), upgraded: true, now: now).accepted)
+        XCTAssertEqual(driver.lastPoint, CGPoint(x: 155, y: 100))
+    }
+
+    func testNewGeometryOrSessionDiscardsThePreviousPointerChain() {
+        for geometryChange in [false, true] {
+            let recorder = NativeInputRecorder()
+            let driver = configuredDriver(recorder)
+            XCTAssertTrue(driver.handle(action("move", count: 1, x: 10), upgraded: true, now: 10).accepted)
+            XCTAssertEqual(driver.lastPoint.x, 110)
+            // WindowServer still reports the old position while the session or geometry changes.
+            if geometryChange {
+                driver.configure(bounds: CGRect(x: 0, y: 0, width: 500, height: 500))
+            } else {
+                driver.resetNativeSequence()
+            }
+            XCTAssertEqual(driver.nextPointerBase(now: 10.01), recorder.pointer)
+            XCTAssertTrue(driver.handle(action("move", count: 1, x: 5), upgraded: true, now: 10.01).accepted)
+            XCTAssertEqual(driver.lastPoint.x, 105, "A previous stream cannot supply the new stream's base")
+        }
+    }
+
+    func testTheNextPointerBaseIsWhatTheDriverWillUseAndRecordsNothing() {
+        let recorder = NativeInputRecorder()
+        recorder.lagsByOneEvent = true
+        let driver = configuredDriver(recorder)
+        var now = 10.0
+        for _ in 1...4 {
+            now += 1.0 / 120.0
+            XCTAssertTrue(driver.handle(action("move", count: 1, x: 5), upgraded: true, now: now).accepted)
+        }
+        now += 0.01
+        XCTAssertNotEqual(recorder.pointer, driver.lastPoint, "The cursor still lags the posted point")
+        XCTAssertEqual(driver.nextPointerBase(now: now), driver.lastPoint, "While chaining, the base is the last post")
+        XCTAssertEqual(driver.nextPointerBase(now: now), driver.lastPoint, "Asking twice changes nothing")
+        XCTAssertTrue(driver.handle(action("click", count: 1), upgraded: true, now: now).accepted)
+        XCTAssertEqual(recorder.mouseEvents.last?.point, CGPoint(x: 120, y: 100))
+
+        now += RemoteInputDriver.pointerChainWindow + 0.01
+        recorder.lagsByOneEvent = false
+        recorder.pointer = CGPoint(x: 40, y: 50)
+        XCTAssertEqual(driver.nextPointerBase(now: now), CGPoint(x: 40, y: 50), "A moved cursor is read again")
+    }
+
+    /// The E2E fence clamps moves into the Test Pad and checks clicks against the base the driver
+    /// will post from, so a lagging cursor can never walk a fenced click out of the pad.
+    func testTheE2EFenceJudgesTheDriversOwnBaseUnderLag() throws {
+        let recorder = NativeInputRecorder()
+        recorder.lagsByOneEvent = true
+        let driver = configuredDriver(recorder)
+        let pad = CGRect(x: 60, y: 60, width: 70, height: 80)
+        var now = 10.0
+        for _ in 1...20 {
+            now += 1.0 / 120.0
+            let base = try XCTUnwrap(driver.nextPointerBase(now: now))
+            let environment = HostE2EFenceEnvironment(testPadRunning: true, testPadFrontmost: true, testPadContent: pad,
+                                                      pointer: base, coveringOwner: nil)
+            var move = action("move", count: 1, x: 5)
+            switch HostE2EInputFence.decide(move, held: false, allowSpaceKeys: false, environment: environment) {
+            case .allow: break
+            case .adjust(let dx, let dy): move.x = dx; move.y = dy
+            case .reject(let reason): XCTFail(reason); return
+            }
+            XCTAssertTrue(driver.handle(move, upgraded: true, now: now, pointerSnapshot: base).accepted)
+            XCTAssertTrue(pad.insetBy(dx: HostE2EInputFence.edgeInset, dy: HostE2EInputFence.edgeInset)
+                .contains(driver.lastPoint), "Posted \(driver.lastPoint) stays in the pad")
+        }
+        now += 0.01
+        let base = try XCTUnwrap(driver.nextPointerBase(now: now))
+        let environment = HostE2EFenceEnvironment(testPadRunning: true, testPadFrontmost: true, testPadContent: pad,
+                                                  pointer: base, coveringOwner: nil)
+        XCTAssertEqual(HostE2EInputFence.decide(action("click", count: 1), held: false, allowSpaceKeys: false,
+                                                environment: environment), .allow)
+        XCTAssertTrue(driver.handle(action("click", count: 1), upgraded: true, now: now, pointerSnapshot: base).accepted)
+        XCTAssertTrue(pad.contains(recorder.mouseEvents.last!.point), "The click lands where the fence judged it")
+    }
+
+    func testFencedPointerSnapshotSurvivesWindowServerMovementBeforeInjection() throws {
+        for name in ["move", "click", "dragDown"] {
+            let recorder = NativeInputRecorder()
+            let driver = configuredDriver(recorder)
+            let pad = CGRect(x: 60, y: 60, width: 70, height: 80)
+            let base = try XCTUnwrap(driver.nextPointerBase(now: 10))
+            let environment = HostE2EFenceEnvironment(testPadRunning: true, testPadFrontmost: true,
+                testPadContent: pad, pointer: base, coveringOwner: nil)
+            let input = action(name, count: 1, hold: name == "dragDown" ? "snapshot-hold" : nil,
+                               x: name == "move" ? 5 : 0)
+            XCTAssertEqual(HostE2EInputFence.decide(input, held: false, allowSpaceKeys: false,
+                                                   environment: environment), .allow)
+            // A physical move or delayed WindowServer event lands outside the pad after admission.
+            recorder.pointer = CGPoint(x: 190, y: 190)
+            XCTAssertTrue(driver.handle(input, upgraded: true, now: 10, pointerSnapshot: base).accepted)
+            let expected = CGPoint(x: name == "move" ? 105 : 100, y: 100)
+            XCTAssertEqual(recorder.mouseEvents.last?.point, expected)
+            XCTAssertTrue(pad.contains(try XCTUnwrap(recorder.mouseEvents.last?.point)))
+        }
+    }
+
     func testRetiredIdentityWindowDoesNotExhaustLongSession() {
         let recorder = NativeInputRecorder()
         let driver = configuredDriver(recorder)
@@ -200,11 +325,22 @@ private final class NativeInputRecorder {
     var pointer = CGPoint(x: 100, y: 100)
     var mouseEvents: [RemoteInputEventSink.MouseEvent] = []
     var scrolls: [(Double, Double)] = []
+    /// Simulates WindowServer applying a posted pointer event only when the next one is posted.
+    var lagsByOneEvent = false
+    private var pendingPointer: CGPoint?
 
     var sink: RemoteInputEventSink {
         RemoteInputEventSink(
             pointerLocation: { [weak self] in self?.pointer ?? .zero },
-            mouseSequence: { [weak self] events in self?.mouseEvents.append(contentsOf: events); return true },
+            mouseSequence: { [weak self] events in
+                guard let self else { return true }
+                self.mouseEvents.append(contentsOf: events)
+                if self.lagsByOneEvent, let last = events.last {
+                    if let pending = self.pendingPointer { self.pointer = pending }
+                    self.pendingPointer = last.point
+                }
+                return true
+            },
             scroll: { [weak self] _, x, y in self?.scrolls.append((x, y)); return true },
             scrollDetailed: { [weak self] _, x, y, _ in self?.scrolls.append((x, y)); return true },
             text: { _ in true },

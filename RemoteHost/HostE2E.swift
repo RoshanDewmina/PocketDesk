@@ -236,8 +236,8 @@ final class HostE2E {
 
     /// Returns the action to inject, or a rejection reason. Pure decisions live in
     /// `HostE2EInputFence` so they can be unit tested without a window server.
-    func fence(_ action: RemoteAction, held: Bool) -> (RemoteAction?, String) {
-        let environment = HostE2EFenceEnvironment.live(testPad: testPad, fresh: action.action != "move")
+    func fence(_ action: RemoteAction, held: Bool, pointer: CGPoint? = nil) -> (RemoteAction?, String) {
+        let environment = HostE2EFenceEnvironment.live(testPad: testPad, fresh: action.action != "move", pointer: pointer)
         let verdict = HostE2EInputFence.decide(action, held: held, allowSpaceKeys: allowSpaceKeys,
                                                environment: environment)
         switch verdict {

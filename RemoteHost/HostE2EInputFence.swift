@@ -16,9 +16,11 @@ struct HostE2EFenceEnvironment {
     /// drags and scrolls always take a fresh snapshot before deciding.
     @MainActor private static var cached: (at: TimeInterval, pid: pid_t?, windows: [E2EWindowCover.Window])?
 
+    /// `pointer`: where the input driver will start the next event (it chains from its last posted
+    /// point while the window server's cursor lags); the cursor as read now when not given.
     @MainActor
-    static func live(testPad: E2ETestPadGeometry, fresh: Bool) -> Self {
-        let pointer = CGEvent(source: nil)?.location ?? .zero
+    static func live(testPad: E2ETestPadGeometry, fresh: Bool, pointer base: CGPoint? = nil) -> Self {
+        let pointer = base ?? CGEvent(source: nil)?.location ?? .zero
         let now = ProcessInfo.processInfo.systemUptime
         if fresh || cached == nil || now - cached!.at > 0.25 {
             let pid = NSRunningApplication.runningApplications(withBundleIdentifier: E2E.testPadBundleID).first?.processIdentifier
@@ -78,8 +80,14 @@ enum HostE2EInputFence {
         case "move":
             let pointer = environment.pointer
             let target = CGPoint(x: pointer.x + action.x, y: pointer.y + action.y)
-            let clamped = CGPoint(x: min(content.maxX, max(content.minX, target.x)),
-                                  y: min(content.maxY, max(content.minY, target.y)))
+            // Keep a representable interior margin: nextDown is lost when converting a
+            // distant pointer to a relative delta and adding that delta back at injection.
+            let minX = min(content.midX, content.minX + 0.5)
+            let minY = min(content.midY, content.minY + 0.5)
+            let maxX = max(content.midX, content.maxX - 0.5)
+            let maxY = max(content.midY, content.maxY - 0.5)
+            let clamped = CGPoint(x: min(maxX, max(minX, target.x)),
+                                  y: min(maxY, max(minY, target.y)))
             if clamped == target { return .allow }
             return .adjust(dx: Double(clamped.x - pointer.x), dy: Double(clamped.y - pointer.y))
         case "click", "right", "double", "dragDown", "scroll":

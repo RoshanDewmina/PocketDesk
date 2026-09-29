@@ -78,9 +78,11 @@ enum PointerShape: String, CaseIterable, Equatable {
 struct HostPointerTelemetryPolicy {
     static let capabilityLifetime: TimeInterval = 1.0
     static let keepalive: TimeInterval = 0.25
-    /// A just-posted move precedes WindowServer's cursor update, by well over 50 ms on a loaded Mac.
-    /// Report the injected point until the observed cursor reaches it or this much time passes.
-    static let injectionSettle: TimeInterval = 0.15
+    /// A just-posted move precedes WindowServer's cursor update, by hundreds of milliseconds on a
+    /// loaded Mac (29 Sep clip: the real cursor ran 300-500 ms behind the phone). Report the injected
+    /// point until the observed cursor reaches it or this much time passes; catching up ends the
+    /// bridge early, so a physical mouse is masked only while the cursor is genuinely late.
+    static let injectionSettle: TimeInterval = 0.5
     static let injectionTolerance: CGFloat = 0.5
     /// After falling back to the captured cursor, wait before hiding it again to avoid capture churn.
     static let rehideCooldown: TimeInterval = 2.0
