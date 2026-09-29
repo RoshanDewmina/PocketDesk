@@ -34,12 +34,32 @@ final class AnywhereAccess: ObservableObject {
     private(set) var grant: EntitlementGrant?
     var serviceURL: () -> URL? = { nil }
 
-    struct RemovalState: Codable { var pending: ServerDataRemovalRequest? }
+    /// Identifies only the pairing that was present when unlink began; no screen key is retained.
+    struct CleanupPairing: Codable, Equatable {
+        let room: String
+        let server: String
+        let tokenDigest: String
+
+        init(_ invitation: PairInvitation) {
+            room = invitation.room
+            server = invitation.server
+            tokenDigest = SecureRandom.digest(invitation.token)
+        }
+    }
+    struct RemovalState: Codable {
+        var pending: ServerDataRemovalRequest?
+        var cleanup: CleanupPairing?
+    }
     @Published private(set) var removalPending = false
+    @Published private(set) var localCleanupPending = false
     private let removalPersistence: (any PairPersistence)?
     private var removalState: RemovalState?
     private var removing = false
     @Published private(set) var removalRecoveryRequired = false
+    var cleanupPairing: CleanupPairing? { removalState?.pending == nil ? removalState?.cleanup : nil }
+    var removalCompleted: Bool { removalState != nil && removalState?.pending == nil && !removalRecoveryRequired }
+    /// Also blocks background reconnection after unlink until a person explicitly starts again.
+    var phoneConnectionAllowed: Bool { removalState == nil && !removalRecoveryRequired }
 
     private let source: AnywhereEntitlementSource
     private let makeClient: (URL) -> EntitlementVerifying
@@ -65,9 +85,10 @@ final class AnywhereAccess: ObservableObject {
         do {
             removalState = try removalPersistence?.read(RemovalState.self)
             removalPending = removalState?.pending != nil
+            localCleanupPending = removalState?.pending == nil && removalState?.cleanup != nil
         } catch {
             // An unreadable marker may represent a confirmed unlink. Never relink silently.
-            removalState = RemovalState(pending: nil)
+            removalState = RemovalState(pending: nil, cleanup: nil)
             removalPending = true
             removalRecoveryRequired = true
         }
@@ -86,6 +107,7 @@ final class AnywhereAccess: ObservableObject {
     /// non-closing `entitlement_required` triggers one verification and, if it yields a token, one reconnect.
     func attach(_ connection: RemoteCoordinator, store: AnywhereStore) {
         connection.advertisesRemoteAccess = true
+        connection.startAllowed = { [weak self] in self?.phoneConnectionAllowed ?? false }
         connection.entitlementToken = { [weak self, weak connection] in
             guard let server = connection?.invitation?.server else { return nil }
             return self?.currentToken(forSignalingServer: server)
@@ -168,9 +190,13 @@ final class AnywhereAccess: ObservableObject {
     /// Before a person-started connection: gets a token if none is held, but never holds the
     /// connection back longer than `timeout`. A late answer still lands for the next attempt.
     func prepareForConnection(timeout: TimeInterval = 4) async {
-        guard !removalPending else { return }
+        guard !removalPending, !localCleanupPending, !removalRecoveryRequired else { return }
         // Only an explicit new Connect resumes verification after a completed unlink.
-        if removalState != nil { removalState = nil; try? removalPersistence?.delete() }
+        if removalState != nil {
+            do { try removalPersistence?.delete() }
+            catch { return }
+            removalState = nil
+        }
         guard source.entitlement.hasAccess else { return }
         guard currentToken() == nil else {
             if grant?.needsRefresh(at: now()) == true { Task { await refresh() } }
@@ -221,15 +247,12 @@ final class AnywhereAccess: ObservableObject {
     }
 
     /// Keeps removal proof in the Keychain before stopping verification. A lost response is retryable.
-    func unlinkDevice(using remover: any ServerDataRemoving = HTTPServerDataRemover()) async throws {
-        guard !removing else { return }
-        if removalRecoveryRequired {
-            let recovered = try removalPersistence?.read(RemovalState.self)
-            removalState = recovered
-            removalPending = recovered?.pending != nil
-            removalRecoveryRequired = false
-            if recovered != nil && recovered?.pending == nil { clear(); return }
-        }
+    func unlinkDevice(pairing: PairInvitation? = nil,
+                      using remover: any ServerDataRemoving = HTTPServerDataRemover()) async throws {
+        guard !removing else { throw ServerDataRemovalError.unavailable }
+        try recoverRemovalState()
+        // A 204 already arrived. Repeating the server request cannot repair local Keychain cleanup.
+        if removalCompleted { return }
         let request: ServerDataRemovalRequest
         if let pending = removalState?.pending { request = pending }
         else {
@@ -239,7 +262,7 @@ final class AnywhereAccess: ObservableObject {
             }
             request = ServerDataRemovalRequest(kind: .device, serviceOrigin: serviceOrigin, identifier: device, proof: token)
             _ = try request.httpRequest()
-            let pending = RemovalState(pending: request)
+            let pending = RemovalState(pending: request, cleanup: pairing.map(CleanupPairing.init))
             try removalPersistence?.save(pending)
             removalState = pending
             removalPending = true
@@ -250,18 +273,42 @@ final class AnywhereAccess: ObservableObject {
         defer { removing = false }
         try await remover.remove(request)
         // Persist suppression before clearing the grant: a restart must not re-link through listeners.
-        let completed = RemovalState(pending: nil)
+        let completed = RemovalState(pending: nil, cleanup: removalState?.cleanup)
         try removalPersistence?.save(completed)
         removalState = completed
         removalPending = false
+        localCleanupPending = completed.cleanup != nil
         clear()
+    }
+
+    /// Retry after a locked Keychain read; keep connection and verification closed until it succeeds.
+    func recoverRemovalState() throws {
+        guard removalRecoveryRequired else { return }
+        let recovered = try removalPersistence?.read(RemovalState.self)
+        removalState = recovered
+        removalPending = recovered?.pending != nil
+        localCleanupPending = recovered?.pending == nil && recovered?.cleanup != nil
+        removalRecoveryRequired = false
+    }
+
+    /// Call only after the coordinator has removed, or safely superseded, the original pairing.
+    func acknowledgeLocalCleanup(_ pairing: CleanupPairing) throws {
+        guard !removalRecoveryRequired, removalState?.pending == nil,
+              removalState?.cleanup == pairing else { throw ServerDataRemovalError.invalidProof }
+        let completed = RemovalState(pending: nil, cleanup: nil)
+        try removalPersistence?.save(completed)
+        removalState = completed
+        localCleanupPending = false
     }
 
     func cancelRemoval() throws {
         guard !removing else { return }
+        try recoverRemovalState()
+        guard removalState?.pending != nil else { throw ServerDataRemovalError.invalidProof }
         try removalPersistence?.delete()
         removalState = nil
         removalPending = false
+        localCleanupPending = false
         removalRecoveryRequired = false
     }
 
