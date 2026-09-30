@@ -16,6 +16,24 @@ enum PortraitWindowPlacement {
     static func screenRelativeContentRect(for screenFrame: CGRect) -> CGRect {
         CGRect(origin: .zero, size: screenFrame.size)
     }
+    static func matches(windowID: UInt32?, ownerPID: Int32?, screenID: UInt32?, displayFound: Bool,
+                        captureFrame: CGRect?, expectedWindowID: UInt32, expectedOwnerPID: Int32,
+                        expectedDisplayID: UInt32, displayBounds: CGRect) -> Bool {
+        guard windowID == expectedWindowID, ownerPID == expectedOwnerPID, screenID == expectedDisplayID,
+              displayFound, let frame = captureFrame else { return false }
+        // Preserve the original sub-point tolerance; inferred order-front scaling is never accepted.
+        return abs(frame.minX - displayBounds.minX) < 1 && abs(frame.minY - displayBounds.minY) < 1
+            && abs(frame.width - displayBounds.width) < 1 && abs(frame.height - displayBounds.height) < 1
+    }
+}
+
+struct PortraitPlacementDeadline {
+    private let endMs: Double
+    init(startMs: Double) { endMs = startMs + 5000 }
+    func remainingNanoseconds(nowMs: Double) -> UInt64? {
+        guard endMs.isFinite, nowMs.isFinite, nowMs < endMs else { return nil }
+        return UInt64(max(1, min(5000, endMs - nowMs) * 1_000_000))
+    }
 }
 
 enum PortraitCreationPreflight {

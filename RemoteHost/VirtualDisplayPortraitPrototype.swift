@@ -164,31 +164,11 @@ private final class PortraitController: NSObject, NSWindowDelegate {
             let relativeContentRect = PortraitWindowPlacement.screenRelativeContentRect(for: screen.frame)
             let window = NSWindow(contentRect: relativeContentRect, styleMask: .borderless, backing: .buffered, defer: false, screen: screen)
             window.isReleasedWhenClosed = false; window.title = "Farside synthetic portrait fixture"
+            window.animationBehavior = .none
             window.contentView = view; window.collectionBehavior = [.canJoinAllSpaces, .stationary]
             window.orderFrontRegardless(); owned.window = window; owned.view = view
             view.start()
-            let shareable = try await discover(owned)
-            guard admission.accepts(token) else { throw PortraitPrototypeFailure.rejected("cancelled before capture identity inspection") }
-            let requestedWindowID = CGWindowID(window.windowNumber)
-            let matchingWindow = shareable.windows.first { $0.windowID == requestedWindowID }
-            let ownWindow = matchingWindow.flatMap { $0.owningApplication?.processID == getpid() ? $0 : nil }
-            let displayFound = shareable.displays.contains { $0.displayID == owned.displayID }
-            // Bound diagnostics to the exact requested window and owned screen; no titles or unrelated windows.
-            report["placement"] = ["requestedWindowID": requestedWindowID, "requestedDisplayID": owned.displayID,
-                                   "expectedOwnerPID": getpid(), "matchedWindowID": matchingWindow.map { $0.windowID } as Any? ?? NSNull(),
-                                   "matchedOwnerPID": matchingWindow?.owningApplication?.processID as Any? ?? NSNull(),
-                                   "ownWindowFound": ownWindow != nil, "displayFound": displayFound,
-                                   "windowScreenID": window.screen.map { Self.screenID($0) } as Any? ?? NSNull(),
-                                   "windowFrame": Self.rectReport(window.frame), "targetScreenFrame": Self.rectReport(screen.frame),
-                                   "windowScreenFrame": window.screen.map { Self.rectReport($0.frame) } as Any? ?? NSNull(),
-                                   "initializerContentRect": Self.rectReport(relativeContentRect),
-                                   "cgDisplayBounds": Self.rectReport(CGDisplayBounds(owned.displayID)),
-                                   "scWindowFrame": matchingWindow.map { Self.rectReport($0.frame) } as Any? ?? NSNull()]
-            guard let ownWindow, displayFound,
-                  window.screen.map({ Self.screenID($0) == owned.displayID }) == true,
-                  Self.nearlyEqual(ownWindow.frame, CGDisplayBounds(owned.displayID)) else {
-                throw PortraitPrototypeFailure.rejected("capture identity/placement verification failed")
-            }
+            let ownWindow = try await verifiedCaptureWindow(owned, window: window, screen: screen, initializerRect: relativeContentRect)
             let filter = SCContentFilter(desktopIndependentWindow: ownWindow)
             guard abs(filter.contentRect.width - 430) < 1, abs(filter.contentRect.height - 932) < 1,
                   abs(Double(filter.pointPixelScale) - Double(options.mode.scale)) < 0.01 else {
@@ -268,8 +248,48 @@ private final class PortraitController: NSObject, NSWindowDelegate {
         }
     }
 
-    private func discover(_ owned: PortraitResources) async throws -> SCShareableContent {
-        try await withCheckedThrowingContinuation { continuation in
+    private func verifiedCaptureWindow(_ owned: PortraitResources, window: NSWindow, screen: NSScreen,
+                                       initializerRect: CGRect) async throws -> SCWindow {
+        let beganMs = MachClock.nowMs()
+        let deadline = PortraitPlacementDeadline(startMs: beganMs)
+        let requestedWindowID = CGWindowID(window.windowNumber)
+        var attempts = 0
+        while admission.accepts(owned.token), deadline.remainingNanoseconds(nowMs: MachClock.nowMs()) != nil {
+            let shareable = try await discover(owned, within: deadline)
+            guard admission.accepts(owned.token) else { throw PortraitPrototypeFailure.rejected("cancelled before capture identity inspection") }
+            attempts += 1
+            let matchingWindow = shareable.windows.first { $0.windowID == requestedWindowID }
+            let displayFound = shareable.displays.contains { $0.displayID == owned.displayID }
+            let windowScreenID = window.screen.map { Self.screenID($0) }
+            let withinDeadline = deadline.remainingNanoseconds(nowMs: MachClock.nowMs()) != nil
+            let verified = withinDeadline && PortraitWindowPlacement.matches(windowID: matchingWindow?.windowID,
+                ownerPID: matchingWindow?.owningApplication?.processID, screenID: windowScreenID, displayFound: displayFound,
+                captureFrame: matchingWindow?.frame, expectedWindowID: requestedWindowID, expectedOwnerPID: getpid(),
+                expectedDisplayID: owned.displayID, displayBounds: CGDisplayBounds(owned.displayID))
+            // Replace a single bounded record; never accumulate snapshots, titles or unrelated window data.
+            report["placement"] = ["requestedWindowID": requestedWindowID, "requestedDisplayID": owned.displayID,
+                                   "expectedOwnerPID": getpid(), "matchedWindowID": matchingWindow.map { $0.windowID } as Any? ?? NSNull(),
+                                   "matchedOwnerPID": matchingWindow?.owningApplication?.processID as Any? ?? NSNull(),
+                                   "ownWindowFound": matchingWindow?.owningApplication?.processID == getpid(), "displayFound": displayFound,
+                                   "windowScreenID": windowScreenID as Any? ?? NSNull(), "attempts": attempts,
+                                   "elapsedMs": MachClock.nowMs() - beganMs, "verified": verified, "deadlineExpired": !withinDeadline,
+                                   "automaticAnimation": "none",
+                                   "windowFrame": Self.rectReport(window.frame), "targetScreenFrame": Self.rectReport(screen.frame),
+                                   "windowScreenFrame": window.screen.map { Self.rectReport($0.frame) } as Any? ?? NSNull(),
+                                   "initializerContentRect": Self.rectReport(initializerRect),
+                                   "cgDisplayBounds": Self.rectReport(CGDisplayBounds(owned.displayID)),
+                                   "scWindowFrame": matchingWindow.map { Self.rectReport($0.frame) } as Any? ?? NSNull()]
+            if verified, let matchingWindow { return matchingWindow }
+            guard let remaining = deadline.remainingNanoseconds(nowMs: MachClock.nowMs()) else { break }
+            try? await Task.sleep(nanoseconds: min(25_000_000, remaining))
+        }
+        throw PortraitPrototypeFailure.rejected("capture identity/placement deadline or cancellation")
+    }
+    private func discover(_ owned: PortraitResources, within deadline: PortraitPlacementDeadline) async throws -> SCShareableContent {
+        guard let remaining = deadline.remainingNanoseconds(nowMs: MachClock.nowMs()) else {
+            throw PortraitPrototypeFailure.rejected("shareable-content deadline")
+        }
+        return try await withCheckedThrowingContinuation { continuation in
             let gate = PortraitDiscoveryGate(continuation)
             SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: false) { content, error in
                 Task { @MainActor in
@@ -278,7 +298,7 @@ private final class PortraitController: NSObject, NSWindowDelegate {
                     else { gate.resolve(.failure(PortraitPrototypeFailure.rejected("shareable-content-failed(\((error as NSError?)?.code ?? -1))"))) }
                 }
             }
-            Task { try? await Task.sleep(nanoseconds: 5_000_000_000); gate.resolve(.failure(PortraitPrototypeFailure.rejected("shareable-content deadline"))) }
+            Task { try? await Task.sleep(nanoseconds: remaining); gate.resolve(.failure(PortraitPrototypeFailure.rejected("shareable-content deadline"))) }
         }
     }
     private func stop(reason: String) async {
@@ -360,9 +380,6 @@ private final class PortraitController: NSObject, NSWindowDelegate {
     }
     private static func screenID(_ screen: NSScreen) -> CGDirectDisplayID { (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? 0 }
     private static func screen(_ id: CGDirectDisplayID) -> NSScreen? { NSScreen.screens.first { screenID($0) == id } }
-    private static func nearlyEqual(_ a: CGRect, _ b: CGRect) -> Bool {
-        abs(a.minX - b.minX) < 1 && abs(a.minY - b.minY) < 1 && abs(a.width - b.width) < 1 && abs(a.height - b.height) < 1
-    }
     private static func rectReport(_ rect: CGRect) -> [String: Double] {
         ["x": Double(rect.origin.x), "y": Double(rect.origin.y), "width": Double(rect.width), "height": Double(rect.height)]
     }

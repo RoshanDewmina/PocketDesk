@@ -30,6 +30,27 @@ final class VirtualDisplayPrototypePolicyTests: XCTestCase {
             XCTAssertEqual(global, screen)
         }
     }
+    func testTransientScaledSnapshotAndWrongIdentitiesNeverPassPlacementGate() {
+        let bounds = CGRect(x: -430, y: 0, width: 430, height: 932)
+        func matches(_ frame: CGRect?, window: UInt32? = 820, owner: Int32? = 91, screen: UInt32? = 5, displayFound: Bool = true) -> Bool {
+            PortraitWindowPlacement.matches(windowID: window, ownerPID: owner, screenID: screen, displayFound: displayFound,
+                captureFrame: frame, expectedWindowID: 820, expectedOwnerPID: 91, expectedDisplayID: 5, displayBounds: bounds)
+        }
+        XCTAssertFalse(matches(CGRect(x: -426, y: 8, width: 422, height: 916)))
+        XCTAssertFalse(matches(nil)); XCTAssertFalse(matches(bounds, window: 821)); XCTAssertFalse(matches(bounds, owner: 92))
+        XCTAssertFalse(matches(bounds, screen: 1)); XCTAssertFalse(matches(bounds, displayFound: false))
+        XCTAssertFalse(matches(bounds.offsetBy(dx: 0, dy: 311))) // AppKit and CG coordinates cannot be mixed.
+        XCTAssertTrue(matches(bounds))
+    }
+    func testPlacementRediscoverySharesOneFiveSecondDeadline() {
+        let deadline = PortraitPlacementDeadline(startMs: 100)
+        XCTAssertEqual(deadline.remainingNanoseconds(nowMs: 100), 5_000_000_000)
+        XCTAssertEqual(deadline.remainingNanoseconds(nowMs: 2500), 2_600_000_000)
+        XCTAssertEqual(deadline.remainingNanoseconds(nowMs: 5099), 1_000_000)
+        XCTAssertNil(deadline.remainingNanoseconds(nowMs: 5100)); XCTAssertNil(deadline.remainingNanoseconds(nowMs: 8000))
+        XCTAssertNil(deadline.remainingNanoseconds(nowMs: .nan))
+        XCTAssertNil(PortraitPlacementDeadline(startMs: .infinity).remainingNanoseconds(nowMs: 100))
+    }
     func testCLIFailsClosedBeforeHostStartup() throws {
         for extra in [["--portrait-mode"], ["--portrait-mode", "landscape"], ["--portrait-action", "unknown"],
                       ["--portrait-mode", "1x", "--portrait-mode", "2x"], ["--virtual-display-spike"],
