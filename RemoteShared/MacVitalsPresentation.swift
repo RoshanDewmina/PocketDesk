@@ -20,7 +20,8 @@ struct MacVitalsPresentation: Equatable {
     init(_ vitals: MacVitals) {
         let percent = vitals.batteryPercent
         let spokenPercent = percent.map { "\($0) percent" }
-        // A nil caption is a Mac with no battery to speak of, which reads as "running normally".
+        // A nil caption is a Mac with no battery to speak of or one that did not report its power;
+        // with no suffix either, that reads as "running normally".
         let base: (caption: String?, spoken: [String]) = switch vitals.powerSource {
         case .battery:
             (Self.join("on battery", percent), ["on battery", spokenPercent].compactMap { $0 })
@@ -53,8 +54,10 @@ struct MacVitalsPresentation: Equatable {
                 let words = [base.caption].compactMap { $0 } + kept
                 if !words.isEmpty { captions.append("Mac · " + words.joined(separator: " · ")) }
             }
-            let shortest = ([base.caption].compactMap { $0 } + withoutWarm).joined(separator: " · ")
-            captions.append(shortest.isEmpty ? "running normally" : shortest)
+            var shortest = [base.caption].compactMap { $0 } + withoutWarm
+            // Something is being reported, so "running normally" would be untrue; keep its most important word.
+            if shortest.isEmpty { shortest = Array((withoutLowPower + suffixes).prefix(1)) }
+            captions.append(shortest.joined(separator: " · "))
         }
         self.captions = captions.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
         spoken = "Your Mac: " + (base.spoken + normal + suffixes).joined(separator: ", ") + "."

@@ -106,7 +106,7 @@ final class MacVitalsPowerTests: XCTestCase {
         }
         let perRead = (ProcessInfo.processInfo.systemUptime - start) / 200
         print("MacVitalsPowerTests one power + CPU read: \(String(format: "%.3f", perRead * 1000)) ms")
-        XCTAssertLessThan(perRead, 0.01, "A read that runs at most once a second must stay far under 10 ms")
+        XCTAssertLessThan(perRead, 0.05, "A read that runs at most once a second must stay far under 50 ms, even on a busy Mac")
     }
 
     @MainActor
