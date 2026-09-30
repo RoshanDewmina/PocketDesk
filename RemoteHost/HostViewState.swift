@@ -82,6 +82,9 @@ struct HostViewState: Equatable {
     var serverRemovalPending = false
     var serverRemovalMessage: String?
     var localPairRemovalMessage: String?
+    var allowBigText = true
+    /// "Big Text on · looks like 1280 × 832" or "Restoring normal size…"; nil when Big Text is off.
+    var bigTextStatus: String?
     var macOSMajor = HostSystemSettingsPane.currentMacOSMajor
     /// False after the person removed the menu bar icon; Farside keeps running.
     var menuBarIconShown = true
@@ -121,6 +124,8 @@ struct HostActions {
     var setAutomaticRecovery: (Bool) -> Void = { _ in }
     var openLoginItems: () -> Void = {}
     var setPrivacyCurtain: (Bool) -> Void = { _ in }
+    var setAllowBigText: (Bool) -> Void = { _ in }
+    var restoreNormalSize: () -> Void = {}
     var setAgentAlerts: (Bool) -> Void = { _ in }
     var copyAgentHookSetup: () -> Void = {}
     var resetAgentAlertLink: () -> Void = {}

@@ -139,6 +139,27 @@ final class RemoteHostModel: ObservableObject {
     private var serverRemovalReadFailed = false
     private lazy var input = RemoteInputDriver(isTrusted: { [unowned self] in self.controlPermission.isGranted })
     private let capture = RemoteCapture()
+    private lazy var bigText = BigTextController(
+        switcher: LiveDisplayModeSwitcher(), windows: BigTextWindowKeeper(access: LiveWindowAccess()),
+        now: { ProcessInfo.processInfo.systemUptime },
+        sleep: { seconds in _ = try? await Task.sleep(for: .seconds(seconds)) })
+    // The CoreGraphics callback holds this monitor unretained, so it lives as long as the host.
+    private lazy var reconfigurationMonitor = DisplayReconfigurationMonitor { [weak self] event in
+        guard let self else { return }
+        self.bigText.observe(event)
+        if self.bigTextOwnsScreenChanges, !event.flags.contains(.beginConfigurationFlag) {
+            self.curtain.refitDuringDisplayChange()
+        }
+    }
+    private var bigTextLastRestoreRetry: TimeInterval = 0
+    private var bigTextScreenSnapshot: BigTextScreenSnapshot?
+    private var bigTextResuming = false
+    /// A Big Text change began and nothing has refreshed the display list since.
+    private var bigTextNeedsRefresh = false
+    private var bigTextRefreshTask: Task<Void, Never>?
+    private var bigTextRefreshGeneration: UInt64 = 0
+    /// Bumped whenever the display list is thrown away, so a slower Big Text fetch never revives it.
+    private var displaySnapshotGeneration: UInt64 = 0
     /// G12: one per capture session while the ladder switch is on.
     private var loadMonitor: HostLoadMonitor?
     private var vitalsMonitor: MacVitalsMonitor?
@@ -320,8 +341,16 @@ final class RemoteHostModel: ObservableObject {
             serverRemovalMessage: serverRemovalMessage,
             localPairRemovalMessage: localPairRemovalMessage,
             menuBarIconShown: menuBarIconShown,
-            permissionsTurnedOffByUpdate: permissionsTurnedOffByUpdate
+            permissionsTurnedOffByUpdate: permissionsTurnedOffByUpdate,
+            allowBigText: preferences.allowBigText,
+            bigTextStatus: bigTextStatus
         )
+    }
+
+    private var bigTextStatus: String? {
+        if bigText.restorePending || bigText.phase == .restoring { return "Restoring normal size…" }
+        guard let current = bigText.current else { return nil }
+        return "Big Text on · looks like \(current.width) × \(current.height)"
     }
 
     private var availabilityNote: HostAvailabilityNote? {
@@ -361,6 +390,7 @@ final class RemoteHostModel: ObservableObject {
         }
         connection.onAuthenticated = { [weak self] in self?.phoneConnected() }
         connection.onEnded = { [weak self] in
+            self?.bigText.connectionLost()
             self?.endCapture()
             self?.reconcileAvailabilityAfterCoordinatorReset()
         }
@@ -389,6 +419,7 @@ final class RemoteHostModel: ObservableObject {
             self.curtain.lift()
             self.reconcileCurtain()
         }
+        curtain.ownsScreenChange = { [weak self] in self?.bigTextOwnsScreenChanges ?? false }
         curtain.onLocalLift = { [weak self] in self?.curtainLiftedLocally() }
         curtain.onPhaseChange = { [weak self] _ in self?.reconcileCurtain() }
         pointerTelemetry.send = { [weak self] action in self?.connection.sendControl(action) ?? false }
@@ -432,19 +463,23 @@ final class RemoteHostModel: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self else { return }
-                if self.sessionState == .couch && self.connection.connected {
+                if self.bigTextHandlingScreenChanges {
+                    self.bigText.handleScreenChangeNotification(
+                        refit: { self.curtain.refitDuringDisplayChange() },
+                        foreign: { self.handleScreenChange() })
+                } else if self.bigTextOwnsScreenChanges {
+                    self.curtain.refitDuringDisplayChange()
+                } else if self.sessionState == .couch && self.connection.connected {
                     self.displaysStaleFromCouch = true
                     self.releaseRemoteInput(notifyPhone: true)
                     let rects = HostCouchDisplays.current()
                     guard !rects.isEmpty else { self.stop(); return }
                     self.input.configure(displays: rects)
-                    return
+                } else {
+                    self.handleScreenChange()
                 }
-                self.stop()
-                self.invalidateDisplays(status: .notChecked)
-                self.loadDisplays()
             }
         })
         observers.append(NotificationCenter.default.addObserver(
@@ -456,11 +491,22 @@ final class RemoteHostModel: ObservableObject {
                 self.pollPermissions()
             }
         })
+        bigText.host = self
+        reconfigurationMonitor.start()
         screenRecordingPermission = CGPreflightScreenCaptureAccess() ? .granted : .denied
         inputAccess = inputAccessCache.current
         evaluateUpgradeRegrant()
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pollPermissions() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.pollPermissions()
+                let now = ProcessInfo.processInfo.systemUptime
+                if self.bigText.restorePending, !self.bigText.isChanging, !self.screenLocked,
+                   now - self.bigTextLastRestoreRetry >= 30 {
+                    self.bigTextLastRestoreRetry = now
+                    self.bigText.retryPendingRestore()
+                }
+            }
         }
         permissionTimer?.tolerance = 0.2
         if screenRecordingPermission.isGranted { loadDisplays() } else { reconcileSharing() }
@@ -822,6 +868,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func phoneConnected() {
+        bigText.retryPendingRestore()
         switch connection.peerRequestedMode {
         case .picture: beginCapture()
         case .couch:
@@ -900,7 +947,7 @@ final class RemoteHostModel: ObservableObject {
             events.record(.error, problem)
         }
         events.record(.settings, "Automatic recovery \(enabled ? "on" : "off")")
-        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: recoveryHelperRunning)
+        updateHangWatchdog(curtainUp: curtain.phase != .down)
         refreshBackgroundStates()
     }
 
@@ -918,6 +965,18 @@ final class RemoteHostModel: ObservableObject {
         }
         events.record(.curtain, "Hide screen while sharing \(enabled ? "on" : "off")")
         reconcileCurtain()
+    }
+
+    func setAllowBigText(_ allowed: Bool) {
+        preferences.allowBigText = allowed
+        events.record(.settings, "Allow a connected phone to change text size \(allowed ? "on" : "off")")
+        if !allowed { bigText.sessionEnded(.restoreButton) }
+        sendCaptureHealth(captureHealthy)
+        objectWillChange.send()
+    }
+
+    func restoreNormalSize() {
+        bigText.sessionEnded(.restoreButton)
     }
 
     func copyDiagnostics() {
@@ -1082,14 +1141,14 @@ final class RemoteHostModel: ObservableObject {
         loginItemState = background.loginState
         recoveryState = background.recoveryState
         openAtLogin = loginItemState.isRegistered
-        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: recoveryHelperRunning)
+        updateHangWatchdog(curtainUp: curtain.phase != .down)
     }
 
     /// Launch at login and automatic recovery turn on once setup is complete; later choices stick.
     private func applyBackgroundDefaults() {
         if let problem = background.applyDefaults(setupComplete: true) { events.record(.error, problem) }
         refreshBackgroundStates()
-        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: recoveryHelperRunning)
+        updateHangWatchdog(curtainUp: curtain.phase != .down)
     }
 
     // MARK: Watchdog and recovery
@@ -1124,6 +1183,13 @@ final class RemoteHostModel: ObservableObject {
     /// Ending a stalled host only helps when the helper is registered to reopen it.
     private var recoveryHelperRunning: Bool { background.recoveryWanted && background.recoveryState == .on }
 
+    // A display left on a Big Text mode reverts only when this process exits, so a hang while it is
+    // engaged gets the curtain's short threshold (HangWatchdogPolicy treats both alike).
+    private func updateHangWatchdog(curtainUp: Bool) {
+        hangWatchdog?.update(curtainUp: curtainUp, recoveryEnabled: recoveryHelperRunning,
+                             bigTextEngaged: bigText.isEngaged, displayChanging: bigText.isChanging)
+    }
+
     private static let crashLoopDetail = "Farside stopped after repeated crashes. Sharing is paused until you resume it."
     /// A recovery notice is still worth telling a phone that connects within this window.
     private static let recoveryNoticeLifetime: TimeInterval = 60 * 60
@@ -1150,7 +1216,8 @@ final class RemoteHostModel: ObservableObject {
             accessibilityGranted: inputAccess.accessibility.isGranted,
             locallyDismissed: curtainLocallyDismissed,
             raiseFailed: curtainRaiseFailed,
-            safeMode: crashLoopStopped
+            safeMode: crashLoopStopped,
+            displayReconfiguring: bigText.isChanging || bigTextResuming || bigTextNeedsRefresh
         )
         switch PrivacyCurtainPolicy.desired(inputs, currentlyUp: curtain.phase != .down) {
         case .up where curtain.phase == .down && !curtainRaising:
@@ -1162,7 +1229,7 @@ final class RemoteHostModel: ObservableObject {
         }
         let covering = curtain.phase != .down
         watchdog?.setCurtainUp(covering)
-        hangWatchdog?.update(curtainUp: covering, recoveryEnabled: recoveryHelperRunning)
+        updateHangWatchdog(curtainUp: covering)
         let state = PrivacyCurtainPolicy.protocolState(inputs, up: curtain.phase == .up)
         if state != curtainState {
             curtainState = state
@@ -1202,7 +1269,7 @@ final class RemoteHostModel: ObservableObject {
     private func liftCurtain() {
         if curtain.phase != .down { curtain.lift() }
         watchdog?.setCurtainUp(false)
-        hangWatchdog?.update(curtainUp: false, recoveryEnabled: recoveryHelperRunning)
+        updateHangWatchdog(curtainUp: false)
     }
 
     private static func curtainStatus(_ state: PrivacyCurtainState, displays: Int) -> String? {
@@ -1229,6 +1296,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func stop() {
+        bigText.sessionEnded(.sessionEnded)
         liftCurtain()
         invalidateTextFocus()
         unavailabilityTeardown?.cancel(); unavailabilityTeardown = nil
@@ -1242,6 +1310,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func stopForTermination() {
+        bigText.restoreForTermination()
+        reconfigurationMonitor.stop()
         liftCurtain()
         #if DEBUG
         HostE2E.active?.terminating()
@@ -1459,6 +1529,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func invalidateDisplays(status: HostDisplayRefreshStatus) {
+        displaySnapshotGeneration &+= 1
         displayRefreshTask?.cancel()
         displayRefreshTask = nil
         displayRefreshGeneration.invalidate()
@@ -1509,7 +1580,7 @@ final class RemoteHostModel: ObservableObject {
 
     // MARK: Capture session
 
-    private func beginCapture() {
+    private func beginCapture(keepingExclusions: Bool = false) {
         guard CGPreflightScreenCaptureAccess() else {
             screenRecordingPermission = .denied
             stop()
@@ -1577,11 +1648,12 @@ final class RemoteHostModel: ObservableObject {
             guard let self else { return }
             do {
                 guard self.captureStartIsCurrent(attempt, peer: peer), !Task.isCancelled else { return }
-                let owner = try await self.capture.start(display: display, peer: peer)
+                let owner = try await self.capture.start(display: display, peer: peer, keepingExclusions: keepingExclusions)
                 guard self.captureStartIsCurrent(attempt, peer: peer), !Task.isCancelled else {
                     _ = self.capture.stop(ifOwnedBy: owner)
                     return
                 }
+                self.bigText.sessionResumed()
                 self.beginLoadMonitor(peer: peer)
             } catch is CancellationError {
                 return
@@ -1636,7 +1708,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     /// No screen capture, encoder, load monitor, viewport, cursor hiding or curtain: the person watches the Mac itself.
-    private func beginCouch() {
+    private func beginCouch(restoringBigText: Bool = true) {
+        if restoringBigText { bigText.sessionEnded(.restoreButton) }
         cancelPictureRefresh()
         guard connection.connected, connection.media != nil else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
@@ -1718,7 +1791,7 @@ final class RemoteHostModel: ObservableObject {
     private func refreshCouchHealth() -> Bool {
         guard sessionState == .couch else { couchHealthy = false; return false }
         // A pending sleep/lock/user-switch teardown must not be re-admitted by the next tick before it stops the session.
-        let healthy = unavailabilityTeardown == nil && CouchHealth.isHealthy(couchHealthInputs)
+        let healthy = unavailabilityTeardown == nil && !bigTextHandlingScreenChanges && CouchHealth.isHealthy(couchHealthInputs)
         if couchHealthy && !healthy {
             invalidateTextFocus()
             releaseRemoteInput(notifyPhone: true)
@@ -2110,11 +2183,13 @@ final class RemoteHostModel: ObservableObject {
     }
 
     /// A switched-off experiment is not advertised, so the phone never sends what the host would ignore.
-    private static var advertisedFeatures: [String] {
+    private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
-        return SessionFeature.host.filter {
+        let base = SessionFeature.host.filter {
             ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
         } + [SessionFeature.couch]
+        return HostFeatureList.features(base: base, allowBigText: preferences.allowBigText,
+                                        accessibility: accessibilityPermission.isGranted)
     }
 
     private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil) {
@@ -2139,7 +2214,7 @@ final class RemoteHostModel: ObservableObject {
             action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: true,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
-            features: Self.advertisedFeatures, hostState: state,
+            features: advertisedFeatures, hostState: state,
             hostStream: connection.media?.takeHostSummary(),
             curtain: curtainState.rawValue, hostEvent: event,
             display: capturedDisplayID, agentAlert: alert,
@@ -2281,6 +2356,10 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Display selection
 
     private func receiveDisplaySelection(_ action: RemoteAction) {
+        // The phone waits on a reply to every scale request, so a stale one learns the current epoch.
+        if action.action == "displayScale", action.epoch != inputEpoch.value {
+            return sendDisplayList(scaleError: .failed, scaleRequestID: action.scaleRequestID)
+        }
         guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused, !sessionRefused else { return }
         switch action.action {
         case "displays":
@@ -2298,6 +2377,16 @@ final class RemoteHostModel: ObservableObject {
                 events.record(.sharing, "Phone switched the shared display to \(Self.displayName(for: id))")
                 switchSessionDisplay(to: id)
             }
+        case "displayScale":
+            guard sessionState == .picture else {
+                return sendDisplayList(scaleError: .disabled, scaleRequestID: action.scaleRequestID)
+            }
+            guard let requested = action.display, let width = action.looksLikeWidth else { return }
+            guard requested == selected, displays.contains(where: { $0.displayID == requested }) else {
+                return sendDisplayList(scaleError: .unsupported, scaleRequestID: action.scaleRequestID)
+            }
+            bigText.request(display: requested, looksLikeWidth: width, allowed: preferences.allowBigText,
+                            accessibilityGranted: accessibilityPermission.isGranted, requestID: action.scaleRequestID)
         default:
             break
         }
@@ -2306,13 +2395,14 @@ final class RemoteHostModel: ObservableObject {
     /// The phone chose another display: stream it in the same session. A new epoch and geometry
     /// follow, so input meant for the old display can never land on the new one.
     private func switchSessionDisplay(to id: CGDirectDisplayID) {
+        bigText.sessionEnded(.displaySwitched)
         liftCurtain()
         selected = id
         beginCapture()
         sendDisplayList()
     }
 
-    private func sendDisplayList() {
+    private func sendDisplayList(scaleError: BigTextError? = nil, scaleRequestID: String? = nil) {
         guard connection.connected else { return }
         let entries = displays.map { display in
             HostDisplayCatalog.Display(
@@ -2322,9 +2412,18 @@ final class RemoteHostModel: ObservableObject {
                 pixelHeight: CGDisplayCopyDisplayMode(display.displayID).map { $0.pixelHeight },
                 main: display.displayID == CGMainDisplayID())
         }
+        var descriptors = HostDisplayCatalog.descriptors(entries)
+        if preferences.allowBigText && accessibilityPermission.isGranted {
+            descriptors = descriptors.map { descriptor in
+                guard descriptor.id == selected else { return descriptor }
+                let described = BigTextController.describe(descriptor, offer: bigText.offer(for: descriptor.id))
+                // Mid-change the live mode can be neither the baseline nor a step, which the phone rejects.
+                return (try? described.validate()) == nil ? descriptor : described
+            }
+        }
         _ = connection.sendControl(RemoteAction(action: "displays", epoch: inputEpoch.value,
-                                                displays: HostDisplayCatalog.descriptors(entries),
-                                                display: capturedDisplayID))
+                                                displays: descriptors, display: capturedDisplayID,
+                                                scaleError: scaleError?.rawValue, scaleRequestID: scaleRequestID))
     }
 
     /// The phone is backgrounding: stop capture and input now, but keep the peer and its
@@ -2397,6 +2496,7 @@ final class RemoteHostModel: ObservableObject {
             }
             connection.checkSignalingLiveness()
             if HostScreenLock.isLocked() { screenLocked = true; return }
+            bigText.retryPendingRestore()
             autoStart.clear()
             detail = nil
             unavailableReason = nil
@@ -2578,6 +2678,192 @@ final class RemoteHostModel: ObservableObject {
         "move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "holdRenew", "scroll", "text", "key",
         "auxClick"
     ]
+}
+
+// MARK: Big Text
+
+extension RemoteHostModel: BigTextHost {
+    func bigTextQuiesce() {
+        bigTextScreenSnapshot = nil
+        invalidateTextFocus()
+        releaseRemoteInput(notifyPhone: true)
+        inputFreshness.expireTokens()
+        input.enabled = false
+        captureHealthy = false
+        pointerLocator.reset()
+        pointerTelemetry.end()
+        captureAttempt &+= 1
+        captureTask?.cancel(); captureTask = nil
+        endLoadMonitor()
+        // The curtain windows stay excluded, so the next stream starts without ever showing them.
+        _ = capture.stop(keepingExclusions: true)
+        curtain.followsScreenChanges = false
+        reconcileCurtain()
+    }
+
+    func bigTextResume(display: CGDirectDisplayID) async -> Bool {
+        bigTextResuming = true
+        bigTextNeedsRefresh = false
+        defer {
+            bigTextResuming = false
+            curtain.followsScreenChanges = true
+        }
+        guard let refreshed = await verifiedDisplays(including: display) else {
+            if !terminating { bigTextForeignChange() }
+            return false
+        }
+        guard !terminating, bigText.ownsLiveConfiguration else {
+            if !terminating { bigTextForeignChange() }
+            return false
+        }
+        rememberBigTextScreenSnapshot(refreshed)
+        curtain.refitToScreens()
+        guard active else {
+            loadDisplays()
+            return true
+        }
+        // loadDisplays() returns early while sharing, so the refreshed list is adopted here; the input
+        // driver and geometry then come from frames that match the new mode.
+        displays = refreshed
+        if sessionState == .couch {
+            beginCouch(restoringBigText: false)
+            return true
+        }
+        guard bigTextSessionStreaming, refreshed.contains(where: { $0.displayID == selected }) else {
+            reconcileCurtain()
+            return true
+        }
+        beginCapture(keepingExclusions: curtain.phase == .up)
+        return true
+    }
+
+    func bigTextReply(display: CGDirectDisplayID, error: BigTextError?, requestID: String?) {
+        sendDisplayList(scaleError: error, scaleRequestID: requestID)
+    }
+
+    func bigTextForeignChange() {
+        bigTextScreenSnapshot = nil
+        bigTextNeedsRefresh = false
+        curtain.followsScreenChanges = true
+        handleScreenChange()
+    }
+
+    func bigTextStateChanged() {
+        if bigText.isChanging {
+            prepareCurtainForBigTextChange()
+            bigTextScreenSnapshot = nil
+            bigTextNeedsRefresh = true
+        } else if bigTextNeedsRefresh {
+            bigTextNeedsRefresh = false
+            // A failed restore left the mode, and so the display list, as it was; refreshing would
+            // stop the session and re-queue the same failing restore.
+            if !bigText.restorePending { refreshAfterBigTextChange() }
+        }
+        reconcileCurtain()
+        objectWillChange.send()
+    }
+
+    private func prepareCurtainForBigTextChange() {
+        guard let target = bigText.changeTarget else { return }
+        let coverage = CurtainDisplayCoverage.envelope(
+            frames: NSScreen.screens.map(\.frame), currentSize: CGDisplayBounds(target.display).size,
+            targetSize: CGSize(width: target.mode.width, height: target.mode.height))
+        // Keep the IDs already excluded by capture. Cancel a half-raise before capture.stop().
+        curtain.prepareForDisplayChange(coverage: coverage)
+    }
+
+    func bigTextDisplayBounds(_ display: CGDirectDisplayID) -> CGRect {
+        CGDisplayBounds(display)
+    }
+
+    func bigTextRunningAppPIDs() -> [pid_t] {
+        NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }.map(\.processIdentifier)
+    }
+
+    /// Screen changes Big Text makes are handled by its own completion, not by stopping the session.
+    private var bigTextHandlingScreenChanges: Bool {
+        bigText.isChanging || bigTextNeedsRefresh || bigTextResuming || bigTextRefreshTask != nil
+    }
+
+    fileprivate var bigTextOwnsScreenChanges: Bool {
+        if bigTextHandlingScreenChanges {
+            return bigText.screenChangeVerdict != .foreign
+        }
+        guard let snapshot = bigTextScreenSnapshot else { return false }
+        let online = LiveDisplayModeSwitcher().onlineDisplays()
+        var frames: [CGDirectDisplayID: CGRect] = [:]
+        var modes: [CGDirectDisplayID: Int32] = [:]
+        for id in online {
+            frames[id] = CGDisplayBounds(id)
+            modes[id] = CGDisplayCopyDisplayMode(id)?.ioDisplayModeID
+        }
+        return snapshot.matches(online: online, frames: frames, modeIDs: modes)
+    }
+
+    private func rememberBigTextScreenSnapshot(_ refreshed: [SCDisplay]) {
+        let frames = Dictionary(uniqueKeysWithValues: refreshed.map { ($0.displayID, $0.frame) })
+        var modes: [CGDirectDisplayID: Int32] = [:]
+        for display in refreshed { modes[display.displayID] = CGDisplayCopyDisplayMode(display.displayID)?.ioDisplayModeID }
+        guard modes.count == frames.count else { bigTextScreenSnapshot = nil; return }
+        bigTextScreenSnapshot = BigTextScreenSnapshot(frames: frames, modeIDs: modes)
+    }
+
+    private var bigTextSessionStreaming: Bool {
+        active && sessionState == .picture && connection.connected && connection.media != nil && !phonePause.isPaused && !terminating && !screenLocked
+    }
+
+    fileprivate func handleScreenChange() {
+        bigTextScreenSnapshot = nil
+        stop()
+        invalidateDisplays(status: .notChecked)
+        loadDisplays()
+    }
+
+    /// SCDisplay frames can lag a mode change; only a list that agrees with CoreGraphics for every
+    /// display is used, else stale frames would map clicks to the old size.
+    private func verifiedDisplays(including display: CGDirectDisplayID?) async -> [SCDisplay]? {
+        let generation = displaySnapshotGeneration
+        for attempt in 0..<BigTextRefresh.attempts {
+            if attempt > 0 { try? await Task.sleep(for: BigTextRefresh.retryDelay) }
+            guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else { continue }
+            guard generation == displaySnapshotGeneration, !terminating else { return nil }
+            let list = content.displays
+            guard !list.isEmpty,
+                  display.map({ id in list.contains { $0.displayID == id } }) ?? true,
+                  list.allSatisfy({ BigTextRefresh.matches(frame: $0.frame, coreGraphicsBounds: CGDisplayBounds($0.displayID)) })
+            else { continue }
+            return list
+        }
+        return nil
+    }
+
+    /// A restore that ran without pausing the stream (the session ended, or moved to another display)
+    /// still resized the desktop: other displays can move, and the next session must not start from
+    /// the Big Text frames.
+    private func refreshAfterBigTextChange() {
+        bigTextRefreshTask?.cancel()
+        bigTextRefreshGeneration &+= 1
+        let generation = bigTextRefreshGeneration
+        bigTextRefreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let streamed = self.capturedDisplayID
+            let before = self.displays.first { $0.displayID == streamed }?.frame
+            let refreshed = await self.verifiedDisplays(including: nil)
+            guard !Task.isCancelled, generation == self.bigTextRefreshGeneration else { return }
+            self.bigTextRefreshTask = nil
+            guard !self.terminating, !self.bigText.isChanging else { return }
+            guard let refreshed, self.bigText.ownsLiveConfiguration else { return self.handleScreenChange() }
+            self.rememberBigTextScreenSnapshot(refreshed)
+            self.curtain.refitToScreens()
+            guard self.active else { return self.loadDisplays() }
+            guard refreshed.contains(where: { $0.displayID == self.selected }) else { return self.handleScreenChange() }
+            self.displays = refreshed
+            guard let streamed, streamed == self.capturedDisplayID, self.bigTextSessionStreaming,
+                  let after = refreshed.first(where: { $0.displayID == streamed })?.frame, after != before
+            else { return }
+            self.beginCapture(keepingExclusions: self.curtain.phase == .up)
+        }
+    }
 }
 
 #if DEBUG

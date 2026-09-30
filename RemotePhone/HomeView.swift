@@ -512,7 +512,9 @@ struct HomeView: View {
                                                       biometryName: gate.authenticator.biometryName) ?? ""
                 return
             }
-            connection.revoke()
+            let room = connection.invitation?.room
+            guard connection.revoke() else { return }
+            if let room { model.bigTextMemory.forget(room: room) }
             model.vitalsMemory.forget()
             refreshLastBattery()
             lastReachedAt = 0

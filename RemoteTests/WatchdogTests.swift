@@ -192,6 +192,24 @@ final class HangWatchdogTests: XCTestCase {
                      "Without recovery or a curtain, a slow main thread is left alone")
     }
 
+    func testBigTextUsesTheShortThresholdEvenWithoutCurtainOrRecovery() {
+        XCTAssertEqual(HangWatchdogPolicy.threshold(curtainUp: false, recoveryEnabled: false, bigTextEngaged: true),
+                       HangWatchdogPolicy.curtainThreshold, "a hung host must not keep the Mac on Big Text")
+        XCTAssertNil(HangWatchdogPolicy.threshold(curtainUp: false, recoveryEnabled: false))
+    }
+
+    func testDisplayConfigurationUsesBoundedRecoveryGraceEvenWithCurtainUp() {
+        XCTAssertEqual(HangWatchdogPolicy.threshold(curtainUp: true, recoveryEnabled: false,
+                                                   bigTextEngaged: true, displayChanging: true), 12)
+        XCTAssertEqual(HangWatchdogPolicy.threshold(curtainUp: false, recoveryEnabled: true,
+                                                   displayChanging: true), 12)
+        XCTAssertEqual(HangWatchdogPolicy.threshold(curtainUp: false, recoveryEnabled: false,
+                                                   bigTextEngaged: true, displayChanging: true), 12)
+        XCTAssertNil(HangWatchdogPolicy.threshold(curtainUp: false, recoveryEnabled: false, displayChanging: true))
+        XCTAssertEqual(HangWatchdogPolicy.threshold(curtainUp: true, recoveryEnabled: false,
+                                                   bigTextEngaged: true, displayChanging: false), 4, "normal hang protection returns afterwards")
+    }
+
     func testWatchdogThreadReportsAStuckMainThread() {
         let fired = expectation(description: "hang reported")
         fired.assertForOverFulfill = false

@@ -33,6 +33,7 @@ enum SessionFeature {
     static let focusGeometry = "focus.rect.1"
     /// Couch mode: trackpad and keys with no picture, on a proven local link. Advertised by the host itself, not in `host`.
     static let couch = "couch.1"
+    static let displayScale = "display.scale.2"
     static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
                        momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]

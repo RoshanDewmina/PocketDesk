@@ -57,6 +57,10 @@ struct RemoteAction: Codable {
     var mode: String? = nil
     /// One-shot reason the Mac did not switch, on `capture` status.
     var modeReason: String? = nil
+    var looksLikeWidth: Double? = nil
+    var scaleError: String? = nil
+    /// Correlates Big Text requests and replies; absent for older peers.
+    var scaleRequestID: String? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
@@ -81,6 +85,14 @@ struct RemoteAction: Codable {
         else { throw RemoteError.invalidMessage }
         guard file == nil || action == "file" else { throw RemoteError.invalidMessage }
         try validateFocusGeometry()
+        if looksLikeWidth != nil, action != "displayScale" { throw RemoteError.invalidMessage }
+        if let scaleError, action != "displays" || scaleError.isEmpty || scaleError.utf8.count > 64 { throw RemoteError.invalidMessage }
+        if let scaleRequestID {
+            guard ["displayScale", "displays"].contains(action),
+                  scaleRequestID.utf8.count == 32,
+                  scaleRequestID.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) })
+            else { throw RemoteError.invalidMessage }
+        }
         // Also before the early returns, so no other action can carry a display list.
         if try validateSessionMode() { return }
         if try validateDisplaySelection() { return }

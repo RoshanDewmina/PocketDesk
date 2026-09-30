@@ -1,0 +1,94 @@
+import XCTest
+
+final class BigTextProtocolTests: XCTestCase {
+    func testDisplayScaleRequestsValidate() {
+        XCTAssertNoThrow(try RemoteAction(action: "displayScale", epoch: 3, display: 1, looksLikeWidth: 1280).validate())
+        XCTAssertNoThrow(try RemoteAction(action: "displayScale", epoch: 3, display: 1, looksLikeWidth: 0).validate(),
+                         "0 asks for the Mac's own size")
+    }
+
+    func testMalformedScaleActionsAreRejected() {
+        let invalid: [RemoteAction] = [
+            RemoteAction(action: "displayScale", epoch: 3, display: 1),
+            RemoteAction(action: "displayScale", epoch: 3, looksLikeWidth: 1280),
+            RemoteAction(action: "displayScale", epoch: 3, display: 0, looksLikeWidth: 1280),
+            RemoteAction(action: "displayScale", epoch: 3, display: 1, looksLikeWidth: .nan),
+            RemoteAction(action: "displayScale", epoch: 3, display: 1, looksLikeWidth: 25_000),
+            RemoteAction(action: "displayScale", epoch: 3, display: 1, looksLikeWidth: -5),
+            RemoteAction(action: "displayScale", text: "x", epoch: 3, display: 1, looksLikeWidth: 1280),
+            RemoteAction(action: "click", epoch: 3, looksLikeWidth: 1280),
+            RemoteAction(action: "capture", epoch: 3, scaleError: "failed"),
+            RemoteAction(action: "capture", epoch: 3, scaleError: "nonsense"),
+            RemoteAction(action: "displays", epoch: 3, scaleError: String(repeating: "x", count: 65)),
+        ]
+        for action in invalid { XCTAssertThrowsError(try action.validate(), "\(action.action) must be rejected") }
+    }
+
+    func testUnknownScaleErrorOnDisplaysIsAccepted() throws {
+        let reply = RemoteAction(action: "displays", epoch: 3, displays: [], display: 1, scaleError: "nonsense")
+        XCTAssertNoThrow(try reply.validate(), "a newer Mac's error code must not end the session")
+        let decoded = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(reply))
+        XCTAssertNoThrow(try decoded.validate())
+        XCTAssertNil(decoded.scaleError.flatMap(BigTextError.init(rawValue:)))
+    }
+
+    func testRequestIdentityRoundTripsOnRequestsAndReplies() throws {
+        let id = String(repeating: "a", count: 32)
+        for action in [RemoteAction(action: "displayScale", epoch: 3, display: 1, looksLikeWidth: 1280, scaleRequestID: id),
+                       RemoteAction(action: "displays", epoch: 3, displays: [], display: 1, scaleRequestID: id)] {
+            let decoded = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(action))
+            XCTAssertNoThrow(try decoded.validate())
+            XCTAssertEqual(decoded.scaleRequestID, id)
+        }
+    }
+
+    func testInvalidRequestIdentitiesCannotRideOtherActionsOrEarlyReturns() {
+        for id in ["", "a", String(repeating: "A", count: 32), String(repeating: "g", count: 32), String(repeating: "0", count: 33)] {
+            XCTAssertThrowsError(try RemoteAction(action: "displayScale", display: 1, looksLikeWidth: 1280, scaleRequestID: id).validate())
+        }
+        let id = String(repeating: "a", count: 32)
+        for name in ["heartbeat", "capture", "display", "click"] {
+            XCTAssertThrowsError(try RemoteAction(action: name, display: 1, scaleRequestID: id).validate())
+        }
+    }
+
+    func testDescriptorScaleFields() {
+        var display = DisplayDescriptor(id: 1, name: "Built-in Retina Display", width: 1470, height: 956)
+        display.scaleSteps = [ScaleStep(width: 1280, height: 832), ScaleStep(width: 1024, height: 665)]
+        display.scaleBaselineWidth = 1470
+        display.scaleCurrentWidth = 1280
+        XCTAssertNoThrow(try display.validate())
+
+        display.scaleCurrentWidth = 1111
+        XCTAssertThrowsError(try display.validate(), "current must be the baseline or an offered step")
+        display.scaleCurrentWidth = nil
+        display.scaleSteps = [ScaleStep(width: 1600, height: 1040)]
+        XCTAssertThrowsError(try display.validate(), "steps are bigger text, so narrower than the baseline")
+        display.scaleSteps = Array(repeating: ScaleStep(width: 1000, height: 650), count: 5)
+        XCTAssertThrowsError(try display.validate(), "at most four steps")
+        display.scaleSteps = [ScaleStep(width: 1280, height: 832)]
+        display.scaleBaselineWidth = nil
+        XCTAssertThrowsError(try display.validate(), "steps need a baseline")
+        display.scaleSteps = []
+        display.scaleBaselineWidth = 1470
+        XCTAssertNoThrow(try display.validate(), "already at the largest size offers no steps")
+    }
+
+    func testOlderDecodersIgnoreTheNewDescriptorFields() {
+        struct OldDescriptor: Decodable { var id: UInt32; var name: String; var width: Double; var height: Double }
+        let json = #"{"id":1,"name":"Built-in","width":1470,"height":956,"main":true,"scaleSteps":[{"width":1280,"height":832}],"scaleBaselineWidth":1470}"#
+        XCTAssertNoThrow(try JSONDecoder().decode(OldDescriptor.self, from: Data(json.utf8)))
+    }
+
+    func testErrorReplyRoundTrips() throws {
+        let reply = RemoteAction(action: "displays", epoch: 4, displays: [], display: 1, scaleError: BigTextError.failed.rawValue)
+        let decoded = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(reply))
+        XCTAssertNoThrow(try decoded.validate())
+        XCTAssertEqual(decoded.scaleError, "failed")
+    }
+
+    func testCapabilityIsOptIn() {
+        XCTAssertEqual(SessionFeature.displayScale, "display.scale.2")
+        XCTAssertFalse(SessionFeature.host.contains(SessionFeature.displayScale), "advertised only when the Mac allows it")
+    }
+}

@@ -227,6 +227,7 @@ struct HostPreferences {
         static let allowFileTransfer = "allowFileTransfer"
         static let menuBarIconShown = "menuBarIconShown"
         static let osPermissionRecord = "osPermissionRecord"
+        static let allowBigText = "allowBigTextFromPhone"
     }
 
     let defaults: UserDefaults
@@ -234,7 +235,7 @@ struct HostPreferences {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         defaults.register(defaults: [Key.allowControl: true, Key.keepAwake: true, Key.sharingEnabled: true,
-                                     Key.chimeOnConnect: true, Key.allowFileTransfer: true, Key.menuBarIconShown: true])
+                                     Key.chimeOnConnect: true, Key.allowBigText: true, Key.allowFileTransfer: true, Key.menuBarIconShown: true])
     }
 
     /// A short sound when a phone connects, so someone at the Mac always knows.
@@ -299,6 +300,11 @@ struct HostPreferences {
         nonmutating set { defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: Key.osPermissionRecord) }
     }
 
+    var allowBigText: Bool {
+        get { defaults.bool(forKey: Key.allowBigText) }
+        nonmutating set { defaults.set(newValue, forKey: Key.allowBigText) }
+    }
+
     var serviceAddress: String? {
         get {
             let value = defaults.string(forKey: Key.serviceAddress)?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -332,5 +338,11 @@ struct HostPreferences {
             }
         }
         return nil
+    }
+}
+
+enum HostFeatureList {
+    static func features(base: [String], allowBigText: Bool, accessibility: Bool) -> [String] {
+        allowBigText && accessibility ? base + [SessionFeature.displayScale] : base
     }
 }

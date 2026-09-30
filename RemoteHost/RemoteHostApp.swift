@@ -154,6 +154,8 @@ extension HostActions {
             setAutomaticRecovery: model.setAutomaticRecovery,
             openLoginItems: model.openLoginItems,
             setPrivacyCurtain: model.setPrivacyCurtain,
+            setAllowBigText: model.setAllowBigText,
+            restoreNormalSize: model.restoreNormalSize,
             setAgentAlerts: model.setAgentAlerts,
             copyAgentHookSetup: model.copyAgentHookSetup,
             resetAgentAlertLink: model.resetAgentAlertLink,

@@ -39,6 +39,8 @@ struct PrivacyCurtainInputs: Equatable {
     var locallyDismissed = false
     var raiseFailed = false
     var safeMode = false
+    /// Big Text is changing the display mode; capture blips during it must not uncover the Mac.
+    var displayReconfiguring = false
 }
 
 enum PrivacyCurtainPolicy {
@@ -51,6 +53,7 @@ enum PrivacyCurtainPolicy {
         guard inputs.preference, inputs.sessionLive, !inputs.phonePaused, !inputs.screenLocked,
               !inputs.safeMode, !inputs.locallyDismissed, !inputs.raiseFailed,
               inputs.accessibilityGranted else { return .down }
+        if currentlyUp && inputs.displayReconfiguring { return .up }
         if currentlyUp {
             let lostPicture = !inputs.captureHealthy && !inputs.displayAsleep && inputs.unhealthyFor > unhealthyGrace
             return lostPicture ? .down : .up
@@ -154,6 +157,25 @@ enum CurtainCanary {
     }
 }
 
+/// Own mode changes preserve the screen arrangement. Cover the current desktop plus twice the
+/// target/current size delta in each direction: neighbouring origins and AppKit's flipped Y
+/// origin can both shift by that delta. Foreign topology changes still lift the curtain.
+enum CurtainDisplayCoverage {
+    static func envelope(frames: [CGRect], currentSize: CGSize, targetSize: CGSize) -> CGRect {
+        let desktop = frames.reduce(CGRect.null) { $0.union($1) }
+        guard !desktop.isNull else { return .null }
+        let dx = 2 * abs(targetSize.width - currentSize.width) + 1
+        let dy = 2 * abs(targetSize.height - currentSize.height) + 1
+        return desktop.insetBy(dx: -dx, dy: -dy)
+    }
+
+    static func matchesAppKit(frame: CGRect, bounds: CGRect, mainHeight: CGFloat) -> Bool {
+        BigTextRefresh.matches(frame: frame,
+                              coreGraphicsBounds: CGRect(x: bounds.minX, y: mainHeight - bounds.maxY,
+                                                        width: bounds.width, height: bounds.height))
+    }
+}
+
 /// Opaque windows covering every display while a phone is connected. They belong to this process,
 /// so they vanish if the host crashes or is ended by its hang watchdog, and they are excluded from
 /// the host's own ScreenCaptureKit filter so the phone keeps seeing the real desktop.
@@ -175,6 +197,12 @@ final class PrivacyCurtainController {
     /// Called before the curtain lifts after three local Escape presses.
     var onLocalLift: (() -> Void)?
     var onPhaseChange: ((Phase) -> Void)?
+    /// False while the host itself changes a display mode; it then calls `refitToScreens()`.
+    var followsScreenChanges = true
+    /// Both observers use the host's verified receipt, so a late duplicate never lifts the curtain.
+    var ownsScreenChange: (() -> Bool)?
+    private var changeCoverage: CGRect?
+    private var finishingDisplayChange = false
     /// One window per display. Tests substitute tiny off-screen windows so nothing is ever shown.
     private let makeWindows: () -> [NSWindow]
 
@@ -227,6 +255,45 @@ final class PrivacyCurtainController {
         return .raised
     }
 
+    /// Cancel an unfinished raise before its capture owner is invalidated. An already raised
+    /// curtain keeps exactly the same window IDs and capture exclusions throughout the switch.
+    func prepareForDisplayChange(coverage: CGRect) {
+        if phase == .raising { lift(); return }
+        guard phase == .up, !coverage.isNull, !coverage.isEmpty else { return }
+        changeCoverage = coverage
+        finishingDisplayChange = false
+        for window in windows { window.setFrame(window.frame.union(coverage), display: true) }
+    }
+
+    /// Early callbacks must never shrink to lagging AppKit frames; union them with the guard
+    /// envelope until ScreenCaptureKit and CoreGraphics agree at completion.
+    func refitDuringDisplayChange() {
+        guard phase == .up, let coverage = changeCoverage else { return }
+        if finishingDisplayChange { return refitToScreens() }
+        let expanded = NSScreen.screens.reduce(coverage) { $0.union($1.frame) }
+        changeCoverage = expanded
+        for window in windows { window.setFrame(window.frame.union(expanded), display: true) }
+    }
+
+    /// Windows are made in `NSScreen.screens` order, so they pair with screens by position.
+    func refitToScreens() {
+        let screens = NSScreen.screens
+        guard windows.count == screens.count else { return lift() }
+        if changeCoverage != nil {
+            finishingDisplayChange = true
+            let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+            // AppKit can lag the verified capture geometry too. Keep the guard envelope until
+            // every screen has caught up, then a late own notification can finish the exact refit.
+            guard screens.allSatisfy({ screen in
+                guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { return false }
+                return CurtainDisplayCoverage.matchesAppKit(frame: screen.frame, bounds: CGDisplayBounds(id), mainHeight: mainHeight)
+            }) else { return }
+        }
+        changeCoverage = nil
+        finishingDisplayChange = false
+        for (window, screen) in zip(windows, screens) { window.setFrame(screen.frame, display: true) }
+    }
+
     func lift() {
         generation &+= 1
         let wasShowing = phase != .down
@@ -260,6 +327,8 @@ final class PrivacyCurtainController {
             window.close()
         }
         windows.removeAll()
+        changeCoverage = nil
+        finishingDisplayChange = false
         escape.reset()
         phase = .down
     }
@@ -297,7 +366,14 @@ final class PrivacyCurtainController {
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.lift() }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if !self.followsScreenChanges || self.ownsScreenChange?() == true {
+                    self.refitDuringDisplayChange()
+                    return
+                }
+                self.lift()
+            }
         }
     }
 

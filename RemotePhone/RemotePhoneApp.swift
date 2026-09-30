@@ -87,6 +87,17 @@ enum ResumeState: Equatable {
     case none, backgrounded, reconnecting, needsChoice
 }
 
+struct BigTextState: Equatable {
+    var steps: [ScaleStep] = []
+    var baselineWidth: Double?
+    var currentWidth: Double?
+    var savedWidth: Double?
+    var pendingTarget: Double?
+    var pendingSince: TimeInterval?
+    var sessionOff = false
+    var autoApplied = false
+}
+
 @MainActor
 final class PhoneRemoteModel: ObservableObject {
     /// A lost live session keeps retrying for about 90 seconds, long enough for the Mac's
@@ -426,6 +437,7 @@ final class PhoneRemoteModel: ObservableObject {
     #endif
 
     var canControl: Bool {
+        guard bigText.pendingTarget == nil else { return false }
         #if DEBUG
         if inputProbe != nil { return !privacyShield && !contentConcealed }
         #endif
@@ -537,8 +549,9 @@ final class PhoneRemoteModel: ObservableObject {
         #if DEBUG
         if let inputProbe {
             _ = inputProbe.record(RemoteAction(action: "displays", epoch: geometryEpoch))
+            watchProbeBigText()
             receiveDisplays(RemoteAction(action: "displays", epoch: geometryEpoch,
-                                         displays: Self.probeDisplays, display: currentDisplayID ?? Self.probeDisplays[0].id))
+                                         displays: probeDisplayList, display: currentDisplayID ?? Self.probeDisplays[0].id))
             return
         }
         #endif
@@ -554,13 +567,41 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     #if DEBUG
-    /// Two displays for offline checks of the picker (`--ui-input-probe`).
+    /// Two displays for offline checks of the picker (`--ui-input-probe`); the built-in one offers
+    /// two Big Text steps.
     static let probeDisplays = [
         DisplayDescriptor(id: 1, name: "Built-in Retina Display", width: 1440, height: 900,
-                          pixelWidth: 2880, pixelHeight: 1800, main: true),
+                          pixelWidth: 2880, pixelHeight: 1800, main: true,
+                          scaleSteps: [ScaleStep(width: 1280, height: 832), ScaleStep(width: 1024, height: 665)],
+                          scaleBaselineWidth: 1470, scaleCurrentWidth: 1470),
         DisplayDescriptor(id: 2, name: "Studio Display", width: 2560, height: 1440,
                           pixelWidth: 5120, pixelHeight: 2880, main: false)
     ]
+    private var probeScaleWidth: Double = 1470
+    private var probeScaleWatch: AnyCancellable?
+
+    private var probeDisplayList: [DisplayDescriptor] {
+        var list = Self.probeDisplays
+        list[0].scaleCurrentWidth = probeScaleWidth
+        return list
+    }
+
+    /// Offline stand-in for the Mac's answer to `displayScale`: each request the phone starts
+    /// waiting on is answered with the list at the new size, a second later so a UI test can see
+    /// the progress pill.
+    private func watchProbeBigText() {
+        guard probeScaleWatch == nil else { return }
+        probeScaleWatch = $bigText.map(\.pendingSince).removeDuplicates().compactMap { $0 }
+            .delay(for: .seconds(1), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in self?.answerProbeBigText() }
+    }
+
+    private func answerProbeBigText() {
+        guard let target = bigText.pendingTarget else { return }
+        probeScaleWidth = target == 0 ? 1470 : target
+        receiveDisplays(RemoteAction(action: "displays", epoch: geometryEpoch,
+                                     displays: probeDisplayList, display: currentDisplayID, scaleRequestID: bigTextPendingRequest?.id))
+    }
     #endif
 
     /// Streams another display in the same session and remembers the choice for this Mac.
@@ -591,6 +632,7 @@ final class PhoneRemoteModel: ObservableObject {
         if pendingDisplayID != nil { resetQuality() }
         pendingDisplayID = nil
         applyRememberedDisplay()
+        updateBigText(from: action)
     }
 
     #if DEBUG
@@ -603,7 +645,7 @@ final class PhoneRemoteModel: ObservableObject {
             self.fresh = true
             self.captureHealthy = true
             self.receiveDisplays(RemoteAction(action: "displays", epoch: self.geometryEpoch,
-                                              displays: Self.probeDisplays, display: display.id))
+                                              displays: self.probeDisplayList, display: display.id))
         }
     }
     #endif
@@ -668,6 +710,162 @@ final class PhoneRemoteModel: ObservableObject {
         macVitals = vitals
     }
     #endif
+    // MARK: Big Text
+
+    @Published private(set) var bigText = BigTextState()
+    var lastBigTextRequest: (display: UInt32, width: Double, requestID: String)?
+    private(set) var bigTextRequestsSent = 0
+    var bigTextMemory = BigTextMemory()
+    var bigTextRoomOverride: String?
+    var bigTextClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    private var bigTextSendTask: Task<Void, Never>?
+    private var bigTextDisplayID: UInt32?
+    private struct BigTextRequest {
+        let id: String
+        let display: UInt32
+        let acceptedWidth: Double?
+    }
+    private var bigTextPendingRequest: BigTextRequest?
+    private var bigTextTimedOut: (request: BigTextRequest, noticeGeneration: UInt64)?
+    private var sessionNoticeGeneration: UInt64 = 0
+    static let bigTextDebounce: Duration = .milliseconds(600)
+    static let bigTextTimeout: TimeInterval = 8
+
+    var bigTextSupported: Bool { supports(SessionFeature.displayScale) }
+    var showsSharingStoppedCard: Bool { fresh && !captureHealthy && bigText.pendingTarget == nil }
+    private var bigTextRoom: String? { bigTextRoomOverride ?? connection.invitation?.room }
+    private var currentDescriptor: DisplayDescriptor? { displays.first { $0.id == currentDisplayID } }
+
+    /// Saves the level for this Mac and display now; the Mac is asked after a short pause, so
+    /// several quick choices cost one mode change.
+    func chooseBigText(_ width: Double?) {
+        guard bigTextSupported, let id = currentDisplayID, let descriptor = currentDescriptor else { return }
+        if let room = bigTextRoom { bigTextMemory.remember(width, forRoom: room, display: descriptor, among: displays) }
+        bigText.savedWidth = width
+        bigText.sessionOff = false
+        bigText.autoApplied = true
+        scheduleBigText(display: id, width: width ?? 0)
+    }
+
+    func setBigTextOffForSession(_ off: Bool) {
+        guard bigTextSupported, let id = currentDisplayID else { return }
+        bigText.sessionOff = off
+        bigText.autoApplied = true
+        scheduleBigText(display: id, width: off ? 0 : (bigText.savedWidth ?? 0))
+    }
+
+    func chooseBigTextNow(_ width: Double) {
+        guard bigTextSupported, let id = currentDisplayID else { return }
+        bigTextSendTask?.cancel()
+        bigTextSendTask = nil
+        sendBigText(display: id, width: width)
+    }
+
+    func checkBigTextTimeout() {
+        guard let since = bigText.pendingSince, bigTextClock() - since > Self.bigTextTimeout else { return }
+        let timedOut = bigTextPendingRequest
+        bigTextPendingRequest = nil
+        bigText.pendingTarget = nil
+        bigText.pendingSince = nil
+        showSessionNotice("Couldn't change text size")
+        if let timedOut { bigTextTimedOut = (timedOut, sessionNoticeGeneration) }
+    }
+
+    static func bigTextMessage(_ error: BigTextError) -> String? {
+        switch error {
+        case .noAccessibility: "Big Text needs Accessibility permission on your Mac."
+        case .unsupported: "This display doesn't offer larger sizes."
+        case .disabled: "Big Text is turned off on this Mac."
+        case .failed: "Couldn't change text size. If an app is full screen on your Mac, exit full screen and try again."
+        case .busy: nil
+        }
+    }
+
+    private func scheduleBigText(display: UInt32, width: Double) {
+        bigTextSendTask?.cancel()
+        bigTextSendTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.bigTextDebounce)
+            guard let self, !Task.isCancelled, self.currentDisplayID == display else { return }
+            self.bigTextSendTask = nil
+            self.sendBigText(display: display, width: width)
+        }
+    }
+
+    private func sendBigText(display: UInt32, width: Double) {
+        if let timedOut = bigTextTimedOut, sessionNoticeGeneration == timedOut.noticeGeneration {
+            sessionNoticeTask?.cancel()
+            sessionNotice = nil
+        }
+        bigTextTimedOut = nil
+        cancelInput()
+        let id = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        let descriptor = displays.first { $0.id == display }
+        let nearest = descriptor?.scaleSteps?.min { abs($0.width - width) < abs($1.width - width) }?.width
+        let boundedNearest = nearest.flatMap { abs($0 - width) <= width * 0.10 ? $0 : nil }
+        let noOp = descriptor?.scaleBaselineWidth.flatMap { width >= $0 ? descriptor?.scaleCurrentWidth : nil }
+        let accepted = width == 0 ? descriptor?.scaleBaselineWidth : (boundedNearest ?? noOp)
+        bigTextPendingRequest = BigTextRequest(id: id, display: display, acceptedWidth: accepted)
+        lastBigTextRequest = (display, width, id)
+        bigTextRequestsSent += 1
+        // Pending even if the send failed: the 8 s timeout then tells the person, instead of silence.
+        _ = transmit(RemoteAction(action: "displayScale", epoch: geometryEpoch, display: display, looksLikeWidth: width, scaleRequestID: id))
+        bigText.pendingTarget = width
+        bigText.pendingSince = bigTextClock()
+    }
+
+    private func updateBigText(from action: RemoteAction) {
+        guard let descriptor = currentDescriptor else { return }
+        if bigTextDisplayID != descriptor.id {
+            // A delayed request belongs to the old display and must not block the new one.
+            bigTextSendTask?.cancel()
+            bigTextSendTask = nil
+            // A saved level belongs to one display, so a switch gets that display's level once.
+            bigTextDisplayID = descriptor.id
+            bigText.autoApplied = false
+        }
+        bigText.steps = descriptor.scaleSteps ?? []
+        bigText.baselineWidth = descriptor.scaleBaselineWidth
+        bigText.currentWidth = descriptor.scaleCurrentWidth
+        if let room = bigTextRoom { bigText.savedWidth = bigTextMemory.width(forRoom: room, display: descriptor, among: displays) }
+        let error = action.scaleError.flatMap(BigTextError.init(rawValue:))
+        if action.scaleError == nil, let timedOut = bigTextTimedOut,
+           action.scaleRequestID == timedOut.request.id, timedOut.request.display == descriptor.id,
+           let accepted = timedOut.request.acceptedWidth, descriptor.scaleCurrentWidth == accepted {
+            bigTextTimedOut = nil
+            if sessionNoticeGeneration == timedOut.noticeGeneration {
+                sessionNoticeTask?.cancel()
+                sessionNotice = nil
+            }
+        }
+        // A display list is also sent on capture restart, display selection and other
+        // requests. Only the completion of the latest scale request owns its pending UI.
+        let pendingSucceeded = bigTextPendingRequest.map { pending in
+            guard let accepted = pending.acceptedWidth else { return false }
+            return displays.first(where: { $0.id == pending.display })?.scaleCurrentWidth == accepted
+        } ?? false
+        if let pending = bigTextPendingRequest, action.scaleRequestID == pending.id, error != .busy,
+           action.scaleError != nil || pendingSucceeded {
+            bigTextPendingRequest = nil
+            bigText.pendingTarget = nil
+            bigText.pendingSince = nil
+            if let error, let message = Self.bigTextMessage(error) { showSessionNotice(message) }
+        }
+        applySavedBigText()
+    }
+
+    private func applySavedBigText() {
+        guard bigTextSupported, !bigText.autoApplied, bigText.pendingTarget == nil, bigTextSendTask == nil,
+              let baseline = bigText.baselineWidth, let current = bigText.currentWidth,
+              let id = currentDisplayID, id == bigTextDisplayID else { return }
+        bigText.autoApplied = true
+        // A different phone may have left its level during the host's disconnect grace.
+        guard !bigText.sessionOff, let saved = bigText.savedWidth else {
+            if current != baseline { sendBigText(display: id, width: 0) }
+            return
+        }
+        guard saved < baseline, saved != current else { return }
+        sendBigText(display: id, width: saved)
+    }
 
     // MARK: Viewport capture (G4)
 
@@ -970,6 +1168,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func showSessionNotice(_ text: String) {
+        sessionNoticeGeneration &+= 1
         sessionNotice = text
         sessionNoticeTask?.cancel()
         sessionNoticeTask = Task { @MainActor [weak self] in
@@ -1780,6 +1979,8 @@ final class PhoneRemoteModel: ObservableObject {
             acceptResumeMeasurement(resumeTiming.settled(at: now))
         }
         _ = resumeTiming.expire(at: now)
+        if !bigText.autoApplied { applySavedBigText() }
+        checkBigTextTimeout()
         if fresh && now - lastFrame > 2 {
             fresh = false
             pointerLocator.clear()
@@ -1863,6 +2064,14 @@ final class PhoneRemoteModel: ObservableObject {
         pendingDisplayID = nil
         displaysRequested = false
         rememberedDisplayApplied = false
+        bigTextSendTask?.cancel()
+        bigTextSendTask = nil
+        bigTextDisplayID = nil
+        bigTextTimedOut = nil
+        bigTextPendingRequest = nil
+        bigText = BigTextState()
+        lastBigTextRequest = nil
+        bigTextRequestsSent = 0
         geometryEpoch = 0
         nativeInteractionSupported = false
         inputToken = nil
