@@ -331,8 +331,9 @@ final class PhoneRemoteModel: ObservableObject {
         #if DEBUG
         if let inputProbe {
             _ = inputProbe.record(RemoteAction(action: "displays", epoch: geometryEpoch))
+            watchProbeBigText()
             receiveDisplays(RemoteAction(action: "displays", epoch: geometryEpoch,
-                                         displays: Self.probeDisplays, display: currentDisplayID ?? Self.probeDisplays[0].id))
+                                         displays: probeDisplayList, display: currentDisplayID ?? Self.probeDisplays[0].id))
             return
         }
         #endif
@@ -348,13 +349,41 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     #if DEBUG
-    /// Two displays for offline checks of the picker (`--ui-input-probe`).
+    /// Two displays for offline checks of the picker (`--ui-input-probe`); the built-in one offers
+    /// two Big Text steps.
     static let probeDisplays = [
         DisplayDescriptor(id: 1, name: "Built-in Retina Display", width: 1440, height: 900,
-                          pixelWidth: 2880, pixelHeight: 1800, main: true),
+                          pixelWidth: 2880, pixelHeight: 1800, main: true,
+                          scaleSteps: [ScaleStep(width: 1280, height: 832), ScaleStep(width: 1024, height: 665)],
+                          scaleBaselineWidth: 1470, scaleCurrentWidth: 1470),
         DisplayDescriptor(id: 2, name: "Studio Display", width: 2560, height: 1440,
                           pixelWidth: 5120, pixelHeight: 2880, main: false)
     ]
+    private var probeScaleWidth: Double = 1470
+    private var probeScaleWatch: AnyCancellable?
+
+    private var probeDisplayList: [DisplayDescriptor] {
+        var list = Self.probeDisplays
+        list[0].scaleCurrentWidth = probeScaleWidth
+        return list
+    }
+
+    /// Offline stand-in for the Mac's answer to `displayScale`: each request the phone starts
+    /// waiting on is answered with the list at the new size, a second later so a UI test can see
+    /// the progress pill.
+    private func watchProbeBigText() {
+        guard probeScaleWatch == nil else { return }
+        probeScaleWatch = $bigText.map(\.pendingSince).removeDuplicates().compactMap { $0 }
+            .delay(for: .seconds(1), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in self?.answerProbeBigText() }
+    }
+
+    private func answerProbeBigText() {
+        guard let target = bigText.pendingTarget else { return }
+        probeScaleWidth = target == 0 ? 1470 : target
+        receiveDisplays(RemoteAction(action: "displays", epoch: geometryEpoch,
+                                     displays: probeDisplayList, display: currentDisplayID))
+    }
     #endif
 
     /// Streams another display in the same session and remembers the choice for this Mac.
@@ -397,7 +426,7 @@ final class PhoneRemoteModel: ObservableObject {
             self.fresh = true
             self.captureHealthy = true
             self.receiveDisplays(RemoteAction(action: "displays", epoch: self.geometryEpoch,
-                                              displays: Self.probeDisplays, display: display.id))
+                                              displays: self.probeDisplayList, display: display.id))
         }
     }
     #endif
