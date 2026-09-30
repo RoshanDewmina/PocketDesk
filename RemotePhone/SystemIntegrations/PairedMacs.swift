@@ -1,8 +1,7 @@
 import Foundation
 
 /// A Mac this iPhone is paired with, as the system surfaces (Siri, Shortcuts, Spotlight) see it.
-/// Farside 1.0 pairs one Mac at a time, but every surface is written for several: the intents take
-/// an optional Mac and ask "Which Mac?" only when there is more than one.
+/// Each surface resolves an explicit destination; legacy aliases remain lookup-only.
 struct PairedMac: Equatable {
     /// Opaque and stable for one pairing. Never the room id, which the service knows.
     let id: String
@@ -17,20 +16,31 @@ enum PairedMacs {
 
     static func all() -> [PairedMac] { loader() }
 
-    static func mac(withID id: String) -> PairedMac? { all().first { $0.id == id } }
+    static func mac(withID id: String) -> PairedMac? {
+        if let direct = all().first(where: { $0.id == id }) { return direct }
+        guard let snapshot = try? PhoneTrustStore.shared.snapshot(),
+              let host = snapshot.hosts.first(where: { $0.legacyAliases.contains(id) }) else { return nil }
+        return all().first { $0.id == "m_" + host.id }
+    }
+
+    static func id(for invitation: PairInvitation) -> String? {
+        // Exact owner credentials bind alerts/activity/share destinations to one saved pair.
+        all().first { $0.invitation?.room == invitation.room && $0.invitation?.token == invitation.token
+            && $0.invitation?.durableHostID == invitation.durableHostID }?.id
+    }
 
     static func opaqueID(room: String) -> String {
         "m_" + String(SecureRandom.digest("farside.mac|" + room).prefix(16))
     }
 
     private static func defaultLoader() -> [PairedMac] {
-        var saved: PairInvitation?
         #if DEBUG
-        saved = DebugLaunchSeeds.invitation
+        if let saved = DebugLaunchSeeds.invitation {
+            return [PairedMac(id: opaqueID(room: saved.room), name: saved.name, invitation: saved)]
+        }
         #endif
-        if saved == nil { saved = (try? PairStore(account: "phone").read(PairInvitation.self)) ?? nil }
-        guard let saved else { return [] }
-        return [PairedMac(id: opaqueID(room: saved.room), name: saved.name, invitation: saved)]
+        guard let snapshot = try? PhoneTrustStore.shared.snapshot() else { return [] }
+        return snapshot.hosts.map { PairedMac(id: "m_" + $0.id, name: $0.invitation.name, invitation: $0.invitation) }
     }
 }
 
