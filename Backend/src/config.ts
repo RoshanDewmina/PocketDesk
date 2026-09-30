@@ -16,6 +16,8 @@ export type Config = {
   testForceRelay: boolean;
   /** Local dev/test migration switch: legacy peers may receive STUN and TURN. Refused on public deployments. */
   allowUnentitledRelay: boolean;
+  /** Staging-only developer pass: these exact rooms are treated as entitled without a purchase. Refused in production. */
+  devRelayRooms: Set<string>;
   /** 0 disables; otherwise each peer's last `ice` message is re-sent unchanged every N seconds so quiet sockets stay open. */
   keepaliveMs: number;
   roots: Uint8Array[];
@@ -39,6 +41,11 @@ export function loadConfig(env: Env): Config {
   const allowUnentitledRelay = flagVar(env.ALLOW_UNENTITLED_RELAY);
   if (isPublicEnvironment(environmentName) && allowUnentitledRelay) {
     throw new Error("ALLOW_UNENTITLED_RELAY is refused on public deployments");
+  }
+  const devRelayRooms = new Set(listVar((env as { DEV_RELAY_ROOMS?: string }).DEV_RELAY_ROOMS));
+  if (devRelayRooms.size > 0) {
+    if (isProduction) throw new Error("DEV_RELAY_ROOMS is refused in production");
+    if (devRelayRooms.size > 4 || [...devRelayRooms].some(room => !/^[a-f0-9]{64}$/.test(room))) throw new Error("DEV_RELAY_ROOMS invalid");
   }
   const keepaliveSeconds = parseIntegerVar(env.KEEPALIVE_SECONDS, 0, 0, 600);
   if (keepaliveSeconds !== 0 && keepaliveSeconds < 15) throw new Error("KEEPALIVE_SECONDS must be 0 or at least 15");
@@ -65,6 +72,7 @@ export function loadConfig(env: Env): Config {
     maxDevices: parseIntegerVar(env.MAX_DEVICES_PER_ENTITLEMENT, 3, 1, 10),
     testForceRelay,
     allowUnentitledRelay,
+    devRelayRooms,
     keepaliveMs: keepaliveSeconds * 1000,
     roots: parseRootPins(env.APPLE_ROOT_CERTS),
     relayConfigured,

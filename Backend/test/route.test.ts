@@ -42,6 +42,21 @@ describe("route.1 server policy", () => {
     expect(() => loadConfig(staging)).toThrow("ALLOW_UNENTITLED_RELAY is refused on public deployments");
   });
 
+  it("accepts a staging developer pass for exact rooms only and refuses it in production", () => {
+    const withEnv = (name: string, rooms: string) => new Proxy(testEnv, {
+      get(target, property) {
+        if (property === "ENVIRONMENT_NAME") return name;
+        if (property === "DEV_RELAY_ROOMS") return rooms;
+        return Reflect.get(target, property);
+      },
+    });
+    const room = "a".repeat(64);
+    expect(loadConfig(withEnv("staging", room)).devRelayRooms.has(room)).toBe(true);
+    expect(loadConfig(withEnv("staging", "")).devRelayRooms.size).toBe(0);
+    expect(() => loadConfig(withEnv("production", room))).toThrow("DEV_RELAY_ROOMS is refused in production");
+    expect(() => loadConfig(withEnv("staging", "not-a-room"))).toThrow("DEV_RELAY_ROOMS invalid");
+  });
+
   it("sends one matching, expiring policy to both peers before admitting signaling", async () => {
     const p = await pairing();
     const host = await connectHost(p, { features: ["route.1", "renew.1"] });

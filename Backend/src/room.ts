@@ -539,7 +539,7 @@ export class RoomDO extends DurableObject<Env> {
    * outage costs at most a local-only session); an established session keeps its credentials through `stillEntitled`.
    */
   private async checkEntitlement(token: string | undefined): Promise<Entitlement> {
-    if (!token) return this.config.allowUnentitledRelay ? { entitled: true } : { entitled: false };
+    if (!token) return this.unentitledRelayAllowed() ? { entitled: true } : { entitled: false };
     const now = Date.now();
     const payload = await verifyEntitlementToken(this.env.ENTITLEMENT_TOKEN_KEY, token, now, this.config.environmentName);
     if (!payload) return { entitled: false };
@@ -554,6 +554,14 @@ export class RoomDO extends DurableObject<Env> {
     }
   }
 
+  private unentitledRelayAllowed(): boolean {
+    if (this.config.allowUnentitledRelay) return true;
+    const room = this.state().room;
+    if (!room || !this.config.devRelayRooms.has(room)) return false;
+    log("dev_relay_pass_used", { room: fingerprint(room) });
+    return true;
+  }
+
   /** Fresh authorization is required before minting replacement TURN credentials. */
   private async stillEntitled(attachment: Attachment, now: number): Promise<"valid" | "invalid" | "unavailable"> {
     if (!attachment.entitled) return "invalid";
@@ -561,7 +569,7 @@ export class RoomDO extends DurableObject<Env> {
     const state = this.state();
     const entitlementId = attachment.entitlementId ?? state.entitlement_id;
     const deviceId = attachment.deviceId ?? state.entitled_device;
-    if (!entitlementId || !deviceId) return this.config.allowUnentitledRelay ? "valid" : "invalid";
+    if (!entitlementId || !deviceId) return this.unentitledRelayAllowed() ? "valid" : "invalid";
     try {
       const row = await withTimeout(entitlementForDevice(this.env.DB, entitlementId, deviceId), STORAGE_TIMEOUT_MS, "entitlement lookup");
       return row !== null && hasAccess(row, now) && row.device_room === state.room ? "valid" : "invalid";
