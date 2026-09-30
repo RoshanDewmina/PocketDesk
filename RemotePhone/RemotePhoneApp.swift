@@ -338,8 +338,8 @@ final class PhoneRemoteModel: ObservableObject {
             couchAck.reset()
             couchStalled = false
             cancelInput()
+            sessionMode = mode
         }
-        sessionMode = mode
         connection.sessionModeRequest = mode
         if pendingModeSwitch == mode { clearPendingModeSwitch() }
     }
@@ -1385,7 +1385,7 @@ final class PhoneRemoteModel: ObservableObject {
                 cancelInput()
                 showSessionNotice(CouchCopy.notAnswering)
             }
-            couchStalled = stalled
+            if couchStalled != stalled { couchStalled = stalled }
         }
         if activeHold != nil {
             if !canControl || explicitHoldDeadline.map({ now >= $0 }) == true {

@@ -62,9 +62,13 @@ final class CouchPhoneModelTests: XCTestCase {
 
     func testARefusalEndsTheAttemptAndSaysWhy() throws {
         let model = connected(mode: .couch)
+        model.connection.status = "Connected"
         try deliver(status(false, mode: SessionModeStatus.refused, reason: "controlOff", features: couchFeatures), to: model)
         XCTAssertEqual(model.couchRefusal, .controlOff)
         XCTAssertFalse(model.canControl)
+        XCTAssertEqual(model.sessionEndReason, .error)
+        XCTAssertEqual(model.connection.status, "Disconnected", "the refusal stopped the coordinator")
+        XCTAssertFalse(model.connection.connected)
         XCTAssertFalse(model.connection.isRunning)
         model.clearCouchRefusal()
         XCTAssertNil(model.couchRefusal)
