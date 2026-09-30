@@ -2,6 +2,8 @@
 """Parent-provisioned, DEBUG native stub lanes. No build/device/daemon lifecycle CLI."""
 import argparse
 import contextlib
+import ctypes
+import errno
 import datetime as dt
 import fcntl
 import hashlib
@@ -168,6 +170,39 @@ def main_image(pid):
     images = [line[1:] for line in output.splitlines() if line.startswith('n')]
     require(images, 'process main image unavailable')
     return str(Path(images[0]).resolve())
+
+
+class ProcBSDInfo(ctypes.Structure):
+    # Public SDK sys/proc_info.h: proc_bsdinfo, arm64 Darwin. Verify its ABI before use.
+    _fields_ = [(name, ctypes.c_uint32) for name in ('flags', 'status', 'xstatus', 'pid', 'ppid',
+        'uid', 'gid', 'ruid', 'rgid', 'svuid', 'svgid', 'reserved')] + [
+        ('comm', ctypes.c_char * 16), ('name', ctypes.c_char * 32)] + [
+        (name, ctypes.c_uint32) for name in ('nfiles', 'pgid', 'pjobc', 'tdev', 'tpgid')] + [
+        ('nice', ctypes.c_int32), ('startSeconds', ctypes.c_uint64), ('startMicroseconds', ctypes.c_uint64)]
+
+
+def process_birth(pid):
+    require(sys.platform == 'darwin' and ctypes.sizeof(ProcBSDInfo) == 136
+            and ProcBSDInfo.startSeconds.offset == 120 and ProcBSDInfo.startMicroseconds.offset == 128,
+            'unsupported public process-info ABI')
+    library = ctypes.CDLL('/usr/lib/libproc.dylib', use_errno=True)
+    function = library.proc_pidinfo
+    function.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_uint64, ctypes.c_void_p, ctypes.c_int]
+    function.restype = ctypes.c_int
+    info = ProcBSDInfo(); ctypes.set_errno(0)
+    count = function(pid, 3, 0, ctypes.byref(info), ctypes.sizeof(info))
+    if count != ctypes.sizeof(info):
+        if count <= 0 and ctypes.get_errno() == errno.ESRCH:
+            return None
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return None
+        raise Refused('live process birth identity unavailable')
+    require(info.pid == pid and info.uid == os.getuid() and info.ruid == os.getuid()
+            and info.startSeconds > 0 and info.startMicroseconds < 1000000, 'process birth owner/identity differs')
+    return {'birth': [int(info.startSeconds), int(info.startMicroseconds)], 'uid': int(info.uid),
+            'ruid': int(info.ruid), 'ppid': int(info.ppid), 'group': int(info.pgid)}
 
 
 def settle_child(child, command, seconds=3):
@@ -534,27 +569,43 @@ def group_members(group):
     for line in output.splitlines():
         fields = line.split(maxsplit=9)
         if len(fields) == 10 and int(fields[2]) == group and not fields[3].startswith('Z'):
-            members[str(int(fields[0]))] = {'ppid': int(fields[1]), 'identity': ' '.join(' '.join(fields[4:]).split()), 'group': group}
+            pid = int(fields[0]); life = process_birth(pid)
+            if life is None:
+                continue  # Positively absent since the ps snapshot, never an unknown live PID.
+            require(life['ppid'] == int(fields[1]) and life['group'] == group, 'process ancestry/group changed during census')
+            members[str(pid)] = {**life, 'identity': ' '.join(' '.join(fields[4:]).split())}
     return members
 
 
 def validate_members(item, members, discover=False):
     known = item.setdefault('members', {})
     pending = dict(members)
+    validated_current = set()
     for pid, current in list(pending.items()):
         if pid in known:
-            require(current['identity'] == known[pid]['identity'], 'group member PID reused/drifted')
+            previous = known[pid]
+            if pid != str(item['pid']) and 'birth' in previous:
+                require(all(current.get(key) == previous[key] for key in ('birth', 'uid', 'ruid', 'group')),
+                        'group descendant PID reused/owner/group drifted')
+            else:
+                require(current['identity'] == previous['identity'], 'group member PID reused/drifted')
+                if 'birth' in previous:
+                    require(all(current.get(key) == previous[key] for key in ('birth', 'uid', 'ruid', 'group')),
+                            'group leader lifetime changed')
+            validated_current.add(pid)
             pending.pop(pid)
     if str(item['pid']) in pending:
         leader = pending.pop(str(item['pid']))
         require(leader['identity'] == item['identity'], 'group leader identity drift')
         known[str(item['pid'])] = leader
+        validated_current.add(str(item['pid']))
     if discover:
         while pending:
             progress = False
             for pid, current in list(pending.items()):
-                if str(current['ppid']) in known:
+                if str(current['ppid']) in validated_current:
                     known[pid] = current; pending.pop(pid); progress = True
+                    validated_current.add(pid)
             require(progress, 'unproven process-group member ancestry; refusing signal')
     require(not pending, 'unrecorded group member; refusing signal')
 

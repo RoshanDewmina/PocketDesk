@@ -284,6 +284,57 @@ class RunnerTests(unittest.TestCase):
         child.terminate.assert_not_called()
         self.assertEqual(runner.read_json(self.root / 'settled-ownership.json')[0]['identity'], 'settled')
 
+    def testDescendantExecPreservesLifetimeButReusedBirthUidOrGroupRefuses(self):
+        leader = {'identity': 'leader', 'ppid': 1, 'group': 123, 'birth': [100, 1], 'uid': os.getuid(), 'ruid': os.getuid()}
+        descendant = {'identity': 'xcrun', 'ppid': 123, 'group': 123, 'birth': [100, 2], 'uid': os.getuid(), 'ruid': os.getuid()}
+        item = {'pid': 123, 'identity': 'leader', 'members': {'123': leader, '456': descendant}}
+        transitioned = dict(descendant, identity='pinned-tool')
+        runner.validate_members(item, {'123': leader, '456': transitioned})
+        for key, value in [('birth', [100, 3]), ('uid', os.getuid() + 1), ('ruid', os.getuid() + 1), ('group', 999)]:
+            with self.subTest(key=key), patch.object(runner.os, 'killpg') as kill:
+                changed = dict(transitioned); changed[key] = value
+                with patch.object(runner, 'group_members', return_value={'123': leader, '456': changed}):
+                    with self.assertRaises(runner.Refused): runner.stop_group(item)
+                kill.assert_not_called()
+        with self.assertRaises(runner.Refused):
+            runner.validate_members(item, {'123': dict(leader, identity='unexpected-leader-exec'), '456': transitioned})
+
+    def testLegacyIdentityAndCurrentAncestryRemainStrict(self):
+        leader = {'identity': 'leader', 'ppid': 1, 'group': 123}
+        legacy = {'identity': 'old', 'ppid': 123, 'group': 123}
+        item = {'pid': 123, 'identity': 'leader', 'members': {'123': leader, '456': legacy}}
+        with self.assertRaises(runner.Refused): runner.validate_members(item, {'123': leader, '456': dict(legacy, identity='changed')})
+        # A historical parent PID is insufficient: its lifetime is not in this census.
+        unknown = {'identity': 'new', 'ppid': 456, 'group': 123}
+        with self.assertRaises(runner.Refused): runner.validate_members(item, {'123': leader, '789': unknown}, discover=True)
+
+    def testBirthQueryRequiresFullSizeOwnedIdentityAndPositiveAbsence(self):
+        function = unittest.mock.Mock(); library = types.SimpleNamespace(proc_pidinfo=function)
+        with patch.object(runner.ctypes, 'CDLL', return_value=library), patch.object(runner.ctypes, 'get_errno', return_value=runner.errno.ESRCH), patch.object(runner.os, 'kill') as kill:
+            function.return_value = 0
+            self.assertIsNone(runner.process_birth(123)); kill.assert_not_called()
+        for size in (0, 128):
+            with patch.object(runner.ctypes, 'CDLL', return_value=library), patch.object(runner.ctypes, 'get_errno', return_value=runner.errno.EPERM), patch.object(runner.os, 'kill', return_value=None) as kill:
+                function.return_value = size
+                with self.assertRaisesRegex(runner.Refused, 'live process'): runner.process_birth(123)
+                kill.assert_called_once_with(123, 0)
+        def fill(pid, flavor, arg, buffer, size):
+            self.assertEqual((pid, flavor, arg, size), (123, 3, 0, 136))
+            info = runner.ctypes.cast(buffer, runner.ctypes.POINTER(runner.ProcBSDInfo)).contents
+            info.pid = 123; info.uid = info.ruid = os.getuid(); info.pgid = 123; info.ppid = 10
+            info.startSeconds = 100; info.startMicroseconds = 200
+            return size
+        function.side_effect = fill
+        with patch.object(runner.ctypes, 'CDLL', return_value=library):
+            self.assertEqual(runner.process_birth(123)['birth'], [100, 200])
+        def foreign(*args):
+            result = fill(*args)
+            runner.ctypes.cast(args[3], runner.ctypes.POINTER(runner.ProcBSDInfo)).contents.uid = os.getuid() + 1
+            return result
+        function.side_effect = foreign
+        with patch.object(runner.ctypes, 'CDLL', return_value=library):
+            with self.assertRaisesRegex(runner.Refused, 'owner'): runner.process_birth(123)
+
 
 if __name__ == '__main__':
     unittest.main()
