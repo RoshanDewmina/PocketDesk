@@ -225,15 +225,20 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         maxInFlight = tuning.encoderMaxInFlight
         latency.reset()
         lock.unlock()
-        counters?.recordEncoderEvidence(VideoEncoderEvidence(path: .compatibility, maximumQPBound: nil,
-            lowLatencyRequested: false, hardwareRequired: false, hardwareReported: nil))
-        counters?.encoderSessionStarted()
-        return inner.startEncode(with: settings, numberOfCores: numberOfCores)
+        let result = inner.startEncode(with: settings, numberOfCores: numberOfCores)
+        if result == 0 {
+            counters?.recordEncoderEvidence(VideoEncoderEvidence(path: .compatibility, maximumQPBound: nil,
+                lowLatencyRequested: false, hardwareRequired: false, hardwareReported: nil))
+            counters?.encoderSessionStarted()
+        } else { counters?.recordEncoderEvidence(nil) }
+        return result
     }
 
     func release() -> Int {
         lock.lock(); settings = nil; latency.reset(); lock.unlock()
-        return inner.release()
+        let result = inner.release()
+        counters?.recordEncoderEvidence(nil)
+        return result
     }
 
     func encode(_ frame: RTCVideoFrame, codecSpecificInfo info: (any RTCCodecSpecificInfo)?, frameTypes: [NSNumber]) -> Int {

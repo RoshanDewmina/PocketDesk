@@ -110,6 +110,7 @@ struct StreamCounterSnapshot {
     var rateUpdates: Int?
     var encoderSessionAgeS: Double?
     var encoderDropped: Int?
+    var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
     var encoderEvidence: VideoEncoderEvidence?
     // Host input (perf pack 1b): data-channel arrival → handled on the main queue, and CGEvent post time.
@@ -151,6 +152,7 @@ struct HostStreamSummary: Codable, Equatable {
     /// Frames the encoder's newest-frame-wins gate dropped at submit in the last sample.
     var encoderDropped: Int?
     /// Frames VideoToolbox dropped without a callback (retired by a later completion) in the last sample.
+    var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
     var encoderEvidence: VideoEncoderEvidence?
     /// Input messages: data-channel arrival → handled on the Mac's main queue, and CGEvent post time.
@@ -190,7 +192,7 @@ struct HostStreamSummary: Codable, Equatable {
                        encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs,
                        inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs, inputPostP95Ms].compactMap { $0 }
         let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates,
-                        encoderDropped, encoderSilentDrops, inputEvents].compactMap { $0 }
+                        encoderDropped, encoderSilentDrops, encoderDeliveryDrops, inputEvents].compactMap { $0 }
         let bytes = [encodeBytesP50, keyFrameBytesMax].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 10_000_000 }),
               integers.allSatisfy({ $0 >= 0 && $0 <= 100_000 }),
@@ -326,6 +328,7 @@ struct StreamStatsReport: Codable, Equatable {
     var rateUpdates: Int?
     var encoderSessionAgeS: Double?
     var encoderDropped: Int?
+    var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
     var encoderEvidence: VideoEncoderEvidence?
     var inputMainDelayP50Ms: Double?
@@ -441,6 +444,7 @@ struct StreamStatsReport: Codable, Equatable {
                 rateUpdates = counters.rateUpdates
                 encoderSessionAgeS = Self.round(counters.encoderSessionAgeS)
                 encoderDropped = counters.encoderDropped
+                encoderDeliveryDrops = counters.encoderDeliveryDrops
                 encoderSilentDrops = counters.encoderSilentDrops
                 encoderEvidence = counters.encoderEvidence
                 if let evidence = encoderEvidence { powerEfficientEncoder = evidence.hardwareReported }
@@ -510,6 +514,7 @@ struct StreamStatsReport: Codable, Equatable {
                           rateUpdates: rateUpdates.map { min($0, 100_000) },
                           encoderSessionAgeS: encoderSessionAgeS.map { min($0, 10_000_000) },
                           encoderDropped: encoderDropped.map { min($0, 100_000) },
+                          encoderDeliveryDrops: encoderDeliveryDrops.map { min($0, 100_000) },
                           encoderSilentDrops: encoderSilentDrops.map { min($0, 100_000) },
                           encoderEvidence: encoderEvidence,
                           inputMainDelayP50Ms: inputMainDelayP50Ms.map { min($0, 10_000_000) },
@@ -843,6 +848,7 @@ final class StreamCounters: @unchecked Sendable {
     private var keyFrameBytesMax = 0
     private var rateUpdates = 0
     private var encoderDropped = 0
+    private var encoderDeliveryDrops = 0
     private var encoderSilentDrops = 0
     private var inputMainDelay = LatencyWindow()
     private var inputPost = LatencyWindow()
@@ -997,6 +1003,9 @@ final class StreamCounters: @unchecked Sendable {
         lock.lock(); encoderSilentDrops += max(0, count); lock.unlock()
     }
 
+    /// Encoded outputs replaced in the bounded delivery mailbox, separate from VT drops.
+    func encoderDeliveryDropped() { lock.lock(); encoderDeliveryDrops += 1; lock.unlock() }
+
     func recordEncoderEvidence(_ evidence: VideoEncoderEvidence?) {
         lock.lock(); encoderEvidence = evidence; lock.unlock()
     }
@@ -1061,6 +1070,7 @@ final class StreamCounters: @unchecked Sendable {
         result.rateUpdates = encode.count > 0 || rateUpdates > 0 ? rateUpdates : nil
         result.encoderSessionAgeS = encoderSessionStartedMs.map { max(0, (MachClock.nowMs() - $0) / 1000) }
         result.encoderDropped = encode.count > 0 || encoderDropped > 0 ? encoderDropped : nil
+        result.encoderDeliveryDrops = encoderDeliveryDrops > 0 ? encoderDeliveryDrops : nil
         result.encoderSilentDrops = encode.count > 0 || encoderSilentDrops > 0 ? encoderSilentDrops : nil
         let mainDelay = inputMainDelay.drainPercentiles()
         let post = inputPost.drainPercentiles()
@@ -1073,6 +1083,7 @@ final class StreamCounters: @unchecked Sendable {
         keyFrameBytesMax = 0
         rateUpdates = 0
         encoderDropped = 0
+        encoderDeliveryDrops = 0
         encoderSilentDrops = 0
         snapshot = StreamCounterSnapshot(interval: 0)
         startedAt = time
