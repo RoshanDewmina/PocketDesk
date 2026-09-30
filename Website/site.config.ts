@@ -51,8 +51,8 @@ export const config = {
     phone: null,
     postalAddress: null,
     legalName: null,
-    governingLaw: null,
-    responseTime: null,
+    governingLaw: "the Province of Ontario and the federal laws of Canada applicable there",
+    responseTime: "within two business days",
   } satisfies Contact as Contact,
 
   launch: {
