@@ -40,13 +40,13 @@ enum HostInstallLocation {
 enum HostBackgroundPolicy {
     enum RecoveryAction: Equatable { case none, register, reregister, unregister }
 
-    /// The first time setup is complete, launch at login turns on once. Any later choice sticks.
+    /// New installations require an explicit choice. Existing system registrations stay intact.
     static func shouldEnableLoginByDefault(setupComplete: Bool, defaultApplied: Bool, installed: Bool,
                                            state: HostBackgroundItemState) -> Bool {
-        setupComplete && installed && !defaultApplied && (state == .off || state == .unavailable)
+        false
     }
 
-    /// Automatic recovery is on by default after setup. An updated helper is re-registered, as
+    /// Automatic recovery follows the saved choice. An updated helper is re-registered, as
     /// ServiceManagement requires when a LaunchAgent's executable changes.
     static func recoveryAction(wanted: Bool, setupComplete: Bool, installed: Bool,
                                state: HostBackgroundItemState, registeredFingerprint: String?,
@@ -70,6 +70,7 @@ final class HostBackgroundServices {
         static let loginDefaultApplied = "launchAtLoginDefaultApplied"
         static let recoveryWanted = "automaticRecoveryEnabled"
         static let registeredHelper = "automaticRecoveryHelperFingerprint"
+        static let explicitChoicePolicy = "backgroundChoicePolicyV2"
     }
 
     let loginItem: HostBackgroundService
@@ -88,8 +89,16 @@ final class HostBackgroundServices {
         self.defaults = defaults
         self.installed = installed
         self.helperFingerprint = helperFingerprint
-        defaults.register(defaults: [Key.recoveryWanted: true])
         refresh()
+        // Migrate once, before registering defaults. Preserve old installed setup's implicit
+        // recovery choice and actual registered helpers; never overwrite an explicit false.
+        if !defaults.bool(forKey: Key.explicitChoicePolicy) {
+            if defaults.object(forKey: Key.recoveryWanted) == nil {
+                let legacyEnabled = defaults.bool(forKey: Key.loginDefaultApplied) || recoveryState.isRegistered
+                defaults.set(legacyEnabled, forKey: Key.recoveryWanted)
+            }
+            defaults.set(true, forKey: Key.explicitChoicePolicy)
+        }
     }
 
     static func live(bundle: Bundle = .main) -> HostBackgroundServices {

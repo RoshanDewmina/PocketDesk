@@ -113,7 +113,7 @@ final class HostReadinessTests: XCTestCase {
 
         let preferences = HostPreferences(defaults: defaults)
         XCTAssertTrue(preferences.allowControl)
-        XCTAssertTrue(preferences.keepAwake)
+        XCTAssertFalse(preferences.keepAwake, "Idle keep-awake requires a deliberate new-install choice")
         XCTAssertTrue(preferences.sharingEnabled)
         XCTAssertTrue(HostControlConsentState().isAllowed)
 

@@ -7,6 +7,7 @@ enum SessionFeature {
   static let liveViewOnly = "viewOnlyLive.2"
     static let extendedFeatureList = "features.32"
     static let causalInput = "input.causal.1"
+    static let lanWake = "wake.helper.1"
     static let inputReceipt = "input.receipt.1"
     static let captureScope = "capture-scope-v1"
     static let pencilInput = "input.pencil.1"
