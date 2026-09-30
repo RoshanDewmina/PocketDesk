@@ -26,6 +26,16 @@ enum GuestBudgetPolicy {
               let guest, now.isFinite, guest.at.isFinite, now >= guest.at, now - guest.at < freshness,
               let rate = guest.totalKbps, rate.isFinite, rate >= 0,
               let capacity = guest.capacityKbps, capacity.isFinite, capacity >= 128 else { return nil }
+        // Cold video-free paths may omit RTT/pacer. Reported congestion is never ignored;
+        // mandatory owner congestion/headroom gates already precede this separate-path cap.
+        if let rtt = guest.rttMs {
+            guard rtt.isFinite, rtt >= 0 else { return nil }
+            if let baseline = guest.baselineRTTMs {
+                guard baseline.isFinite, baseline >= 0,
+                      rtt < baseline + max(50, baseline * 0.5) else { return nil }
+            }
+        } else if let baseline = guest.baselineRTTMs, !baseline.isFinite || baseline < 0 { return nil }
+        if let pacer = guest.pacerDelayMs { guard pacer.isFinite, pacer >= 0, pacer < 50 else { return nil } }
         return min(maximumKbps, ownerCeiling, capacity)
     }
     static func ceilingKbps(for grantID: String, observation: GuestBudgetObservation, at now: TimeInterval) -> Double? {

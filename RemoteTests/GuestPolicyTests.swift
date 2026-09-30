@@ -117,4 +117,16 @@ final class GuestPolicyTests: XCTestCase {
         XCTAssertThrowsError(try GuestCrypto.open(GuestSignalEnvelope(direction: "host", sequence: "2", payload: envelope.payload), key: receiverKey, grantID: b, sessionID: a, direction: "host"))
         XCTAssertThrowsError(try grant.validate(at: 1000))
     }
+    func testOwnReportedGuestCongestionRejectsButUnavailableColdMeasurementsDoNotInventZero() {
+        func observation(_ rtt: Double?, _ baseline: Double?, _ pacer: Double?) -> GuestTransportObservation {
+            .init(at: 10, totalKbps: 0, capacityKbps: 300, rttMs: rtt, baselineRTTMs: baseline, pacerDelayMs: pacer, controlBufferedBytes: nil)
+        }
+        XCTAssertEqual(GuestBudgetPolicy.boundedCeilingKbps(ownerCeiling: 1000, guest: observation(nil, nil, nil), at: 10), 300)
+        XCTAssertEqual(GuestBudgetPolicy.boundedCeilingKbps(ownerCeiling: 1000, guest: observation(20, 10, 1), at: 10), 300)
+        for value in [observation(80, 10, 1), observation(.nan, 10, 1), observation(10, .infinity, 1),
+                      observation(nil, -1, nil), observation(10, 10, 50), observation(10, 10, .nan), observation(10, 10, -1)] {
+            XCTAssertNil(GuestBudgetPolicy.boundedCeilingKbps(ownerCeiling: 1000, guest: value, at: 10))
+        }
+    }
+
 }
