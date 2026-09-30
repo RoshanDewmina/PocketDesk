@@ -1,0 +1,1348 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Farside Motion Lab</title>
+<meta name="description" content="Connection and menu-bar motion options for Farside, 30 September 2026. Three connect directions (A/B/C), shared phone states, and three Mac popover directions, each driven by the app's real connection states, with Core Haptics sketches and Reduce Motion variants.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Doto:wght@800&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap">
+<style>
+/* Reach tokens (design/FARSIDE-DESIGN-SYSTEM.md). Dark only by decision D32.
+   Everything that moves in the DOM moves by transform or opacity; halftone art is canvas. */
+:root{
+  --void:#050505;--void2:#0B0B0B;--panel:#121212;--panel2:#191919;
+  --bone:#EDE8DF;--ash:#8C877F;--dim:#4A4742;--line:rgba(237,232,223,.12);--line2:rgba(237,232,223,.22);
+  --ember:#FF5B1F;--emberD:#C23D0E;--ink:#0A0A0A;--inkMuted:#5A564F;
+  --ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","Geist",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono","Geist Mono",Menlo,monospace;
+  --dot:"Doto",var(--mono);
+  --serif:"Instrument Serif",Georgia,serif;
+  --ease:cubic-bezier(.16,1,.3,1);--ease2:cubic-bezier(.22,1,.36,1);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--void);color:var(--bone)}
+body{font:15px/1.5 var(--ui);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+button:focus-visible{outline:2px solid var(--bone);outline-offset:2px}
+.cap{font:500 10.5px/1.35 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ash)}
+.mcap{font:400 12.5px/1.35 var(--mono);color:var(--ash)}
+code{font:400 .9em/1.4 var(--mono);color:var(--bone);background:var(--panel2);padding:1px 5px;border-radius:5px;overflow-wrap:anywhere}
+
+/* ---------- page ---------- */
+.top{max-width:1480px;margin:0 auto;padding:30px 24px 18px;display:grid;gap:14px}
+.brand{display:flex;align-items:center;gap:10px}
+.top h1{font:800 clamp(30px,4.4vw,50px)/1 var(--dot);margin:0;letter-spacing:.01em}
+.top h1 em{font:italic 400 1.02em/1 var(--serif);letter-spacing:0}
+.intro{max-width:82ch;color:var(--ash);margin:0}
+.intro b{color:var(--bone);font-weight:500}
+.globals{display:flex;flex-wrap:wrap;gap:10px 18px;align-items:center}
+.switch{display:inline-flex;align-items:center;gap:10px;font-size:13.5px;color:var(--bone)}
+.switch i{width:34px;height:20px;border-radius:10px;background:var(--dim);position:relative;transition:background .2s}
+.switch i::after{content:"";position:absolute;left:2px;top:2px;width:16px;height:16px;border-radius:50%;background:var(--bone);transition:transform .25s var(--ease)}
+.switch[aria-checked=true] i{background:var(--bone)}
+.switch[aria-checked=true] i::after{transform:translateX(14px);background:var(--ink)}
+.keys{font:400 12px var(--mono);color:var(--ash)}
+.keys kbd{font:500 11px var(--mono);border:1px solid var(--line2);border-radius:4px;padding:1px 5px;color:var(--bone)}
+
+.lab{max-width:1480px;margin:0 auto;padding:0 24px 64px;display:grid;grid-template-columns:232px minmax(0,1fr) 390px;gap:24px;align-items:start}
+.rail{position:sticky;top:16px;display:grid;gap:16px}
+.rail .grp{display:grid;gap:2px}
+.rail .grp>.cap{padding:0 12px 6px}
+.sc{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;padding:8px 12px;border-radius:10px;color:var(--ash);font-size:14px}
+.sc:hover{color:var(--bone)}
+.sc[aria-current=true]{background:var(--panel2);color:var(--bone);box-shadow:inset 0 0 0 1px var(--line2)}
+.sc small{font:500 10px var(--mono);letter-spacing:.1em;color:var(--dim)}
+.sc[aria-current=true] small{color:var(--ash)}
+
+.stagecol{display:grid;gap:14px;min-width:0}
+.dirbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;min-height:38px}
+.dir{height:38px;padding:0 15px 0 12px;border-radius:999px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);font:500 13.5px var(--ui);color:var(--ash);display:inline-flex;gap:9px;align-items:center}
+.dir b{font:800 18px/1 var(--dot);color:var(--bone)}
+.dir[aria-pressed=true]{background:var(--bone);color:var(--ink)}
+.dir[aria-pressed=true] b{color:var(--ink)}
+.dirnote{font-size:13px;color:var(--ash)}
+.stage{position:relative;background:radial-gradient(70% 60% at 50% 45%,#141414 0,var(--void) 70%);border:1px solid var(--line);border-radius:22px;display:flex;justify-content:center;align-items:center;padding:24px;min-height:480px;overflow:hidden}
+.fit{position:relative;flex:none}
+.device{position:absolute;left:0;top:0;transform-origin:0 0}
+.controls{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.btn{height:34px;padding:0 14px;border-radius:999px;background:var(--bone);color:var(--ink);font:600 13px var(--ui);display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+.btn svg{width:16px;height:16px}
+.btn.plate{background:var(--panel2);color:var(--bone);box-shadow:inset 0 0 0 1px var(--line2)}
+.btn[disabled]{opacity:.4;cursor:default}
+.sep{width:1px;height:22px;background:var(--line2);margin:0 4px}
+.chip{height:30px;padding:0 12px;border-radius:999px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);font:500 12.5px var(--ui);color:var(--ash)}
+.chip[aria-pressed=true]{color:var(--bone);box-shadow:inset 0 0 0 1px var(--bone)}
+.tele{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px}
+.box{background:var(--void2);border:1px solid var(--line);border-radius:16px;padding:14px 16px}
+.box>.cap{display:block;margin-bottom:10px}
+.log{list-style:none;margin:0;padding:0;display:grid;gap:2px}
+.log li{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:10px;align-items:baseline;padding:4px 0;color:var(--dim);font-size:12.5px}
+.log li i{width:7px;height:7px;border-radius:50%;background:var(--dim);transform:translateY(-1px)}
+.log li code{background:none;padding:0;color:inherit;font-size:12px}
+.log li span{font:400 11.5px var(--mono)}
+.log li small{display:block;font:400 11px var(--mono);color:inherit;opacity:.85}
+.log li.done{color:var(--ash)}
+.log li.done i{background:var(--ash)}
+.log li.cur{color:var(--bone)}
+.log li.cur i{background:var(--bone);box-shadow:0 0 0 3px rgba(237,232,223,.18)}
+.hapbox canvas{width:100%;height:64px;display:block}
+.lamp{display:flex;align-items:center;gap:8px;margin-top:8px;min-height:20px;font:400 12px var(--mono);color:var(--ash)}
+.lamp i{width:8px;height:8px;border-radius:50%;background:var(--dim);transition:background .3s}
+.lamp.on i{background:var(--bone);transition:none}
+
+.spec{position:sticky;top:16px;max-height:calc(100vh - 32px);overflow:auto;background:var(--void2);border:1px solid var(--line);border-radius:18px;padding:20px 20px 24px}
+.spec h2{font:600 22px/1.2 var(--ui);margin:6px 0 10px;text-wrap:balance}
+.spec h2 em{font:italic 400 1.1em var(--serif)}
+.spec h3{font:500 10.5px/1.3 var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ash);margin:20px 0 8px}
+.spec p{margin:0 0 10px;color:#CFCAC1;font-size:14px}
+.spec .rec{display:inline-block;font:600 11px var(--ui);padding:4px 8px;border-radius:6px;background:var(--bone);color:var(--ink);margin-left:6px;vertical-align:3px}
+.spec table{width:100%;border-collapse:collapse;font-size:12.5px}
+.spec td{padding:6px 0;border-top:1px solid var(--line);vertical-align:top}
+.spec td:first-child{color:var(--bone);padding-right:10px;width:44%}
+.spec td:last-child{color:var(--ash);font:400 11.5px/1.45 var(--mono)}
+.spec pre{margin:0;padding:10px 12px;background:var(--panel);border-radius:10px;border:1px solid var(--line);font:400 11.5px/1.55 var(--mono);color:#CFCAC1;white-space:pre-wrap;overflow-wrap:anywhere}
+.spec ul{margin:0 0 10px;padding-left:18px;color:#CFCAC1;font-size:13.5px}
+.spec li{margin-bottom:4px}
+footer{max-width:1480px;margin:0 auto;padding:24px 24px 48px;border-top:1px solid var(--line);color:var(--ash);font-size:13px}
+
+@media (max-width:1240px){.lab{grid-template-columns:210px minmax(0,1fr)}.spec{grid-column:1/-1;position:static;max-height:none}}
+@media (max-width:780px){
+  .top{padding:22px 16px 12px}.lab{grid-template-columns:minmax(0,1fr);padding:0 16px 48px;gap:16px}
+  .rail{position:static;display:flex;gap:6px;overflow-x:auto;padding-bottom:4px;scrollbar-width:none}
+  .rail .grp{display:flex;gap:6px}.rail .grp>.cap{display:none}
+  .sc{flex:none;width:auto;white-space:nowrap;box-shadow:inset 0 0 0 1px var(--line)}
+  .sc small{display:none}
+  .stage{padding:14px;min-height:0}.tele{grid-template-columns:minmax(0,1fr)}
+  footer{padding:20px 16px 40px}
+}
+
+/* ---------- shared mock pieces ---------- */
+.ld{width:8px;height:8px;border-radius:50%;background:var(--ash);position:relative;flex:none;display:inline-block}
+.ld.busy{background:var(--bone)}
+.ld.busy::after{content:"";position:absolute;inset:-4px;border-radius:50%;box-shadow:0 0 0 1.5px var(--bone);animation:ping 1.4s var(--ease) infinite}
+.ld.live{background:var(--ember);box-shadow:0 0 8px rgba(255,91,31,.85)}
+.ld.att{background:transparent;box-shadow:inset 0 0 0 1.6px var(--ember)}
+@keyframes ping{from{transform:scale(.55);opacity:.9}to{transform:scale(1.7);opacity:0}}
+.swp{animation:swp .32s var(--ease) both}
+@keyframes swp{from{opacity:0;transform:translateY(5px)}}
+body.rm .swp{animation:swf .25s linear both}
+@keyframes swf{from{opacity:0}}
+body.rm .ld.busy::after{animation:none;opacity:.45;transform:scale(1.2)}
+
+/* ---------- iPhone ---------- */
+.phone{position:absolute;left:10px;top:10px;width:402px;height:874px;border-radius:58px;overflow:hidden;background:var(--void);box-shadow:0 0 0 9px #161616,0 0 0 10px var(--line2),0 40px 80px rgba(0,0,0,.6);isolation:isolate;font-family:var(--ui);color:var(--bone);-webkit-text-size-adjust:none}
+.phone .full{position:absolute;left:0;top:0;width:402px;height:874px;pointer-events:none}
+.ph-art{z-index:1}.ph-home{z-index:2}.ph-fx{z-index:3}.ph-over{z-index:4}
+.ph-home{position:absolute;inset:0;transform-origin:50% 45%}
+.ph-over{position:absolute;inset:0;pointer-events:none}
+.ph-over>*{pointer-events:auto}
+.ph-over>*:not(.sheet):not(canvas):not(.vf){opacity:0}
+.ph-status{position:absolute;left:0;right:0;top:0;height:54px;z-index:6;display:flex;justify-content:space-between;align-items:center;padding:4px 30px 0 46px;font:600 16px var(--ui);pointer-events:none}
+.ph-status svg{height:12px;margin-left:6px}
+.island{position:absolute;left:50%;top:11px;width:124px;height:36px;margin-left:-62px;border-radius:20px;background:#000;z-index:7}
+.homebar{position:absolute;left:50%;bottom:8px;width:140px;height:5px;margin-left:-70px;border-radius:3px;background:var(--bone);opacity:.85;z-index:7}
+.ph-head{position:absolute;left:20px;right:20px;top:58px;height:44px;display:flex;justify-content:space-between;align-items:center}
+.wm{display:flex;align-items:center;gap:9px;font:800 26px/1 var(--dot)}
+.help{width:38px;height:38px;border-radius:50%;box-shadow:inset 0 0 0 1px var(--line2);display:grid;place-items:center;color:var(--ash);font-weight:600;font-size:17px}
+.ph-artcap{position:absolute;left:0;right:0;top:282px;text-align:center}
+.ph-artcap span{background:var(--void);padding:4px 8px}
+.ph-readout{position:absolute;right:22px;top:256px;display:flex;align-items:center;gap:9px;background:var(--void);padding:5px 10px 5px 9px;border-radius:4px}
+.ph-readout b{font:800 30px/1 var(--dot);color:var(--bone);letter-spacing:.01em;white-space:pre}
+.pips{display:flex;gap:4px}
+.pips i{width:6px;height:6px;border-radius:50%;background:var(--dim)}
+.pips i.on{background:var(--bone)}
+.pips.em i.on{background:var(--ember)}
+.ph-card{position:absolute;left:20px;right:20px;top:316px;padding:18px;border-radius:20px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);transition:transform .32s var(--ease),box-shadow .32s var(--ease)}
+.ph-card.lift{transform:translateY(-3px);box-shadow:inset 0 0 0 1px var(--line2),0 18px 40px rgba(0,0,0,.55)}
+.ph-card .nm{font:600 22px/1.25 var(--ui)}
+.ph-card .sub{font-size:15px;color:var(--ash);margin-top:3px}
+.strow{display:flex;align-items:center;gap:8px;margin-top:10px;min-height:18px}
+.strow .mcap{color:var(--bone)}
+.thumb{position:absolute;right:18px;top:18px;width:104px;height:66px;border-radius:10px;background:#000;box-shadow:inset 0 0 0 1px var(--line2);overflow:hidden}
+.thumb canvas{width:104px;height:66px;display:block}
+.ph-card .hr{height:1px;background:var(--line);margin:14px 0}
+.ph-card .lr{display:flex;justify-content:space-between}
+.ph-approve{position:absolute;left:20px;right:20px;top:486px;height:50px;border-radius:12px;background:var(--panel2);box-shadow:inset 0 0 0 1px var(--line2);display:flex;align-items:center;gap:10px;padding:0 14px;font:500 15px var(--ui)}
+.ph-approve svg{width:18px;height:18px}
+.ph-pill{position:absolute;left:20px;right:20px;top:486px;height:78px;border-radius:999px;background:var(--bone);color:var(--ink);display:flex;align-items:center;padding:0 9px 0 28px;box-shadow:0 0 24px rgba(237,232,223,.16);text-align:left}
+.ph-pill .pl{display:grid;gap:3px}
+.ph-pill .pl b{font:600 20px/1.1 var(--ui)}
+.ph-pill .pl .cap{color:var(--inkMuted)}
+.ph-pill .arr{margin-left:auto;width:60px;height:60px;border-radius:50%;background:var(--ink);color:var(--ember);display:grid;place-items:center}
+.ph-pill .arr svg{width:24px;height:24px}
+.ph-cancel{position:absolute;left:20px;right:20px;top:490px;height:60px;border-radius:999px;background:var(--panel2);box-shadow:inset 0 0 0 1px var(--line2);display:grid;place-items:center;font:600 17px var(--ui)}
+.ph-ccap{position:absolute;left:20px;right:20px;top:596px;display:grid;justify-items:center;gap:10px;text-align:center}
+.ph-ccap .mcap{color:var(--bone);font-size:13px}
+.ph-ccap small{font:500 15px var(--ui);color:var(--ash)}
+.ph-list{position:absolute;left:20px;right:20px;top:614px;border-radius:20px;box-shadow:inset 0 0 0 1px var(--line)}
+.ph-list div{display:flex;justify-content:space-between;align-items:center;height:52px;padding:0 18px;font-size:16px}
+.ph-list div+div{border-top:1px solid var(--line)}
+.ph-list svg{width:16px;height:16px;color:var(--ash)}
+.ph-plan{position:absolute;left:20px;right:20px;top:790px;display:flex;justify-content:space-between;align-items:center;height:44px;padding:0 16px;border-radius:14px;background:var(--panel)}
+/* overlays */
+.toast{position:absolute;left:50%;top:60px;transform-origin:50% 0;display:flex;align-items:center;gap:9px;height:36px;padding:0 14px;border-radius:999px;background:rgba(18,18,18,.96);box-shadow:inset 0 0 0 1px var(--line2);font:400 12.5px var(--mono);white-space:nowrap}
+.dockh{position:absolute;left:50%;bottom:22px;width:120px;margin-left:-60px;display:grid;justify-items:center;gap:6px}
+.dockh i{width:44px;height:5px;border-radius:3px;background:var(--bone);opacity:.8}
+.dockh span{font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--bone);background:rgba(5,5,5,.72);padding:3px 8px;border-radius:5px}
+.ptr{position:absolute;left:0;top:0;width:26px;height:36px;transform-origin:2px 2px}
+.ptr svg{width:26px;height:36px;display:block;filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))}
+.tipdot{position:absolute;left:-5px;top:-5px;width:14px;height:14px;border-radius:50%;background:var(--ember);box-shadow:0 0 10px rgba(255,91,31,.9)}
+.tipdot.hollow{background:transparent;box-shadow:inset 0 0 0 2px var(--bone);animation:breathe 1.4s ease-in-out infinite}
+@keyframes breathe{50%{opacity:.35}}
+body.rm .tipdot.hollow{animation:none}
+.rpill{position:absolute;left:50%;top:60px;display:flex;align-items:center;gap:10px;height:42px;padding:0 5px 0 16px;border-radius:999px;background:rgba(18,18,18,.96);box-shadow:inset 0 0 0 1px var(--line2);font:500 14.5px var(--ui);white-space:nowrap}
+.rpill .end{height:32px;padding:0 14px;border-radius:999px;background:var(--ember);color:var(--void);font:600 14px var(--ui);display:grid;place-items:center}
+.rpill .end.hide{visibility:hidden;width:0;padding:0}
+.marching::after{content:"…";display:inline-block;width:1.1em;animation:march 1.2s steps(4) infinite;overflow:hidden;vertical-align:bottom;white-space:nowrap}
+@keyframes march{from{width:0}to{width:1.1em}}
+body.rm .marching::after{animation:none}
+.cover{position:absolute;inset:0;background:var(--void2);padding:60px 24px 34px;display:flex;flex-direction:column}
+.cover canvas{width:402px;height:240px;margin:0 -24px;display:block}
+.cover h4{font:600 34px/1.1 var(--ui);margin:6px 0 10px;text-wrap:balance}
+.cover h4 em{font:italic 400 1.12em var(--serif)}
+.cover p{margin:0 0 12px;color:var(--ash);font-size:16px}
+.cover .fix{background:var(--panel);box-shadow:inset 0 0 0 1px var(--line2);border-radius:12px;padding:12px 14px;color:var(--bone);font-size:15px}
+.cover .grow{flex:1}
+.pbtn{height:60px;border-radius:999px;background:var(--bone);color:var(--ink);display:grid;place-items:center;font:600 17px var(--ui);width:100%}
+.sbtn{height:52px;border-radius:999px;background:var(--panel2);box-shadow:inset 0 0 0 1px var(--line2);display:grid;place-items:center;font:600 16px var(--ui);width:100%;margin-top:8px}
+.xbtn{position:absolute;right:20px;top:60px;width:36px;height:36px;border-radius:50%;background:var(--panel2);display:grid;place-items:center;color:var(--ash)}
+.sheet{position:absolute;left:0;right:0;top:58px;bottom:0;background:var(--void2);border-radius:28px 28px 0 0;box-shadow:0 -1px 0 var(--line2);padding:14px 20px 30px}
+.grab{width:38px;height:5px;border-radius:3px;background:var(--dim);margin:0 auto 14px}
+.sheet h4{font:600 22px/1.2 var(--ui);margin:0 0 4px;text-align:center}
+.sheet h4 em{font:italic 400 1.12em var(--serif)}
+.sheet .lede{color:var(--ash);text-align:center;margin:0 0 16px;font-size:15px}
+.vf{position:absolute;left:36px;top:160px;width:330px;height:330px;border-radius:22px}
+.corner{position:absolute;left:0;top:0;width:34px;height:34px;border:0 solid var(--bone)}
+.corner.a{border-width:4px 0 0 4px;border-top-left-radius:12px}
+.corner.b{border-width:4px 4px 0 0;border-top-right-radius:12px}
+.corner.c{border-width:0 0 4px 4px;border-bottom-left-radius:12px}
+.corner.d{border-width:0 4px 4px 0;border-bottom-right-radius:12px}
+.pairtxt{position:absolute;left:20px;right:20px;top:510px;text-align:center}
+.pairtxt .cap{color:var(--bone)}
+.pairtxt p{margin:8px 0 0;color:var(--ash);font-size:16px}
+.macsliver{position:absolute;left:50%;top:600px;width:240px;margin-left:-120px;height:30px;border-radius:8px;background:#1b1b1d;box-shadow:inset 0 0 0 1px var(--line2);display:flex;align-items:center;justify-content:flex-end;gap:14px;padding:0 12px;font:500 11px var(--ui);color:#ddd}
+.macsliver .mk{position:relative;width:16px;height:20px}
+.macsliver .mk svg{position:absolute;inset:0}
+.macsliver .mk b{position:absolute;left:-3px;top:-3px;width:10px;height:10px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--ember)}
+.waitrow{position:absolute;left:20px;right:20px;top:646px;display:flex;justify-content:center;align-items:center;gap:8px}
+.errplate{position:absolute;left:20px;right:20px;top:510px;border-radius:12px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--ember);padding:12px 14px;font-size:15px}
+.errplate b{display:block;margin-bottom:2px}
+.errplate span{color:var(--ash)}
+.zz{position:absolute;left:0;top:0;font:800 28px/1 var(--dot);color:var(--ash)}
+.notice{position:absolute;left:20px;right:20px;top:486px;border-radius:12px;background:var(--panel2);box-shadow:inset 0 0 0 1px var(--line2);padding:12px 14px;display:flex;gap:10px;align-items:flex-start;font-size:15px}
+.notice span{color:var(--ash);display:block;font-size:14px;margin-top:2px}
+.plans{display:grid;gap:8px;margin:0 0 14px}
+.plan{display:flex;justify-content:space-between;align-items:center;height:58px;padding:0 16px;border-radius:14px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line)}
+.plan.sel{box-shadow:inset 0 0 0 1.5px var(--bone)}
+.plan b{font-weight:600}
+.plan span{color:var(--ash);font-size:14px}
+.fine{font-size:12px;color:var(--ash);text-align:center;margin-top:10px}
+.appstore{position:absolute;left:8px;right:8px;bottom:8px;height:300px;border-radius:36px;background:#1c1c1e;box-shadow:0 -10px 40px rgba(0,0,0,.6);padding:22px 24px;font-size:15px;color:#f2f2f7}
+.appstore .row{display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid rgba(255,255,255,.1)}
+.appstore .dc{position:absolute;left:0;right:0;bottom:34px;text-align:center;color:#aaa;font-size:14px}
+.appstore .ok{position:absolute;left:0;right:0;bottom:30px;text-align:center;font:600 17px var(--ui)}
+.spin{display:inline-block;width:16px;height:16px;border-radius:50%;border:2px solid rgba(10,10,10,.25);border-top-color:var(--ink);animation:spin .8s linear infinite;vertical-align:-3px}
+@keyframes spin{to{transform:rotate(360deg)}}
+body.rm .spin{animation-duration:2.4s}
+
+/* ---------- Mac ---------- */
+.mac{position:absolute;left:0;top:0;width:760px;height:560px;border-radius:14px;overflow:hidden;box-shadow:0 0 0 1px var(--line2),0 40px 80px rgba(0,0,0,.6);font-family:var(--ui);color:#eee;isolation:isolate}
+.wall{position:absolute;inset:0;background:radial-gradient(120% 80% at 15% 100%,#3a2a44 0,transparent 60%),radial-gradient(90% 70% at 90% 5%,#1d3a4c 0,transparent 60%),linear-gradient(#141821,#0a0c10)}
+.dwin{position:absolute;left:34px;top:70px;width:300px;height:220px;border-radius:10px;background:#1b1d21;box-shadow:0 0 0 1px rgba(255,255,255,.08),0 20px 40px rgba(0,0,0,.5)}
+.dwin::before{content:"";position:absolute;left:12px;top:11px;width:44px;height:10px;background:radial-gradient(circle at 5px 5px,#ff5f57 4px,transparent 4.5px),radial-gradient(circle at 19px 5px,#febc2e 4px,transparent 4.5px),radial-gradient(circle at 33px 5px,#28c840 4px,transparent 4.5px)}
+.dwin i{position:absolute;left:18px;height:6px;border-radius:3px;background:#3a3e45}
+.mb{position:absolute;left:0;right:0;top:0;height:28px;background:rgba(22,22,24,.78);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);display:flex;align-items:center;gap:18px;padding:0 12px 0 16px;font:500 13px var(--ui);color:#eee;z-index:5}
+.mb b{font-weight:700}
+.mbr{margin-left:auto;display:flex;align-items:center;gap:6px}
+.mbr .it{height:22px;min-width:26px;padding:0 5px;border-radius:5px;display:grid;place-items:center}
+.mbr .it svg{height:14px}
+.mbr .it.open{background:rgba(255,255,255,.2)}
+.mbr .it.si canvas{width:14px;height:20px;display:block}
+.mbr .clock{font:500 13px var(--ui);padding:0 4px}
+.pop{position:absolute;left:330px;top:33px;width:360px;border-radius:14px;background:#161616;box-shadow:0 0 0 1px rgba(255,255,255,.1),0 24px 60px rgba(0,0,0,.65);overflow:hidden;color:var(--bone);font-size:13px;z-index:6;transform-origin:50% 0}
+.loupe{position:absolute;left:18px;bottom:18px;display:flex;align-items:flex-end;gap:12px;z-index:4}
+.loupe .lb{width:112px;height:140px;border-radius:14px;background:rgba(20,20,22,.85);box-shadow:inset 0 0 0 1px var(--line2);display:grid;place-items:center}
+.loupe canvas{width:84px;height:120px}
+.loupe .cap{padding-bottom:4px;color:#b8b3ab}
+.pb{padding:14px 16px}
+.tile{width:36px;height:36px;border-radius:10px;background:var(--panel2);box-shadow:inset 0 0 0 1px var(--line);display:grid;place-items:center;flex:none;position:relative;overflow:hidden}
+.tile svg{width:18px;height:18px}
+.who{display:flex;align-items:center;gap:12px}
+.who .t{font:600 15px/1.25 var(--ui)}
+.who .c{font:400 11px/1.3 var(--mono);color:var(--ash);margin-top:3px}
+.who .el{margin-left:auto;font:500 13px var(--mono);color:var(--bone)}
+.rows{margin-top:12px;border-radius:12px;box-shadow:inset 0 0 0 1px var(--line);padding:0 12px}
+.trow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:9px 0;width:100%;text-align:left}
+.trow+.trow{border-top:1px solid var(--line)}
+.trow b{font-weight:500;font-size:13px;display:block}
+.trow small{color:var(--ash);font-size:11.5px}
+.swi{width:32px;height:18px;border-radius:9px;background:var(--dim);position:relative;flex:none;transition:background .2s}
+.swi::after{content:"";position:absolute;left:2px;top:2px;width:14px;height:14px;border-radius:7px;background:var(--bone);transition:transform .28s var(--ease),width .12s}
+.swi.on{background:var(--bone)}
+.swi.on::after{transform:translateX(14px);background:var(--ink)}
+.trow:active .swi::after{width:18px}
+.trow:active .swi.on::after{transform:translateX(10px)}
+.acts{display:flex;gap:8px;margin-top:12px;position:relative}
+.mbtn{height:30px;border-radius:8px;font:600 13px var(--ui);display:grid;place-items:center;padding:0 12px;flex:1;white-space:nowrap}
+.mbtn.w146{flex:none;width:146px}
+.mbtn.plate{background:var(--panel2);box-shadow:inset 0 0 0 1px var(--line2)}
+.mbtn.primary{background:var(--bone);color:var(--ink)}
+.mbtn.ember{background:var(--ember);color:var(--void)}
+.mbtn:active{transform:scale(.97)}
+.foot{display:flex;justify-content:space-between;margin-top:14px;color:var(--ash);font-size:12.5px}
+.confirm{margin-top:12px;border-radius:12px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line2);padding:12px}
+.confirm b{display:block;font-size:13.5px}
+.confirm span{display:block;color:var(--ash);font-size:12px;margin:3px 0 10px}
+.confirm .acts{margin-top:0}
+.strip{position:relative;height:96px;background:var(--void)}
+.strip canvas{width:360px;height:96px;display:block}
+.plate{position:absolute;left:8px;bottom:10px;display:flex;align-items:center;gap:8px;background:var(--void);border-radius:6px;padding:5px 8px;font:500 11px var(--mono);letter-spacing:.06em;text-transform:uppercase;color:var(--bone)}
+.spark{margin-top:10px;height:26px}
+.spark canvas{width:328px;height:26px;display:block}
+.qrblk{display:grid;justify-items:center;gap:8px;padding:16px 0 4px}
+.qrblk canvas{width:176px;height:176px;display:block}
+.xdots{display:flex;gap:5px}
+.xdots i{width:6px;height:6px;border-radius:50%;background:var(--bone)}
+.xdots i.gone{background:var(--dim)}
+.m2hd{display:flex;align-items:center;gap:8px;padding:14px 16px 0}
+.m2hd .wmk{font:800 17px/1 var(--dot)}
+.chipst{margin-left:auto;display:flex;align-items:center;gap:7px;height:24px;padding:0 10px;border-radius:999px;background:var(--panel2);box-shadow:inset 0 0 0 1px var(--line2);font:500 11px var(--mono)}
+.scard{margin:12px 16px 0;border-radius:14px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);padding:14px;position:relative;overflow:hidden}
+.scard .edge{position:absolute;left:0;right:0;top:0;height:2px;background:var(--ember);transform-origin:0 50%}
+.meters{display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:8px;margin-top:12px}
+.meter{border-radius:10px;background:var(--void2);padding:8px 10px;overflow:hidden}
+.meter .cap{font-size:9.5px}
+.meter b{display:block;font:800 26px/1.1 var(--dot);margin-top:4px;white-space:nowrap}
+.meter b small{font:500 11px var(--mono);color:var(--ash);margin-left:3px}
+.meter b.word{font:600 16px/1.9 var(--ui)}
+.pipsrow{display:flex;gap:14px;margin-top:12px}
+.pip{display:flex;align-items:center;gap:6px;font:400 11px var(--mono);color:var(--ash)}
+.pip i{width:7px;height:7px;border-radius:50%;background:var(--dim)}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 16px 0}
+.ttile{border-radius:12px;background:var(--panel);box-shadow:inset 0 0 0 1px var(--line);padding:10px;text-align:left;display:grid;gap:8px;position:relative;overflow:hidden}
+.ttile b{font-weight:500;font-size:12.5px}
+.ttile small{color:var(--ash);font-size:11px}
+.ttile .swi{position:absolute;right:10px;top:10px}
+.ttile.on{box-shadow:inset 0 0 0 1px var(--line2);background:var(--panel2)}
+.m3{background:rgba(38,38,40,.94);backdrop-filter:blur(30px)}
+.m3 .hdr{display:flex;align-items:center;gap:12px;padding:14px 16px 10px}
+.m3 .sym{width:32px;height:32px;border-radius:50%;background:rgba(255,255,255,.1);display:grid;place-items:center;position:relative}
+.m3 .sym svg{width:17px;height:17px;position:absolute}
+.m3 .ttl{font:600 14px var(--ui)}
+.m3 .sub{font:400 12px var(--ui);color:#a9a9ad;margin-top:1px}
+.m3 .sub .num{font-variant-numeric:tabular-nums;display:inline-block}
+.m3 .sec{margin:0 10px;border-radius:10px;background:rgba(255,255,255,.06);padding:0 10px}
+.m3 .trow b{font-weight:400}
+.m3 .trow small{color:#9a9a9e}
+.m3 .swi.on{background:var(--bone)}
+.m3 .pb{padding:12px 16px 14px}
+.alert{position:absolute;inset:0;background:rgba(0,0,0,.5);display:grid;place-items:center;z-index:3}
+.alert>div{width:260px;border-radius:14px;background:#2a2a2c;box-shadow:0 0 0 1px rgba(255,255,255,.12),0 20px 50px rgba(0,0,0,.6);padding:18px 16px 14px;text-align:center}
+.alert b{display:block;font-size:13.5px;margin:8px 0 4px}
+.alert span{display:block;color:#b0b0b4;font-size:11.5px;margin-bottom:12px}
+.alert .mbtn{width:100%;flex:none;margin-top:6px}
+.approve p{margin:10px 0 0;color:var(--ash);font-size:12.5px}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span id="brandMark"></span><span class="cap">Farside · motion lab · 30 Sep 2026</span></div>
+  <h1>Contact, <em>felt</em></h1>
+  <p class="intro">Options for how connecting looks and feels on the iPhone, plus a livelier Mac menu bar. <b>Every stage waits for a real state from the app</b>: switch <b>Manual states</b> on and nothing advances until you press <b>Next state</b>. Loops that play while waiting mean “still trying”, never “further along”. No distance is shown or implied.</p>
+  <div class="globals">
+    <button class="switch" id="rmSwitch" role="switch" aria-checked="false"><i></i><span id="rmLbl">Reduce Motion</span></button>
+    <button class="switch" id="manSwitch" role="switch" aria-checked="false"><i></i><span>Manual states</span></button>
+    <span class="keys"><kbd>R</kbd> replay · <kbd>N</kbd> next state · <kbd>[</kbd> <kbd>]</kbd> scenario</span>
+  </div>
+</header>
+<main class="lab">
+  <nav class="rail" id="rail" aria-label="Scenarios"></nav>
+  <section class="stagecol" aria-label="Preview">
+    <div class="dirbar" id="dirbar" role="group" aria-label="Direction"></div>
+    <div class="stage" id="stage"><div class="fit" id="fit"><div class="device" id="device"></div></div></div>
+    <div class="controls">
+      <button class="btn" id="replay" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4.5v4h4"/></svg>Replay</button>
+      <button class="btn plate" id="next" type="button">Next state →</button>
+      <span class="sep" aria-hidden="true"></span>
+      <span class="cap" id="profLbl">Network</span>
+      <span id="profiles" style="display:flex;gap:6px;flex-wrap:wrap"></span>
+    </div>
+    <div class="tele">
+      <div class="box"><span class="cap">Real states, in order</span><ol class="log" id="log" aria-live="polite"></ol></div>
+      <div class="box hapbox"><span class="cap" id="hapTitle">Haptics · Core Haptics sketch</span><canvas id="hap" aria-hidden="true"></canvas><div class="lamp" id="lamp"><i></i><span>Waiting</span></div></div>
+    </div>
+  </section>
+  <aside class="spec" id="spec" aria-live="polite"></aside>
+</main>
+<footer>Stand-ins: the Mac desktop, QR code and App Store sheet are drawn locally. The streamed Mac picture is never dithered in the app; halftone here stands in only for the pre-first-frame lock, which the app already does. Built for design review, not shipped code. Implementation notes: <code>design/motion-lab-2026-09-30/NOTES.md</code>.</footer>
+
+<script>
+(function(){
+'use strict';
+const $=(s,r)=>(r||document).querySelector(s), $$=(s,r)=>Array.from((r||document).querySelectorAll(s));
+const C={void:'#050505',void2:'#0B0B0B',panel:'#121212',panel2:'#191919',bone:'#EDE8DF',ash:'#8C877F',dim:'#4A4742',ember:'#FF5B1F',emberD:'#C23D0E',mid:'#F7A57F',ink:'#0A0A0A'};
+const clamp=(v,a,b)=>v<a?a:v>b?b:v, lerp=(a,b,t)=>a+(b-a)*t;
+const seg=(t,a,b)=>t<=a?0:t>=b?1:(t-a)/(b-a);
+const TAU=Math.PI*2;
+function bez(x1,y1,x2,y2){
+  const cx=3*x1,bx=3*(x2-x1)-cx,ax=1-cx-bx,cy=3*y1,by=3*(y2-y1)-cy,ay=1-cy-by;
+  const sx=t=>((ax*t+bx)*t+cx)*t, sy=t=>((ay*t+by)*t+cy)*t, dx=t=>(3*ax*t+2*bx)*t+cx;
+  return x=>{ if(x<=0) return 0; if(x>=1) return 1; let t=x; for(let i=0;i<8;i++){ const e=sx(t)-x, d=dx(t); if(Math.abs(e)<1e-5||Math.abs(d)<1e-6) break; t=clamp(t-e/d,0,1); } return sy(t); };
+}
+const E1=bez(.16,1,.3,1), E2=bez(.22,1,.36,1), EIO=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2, EIN=t=>t*t*t;
+function hash2(x,y){ let h=Math.imul(x|0,374761393)+Math.imul(y|0,668265263); h=Math.imul(h^(h>>>13),1274126177); return ((h^(h>>>16))>>>0)/4294967296; }
+const bump=(t,c,w)=>{ const b=(t-c)/w; return Math.exp(-b*b); };
+
+/* ================= halftone (port of RemoteShared/FarsideHalftone.swift) ================= */
+const HT={off:document.createElement('canvas')};
+HT.oc=HT.off.getContext('2d',{willReadFrequently:true});
+const Lc=v=>{ v=Math.round(clamp(v,0,1)*255); return 'rgb('+v+','+v+',0)'; };
+function glow(c,x,y,r,a){ if(r<=0) return; c.save(); c.globalCompositeOperation='lighter'; const g=c.createRadialGradient(x,y,0,x,y,r); g.addColorStop(0,'rgba(0,0,255,'+clamp(a,0,1)+')'); g.addColorStop(1,'rgba(0,0,255,0)'); c.fillStyle=g; c.fillRect(x-r,y-r,r*2,r*2); c.restore(); }
+function radialBone(c,x,y,r,a){ if(r<=0) return; c.save(); c.globalCompositeOperation='lighter'; const g=c.createRadialGradient(x,y,0,x,y,r); g.addColorStop(0,'rgba(255,255,0,'+clamp(a,0,1)+')'); g.addColorStop(1,'rgba(255,255,0,0)'); c.fillStyle=g; c.fillRect(x-r,y-r,r*2,r*2); c.restore(); }
+/* o: {cell, t (s), scene(c,w,h,t), ripples:[{x,y,t0,s,v,w,life,em,push}], dust, alpha, dotScale} */
+function halftone(ctx,rx,ry,W,H,o){
+  const cell=Math.max(2,o.cell), cols=Math.ceil(W/cell), rows=Math.ceil(H/cell);
+  if(cols<1||rows<1||cols*rows>90000) return;
+  const off=HT.off, oc=HT.oc;
+  if(off.width!==cols||off.height!==rows){ off.width=cols; off.height=rows; }
+  oc.setTransform(1,0,0,1,0,0); oc.globalCompositeOperation='source-over'; oc.globalAlpha=1; oc.fillStyle='#000'; oc.fillRect(0,0,cols,rows);
+  oc.setTransform(cols/W,0,0,rows/H,0,0); o.scene(oc,W,H,o.t);
+  const px=oc.getImageData(0,0,cols,rows).data;
+  const R=(o.ripples||[]).filter(k=>o.t>=k.t0&&o.t-k.t0<k.life);
+  const r0=cell*.5*(o.dotScale||1.1), dust=o.dust==null?.05:o.dust, t=o.t;
+  const pB=new Path2D(), pM=new Path2D(), pE=new Path2D();
+  for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
+    const i=y*cols+x, E=px[i*4+2]/255, cx=(x+.5)*cell, cy=(y+.5)*cell; let L=px[i*4]/255;
+    if(L<.03&&dust>0){ const h=hash2(x,y); L=h<dust?(.4+.6*h/dust)*.09*(.55+.45*Math.sin(t*1.7+i*.7)):0; }
+    let rp=0,re=0,ox=0,oy=0;
+    for(let k=0;k<R.length;k++){ const q=R[k], dx=cx-q.x, dy=cy-q.y, dd=Math.sqrt(dx*dx+dy*dy)||.001, age=t-q.t0; let b=(dd-age*q.v)/q.w; b=Math.exp(-b*b)*q.s*(1-age/q.life); if(b>.02){ rp+=b; re+=b*(q.em==null?.9:q.em); ox+=dx/dd*b*(q.push==null?4:q.push); oy+=dy/dd*b*(q.push==null?4:q.push); } }
+    let lum=L+rp*(L>.05?.4:.26); if(E>.05) lum=Math.max(lum,E*.62); if(re>.05) lum=Math.max(lum,re*.62); if(lum>1) lum=1;
+    const r=r0*Math.sqrt(lum); if(r<.38) continue;
+    const e=E+re, P=e>.5?pE:(e>.18?pM:pB), X=rx+cx+ox, Y=ry+cy+oy; P.moveTo(X+r,Y); P.arc(X,Y,r,0,TAU);
+  }
+  ctx.save(); ctx.globalAlpha=o.alpha==null?1:clamp(o.alpha,0,1);
+  ctx.fillStyle=o.bone||C.bone; ctx.fill(pB); ctx.fillStyle=C.mid; ctx.fill(pM); ctx.fillStyle=C.ember; ctx.fill(pE); ctx.restore();
+}
+function rip(x,y,t0,q){ q=q||{}; return {x,y,t0,s:q.s==null?1.2:q.s,v:q.v==null?300:q.v,w:q.w||30,life:q.life||1.4,em:q.em==null?.9:q.em,push:q.push==null?4:q.push}; }
+
+/* the reaching hand and the Mac pointer, painted as luminance (bone in R/G, ember in B) */
+function drawHand(c,tx,ty,s,a){
+  c.save(); c.translate(tx,ty); c.rotate(a); c.scale(s,s);
+  const g=c.createLinearGradient(0,0,-640,230); g.addColorStop(0,Lc(1)); g.addColorStop(.28,Lc(.82)); g.addColorStop(.6,Lc(.46)); g.addColorStop(1,Lc(.18));
+  const g2=c.createLinearGradient(0,0,-560,200); g2.addColorStop(0,Lc(.78)); g2.addColorStop(.35,Lc(.6)); g2.addColorStop(1,Lc(.16));
+  c.lineCap='round'; c.lineJoin='round';
+  const sg=(p,lw,st,out)=>{ c.beginPath(); c.moveTo(p[0][0],p[0][1]); for(let i=1;i<p.length;i++) c.lineTo(p[i][0],p[i][1]); if(out){ c.strokeStyle='rgb(10,10,0)'; c.lineWidth=lw+8; c.stroke(); } c.strokeStyle=st; c.lineWidth=lw; c.stroke(); };
+  sg([[-440,142],[-1000,360]],150,Lc(.2)); sg([[-240,66],[-470,150]],106,g);
+  c.fillStyle=g; c.beginPath(); c.ellipse(-206,64,66,55,-.14,0,TAU); c.fill();
+  sg([[-188,86],[-150,98],[-136,113],[-150,125]],28,g2,true); sg([[-182,60],[-134,70],[-116,90],[-132,106]],33,g2,true);
+  sg([[-176,34],[-120,42],[-98,64],[-114,82]],36,g2,true); sg([[-176,8],[-94,4],[-17,0]],34,g,true);
+  sg([[-250,74],[-202,66],[-156,54],[-128,52]],30,g,true);
+  c.restore();
+}
+const CUR=[[0,0],[0,250],[60,196],[98,284],[134,268],[96,180],[176,180]];
+function drawCursor(c,tx,ty,s,a,lum){
+  lum=lum==null?1:lum; c.save(); c.translate(tx,ty); c.rotate(a||0); c.scale(s,s);
+  c.beginPath(); c.moveTo(CUR[0][0],CUR[0][1]); for(let i=1;i<CUR.length;i++) c.lineTo(CUR[i][0],CUR[i][1]); c.closePath();
+  c.fillStyle=Lc(.13*lum); c.fill(); c.lineJoin='round'; c.lineWidth=13; c.strokeStyle=Lc(lum); c.stroke(); c.restore();
+}
+/* FarsideArt.reach(gap:contact:) plus a few knobs for the new beats */
+function reachGeom(w,h,gap,t,float){ const u=Math.min(w,h*1.95)/390, mx=w*.52, my=h*.42, drift=Math.sin(t*.7)*3*(float==null?1:float), a=-.12;
+  return {u,mx,my,drift,a,fx:mx-gap*u*Math.cos(a),fy:my+drift-gap*u*Math.sin(a)}; }
+function reachScene(p){
+  return (c,w,h,t)=>{
+    const G=reachGeom(w,h,p.gap,t,p.float);
+    radialBone(c,w*.5,h*.5,w*.5,.07);
+    drawCursor(c,G.mx+4*G.u,G.my-6*G.u+G.drift*.4+(p.ptrDy||0)*G.u,.28*G.u,-.05+(p.ptrRot||0),p.ptrLum);
+    drawHand(c,G.fx,G.fy,.34*G.u,G.a);
+    if(p.contact>0) glow(c,G.mx,G.my+G.drift*.5,(18+18*p.contact)*G.u,.35+.65*p.contact);
+    if(p.flash>0) radialBone(c,G.mx,G.my+G.drift*.5,26*G.u,p.flash);
+    if(p.extra) p.extra(c,w,h,t,G);
+  };
+}
+function zoomScene(scene,z,cx,cy){ if(z===1) return scene; return (c,w,h,t)=>{ c.save(); c.translate(cx,cy); c.scale(z,z); c.translate(-cx,-cy); scene(c,w,h,t); c.restore(); }; }
+
+/* a Mac desktop, proportional so it reads in a 104x66 thumbnail and full screen */
+/* k blends the landscape layout (0, the card thumbnail) into the portrait crop (1, the phone) so a zoom never snaps */
+const DL0={mb:.05,w1:[.05,.14,.55,.62],w2:[.52,.36,.42,.5],dock:[.25,.87,.5,.09]}, DL1={mb:.028,w1:[.05,.09,.9,.42],w2:[.16,.55,.76,.29],dock:[.12,.9,.76,.052]};
+function deskLayout(w,h,k){ if(k==null) k=w>h?0:1; const f=(a,b)=>a.map((v,i)=>lerp(v,b[i],k)*(i%2?h:w));
+  return {mb:lerp(DL0.mb,DL1.mb,k)*h,w1:f(DL0.w1,DL1.w1),w2:f(DL0.w2,DL1.w2),dock:f(DL0.dock,DL1.dock)}; }
+function macScene(c,w,h,t,k){
+  const L=deskLayout(w,h,k), g=c.createLinearGradient(0,0,0,h); g.addColorStop(0,Lc(.24)); g.addColorStop(1,Lc(.1)); c.fillStyle=g; c.fillRect(0,0,w,h);
+  c.fillStyle=Lc(.5); c.fillRect(0,0,w,L.mb);
+  let [x,y,ww,hh]=L.w1; c.fillStyle=Lc(.3); c.fillRect(x,y,ww,hh); c.fillStyle=Lc(.55); c.fillRect(x,y,ww,hh*.08);
+  c.fillStyle=Lc(.78); for(let i=0;i<7;i++) c.fillRect(x+ww*.24,y+hh*(.18+i*.1),ww*(.3+.35*hash2(i,3)),hh*.035);
+  c.fillStyle=Lc(.42); c.fillRect(x,y+hh*.08,ww*.18,hh*.92);
+  [x,y,ww,hh]=L.w2; c.fillStyle=Lc(.92); c.fillRect(x,y,ww,hh); c.fillStyle=Lc(.7); c.fillRect(x,y,ww,hh*.1);
+  c.fillStyle=Lc(.45); for(let i=0;i<4;i++) c.fillRect(x+ww*.08,y+hh*(.24+i*.16),ww*(.5+.3*hash2(i,9)),hh*.05);
+  [x,y,ww,hh]=L.dock; c.fillStyle=Lc(.45); c.fillRect(x,y,ww,hh); c.fillStyle=Lc(.85); for(let i=0;i<8;i++) c.fillRect(x+ww*(.04+i*.12),y+hh*.18,ww*.08,hh*.64);
+}
+function rr(c,x,y,w,h,r){ c.beginPath(); if(c.roundRect) c.roundRect(x,y,w,h,r); else c.rect(x,y,w,h); }
+function drawDesk(c,w,h){
+  const L=deskLayout(w,h), g=c.createLinearGradient(0,0,w,h); g.addColorStop(0,'#2d3d4b'); g.addColorStop(1,'#141a21'); c.fillStyle=g; c.fillRect(0,0,w,h);
+  c.fillStyle='rgba(20,20,22,.92)'; c.fillRect(0,0,w,L.mb); c.fillStyle='#e9e9ea'; c.font='600 '+Math.max(9,L.mb*.5)+'px -apple-system,system-ui'; c.fillText('Code   File   Edit   View',12,L.mb*.68);
+  let [x,y,ww,hh]=L.w1; c.save(); c.shadowColor='rgba(0,0,0,.5)'; c.shadowBlur=24; c.shadowOffsetY=10; c.fillStyle='#1b1d21'; rr(c,x,y,ww,hh,10); c.fill(); c.restore();
+  c.fillStyle='#25272c'; rr(c,x,y,ww,hh*.08,10); c.fill(); ['#ff5f57','#febc2e','#28c840'].forEach((col,i)=>{ c.fillStyle=col; c.beginPath(); c.arc(x+14+i*14,y+hh*.04,4.2,0,TAU); c.fill(); });
+  c.fillStyle='#16181b'; c.fillRect(x,y+hh*.08,ww*.18,hh*.92);
+  const cols=['#c586c0','#9cdcfe','#dcdcaa','#4ec9b0','#ce9178','#9cdcfe','#6a9955'];
+  for(let i=0;i<7;i++){ c.fillStyle=cols[i]; rr(c,x+ww*.24,y+hh*(.18+i*.1),ww*(.3+.35*hash2(i,3)),hh*.035,3); c.fill(); }
+  [x,y,ww,hh]=L.w2; c.save(); c.shadowColor='rgba(0,0,0,.45)'; c.shadowBlur=22; c.shadowOffsetY=8; c.fillStyle='#f4f3ef'; rr(c,x,y,ww,hh,10); c.fill(); c.restore();
+  c.fillStyle='#e5e3de'; rr(c,x,y,ww,hh*.1,10); c.fill(); c.fillStyle='#8f8b84'; c.fillRect(x+ww*.08,y+hh*.24,ww*.5,hh*.06);
+  c.fillStyle='#c9c6bf'; for(let i=1;i<4;i++) c.fillRect(x+ww*.08,y+hh*(.24+i*.16),ww*(.5+.3*hash2(i,9)),hh*.05);
+  [x,y,ww,hh]=L.dock; c.fillStyle='rgba(70,70,74,.6)'; rr(c,x,y,ww,hh,12); c.fill();
+  ['#5AC8FA','#FFD35C','#6EE7A8','#FF8A7A','#2A2A33','#F2F2F7','#FFB3C7','#B6F09C'].forEach((col,i)=>{ c.fillStyle=col; rr(c,x+ww*(.04+i*.12),y+hh*.18,ww*.08,hh*.64,6); c.fill(); });
+}
+const deskCache={};
+function deskCanvas(w,h){ const k=w+'x'+h; if(deskCache[k]) return deskCache[k]; const cv=document.createElement('canvas'); cv.width=w*2; cv.height=h*2; const c=cv.getContext('2d'); c.scale(2,2); drawDesk(c,w,h); deskCache[k]=cv; return cv; }
+
+/* the mark: dot-matrix pointer whose tip is the ember dot (RemoteHost/HostMark.swift) */
+const ARROW=["#","##","###","####","#####","######","#######","########","#########","##########","######","##.##","#...##","....##",".....##",".....##"];
+const COMPACT=["#","##","###","####","#####","######","###","#.##","...#"];
+function markDots(rows){ const out=[]; rows.forEach((r,y)=>{ for(let x=0;x<r.length;x++) if(r[x]==='#') out.push({x,y,tip:x===0&&y===0}); }); return out; }
+function markSVG(h,tip,body){ const rows=h<=24?COMPACT:ARROW, W=Math.max.apply(null,rows.map(r=>r.length)), H=rows.length; let s='';
+  markDots(rows).forEach(p=>{ s+='<circle cx="'+(p.x+.5)+'" cy="'+(p.y+.5)+'" r="'+(p.tip?.5:.42)+'" fill="'+(p.tip?(tip||C.ember):(body||C.bone))+'"/>'; });
+  return '<svg width="'+Math.round(W*h/H)+'" height="'+h+'" viewBox="0 0 '+W+' '+H+'" aria-hidden="true">'+s+'</svg>'; }
+
+/* ================= DOM helpers ================= */
+function op(el,o,tf){ if(!el) return; const os=(+clamp(o,0,1)).toFixed(3); if(el._o!==os){ el.style.opacity=os; el._o=os; } if(tf!==undefined&&el._t!==tf){ el.style.transform=tf; el._t=tf; } }
+function vis(el,on){ if(!el) return; const v=on?'':'hidden'; if(el._v!==v){ el.style.visibility=v; el._v=v; } }
+function txt(el,s){ if(!el||el._s===s) return; const first=el._s===undefined; el._s=s; el.textContent=s; if(!first){ el.classList.remove('swp'); void el.offsetWidth; el.classList.add('swp'); } }
+function html(el,s){ if(!el||el._h===s) return; el._h=s; el.innerHTML=s; }
+function cls(el,c,on){ if(el&&el.classList.contains(c)!==!!on) el.classList.toggle(c,!!on); }
+function dot(el,state){ if(!el) return; const c='ld'+(state&&state!=='idle'?' '+state:''); if(el.className!==c) el.className=c; }
+function mkCanvas(el,w,h,d){ d=d||2; el.width=Math.round(w*d); el.height=Math.round(h*d); const c=el.getContext('2d'); c._d=d; c._w=w; c._h=h; return c; }
+function clr(c){ c.setTransform(c._d,0,0,c._d,0,0); c.clearRect(0,0,c._w,c._h); }
+const ICON={
+  arrow:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6"/></svg>',
+  shield:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v6c0 4.2-3 7.6-7 9-4-1.4-7-4.8-7-9V6z"/><path d="M8.8 12.2l2.2 2.2 4.4-4.6"/></svg>',
+  plus:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  bell:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z"/><path d="M10 21h4"/></svg>',
+  ptr:'<svg viewBox="0 0 26 36" aria-hidden="true"><path d="M2 2v28l7.5-7 5 11 5-2.3-5-10.7H25z" fill="#111" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>',
+  phone:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="6.5" y="2.5" width="11" height="19" rx="2.6"/><path d="M10.5 5h3" stroke-linecap="round"/></svg>',
+  pause:'<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6.5" y="5" width="3.6" height="14" rx="1"/><rect x="13.9" y="5" width="3.6" height="14" rx="1"/></svg>',
+  qr:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="3.5" width="6.5" height="6.5" rx="1"/><rect x="14" y="3.5" width="6.5" height="6.5" rx="1"/><rect x="3.5" y="14" width="6.5" height="6.5" rx="1"/><path d="M14 14h2.5v2.5M20.5 14v6.5H14"/></svg>',
+  q:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M9.2 9a3 3 0 1 1 4.3 2.7c-.9.5-1.5 1.2-1.5 2.3"/><circle cx="12" cy="17.6" r=".6" fill="currentColor"/></svg>',
+  cursor:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M7 4v14l3.6-3.4 2.4 5.3 2.4-1.1-2.4-5.2H18z"/></svg>',
+  wifi:'<svg viewBox="0 0 20 14" fill="currentColor"><path d="M10 13.2l2.4-2.9a3.6 3.6 0 0 0-4.8 0zM4.4 7.3l1.5 1.8a6.3 6.3 0 0 1 8.2 0l1.5-1.8a8.7 8.7 0 0 0-11.2 0zM1.3 3.6l1.5 1.8a11 11 0 0 1 14.4 0l1.5-1.8a13.4 13.4 0 0 0-17.4 0z"/></svg>',
+  bat:'<svg viewBox="0 0 28 14" fill="none"><rect x="1" y="1.5" width="22" height="11" rx="3" stroke="currentColor" opacity=".5"/><rect x="3" y="3.5" width="16" height="7" rx="1.6" fill="currentColor"/><rect x="24.5" y="5" width="2" height="4" rx="1" fill="currentColor" opacity=".5"/></svg>',
+  sig:'<svg viewBox="0 0 18 12" fill="currentColor"><rect x="0" y="8" width="3" height="4" rx="1"/><rect x="5" y="5.5" width="3" height="6.5" rx="1"/><rect x="10" y="3" width="3" height="9" rx="1"/><rect x="15" y="0" width="3" height="12" rx="1"/></svg>',
+  cc:'<svg viewBox="0 0 20 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="18" height="5" rx="2.5"/><rect x="1" y="8" width="18" height="5" rx="2.5"/><circle cx="5" cy="3.5" r="1.2" fill="currentColor"/><circle cx="15" cy="10.5" r="1.2" fill="currentColor"/></svg>',
+  check:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>'
+};
+
+/* ================= the lab engine ================= */
+const MQ=window.matchMedia?matchMedia('(prefers-reduced-motion: reduce)'):{matches:false};
+const LAB={scId:'connect',dir:'A',mdir:'1',rm:!!MQ.matches,sysRM:!!MQ.matches,manual:false,prof:{},t:0,t0:0,entered:{},cursor:0,pend:[],hapLog:[],P:null,M:null,toggles:{control:true,chime:true,curtain:false,login:true}};
+const SC={}, SPEC={}, ORDER=[];
+function def(id,o){ o.id=id; SC[id]=o; ORDER.push(id); }
+function curSc(){ return SC[LAB.scId]; }
+function curProf(){ const sc=curSc(), k=LAB.prof[sc.id]||Object.keys(sc.profiles)[0]; return {key:k,...sc.profiles[k]}; }
+function mkS(){ const t=LAB.t, E=LAB.entered;
+  return {t,rm:LAB.rm,dir:LAB.dir,mdir:LAB.mdir,prof:curProf().key,
+    at:k=>(k in E)?E[k]:null, has:k=>(k in E), since:k=>(k in E)?t-E[k]:-1,
+    latest(keys){ let best=null,bt=-Infinity; for(const k of keys) if((k in E)&&E[k]>=bt){ best=k; bt=E[k]; } return best; }}; }
+/* a value that retargets smoothly each time one of its states arrives */
+function track(S,init,steps,dur,ease){
+  ease=ease||E1; const list=steps.filter(s=>S.has(s[0])).sort((a,b)=>S.at(a[0])-S.at(b[0]));
+  if(!list.length) return init;
+  let from=init,to=init,start=null;
+  const val=tt=>(dur<=0||start===null)?to:lerp(from,to,ease(clamp((tt-start)/dur,0,1)));
+  for(const [k,tg] of list){ const tk=S.at(k), v=start===null?init:val(tk); from=v; to=tg; start=tk; }
+  return val(S.t);
+}
+function enter(key,at){ if(key in LAB.entered) return; LAB.entered[key]=at; fireHaptics(key,at); renderLog(); }
+function play(){
+  const sc=curSc(), P=curProf();
+  LAB.t0=performance.now(); LAB.t=0; LAB.entered={}; LAB.cursor=0; LAB.pend=[]; LAB.hapLog=[];
+  sc.setup&&sc.setup();
+  const seq=P.seq; while(LAB.cursor<seq.length&&seq[LAB.cursor][1]<=0){ enter(seq[LAB.cursor][0],seq[LAB.cursor][1]); LAB.cursor++; }
+  renderLog(); setLamp(null); kick();
+}
+function nextState(){ const seq=curProf().seq; if(LAB.cursor>=seq.length) return; enter(seq[LAB.cursor][0],LAB.t); LAB.cursor++; renderLog(); }
+let raf=0;
+function kick(){ if(!raf) raf=requestAnimationFrame(loop); }
+function loop(now){
+  raf=0; if(document.hidden) return;
+  LAB.t=now-LAB.t0;
+  const seq=curProf().seq;
+  if(!LAB.manual){ while(LAB.cursor<seq.length&&seq[LAB.cursor][1]<=LAB.t){ enter(seq[LAB.cursor][0],seq[LAB.cursor][1]); LAB.cursor++; } }
+  LAB.pend=LAB.pend.filter(p=>{ if(LAB.t>=p.at){ LAB.hapLog.push({...p.ev,te:p.at}); setLamp(p.ev); return false; } return true; });
+  try{ curSc().frame(mkS()); }catch(err){ console.error(err); }
+  drawHap(); raf=requestAnimationFrame(loop);
+}
+document.addEventListener('visibilitychange',()=>{ if(!document.hidden) kick(); });
+
+/* ================= haptics ================= */
+const T=(dt,i,s,label,decor)=>({k:'t',dt,i,s,label,decor});
+const CN=(dt,d,i,s,label)=>({k:'c',dt,d,i,s,label});
+const N=(dt,kind)=>({k:'n',dt,kind,label:'.'+kind,i:kind==='success'?.8:.9,s:.5});
+const SND=(dt,label)=>({k:'snd',dt,label,i:.6,s:.5});
+function hapFor(){ const h=HAP[LAB.scId]; if(!h) return {}; const byDir=h[LAB.scId.startsWith('mac')?LAB.mdir:LAB.dir]; const byProf=h['@'+curProf().key]; return byDir||byProf||h.all||{}; }
+function fireHaptics(key,at){ const evs=hapFor()[key]; if(!evs) return; evs.forEach(ev=>{ if(ev.decor&&LAB.rm) return; LAB.pend.push({at:at+ev.dt,ev}); }); }
+function setLamp(ev){ const l=$('#lamp'), s=l.querySelector('span');
+  if(!ev){ const empty=!Object.keys(hapFor()).length; s.textContent=empty?(curSc().device==='mac'?'Mac has no haptics · sounds only':'No haptic in this scenario'):'Waiting for a state…'; l.classList.remove('on'); return; }
+  const d=ev.k==='t'?'transient · I '+ev.i+' S '+ev.s:ev.k==='c'?'continuous '+ev.d+' s · I '+ev.i+' S '+ev.s:ev.k==='snd'?'sound':'UINotificationFeedback';
+  s.textContent=ev.label+' — '+d; l.classList.remove('on'); void l.offsetWidth; l.classList.add('on'); clearTimeout(setLamp._t); setLamp._t=setTimeout(()=>l.classList.remove('on'),240); }
+let hapC=null; const HAPFONT='10px ui-monospace, "SF Mono", Menlo, monospace';
+function drawHap(){
+  const cv=$('#hap'); const w=cv.clientWidth||300, h=64;
+  if(!hapC||hapC._w!==w){ hapC=mkCanvas(cv,w,h,Math.min(2,window.devicePixelRatio||1)); }
+  clr(hapC); const c=hapC, now=LAB.t, span=4000;
+  c.fillStyle=C.dim; c.fillRect(0,h-1,w,1);
+  for(const e of LAB.hapLog){ const x=w-(now-e.te)/span*w; if(x<-80) continue;
+    const col=e.s>.6?C.bone:(e.s>.3?'#C9C4BB':C.ash);
+    if(e.k==='t'){ const bh=Math.max(3,e.i*(h-8)); c.fillStyle=col; c.fillRect(x-1.5,h-1-bh,3,bh); }
+    else if(e.k==='c'){ const bw=e.d*1000/span*w, bh=Math.max(3,e.i*(h-8)); c.fillStyle='rgba(237,232,223,.35)'; c.fillRect(x,h-1-bh,bw,bh); }
+    else if(e.k==='n'){ c.fillStyle=e.kind==='warning'?C.ember:C.bone; const bh=(h-8)*e.i; c.fillRect(x-1.5,h-1-bh,3,bh); c.fillRect(x+6,h-1-bh*.7,3,bh*.7); if(e.kind==='warning') c.fillRect(x+13.5,h-1-bh*.5,3,bh*.5); }
+    else { c.strokeStyle=C.ash; c.beginPath(); for(let k=0;k<3;k++){ c.arc(x,h-10,5+k*5,-.7,.7); } c.stroke(); }
+    c.fillStyle=C.ash; c.font=HAPFONT; if(x>2) c.fillText(e.label,x+4,10+((e.te/97|0)%3)*11);
+  }
+}
+
+/* ================= iPhone ================= */
+const PW=402, PH=874, ART={x:0,y:104,w:402,h:200};
+function buildPhone(){
+  const dev=$('#device');
+  dev.innerHTML='<div class="phone" id="phone">'+
+   '<canvas class="full ph-art"></canvas>'+
+   '<div class="ph-home">'+
+    '<div class="ph-head"><span class="wm">'+markSVG(22)+'<span>farside</span></span><span class="help">?</span></div>'+
+    '<div class="ph-artcap"><span class="cap">Gap · one tap wide</span></div>'+
+    '<div class="ph-readout" aria-hidden="true"><span class="pips"><i></i><i></i><i></i></span><b></b></div>'+
+    '<div class="ph-card"><div class="nm">Studio Mac</div><div class="sub">Paired with this iPhone</div>'+
+     '<div class="strow"><i class="ld"></i><span class="mcap stt">Paired · ready when you are</span></div>'+
+     '<div class="thumb"><canvas></canvas></div><div class="hr"></div>'+
+     '<div class="lr"><span class="cap">Last reached 11:48 PM</span><span class="cap">We won’t ask why</span></div></div>'+
+    '<div class="ph-approve">'+ICON.shield+'On your Mac, choose Allow.</div>'+
+    '<button class="ph-pill" type="button" aria-label="Connect"><span class="pl"><b>Connect</b><span class="cap">Closes the gap</span></span><span class="arr">'+ICON.arrow+'</span></button>'+
+    '<div class="ph-cancel">Cancel connection</div>'+
+    '<div class="ph-ccap"><span class="mcap"></span><small>Cancel</small></div>'+
+    '<div class="ph-list"><div>Pair another Mac '+ICON.plus+'</div><div>Alerts &amp; Lock Screen '+ICON.bell+'</div><div>How to steer · 40 sec '+ICON.arrow+'</div></div>'+
+    '<div class="ph-plan"><span class="cap">Free · same Wi‑Fi</span><span class="cap" style="color:var(--bone)">Anywhere →</span></div>'+
+   '</div>'+
+   '<canvas class="full ph-fx"></canvas><div class="ph-over"></div>'+
+   '<div class="ph-status"><span>9:41</span><span style="display:flex;align-items:center">'+ICON.sig+ICON.wifi+ICON.bat+'</span></div><div class="island"></div><div class="homebar"></div>'+
+  '</div>';
+  const root=$('#phone');
+  const P={root,kind:'phone',w:PW+20,h:PH+20,
+    art:mkCanvas($('.ph-art',root),PW,PH), fx:mkCanvas($('.ph-fx',root),PW,PH), thumb:mkCanvas($('.thumb canvas',root),104,66,3),
+    home:$('.ph-home',root), over:$('.ph-over',root), artcap:$('.ph-artcap',root), readout:$('.ph-readout',root), rword:$('.ph-readout b',root), pips:$('.ph-readout .pips',root),
+    card:$('.ph-card',root), cdot:$('.ph-card .ld',root), cst:$('.ph-card .stt',root), thumbEl:$('.thumb',root), approve:$('.ph-approve',root), pill:$('.ph-pill',root),
+    cancel:$('.ph-cancel',root), ccap:$('.ph-ccap',root), ccapT:$('.ph-ccap .mcap',root), list:$('.ph-list',root), plan:$('.ph-plan',root), status:$('.ph-status',root)};
+  P.pill.addEventListener('click',()=>{ if(LAB.manual&&LAB.scId==='connect'&&!LAB.entered.tap) nextState(); else play(); });
+  return P;
+}
+/* resets the Home screen to its idle look; scenarios then change only what they own */
+function homeReset(P){
+  P.over.innerHTML=''; clr(P.art); clr(P.fx);
+  op(P.home,1,''); [P.artcap,P.card,P.pill,P.list,P.plan].forEach(e=>op(e,1,''));
+  [P.readout,P.approve,P.cancel,P.ccap].forEach(e=>op(e,0,'')); vis(P.status,true); op(P.status,1);
+  op(P.thumbEl,1); cls(P.card,'lift',false); dot(P.cdot,'idle'); txt(P.cst,'Paired · ready when you are'); P.cst._s=undefined; txt(P.cst,'Paired · ready when you are');
+}
+/* MacStatus(connection.status) as the Home card shows it (RemotePhone/HomeView.swift) */
+const STAGES=['tap','p1','p2','ap','p3','live','track','frame'];
+function macStatus(S){ const k=S.latest(STAGES);
+  switch(k){ case 'p1': return {text:'Connecting securely',dot:'busy',busy:true,prog:1};
+    case 'p2': return {text:'Mac found · checking it’s yours',dot:'live',busy:true,contact:true,prog:2};
+    case 'ap': return {text:'Approve this iPhone on your Mac',dot:'live',busy:true,contact:true,prog:2,approve:true};
+    case 'p3': case 'live': case 'track': case 'frame': return {text:'Opening the picture',dot:'live',busy:true,contact:true,prog:3};
+    default: return {text:'Paired · ready when you are',dot:'idle',busy:false,prog:0}; } }
+function readoutWord(S){ const k=S.latest(['p1','p2','ap','p3','live']); return {p1:'reaching',p2:'found',ap:'allow',p3:'opening',live:'contact'}[k]||''; }
+function scramble(word,since,rm){ if(rm||since<0) return word; const n=word.length, abc='abcdefghijklmnopqrstuvwxyz'; let out='';
+  for(let i=0;i<n;i++){ const settle=60+i*34; out+=since>=settle?word[i]:abc[(hash2(i,Math.floor(since/40))*26)|0]; } return out; }
+function homeCommon(S,P,opt){
+  opt=opt||{}; const ms=opt.status?Object.assign(macStatus(S),opt.status):macStatus(S);
+  txt(P.cst,ms.text); dot(P.cdot,ms.dot);
+  const tapS=S.since('tap');
+  if(!opt.keepPill){
+    const press=tapS>=0&&tapS<140?.98:1;
+    op(P.pill,ms.busy?(S.rm?0:1-seg(tapS,0,160)):1,'scale('+press+')');
+    op(P.cancel,ms.busy?seg(tapS,80,300):0,'translateY('+(ms.approve?56:0)+'px)');
+  }
+  op(P.approve,ms.approve?seg(S.since('ap'),0,260):0);
+  op(P.artcap,ms.busy?1-seg(tapS,0,200):1);
+  return ms;
+}
+function sessionFade(S,P,key,dur){ const l=S.since(key); if(l<0) return 0; const p=S.rm?seg(l,0,250):E1(seg(l,0,dur||280)); op(P.home,1-p,S.rm?'none':'scale('+(1-.03*p)+')'); return p; }
+/* the pre-first-frame lock, stepped by real events only: connected → coarse, video track → finer, first frame → crisp */
+function drawSession(c,S,coarse){
+  const ts=S.t/1000, fr=S.since('frame');
+  if(fr<0||fr<320){
+    c.fillStyle=C.void; c.fillRect(0,0,PW,PH);
+    const fine=S.has('track'), la=S.at('live');
+    halftone(c,0,0,PW,PH,{cell:fine?7:(coarse||22),t:ts,scene:macScene,dust:fine?.02:.2,dotScale:1.05,
+      ripples:la==null?[]:[rip(PW/2,PH/2,la/1000,{s:1.4,v:900,w:60,life:1.4})]});
+  }
+  if(fr>=0){ c.save(); c.globalAlpha=S.rm?seg(fr,0,250):E1(seg(fr,0,300)); c.drawImage(deskCanvas(PW,PH),0,0,PW,PH); c.restore(); }
+}
+function artReach(S,P,o){
+  const ts=S.t/1000, sc=reachScene(o);
+  halftone(P.art,ART.x,ART.y,ART.w,ART.h,{cell:o.cell||3.6,t:(S.rm?2:ts),scene:o.zoom&&o.zoom!==1?zoomScene(sc,o.zoom,ART.w*.52,ART.h*.42):sc,ripples:S.rm?[]:(o.ripples||[]),dust:.05,alpha:o.alpha});
+}
+/* bone rings that leave the fingertip while a stage waits: "still trying", never "further along" */
+function searchRipples(S,gap,from,until){
+  const out=[]; if(S.rm||from==null) return out; const now=S.t/1000, stop=until==null?Infinity:until/1000, G=reachGeom(ART.w,ART.h,gap,now);
+  for(let n=0;n<40;n++){ const t0=from/1000+.35+n*1.6; if(t0>now||t0>stop) break; if(now-t0<1.3) out.push(rip(G.fx,G.fy,t0,{s:.7,v:150,w:20,life:1.3,em:0,push:1.5})); }
+  return out; }
+
+/* ---------- Connect ---------- */
+def('connect',{group:'Phone',name:'Connect',tag:'A · B · C',device:'phone',dirs:['A','B','C'],
+  profiles:{
+    lan:{label:'Home Wi‑Fi',seq:[['idle',0],['tap',700],['p1',760],['p2',1180],['p3',1680],['live',2100],['track',2220],['frame',2400]]},
+    relay:{label:'Relayed · slow',seq:[['idle',0],['tap',700],['p1',760],['p2',2200],['p3',3500],['live',4700],['track',4950],['frame',5600]]},
+    approve:{label:'First connect · needs Allow',seq:[['idle',0],['tap',700],['p1',760],['p2',1180],['ap',1450],['p3',4600],['live',5000],['track',5120],['frame',5300]]}},
+  states:{idle:['status "Ready to connect"','MacStatus .idle'],tap:['HomeView.connect() → connection.start()','press'],p1:['status "Connecting securely…"','MacStatus.progress 1'],
+    p2:['status "Authenticating your Mac…"','progress 2 · inContact'],ap:['status "Approve this phone on your Mac"','needsApproval · awaitingApproval'],p3:['status "Connecting live desktop…"','progress 3 · RTC checking'],
+    live:['connection.connected = true','PhoneRemoteView.showsSession'],track:['connection.remoteVideo ≠ nil','video track attached'],frame:['model.fresh = true','ResolutionLockView pictureReady']},
+  setup(){ homeReset(LAB.P); },
+  frame(S){ const P=LAB.P; clr(P.art); clr(P.fx); ({A:connA,B:connB,C:connC})[S.dir](S,P); }
+});
+function connA(S,P){
+  const rm=S.rm, live=S.since('live');
+  const ms=homeCommon(S,P);
+  const gap=track(S,34,[['p1',18],['p2',8],['p3',2],['live',0]],rm?0:900,E1);
+  const contact=track(S,0,[['p2',1]],rm?0:600,E1);
+  const iris=live<0?0:(rm?0:E1(seg(live,0,460)));
+  const breathe=S.latest(STAGES)==='ap'&&!rm?.12*Math.sin(S.t/1000*TAU/1.8):0;
+  const G=reachGeom(ART.w,ART.h,gap,S.t/1000);
+  const rips=searchRipples(S,gap,S.at('p1'),S.at('live'));
+  if(S.has('p2')) rips.push(rip(G.mx,G.my,S.at('p2')/1000,{s:1.2,v:260,w:30,life:1.5}));
+  if(S.has('live')) rips.push(rip(G.mx,G.my,S.at('live')/1000,{s:1.9,v:520,w:40,life:1}));
+  if(!(live>=0&&(rm?live>260:iris>=1))){
+    artReach(S,P,{gap,contact:clamp(contact+breathe+(live>=0?.4:0),0,1.4),zoom:1+iris*5,cell:3.6*(1+iris*1.8),ripples:rips,flash:live>=0&&!rm?1-seg(live,0,220):0,alpha:rm&&live>=0?1-seg(live,0,250):1});
+  }
+  const word=readoutWord(S), wk=S.latest(['p1','p2','ap','p3','live']);
+  if(word){ P.rword.textContent=scramble(word,S.since(wk),rm); P.rword.style.color=contact>.5?C.ember:C.bone; }
+  op(P.readout,ms.busy?(rm?1:seg(S.since('p1'),0,240)):0);
+  $$('i',P.pips).forEach((el,i)=>cls(el,'on',ms.prog>i)); cls(P.pips,'em',!!ms.contact);
+  sessionFade(S,P,'live',260);
+  if(live>=0){
+    const c=P.fx, cx=ART.x+G.mx, cy=ART.y+G.my;
+    if(rm){ c.save(); c.globalAlpha=seg(live,0,250); drawSession(c,S); c.restore(); }
+    else{ const R=lerp(3,980,iris); c.save(); c.beginPath(); c.arc(cx,cy,R,0,TAU); c.clip(); drawSession(c,S); c.restore();
+      if(iris<1){ c.strokeStyle='rgba(255,91,31,'+(.9*(1-iris))+')'; c.lineWidth=2+6*(1-iris); c.beginPath(); c.arc(cx,cy,R,0,TAU); c.stroke(); } }
+  }
+}
+function thumbScene(S,shimmer){ return (c,w,h,t)=>{ macScene(c,w,h,t); if(shimmer!=null){ const x=shimmer*(w+60)-30; c.save(); c.globalCompositeOperation='lighter'; const g=c.createLinearGradient(x-18,0,x+18,0); g.addColorStop(0,'rgba(90,90,0,0)'); g.addColorStop(.5,'rgba(90,90,0,1)'); g.addColorStop(1,'rgba(90,90,0,0)'); c.fillStyle=g; c.fillRect(x-18,0,36,h); c.restore(); } }; }
+const THUMB={x:260,y:334,w:104,h:66};
+function connB(S,P){
+  const rm=S.rm, live=S.since('live'), ts=S.t/1000;
+  const ms=homeCommon(S,P);
+  const gap=track(S,34,[['p1',18],['p2',8],['p3',2]],rm?0:900,E1);
+  const dimArt=ms.busy?(rm?.5:lerp(1,.45,seg(S.since('tap'),0,400))):1;
+  if(!(live>=0&&live>300)) artReach(S,P,{gap,contact:0,alpha:dimArt*(live>=0?1-seg(live,0,300):1)});
+  cls(P.card,'lift',ms.busy&&live<0);
+  const k=S.latest(['p1','p2','ap','p3']);
+  const cell={p1:6,p2:4.4,ap:4.4,p3:3.3}[k]||2.5, waiting=ms.busy&&live<0;
+  const shimmer=waiting&&!rm?((S.t-(S.at(k)||0))/1400)%1:null;
+  const trip=[]; if(!rm) ['p1','p2','p3'].forEach(key=>{ if(S.has(key)) trip.push(rip(52,33,S.at(key)/1000,{s:1,v:140,w:12,life:.55,em:key==='p2'?.6:0,push:1})); });
+  if(live<0){ clr(P.thumb); P.thumb.fillStyle='#000'; P.thumb.fillRect(0,0,104,66);
+    halftone(P.thumb,0,0,104,66,{cell,t:rm?2:ts,scene:thumbScene(S,shimmer),dust:k==='tap'||k==='p1'?.3:0,dotScale:1.12,ripples:trip}); }
+  op(P.thumbEl,live>=0?0:1);
+  sessionFade(S,P,'live',300);
+  if(live>=0){
+    const c=P.fx;
+    if(rm){ c.save(); c.globalAlpha=seg(live,0,250); drawSession(c,S,13); c.restore(); return; }
+    const z=E1(seg(live,0,480));
+    if(z<1){ const x=lerp(THUMB.x,0,z), y=lerp(THUMB.y,0,z), w=lerp(THUMB.w,PW,z), h=lerp(THUMB.h,PH,z);
+      c.save(); rr(c,x,y,w,h,lerp(10,40,z)); c.clip(); c.fillStyle='#000'; c.fillRect(x,y,w,h);
+      halftone(c,x,y,w,h,{cell:lerp(3.3,13,z),t:ts,scene:(cc,ww,hh,tt)=>macScene(cc,ww,hh,tt,z),dust:0,dotScale:1.1}); c.restore();
+      c.strokeStyle='rgba(237,232,223,'+(.3*(1-z))+')'; c.lineWidth=1; rr(c,x+.5,y+.5,w-1,h-1,lerp(10,40,z)); c.stroke();
+    } else drawSession(c,S,13);
+  }
+}
+function connC(S,P){
+  const rm=S.rm, live=S.since('live'), tap=S.since('tap'), ts=S.t/1000;
+  const ms=homeCommon(S,P,{keepPill:true});
+  const gap=track(S,34,[['p1',18],['p2',8],['p3',2]],rm?0:900,E1);
+  if(!(live>=0&&live>300)) artReach(S,P,{gap,contact:0,alpha:(ms.busy?(rm?.55:lerp(1,.55,seg(tap,0,400))):1)*(live>=0?1-seg(live,0,300):1)});
+  op(P.pill,tap>=0?0:1); op(P.cancel,0); op(P.list,ms.busy?1-seg(tap,0,200):1); op(P.plan,ms.busy?1-seg(tap,0,200):1);
+  op(P.ccap,ms.busy&&live<0?seg(tap,200,420):0); txt(P.ccapT,ms.text);
+  sessionFade(S,P,'live',300);
+  const c=P.fx, cx=201, cy=525;
+  if(tap>=0&&(live<0||live<520)){
+    const m=rm?1:E1(seg(tap,0,380)), w=lerp(362,78,m), inkx=lerp(343,cx,m), a=live>=0?(rm?1-seg(live,0,250):1):1;
+    c.save(); c.globalAlpha=a;
+    c.fillStyle=C.bone; c.shadowColor='rgba(237,232,223,.16)'; c.shadowBlur=24; rr(c,cx-w/2,486,w,78,39); c.fill(); c.shadowBlur=0;
+    c.fillStyle=C.ink; c.beginPath(); c.arc(inkx,cy,30,0,TAU); c.fill();
+    const p3=S.since('p3'), arrowA=p3>=0?1-seg(p3,0,200):1, dotR=p3>=0?(rm?7:7*E1(seg(p3,80,380))):0;
+    if(arrowA>0){ c.save(); c.globalAlpha=a*arrowA; c.translate(inkx,cy); c.strokeStyle=C.ember; c.lineWidth=2.6; c.lineCap='round'; c.lineJoin='round'; c.beginPath(); c.moveTo(-7,0); c.lineTo(7,0); c.moveTo(1,-6); c.lineTo(7,0); c.lineTo(1,6); c.stroke(); c.restore(); }
+    if(dotR>0){ c.fillStyle=C.ember; c.shadowColor='rgba(255,91,31,.9)'; c.shadowBlur=12; c.beginPath(); c.arc(cx,cy,dotR,0,TAU); c.fill(); c.shadowBlur=0; }
+    const N18=18, lit=ms.prog*6, emb=!!ms.contact, ringA=rm?1:seg(tap,260,480);
+    const orbit=!rm&&live<0?((S.t/1000)/1.2)%1:-1;
+    for(let i=0;i<N18;i++){ const an=-Math.PI/2+i*TAU/N18, x=cx+Math.cos(an)*58, y=cy+Math.sin(an)*58;
+      const on=i<lit, litAt=on?(S.at(['p1','p2','p3'][Math.floor(i/6)])||0)+(i%6)*32:0, pop=on&&!rm?1+.6*bump(S.t-litAt,90,60):1;
+      let r=on?2.3*pop:1.5, col=on?(emb?C.ember:C.bone):C.dim;
+      if(!on&&orbit>=0){ const d=Math.abs(((i/N18-orbit)%1+1.5)%1-.5); if(d<.08){ col=C.ash; r=1.9; } }
+      c.globalAlpha=a*ringA; c.fillStyle=col; c.beginPath(); c.arc(x,y,r,0,TAU); c.fill(); }
+    c.restore();
+  }
+  if(live>=0){
+    if(rm){ c.save(); c.globalAlpha=seg(live,0,250); drawSession(c,S); c.restore(); return; }
+    const p=E1(seg(live,40,500)), R=lerp(39,1000,p);
+    c.save(); c.beginPath(); c.arc(cx,cy,R,0,TAU); c.clip(); drawSession(c,S); c.restore();
+    if(p<1){ c.strokeStyle='rgba(255,91,31,'+(.85*(1-p))+')'; c.lineWidth=2+5*(1-p); c.beginPath(); c.arc(cx,cy,R,0,TAU); c.stroke(); }
+  }
+}
+
+/* ---------- Arrival ---------- */
+const PTR={x:236,y:398};
+function ensureOver(P,key,markup){ if(P._over!==key){ P.over.innerHTML=markup; P._over=key; } }
+def('arrival',{group:'Phone',name:'Connected · arrival',device:'phone',
+  profiles:{direct:{label:'Direct route',seq:[['frame',0],['pointer',220],['route',1300]]},relay:{label:'Relayed route',seq:[['frame',0],['pointer',220],['route',1900]]}},
+  states:{frame:['model.fresh = true','first frame on screen'],pointer:['pointerLocator.followUpdates','host cursor position known'],route:['connection.diagnostics measured','route + RTT from stream stats']},
+  setup(){ const P=LAB.P; homeReset(P); P._over=null; op(P.home,0);
+    ensureOver(P,'arr','<div class="toast"><i class="ld live"></i><span class="tt">Studio Mac · Measuring…</span></div><div class="ptr">'+ICON.ptr+'<i class="tipdot"></i></div><div class="dockh"><i></i><span>Controls</span></div>'); },
+  frame(S){ const P=LAB.P, rm=S.rm, c=P.fx; clr(P.art); clr(c); op(P.home,0); vis(P.status,false);
+    c.drawImage(deskCanvas(PW,PH),0,0,PW,PH);
+    const toast=$('.toast',P.over), tt=$('.tt',P.over), ptr=$('.ptr',P.over), tip=$('.tipdot',P.over), dock=$('.dockh',P.over);
+    const f=S.since('frame'), pt=S.since('pointer'), rt=S.since('route');
+    const tin=rm?seg(f,120,370):E1(seg(f,120,460)), out=rt>=0?(rm?seg(rt,2000,2250):E1(seg(rt,2000,2280))):0;
+    op(toast,tin*(1-out),'translateX(-50%) translateY('+(rm?0:(1-tin)*-14-out*8)+'px) scale('+(rm?1:1-.35*out)+')');
+    txt(tt,rt>=0?'Studio Mac · '+(S.prof==='relay'?'Relayed · 48 ms':'Direct · 14 ms'):'Studio Mac · Measuring…');
+    const pin=pt<0?0:(rm?1:E1(seg(pt,0,320))), ps=rm?1:lerp(1.25,1,pin);
+    op(ptr,pin,'translate('+(PTR.x-2)+'px,'+(PTR.y-2)+'px) scale('+ps+')');
+    const tp=pt<0?0:seg(pt,0,700); op(tip,rm?(pt>=0&&pt<600?1:0):(1-tp)*(tp>0?1:0),'scale('+(rm?1:1+.8*Math.sin(Math.PI*Math.min(1,tp*1.6)))+')');
+    if(pt>=0&&!rm){ const p=E1(seg(pt,0,620)); if(p<1){ c.fillStyle='rgba(237,232,223,'+(1-p)+')'; for(let i=0;i<16;i++){ const an=i*TAU/16, r=6+24*p; c.beginPath(); c.arc(PTR.x+Math.cos(an)*r,PTR.y+Math.sin(an)*r,1.6*(1-p)+.6,0,TAU); c.fill(); } } }
+    const din=rm?seg(f,240,490):E1(seg(f,240,640)); op(dock,din,'translateY('+(1-din)*20+'px)');
+  }
+});
+
+/* ---------- Reconnecting ---------- */
+let dotTile=null;
+function dotPattern(c){ if(!dotTile){ dotTile=document.createElement('canvas'); dotTile.width=10; dotTile.height=10; const t=dotTile.getContext('2d'); t.fillStyle='rgba(0,0,0,.92)'; t.beginPath(); t.arc(5,5,3.2,0,TAU); t.fill(); } return c.createPattern(dotTile,'repeat'); }
+function dotDim(c,amount,region,hole){
+  c.save(); c.beginPath(); c.rect(region[0],region[1],region[2],region[3]); if(hole) c.arc(hole[0],hole[1],hole[2],0,TAU,true); c.clip('evenodd');
+  const g=c.createLinearGradient(0,0,0,PH); g.addColorStop(0,'rgba(5,5,5,'+(.3*amount)+')'); g.addColorStop(1,'rgba(5,5,5,'+(.78*amount)+')'); c.fillStyle=g; c.fillRect(0,0,PW,PH);
+  c.globalAlpha=amount; c.setTransform(1,0,0,1,0,0); c.fillStyle=dotPattern(c); c.fillRect(0,0,PW*2,PH*2); c.restore(); }
+def('reconnect',{group:'Phone',name:'Reconnecting',device:'phone',
+  profiles:{back:{label:'Back in 3 s',seq:[['live',0],['drop',900],['back',3900],['fresh',4150]]},fail:{label:'Gives up',seq:[['live',0],['drop',900],['gaveup',6200]]}},
+  states:{live:['connection.connected = true','live session'],drop:['status "Connection interrupted · retrying…"','MacStatus "Reconnecting" · sessionHeld'],back:['connection.connected = true','retry succeeded'],fresh:['model.fresh = true','new frames'],gaveup:['sessionLossRetryLimit reached (24)','FriendlyError .connectionLost']},
+  setup(){ const P=LAB.P; homeReset(P); P._over=null; op(P.home,0);
+    ensureOver(P,'rec','<div class="ptr">'+ICON.ptr+'<i class="tipdot"></i></div><div class="rpill"><i class="ld busy"></i><span class="rt">Reconnecting to Studio Mac</span><span class="end">End</span></div><div class="cover" style="padding-top:120px"><h4>Could not <em>reconnect</em></h4><p>Couldn’t reach Studio Mac. Your pairing is kept.</p><div class="grow"></div><button class="pbtn" type="button">Reconnect</button><button class="sbtn" type="button">Return to Farside</button></div>'); },
+  frame(S){ const P=LAB.P, rm=S.rm, c=P.fx; clr(P.art); clr(c); op(P.home,0); vis(P.status,false);
+    c.drawImage(deskCanvas(PW,PH),0,0,PW,PH);
+    const d=S.since('drop'), b=S.since('back'), g=S.since('gaveup');
+    const ptr=$('.ptr',P.over), tip=$('.tipdot',P.over), pill=$('.rpill',P.over), rt=$('.rt',P.over), end=$('.end',P.over), cover=$('.cover',P.over);
+    op(ptr,1,'translate('+(PTR.x-2)+'px,'+(PTR.y-2)+'px)');
+    const down=d>=0&&b<0;
+    cls(tip,'hollow',down); op(tip,down?1:(b>=0?(rm?(b<500?1:0):1-seg(b,200,700)):0),'scale('+(b>=0&&!rm?1+.7*bump(b,120,90):1)+')');
+    if(d>=0){
+      if(b<0){ const p=rm?seg(d,0,250):E1(seg(d,0,420)); dotDim(c,g>=0?1:1,[0,0,PW,rm?PH:PH*p]); }
+      else { const p=rm?seg(b,0,250):E1(seg(b,0,460)); if(p<1){ if(rm) dotDim(c,1-p,[0,0,PW,PH]); else dotDim(c,1,[0,0,PW,PH],[PTR.x,PTR.y,p*1000]); } }
+    }
+    const pin=d<0?0:(rm?seg(d,0,250):E1(seg(d,0,480)));
+    const pout=b>=0?(rm?seg(b,1400,1650):E1(seg(b,1400,1700))):(g>=0?seg(g,0,200):0);
+    op(pill,pin*(1-pout),'translateX(-50%) translateY('+(rm?0:(1-pin)*-40-pout*10)+'px)');
+    if(b>=0){ txt(rt,'Back · Direct · 16 ms'); dot($('.ld',pill),'live'); cls(rt,'marching',false); cls(end,'hide',true); }
+    else { txt(rt,'Reconnecting to Studio Mac'); dot($('.ld',pill),'busy'); cls(rt,'marching',true); cls(end,'hide',false); }
+    const cin=g<0?0:(rm?seg(g,150,400):E1(seg(g,150,600))); op(cover,cin,'translateY('+(rm?0:(1-cin)*30)+'px)'); vis(cover,g>=0);
+  }
+});
+
+/* ---------- Ended ---------- */
+function cardDotPos(P){ if(!P._cdp){ P._cdp={x:P.card.offsetLeft+P.cdot.offsetLeft+4,y:P.card.offsetTop+P.cdot.offsetTop+4}; } return P._cdp; }
+def('ended',{group:'Phone',name:'Disconnected · ended',device:'phone',
+  profiles:{user:{label:'You tap End',seq:[['live',0],['end',1100],['home',1100]]},mac:{label:'Mac stops sharing',seq:[['live',0],['end',1100],['home',1100],['notice',1700]]}},
+  states:{live:['connection.connected = true','live session'],end:['model.disconnect() · EndReason.user','or EndReason.macStopped'],home:['showsSession = false','HomeView returns'],notice:['model.macNotice','"stopped sharing" card line']},
+  setup(){ const P=LAB.P; homeReset(P); P._over=null; P._cdp=null;
+    ensureOver(P,'end','<div class="notice">'+ICON.shield+'<div><b>Stopped from Studio Mac</b><span>Someone chose Stop Sharing at 11:48 PM.</span></div></div>'); },
+  frame(S){ const P=LAB.P, rm=S.rm, c=P.fx; clr(P.art); clr(c);
+    const e=S.since('end'), ts=S.t/1000, notice=$('.notice',P.over), macStop=S.prof==='mac';
+    const homeIn=e<0?0:(rm?seg(e,0,250):E1(seg(e,300,800)));
+    op(P.home,homeIn); vis(P.status,homeIn>.5);
+    op(P.pill,macStop?(S.has('notice')?0:1):1); op(P.list,1);
+    const gap=e<0?0:(rm?34:lerp(2,34,E1(seg(e,300,1200))));
+    if(e>=0) artReach(S,P,{gap,contact:rm?0:1-seg(e,300,900),alpha:homeIn});
+    txt(P.cst,e<0?'Opening the picture':(macStop?'Stopped from your Mac':'Paired · ready when you are')); txt($('.lr .cap',P.card),e<0?'Last reached 11:48 PM':'Last reached 11:48 PM');
+    dot(P.cdot,e<0?'live':(macStop?'att':'idle'));
+    const ni=S.since('notice'); op(notice,ni<0?0:(rm?seg(ni,0,250):E1(seg(ni,0,400))),'translateY('+(ni<0||rm?0:(1-E1(seg(ni,0,400)))*10)+'px)');
+    if(e<0){ c.drawImage(deskCanvas(PW,PH),0,0,PW,PH); return; }
+    if(rm){ c.save(); c.globalAlpha=1-seg(e,0,250); c.drawImage(deskCanvas(PW,PH),0,0,PW,PH); c.restore(); return; }
+    const sy=e<180?lerp(1,.006,EIN(seg(e,0,180))):.006, sx=e<180?1:lerp(1,.012,E1(seg(e,180,320)));
+    if(e<320){ c.save(); c.translate(PW/2,PH/2); c.scale(sx,sy); c.translate(-PW/2,-PH/2); c.drawImage(deskCanvas(PW,PH),0,0,PW,PH); c.restore();
+      c.fillStyle='rgba(237,232,223,'+(.9*seg(e,80,180))+')'; c.fillRect(PW/2-PW*sx/2,PH/2-2,PW*sx,4); }
+    const tgt=cardDotPos(P), fly=E2(seg(e,440,900));
+    if(e>=260&&fly<1){ const x=lerp(PW/2,tgt.x,fly), y=lerp(PH/2,tgt.y,fly)-Math.sin(Math.PI*fly)*80, r=lerp(6,4,fly);
+      c.fillStyle=fly>.85?C.ash:C.bone; c.shadowColor='rgba(237,232,223,.8)'; c.shadowBlur=14*(1-fly); c.beginPath(); c.arc(x,y,r,0,TAU); c.fill(); c.shadowBlur=0; }
+  }
+});
+
+/* ---------- Pairing success ---------- */
+const QRN=25, QR={x:106,y:230,s:190}, QC={x:201,y:325};
+const QRM=(()=>{ const m=[]; for(let y=0;y<QRN;y++) for(let x=0;x<QRN;x++){ const f=(a,b)=>x>=a&&x<a+7&&y>=b&&y<b+7, fin=f(0,0)||f(QRN-7,0)||f(0,QRN-7);
+  let on; if(fin){ const lx=x<7?x:x-(QRN-7), ly=y<7?y:y-(QRN-7); on=lx===0||lx===6||ly===0||ly===6||(lx>=2&&lx<=4&&ly>=2&&ly<=4); } else on=hash2(x*3+1,y*5+2)<.46; if(on) m.push({x,y}); } return m; })();
+const MARK=(()=>{ const d=markDots(ARROW), pitch=9, ox=QC.x-5*pitch, oy=QC.y-8*pitch; return d.map(p=>({x:ox+(p.x+.5)*pitch,y:oy+(p.y+.5)*pitch,tip:p.tip})); })();
+const QRMAP=(()=>{ const used=new Set(), map=[]; MARK.forEach((m,mi)=>{ let best=-1,bd=1e9; QRM.forEach((q,qi)=>{ if(used.has(qi)) return; const x=QR.x+(q.x+.5)*QR.s/QRN, y=QR.y+(q.y+.5)*QR.s/QRN, dd=(x-m.x)**2+(y-m.y)**2; if(dd<bd){ bd=dd; best=qi; } }); used.add(best); map[best]=mi; }); return map; })();
+function drawQRPhone(c,S){
+  const det=S.since('detect'), acc=S.since('accepted'), rej=S.since('rejected'), rm=S.rm, ms=QR.s/QRN, ts=S.t/1000;
+  const drift=det<0&&!rm?[Math.sin(ts*1.3)*3,Math.cos(ts*1.1)*2]:[0,0];
+  QRM.forEach((q,qi)=>{ const x0=QR.x+(q.x+.5)*ms+drift[0], y0=QR.y+(q.y+.5)*ms+drift[1];
+    if(acc<0){ c.fillStyle=rej>=0?C.dim:'#1a1a1a'; c.fillRect(x0-ms/2,y0-ms/2,ms-.6,ms-.6); return; }
+    const mi=QRMAP[qi], dist=Math.hypot(x0-QC.x,y0-QC.y), p=rm?seg(acc,0,300):E1(seg(acc,dist*.9,dist*.9+620));
+    if(mi===undefined){ const a=1-p; if(a<=0) return; const an=Math.atan2(y0-QC.y,x0-QC.x), push=rm?0:40*p; c.globalAlpha=a; c.fillStyle='#1a1a1a'; const r=lerp(ms/2,1.2,p); c.beginPath(); c.arc(x0+Math.cos(an)*push,y0+Math.sin(an)*push,r,0,TAU); c.fill(); c.globalAlpha=1; return; }
+    const m=MARK[mi], x=lerp(x0,m.x,p), y=lerp(y0,m.y,p), r=lerp(ms*.55,m.tip?4.6:3.8,p);
+    const col=p<.5?'#1a1a1a':(m.tip&&acc>700?C.ember:C.bone);
+    if(rm){ c.globalAlpha=1; } c.fillStyle=col;
+    if(m.tip&&acc>700){ c.shadowColor='rgba(255,91,31,.9)'; c.shadowBlur=16; }
+    if(p<.3){ c.fillRect(x-ms/2,y-ms/2,ms-.6,ms-.6); } else { c.beginPath(); c.arc(x,y,r,0,TAU); c.fill(); }
+    c.shadowBlur=0; });
+}
+def('pairing',{group:'Phone',name:'Pairing success',device:'phone',
+  profiles:{ok:{label:'First pairing',seq:[['scan',0],['detect',1100],['accepted',1500],['approve',2700],['allowed',5200],['home',5900]]},expired:{label:'Expired code',seq:[['scan',0],['detect',1100],['rejected',1500]]}},
+  states:{scan:['PairingSheet · ScannerView','camera live'],detect:['AVMetadataObject .qr found','code in frame'],accepted:['invitation parsed + stored','pairedInSheet · PairingBurstView'],approve:['status "Approve this phone on your Mac"','awaitingApproval'],allowed:['Mac chose Allow → "Connecting live desktop…"','HostStatus .controlling'],home:['sheet dismissed','HomeView with Mac card'],rejected:['"invalid or expired"','FriendlyError .codeRejected']},
+  setup(){ const P=LAB.P; homeReset(P); P._over=null;
+    ensureOver(P,'pair','<div class="sheet"><div class="grab"></div><h4>Scan the code on your <em>Mac</em></h4><p class="lede">Farside menu bar → Pair a phone…</p></div><canvas class="full pcv"></canvas>'+
+      '<div class="vf"><i class="corner a"></i><i class="corner b"></i><i class="corner c"></i><i class="corner d"></i></div>'+
+      '<div class="pairtxt"><span class="cap">Paired</span><p>Now choose Allow on your Mac.</p></div>'+
+      '<div class="macsliver"><span>Wed 11:48 PM</span><span class="mk">'+markSVG(20,'transparent','#ddd')+'<b></b></span></div>'+
+      '<div class="waitrow"><i class="ld busy"></i><span class="mcap wt">Waiting for Allow on Studio Mac</span></div>'+
+      '<div class="errplate"><b>Pairing code not accepted</b><span>That code expired. Choose Pair a phone… on your Mac for a new one.</span></div>'); P._pcv=mkCanvas($('.pcv',P.over),PW,PH); },
+  frame(S){ const P=LAB.P, rm=S.rm, c=P._pcv, ts=S.t/1000; clr(P.art); clr(P.fx); clr(c);
+    const det=S.since('detect'), acc=S.since('accepted'), ap=S.since('approve'), al=S.since('allowed'), hm=S.since('home'), rej=S.since('rejected');
+    const sheet=$('.sheet',P.over), vf=$('.vf',P.over), pt=$('.pairtxt',P.over), sl=$('.macsliver',P.over), wr=$('.waitrow',P.over), ring=$('.macsliver b',P.over), ep=$('.errplate',P.over);
+    const down=hm<0?0:(rm?seg(hm,0,250):E1(seg(hm,0,480)));
+    op(P.home,hm<0?0:down); if(hm>=0){ txt(P.cst,'Opening the picture'); dot(P.cdot,'live'); op(P.card,down,'translateY('+(1-down)*16+'px)'); }
+    const sheetT=rm?'none':'translateY('+down*820+'px)', sheetO=rm?1-down:1;
+    op(sheet,sheetO,sheetT);
+    if(down<1){
+      c.save(); if(!rm) c.translate(0,down*820); c.globalAlpha=sheetO;
+      const camA=acc<0?1:1-seg(acc,0,500);
+      c.save(); rr(c,36,160,330,330,22); c.clip(); c.fillStyle='#050505'; c.fillRect(36,160,330,330);
+      if(camA>0){ c.globalAlpha=sheetO*camA; const g=c.createRadialGradient(201,340,20,201,325,260); g.addColorStop(0,'#3a3a3c'); g.addColorStop(1,'#0c0c0e'); c.fillStyle=g; c.fillRect(36,160,330,330);
+        c.fillStyle='#e9e7e2'; rr(c,86,210,230,230,14); c.fill();
+        for(let i=0;i<220;i++){ const x=36+hash2(i,Math.floor(ts*12))*330, y=160+hash2(i+9,Math.floor(ts*12)+3)*330; c.fillStyle='rgba(255,255,255,.05)'; c.fillRect(x,y,1.5,1.5); } }
+      c.globalAlpha=sheetO; c.restore();
+      drawQRPhone(c,S);
+      c.restore();
+    }
+    const lock=det<0?0:(rm?1:E1(seg(det,0,360)));
+    const shake=rej>=0&&!rm?Math.sin(seg(rej,0,360)*TAU*3)*6*(1-seg(rej,0,360)):0;
+    const inset=lerp(0,62,lock);
+    $$('.corner',vf).forEach((el,i)=>{ const x=(i===0||i===2)?inset:330-34-inset, y=(i<2)?inset:330-34-inset; el.style.transform='translate('+x+'px,'+y+'px)'; });
+    op(vf,acc>=0?1-seg(acc,0,250):(1-down),'translateX('+shake+'px)');
+    const tin=acc<0?0:(rm?seg(acc,500,750):E1(seg(acc,600,1000)));
+    op(pt,tin*(1-down),'translateY('+(1-tin)*8+'px)');
+    op(sl,ap<0?0:(rm?seg(ap,0,250):E1(seg(ap,0,400)))*(1-down)); op(wr,ap<0?0:seg(ap,100,400)*(1-down));
+    if(al>=0){ ring.style.background=C.ember; ring.style.boxShadow='0 0 8px rgba(255,91,31,.9)'; txt($('.wt',P.over),'Allowed · opening Studio Mac'); dot($('.ld',wr),'live'); }
+    else { ring.style.background='transparent'; ring.style.boxShadow='inset 0 0 0 1.5px '+C.ember; ring.style.opacity=rm?1:(.45+.55*(.5+.5*Math.sin(ts*TAU/1.4))); txt($('.wt',P.over),'Waiting for Allow on Studio Mac'); dot($('.ld',wr),'busy'); }
+    op(ep,rej<0?0:(rm?seg(rej,0,250):E1(seg(rej,200,500))));
+  }
+});
+
+/* ---------- Failure ---------- */
+def('failure',{group:'Phone',name:'Failure · Mac asleep',device:'phone',
+  profiles:{asleep:{label:'Mac asleep',seq:[['idle',0],['tap',600],['p1',660],['fail',3900]]},unreachable:{label:'Unreachable',seq:[['idle',0],['tap',600],['p1',660],['fail',4400]]}},
+  states:{idle:['status "Ready to connect"','idle'],tap:['connection.start()','press'],p1:['status "Connecting securely…"','progress 1'],fail:['HostPresence .sleeping → .napping','or "Connection timed out" → .unreachable']},
+  setup(){ const P=LAB.P; homeReset(P); P._over=null; const asleep=S0().prof==='asleep';
+    ensureOver(P,'fail'+asleep,'<span class="zz">z</span><span class="zz">z</span><span class="zz">z</span><div class="cover"><span class="xbtn">✕</span><canvas></canvas>'+
+      (asleep?'<h4>Your Mac is <em>napping</em></h4><p>It went to sleep at 11:48 PM, so it can’t hear your phone.</p><div class="fix">Tap any key on the Mac or open its lid, then try again.</div>'
+             :'<h4>Your Mac is out of <em>reach</em></h4><p>Studio Mac may be asleep, offline, or Farside isn’t running in its menu bar.</p><div class="fix">Check that it’s awake and Farside is open, then try again.</div>')+
+      '<div class="grow"></div><button class="pbtn" type="button">Try again</button></div>');
+    P._cov=mkCanvas($('.cover canvas',P.over),402,240); },
+  frame(S){ const P=LAB.P, rm=S.rm, ts=S.t/1000; clr(P.art); clr(P.fx);
+    const f=S.since('fail'), asleep=S.prof==='asleep';
+    if(f>=0){ homeCommon(S,P,{keepPill:true,status:{text:asleep?'Asleep · wake it to connect':'Couldn’t reach it',dot:'att'}}); op(P.cancel,1-seg(f,0,200)); op(P.pill,seg(f,300,600)); } else homeCommon(S,P);
+    const gap=f<0?track(S,34,[['p1',18]],rm?0:900,E1):(rm?34:lerp(18,34,E1(seg(f,0,900))));
+    const sink=f<0||!asleep?0:(rm?1:E1(seg(f,0,800))), fade=f<0||asleep?0:(rm?1:E1(seg(f,0,700)));
+    const rips=f<0?searchRipples(S,gap,S.at('p1'),null):[];
+    artReach(S,P,{gap,contact:0,ptrDy:14*sink,ptrRot:.35*sink,ptrLum:lerp(1,asleep?.5:.12,Math.max(sink,fade)),ripples:rips});
+    op(P.readout,0);
+    $$('.zz',P.over).forEach((z,i)=>{ if(!asleep||f<0){ op(z,0); return; } const ph=((ts-(S.at('fail')/1000)-i*.5)%1.8+1.8)%1.8/1.8, show=!rm&&(S.t-S.at('fail'))>i*500;
+      op(z,show?Math.sin(Math.PI*ph)*.9:(rm&&i===0?.8:0),'translate('+(222+i*9+ph*10)+'px,'+(160-ph*34-i*4)+'px)'); });
+    const cov=$('.cover',P.over), cin=f<0?0:(rm?seg(f,700,950):E1(seg(f,700,1150)));
+    vis(cov,f>=700); op(cov,rm?cin:1,'translateY('+(rm?0:(1-cin)*PH)+'px)');
+    if(f>=700){ clr(P._cov); halftone(P._cov,0,0,402,240,{cell:5,t:rm?2:ts,scene:reachScene({gap:34,contact:0,ptrDy:asleep?14:0,ptrRot:asleep?.35:0,ptrLum:asleep?.5:.12}),dust:.04}); }
+  }
+});
+function S0(){ return mkS(); }
+
+/* ---------- Anywhere unlocked ---------- */
+def('anywhere',{group:'Phone',name:'Anywhere unlocked',device:'phone',
+  profiles:{trial:{label:'Trial starts',seq:[['paywall',0],['purchasing',900],['purchased',2700],['verified',3050]]},pending:{label:'Ask to Buy',seq:[['paywall',0],['purchasing',900],['pending',2700]]}},
+  states:{paywall:['AnywherePaywallView','entitlement .notSubscribed'],purchasing:['purchaseState .purchasing','App Store sheet'],purchased:['purchaseState .purchased','transaction verified by StoreKit'],verified:['entitlement.phase .trial · hasAccess','AnywhereAccess confirmed'],pending:['purchaseState .pending','no access yet']},
+  setup(){ const P=LAB.P; homeReset(P); P._over=null;
+    ensureOver(P,'any','<div class="sheet" style="padding-top:14px"><div class="grab"></div><canvas style="width:402px;height:210px;margin:0 -20px;display:block"></canvas>'+
+      '<h4 class="ah">Farside <em>Anywhere</em></h4><p class="lede al">Reach your Mac from any network, not just home Wi‑Fi.</p>'+
+      '<div class="plans"><div class="plan sel"><div><b>Yearly</b><br><span>7-day free trial, then CA$49.99</span></div><span>Save 30%</span></div><div class="plan"><div><b>Monthly</b><br><span>CA$5.99 a month</span></div></div></div>'+
+      '<button class="pbtn ab" type="button">Start 7-day free trial</button><p class="fine">Cancel any time in Settings. Restore Purchases</p></div>'+
+      '<div class="appstore"><b>App Store</b><div style="height:14px"></div><div class="row"><span>Farside Anywhere · Yearly</span><span>Free for 7 days</span></div><div class="row"><span>Account</span><span>roshan@…</span></div><div class="dc">Double-click to confirm</div><div class="ok">'+ICON.check.replace('<svg','<svg width="22" height="22" style="vertical-align:-5px;margin-right:6px"')+'Done</div></div>');
+    P._any=mkCanvas($('.sheet canvas',P.over),402,210); },
+  frame(S){ const P=LAB.P, rm=S.rm, ts=S.t/1000; clr(P.art); clr(P.fx); op(P.home,1);
+    const pu=S.since('purchasing'), pd=S.since('purchased'), v=S.since('verified'), pn=S.since('pending');
+    const as=$('.appstore',P.over), ok=$('.ok',as), dc=$('.dc',as), btn=$('.ab',P.over), ah=$('.ah',P.over), al=$('.al',P.over), plans=$('.plans',P.over);
+    const ain=pu<0?0:(rm?seg(pu,0,250):E1(seg(pu,0,420))), aout=pd>=0?(rm?seg(pd,400,650):E1(seg(pd,400,760))):(pn>=0?(rm?seg(pn,300,550):E1(seg(pn,300,660))):0);
+    op(as,ain*(rm?1-aout:1),'translateY('+(rm?0:(1-ain+aout)*320)+'px)'); op(ok,pd>=0?1:0); op(dc,pd>=0?0:1);
+    if(v>=0){ html(btn,'Done'); html(ah,'Anywhere is <em>on</em>'); txt(al,'Your trial runs until 7 Oct. We’ll remind you two days before it ends.'); op(plans,rm?1-seg(v,0,250):1-E1(seg(v,0,300))); }
+    else if(pn>=0){ html(btn,'Done'); html(ah,'Waiting for <em>approval</em>'); txt(al,'Anywhere turns on when the purchase is approved. Nothing to do here.'); op(plans,1); }
+    else if(pu>=0){ html(btn,'<span class="spin"></span>'); html(ah,'Farside <em>Anywhere</em>'); txt(al,'Reach your Mac from any network, not just home Wi‑Fi.'); op(plans,1); }
+    else { html(btn,'Start 7-day free trial'); html(ah,'Farside <em>Anywhere</em>'); txt(al,'Reach your Mac from any network, not just home Wi‑Fi.'); op(plans,1); }
+    const c=P._any; clr(c);
+    const scat=v<0?0:(rm?1:E1(seg(v,0,650))), reach=v<0?0:(rm?1:E1(seg(v,150,1000))), word=v<0?0:(rm?1:E1(seg(v,500,1300)));
+    const gap=lerp(96,6,reach), contact=v<0?0:(rm?1:seg(v,800,1100));
+    const scene=reachScene({gap,contact,float:1,extra:(cc,w,h,t,G)=>{
+      const hx=G.mx-96*G.u-20, hy=G.my+12, R=62;
+      for(let i=0;i<36;i++){ const an=i*TAU/36, push=scat*60, a=1-scat; if(a<=0) break; cc.globalAlpha=a; cc.fillStyle=Lc(.75); cc.beginPath(); cc.arc(hx+Math.cos(an)*(R+push),hy+Math.sin(an)*(R+push),2.4,0,TAU); cc.fill(); }
+      cc.globalAlpha=1;
+      if(word>0){ cc.save(); cc.globalAlpha=word; cc.fillStyle=Lc(.95); cc.font='800 44px Doto, monospace'; cc.textAlign='center'; cc.fillText('anywhere',w*.5,h*.93); cc.restore(); }
+    }});
+    halftone(c,0,0,402,210,{cell:3.6,t:rm?2:ts,scene,dust:.05,ripples:v>=0&&!rm?[rip(402*.52,210*.42,(S.at('verified')+950)/1000,{s:1.6,v:320,w:34,life:1.3})]:[]});
+  }
+});
+
+/* ================= Mac ================= */
+const MW=760, MH=560;
+function buildMac(){
+  const dev=$('#device');
+  dev.innerHTML='<div class="mac" id="mac"><div class="wall"></div><div class="dwin"><i style="top:48px;width:170px"></i><i style="top:66px;width:210px"></i><i style="top:84px;width:120px"></i><i style="top:102px;width:190px"></i><i style="top:120px;width:150px"></i></div>'+
+   '<div class="mb"><svg width="13" height="15" viewBox="0 0 13 15" aria-hidden="true"><path fill="#eee" d="M10.6 8c0-1.9 1.6-2.8 1.6-2.8-.9-1.3-2.3-1.5-2.8-1.5-1.2-.1-2.3.7-2.9.7-.6 0-1.5-.7-2.5-.7C2.7 3.7 1.5 4.5.8 5.7c-1.4 2.4-.4 6 1 8 .7 1 1.5 2 2.5 2 1 0 1.4-.6 2.6-.6s1.5.6 2.6.6c1.1 0 1.7-1 2.4-2 .8-1.1 1.1-2.2 1.1-2.2S10.6 11 10.6 8zM8.7 2.3C9.2 1.7 9.6.8 9.5 0c-.8 0-1.7.5-2.3 1.1-.5.5-.9 1.4-.8 2.2.9.1 1.8-.4 2.3-1z"/></svg><b>Finder</b><span>File</span><span>Edit</span><span>View</span><span>Go</span>'+
+   '<div class="mbr"><span class="it si open"><canvas></canvas></span><span class="it">'+ICON.cc+'</span><span class="it">'+ICON.wifi+'</span><span class="it">'+ICON.bat+'</span><span class="clock">Wed 30 Sep 11:48 PM</span></div></div>'+
+   '<div class="pop" id="pop"></div>'+
+   '<div class="loupe"><div class="lb"><canvas></canvas></div><span class="cap">Status item · 6×</span></div></div>';
+  const root=$('#mac');
+  const si=$('.si',root), pop=$('#pop'); pop.style.left=clamp(si.offsetLeft+si.offsetWidth/2-180,8,MW-368)+'px';
+  const M={root,kind:'mac',w:MW,h:MH,si:mkCanvas($('.si canvas',root),14,20,3),loupe:mkCanvas($('.loupe canvas',root),84,120,2),pop:$('#pop'),dir:null};
+  return M;
+}
+function toggleRow(key,title,sub){ const on=LAB.toggles[key]; return '<button class="trow" type="button" role="switch" aria-checked="'+on+'" data-tg="'+key+'"><span><b>'+title+'</b><small>'+sub+'</small></span><i class="swi'+(on?' on':'')+'"></i></button>'; }
+function toggleTile(key,title,sub){ const on=LAB.toggles[key]; return '<button class="ttile'+(on?' on':'')+'" type="button" role="switch" aria-checked="'+on+'" data-tg="'+key+'"><b>'+title+'</b><small>'+sub+'</small><i class="swi'+(on?' on':'')+'"></i></button>'; }
+const FOOT='<div class="foot"><span>Settings…</span><span>Pair a phone…</span><span>Quit</span></div>';
+function buildPop(M,dir){
+  const P=M.pop; M.dir=dir; P.className='pop m'+dir;
+  if(dir==='1'){
+    P.innerHTML='<div class="strip"><canvas></canvas><div class="plate"><i class="ld"></i><span class="hl"></span></div></div>'+
+     '<div class="qrblk"><canvas></canvas><div class="xdots"></div><span class="mcap xt"></span></div>'+
+     '<div class="pb"><div class="who"><span class="tile"></span><span><div class="t"></div><div class="c"></div></span><span class="el"></span></div>'+
+     '<div class="spark"><canvas></canvas></div><p class="approve msg" style="margin:10px 0 0;color:var(--ash);font-size:12.5px"></p>'+
+     '<div class="rows">'+toggleRow('control','Allow control','Off means view only')+toggleRow('chime','Chime when a phone connects','So you always know')+toggleRow('curtain','Hide this Mac’s screen','Only while a phone is connected')+'</div>'+
+     '<div class="acts"></div>'+FOOT+'</div>';
+    M.strip=mkCanvas($('.strip canvas',P),360,96); M.spark=mkCanvas($('.spark canvas',P),328,26);
+  } else if(dir==='2'){
+    P.innerHTML='<div class="m2hd">'+markSVG(18)+'<span class="wmk">farside</span><span class="chipst"><i class="ld"></i><span class="hl"></span></span></div>'+
+     '<div class="qrblk"><canvas></canvas><div class="xdots"></div><span class="mcap xt"></span></div>'+
+     '<div class="scard"><i class="edge"></i><div class="who"><span class="tile"></span><span><div class="t"></div><div class="c"></div></span></div>'+
+      '<div class="meters"><div class="meter"><span class="cap">Route</span><b class="word mr">—</b></div><div class="meter"><span class="cap">Latency</span><b class="ml">—</b></div><div class="meter"><span class="cap">Frames</span><b class="mf">—</b></div></div>'+
+      '<div class="pipsrow"><span class="pip" data-k="pointer"><i></i>Pointer</span><span class="pip" data-k="click"><i></i>Click</span><span class="pip" data-k="keys"><i></i>Keys</span><span class="pip" data-k="scroll"><i></i>Scroll</span></div>'+
+      '<p class="approve msg"></p></div>'+
+     '<div class="tiles">'+toggleTile('control','Allow control','Off = view only')+toggleTile('chime','Chime','On connect')+toggleTile('curtain','Hide screen','While connected')+toggleTile('login','Open at login','Always ready')+'</div>'+
+     '<div class="pb" style="padding-top:0"><div class="acts"></div>'+FOOT+'</div>';
+  } else {
+    P.innerHTML='<div class="hdr"><span class="sym"></span><span><div class="ttl t"></div><div class="sub c"></div></span></div>'+
+     '<div class="qrblk"><canvas></canvas><div class="xdots"></div><span class="mcap xt"></span></div>'+
+     '<p class="approve msg" style="margin:0 16px 10px;color:#a9a9ad;font-size:12px"></p>'+
+     '<div class="sec">'+toggleRow('control','Allow control','Off means view only')+toggleRow('chime','Chime when a phone connects','')+toggleRow('curtain','Hide this Mac’s screen','')+'</div>'+
+     '<div class="pb"><div class="acts"></div>'+FOOT+'</div><div class="alert" hidden><div>'+markSVG(34)+'<b>Stop sharing with Roshan’s iPhone?</b><span>It disconnects right away. You can share again from this menu.</span><button class="mbtn ember" type="button">Stop Sharing</button><button class="mbtn plate" type="button">Keep Sharing</button></div></div>';
+  }
+  M.qr=mkCanvas($('.qrblk canvas',P),176,176); M.xd=$('.xdots',P); M.xd.innerHTML='<i></i>'.repeat(12);
+  $$('[data-tg]',P).forEach(b=>b.addEventListener('click',()=>{ const k=b.dataset.tg; LAB.toggles[k]=!LAB.toggles[k]; b.setAttribute('aria-checked',LAB.toggles[k]); cls($('.swi',b),'on',LAB.toggles[k]); cls(b,'on',LAB.toggles[k]);
+    if(b.classList.contains('ttile')&&!LAB.rm){ b.animate([{transform:'scale(.97)'},{transform:'scale(1)'}],{duration:260,easing:'cubic-bezier(.16,1,.3,1)'}); } }));
+  M.acts=$('.acts',P); M._acts=null;
+}
+/* HostStatus for the popover, from the lab states of each Mac scenario */
+function macVM(S){
+  const k=S.latest(['ready','live','allow','pause','attention','code','scanned','expired','confirm','keep']);
+  const vm={status:'ready',liveAt:S.at('live')!=null?S.at('live'):S.at('allow'),measuredAt:S.at('measured'),pressAt:S.at('press'),stopAt:S.at('confirm'),keepAt:S.at('keep'),codeAt:S.at('code'),scanAt:S.at('scanned'),expiredAt:S.at('expired'),pauseAt:S.at('pause'),attnAt:S.at('attention')};
+  vm.status={ready:'ready',live:'live',allow:'live',keep:'live',pause:'paused',attention:'attn',code:'pairing',scanned:'approval',expired:'expired',confirm:'off'}[k]||'ready';
+  vm.confirming=vm.pressAt!=null&&vm.stopAt==null&&vm.keepAt==null;
+  if(vm.status==='live'&&vm.measuredAt==null&&S.at('allow')!=null) vm.measuredAt=S.at('allow')+900;
+  return vm;
+}
+function markState(vm){ return vm.status==='live'?'live':(vm.status==='paused'||vm.status==='off')?'paused':(vm.status==='attn'||vm.status==='approval')?'attention':'idle'; }
+const EVP=[700,1150,1400,2300,2450,2600,3900,4300,4380,5600], EVT=['pointer','click','pointer','keys','keys','keys','scroll','click','click','pointer'];
+function macEvents(S,vm){ if(vm.status!=='live'||vm.liveAt==null||!LAB.toggles.control) return []; const out=[], rel=S.t-vm.liveAt; if(rel<0) return out;
+  const cyc=Math.floor(rel/6000); for(let c=Math.max(0,cyc-1);c<=cyc;c++) EVP.forEach((o,i)=>{ const at=vm.liveAt+c*6000+o; if(at<=S.t&&S.t-at<2400&&(vm.stopAt==null||at<vm.stopAt)) out.push({at,type:EVT[i]}); }); return out; }
+function drawMark(c,S,vm,dir){
+  const st=markState(vm), rm=S.rm, t=S.t, sl=vm.liveAt==null?-1:t-vm.liveAt;
+  const body=st==='paused'?'rgba(255,255,255,.42)':'rgba(255,255,255,.94)';
+  const sc=dir==='3'&&st==='live'&&!rm?1+.2*Math.sin(Math.PI*seg(sl,0,380)):1;
+  c.save(); c.translate(7,10); c.scale(sc,sc); c.translate(-7,-10);
+  const dots=markDots(COMPACT);
+  dots.forEach((d,i)=>{ const x=2+d.x*2, y=2+d.y*2;
+    if(!d.tip){ let r=.84; if(dir==='1'&&st==='live'&&!rm&&sl>=0) r+=.5*bump(sl,60+i*24,50); c.fillStyle=body; c.beginPath(); c.arc(x,y,r,0,TAU); c.fill(); return; }
+    if(st==='live'){ let halo=.35; if(dir==='1'&&!rm) halo=.18+.3*(.5+.5*Math.sin(t/1000*TAU/2.8));
+      const fadeIn=rm?1:seg(sl,0,200);
+      c.fillStyle='rgba(255,91,31,'+(halo*fadeIn)+')'; c.beginPath(); c.arc(x,y,2.1,0,TAU); c.fill();
+      c.fillStyle=fadeIn<1?'rgba(255,'+Math.round(lerp(255,91,fadeIn))+','+Math.round(lerp(255,31,fadeIn))+',1)':C.ember; c.beginPath(); c.arc(x,y,1.2,0,TAU); c.fill();
+      if(dir==='2'){ let last=-1e9; macEvents(S,vm).forEach(e=>{ if(e.at-last<250) return; last=e.at; const p=seg(t-e.at,0,280); if(p>=1) return; c.strokeStyle='rgba(255,91,31,'+(.95*(1-p))+')'; c.lineWidth=.6; c.beginPath(); c.arc(x,y,1.3+(rm?0:2.2*p),0,TAU); c.stroke(); }); }
+    } else if(st==='attention'){ c.strokeStyle=body; c.lineWidth=.8; c.beginPath(); c.arc(x,y,1.3,0,TAU); c.stroke(); }
+    else { const so=vm.stopAt==null?-1:t-vm.stopAt;
+      if(so>=0&&so<320&&!rm){ const p=so/320; c.fillStyle='rgba(255,'+Math.round(lerp(91,255,p))+','+Math.round(lerp(31,255,p))+','+(st==='paused'?lerp(1,.42,p):1)+')'; c.beginPath(); c.arc(x,y,lerp(1.2,1,p),0,TAU); c.fill(); }
+      else { c.fillStyle=body; c.beginPath(); c.arc(x,y,1,0,TAU); c.fill(); } }
+  });
+  c.restore();
+}
+function drawQRMac(c,S,vm,dir){
+  clr(c); const n=QRN, s=176, ms=s/n, rm=S.rm, t=S.t;
+  const shown=vm.codeAt==null?-1:t-vm.codeAt, sc=vm.scanAt==null?-1:t-vm.scanAt, ex=vm.expiredAt==null?-1:t-vm.expiredAt;
+  c.fillStyle='#EDE8DF'; rr(c,0,0,s,s,10); c.fill();
+  const B=[0,8,2,10,12,4,14,6,3,11,1,9,15,7,13,5];
+  QRM.forEach(q=>{ const th=(B[(q.y%4)*4+(q.x%4)]+.5)/16, appear=rm?1:seg(shown,th*380,th*380+90); if(appear<=0) return;
+    let x=(q.x+.5)*ms, y=(q.y+.5)*ms, r=ms/2, col='#0A0A0A', a=appear;
+    if(sc>=0){ const p=rm?seg(sc,0,250):E1(seg(sc,0,520)); x=lerp(x,s/2,p); y=lerp(y,s/2,p); r=lerp(r,1.2,p); a*=1-p*.9; }
+    if(ex>=0){ col=C.ash; if(!rm){ const p=E1(seg(ex,0,500)); x+=(hash2(q.x,q.y)-.5)*10*p; y+=(hash2(q.y,q.x)-.5)*10*p; } }
+    c.globalAlpha=a; c.fillStyle=col; if(r>=ms/2-.01) c.fillRect(x-r,y-r,r*2-.5,r*2-.5); else { c.beginPath(); c.arc(x,y,r,0,TAU); c.fill(); } });
+  c.globalAlpha=1;
+  if(sc>=0){ const p=rm?1:seg(sc,380,620); c.fillStyle='rgba(255,91,31,'+p+')'; c.shadowColor='rgba(255,91,31,.9)'; c.shadowBlur=12*p; c.beginPath(); c.arc(s/2,s/2,6,0,TAU); c.fill(); c.shadowBlur=0; }
+}
+function setActs(M,key,markup){ if(M._acts!==key){ M.acts.outerHTML='<div class="acts">'+markup+'</div>'; M.acts=$('.acts',M.pop); M._acts=key;
+  if(!LAB.rm) M.acts.animate([{opacity:0,transform:'translateY(4px)'},{opacity:1,transform:'none'}],{duration:280,easing:'cubic-bezier(.16,1,.3,1)'});
+  $$('[data-go]',M.acts).forEach(b=>b.addEventListener('click',()=>{ if(LAB.manual) nextState(); })); } }
+function actsFor(M,S,vm){
+  if(vm.confirming&&M.dir!=='3') return setActs(M,'confirm','<div class="confirm" style="flex:1"><b>Stop sharing with Roshan’s iPhone?</b><span>It disconnects right away. You can share again from this menu.</span><div class="acts"><button class="mbtn plate" type="button" data-go>Keep Sharing</button><button class="mbtn ember" type="button" data-go>Stop Sharing</button></div></div>');
+  switch(vm.status){
+    case 'live': return setActs(M,'live','<button class="mbtn plate w146" type="button">Pause 10 min</button><button class="mbtn ember" type="button" data-go>Stop Sharing</button>');
+    case 'ready': return setActs(M,'ready','<button class="mbtn plate w146" type="button">Pause 10 min</button><button class="mbtn plate" type="button">Stop Sharing</button>');
+    case 'paused': return setActs(M,'paused','<button class="mbtn primary" type="button">Resume Now</button>');
+    case 'off': return setActs(M,'off','<button class="mbtn primary" type="button">Resume Sharing</button>');
+    case 'attn': return setActs(M,'attn','<button class="mbtn primary" type="button">Try Again</button>');
+    case 'pairing': return setActs(M,'pairing','<button class="mbtn plate" type="button">Cancel</button><button class="mbtn plate" type="button">Copy Code</button>');
+    case 'approval': return setActs(M,'approval','<button class="mbtn plate w146" type="button">Decline</button><button class="mbtn primary" type="button" data-go>Allow</button>');
+    case 'expired': return setActs(M,'expired','<button class="mbtn primary" type="button">Show New Code</button>');
+  }
+}
+function presentation(vm,S){
+  const cap=vm.measuredAt!=null&&S.t>=vm.measuredAt?'Direct · '+rttAt(S.t)+' ms · '+fpsAt(S.t)+' fps':'Measuring the connection';
+  const ctl=LAB.toggles.control;
+  switch(vm.status){
+    case 'live': return {mood:'live',hl:ctl?'Connected · sharing this Mac':'Connected · view only',title:ctl?'Roshan’s iPhone is steering':'Roshan’s iPhone is watching',cap,icon:ICON.phone};
+    case 'ready': return {mood:'calm',hl:'Ready · waiting for your iPhone',title:'No one is connected',cap:'Open Farside on your iPhone',icon:ICON.phone};
+    case 'paused': return {mood:'paused',hl:'Paused · back at 11:58 PM',title:'Sharing is paused',cap:'Your iPhone can’t connect until then',icon:ICON.pause};
+    case 'off': return {mood:'paused',hl:'Sharing is off',title:'Sharing is off',cap:'Your iPhone can’t connect',icon:ICON.pause};
+    case 'attn': return {mood:'attention',hl:'This Mac went to sleep',title:'This Mac went to sleep',cap:'Sharing resumes when it wakes',icon:ICON.q};
+    case 'pairing': return {mood:'calm',hl:'Pairing · waiting for a scan',title:'Scan with your iPhone',cap:'Farside on iPhone → Scan pairing code',icon:ICON.qr};
+    case 'approval': return {mood:'attention',hl:'A phone wants to connect',title:'Is this your phone?',cap:'It just scanned your code',icon:ICON.q,msg:'Once allowed, it can see this screen and use the mouse and keyboard. Allow it only if it’s the phone in your hand.'};
+    case 'expired': return {mood:'calm',hl:'Code expired',title:'That code expired',cap:'Codes last 2 minutes',icon:ICON.qr};
+  }
+}
+const rttAt=t=>Math.round(13+4*hash2(Math.floor(t/500),7)+(hash2(Math.floor(t/500),3)>.93?18:0));
+const fpsAt=t=>hash2(Math.floor(t/1000),5)>.85?58:60;
+function elapsed(vm,S){ if(vm.liveAt==null) return ''; const s=Math.max(0,Math.floor((S.t-vm.liveAt)/1000)), m=Math.floor(s/60); return m+':'+String(s%60).padStart(2,'0'); }
+function renderMac(S){
+  const M=LAB.M; if(M.dir!==S.mdir) buildPop(M,S.mdir);
+  const vm=macVM(S), pr=presentation(vm,S), rm=S.rm, P=M.pop, dir=S.mdir, t=S.t;
+  clr(M.si); drawMark(M.si,S,vm,dir); clr(M.loupe); M.loupe.save(); M.loupe.scale(6,6); drawMark(M.loupe,S,vm,dir); M.loupe.restore();
+  const pairing=vm.status==='pairing'||vm.status==='approval'&&vm.scanAt!=null&&t-vm.scanAt<700||vm.status==='expired';
+  const qb=$('.qrblk',P); qb.style.display=pairing?'':'none';
+  if(pairing){ drawQRMac(M.qr,S,vm,dir); const left=vm.codeAt==null?0:Math.max(0,120-Math.floor((t-vm.codeAt)/1000)), gone=vm.status==='expired'?12:Math.floor((120-left)/10);
+    $$('i',M.xd).forEach((d,i)=>cls(d,'gone',i<gone)); txt($('.xt',P),vm.status==='expired'?'Code expired':(vm.scanAt!=null?'Scanned':'Expires in '+Math.floor(left/60)+':'+String(left%60).padStart(2,'0'))); }
+  const tEl=$('.t',P), cEl=$('.c',P), msg=$('.msg',P);
+  txt(tEl,pr.title); txt(cEl,pr.cap); txt(msg,pr.msg||''); msg.style.display=pr.msg?'':'none';
+  const liveIn=vm.liveAt==null?1:(rm?1:E1(seg(t-vm.liveAt,0,420)));
+  if(dir==='1'){
+    const strip=$('.strip',P); strip.style.display=pairing?'none':'';
+    txt($('.hl',P),pr.hl); dot($('.plate .ld',P),pr.mood==='live'?'live':pr.mood==='attention'?'att':'idle');
+    html($('.tile',P),pr.icon); txt($('.el',P),vm.status==='live'?elapsed(vm,S):'');
+    if(!pairing){ const c=M.strip; clr(c); c.fillStyle=C.void; c.fillRect(0,0,360,96);
+      const so=vm.stopAt==null?-1:t-vm.stopAt, live=vm.status==='live'||(so>=0&&so<460);
+      const gap=vm.liveAt==null?34:(rm?0:lerp(34,0,E1(seg(t-vm.liveAt,0,700)))), contact=vm.liveAt==null?0:(rm?1:seg(t-vm.liveAt,500,800));
+      const rips=[]; if(!rm&&vm.liveAt!=null){ rips.push(rip(360*.52,96*.42,(vm.liveAt+600)/1000,{s:1.6,v:260,w:24,life:1.2})); macEvents(S,vm).forEach(e=>{ if(e.type==='click') rips.push(rip(360*.52,96*.42,e.at/1000,{s:1,v:220,w:16,life:.9})); }); }
+      let sy=1,sx=1,alpha=1;
+      if(so>=0){ if(rm){ alpha=.35; } else { sy=so<180?lerp(1,.03,EIN(seg(so,0,180))):.03; sx=so<180?1:lerp(1,.02,E1(seg(so,180,320))); alpha=so<460?1:.35; } }
+      const off=(vm.status==='paused'||vm.status==='off')&&(so<0||so>=460);
+      const sc=reachScene({gap:off?34:(live||vm.status==='live'?gap:34),contact:off?0:(live?contact:0),float:off?0:1});
+      if(sy<1||sx<1){ halftone(c,0,0,360,96,{cell:3.2,t:rm?2:t/1000,scene:(cc,w,h,tt)=>{ cc.save(); cc.translate(w/2,h/2); cc.scale(sx,sy); cc.translate(-w/2,-h/2); sc(cc,w,h,tt); cc.restore(); cc.save(); cc.globalCompositeOperation='lighter'; cc.fillStyle=Lc(.9*seg(so,60,180)); cc.fillRect(w/2-w*sx/2,h/2-1.5,w*sx,3); cc.restore(); },dust:0}); }
+      else halftone(c,0,0,360,96,{cell:3.2,t:(rm||off)?2:t/1000,scene:sc,ripples:rips,dust:off?0:.04,alpha:off?.35:alpha});
+    }
+    const sp=$('.spark',P); sp.style.display=vm.status==='live'?'':'none';
+    if(vm.status==='live'){ const c=M.spark; clr(c); const ma=vm.measuredAt;
+      for(let i=0;i<41;i++){ const ts=t-(40-i)*500; if(ma==null||ts<ma||ts<vm.liveAt) continue; const v=rttAt(ts), n=clamp(Math.round(v/8),1,5), x=4+i*8;
+        for(let k=0;k<n;k++){ c.fillStyle=i===40?C.bone:(k===n-1?'#C9C4BB':C.dim); c.beginPath(); c.arc(x,22-k*4.5,1.5,0,TAU); c.fill(); } } }
+  } else if(dir==='2'){
+    txt($('.hl',P),vm.status==='live'?'Live · '+elapsed(vm,S):pr.mood==='paused'?'Off':pr.mood==='attention'?'Needs you':'Ready'); dot($('.chipst .ld',P),pr.mood==='live'?'live':pr.mood==='attention'?'att':'idle');
+    html($('.tile',P),pr.icon);
+    const card=$('.scard',P); card.style.display=pairing?'none':'';
+    const edge=$('.edge',P); op(edge,vm.status==='live'?(rm?.0:1-seg(t-vm.liveAt,700,1300)):0,'scaleX('+(vm.status==='live'?(rm?1:E1(seg(t-vm.liveAt,0,600))):0)+')');
+    const meas=vm.status==='live'&&vm.measuredAt!=null&&t>=vm.measuredAt;
+    txt($('.mr',P),meas?'Direct':'—'); html($('.ml',P),meas?rttAt(t)+'<small>ms</small>':'—'); html($('.mf',P),meas?fpsAt(t)+'':'—');
+    $$('.meter',P).forEach(m=>op(m,vm.status==='live'?1:.45));
+    const evs=macEvents(S,vm);
+    $$('.pip',P).forEach(pp=>{ const k=pp.dataset.k, i=$('i',pp); let a=0; evs.forEach(e=>{ if(e.type===k) a=Math.max(a,1-seg(t-e.at,0,rm?120:420)); });
+      i.style.background=a>0?C.ember:(vm.status==='live'&&LAB.toggles.control?C.ash:C.dim); i.style.transform=rm?'none':'scale('+(1+.6*a)+')'; op(pp,vm.status==='live'?1:.4); });
+    op($('.pipsrow',P),vm.status==='live'||vm.status==='ready'?1:0);
+  } else {
+    const sym=$('.sym',P), key=pr.icon===ICON.phone&&vm.status==='live'?'cursor':pr.icon;
+    if(sym._k!==key){ const old=sym.firstElementChild; sym._k=key; sym.insertAdjacentHTML('beforeend',key==='cursor'?ICON.cursor:pr.icon); const nw=sym.lastElementChild;
+      if(old&&!rm){ old.animate([{transform:'scale(1)',opacity:1},{transform:'scale(.4)',opacity:0}],{duration:180,easing:'ease-in',fill:'forwards'}).onfinish=()=>old.remove(); nw.animate([{transform:'scale(.4)',opacity:0},{transform:'scale(1)',opacity:1}],{duration:260,delay:90,easing:'cubic-bezier(.34,1.56,.64,1)',fill:'backwards'}); }
+      else if(old) old.remove(); }
+    sym.style.background=vm.status==='live'?'rgba(255,91,31,.22)':'rgba(255,255,255,.1)'; sym.style.color=vm.status==='live'?C.ember:'#eee';
+    const al=$('.alert',P); al.hidden=!vm.confirming;
+  }
+  actsFor(M,S,vm);
+  const popIn=rm?1:E1(seg(t,0,220)); op(P,popIn,'translateY('+(1-popIn)*-6+'px) scale('+(.98+.02*popIn)+')');
+}
+const MSTATES={ready:['HostStatus .ready','sharingActive · hostRegistered'],live:['HostStatus .controlling','connected · controlEffective'],measured:['HostSessionReadout.parse(diagnostics)','route · RTT · fps measured'],
+  click:['input events from the phone','RemoteInputDriver'],pause:['HostStatus .paused','pausedUntil = +10 min'],attention:['HostStatus .unavailable','HostAvailabilityNote .asleep'],
+  press:['Stop Sharing pressed','confirmation shown (new)'],confirm:['actions.stopSharing()','HostStatus .paused, wantsSharing false'],keep:['Keep Sharing','confirmation dismissed'],
+  code:['HostPairingState .showingCode(code, expires:)','HostStatus .pairing'],scanned:['HostPairingState .awaitingApproval','HostStatus .approvalRequested'],allow:['actions.approvePhone()','HostStatus .controlling'],expired:['HostPairingState .expired','code timed out']};
+def('macStatus',{group:'Mac',name:'Status item',tag:'1 · 2 · 3',device:'mac',dirs:['1','2','3'],
+  profiles:{day:{label:'A session, then a nap',seq:[['ready',0],['live',1200],['measured',2000],['pause',6400],['attention',8600]]}},states:MSTATES,
+  setup(){}, frame(S){ renderMac(S); }});
+def('macConnect',{group:'Mac',name:'Phone connects',tag:'1 · 2 · 3',device:'mac',dirs:['1','2','3'],
+  profiles:{lan:{label:'Home Wi‑Fi',seq:[['ready',0],['live',1300],['measured',2300]]},slow:{label:'Slow to measure',seq:[['ready',0],['live',1300],['measured',4600]]}},states:MSTATES,
+  setup(){}, frame(S){ renderMac(S); }});
+def('macSession',{group:'Mac',name:'Session in progress',tag:'1 · 2 · 3',device:'mac',dirs:['1','2','3'],
+  profiles:{on:{label:'Controlling',seq:[['live',-724000],['measured',-723000]]}},states:MSTATES,
+  setup(){}, frame(S){ renderMac(S); }});
+def('macStop',{group:'Mac',name:'Stop sharing',tag:'1 · 2 · 3',device:'mac',dirs:['1','2','3'],
+  profiles:{stop:{label:'Confirms Stop',seq:[['live',-300000],['measured',-299000],['press',1400],['confirm',3400]]},keep:{label:'Keeps sharing',seq:[['live',-300000],['measured',-299000],['press',1400],['keep',3400]]}},states:MSTATES,
+  setup(){}, frame(S){ renderMac(S); }});
+def('macPair',{group:'Mac',name:'Pairing code',tag:'1 · 2 · 3',device:'mac',dirs:['1','2','3'],
+  profiles:{ok:{label:'Scanned + allowed',seq:[['code',0],['scanned',3000],['allow',5600],['measured',6600]]},expire:{label:'Code expires',seq:[['code',0],['expired',3600]]}},states:MSTATES,
+  setup(){}, frame(S){ renderMac(S); }});
+
+/* ================= haptic sketches ================= */
+const HAP={
+  connect:{
+    A:{tap:[T(0,.5,.7,'press')],p2:[T(0,.7,.35,'contact'),CN(0,.18,.3,.1,'touch')],p3:[T(0,.4,.8,'click',true)],live:[T(0,1,.55,'meet'),CN(0,.24,.6,.2,'settle')],frame:[N(0,'success')]},
+    B:{tap:[T(0,.5,.7,'press')],p1:[T(0,.45,.9,'tick 1',true)],p2:[T(0,.6,.9,'tick 2',true)],p3:[T(0,.75,.9,'tick 3',true)],live:[T(0,.5,.2,'lift')],frame:[N(0,'success')]},
+    C:{tap:[T(0,.6,.9,'press')],p1:[T(0,.35,.6,'segment',true)],p2:[T(0,.55,.45,'contact')],p3:[T(0,.35,.6,'segment',true)],live:[CN(0,.3,.5,.3,'whoosh'),T(300,1,.6,'open')],frame:[N(0,'success')]}},
+  reconnect:{all:{drop:[T(0,.35,.15,'slack')],back:[T(0,.55,.5,'back')],gaveup:[N(0,'warning')]}},
+  ended:{'@user':{end:[T(0,.5,.3,'soft end')]},'@mac':{end:[N(0,'warning')]}},
+  pairing:{all:{detect:[T(0,.6,.9,'lock on')],accepted:[N(250,'success')],allowed:[T(0,.7,.5,'allowed')],rejected:[N(0,'warning')]}},
+  failure:{all:{tap:[T(0,.5,.7,'press')],fail:[N(0,'warning')]}},
+  anywhere:{all:{verified:[N(0,'success')]}},
+  macConnect:{all:{live:[SND(0,'chime (if on)')]}},
+  macPair:{all:{allow:[SND(0,'chime (if on)')]}},
+  macStatus:{all:{live:[SND(0,'chime (if on)')]}}
+};
+
+/* ================= specs ================= */
+const S_A={title:'A · Reach, <em>restored</em>',rec:true,
+  body:['The Home animation you missed, finished properly. The fingertip closes on the pointer one real stage at a time, and the Doto readout is back, now naming the stage (reaching → found → opening) instead of counting fake centimetres. Three pips under it light per stage; they turn ember at contact.',
+        'While a stage waits, a faint bone ring leaves the fingertip every 1.6 s. It means “still trying”, never “further along”. When the Mac answers, the ember glow and ripple land where finger meets pointer. On connected, the fingertip touches, the dot flashes, and the picture opens as an iris out of that dot. The lock inside the iris goes coarse → fine → crisp on the video track and first frame.'],
+  drives:[['Gap eases 34 → 18','p1 · status "Connecting securely…" (MacStatus.progress 1)'],['Gap 8 · ember glow + ripple · "found"','p2 · "Authenticating your Mac…" (inContact)'],['Glow breathes · "allow"','"Approve this phone on your Mac" (needsApproval)'],['Gap 2 · "opening"','p3 · "Connecting live desktop…" / RTC checking'],['Touch, flash, iris','connection.connected → showsSession'],['Lock coarse → fine','connection.remoteVideo attached'],['Crisp picture','model.fresh → ResolutionLockView pictureReady']],
+  hap:'tap    transient  I .50 S .70   press\np2     transient  I .70 S .35   contact\n       continuous .18 s I .30 S .10 (decay)\np3     transient  I .40 S .80   click   (off with Reduce Motion)\nlive   transient  I 1.0 S .55   meet\n       continuous .24 s, intensity curve .6 → 0\nframe  UINotificationFeedbackGenerator .success',
+  swift:'Keep ReachArt; restore a readout overlay that shows a stage word in Doto with <code>.contentTransition(.numericText())</code> (or a 240 ms scramble in a <code>TimelineView</code>). Gap and contact already animate through <code>animatableData</code>. Iris: a <code>Circle()</code> mask on NativeSessionView scaled from the meeting point with <code>.matchedGeometryEffect</code>-free <code>scaleEffect</code> (transform only), 440 ms, <code>Farside.Motion.easeOut</code>. Haptics in one <code>CHHapticEngine</code>; the success stays <code>.sensoryFeedback(.success)</code>.',
+  rm:'Art is a still frame; the readout word cross-fades; no search rings; the session cross-fades in 250 ms. Contact and success haptics stay; the p3 click is dropped.',
+  budget:'Adds no wait. Gap tweens are 0.9 s but retarget on every state. The 440 ms iris starts at connected and overlaps the wait for the first frame; if the frame lands first, the crisp fade simply starts inside the iris.'};
+const S_B={title:'B · The <em>window</em> opens',
+  body:['The Mac card is the hero. Its halftone thumbnail becomes the progress: noisy with a shimmer while reaching, then snapping to a finer dot grid with a rigid tick at each real stage (the same tick language the resolution lock already uses).',
+        'On connected, the thumbnail zooms out of the card to fill the screen. Its dots grow with the zoom, as if magnified, and hand straight over to the resolution lock, so the picture you get is the same object you tapped. The reach art dims to let the card lead.'],
+  drives:[['Card lifts · thumbnail noise + shimmer','p1 · "Connecting securely…"'],['Snap to coarse dots · tick','p2 · "Authenticating your Mac…"'],['Snap finer · tick','p3 · "Connecting live desktop…"'],['Zoom from card to full screen','connection.connected'],['Dots finer','remoteVideo attached'],['Crisp','model.fresh']],
+  hap:'tap    transient I .50 S .70  press\np1     transient I .45 S .90  tick 1 (off with Reduce Motion)\np2     transient I .60 S .90  tick 2\np3     transient I .75 S .90  tick 3\nlive   transient I .50 S .20  lift\nframe  .success',
+  swift:'Thumbnail: the existing <code>FarsideHalftone</code> with <code>cell</code> stepped by <code>MacStatus.progress</code>, shimmer as a moving <code>layers.glow</code> band. Zoom: iOS 18 <code>.matchedTransitionSource(id: "mac", in: ns)</code> on the thumbnail + <code>.navigationTransition(.zoom(sourceID: "mac", in: ns))</code>, or a manual <code>matchedGeometryEffect</code> into a full-screen cover. Ticks already exist in ResolutionLockView (<code>.impact(flexibility: .rigid, intensity:)</code>).',
+  rm:'Thumbnail cross-fades between steps without shimmer; the zoom becomes a 250 ms cross-fade; ticks off, success stays.',
+  budget:'Zoom is 480 ms from connected, overlapping the first frame. Most “Apple-native”; least brand-specific of the three.'};
+const S_C={title:'C · Button <em>portal</em>',
+  body:['The thing you pressed becomes the progress. The Connect pill folds into a bone ring with the ember arrow at its centre. Eighteen dots around it light in thirds, one third per real stage; they turn ember at contact. An ash glint circling the unlit dots is the “still trying” loop.',
+        'At “Connecting live desktop…” the arrow becomes the ember dot. On connected, the ring opens into a portal that fills the screen. Cancel sits right under the ring the whole time.'],
+  drives:[['Pill folds into the ring (press feedback, not progress)','tap · HomeView.connect()'],['First third lights (bone)','p1 · "Connecting securely…"'],['Second third · ring turns ember','p2 · "Authenticating your Mac…"'],['Last third · arrow → ember dot','p3 · "Connecting live desktop…"'],['Portal opens','connection.connected'],['Lock → crisp','remoteVideo · model.fresh']],
+  hap:'tap    transient  I .60 S .90  press\np1     transient  I .35 S .60  segment (off with Reduce Motion)\np2     transient  I .55 S .45  contact\np3     transient  I .35 S .60  segment (off with Reduce Motion)\nlive   continuous .30 s I .50→.8 S .30 whoosh\n       transient  I 1.0 S .60 at +300 ms  open\nframe  .success',
+  swift:'Pill → ring: one <code>RoundedRectangle</code> whose width animates (transform via <code>scaleEffect(x:)</code> on the background, label fades) — or <code>matchedGeometryEffect</code> between the pill and a <code>Circle</code>. Ring dots: 18 <code>Circle()</code>s in a <code>ZStack</code> with <code>.rotationEffect</code>, lit count bound to <code>MacStatus.progress</code>, <code>.phaseAnimator</code> pop per dot. Portal: circular mask <code>scaleEffect</code> on the session.',
+  rm:'The pill swaps to the ring instantly, dots light without the pop, no glint; the portal becomes a cross-fade.',
+  budget:'Fold is 380 ms, starting on tap before the first state, so it never waits. Portal 460 ms from connected.'};
+Object.assign(SPEC,{'connect:A':S_A,'connect:B':S_B,'connect:C':S_C,
+ arrival:{title:'Connected · <em>arrival</em>',body:['Once the first frame is crisp, the session says hello quietly. The phone-drawn pointer lands where the Mac’s cursor really is, with one ember contact pulse and a halftone settle-halo. A small route toast drops in, says “Measuring…” until the stream stats exist, then shows the measured route and round trip, and folds away after two seconds. The dock handle rises last.','Nothing here buzzes: the success already fired at the first frame.'],
+   drives:[['Toast in · “Measuring…”','model.fresh (first frame)'],['Pointer lands + pulse + halo','PointerLocator follow update (host cursor position)'],['Toast shows route · ms','connection.diagnostics / stream stats measured'],['Toast folds away','2 s after the route appears']],
+   hap:'none. The first-frame .success is the arrival haptic.',swift:'Toast: <code>.transition(.move(edge: .top).combined(with: .opacity))</code>, text with <code>.contentTransition(.numericText())</code>. Halo: 16 dots in a <code>Canvas</code> driven by <code>KeyframeAnimator</code> (scale 6 → 30 pt, opacity 1 → 0, 600 ms). The ember pulse reuses PointerAccents.',rm:'Pointer appears without pulse or halo; toast and dock handle fade.',budget:'Everything plays after the picture is already usable; input is never blocked.'},
+ reconnect:{title:'Reconnecting, <em>in place</em>',body:['The picture freezes where it is and a dot screen washes down over it (the existing FarsideDotScreen), so it is obviously stale but still recognisable. The pointer’s ember tip goes hollow and breathes. The Reconnecting pill drops in with End always available.','When the connection returns, the dim clears as a circle opening from the pointer, the tip refills ember with a small pop, and the pill says “Back · Direct · 16 ms” for a moment. If retries run out, “Could not reconnect” replaces the session.'],
+   drives:[['Dim wipes down · tip hollow · pill in','"Connection interrupted · retrying…" (MacStatus "Reconnecting", sessionHeld)'],['Dim opens from pointer · tip refills','connection.connected = true'],['“Back · route · ms”','model.fresh + measured route'],['Could not reconnect','retry limit (sessionLossRetryLimit 24) → FriendlyError .connectionLost / ResumeState']],
+   hap:'drop    transient I .35 S .15  slack (taps are now being dropped)\nback    transient I .55 S .50  back\ngaveup  .warning',swift:'Dim: FarsideDotScreen masked by a <code>Rectangle</code> scaled on y (wipe) and later by an inverted <code>Circle</code> mask scaled from the pointer (transform only). Pill text <code>.contentTransition(.opacity)</code>; hollow tip <code>.symbolEffect(.pulse)</code>-style opacity loop.',rm:'Dim fades in and out; no wipe or circle; tip stays hollow without breathing.',budget:'Shown the moment the drop is known; nothing delays the retry.'},
+ ended:{title:'Session <em>ended</em>',body:['Ending powers the picture down like an old monitor: it collapses to a bright line, then to a dot. The dot arcs down and lands in the Mac card’s status light as Home fades up behind it, and the hand eases back from the pointer. It is a clear “that’s over” without a dialog.','When the Mac stopped sharing, the dot lands on an ember ring and a notice explains who stopped it. That case gets the warning haptic; ending it yourself gets a soft tap.'],
+   drives:[['Line → dot → flies to card','model.disconnect() · EndReason.user, or EndReason.macStopped'],['Home fades in, gap widens','showsSession = false'],['Notice line','model.macNotice (“stopped sharing”)']],
+   hap:'you end   transient I .50 S .30  soft\nmac stops .warning',swift:'A custom <code>Transition</code> on the session: <code>scaleEffect(x: 1, y: 0.006)</code> then <code>scaleEffect(x: 0.012)</code> via <code>KeyframeAnimator</code> (180 + 140 ms). The flying dot is a <code>matchedGeometryEffect</code> to the MacCard LiveDot.',rm:'Session cross-fades to Home in 250 ms.',budget:'900 ms total, but Home is interactive from 300 ms.'},
+ pairing:{title:'Pairing <em>success</em>',body:['The viewfinder corners snap onto the code the moment the camera finds it. When the invitation is accepted, the code’s modules turn into dots and fly into the Farside mark; the tip lights ember last. This upgrades the current PairingBurstView (which scales the code into the mark).','Then it waits honestly for the Mac: a tiny menu-bar sliver shows the mark with its attention ring pulsing until someone chooses Allow. An expired code makes the corners shake once and says what to do.'],
+   drives:[['Corners snap to the code','AVMetadataObject .qr detected'],['Modules → mark, ember tip','invitation accepted (pairedInSheet · PairingBurstView)'],['Mac sliver · ring pulses','"Approve this phone on your Mac" (awaitingApproval)'],['Ring fills ember','Mac Allow → "Connecting live desktop…"'],['Shake + message','"invalid or expired" → FriendlyError .codeRejected']],
+   hap:'detect    transient I .60 S .90  lock on\naccepted  .success (+250 ms, as the dots land)\nallowed   transient I .70 S .50\nrejected  .warning',swift:'Module-to-mark map precomputed once; one <code>Canvas</code> driven by <code>KeyframeAnimator</code> (don’t build 300 views). Corners: four shapes with <code>.animation(.spring(response: 0.3, dampingFraction: 0.7))</code>. Shake: <code>.phaseAnimator</code> on x offset.',rm:'Corners jump; the code cross-fades into the mark; the ring does not pulse.',budget:'Burst 700 ms, only after acceptance; the approval wait is the Mac’s, not ours.'},
+ failure:{title:'Failure · <em>napping</em>',body:['The same reach, told honestly. While the stage waits, rings leave the fingertip and nothing comes back. When the app learns the Mac is asleep, the pointer tilts and sinks, a few Doto z’s drift up, and the hand eases back. Then the existing friendly error slides up with one fix and Try again.','For “out of reach” (connection timed out), the pointer dissolves into dust instead: we can’t see it at all.'],
+   drives:[['Rings go out, no echo','p1 · "Connecting securely…" (waiting)'],['Pointer sinks + z’s','HostPresence .sleeping → FriendlyError .napping'],['Pointer dissolves','"Connection timed out" → FriendlyError .unreachable'],['Error cover','HomeView.statusChanged → friendlyError']],
+   hap:'tap   transient I .50 S .70  press\nfail  .warning (only when the reason is known, never on a guess)',swift:'Add <code>ptrDy</code>/<code>ptrRot</code>/<code>ptrLum</code> to <code>FarsideArt.reach</code>; z’s are three <code>Text("z")</code> in Doto with <code>.phaseAnimator</code>. The cover stays <code>.fullScreenCover</code>.',rm:'Pointer jumps to its sleeping pose; no rings or z’s; the cover fades.',budget:'Plays only after the real failure; adds 700 ms before the cover so the change is readable.'},
+ anywhere:{title:'Anywhere <em>unlocked</em>',body:['Buying Anywhere should feel like the reach getting longer, not like a slot machine. The paywall art shows the hand inside a dotted home Wi‑Fi edge. Once StoreKit’s purchase is verified and the app has access, the edge scatters, the hand stretches to the far pointer, and “anywhere” resolves in Doto dots. The copy says exactly what changed and when the trial ends.','Ask to Buy (pending) gets no celebration, just a calm “waiting for approval”.'],
+   drives:[['Spinner on the button','purchaseState .purchasing'],['App Store sheet “Done”','purchaseState .purchased'],['Edge scatters, reach, “anywhere”','entitlement.hasAccess (phase .trial/.active) confirmed'],['Calm waiting copy','purchaseState .pending']],
+   hap:'verified  .success (once, only when access is real)\npending   none',swift:'Scene gets a dotted <code>Circle</code> (dash [1, 6]) whose dots scatter via <code>KeyframeAnimator</code>; the word is Doto <code>Text</code> revealed with a <code>.mask</code> of growing halftone dots.',rm:'Still art in the unlocked pose; copy cross-fades.',budget:'Plays after the sheet closes; Done is tappable immediately.'}
+});
+const MAC_COMMON='Native controls stay native: every toggle is a real <code>Toggle</code> (switch role, keyboard and VoiceOver work), buttons keep their titles, sections use <code>HostSettingsSection</code>/<code>HostHairlineList</code>, never <code>GroupBox</code> (AGENTS.md CUA note). Motion layers are <code>accessibilityHidden</code>; state changes post one <code>AccessibilityNotification.Announcement</code> (“Roshan’s iPhone connected”). Stop Sharing while a phone is connected now asks first: Keep Sharing is the default (Return/Esc), Stop Sharing is the destructive button.';
+const MAC_STATUS={'1':'Breathing tip: while live, the ember halo breathes slowly (2.8 s). On connect, a brightness wave runs from the tip down the mark once.','2':'Activity tip: the ember tip is steady, and a tiny ring flashes on each input event from the phone (at most 4 per second). You can see when you are being driven.','3':'One bounce: the mark scales once on connect and then sits still. No ongoing redraw at all.'};
+const M1={title:'1 · Live <em>strip</em>',rec:true,body:['An evolution of today’s popover. The halftone strip stops being wallpaper and becomes the session: the same hand and pointer as the phone, closing and touching when a phone connects, with a small ember ripple for each click the phone sends. The who-row gains an elapsed timer and a dot sparkline of the measured round trip.','Stop Sharing asks inline, then the strip powers down like the phone’s ended screen and the status item’s ember tip fades out. Pairing shows the QR right in the popover: it resolves through an ordered dither, a row of 12 dots drains as the 2-minute code ages, and a scan collapses it into the ember dot.'],
+  hap:'Mac has no haptics. Sound: the existing connect chime (chimeOnConnect). Optional: NSHapticFeedbackManager .levelChange on toggle only while a Force Touch trackpad is being pressed.',swift:'Strip: the existing <code>HostArt(.popoverStrip)</code> Canvas driven by <code>FarsideArt.reach(gap:contact:)</code>; ripples from input events, throttled. Sparkline: <code>Canvas</code> over the last 40 <code>HostSessionReadout.roundTripMs</code> samples. Status item: pre-render 12 NSImage frames (breathing + arrival wave) and swap on a 12 fps timer only while live; a MenuBarExtra label will not run SwiftUI effects.',rm:'Strip is a still frame of the current state; no ripples, no breathing, no power-down (it just dims). Confirmation and QR appear without motion.'};
+const M2={title:'2 · Control <em>room</em>',body:['The popover reorganises around the live session. A status chip in the header says “Live · 12:04”. The session card lists who is connected and three measured meters in Doto (route, latency, frames); meters show “—” until the numbers are real. A row of activity pips lights ember when the phone moves the pointer, clicks, types or scrolls, which doubles as a security feature.','Toggles become four tiles. On connect, an ember line sweeps across the top of the card and fades. The status item flashes a ring per input event.'],
+  hap:'Mac has no haptics. Sound: connect chime. Pips are visual only.',swift:'Meters: Doto <code>Text</code> with <code>.contentTransition(.numericText())</code> and <code>.monospacedDigit()</code>. Pips: events from RemoteInputDriver published at ≤ 10 Hz to a small ring buffer; <code>.phaseAnimator</code> flash. Tiles are <code>Toggle</code> with a custom <code>ToggleStyle</code> (keeps the switch role). Status item: an <code>NSStatusItem</code> with a layer-backed button so the ring is a CALayer animation off the main thread.',rm:'Pips light without scale; meters update without rolling; no edge sweep; no status-item ring (the tip is steady ember).'};
+const M3={title:'3 · Quiet <em>native</em>',body:['The lowest-risk option. It looks like a well-made macOS popover: SF Symbol header that swaps with a bounce (iPhone → cursor rays) when a phone connects, native switches, numbers that tick with numeric transitions. The status item bounces once and then stays still.','Stop Sharing uses the system confirmation alert. Pairing uses the same dither-in QR and drain dots, but keeps the calm popover around it.'],
+  hap:'Mac has no haptics. Sound: connect chime.',swift:'<code>Image(systemName:)</code> with <code>.contentTransition(.symbolEffect(.replace))</code>; captions with <code>.contentTransition(.numericText())</code>; <code>.confirmationDialog</code> for Stop Sharing with <code>Button(role: .destructive)</code> and <code>.keyboardShortcut(.cancelAction)</code> on Keep Sharing. Status item: 5 pre-rendered bounce frames on connect only.',rm:'Symbols swap without bounce; the status item never scales.'};
+function macSpec(id,dir){ const base={'1':M1,'2':M2,'3':M3}[dir];
+  const what={macStatus:'What you see in the menu bar: '+MAC_STATUS[dir],macConnect:'The popover is open when a phone connects: watch the headline, who-row and measurements arrive in order; numbers appear only once measured.',macSession:'Twelve minutes in: live elapsed time, measured round trip, and the phone’s input events.',macStop:'Stop Sharing while a phone is connected. Switch Manual states on to hold the confirmation.',macPair:'Pair a phone… now shows the code in the popover. It drains as it ages; a scan collapses it into the ember dot, then asks “Is this your phone?”.'}[id];
+  const drives={macStatus:[['Tip ember + arrival','HostStatus .controlling → HostMarkState .live'],['Ring per event (2)','phone input events'],['Body dims','HostStatus .paused → .paused'],['Tip ring','HostStatus .unavailable → .attention']],
+    macConnect:[['Headline, who-row, tip','HostStatus .ready → .controlling'],['Caption / meters / sparkline','HostSessionReadout.parse(diagnostics) non-nil']],
+    macSession:[['Elapsed','sessionStartedAt (HostModel)'],['RTT / fps','HostSessionReadout.roundTripMs · framesPerSecond'],['Ripples / pips / rings','RemoteInputDriver events (needs a new throttled publisher)']],
+    macStop:[['Inline confirm','Stop Sharing pressed while HostStatus.isSessionLive'],['Power-down, tip fades','actions.stopSharing() → HostStatus .paused'],['Back to live','Keep Sharing']],
+    macPair:[['QR dithers in, dots drain','HostPairingState .showingCode(code, expires:)'],['Collapse to dot · approval','.awaitingApproval → HostStatus .approvalRequested'],['Live','actions.approvePhone() → .controlling'],['Scatter + dim','HostPairingState .expired']]}[id];
+  return {...base,lead:what,drives,extra:MAC_COMMON}; }
+
+/* ================= UI shell ================= */
+function renderRail(){
+  const groups={}; ORDER.forEach(id=>{ const s=SC[id]; (groups[s.group]=groups[s.group]||[]).push(s); });
+  $('#rail').innerHTML=Object.keys(groups).map(g=>'<div class="grp"><span class="cap">'+(g==='Phone'?'iPhone':'Mac menu bar')+'</span>'+groups[g].map(s=>'<button class="sc" type="button" data-sc="'+s.id+'" aria-current="'+(s.id===LAB.scId)+'">'+s.name+(s.tag?'<small>'+s.tag+'</small>':'')+'</button>').join('')+'</div>').join('');
+  $$('.sc').forEach(b=>b.addEventListener('click',()=>select(b.dataset.sc)));
+}
+const DIRNAMES={A:'Reach, restored',B:'The window opens',C:'Button portal','1':'Live strip','2':'Control room','3':'Quiet native'};
+function renderDirs(){
+  const sc=curSc(), el=$('#dirbar');
+  if(!sc.dirs){ el.innerHTML='<span class="dirnote">Shared across A/B/C: these states reuse the Reach art vocabulary, so they work with any connect direction.</span>'; return; }
+  const cur=sc.device==='mac'?LAB.mdir:LAB.dir;
+  el.innerHTML=sc.dirs.map(d=>'<button class="dir" type="button" aria-pressed="'+(d===cur)+'" data-d="'+d+'"><b>'+d+'</b>'+DIRNAMES[d]+((d==='A'||d==='1')?' · recommended':'')+'</button>').join('');
+  $$('.dir',el).forEach(b=>b.addEventListener('click',()=>{ if(sc.device==='mac') LAB.mdir=b.dataset.d; else LAB.dir=b.dataset.d; renderDirs(); renderSpec(); syncHash(); play(); }));
+}
+function renderProfiles(){
+  const sc=curSc(), cur=curProf().key;
+  $('#profLbl').textContent=sc.device==='mac'?'Sequence':'Case';
+  $('#profiles').innerHTML=Object.keys(sc.profiles).map(k=>'<button class="chip" type="button" aria-pressed="'+(k===cur)+'" data-p="'+k+'">'+sc.profiles[k].label+'</button>').join('');
+  $$('#profiles .chip').forEach(b=>b.addEventListener('click',()=>{ LAB.prof[sc.id]=b.dataset.p; renderProfiles(); if(sc.id==='failure') LAB.P._over=null; play(); }));
+}
+function renderLog(){
+  const sc=curSc(), seq=curProf().seq, lastKey=(()=>{ let k=null,t=-Infinity; for(const key in LAB.entered) if(LAB.entered[key]>=t){ t=LAB.entered[key]; k=key; } return k; })();
+  $('#log').innerHTML=seq.map(([k,at])=>{ const d=k in LAB.entered, s=sc.states[k]||[k,'']; const tt=d?(LAB.entered[k]<-60000?'earlier':'+'+(LAB.entered[k]/1000).toFixed(2)+' s'):(LAB.manual?'waiting':'');
+    return '<li class="'+(k===lastKey?'cur':d?'done':'')+'"><i></i><div><code>'+s[0]+'</code><small>'+s[1]+'</small></div><span>'+tt+'</span></li>'; }).join('');
+  $('#next').disabled=LAB.cursor>=seq.length;
+}
+function renderSpec(){
+  const sc=curSc(); const key=sc.id==='connect'?'connect:'+LAB.dir:sc.id;
+  const s=sc.device==='mac'?macSpec(sc.id,LAB.mdir):SPEC[key];
+  const rows=(s.drives||[]).map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>').join('');
+  $('#spec').innerHTML='<span class="cap">'+(sc.device==='mac'?'Mac menu bar · '+sc.name:'iPhone · '+sc.name)+'</span><h2>'+s.title+(s.rec?' <span class="rec">Recommended</span>':'')+'</h2>'+
+    (s.lead?'<p><b style="color:var(--bone);font-weight:500">'+s.lead+'</b></p>':'')+s.body.map(p=>'<p>'+p+'</p>').join('')+
+    '<h3>Driven by (real states)</h3><table>'+rows+'</table>'+
+    '<h3>Haptics</h3><pre>'+s.hap+'</pre>'+
+    '<h3>SwiftUI</h3><p>'+s.swift+'</p>'+
+    '<h3>Reduce Motion</h3><p>'+s.rm+'</p>'+
+    (s.budget?'<h3>Time budget</h3><p>'+s.budget+'</p>':'')+
+    (s.extra?'<h3>Accessibility</h3><p>'+s.extra+'</p>':'');
+}
+let Z=1;
+function fit(){
+  const D=LAB.dev; if(!D) return; const st=$('#stage'), pad=window.innerWidth<780?28:48;
+  const W=Math.max(200,st.clientWidth-pad), H=Math.max(560,Math.min(window.innerHeight-200,D.h+pad));
+  Z=Math.min(1,W/D.w,H/D.h); if(D.kind==='mac') Z=Math.min(1,W/D.w);
+  $('#fit').style.width=D.w*Z+'px'; $('#fit').style.height=D.h*Z+'px'; $('#device').style.transform='scale('+Z+')';
+}
+function select(id,noPlay){
+  if(!SC[id]) return; LAB.scId=id; const sc=SC[id];
+  if(sc.device==='phone'){ if(!LAB.P||LAB.dev!==LAB.P||!$('#phone')){ LAB.P=buildPhone(); } LAB.dev=LAB.P; LAB.P._over=null; }
+  else { if(!LAB.M||LAB.dev!==LAB.M||!$('#mac')){ LAB.M=buildMac(); } LAB.dev=LAB.M; }
+  $$('.sc').forEach(b=>b.setAttribute('aria-current',b.dataset.sc===id));
+  $('#hapTitle').textContent=sc.device==='mac'?'Sound + haptics':'Haptics · Core Haptics sketch';
+  renderDirs(); renderProfiles(); renderSpec(); fit(); syncHash(); if(!noPlay) play();
+}
+function syncHash(){ const sc=curSc(); const h='#'+sc.id+(sc.dirs?'/'+(sc.device==='mac'?LAB.mdir:LAB.dir):''); if(location.hash!==h) history.replaceState(null,'',h); }
+function applyRM(on){ LAB.rm=on; document.body.classList.toggle('rm',on); const sw=$('#rmSwitch'); sw.setAttribute('aria-checked',on); $('#rmLbl').textContent=LAB.sysRM?'Reduce Motion (system is on)':'Reduce Motion'; play(); }
+
+$('#brandMark').innerHTML=markSVG(26);
+$('#rmSwitch').addEventListener('click',()=>applyRM(!LAB.rm));
+$('#manSwitch').addEventListener('click',()=>{ LAB.manual=!LAB.manual; $('#manSwitch').setAttribute('aria-checked',LAB.manual); play(); });
+$('#replay').addEventListener('click',()=>play());
+$('#next').addEventListener('click',()=>{ if(!LAB.manual){ LAB.manual=true; $('#manSwitch').setAttribute('aria-checked',true); } nextState(); });
+document.addEventListener('keydown',e=>{ if(e.target.closest&&e.target.closest('input,textarea')) return; const k=e.key.toLowerCase();
+  if(k==='r') play(); else if(k==='n') $('#next').click(); else if(k===']'||k==='['){ const i=ORDER.indexOf(LAB.scId), j=(i+(k===']'?1:-1)+ORDER.length)%ORDER.length; select(ORDER[j]); } });
+if(MQ.addEventListener) MQ.addEventListener('change',e=>{ LAB.sysRM=e.matches; applyRM(e.matches); });
+window.addEventListener('resize',fit);
+renderRail();
+(function init(){ const m=/^#(\w+)(?:\/(\w))?/.exec(location.hash||''); let id='connect';
+  if(m&&SC[m[1]]){ id=m[1]; if(m[2]){ if(SC[id].device==='mac') LAB.mdir=m[2]; else LAB.dir=m[2]; } }
+  document.body.classList.toggle('rm',LAB.rm); $('#rmSwitch').setAttribute('aria-checked',LAB.rm); if(LAB.sysRM) $('#rmLbl').textContent='Reduce Motion (system is on)';
+  select(id); if(document.fonts&&document.fonts.ready) document.fonts.ready.then(fit); })();
+window.FLAB=LAB;
+})();
+</script>
+</body>
+</html>
