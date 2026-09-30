@@ -179,7 +179,8 @@ struct HomeView: View {
         }
         .confirmationDialog("Forget this Mac locally?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget Mac", role: .destructive) {
-                connection.revoke()
+                let room = connection.invitation?.room
+                if connection.revoke(), let room { AwayMemory().forget(room: room) }
                 lastReachedAt = 0
                 lastFailure = nil
             }
@@ -235,7 +236,8 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 0) {
             if let macName {
                 MacCard(name: macName, status: status, failure: status.tone == .idle ? lastFailure : nil,
-                        notice: model.macNotice, lastReached: lastReached)
+                        notice: model.macNotice, lastReached: lastReached,
+                        awayWasOn: connection.invitation.map { AwayMemory().wasOn(forRoom: $0.room) } ?? false)
                 connectControl
             } else {
                 emptyState
@@ -538,6 +540,7 @@ struct MacCard: View {
     var failure: FriendlyError?
     var notice: String?
     var lastReached: Date?
+    var awayWasOn = false
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
@@ -579,6 +582,12 @@ struct MacCard: View {
                 if lastReached != nil { Text("We won’t ask why").farsideCaption() }
             }
             .accessibilityElement(children: .combine)
+            if awayWasOn {
+                Text("Away mode was on when you last connected")
+                    .farsideCaption()
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("home.mac.away")
+            }
         }
         .padding(18)
         .farsidePlate()
