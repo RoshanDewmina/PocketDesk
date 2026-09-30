@@ -80,6 +80,7 @@ struct OwnedVTConfiguration: Equatable {
         level = UInt8(packed & 255)
         guard [10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40, 41, 42, 50, 51, 52].contains(level) else { return nil }
         let constraints = UInt8((packed >> 8) & 255)
+        guard level != 11 || constraints & 0x10 == 0 else { return nil } // Level 1b is not Level 1.1.
         switch packed >> 16 {
         case 0x42: profile = constraints & 0x40 != 0 ? .constrainedBaseline : .baseline
         case 0x4d where constraints == 0: profile = .main
@@ -349,6 +350,8 @@ final class VideoEncoderCallbackDelivery: @unchecked Sendable {
     private var closed = true
     private var pending: Output?
     private var scheduled = false
+    private var requiresRecovery = false
+    private var lossGeneration: UInt64 = 0
     private var callback: RTCVideoEncoderCallback?
     private weak var counters: StreamCounters?
     init(counters: StreamCounters? = nil) { self.counters = counters }
@@ -360,24 +363,29 @@ final class VideoEncoderCallbackDelivery: @unchecked Sendable {
     func activate() -> UUID {
         fence.lock(); defer { fence.unlock() }
         mailbox.lock(); defer { mailbox.unlock() }
-        epoch = UUID(); closed = false; pending = nil
+        epoch = UUID(); closed = false; pending = nil; requiresRecovery = false; lossGeneration = 0
         return epoch
     }
     func isCurrent(_ candidate: UUID) -> Bool {
         mailbox.lock(); defer { mailbox.unlock() }
         return !closed && epoch == candidate
     }
+    var needsKeyFrame: Bool { mailbox.lock(); defer { mailbox.unlock() }; return requiresRecovery }
     func enqueue(_ image: RTCEncodedImage, info: any RTCCodecSpecificInfo, epoch candidate: UUID) {
-        // This path may run on the owned encoder queue. It must NEVER wait for
-        // the callback fence, whose caller may synchronously release that encoder.
+        // Never wait on outward callback fence from the encoder ownership queue.
         mailbox.lock()
         guard !closed, epoch == candidate else { mailbox.unlock(); return }
-        let replaced = pending != nil
-        pending = Output(epoch: candidate, image: image, info: info)
-        let shouldSchedule = !scheduled
-        scheduled = true
+        var drops = 0
+        if pending != nil {
+            pending = nil; drops += 1; requiresRecovery = true; lossGeneration &+= 1
+        }
+        if requiresRecovery && image.frameType != .videoFrameKey {
+            drops += 1; lossGeneration &+= 1
+        } else { pending = Output(epoch: candidate, image: image, info: info) }
+        let shouldSchedule = !scheduled && pending != nil
+        if shouldSchedule { scheduled = true }
         mailbox.unlock()
-        if replaced { counters?.encoderDeliveryDropped() }
+        for _ in 0..<drops { counters?.encoderDeliveryDropped() }
         if shouldSchedule { queue.async { [weak self] in self?.deliver() } }
     }
     private func deliver() {
@@ -389,8 +397,20 @@ final class VideoEncoderCallbackDelivery: @unchecked Sendable {
             }
             pending = nil
             let valid = !closed && output.epoch == epoch
+            let losses = lossGeneration
             mailbox.unlock()
-            if valid, callback?(output.image, output.info) == true, isCurrent(output.epoch) { counters?.encodedFrameAccepted() }
+            if valid {
+                let accepted = callback?(output.image, output.info) == true
+                mailbox.lock()
+                let current = !closed && output.epoch == epoch
+                if current && accepted && output.image.frameType == .videoFrameKey && lossGeneration == losses { requiresRecovery = false }
+                if current && !accepted {
+                    requiresRecovery = true; lossGeneration &+= 1
+                    if pending?.image.frameType != .videoFrameKey { pending = nil }
+                }
+                mailbox.unlock()
+                if accepted && current { counters?.encodedFrameAccepted() }
+            }
             fence.unlock()
         }
     }
@@ -440,9 +460,9 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
         // callback can ask for implementationName/release/rate synchronously.
         let epoch = delivery.activate()
         return serialized {
+            guard delivery.isCurrent(epoch) else { return -1 }
             if let active { _ = active.release() }
             active = nil
-            guard delivery.isCurrent(epoch) else { return -1 }
             let saved = RTCVideoEncoderSettings()
             saved.name = settings.name; saved.width = settings.width; saved.height = settings.height
             saved.startBitrate = min(maximumKbps, max(1, settings.startBitrate))
@@ -471,13 +491,14 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
     }
     func encode(_ frame: RTCVideoFrame, codecSpecificInfo info: (any RTCCodecSpecificInfo)?, frameTypes: [NSNumber]) -> Int {
         serialized {
-            let result = active?.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes) ?? -1
+            let requested = delivery.needsKeyFrame ? [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)] : frameTypes
+            let result = active?.encode(frame, codecSpecificInfo: info, frameTypes: requested) ?? -1
             guard result != 0, usingOwned, let settings, let epoch = deliveryEpoch, delivery.isCurrent(epoch) else { return result }
             _ = owned.release()
             fallback.setCallback { [delivery] image, info in delivery.enqueue(image, info: info, epoch: epoch); return false }
             guard fallback.startEncode(with: settings, numberOfCores: cores) == 0 else { active = nil; return -1 }
             active = fallback; usingOwned = false
-            return fallback.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes)
+            return fallback.encode(frame, codecSpecificInfo: info, frameTypes: [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)])
         }
     }
     func setBitrate(_ bitrateKbit: UInt32, framerate: UInt32) -> Int32 {
