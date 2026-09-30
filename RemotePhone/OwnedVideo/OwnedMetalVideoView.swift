@@ -10,6 +10,13 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     var counters: StreamCounters?
     var beforeDraw: ((MTKView) -> Void)?
     var fillsFrame = false
+    /// Only an actual original source drawable presentation may report this receipt.
+    /// Consumers enqueue owner-validated work; they must not synchronously hop to main.
+    private var originalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
+    var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)? {
+        get { fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { originalSourcePresented } ?? nil }
+        set { _ = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { originalSourcePresented = newValue } }
+    }
     private let commandQueue: MTLCommandQueue?
     private var cache: CVMetalTextureCache?
     private var pipelines: [Bool: MTLRenderPipelineState] = [:]
@@ -84,6 +91,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         fence.invalidate(); mailbox.invalidate()
         wakeLock.lock(); closed = true; wakeLock.unlock()
         beforeDraw = nil; timingAvailable = false
+        originalSourcePresented = nil // The terminal fence already drained any earlier callback.
         metal.isPaused = true; metal.isHidden = true
         fallback?.isEnabled = false; fallback?.removeFromSuperview(); fallback = nil
         cache.map { CVMetalTextureCacheFlush($0, 0) }
@@ -156,10 +164,12 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         // Capture this drawable's exact envelope, not whichever frame is newest at callback time.
         #if !targetEnvironment(simulator)
         if submission.isNew {
+            let receiptCallback = originalSourcePresented // Snapshot under this draw's admission fence.
             drawable.addPresentedHandler { [weak self, envelope] shown in
-                guard shown.presentedTime > 0, let self else { return }
+                guard shown.presentedTime.isFinite, shown.presentedTime > 0, let self else { return }
                 _ = self.fence.withAdmission(envelope.identity, at: ProcessInfo.processInfo.systemUptime) {
                     self.counters?.presentedFrame(atMs: shown.presentedTime * 1000, marker: envelope.marker)
+                    if envelope.originalSource { receiptCallback?(envelope.identity, envelope.receiptID) }
                 }
             }
         }
