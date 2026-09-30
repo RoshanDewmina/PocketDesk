@@ -7,6 +7,7 @@ struct MediaCapacityObservation {
     var route: String
     var capacityKbps: Double?
     var videoKbps: Double?
+    var totalTransportKbps: Double? = nil
     var rttMs: Double?
     var pacerDelayMs: Double?
 }
@@ -53,6 +54,7 @@ final class MediaResourceBudget: @unchecked Sendable {
     private var tokens: Double = 0
     private var lastCredit: TimeInterval?
     private var ended = false
+    private var replicatedGuests: (count: Int, at: TimeInterval, kbps: Double?) = (0, 0, 0)
 
     func observe(_ next: MediaCapacityObservation) {
         lock.lock(); defer { lock.unlock() }
@@ -66,6 +68,14 @@ final class MediaResourceBudget: @unchecked Sendable {
         observation = next
     }
 
+    /// Active guest associations share this uplink. Unknown or stale replication pauses bulk files.
+    func observeGuests(count: Int, kbps: Double?, at: TimeInterval) {
+        lock.lock(); defer { lock.unlock() }
+        guard !ended else { return }
+        replicatedGuests = (count, at, kbps)
+        tokens = 0; lastCredit = at
+    }
+
     func end() {
         lock.lock(); defer { lock.unlock() }
         ended = true; observation = nil; tokens = 0; lastCredit = nil
@@ -77,12 +87,22 @@ final class MediaResourceBudget: @unchecked Sendable {
               controlBuffered == 0, let fileBuffered,
               fileBuffered <= BulkAdmissionPolicy.maximumBufferedBytes,
               UInt64(bytes) <= BulkAdmissionPolicy.maximumBufferedBytes - fileBuffered,
-              let observation,
-              let rate = BulkAdmissionPolicy.bytesPerSecond(observation, at: now, baselineRTT: baselineRTT)
+              var observation,
+              replicatedGuests.count == 0 || (replicatedGuests.count > 0 && replicatedGuests.count <= 2 &&
+                replicatedGuests.at.isFinite && now >= replicatedGuests.at && now - replicatedGuests.at < 2 &&
+                replicatedGuests.kbps.map { $0.isFinite && $0 >= 0 } == true)
         else {
             // Congestion/staleness never accumulates a burst that fires when input resumes.
             tokens = 0; lastCredit = now
             return false
+        }
+        if replicatedGuests.count > 0 {
+            // A host guest lane never inherits the receive-only bulk fallback.
+            guard observation.capacityKbps != nil, let total = observation.totalTransportKbps, total.isFinite, total >= 0, let kbps = replicatedGuests.kbps else { tokens = 0; lastCredit = now; return false }
+            observation.videoKbps = total + kbps
+        }
+        guard let rate = BulkAdmissionPolicy.bytesPerSecond(observation, at: now, baselineRTT: baselineRTT) else {
+            tokens = 0; lastCredit = now; return false
         }
         guard let previous = lastCredit, now >= previous else {
             tokens = 0; lastCredit = now

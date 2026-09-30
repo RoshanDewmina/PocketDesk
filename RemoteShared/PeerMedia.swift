@@ -164,6 +164,12 @@ final class PeerMedia: NSObject {
     var onDiagnostics: ((String) -> Void)?
     var onStreamStatistics: ((StreamStatsReport) -> Void)?
     var onSenderStatistics: ((StreamStatsReport) -> Void)?
+    var onGuestTransportStatistics: ((GuestTransportObservation) -> Void)? // main, exact peer instance
+    private var guestTransportSampler = GuestTransportSampler()
+    private var transportUsageSampler = TransportUsageSampler()
+    func observeReplicatedGuestLoad(count: Int, kbps: Double?, at: TimeInterval) {
+        resourceBudget.observeGuests(count: count, kbps: kbps, at: at)
+    }
     /// `file` channel messages, delivered on WebRTC's thread; the receiver hops to its own queue.
     var onFileMessage: ((Data) -> Void)?
     var onFileBufferedAmountChange: (() -> Void)?
@@ -984,11 +990,22 @@ final class PeerMedia: NSObject {
         stats.tuning = tuning.liveSummary
         stats.thermalState = ProcessInfo.processInfo.thermalState.rawValue
         stats.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
-        resourceBudget.observe(MediaCapacityObservation(at: ProcessInfo.processInfo.systemUptime,
+        let transport = entries.first { $0.type == "transport" && $0.string("selectedCandidatePairId") == sample.pair?.id }
+        let transportRate = guestTransportSampler.sample(identity: transport.flatMap { item in sample.pair.map { item.id + "/" + $0.id } },
+            timestamp: transport?.timestamp, bytesSent: transport?.number("bytesSent"), rttMs: stats.rttMs)
+        let observedAt = ProcessInfo.processInfo.systemUptime
+        stats.transportUsage = transportUsageSampler.sample(identity: transport.flatMap { item in sample.pair.map { item.id + "/" + $0.id } },
+            timestamp: transport?.timestamp, bytesSent: transport?.number("bytesSent"), bytesReceived: transport?.number("bytesReceived"), at: observedAt)
+        if isHost {
+            onGuestTransportStatistics?(GuestTransportObservation(at: observedAt, totalKbps: transportRate.kbps,
+                capacityKbps: stats.availableOutgoingKbps, rttMs: stats.rttMs, baselineRTTMs: transportRate.baselineRTT,
+                pacerDelayMs: stats.pacerDelayMs, controlBufferedBytes: controlBufferedAmount))
+        }
+        resourceBudget.observe(MediaCapacityObservation(at: observedAt,
             // A receive-only phone has no outbound-video GCC estimate for its file uploads.
             // The transport's camera bootstrap estimate is not observed upload capacity.
             route: sample.route, capacityKbps: isHost ? stats.availableOutgoingKbps : nil,
-            videoKbps: stats.sentKbps, rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs))
+            videoKbps: transportRate.kbps ?? stats.sentKbps, totalTransportKbps: transportRate.kbps, rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs))
         if isHost {
             if nativeDesktopCodecs {
                 stats.targetFPS = targetFPS
