@@ -228,6 +228,12 @@ final class PeerMedia: NSObject {
         #endif
         return factory
     }()
+    // Cross-thread order: localRouteLock → audioLifetimeLock → device's PCM/consent lock.
+    // Device dispatch is asynchronous and never reenters PeerMedia while these locks are held.
+    // Every audio reference access and terminal fence uses this lock; video `closed` belongs
+    // to captureLock and must not be read by the audio capture or ICE callback threads.
+    private let audioLifetimeLock = NSLock()
+    private var audioClosed = false
     #if os(macOS)
     private var systemAudioDevice: FPSystemAudioDevice?
     private var sessionAudioFactory: RTCPeerConnectionFactory?
@@ -240,33 +246,78 @@ final class PeerMedia: NSObject {
     private var remoteAudioTrack: RTCAudioTrack?
     private var remoteAudioMuted = true
 
+    private func withAudioLifetime<T>(_ body: (Bool) -> T) -> T {
+        localRouteLock.lock(); defer { localRouteLock.unlock() }
+        audioLifetimeLock.lock(); defer { audioLifetimeLock.unlock() }
+        return body(!audioClosed && (localLink == nil || localPathAuthorized))
+    }
+
     /// Explicit local playback choice; the phone never creates a sending microphone track.
     func setRemoteAudioMuted(_ muted: Bool) {
-        remoteAudioMuted = muted
-        #if os(iOS)
-        phoneAudioDevice?.setConsent(!muted && localGateOpen() && !closed)
+        withAudioLifetime { permitted in
+            remoteAudioMuted = muted
+            #if os(iOS)
+            phoneAudioDevice?.setConsent(!muted && permitted)
+            #endif
+        }
+        refreshAudioTracks()
+    }
+
+    // Track setters may synchronously proxy to WebRTC's signaling thread. Run them on
+    // main, outside both locks, so an ICE callback waiting for the lifetime fence cannot
+    // deadlock a setter waiting for that callback thread. Every queued refresh reads current state.
+    private func refreshAudioTracks() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.refreshAudioTracks() }
+            return
+        }
+        let remote = withAudioLifetime { permitted in (remoteAudioTrack, !remoteAudioMuted && permitted) }
+        remote.0?.isEnabled = remote.1
+        #if os(macOS)
+        let system = withAudioLifetime { permitted in (systemAudioTrack, permitted && systemAudioDevice?.consentEnabled == true) }
+        system.0?.isEnabled = system.1
         #endif
-        remoteAudioTrack?.isEnabled = !muted && localGateOpen() && !closed
     }
 
     private func observeRemoteAudio() {
         guard !isHost else { return }
-        remoteAudioTrack = connection?.receivers.compactMap { $0.track as? RTCAudioTrack }.first
-        remoteAudioTrack?.isEnabled = !remoteAudioMuted && localGateOpen() && !closed
+        let track = connection?.receivers.compactMap { $0.track as? RTCAudioTrack }.first
+        withAudioLifetime { _ in
+            guard !audioClosed else { return }
+            remoteAudioTrack = track
+        }
+        refreshAudioTracks()
     }
 
     #if os(macOS)
-    var systemAudioEnabled: Bool { systemAudioDevice?.consentEnabled == true }
+    var systemAudioEnabled: Bool { withAudioLifetime { _ in systemAudioDevice?.consentEnabled == true } }
     func setSystemAudioEnabled(_ enabled: Bool) {
-        systemAudioDevice?.setConsent(enabled && !closed)
-        systemAudioTrack?.isEnabled = enabled && !closed
+        withAudioLifetime { permitted in
+            systemAudioDevice?.setConsent(enabled && permitted)
+        }
+        refreshAudioTracks()
     }
-    func beginSystemAudioCapture() -> UInt64 { systemAudioDevice?.beginCapture() ?? 0 }
-    func endSystemAudioCapture(_ epoch: UInt64) { systemAudioDevice?.endCapture(epoch) }
-    func submitSystemAudio(_ pcm: Data, epoch: UInt64, hostTime: UInt64) {
-        guard localGateOpen(), !closed else { return }
-        _ = systemAudioDevice?.submitPCM(pcm, captureEpoch: epoch, hostTime: hostTime)
+    func beginSystemAudioCapture() -> UInt64 {
+        withAudioLifetime { permitted in permitted ? (systemAudioDevice?.beginCapture() ?? 0) : 0 }
     }
+    func endSystemAudioCapture(_ epoch: UInt64) {
+        withAudioLifetime { _ in systemAudioDevice?.endCapture(epoch) }
+    }
+    @discardableResult
+    func submitSystemAudio(_ pcm: Data, epoch: UInt64, hostTime: UInt64) -> Bool {
+        withAudioLifetime { permitted in
+            guard permitted else { return false }
+            return systemAudioDevice?.submitPCM(pcm, captureEpoch: epoch, hostTime: hostTime) ?? false
+        }
+    }
+    #if DEBUG && AUDIO_LIFETIME_TESTS
+    /// Test retained native-device state after actual PeerMedia teardown. No route authorization.
+    var audioDeviceForLifetimeTesting: FPSystemAudioDevice? {
+        withAudioLifetime { _ in systemAudioDevice }
+    }
+    func authorizeAudioPathForLifetimeTesting() { _ = authorizeLocalPath() }
+    func cutAudioPathForLifetimeTesting() { _ = cutLocalPath() }
+    #endif
     #endif
     private var connection: RTCPeerConnection?
     private var channel: RTCDataChannel?
@@ -307,16 +358,19 @@ final class PeerMedia: NSObject {
 
     /// Runs on the WebRTC callback thread before any main-actor status notification.
     private func cutLocalPath() -> Bool {
-        localRouteLock.lock(); defer { localRouteLock.unlock() }
+        localRouteLock.lock()
         let hadAuthorized = localPathEverAuthorized
         localPathAuthorized = false
-        remoteAudioTrack?.isEnabled = false
+        audioLifetimeLock.lock()
         #if os(iOS)
         phoneAudioDevice?.setConsent(false)
         #endif
         #if os(macOS)
         systemAudioDevice?.setConsent(false)
         #endif
+        audioLifetimeLock.unlock()
+        localRouteLock.unlock()
+        refreshAudioTracks()
         return hadAuthorized
     }
     private var connectedPublished = false
@@ -405,7 +459,7 @@ final class PeerMedia: NSObject {
                                                decoderFactory: nativeDesktopCodecs ? PocketDeskVideoDecoderFactory() : RTCDefaultVideoDecoderFactory(),
                                                audioDevice: device)
             sessionAudioFactory = factory
-            systemAudioDevice = device
+            withAudioLifetime { _ in systemAudioDevice = device }
             #if DEBUG
             E2EMedia.restrictToLoopbackIfNeeded(factory)
             #endif
@@ -417,7 +471,7 @@ final class PeerMedia: NSObject {
             device.onFailure = { [weak self] in self?.onAudioPlaybackFailure?() }
             factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? PocketDeskVideoEncoderFactory() : RTCDefaultVideoEncoderFactory(),
                                                decoderFactory: nativeDesktopCodecs ? PocketDeskVideoDecoderFactory() : RTCDefaultVideoDecoderFactory(), audioDevice: device)
-            phoneAudioDevice = device; phoneAudioFactory = factory
+            withAudioLifetime { _ in phoneAudioDevice = device }; phoneAudioFactory = factory
             #if DEBUG
             E2EMedia.restrictToLoopbackIfNeeded(factory)
             #endif
@@ -433,7 +487,7 @@ final class PeerMedia: NSObject {
             let audioSource = factory.audioSource(with: audioConstraints)
             let audio = factory.audioTrack(with: audioSource, trackId: "mac-system-output")
             audio.isEnabled = false
-            systemAudioTrack = audio
+            withAudioLifetime { _ in systemAudioTrack = audio }
             let audioInit = RTCRtpTransceiverInit()
             audioInit.direction = .sendOnly
             _ = connection?.addTransceiver(with: audio, init: audioInit)
@@ -940,14 +994,24 @@ final class PeerMedia: NSObject {
     func close() {
         resourceBudget.end()
         linkMonitor?.cancel(); linkMonitor = nil
-        #if os(iOS)
-        phoneAudioDevice?.setConsent(false)
-        #endif
-        remoteAudioTrack?.isEnabled = false; remoteAudioTrack = nil
-        #if os(macOS)
-        systemAudioDevice?.setConsent(false)
-        systemAudioTrack?.isEnabled = false
-        #endif
+        let retiredAudioTracks: [RTCAudioTrack] = withAudioLifetime { _ in
+            // Fence queued native PCM/render blocks before detaching stored references.
+            var retired = remoteAudioTrack.map { [$0] } ?? []
+            audioClosed = true
+            #if os(iOS)
+            phoneAudioDevice?.setConsent(false); phoneAudioDevice = nil
+            #endif
+            remoteAudioTrack = nil
+            #if os(macOS)
+            systemAudioDevice?.setConsent(false); systemAudioDevice = nil
+            if let systemAudioTrack { retired.append(systemAudioTrack) }
+            systemAudioTrack = nil
+            #endif
+            return retired
+        }
+        // Production teardown is main-thread owned; device consent above fences PCM immediately.
+        if Thread.isMainThread { retiredAudioTracks.forEach { $0.isEnabled = false } }
+        else { DispatchQueue.main.async { retiredAudioTracks.forEach { $0.isEnabled = false } } }
         preGateControl.removeAll(); preGateBytes = 0
         statisticsTimer?.invalidate(); statisticsTimer = nil
         if let cadenceRenderer { observedTrack?.remove(cadenceRenderer) }
@@ -960,10 +1024,10 @@ final class PeerMedia: NSObject {
         connection?.delegate = nil; connection?.close(); connection = nil
         candidates.removeAll(); video = nil
         #if os(iOS)
-        phoneAudioDevice = nil; phoneAudioFactory = nil
+        phoneAudioFactory = nil
         #endif
         #if os(macOS)
-        systemAudioTrack = nil; systemAudioDevice = nil; sessionAudioFactory = nil
+        sessionAudioFactory = nil
         #endif
     }
 }
