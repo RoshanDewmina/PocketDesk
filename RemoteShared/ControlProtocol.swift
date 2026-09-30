@@ -46,6 +46,8 @@ struct RemoteAction: Codable {
     var busy: BusyState? = nil
     var looksLikeWidth: Double? = nil
     var scaleError: String? = nil
+    /// Correlates Big Text requests and replies; absent for older peers.
+    var scaleRequestID: String? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
@@ -67,6 +69,12 @@ struct RemoteAction: Codable {
         }
         if looksLikeWidth != nil, action != "displayScale" { throw RemoteError.invalidMessage }
         if let scaleError, action != "displays" || scaleError.isEmpty || scaleError.utf8.count > 64 { throw RemoteError.invalidMessage }
+        if let scaleRequestID {
+            guard ["displayScale", "displays"].contains(action),
+                  scaleRequestID.utf8.count == 32,
+                  scaleRequestID.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) })
+            else { throw RemoteError.invalidMessage }
+        }
         // Also before the early returns, so no other action can carry a display list.
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }
