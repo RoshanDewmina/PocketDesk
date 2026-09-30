@@ -306,6 +306,10 @@ targets:
       - RemoteShared/ConnectMotionModel.swift
       - RemoteHost/HostSetupView.swift
       - RemoteHost/HostSettingsView.swift
+      - RemoteShared/WakeRequest.swift
+      - RemoteHost/Availability/HostLANWake.swift
+      - RemoteHost/Availability/LANMagicPacketSender.swift
+      - RemoteHost/Availability/WakeTargetRegistrationView.swift
       - RemoteShared/LegalNoticesView.swift
       - RemoteShared/ThirdPartyNotices.txt
     settings:
