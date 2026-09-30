@@ -58,6 +58,58 @@ final class NativeGestureEngineTests: XCTestCase {
         XCTAssertTrue(log.clicks.isEmpty)
     }
 
+    func testAsymmetricPinchKeepsOriginalSourceUnderMovingMidpointInControlAndView() {
+        for panMode in [false, true] {
+            for reversed in [false, true] {
+                let log = CommandLog()
+                let input = engine(log, enabled: !panMode, panMode: panMode)
+                var viewport = ViewportTransform(sourceSize: CGSize(width: 1920, height: 1080),
+                                                 canvasSize: CGSize(width: 844, height: 390), mode: .fill, zoom: 1.5)
+                let source = viewport.sourcePoint(fromView: CGPoint(x: 400, y: 180))!
+                let leftSource = viewport.sourcePoint(fromView: CGPoint(x: 300, y: 180))!
+                let rightSource = viewport.sourcePoint(fromView: CGPoint(x: 500, y: 180))!
+                input.onCommand = { command in
+                    let accepted = log.record(command)
+                    if case .navigate(let factor, let anchor, let translation) = command {
+                        // Apply the actual NativeSessionView navigation mapping, away from edge clamps.
+                        viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
+                        viewport.pan(by: translation)
+                    }
+                    return accepted
+                }
+                func pair(_ left: CGFloat, _ right: CGFloat) -> [NativeGestureEngine.Touch] {
+                    let contacts = [touch(1, left, 180), touch(2, right, 180)]
+                    return reversed ? Array(contacts.reversed()) : contacts
+                }
+                input.update(pair(300, 500), at: 1)
+                input.update(pair(300, 508), at: 1.03)
+                XCTAssertTrue(log.navigation.isEmpty, "Ambiguous pre-recognition motion stays buffered")
+                input.update(pair(300, 530), at: 1.15)
+                XCTAssertEqual(log.navigation.count, 1)
+                XCTAssertEqual(log.navigation.first?.anchor, CGPoint(x: 400, y: 180))
+                XCTAssertEqual(log.navigation.first?.translation, CGSize(width: 15, height: 0))
+                XCTAssertEqual(log.navigation.first?.factor ?? 0, 1.15, accuracy: 0.000_001)
+                XCTAssertEqual(viewport.viewPoint(fromSource: source).x, 415, accuracy: 0.000_001)
+                XCTAssertEqual(viewport.viewPoint(fromSource: leftSource).x, 300, accuracy: 0.000_001,
+                               "The stationary finger must retain its original content")
+                input.update(pair(290, 560), at: 1.18)
+                XCTAssertEqual(log.navigation.count, 2)
+                XCTAssertEqual(log.navigation.last?.anchor, CGPoint(x: 415, y: 180))
+                XCTAssertEqual(log.navigation.last?.translation, CGSize(width: 10, height: 0))
+                XCTAssertEqual(viewport.viewPoint(fromSource: source).x, 425, accuracy: 0.000_001)
+                XCTAssertEqual(viewport.viewPoint(fromSource: source).y, 180, accuracy: 0.000_001)
+                XCTAssertEqual(viewport.viewPoint(fromSource: leftSource).x, 290, accuracy: 0.000_001)
+                XCTAssertEqual(viewport.viewPoint(fromSource: rightSource).x, 560, accuracy: 0.000_001)
+                XCTAssertEqual(log.navigation.map(\.factor).reduce(1, *), 1.35, accuracy: 0.000_001)
+                input.update([], at: 1.2)
+                input.cancel()
+                XCTAssertEqual(log.zoomEnds, 1)
+                XCTAssertEqual(log.zooms, 0, "Finger pinches use midpoint navigation; hardware zoom commands stay separate")
+                XCTAssertEqual(log.trace, ["navigate", "navigate", "zoomEnded"], "Pinch cannot send any remote input")
+            }
+        }
+    }
+
     func testThreeFingerDirectionsFireOnceAndDoNotLeakAfterUnevenLift() {
         let paths: [(CGFloat, CGFloat, NativeSwipeDirection)] = [(-80,0,.left),(80,0,.right),(0,-80,.up),(0,80,.down)]
         for (dx,dy,direction) in paths {
@@ -156,7 +208,7 @@ final class NativeGestureEngineTests: XCTestCase {
         input.update([touch(1, 0, 84), touch(2, 66, 84)], at: 1.04)
         input.update([touch(1, 0, 70), touch(2, 66, 70)], at: 1.06)
         input.update([], at: 1.1)
-        XCTAssertEqual(log.zooms, 0)
+        XCTAssertEqual(log.navigation.count, 0)
         XCTAssertEqual(log.scrollPhases.first, "began")
         XCTAssertEqual(log.scrollPhases.last, "ended")
 
@@ -164,7 +216,7 @@ final class NativeGestureEngineTests: XCTestCase {
         pinch.update([touch(1, 0, 100), touch(2, 60, 100)], at: 2)
         pinch.update([touch(1, -6, 101), touch(2, 67, 99)], at: 2.02)
         pinch.update([], at: 2.1)
-        XCTAssertEqual(pinchLog.zooms, 1, "Fingers moving apart still pinch")
+        XCTAssertEqual(pinchLog.navigation.count, 1, "Fingers moving apart still pinch")
         XCTAssertTrue(pinchLog.scrollPhases.isEmpty)
     }
 
@@ -174,7 +226,7 @@ final class NativeGestureEngineTests: XCTestCase {
         input.update([touch(1, 0, 94), touch(2, 33, 94)], at: 1.02)
         input.update([touch(1, 0, 80), touch(2, 33, 80)], at: 1.04)
         input.update([], at: 1.1)
-        XCTAssertEqual(log.zooms, 0, "A 3 pt splay on a 30 pt span is 10% but not a pinch")
+        XCTAssertEqual(log.navigation.count, 0, "A 3 pt splay on a 30 pt span is 10% but not a pinch")
         XCTAssertEqual(log.scrollPhases, ["began", "changed", "ended"])
     }
 
@@ -193,13 +245,13 @@ final class NativeGestureEngineTests: XCTestCase {
                 // The physical one-hand regression: both fingers move down, one leads by 11pt.
                 // On the 30pt vertical span the old span/centroid test immediately chose pinch.
                 input.update(pair(12, 1), at: 1.02)
-                XCTAssertEqual(log.zooms, 0, "Parallel lead must not zoom: \(offset), reversed \(reversed)")
+                XCTAssertEqual(log.navigation.count, 0, "Parallel lead must not zoom: \(offset), reversed \(reversed)")
                 input.tick(at: 1.17)
-                XCTAssertEqual(log.zooms, 0, "A pause with aligned finger motion must retain scroll intent")
+                XCTAssertEqual(log.navigation.count, 0, "A pause with aligned finger motion must retain scroll intent")
                 input.update(pair(24, 9, jitter: 2), at: 1.2)
                 input.update(pair(36, 24, jitter: -2), at: 1.22)
                 input.update([], at: 1.25)
-                XCTAssertEqual(log.zooms, 0)
+                XCTAssertEqual(log.navigation.count, 0)
                 XCTAssertEqual(log.scrollPhases.first, "began")
                 XCTAssertEqual(log.scrollPhases.last, "ended")
                 XCTAssertEqual(log.scrollPhases.filter { $0 == "began" }.count, 1)
@@ -220,11 +272,11 @@ final class NativeGestureEngineTests: XCTestCase {
             input.update([touch(firstID, 100, 101), touch(secondID, 100, 130)], at: 1.01)
             // Separate contact updates, as when one finger moves before its partner.
             input.update([touch(firstID, 100, 113), touch(secondID, 100, 130)], at: 1.03)
-            XCTAssertEqual(log.zooms, 0)
+            XCTAssertEqual(log.navigation.count, 0)
             input.update([touch(firstID, 100, 113), touch(secondID, 100, 134)], at: 1.04)
             input.update([touch(firstID, 100, 125), touch(secondID, 100, 145)], at: 1.06)
             input.update([], at: 1.1)
-            XCTAssertEqual(log.zooms, 0)
+            XCTAssertEqual(log.navigation.count, 0)
             XCTAssertEqual(log.scrollPhases, ["began", "changed", "ended"])
             XCTAssertTrue(log.clicks.isEmpty)
         }
@@ -244,13 +296,13 @@ final class NativeGestureEngineTests: XCTestCase {
                 input.update([first], at: 1)
                 input.update(pair(0), at: 1.01)
                 input.update(pair(8), at: 1.03)
-                XCTAssertEqual(log.zooms, 0, "A first-finger lead is ambiguous until anchored intent settles")
+                XCTAssertEqual(log.navigation.count, 0, "A first-finger lead is ambiguous until anchored intent settles")
                 input.update(pair(18), at: 1.15)
                 input.update(pair(24), at: 1.18)
                 input.update([touch(anchorID, 100, 100)], at: 1.19)
                 input.update([], at: 1.2)
-                XCTAssertEqual(log.zooms, 2, "An intentional stationary-finger pinch remains available")
-                XCTAssertEqual(log.zoomFactors.reduce(1, *), 1.4, accuracy: 0.001)
+                XCTAssertEqual(log.navigation.count, 2, "An intentional stationary-finger pinch remains available")
+                XCTAssertEqual(log.navigation.map(\.factor).reduce(1, *), 1.4, accuracy: 0.001)
                 XCTAssertEqual(log.zoomEnds, 1)
                 XCTAssertTrue(log.scrollPhases.isEmpty)
                 XCTAssertTrue(log.clicks.isEmpty)
@@ -267,7 +319,7 @@ final class NativeGestureEngineTests: XCTestCase {
             input.update(reversed ? Array(start.reversed()) : start, at: 1)
             input.update(reversed ? Array(spread.reversed()) : spread, at: 1.02)
             input.update([], at: 1.1)
-            XCTAssertEqual(log.zooms, 1)
+            XCTAssertEqual(log.navigation.count, 1)
             XCTAssertEqual(log.zoomEnds, 1)
             XCTAssertTrue(log.scrollPhases.isEmpty)
             XCTAssertTrue(log.clicks.isEmpty)
@@ -281,16 +333,16 @@ final class NativeGestureEngineTests: XCTestCase {
             input.update([touch(1, 100, 100), touch(2, 160, 100)], at: 1)
             input.update([touch(1, 100, 100), touch(2, 160 + direction * 18, 100)], at: 1.02)
             input.tick(at: 1.08)
-            XCTAssertEqual(log.zooms, 0)
+            XCTAssertEqual(log.navigation.count, 0)
             input.tick(at: 1.15)
-            XCTAssertEqual(log.zooms, 1, "An anchored pinch settles without needing another motion event")
-            XCTAssertEqual(log.zoomFactors.first ?? 0, (60 + direction * 18) / 60, accuracy: 0.001)
+            XCTAssertEqual(log.navigation.count, 1, "An anchored pinch settles without needing another motion event")
+            XCTAssertEqual(log.navigation.map(\.factor).first ?? 0, (60 + direction * 18) / 60, accuracy: 0.001)
             input.cancel()
             input.tick(at: 1.2)
             input.update([touch(1, 100, 100), touch(2, 200, 100)], at: 1.3)
             input.update([], at: 1.4)
             input.cancel()
-            XCTAssertEqual(log.zooms, 1)
+            XCTAssertEqual(log.navigation.count, 1)
             XCTAssertEqual(log.zoomEnds, 1)
             XCTAssertTrue(log.scrollPhases.isEmpty)
             XCTAssertTrue(log.clicks.isEmpty)
@@ -315,7 +367,7 @@ final class NativeGestureEngineTests: XCTestCase {
             input.update([touch(2, 150, 145)], at: 1.08)
             input.update([], at: 1.1)
             input.cancel()
-            XCTAssertEqual(log.zooms, 0)
+            XCTAssertEqual(log.navigation.count, 0)
             XCTAssertEqual(log.scrollPhases, ["began", "changed", ending == 0 ? "ended" : "cancelled"])
             XCTAssertTrue(log.clicks.isEmpty)
             XCTAssertEqual(log.secondary, 0)
@@ -476,7 +528,7 @@ final class NativeGestureEngineTests: XCTestCase {
         input.update([touch(3, -8), touch(4, 28)], at: 2.02)
         input.update([touch(4, 28)], at: 2.04)
         input.update([], at: 2.06)
-        XCTAssertEqual(log.zooms, 1)
+        XCTAssertEqual(log.navigation.count, 1)
         XCTAssertEqual(log.secondary, 1)
         XCTAssertEqual(log.clicks, [])
 
@@ -507,7 +559,7 @@ final class NativeGestureEngineTests: XCTestCase {
         input.update([touch(2, 28), touch(3, 40)], at: 1.06)
         input.update([touch(3, 40)], at: 1.08)
         input.update([], at: 1.1)
-        XCTAssertEqual(log.zooms, 1)
+        XCTAssertEqual(log.navigation.count, 1)
         XCTAssertEqual(log.zoomEnds, 1, "A pinch settles exactly once, however its fingers lift")
         XCTAssertEqual(log.secondary, 0)
         XCTAssertEqual(log.clicks, [])

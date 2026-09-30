@@ -292,6 +292,8 @@ struct StreamStatsReport: Codable, Equatable {
     var assemblyMs: Double?
     var presentedFPS: Double?
     var supersededFrames: Int?
+    /// Replacement rate over the actual counter window; `supersededFrames` remains its raw count.
+    var supersededPerSecond: Double?
     var presentLatencyMs: Double?
     var presentLatencyP90Ms: Double?
     var presentGapP90Ms: Double?
@@ -424,7 +426,7 @@ struct StreamStatsReport: Codable, Equatable {
             }
         }
 
-        if let counters, counters.interval > 0 {
+        if let counters, counters.interval.isFinite, counters.interval > 0 {
             let seconds = counters.interval
             if role == "host" {
                 captureFPS = Self.round(Double(counters.captureFrames) / seconds)
@@ -464,6 +466,8 @@ struct StreamStatsReport: Codable, Equatable {
                 if counters.presentedFrames > 0 || counters.supersededFrames > 0 {
                     presentedFPS = Self.round(Double(counters.presentedFrames) / seconds)
                     supersededFrames = counters.supersededFrames
+                    let replacementRate = Double(counters.supersededFrames) / seconds
+                    supersededPerSecond = replacementRate.isFinite ? replacementRate : nil
                     presentLatencyMs = Self.round(counters.presentLatencyP50Ms)
                     presentLatencyP90Ms = Self.round(counters.presentLatencyP90Ms)
                     presentGapP90Ms = Self.round(counters.presentGapP90Ms)

@@ -572,7 +572,11 @@ final class NativeGestureEngine {
             }
         } else if mode == .zoom {
             let factor = span / max(multiLastDistance, 1)
-            if factor.isFinite && factor > 0 { _ = onCommand(.zoom(factor: factor, anchor: center)) }
+            if factor.isFinite && factor > 0 {
+                _ = onCommand(.navigate(factor: factor, anchor: multiLastCenter,
+                    translation: CGSize(width: center.x - multiLastCenter.x,
+                                        height: center.y - multiLastCenter.y)))
+            }
         } else if mode == .scroll, let id = scrollID, enabled {
             let delta = CGSize(width: center.x - multiLastCenter.x,
                                height: center.y - multiLastCenter.y)
@@ -585,7 +589,13 @@ final class NativeGestureEngine {
         // The first recognition sample is included in its selected mode.
         if justRecognizedZoom {
             let factor = span / max(multiStartDistance, 1)
-            if factor.isFinite && factor > 0 { _ = onCommand(.zoom(factor: factor, anchor: center)) }
+            // Include all pre-recognition motion, keeping the original source point under
+            // the moving midpoint just as View navigation does. Pinch owns no Mac input.
+            if factor.isFinite && factor > 0 {
+                _ = onCommand(.navigate(factor: factor, anchor: multiStartCenter,
+                    translation: CGSize(width: center.x - multiStartCenter.x,
+                                        height: center.y - multiStartCenter.y)))
+            }
         }
         multiLastCenter = center
         multiLastDistance = span

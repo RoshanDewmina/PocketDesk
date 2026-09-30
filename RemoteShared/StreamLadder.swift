@@ -44,7 +44,11 @@ struct PhoneLoadFeedback: Codable, Equatable {
     var lowPowerMode: Bool?
 
     init(report: StreamStatsReport) {
-        supersededPerSecond = report.supersededFrames.flatMap { (0...1_000).contains($0) ? $0 : nil }
+        // The heartbeat carries whole frames/s. Never substitute the raw window count when
+        // a report has no rate (including older saved reports); its duration is unknown.
+        supersededPerSecond = report.supersededPerSecond.flatMap {
+            $0.isFinite && (0...1_000).contains($0) ? Int($0) : nil
+        }
         decodeMs = report.decodeMs.flatMap { $0.isFinite && (0...1_000).contains($0) ? $0 : nil }
         presentedFPS = report.presentedFPS.flatMap { $0.isFinite && (0...240).contains($0) ? $0 : nil }
         thermalState = report.thermalState.flatMap { (0...3).contains($0) ? $0 : nil }

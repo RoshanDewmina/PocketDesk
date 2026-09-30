@@ -133,10 +133,14 @@ final class DirectTouchEngineTests: XCTestCase {
         input.update([touch(1, 80, 100), touch(2, 220, 100)], at: 1.05)
         input.update([touch(1, 60, 100), touch(2, 240, 100)], at: 1.1)
         input.update([], at: 1.15)
-        XCTAssertGreaterThan(log.zooms, 0)
+        XCTAssertEqual(log.navigation.count, 2)
+        XCTAssertEqual(log.navigation.map(\.factor).reduce(1, *), 1.8, accuracy: 0.0001)
         XCTAssertEqual(log.zoomEnds, 1)
         XCTAssertTrue(log.points.isEmpty, "Zooming the view never moves the Mac pointer")
         XCTAssertTrue(log.clicks.isEmpty)
+        XCTAssertTrue(log.scrollPhases.isEmpty)
+        XCTAssertTrue(log.moves.isEmpty)
+        XCTAssertEqual(log.dragBegins, 0)
     }
 
     func testSwitchingModesMidDragReleasesOnce() {
