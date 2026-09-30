@@ -75,6 +75,12 @@ struct HostSettingsView: View {
                            set: actions.setPrivacyCurtain)
                     .accessibilityIdentifier("farside.settings.privacyCurtain")
             }
+            HostSettingsRow("Allow a connected phone to change text size",
+                            subtitle: "Big Text. Your Mac’s size comes back when the phone disconnects. Windows on other Spaces may stay smaller.") {
+                HostSwitch(label: "Allow a connected phone to change text size", isOn: state.allowBigText,
+                           set: actions.setAllowBigText)
+                    .accessibilityIdentifier("farside.settings.allowBigText")
+            }
             if state.displays.count > 1 {
                 HostSettingsRow("Shared display") {
                     Picker("Shared display",

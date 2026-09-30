@@ -26,6 +26,10 @@ struct HostPopoverView: View {
                 if presentation.showsSessionToggles {
                     sessionToggles
                         .padding(.top, 12)
+                } else if let status = state.bigTextStatus {
+                    // A restore can be pending while locked or asleep, when the session toggles are hidden.
+                    HostHairlineList { bigTextRow(status) }
+                        .padding(.top, 12)
                 }
                 actionRow(presentation)
                     .padding(.top, presentation.showsSessionToggles ? 12 : 16)
@@ -85,6 +89,9 @@ struct HostPopoverView: View {
             HostToggleRow(title: "Hide this Mac’s screen", subtitle: HostCurtainCopy.subtitle(for: state),
                           isOn: state.privacyCurtain, set: actions.setPrivacyCurtain)
                 .accessibilityIdentifier("farside.popover.privacyCurtain")
+            if let status = state.bigTextStatus {
+                bigTextRow(status)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 HostToggleRow(title: "Open at login", subtitle: HostBackgroundItemCopy.loginSubtitle(state.loginItem),
                               isOn: state.openAtLogin, set: actions.setOpenAtLogin)
@@ -97,6 +104,23 @@ struct HostPopoverView: View {
                     .buttonStyle(HostButtonStyle(kind: .inline))
                     .accessibilityIdentifier("farside.popover.allowLoginItem")
                 }
+            }
+        }
+    }
+
+    private func bigTextRow(_ status: String) -> some View {
+        HStack(spacing: 12) {
+            Text(status)
+                .font(.system(size: 14))
+                .foregroundStyle(Farside.Palette.bone)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("farside.popover.bigTextStatus")
+            Spacer(minLength: 12)
+            if !status.hasPrefix("Restoring") {
+                Button("Restore normal size", action: actions.restoreNormalSize)
+                    .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+                    .fixedSize()
+                    .accessibilityIdentifier("farside.popover.restoreNormalSize")
             }
         }
     }
