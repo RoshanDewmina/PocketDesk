@@ -101,6 +101,8 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
 
     /// Stream statistics: the bench marker of the frame forwarded with this stamp.
     var markerForStamp: ((Int64) -> BenchMarker?)?
+    /// Smooth motion (D40) hands its paced frame over here so this same draw shows it.
+    var beforeDraw: ((MTKView) -> Void)?
     /// MTKView creates its drawable lazily and WebRTC's renderer then presents that same one.
     var drawableProvider: (MTKView) -> (any MTLDrawable)? = { $0.currentDrawable }
 
@@ -145,6 +147,7 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
     }
 
     func draw(in view: MTKView) {
+        beforeDraw?(view)
         let presentation = observePresentation(in: view)
         renderer?.draw(in: view)
         let drawnStamp = drawnStampReader?()
