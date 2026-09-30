@@ -624,7 +624,7 @@ export class RoomDO extends DurableObject<Env> {
     try { row = await withTimeout(entitlementForDevice(this.env.DB, state.entitlement_id, state.entitled_device), STORAGE_TIMEOUT_MS, "guest paid admission"); }
     catch { return; } // Unknown paid authority closes guests; it never grants a fallback.
     const current = this.state(), at = Date.now();
-    if (this.peer("host") !== host || this.peer("client") !== client || !row || !hasAccess(row, at) || row.device_room !== state.room ||
+    if (this.peer("host") !== host || this.peer("client") !== client || !row || !hasAccess(row, at, this.config.oneTimeProducts) || row.device_room !== state.room ||
         current.blocked || current.route_epoch !== state.route_epoch || current.route_revision !== state.route_revision ||
         current.entitlement_id !== state.entitlement_id || current.entitled_device !== state.entitled_device ||
         !current.route_expires_at || current.route_expires_at <= at || !current.lease_ends_at || current.lease_ends_at <= at ||
