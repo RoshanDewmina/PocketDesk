@@ -104,6 +104,8 @@ struct HostActions {
     var setAutomaticRecovery: (Bool) -> Void = { _ in }
     var openLoginItems: () -> Void = {}
     var setPrivacyCurtain: (Bool) -> Void = { _ in }
+    var setAllowBigText: (Bool) -> Void = { _ in }
+    var restoreNormalSize: () -> Void = {}
     var setAgentAlerts: (Bool) -> Void = { _ in }
     var copyAgentHookSetup: () -> Void = {}
     var resetAgentAlertLink: () -> Void = {}
