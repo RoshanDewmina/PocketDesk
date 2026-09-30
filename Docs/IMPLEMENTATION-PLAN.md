@@ -1,3 +1,20 @@
+# Active full-feature swarm — 30 September 2026
+
+Direct user authorization: execute the reviewed proposal in parallel, notify when done and ready for testing. This supersedes discussion-only holds for the scoped implementation. Hands-on/provider/publication gates remain deferred. Current main and existing dirty ledger were left intact; root integration branch began at7c81913.
+
+Runtime: root +3 maximum active workers, GPT6.1Sol high for sensitive packages, no Astra; native collaboration only. Parent owns protocol, dependencies, generated project and integration. Stable Xcode + shared /tmp/farside-xcodebuild.lock; quiet host for later physical measurements. Source/fixture/build readiness is distinct from installed/provider/physical acceptance.
+
+| Package | Owner / branch | State / next gate |
+| --- | --- | --- |
+| P00 shared contracts and P01 candidate integration | Root / codex/all-features-integration | Perf d4b06d7 and quality7e62183 combined with timing/quality conflicts reconciled; integrated compile/review pending. |
+| C01 Big Text repairs | implement_big_text / codex/all-features-big-text | R1–R5 fixes in progress; root optional request correlation schema b557acd, scale.2 negotiation; scoped tests then fresh review. |
+| P06 audio | implement_audio / codex/all-features-audio | Actual pinned Mac ADM runtime initialization verified; bounded public output-audio pipeline in progress; full target/consent review pending. |
+| P10 trust/offline | implement_trust / codex/all-features-trust | Atomic per-host migration/selection and local authenticated signaling in progress; root optional identity schema e925ff4; wiring/review pending. |
+| P09a aggregate capacity | Root | Implement bounded adaptive file resource admission; actual contention P09b later. |
+| Remaining P02–P18 / X01–X35 / A01–A26 / C01–C14 | Rotate workers after first packages | Required scope retained; package-level acceptance matrix in this chat outputs, no completed-all-features claim. |
+
+Exact receipts are under /Users/roshansilva/Documents/Codex/2026-09-30/re/work. Active other Farside chat owns Simurgh and portrait virtual-display prototype; inspect its reviewed commits before reuse, do not overwrite or duplicate. External/money decisions are not guessed. Every worker commit requires fresh independent review and combined exact-revision verification.
+
 # App-only continuation and verified Apple app record — 29 September 2026
 
 This continuation recovered the latest Farside Claude Code and Codex handoffs and retains the human's hands-on-testing deferral. The other Farside Codex chats were idle and main was clean at `5f01166` before these disjoint source packages. Installed devices remain `.11`; signed `.12` candidates remain uninstalled. Website/social work, codec migration, deployment and publication are outside this pass.

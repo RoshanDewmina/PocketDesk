@@ -402,7 +402,7 @@ final class FrameTimingTests: XCTestCase {
                 result.summariesWithRecords += 1
                 result.records += records.rtp.count
             }
-            phone?.remoteHostSummary = summary
+            phone?.acceptHostSummary(summary, arrivedFrames: nil, arrivedAt: nil)
             if let p50 = summary.frameHostP50Ms { hostP50s.append(p50) }
             if let p95 = summary.frameHostP95Ms { hostP95s.append(p95) }
         }
