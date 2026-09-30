@@ -6,6 +6,7 @@ struct HostSettingsView: View {
     @State private var confirmingRemoval = false
     @State private var confirmingServerRemoval = false
     @State private var showingNotices = false
+    @State private var confirmingStop = false
 
     var body: some View {
         let presentation = HostPopoverPresentation.make(for: state)
@@ -40,6 +41,12 @@ struct HostSettingsView: View {
             Button("Remove Server Room", role: .destructive, action: actions.removeServerRoom)
         } message: {
             Text("Sharing stops now. Saved pairing is removed only after server confirmation. If the request fails, keep it and retry.")
+        }
+        .confirmationDialog("Stop sharing with \(PhoneDisplayName.inSentence(state.phoneName))?", isPresented: $confirmingStop) {
+            Button("Stop Sharing", role: .destructive, action: actions.stopSharing)
+            Button("Keep Sharing", role: .cancel) {}
+        } message: {
+            Text("It disconnects right away. You can share again from the menu bar.")
         }
         .confirmationDialog("Remove your paired phone locally?", isPresented: $confirmingRemoval) {
             Button("Remove Phone", role: .destructive, action: actions.removePhone)
@@ -293,6 +300,7 @@ struct HostSettingsView: View {
     private func perform(_ action: HostPopoverAction) {
         switch action {
         case .pause: actions.pauseSharing()
+        case .stopSharing where state.status.isSessionLive: confirmingStop = true
         case .stopSharing: actions.stopSharing()
         case .resumeNow, .resumeSharing, .tryAgain: actions.resumeSharing()
         case .allowPhone: actions.approvePhone()

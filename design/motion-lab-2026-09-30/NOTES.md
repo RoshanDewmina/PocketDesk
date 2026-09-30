@@ -1,5 +1,11 @@
 # Motion lab, 30 September 2026: implementation notes
 
+## Decided and implemented (30 Sep, PRODUCT D38/D39)
+
+- **Phone: A · Reach, restored.** The stage words became dot-matrix glyphs, one per stage (`StageGlyph`: sweeping chevron, ring blooming from the contact dot, opening aperture). The rest lives in `RemotePhone/ConnectMotion.swift`: the iris into the session and the CRT power-down out (`PhoneRemoteView`); Core Haptics beats (`ConnectHaptics`); the arrival route toast; the reconnect veil and "Back" pill; the code-to-mark pairing flight; and the Anywhere unlock art. The pure rules live in `RemoteShared/ConnectMotionModel.swift`, covered by `RemoteTests/ConnectMotionTests.swift`. `ResolutionLockView` now steps only on connected → video track → first frame. Waiting rings start 0.4 s after connecting, so a quick connect shows none.
+- **Mac: 1 · Live strip + "—" meters.** `RemoteHost/HostLiveStrip.swift` holds the tap ripples, power-down, meters, sparkline, activity lights, the inline Stop confirmation and the in-popover pairing code. `HostActivity.swift` is the throttled input feed. `HostMenuBarGlyph.swift` adds the arrival wave, breathing halo and tap flash to the existing mark. Decline is the default on "Is this your phone?". The phone's name travels in the sealed `acceptedAck` (`PhoneIdentity`) and is stored on `HostPair.phoneName`. Without Apple's user-assigned-device-name entitlement iOS reports only "iPhone", so the Mac shows "Your iPhone" until that entitlement exists.
+- Screenshots: `screens/`.
+
 Open `index.html` in a browser; it is self-contained apart from Google Fonts. Pick a scenario on the left, a direction above the frame, and a case under it. **Manual states** holds every stage until you press **Next state** (key `N`), which shows that nothing advances without a real state. **Reduce Motion** swaps in each reduced variant. The URL hash (`#connect/A`, `#macStop/1`) links straight to a view.
 
 Roshan's request (30 Sep): bring back the connect animation Codex removed, and make connections, other states and the Mac menu bar more dynamic and satisfying. PRODUCT.md constraints still hold: no distance counter and nothing that implies measured distance ("Home connection readout", 29 Sep), Reach brand (D31/D32), ember only for contact, and Mac Settings keeps native accessibility and destructive-action confirmation.

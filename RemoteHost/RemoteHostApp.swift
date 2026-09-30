@@ -41,9 +41,7 @@ struct RemoteHostApp: App {
         MenuBarExtra {
             HostPopoverContainer(model: model)
         } label: {
-            Image(nsImage: HostMenuBarIcon.image(for: HostMarkState(status: model.status),
-                                                 accessibilityDescription: "Farside, \(model.status.title)"))
-                .accessibilityLabel("Farside, \(model.status.title)")
+            HostMenuBarLabel(glyph: model.menuGlyph, state: HostMarkState(status: model.status), title: model.status.title)
         }
         .menuBarExtraStyle(.window)
     }
@@ -101,7 +99,7 @@ private struct HostPopoverContainer: View {
                 model.requestPairing()
                 showSetup()
             }
-        ))
+        ), activity: model.activity)
     }
 
     private func showSetup() {

@@ -7,15 +7,30 @@ struct HostPopoverView: View {
     let actions: HostActions
     /// Fixed time for review renders; the live popover uses the current time.
     var now: Date?
+    /// The live session's taps, keys, scrolls and round trips (D39); nil in review renders.
+    var activity: HostActivityFeed?
+    /// Stop Sharing was pressed while a phone is connected; review renders can start here.
+    @State var confirmingStop = false
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let presentation = HostPopoverPresentation.make(for: state, now: now ?? Date())
         VStack(alignment: .leading, spacing: 0) {
-            HostPopoverStrip(presentation: presentation)
+            HostPopoverStrip(presentation: presentation, activity: activity)
             VStack(alignment: .leading, spacing: 0) {
                 who(presentation)
+                if state.status.isSessionLive {
+                    HostLiveReadout(session: state.session, allowControl: state.status == .controlling,
+                                    activity: activity ?? HostActivityFeed())
+                        .padding(.top, 12)
+                }
+                if state.status == .pairing {
+                    HostPopoverPairingCode(pairing: state.pairing, copy: actions.copyPairingCode, newCode: actions.beginPairing)
+                        .padding(.top, 14)
+                        .transition(reduceMotion ? .opacity : .scale(scale: 0.05).combined(with: .opacity))
+                }
                 if let message = presentation.message {
                     Text(message)
                         .font(.system(size: 13))
@@ -39,6 +54,9 @@ struct HostPopoverView: View {
         .frame(width: HostTheme.popoverWidth)
         .background(HostTheme.popoverBackground)
         .preferredColorScheme(.dark)
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : Farside.Motion.easeOut(), value: state.status)
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : Farside.Motion.easeOut(), value: confirmingStop)
+        .onChange(of: state.status.isSessionLive) { _, live in if !live { confirmingStop = false } }
         .accessibilityIdentifier("farside.popover")
     }
 
@@ -57,6 +75,13 @@ struct HostPopoverView: View {
                 }
             }
             Spacer(minLength: 0)
+            if state.status.isSessionLive, let started = state.sessionStartedAt {
+                Text(timerInterval: started...Date.distantFuture, countsDown: false)
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(Farside.Palette.bone)
+                    .fixedSize()
+            }
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel([presentation.title, presentation.spokenCaption ?? presentation.caption]
@@ -101,18 +126,26 @@ struct HostPopoverView: View {
         }
     }
 
+    @ViewBuilder
     private func actionRow(_ presentation: HostPopoverPresentation) -> some View {
-        HStack(spacing: 8) {
-            ForEach(Array(presentation.actions.enumerated()), id: \.offset) { index, action in
-                let button = Button(action.title) { perform(action) }
-                    .buttonStyle(HostButtonStyle(kind: kind(presentation.emphasis(of: action)), fullWidth: true))
-                    .accessibilityIdentifier("farside.popover.\(action.identifier)")
-                    .hostDefaultAction(index == presentation.actions.count - 1
-                                       && presentation.emphasis(of: action) == .primary)
-                if presentation.actions.count > 1 && index == 0 {
-                    button.frame(width: 146)
-                } else {
-                    button.frame(maxWidth: .infinity)
+        if confirmingStop && state.status.isSessionLive {
+            HostStopConfirm(phoneName: state.phoneName, keep: { confirmingStop = false }, stop: {
+                confirmingStop = false
+                actions.stopSharing()
+            })
+            .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 4)))
+        } else {
+            HStack(spacing: 8) {
+                ForEach(Array(presentation.actions.enumerated()), id: \.offset) { index, action in
+                    let button = Button(action.title) { perform(action) }
+                        .buttonStyle(HostButtonStyle(kind: kind(presentation.emphasis(of: action)), fullWidth: true))
+                        .accessibilityIdentifier("farside.popover.\(action.identifier)")
+                        .hostDefaultAction(action == presentation.defaultAction)
+                    if presentation.actions.count > 1 && index == 0 {
+                        button.frame(width: 146)
+                    } else {
+                        button.frame(maxWidth: .infinity)
+                    }
                 }
             }
         }
@@ -153,6 +186,8 @@ struct HostPopoverView: View {
         if action.leavesPopover { dismiss() }
         switch action {
         case .pause: actions.pauseSharing()
+        // Disconnecting a phone that is steering right now asks first (D39).
+        case .stopSharing where state.status.isSessionLive: confirmingStop = true
         case .stopSharing: actions.stopSharing()
         case .resumeNow, .resumeSharing, .tryAgain: actions.resumeSharing()
         case .allowPhone: actions.approvePhone()
@@ -163,29 +198,4 @@ struct HostPopoverView: View {
     }
 }
 
-/// The strip across the top of the popover. The caption sits on a solid plate, never on dots.
-struct HostPopoverStrip: View {
-    let presentation: HostPopoverPresentation
-
-    var body: some View {
-        ZStack(alignment: .bottomLeading) {
-            HostArt(.popoverStrip(presentation.mood))
-            HStack(spacing: 8) {
-                if presentation.mood == .live { HostLiveDot() }
-                Text(presentation.headline)
-                    .hostCaption(11, color: Farside.Palette.bone)
-                    .lineLimit(1)
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 5)
-            .background(Farside.Palette.void, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .padding(.leading, 8)
-            .padding(.bottom, 10)
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 96)
-        .background(Farside.Palette.void)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(presentation.headline)
-    }
-}
+// HostPopoverStrip (the live strip, D39) lives in HostLiveStrip.swift.

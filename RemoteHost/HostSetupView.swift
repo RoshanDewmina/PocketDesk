@@ -556,12 +556,13 @@ struct HostPairingPage: View {
                 : "A phone just scanned your code. Once allowed, it can see this screen. Allow it only if it’s the phone in your hand.")
                 .padding(.top, 10)
             HStack(spacing: 10) {
+                // Return declines (D39): approving an unknown phone always takes a deliberate click.
                 Button("Decline", action: actions.declinePhone)
                     .buttonStyle(HostButtonStyle(kind: .plate))
+                    .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("farside.setup.declinePhone")
                 Button("Allow", action: actions.approvePhone)
                     .buttonStyle(HostButtonStyle(kind: .primary))
-                    .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("farside.setup.allowPhone")
             }
             .padding(.top, 22)

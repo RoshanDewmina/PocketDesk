@@ -5,34 +5,33 @@ extension Farside.Motion {
     static let sheetSpring = Animation.spring(response: 0.42, dampingFraction: 0.8)
 }
 
-/// The fingertip reaching for the pointer, with `gap` and `contact` animating smoothly.
+/// The fingertip reaching for the pointer, with `gap`, `contact` and the pointer's pose animating smoothly.
 struct ReachArt: View, Animatable {
     var gap: CGFloat
     var contact: CGFloat
     var cell: CGFloat = 5
     var active = true
     var ripples: [HalftoneRipple] = []
-    /// Shows the current connection stage while connecting.
-    var readoutText: String?
+    /// The connect stage's dot glyph while connecting (D38): a pattern per stage, never a number.
+    var readoutStage: ConnectStage?
+    /// 0…1: the pointer lies down asleep (the Mac is napping).
+    var sink: CGFloat = 0
+    /// 0…1: the pointer dissolves (the Mac can't be reached).
+    var fade: CGFloat = 0
 
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(gap, contact) }
-        set { gap = newValue.first; contact = newValue.second }
+    var animatableData: AnimatablePair<AnimatablePair<CGFloat, CGFloat>, AnimatablePair<CGFloat, CGFloat>> {
+        get { AnimatablePair(AnimatablePair(gap, contact), AnimatablePair(sink, fade)) }
+        set { gap = newValue.first.first; contact = newValue.first.second; sink = newValue.second.first; fade = newValue.second.second }
     }
 
     var body: some View {
         FarsideHalftone(style: HalftoneStyle(cell: cell, dust: 0.05), active: active, ripples: ripples,
-                        scene: FarsideArt.reach(gap: gap, contact: contact))
+                        scene: FarsideArt.reach(gap: gap, contact: contact, sink: sink, fade: fade))
             .overlay(alignment: .bottomTrailing) {
-                if let readoutText {
-                    Text(readoutText)
-                        .farsideCaption(contact > 0.5 ? Farside.Palette.ember : Farside.Palette.bone)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.75)
-                        .padding(.horizontal, 10).padding(.vertical, 4)
-                        .background(Farside.Palette.void)
+                if let readoutStage, readoutStage != .idle {
+                    StageReadout(stage: readoutStage, contact: contact > 0.5)
                         .padding(.trailing, 24)
-                        .accessibilityHidden(true)
+                        .padding(.bottom, 6)
                         .transition(.opacity)
                 }
             }
@@ -42,13 +41,30 @@ struct ReachArt: View, Animatable {
     static func meetingPoint(in size: CGSize) -> CGPoint {
         CGPoint(x: size.width * 0.52, y: size.height * 0.42)
     }
+
+    /// Where the fingertip is for a given gap, in the art's own coordinates (see `FarsideArt.reach`).
+    static func fingertip(in size: CGSize, gap: CGFloat) -> CGPoint {
+        let unit = min(size.width, size.height * 1.95) / 390, meet = meetingPoint(in: size), angle: CGFloat = -0.12
+        return CGPoint(x: meet.x - gap * unit * cos(angle), y: meet.y - gap * unit * sin(angle))
+    }
+
+    /// Bone rings leaving the fingertip while a stage waits (D38); none before 0.4 s.
+    static func searchRings(from start: Date?, in size: CGSize, gap: CGFloat) -> [HalftoneRipple] {
+        guard let start, size != .zero else { return [] }
+        let tip = fingertip(in: size, gap: gap)
+        return SearchRings.dates(from: start).map {
+            HalftoneRipple(center: tip, date: $0, strength: 0.7, speed: 150, width: 20, life: 1.3, ember: 0, push: 1.5)
+        }
+    }
 }
 
-/// Before the first frame of a session: a placeholder that locks from noise to coarse to fine,
-/// one light tick per step, then fades as the real picture arrives. It never draws on the live
-/// picture; once frames flow it is gone.
+/// Before the first frame of a session: a placeholder that locks from noise to coarse to fine as
+/// real events arrive, then fades as the real picture arrives. It never draws on the live picture;
+/// once frames flow it is gone.
 struct ResolutionLockView: View {
     let connected: Bool
+    /// The remote video track is attached (`connection.remoteVideo != nil`).
+    var videoTrack = false
     let pictureReady: Bool
     var fixedStage: Int?
     var onFinished: () -> Void = {}
@@ -82,12 +98,10 @@ struct ResolutionLockView: View {
         .ignoresSafeArea()
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-        .sensoryFeedback(trigger: stage) { old, new in
-            guard new > old else { return nil }
-            if new >= 3 { return .success }
-            return reduceMotion ? nil : .impact(flexibility: .rigid, intensity: 0.45 + 0.25 * Double(new))
-        }
+        // The connected beat is ConnectHaptics.meet (PhoneRemoteView); the lock only confirms the picture.
+        .sensoryFeedback(trigger: stage) { old, new in new >= 3 && old < 3 ? .success : nil }
         .task(id: connected) { await run() }
+        .onChange(of: videoTrack) { _, _ in advance() }
         .onChange(of: pictureReady) { _, ready in if ready { finish() } }
     }
 
@@ -109,21 +123,23 @@ struct ResolutionLockView: View {
         return FarsideArt.macThumbnail
     }
 
+    /// Steps follow real events only (D38): connected → coarse, video track → finer, first frame → crisp.
+    /// The two-second hint is a message about waiting, not a step.
     private func run() async {
         guard connected, fixedStage == nil else { return }
-        if reduceMotion {
-            if pictureReady { finish() }
-            return
-        }
-        connectedAt = Date()
-        for next in 1...2 {
-            do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-            guard !finishing else { return }
-            withAnimation(.easeOut(duration: 0.18)) { stage = max(stage, next) }
-        }
         if pictureReady { finish(); return }
+        if !reduceMotion { connectedAt = Date() }
+        advance()
         do { try await Task.sleep(for: .seconds(2)) } catch { return }
+        guard !finishing else { return }
         withAnimation(.easeOut(duration: 0.3)) { slow = true }
+    }
+
+    private func advance() {
+        guard fixedStage == nil, !finishing else { return }
+        let next = min(2, ResolutionLockStage(connected: connected, videoTrack: videoTrack, pictureReady: false).rawValue)
+        guard next > stage else { return }
+        if reduceMotion { stage = next } else { withAnimation(.easeOut(duration: 0.18)) { stage = next } }
     }
 
     /// Steps follow the connection, so the lock never adds a wait: the first frame goes straight to crisp.
@@ -167,19 +183,21 @@ struct ReconnectPill: View {
 struct PairingBurstView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var settled = false
+    @State private var flight: CGFloat = 0
 
     var body: some View {
         VStack(spacing: Farside.Space.l) {
             ZStack {
-                FarsideHalftone(style: HalftoneStyle(cell: 6, dust: 0), animated: false, scene: FarsideArt.pairingCode)
-                    .frame(width: 220, height: 220)
-                    .scaleEffect(settled ? 0.35 : 1)
-                    .opacity(settled ? 0 : 1)
-                    .blur(radius: settled && !reduceMotion ? 6 : 0)
-                FarsideMark(height: 72)
-                    .scaleEffect(settled ? 1 : (reduceMotion ? 1 : 0.4))
-                    .opacity(settled ? 1 : 0)
-                    .shadow(color: Farside.Palette.ember.opacity(settled ? 0.5 : 0), radius: 24)
+                if reduceMotion {
+                    FarsideHalftone(style: HalftoneStyle(cell: 6, dust: 0), animated: false, scene: FarsideArt.pairingCode)
+                        .frame(width: 220, height: 220)
+                        .opacity(settled ? 0 : 1)
+                    FarsideMark(height: 72).opacity(settled ? 1 : 0)
+                } else {
+                    // The code's own modules fly into the mark; the tip lights ember as they land (D38).
+                    CodeToMarkBurst(progress: flight)
+                        .shadow(color: Farside.Palette.ember.opacity(flight > 0.92 ? 0.5 : 0), radius: 24)
+                }
             }
             .frame(width: 240, height: 240)
             VStack(spacing: Farside.Space.xs) {
@@ -187,14 +205,18 @@ struct PairingBurstView: View {
                 Text("Now choose Allow on your Mac.")
                     .font(.body)
                     .foregroundStyle(Farside.Palette.ash)
+                AwaitingAllowMark().padding(.top, Farside.Space.s)
             }
             .opacity(settled ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Farside.Palette.void2.ignoresSafeArea())
         .onAppear {
-            withAnimation(reduceMotion ? .easeInOut(duration: 0.3) : .spring(response: 0.55, dampingFraction: 0.72)) {
-                settled = true
+            if reduceMotion {
+                withAnimation(.easeInOut(duration: 0.3)) { settled = true }
+            } else {
+                withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 0.7)) { flight = 1 }
+                withAnimation(Farside.Motion.easeOut().delay(0.45)) { settled = true }
             }
         }
         .sensoryFeedback(.success, trigger: settled)

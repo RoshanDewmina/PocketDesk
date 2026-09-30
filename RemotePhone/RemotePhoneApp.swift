@@ -206,6 +206,9 @@ final class PhoneRemoteModel: ObservableObject {
     init(background: BackgroundExecution? = nil) {
         self.background = background ?? SystemBackgroundExecution()
         NativeCodecCapability.warmUp()
+        // Shown by the Mac as who is connected (D39). Without the user-assigned-device-name
+        // entitlement iOS reports the model ("iPhone"), which the Mac shows as "Your iPhone".
+        connection.localDisplayName = UIDevice.current.name
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
         if contentConcealed { resumeState = .needsChoice }

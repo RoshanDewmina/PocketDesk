@@ -94,6 +94,9 @@ struct HostPair: Codable {
     var hostToken: String
     var invitation: PairInvitation
     var paired: Bool
+    /// The paired phone's display name, sent inside the sealed `acceptedAck` (D39). Nil for pairs
+    /// made before phones sent one; a new pairing starts without it.
+    var phoneName: String? = nil
 
     static func create(server: String, name: String) throws -> Self {
         let token = try SecureRandom.token()

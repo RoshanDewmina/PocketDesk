@@ -146,6 +146,10 @@ final class RemoteHostModel: ObservableObject {
     private var inputLease = RemoteInputLease()
     private var observers: [NSObjectProtocol] = []
     private var connectionObserver: AnyCancellable?
+    /// D39: the live session's activity for the popover and the menu-bar mark.
+    let activity = HostActivityFeed()
+    lazy var menuGlyph = HostMenuBarGlyph(activity: activity)
+    private var roundTripObserver: AnyCancellable?
     private var agentAlertObservers: Set<AnyCancellable> = []
     private var captureTask: Task<Void, Never>?
     private var captureAttempt: UInt64 = 0
@@ -243,6 +247,8 @@ final class RemoteHostModel: ObservableObject {
             chimeOnConnect: chimeOnConnect,
             pausedUntil: timedPause.resumesAt,
             session: status.isSessionLive ? HostSessionReadout.parse(connection.diagnostics) : nil,
+            sessionStartedAt: status.isSessionLive ? sessionStartedAt : nil,
+            phoneName: PhoneDisplayName.display(connection.peerName),
             availability: availabilityNote,
             loginItem: loginItemState,
             automaticRecovery: recoveryState,
@@ -305,6 +311,10 @@ final class RemoteHostModel: ObservableObject {
         connectionObserver = connection.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
             Task { @MainActor [weak self] in self?.connectionDidChange() }
+        }
+        roundTripObserver = connection.$diagnostics.sink { [weak self] line in
+            guard let self, self.connection.connected else { return }
+            self.activity.record(roundTripMs: HostSessionReadout.parse(line)?.roundTripMs)
         }
         wireAgentAlerts()
         networkPath.onChange = { [weak self] in self?.connection.networkPathChanged() }
@@ -1344,6 +1354,7 @@ final class RemoteHostModel: ObservableObject {
             events.record(.session, "Phone disconnected after \(HostDiagnosticsReport.duration(lastSessionDuration ?? 0))")
             self.sessionStartedAt = nil
         }
+        activity.reset()
         if recoveryNoticeDelivered {
             recoveryNoticePending = false
             recoveryNoticeDelivered = false
@@ -1511,6 +1522,7 @@ final class RemoteHostModel: ObservableObject {
         let outcome = input.handle(action, upgraded: admission == .upgraded, now: now)
         #endif
         countInput(outcome.accepted ? "posted" : (input.enabled ? "refused-by-driver" : "refused-control-disabled"))
+        if outcome.accepted { activity.record(action: action.action) }
         if action.action == "move" || action.action == "moveTo", outcome.accepted {
             pointerTelemetry.moveInjected(globalPoint: input.lastPoint, at: now)
         }

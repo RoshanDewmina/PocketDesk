@@ -22,6 +22,10 @@ struct HalftoneRipple: Equatable {
     var speed: Double = 700
     var width: Double = 48
     var life: Double = 1.6
+    /// 0 makes a bone-only ring, such as the fingertip's "still trying" rings; contact stays ember.
+    var ember: Double = 0.9
+    /// How far the ring pushes dots outward, in points.
+    var push: Double = 4
 }
 
 struct HalftoneStyle {
@@ -118,9 +122,9 @@ enum HalftoneRenderer {
                     let bump = exp(-band * band) * ripple.strength * (1 - age / ripple.life)
                     guard bump > 0.02 else { continue }
                     light += bump * (light > 0.05 ? 0.4 : 0.26)
-                    glow += bump * 0.9
-                    offset.width += CGFloat(dx / distance * bump * 4)
-                    offset.height += CGFloat(dy / distance * bump * 4)
+                    glow += bump * ripple.ember
+                    offset.width += CGFloat(dx / distance * bump * ripple.push)
+                    offset.height += CGFloat(dy / distance * bump * ripple.push)
                 }
                 var level = light
                 if glow > 0.05 { level = max(level, glow * 0.62) }
@@ -202,16 +206,17 @@ struct FarsideDotScreen: View {
 /// All geometry is in points of the scene; the hand points along +x with its fingertip at the origin.
 enum FarsideArt {
     /// A finger reaching for a pointer across `gap` points, with an ember glow of `contact` strength.
+    /// `sink` (0…1) lays the pointer down asleep; `fade` (0…1) dissolves it when the Mac can't be reached.
     static func reach(gap: CGFloat, contact: CGFloat, float: CGFloat = 1, handScale: CGFloat = 1,
-                      handAngle: CGFloat = -0.12) -> (HalftoneLayers, TimeInterval) -> Void {
+                      handAngle: CGFloat = -0.12, sink: CGFloat = 0, fade: CGFloat = 0) -> (HalftoneLayers, TimeInterval) -> Void {
         { layers, time in
             let w = layers.size.width, h = layers.size.height
             let unit = min(w, h * 1.95) / 390
             let meet = CGPoint(x: w * 0.52, y: h * 0.42)
             let drift = sin(time * 0.7) * 3 * float
             radial(layers.bone, at: CGPoint(x: w * 0.5, y: h * 0.5), radius: w * 0.5, from: 0.07, to: 0)
-            pointer(layers.bone, tip: CGPoint(x: meet.x + 4 * unit, y: meet.y - 6 * unit + drift * 0.4),
-                    scale: 0.28 * unit, angle: -0.05)
+            pointer(layers.bone, tip: CGPoint(x: meet.x + 4 * unit, y: meet.y - 6 * unit + drift * 0.4 + 14 * sink * unit),
+                    scale: 0.28 * unit, angle: -0.05 + 0.35 * sink, outline: 1 - 0.5 * sink - 0.88 * fade * (1 - sink))
             hand(layers.bone, tip: CGPoint(x: meet.x - gap * unit * cos(handAngle),
                                            y: meet.y + drift - gap * unit * sin(handAngle)),
                  scale: 0.34 * unit * handScale, angle: handAngle)

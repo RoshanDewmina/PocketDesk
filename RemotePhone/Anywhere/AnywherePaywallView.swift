@@ -14,6 +14,9 @@ struct AnywherePaywallView: View {
     @State private var showManage = false
     @State private var showRedeem = false
     @State private var restoring = false
+    /// Anywhere turned on while this sheet was open (D38): the reach lengthens once. Nil otherwise.
+    @State private var unlock: CGFloat?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var offers: [PlanOffer] { store.offers }
     private var selected: PlanOffer? { offers.first { $0.id == selectedID } ?? offers.first }
@@ -23,7 +26,13 @@ struct AnywherePaywallView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                FarsideHalftone(style: HalftoneStyle(cell: 5, dust: 0.04), scene: FarsideArt.anywhere)
+                Group {
+                    if let unlock {
+                        AnywhereUnlockArt(progress: unlock)
+                    } else {
+                        FarsideHalftone(style: HalftoneStyle(cell: 5, dust: 0.04), scene: FarsideArt.anywhere)
+                    }
+                }
                     .frame(height: verticalSizeClass == .compact ? 120 : 190)
                     .padding(.horizontal, -Farside.Space.l)
                     .accessibilityHidden(true)
@@ -67,6 +76,14 @@ struct AnywherePaywallView: View {
             await store.refresh()
             if let first = store.offers.first, !store.offers.contains(where: { $0.id == selectedID }) { selectedID = first.id }
         }
+        // Only real access celebrates; Ask to Buy (pending) and failures never do.
+        .onChange(of: store.entitlement.hasAccess) { had, has in
+            guard !had, has, unlock == nil else { return }
+            if reduceMotion { unlock = 1; return }
+            unlock = 0
+            withAnimation(.timingCurve(0.22, 1, 0.36, 1, duration: 1.1)) { unlock = 1 }
+        }
+        .sensoryFeedback(.success, trigger: unlock != nil) { _, unlocked in unlocked }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("anywhere.paywall")
     }
