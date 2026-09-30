@@ -1,0 +1,1 @@
+swiftc -frontend -parse: exit 0

@@ -146,7 +146,7 @@ final class MacVitalsPhoneTests: XCTestCase {
     private func evidence(fresh: Bool = true, rtt: Int? = nil, blocker: MacShareBlocker? = nil,
                           vitals: MacVitals?) -> ConnectionHealth.SessionEvidence {
         ConnectionHealth.SessionEvidence(connected: true, fresh: fresh, captureHealthy: true, hostPresence: nil,
-                                         route: "Direct", roundTripMs: rtt, blocker: blocker, vitals: vitals)
+                                         route: "Direct", slowRoundTripMs: rtt, blocker: blocker, vitals: vitals)
     }
 
     func testLowBatteryRanksAfterPictureAndAccessibilityAndBeforeTheNetwork() throws {

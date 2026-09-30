@@ -11,7 +11,7 @@ struct ConnectionHealth: Equatable {
              needsAnywhere, anywhereUnconfirmed, relayUnavailable, relaySlow, networkSlow, sessionClosing,
              macBusy, notApproved, stoppedToStaySafe, pairingProblem, serviceUnreachable, macAnswering,
              unreachable, screenRecordingOff, accessibilityOff, localNetworkOff, wifiHiccups, weakWiFi,
-             constrainedLink, screenRecordingApproval, macBatteryLow, macUnderLoad
+             constrainedLink, screenRecordingApproval, macBatteryLow, macUnderLoad, framesLost
     }
 
     enum Action: Equatable {
@@ -29,9 +29,6 @@ struct ConnectionHealth: Equatable {
             }
         }
     }
-
-    /// A network round trip at or above this is reported as slow.
-    static let slowRoundTripMs = 150
 
     let state: State
     /// Short enough for a status line.
@@ -150,14 +147,17 @@ struct ConnectionHealth: Equatable {
         var canWakeDisplay = false
         /// "Direct" or "Relay" from the stream statistics.
         var route: String?
-        var roundTripMs: Int?
+        /// Non-nil only while the monitor has latched a slow round trip.
+        var slowRoundTripMs: Int?
         /// A grant the Mac reported missing during the session.
         var blocker: MacShareBlocker?
         var wifiStall: WiFiStallTip?
-        /// This iPhone's own link; a hint only, never a cause.
+        /// This iPhone's observed link; never proof of a cause or an authority for route/access.
         var linkHint: NetworkLinkHint?
         /// The Mac's latest vitals, nil when stale or from a Mac that does not report them.
         var vitals: MacVitals? = nil
+        var quality: ConnectionQualityVerdict? = nil
+        var device = "iPhone"
     }
 
     /// Nil while nothing is wrong. Order matters: a dropped connection explains a stalled picture,
@@ -200,6 +200,12 @@ struct ConnectionHealth: Equatable {
                 return ConnectionHealth(state: .macBatteryLow, title: "Mac battery low", detail: detail,
                                         nextStep: "Plug your Mac in, or save your work.")
             }
+        }
+        if let quality = evidence.quality {
+            return ConnectionHealth(state: .framesLost, title: quality.title(device: evidence.device),
+                                    detail: quality.detail, nextStep: quality.fix)
+        }
+        if let vitals = evidence.vitals {
             if vitals.loadLevel == .busy {
                 let detail = vitals.cause == .memory
                     ? "Your Mac reported that other apps are using most of its memory."
@@ -208,11 +214,11 @@ struct ConnectionHealth: Equatable {
                                         nextStep: "Quitting apps you don’t need on your Mac can help.")
             }
         }
-        if let rtt = evidence.roundTripMs, rtt >= slowRoundTripMs {
+        if let rtt = evidence.slowRoundTripMs {
             if evidence.route == "Relay" {
                 return ConnectionHealth(state: .relaySlow, title: "Relay slow",
                                         detail: "Relayed route, \(rtt) ms round trip.",
-                                        nextStep: "On your Mac’s Wi-Fi, Farside can connect directly.")
+                                        nextStep: "Joining your Mac’s Wi-Fi can let Farside connect directly.")
             }
             let route = evidence.route == "Direct" ? "Direct route, " : ""
             return ConnectionHealth(state: .networkSlow, title: "Network slow",
@@ -221,8 +227,8 @@ struct ConnectionHealth: Equatable {
         }
         if let tip = evidence.wifiStall {
             return ConnectionHealth(state: .wifiHiccups, title: tip.title,
-                                    detail: "The picture arrives in bursts about once a second, with no loss.",
-                                    nextStep: tip.detail)
+                                    detail: tip.observation,
+                                    nextStep: tip.fix(device: evidence.device))
         }
         if let hint = evidence.linkHint {
             switch hint.kind {

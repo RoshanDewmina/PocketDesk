@@ -3,7 +3,8 @@ import Network
 
 /// What this device's own network path says about the link, for Connection Health. A hint only:
 /// Apple leaves the link-quality levels coarse and undocumented, so nothing here may grant or deny
-/// free access or pick a route. `route.1` and the local link proof stay the only authorities.
+/// free access or pick a route. It may be named beside measured picture trouble as an observed fact.
+/// Nothing here proves what caused that trouble.  `route.1` and the local link proof stay the only authorities.
 struct NetworkLinkReading: Equatable {
     enum Quality: Equatable { case unknown, minimal, moderate, good }
 
@@ -43,6 +44,7 @@ struct NetworkLinkHint: Equatable {
     let title: String
     let detail: String
     let nextStep: String
+    var cellular = false
 
     /// The most useful hint for a reading, or nil when the link looks fine or says nothing.
     static func from(_ reading: NetworkLinkReading) -> NetworkLinkHint? {
@@ -60,7 +62,7 @@ struct NetworkLinkHint: Equatable {
             return NetworkLinkHint(kind: .cellularOrExpensive, title: "Cellular / expensive",
                                    detail: reading.cellular ? "This iPhone is on cellular data."
                                        : "This iPhone reports a metered network, such as a Personal Hotspot.",
-                                   nextStep: "The picture uses data. Join Wi-Fi to avoid charges.")
+                                   nextStep: "The picture uses data. Join Wi-Fi to avoid charges.", cellular: reading.cellular)
         }
         return nil
     }

@@ -71,15 +71,15 @@ final class ConnectionHealthTests: XCTestCase {
 
     private func session(connected: Bool = true, fresh: Bool = true, capture: Bool = true,
                          presence: HostPresence? = nil, wake: Bool = false,
-                         route: String? = "Direct", rtt: Int? = 12) -> ConnectionHealth? {
+                         route: String? = "Direct", rtt: Int? = nil) -> ConnectionHealth? {
         ConnectionHealth.session(.init(connected: connected, fresh: fresh, captureHealthy: capture,
-                                       hostPresence: presence, canWakeDisplay: wake, route: route, roundTripMs: rtt))
+                                       hostPresence: presence, canWakeDisplay: wake, route: route, slowRoundTripMs: rtt))
     }
 
     func testAHealthySessionReportsNothing() {
         XCTAssertNil(session())
         XCTAssertNil(session(route: nil, rtt: nil))
-        XCTAssertNil(session(route: "Relay", rtt: ConnectionHealth.slowRoundTripMs - 1))
+        XCTAssertNil(session(route: "Relay", rtt: nil))
     }
 
     func testSessionStatesComeFromWhatWasObserved() {
@@ -129,7 +129,7 @@ final class ConnectionHealthTests: XCTestCase {
 
     func testAccessibilityOffIsReportedOnlyWhenTheMacSaysSo() {
         let health = ConnectionHealth.session(.init(connected: true, fresh: true, captureHealthy: true,
-                                                    route: "Direct", roundTripMs: 12, blocker: .accessibilityOff))
+                                                    route: "Direct", slowRoundTripMs: nil, blocker: .accessibilityOff))
         XCTAssertEqual(health?.state, .accessibilityOff)
         XCTAssertEqual(health?.nextStep, "On your Mac: System Settings → Privacy & Security → Accessibility → Farside.")
         XCTAssertEqual(health?.isSlowOnly, false)
@@ -140,20 +140,20 @@ final class ConnectionHealthTests: XCTestCase {
     func testLinkTipsAreGentleAndRankBelowMeasuredProblems() {
         let weak = NetworkLinkHint.from(NetworkLinkReading(quality: .minimal, wifi: true))
         let stall = ConnectionHealth.session(.init(connected: true, fresh: true, captureHealthy: true,
-                                                   route: "Direct", roundTripMs: 12,
+                                                   route: "Direct", slowRoundTripMs: nil,
                                                    wifiStall: WiFiStallTip(), linkHint: weak))
         XCTAssertEqual(stall?.state, .wifiHiccups)
         XCTAssertEqual(stall?.isSlowOnly, true)
         let weakOnly = ConnectionHealth.session(.init(connected: true, fresh: true, captureHealthy: true,
-                                                      route: "Direct", roundTripMs: 12, linkHint: weak))
+                                                      route: "Direct", slowRoundTripMs: nil, linkHint: weak))
         XCTAssertEqual(weakOnly?.state, .weakWiFi)
         XCTAssertEqual(weakOnly?.isSlowOnly, true)
         let slow = ConnectionHealth.session(.init(connected: true, fresh: true, captureHealthy: true,
-                                                  route: "Relay", roundTripMs: 400, wifiStall: WiFiStallTip()))
+                                                  route: "Relay", slowRoundTripMs: 400, wifiStall: WiFiStallTip()))
         XCTAssertEqual(slow?.state, .relaySlow)
         let cellular = NetworkLinkHint.from(NetworkLinkReading(cellular: true))
         XCTAssertNil(ConnectionHealth.session(.init(connected: true, fresh: true, captureHealthy: true,
-                                                    route: "Direct", roundTripMs: 12, linkHint: cellular)))
+                                                    route: "Direct", slowRoundTripMs: nil, linkHint: cellular)))
     }
 
     func testLocalNetworkOffAndASilentMacMapToHealth() {

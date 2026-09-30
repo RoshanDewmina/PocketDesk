@@ -212,7 +212,9 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
                                            isKeyFrame: isKey, inFlight: sample.inFlight)
                 }
             }
-            return callback(image, info)
+            let accepted = callback(image, info)
+            if accepted { self?.counters?.encodedFrameAccepted() }
+            return accepted
         }
         lock.lock(); self.callback = wrapped; lock.unlock()
         inner.setCallback(wrapped)

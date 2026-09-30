@@ -2350,7 +2350,10 @@ final class RemoteHostModel: ObservableObject {
     private func resumeAfterPhoneBackground() {
         guard phonePause.isPaused else { return }
         phonePause.clear()
-        if sessionState == .couch { beginCouch() } else { beginCapture() }
+        if sessionState == .couch { beginCouch() } else {
+            connection.media?.counters.beginResumeCapture()
+            beginCapture()
+        }
     }
 
     private func expirePhonePause() {
