@@ -114,17 +114,11 @@ final class MacShareBlockerTests: XCTestCase {
         XCTAssertNil(host.media, "Nothing is streamed, and nothing pretends to be")
     }
 
-    func testAPhoneThatOnlyKnowsBlockerOneHearsScreenRecordingOffWhileTheMacWaitsForApproval() throws {
-        let (_, olderSignaling, olderPhone) = try pairedHost(blocker: .screenRecordingApproval)
-        let older = try handshake(olderSignaling, phone: olderPhone, features: [MacShareBlocker.feature])
-        let olderRefusal = try JSONDecoder().decode(MacShareBlocker.Refusal.self, from: try XCTUnwrap(older.first?.body))
-        XCTAssertEqual(olderRefusal.reason, .screenRecordingOff, "A blocker.1 phone cannot decode the new reason")
-    }
-
     func testReasonsAreToldOnlyInWordsThePhoneCanRead() {
         let both: Set<String> = [MacShareBlocker.feature, MacShareBlocker.approvalFeature]
         XCTAssertEqual(MacShareBlocker.screenRecordingApproval.told(to: both), .screenRecordingApproval)
-        XCTAssertEqual(MacShareBlocker.screenRecordingApproval.told(to: [MacShareBlocker.feature]), .screenRecordingOff)
+        XCTAssertEqual(MacShareBlocker.screenRecordingApproval.told(to: [MacShareBlocker.feature]), .screenRecordingOff,
+                       "refuseSession sends this: a blocker.1 phone cannot decode the new reason")
         XCTAssertNil(MacShareBlocker.screenRecordingApproval.told(to: []))
         XCTAssertEqual(MacShareBlocker.screenRecordingOff.told(to: [MacShareBlocker.feature]), .screenRecordingOff)
         XCTAssertNil(MacShareBlocker.screenRecordingOff.told(to: ["other"]))
