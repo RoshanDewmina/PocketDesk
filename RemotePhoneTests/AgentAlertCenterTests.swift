@@ -149,7 +149,7 @@ final class AgentAlertCenterTests: XCTestCase {
         XCTAssertEqual(request.content.categoryIdentifier, "AGENT_HELP_REMINDER")
         XCTAssertEqual(request.content.interruptionLevel, .passive, "The reminder never lights the screen or breaks Focus")
         XCTAssertEqual(request.content.threadIdentifier, "mac-7f3a")
-        XCTAssertEqual(request.content.title, "Claude Code needs you")
+        XCTAssertEqual(request.content.title, "A task on your Mac needs you")
         XCTAssertEqual(request.content.body, "Still waiting on you.")
         XCTAssertEqual(request.content.relevanceScore, 0.3)
         let routed = try XCTUnwrap(AgentAlertPayload(userInfo: request.content.userInfo))
