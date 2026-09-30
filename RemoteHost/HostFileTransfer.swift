@@ -15,16 +15,22 @@ final class HostFileTransferService {
 
     private let destination: () -> URL?
     private let pasteboard: HostPasteboardAccess
-    private let queue = DispatchQueue(label: "Farside.file-destination", qos: .userInitiated)
+    private let queue: DispatchQueue
+    private let linkOffer: HostLinkOffer
+    private var effectLease = TransferEffectLease()
+    private var linkOfferID: UUID?
     private let notifier = HostTransferNotifier()
     private var panel: NSOpenPanel?
     private var panelTransfer: String?
     private var authorityGeneration = UUID()
 
     init(destination: @escaping () -> URL? = HostFileTransferService.defaultDestination,
-         pasteboard: HostPasteboardAccess = SystemHostPasteboard()) {
+         pasteboard: HostPasteboardAccess = SystemHostPasteboard(),
+         queue: DispatchQueue = DispatchQueue(label: "Farside.file-destination", qos: .userInitiated),
+         linkOffer: HostLinkOffer? = nil) {
         self.destination = destination
         self.pasteboard = pasteboard
+        self.queue = queue; self.linkOffer = linkOffer ?? .shared
         engine.admit = { [weak self] offer, answer in
             guard let self else { answer(.failure(.notAllowed)); return }
             self.admit(offer, answer: answer)
@@ -50,6 +56,8 @@ final class HostFileTransferService {
 
     /// Authority changed mid-transfer (the setting was turned off): stop and tell the phone.
     func revoke() {
+        effectLease.retire(); effectLease = TransferEffectLease()
+        if let linkOfferID { linkOffer.dismiss(matching: linkOfferID) }; linkOfferID = nil
         authorityGeneration = UUID()
         closePicker(matching: nil)
         engine.cancelAll(status: .notAllowed)
@@ -57,6 +65,8 @@ final class HostFileTransferService {
 
     /// The session ended or paused: stop without messages, since the phone is gone or backgrounded.
     func reset() {
+        effectLease.retire(); effectLease = TransferEffectLease()
+        if let linkOfferID { linkOffer.dismiss(matching: linkOfferID) }; linkOfferID = nil
         authorityGeneration = UUID()
         closePicker(matching: nil)
         engine.reset()
@@ -70,8 +80,11 @@ final class HostFileTransferService {
         guard let folder = destination() else { answer(.failure(.denied)); return }
         // Off the main thread: the first write into Downloads can wait on a macOS consent prompt,
         // and input from the phone must keep flowing so someone can answer it remotely.
-        let generation = authorityGeneration
+        let generation = authorityGeneration, lease = effectLease
         queue.async { [weak self] in
+            guard lease.isActive else {
+                DispatchQueue.main.async { MainActor.assumeIsolated { answer(.failure(.notAllowed)) } }; return
+            }
             let result = Self.prepareSink(for: offer, in: folder)
             DispatchQueue.main.async { MainActor.assumeIsolated {
                 guard let self, self.authorityGeneration == generation else {
@@ -121,9 +134,11 @@ final class HostFileTransferService {
 
     private func receiveLink(_ transfer: String, _ text: String) {
         guard let url = URL(string: text) else { _ = engine.sendControl?(.result(transfer, .invalid)); return }
-        let pasteboard = self.pasteboard
-        queue.async { _ = pasteboard.write(ClipboardPayload(text: text, kind: .url)) }
-        HostLinkOffer.shared.present(url)
+        let pasteboard = self.pasteboard, lease = effectLease
+        queue.async { _ = lease.performIfActive { pasteboard.write(ClipboardPayload(text: text, kind: .url)) } }
+        linkOfferID = linkOffer.present(url, lease: lease, authorized: { [weak self] in
+            guard let self else { return false }; return self.effectLease === lease && self.refusal() == nil
+        })
         _ = engine.sendControl?(.result(transfer, .offered))
     }
 
@@ -235,37 +250,47 @@ final class HostLinkOffer {
     static let lifetime: TimeInterval = 120
     private var panel: NSPanel?
     private var expiry: Task<Void, Never>?
-
-    func present(_ url: URL) {
+    private let showPanel: Bool
+    private let opener: (URL) -> Bool
+    private var lease: TransferEffectLease?
+    private var authorized: (() -> Bool)?
+    private var url: URL?
+    private(set) var currentID: UUID?
+    init(showPanel: Bool = true, opener: @escaping (URL) -> Bool = { NSWorkspace.shared.open($0) }) {
+        self.showPanel = showPanel; self.opener = opener
+    }
+    @discardableResult
+    func present(_ url: URL, lease: TransferEffectLease, authorized: @escaping () -> Bool) -> UUID {
         dismiss()
-        let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
-                            styleMask: [.titled, .closable, .nonactivatingPanel, .utilityWindow],
-                            backing: .buffered, defer: true)
-        panel.title = "Link from your iPhone"
-        panel.level = .floating
-        panel.isFloatingPanel = true
-        panel.hidesOnDeactivate = false
-        panel.isReleasedWhenClosed = false
-        panel.contentView = NSHostingView(rootView: HostLinkOfferView(url: url, open: { [weak self] in
-            NSWorkspace.shared.open(url)
-            self?.dismiss()
-        }, dismiss: { [weak self] in self?.dismiss() }))
-        if let screen = NSScreen.main?.visibleFrame {
-            panel.setFrameTopLeftPoint(NSPoint(x: screen.maxX - panel.frame.width - 16, y: screen.maxY - 16))
+        let id = UUID(); currentID = id
+        self.url = url; self.lease = lease; self.authorized = authorized
+        if showPanel {
+            let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 360, height: 120),
+                                styleMask: [.titled, .closable, .nonactivatingPanel, .utilityWindow], backing: .buffered, defer: true)
+            panel.title = "Link from your iPhone"; panel.level = .floating; panel.isFloatingPanel = true
+            panel.hidesOnDeactivate = false; panel.isReleasedWhenClosed = false
+            panel.contentView = NSHostingView(rootView: HostLinkOfferView(url: url, open: { [weak self] in
+                self?.openOffer(id)
+            }, dismiss: { [weak self] in self?.dismiss(matching: id) }))
+            if let screen = NSScreen.main?.visibleFrame { panel.setFrameTopLeftPoint(NSPoint(x: screen.maxX - panel.frame.width - 16, y: screen.maxY - 16)) }
+            panel.orderFrontRegardless(); self.panel = panel
         }
-        panel.orderFrontRegardless()
-        self.panel = panel
         expiry = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(Self.lifetime * 1_000_000_000))
-            guard !Task.isCancelled else { return }
-            self?.dismiss()
+            guard !Task.isCancelled else { return }; self?.dismiss(matching: id)
         }
+        return id
     }
-
-    func dismiss() {
-        expiry?.cancel(); expiry = nil
-        panel?.close()
-        panel = nil
+    /// Both SwiftUI's queued button closure and expiry bind one exact offer, never a replacement.
+    func openOffer(_ id: UUID) {
+        guard currentID == id, let lease, lease.isActive, authorized?() == true, let url else { return }
+        _ = opener(url) // Main-actor authority and offer checks are contiguous with this action.
+        dismiss(matching: id)
+    }
+    func dismiss(matching id: UUID? = nil) {
+        guard id == nil || currentID == id else { return }
+        currentID = nil; lease = nil; authorized = nil; url = nil
+        expiry?.cancel(); expiry = nil; panel?.close(); panel = nil
     }
 }
 

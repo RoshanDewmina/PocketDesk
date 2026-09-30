@@ -83,6 +83,7 @@ final class HostClipboardService {
     private var assembler = ClipboardAssembler()
     private var outbox = ClipboardOutbox()
     private var generation: UInt64 = 0
+    private var effectLease = TransferEffectLease()
     private var pendingRead: String?
     private var pacer: Timer?
     private var maintenance: Timer?
@@ -129,6 +130,8 @@ final class HostClipboardService {
     }
 
     func reset() {
+        effectLease.retire()
+        effectLease = TransferEffectLease()
         generation &+= 1
         assembler.reset()
         outbox.cancel()
@@ -146,9 +149,9 @@ final class HostClipboardService {
         case .failed(let transfer):
             reply(transfer, .invalid)
         case .complete(let transfer, let payload):
-            let generation = self.generation, pasteboard = self.pasteboard
+            let generation = self.generation, pasteboard = self.pasteboard, lease = effectLease
             queue.async { [weak self] in
-                let stored = pasteboard.write(payload)
+                guard let stored = lease.performIfActive({ pasteboard.write(payload) }) else { return }
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == generation else { return }
                     self.reply(transfer, stored ? .stored : .invalid)
@@ -161,7 +164,7 @@ final class HostClipboardService {
         guard pendingRead == nil, outbox.isEmpty else { reply(frame.transfer, .busy); return }
         let transfer = frame.transfer
         pendingRead = transfer
-        let generation = self.generation, pasteboard = self.pasteboard, baseline = self.baseline
+        let generation = self.generation, pasteboard = self.pasteboard, baseline = self.baseline, lease = effectLease
         let afterCopy = frame.afterCopy == true, copyWait = self.copyWait
         let timeout = readTimeout
         Task { @MainActor [weak self] in
@@ -171,10 +174,12 @@ final class HostClipboardService {
             self.reply(transfer, .busy)
         }
         queue.async { [weak self] in
+            guard lease.isActive else { return }
             let result: HostPasteboardRead
             if afterCopy, let before = baseline.changeCount {
                 let deadline = Date().addingTimeInterval(copyWait)
-                while pasteboard.changeCount == before, Date() < deadline { usleep(40_000) }
+                while lease.isActive, pasteboard.changeCount == before, Date() < deadline { usleep(40_000) }
+                guard lease.isActive else { return }
                 result = pasteboard.changeCount == before ? .refused(.unchanged) : pasteboard.read(limit: ClipboardLimits.maximumBytes)
             } else {
                 result = pasteboard.read(limit: ClipboardLimits.maximumBytes)
