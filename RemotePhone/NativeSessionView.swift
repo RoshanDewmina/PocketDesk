@@ -1594,39 +1594,63 @@ struct NativeSessionView: View {
 
     /// Things you do to the Mac, each printed with its Mac shortcut or phone gesture.
     private func macKeys(compact: Bool) -> some View {
-        let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: compact ? 8 : 4)
-        return LazyVGrid(columns: columns, spacing: 8) {
+        // There are always eight non-scrolling keys. Eager cells keep them present after
+        // keyboard rotation/dismissal, when a lazy grid can retain a zero-sized viewport.
+        let columns = compact ? 8 : 4
+        return Grid(horizontalSpacing: 8, verticalSpacing: 8) {
+            ForEach(0..<(8 / columns), id: \.self) { row in
+                GridRow {
+                    ForEach(0..<columns, id: \.self) { column in
+                        macKey(at: row * columns + column, compact: compact)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder private func macKey(at index: Int, compact: Bool) -> some View {
+        switch index {
+        case 0:
             macKey("Space left", "arrow.left.square", hint: "⌃←", label: "Move left a Space", compact: compact) {
                 _ = model.gesture(.workspaceSwipe(direction: .right))
             }
             .disabled(macKeysDisabled)
+        case 1:
             macKey("Mission Control", "rectangle.3.group", hint: "⌃↑", compact: compact) {
                 _ = model.gesture(.workspaceSwipe(direction: .up))
             }
             .disabled(macKeysDisabled)
+        case 2:
             macKey("App windows", "rectangle.stack", hint: "⌃↓", label: "Application windows", compact: compact) {
                 _ = model.gesture(.workspaceSwipe(direction: .down))
             }
             .disabled(macKeysDisabled)
+        case 3:
             macKey("Space right", "arrow.right.square", hint: "⌃→", label: "Move right a Space", compact: compact) {
                 _ = model.gesture(.workspaceSwipe(direction: .left))
             }
             .disabled(macKeysDisabled)
+        case 4:
             macKey("Right-click", "contextualmenu.and.cursorarrow", hint: "2-finger tap", compact: compact) {
                 model.action("right")
             }
             .disabled(macKeysDisabled)
+        case 5:
             macKey("Double-click", "cursorarrow.click.2", hint: "double tap", compact: compact) {
                 model.action("double")
             }
             .disabled(macKeysDisabled)
+        case 6:
             holdKey(compact: compact)
+        case 7:
             macKey("Show Desktop", "menubar.dock.rectangle", hint: "F11", compact: compact) {
                 _ = model.hardwareKey("f11", modifiers: [])
             }
             .disabled(macKeysDisabled || !model.extendedKeysSupported)
             .accessibilityHint(model.extendedKeysSupported || offlineLayoutCheck
                                ? "Presses F11 on your Mac" : "Needs the updated Farside on your Mac")
+        default: EmptyView()
         }
     }
 
