@@ -2546,13 +2546,16 @@ final class RemoteHostModel: ObservableObject {
         case "viewOnly":
             guard current, sessionState == .picture, connection.peerFeatures.contains(SessionFeature.extendedFeatureList),
                   let next = action.liveViewOnly, !phonePause.isPaused else { return }
-            input.withAuthority {
+            let released = input.withAuthority { () -> Bool in
                 // Close queued posting and release owned holds before publishing acknowledgment.
                 input.enabled = false
                 input.invalidateQueued(); inputFreshness.expireTokens()
                 releaseRemoteInput(notifyPhone: false)
+                guard !input.held else { return false }
                 liveViewOnly = next
+                return true
             }
+            guard released else { connection.dropPeerSession(); return }
             invalidateTextFocus(); clipboard.reset(); fileTransfer.reset()
             connection.media?.setSystemAudioEnabled(false); capture.setSystemAudioEnabled(false)
             applyControlState(notifyPhone: true)
