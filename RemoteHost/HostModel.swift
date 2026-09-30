@@ -172,6 +172,25 @@ final class RemoteHostModel: ObservableObject {
     private var textFocusRevision: UInt64 = 0
     private var textFocusTask: Task<Void, Never>?
     private var captureHealthy = false
+    private var sessionState: HostSessionState = .picture
+    private var couchHealthy = false
+    private var lastPhoneHeartbeatAt: TimeInterval?
+    private var pendingModeReason: SessionModeRefusal?
+    private let couchHUD = CouchHUD()
+    private var refusalTeardown: Task<Void, Never>?
+    /// Set when displays change during Couch: `displays` could not be reloaded while sharing, so Picture must not use it.
+    private var displaysStaleFromCouch = false
+    private var sessionHealthy: Bool {
+        switch sessionState {
+        case .picture: captureHealthy
+        case .couch: couchHealthy
+        case .refused: false
+        }
+    }
+    private var sessionRefused: Bool {
+        if case .refused = sessionState { return true }
+        return false
+    }
     private var capturedDisplayID: CGDirectDisplayID?
     private var pointerLocator = HostPointerLocator()
     private let pointerTelemetry = HostPointerTelemetry()
@@ -230,7 +249,7 @@ final class RemoteHostModel: ObservableObject {
             connected: connection.connected,
             awaitingApproval: connection.awaitingApproval,
             captureApprovalPending: captureApproval.isPending,
-            controlEffective: allowControl && controlPermission.isGranted && captureHealthy,
+            controlEffective: allowControl && controlPermission.isGranted && sessionHealthy,
             unavailable: autoStart.suppressed,
             displayStatus: displayRefreshStatus
         ))
@@ -283,6 +302,7 @@ final class RemoteHostModel: ObservableObject {
             automaticRecovery: recoveryState,
             privacyCurtain: curtainPreference,
             curtainStatus: Self.curtainStatus(curtainState, displays: NSScreen.screens.count),
+            couchMode: sessionState == .couch && connection.connected,
             agentAlerts: agentAlerts.isOn,
             agentAlertsStatus: agentAlerts.statusLine(),
             newestFrameWins: NewestFrameWinsSwitch.isOn,
@@ -368,17 +388,20 @@ final class RemoteHostModel: ObservableObject {
         curtain.onLocalLift = { [weak self] in self?.curtainLiftedLocally() }
         curtain.onPhaseChange = { [weak self] _ in self?.reconcileCurtain() }
         pointerTelemetry.send = { [weak self] action in self?.connection.sendControl(action) ?? false }
-        pointerTelemetry.setCaptureShowsCursor = { [weak self] shows in self?.capture.setShowsCursor(shows) }
+        pointerTelemetry.setCaptureShowsCursor = { [weak self] shows in
+            guard let self, self.sessionState == .picture else { return }
+            self.capture.setShowsCursor(shows)
+        }
         pointerTelemetry.captureShowsCursor = { [weak self] in self?.capture.cursorInVideo ?? true }
         capture.onCursorVisibility = { [weak self] shows in
             guard let self else { return }
             self.pointerTelemetry.captureCursorChanged(showsCursor: shows)
-            self.sendCaptureHealth(self.captureHealthy)
+            self.sendCaptureHealth(self.sessionHealthy)
         }
         capture.onCaptureRegion = { [weak self] region in
             guard let self else { return }
             self.connection.media?.captureRegion = region
-            self.sendCaptureHealth(self.captureHealthy)
+            self.sendCaptureHealth(self.sessionHealthy)
         }
         let workspaceEvents: [(Notification.Name, HostSleepPolicy.Event)] = [
             (NSWorkspace.willSleepNotification, .systemWillSleep),
@@ -407,6 +430,14 @@ final class RemoteHostModel: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                if self.sessionState == .couch && self.connection.connected {
+                    self.displaysStaleFromCouch = true
+                    self.releaseRemoteInput(notifyPhone: true)
+                    let rects = HostCouchDisplays.current()
+                    guard !rects.isEmpty else { self.stop(); return }
+                    self.input.configure(displays: rects)
+                    return
+                }
                 self.stop()
                 self.invalidateDisplays(status: .notChecked)
                 self.loadDisplays()
@@ -781,7 +812,11 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func phoneConnected() {
-        beginCapture()
+        switch connection.peerRequestedMode {
+        case .picture: beginCapture()
+        case .couch:
+            if let refusal = CouchAdmission.decide(couchAdmissionInputs) { beginRefused(refusal) } else { beginCouch() }
+        }
         guard chimeOnConnect, connection.connected, !terminating else { return }
         NSSound(named: NSSound.Name("Glass"))?.play()
     }
@@ -946,7 +981,7 @@ final class RemoteHostModel: ObservableObject {
         var attempts = 0
         while agentAlertOutbox.contains(where: { $0.id == frame.id }), attempts < 4, connection.connected {
             attempts += 1
-            sendCaptureHealth(captureHealthy)
+            sendCaptureHealth(sessionHealthy)
         }
         let delivered = !agentAlertOutbox.contains { $0.id == frame.id }
         agentAlertOutbox.removeAll { $0.id == frame.id }
@@ -981,7 +1016,7 @@ final class RemoteHostModel: ObservableObject {
         snapshot.sharingActive = active
         snapshot.phonePaired = hasPairedPhone
         snapshot.phoneConnected = connection.connected
-        snapshot.controlEffective = allowControl && controlPermission.isGranted && captureHealthy
+        snapshot.controlEffective = allowControl && controlPermission.isGranted && sessionHealthy
         snapshot.keepAwake = keepAwakeEnabled
         snapshot.displayCount = displays.count
         snapshot.detail = detail
@@ -1121,7 +1156,7 @@ final class RemoteHostModel: ObservableObject {
         let state = PrivacyCurtainPolicy.protocolState(inputs, up: curtain.phase == .up)
         if state != curtainState {
             curtainState = state
-            sendCaptureHealth(captureHealthy)
+            sendCaptureHealth(sessionHealthy)
         }
     }
 
@@ -1374,6 +1409,7 @@ final class RemoteHostModel: ObservableObject {
         screenRecordingPermission = result.screenRecording
         refreshInputAccess()
         displays = result.displays
+        displaysStaleFromCouch = false
         displayRefreshStatus = result.displayStatus
         selected = HostDisplayChoice.preferred(
             available: displays.map(\.displayID),
@@ -1395,6 +1431,7 @@ final class RemoteHostModel: ObservableObject {
         displayRefreshTask = nil
         displayRefreshGeneration.invalidate()
         displays = []
+        displaysStaleFromCouch = false
         selected = 0
         displayRefreshStatus = status
     }
@@ -1420,10 +1457,13 @@ final class RemoteHostModel: ObservableObject {
     private func applyControlState(notifyPhone: Bool) {
         let effective = allowControl && controlPermission.isGranted
         if !effective || !inputAccess.accessibility.isGranted { invalidateTextFocus() }
+        if sessionState == .couch { refreshCouchHealth() }
         input.enabled = HostControlPolicy.isEnabled(
             userConsent: allowControl,
             accessibilityPermission: controlPermission,
-            captureHealthy: captureHealthy
+            session: sessionState,
+            captureHealthy: captureHealthy,
+            couchHealthy: couchHealthy
         )
         if !effective {
             releaseRemoteInput(notifyPhone: notifyPhone)
@@ -1448,6 +1488,7 @@ final class RemoteHostModel: ObservableObject {
             captureNeedsApproval()
             return
         }
+        if displaysStaleFromCouch { restartForDisplaysChangedInCouch(); return }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
         if sessionStartedAt == nil {
@@ -1476,37 +1517,17 @@ final class RemoteHostModel: ObservableObject {
         pointerLocator.reset()
         captureTask?.cancel()
         releaseRemoteInput(notifyPhone: true)
+        sessionState = .picture
+        couchHealthy = false
+        inputLease.changeDuration(to: RemoteInputLease.pictureDuration, at: ProcessInfo.processInfo.systemUptime)
+        couchHUD.hide()
         input.configure(SCContentFilter(display: display, excludingWindows: []))
         captureHealthy = false
         input.enabled = false
         advanceEpoch()
         pointerTelemetry.begin(displayFrame: display.frame, epoch: inputEpoch.value)
 
-        lifecycleTimer?.invalidate()
-        let lifecycleTimer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                if self.phonePause.isPaused {
-                    if self.phonePause.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.expirePhonePause() }
-                    return
-                }
-                self.input.expireMomentum()
-                if self.inputLease.isExpired(at: ProcessInfo.processInfo.systemUptime) {
-                    let releasedHold = self.input.externalHoldID
-                    let releaseEpoch = self.inputEpoch.value
-                    if !self.input.held || self.input.release() {
-                        self.inputLease.cancel()
-                        self.sendReleaseNotice(releasedHold: releasedHold, epoch: releaseEpoch)
-                    }
-                }
-                self.sendCaptureHealth(self.captureHealthy)
-                self.refreshInputAccess()
-                self.reconcileCurtain()
-            }
-        }
-        lifecycleTimer.tolerance = 0.025
-        self.lifecycleTimer = lifecycleTimer
-        RunLoop.main.add(lifecycleTimer, forMode: .common)
+        startLifecycleTimer()
 
         let logicalSize = display.frame.size
         let preflight = [
@@ -1546,6 +1567,139 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
+    /// What a display change does to a Picture session today, deferred until the picture is wanted.
+    private func restartForDisplaysChangedInCouch() {
+        events.record(.sharing, "Displays changed during Couch mode; restarting sharing before showing the picture")
+        stop()
+        invalidateDisplays(status: .notChecked)
+        loadDisplays()
+    }
+
+    private func startLifecycleTimer() {
+        lifecycleTimer?.invalidate()
+        let lifecycleTimer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.phonePause.isPaused {
+                    if self.phonePause.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.expirePhonePause() }
+                    return
+                }
+                self.input.expireMomentum()
+                if self.inputLease.isExpired(at: ProcessInfo.processInfo.systemUptime) {
+                    let releasedHold = self.input.externalHoldID
+                    let releaseEpoch = self.inputEpoch.value
+                    if !self.input.held || self.input.release() {
+                        self.inputLease.cancel()
+                        self.sendReleaseNotice(releasedHold: releasedHold, epoch: releaseEpoch)
+                    }
+                }
+                if self.sessionState == .couch { self.refreshCouchHealth() }
+                self.sendCaptureHealth(self.sessionHealthy)
+                self.refreshInputAccess()
+                self.reconcileCurtain()
+            }
+        }
+        self.lifecycleTimer = lifecycleTimer
+        RunLoop.main.add(lifecycleTimer, forMode: .common)
+    }
+
+    /// No screen capture, encoder, load monitor, viewport, cursor hiding or curtain: the person watches the Mac itself.
+    private func beginCouch() {
+        guard connection.connected, connection.media != nil else { stop(); return }
+        if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
+        if sessionStartedAt == nil {
+            sessionStartedAt = Date()
+            sessionsThisLaunch += 1
+            events.record(.session, "Phone connected in Couch mode")
+        }
+        refusalTeardown?.cancel(); refusalTeardown = nil
+        liftCurtain()
+        wakeDisplayForRemoteSession()
+        updatePowerAssertions()
+        captureAttempt &+= 1
+        captureTask?.cancel(); captureTask = nil
+        endLoadMonitor()
+        _ = capture.stop()
+        phonePause.clear()
+        capturedDisplayID = nil
+        pointerLocator.reset()
+        releaseRemoteInput(notifyPhone: true)
+        let rects = HostCouchDisplays.current()
+        guard let main = rects.first else { stop(); return }
+        input.configure(displays: rects)
+        inputLease.changeDuration(to: RemoteInputLease.couchDuration, at: ProcessInfo.processInfo.systemUptime)
+        captureHealthy = false
+        couchHealthy = false
+        input.enabled = false
+        sessionState = .couch
+        advanceEpoch()
+        pointerTelemetry.begin(displayFrame: main, epoch: inputEpoch.value)
+        startLifecycleTimer()
+        _ = connection.sendControl(RemoteAction(action: "geometry", x: main.width, y: main.height, epoch: inputEpoch.value))
+        _ = connection.sendControl(RemoteAction(action: "viewing", x: allowControl && controlPermission.isGranted ? 1 : 0,
+                                                epoch: inputEpoch.value))
+        refreshCouchHealth()
+        sendCaptureHealth(couchHealthy)
+        couchHUD.show()
+        #if DEBUG
+        HostE2E.active?.event("couch.begin", ["displays": rects.count])
+        #endif
+    }
+
+    /// The phone hears why on one `capture` status, then the peer session ends; the host keeps listening.
+    private func beginRefused(_ reason: SessionModeRefusal) {
+        sessionState = .refused(reason)
+        advanceEpoch()
+        input.enabled = false
+        sendCaptureHealth(false)
+        events.record(.session, "Couch mode refused: \(reason.rawValue)")
+        #if DEBUG
+        HostE2E.active?.event("couch.refused", ["reason": reason.rawValue])
+        #endif
+        refusalTeardown?.cancel()
+        refusalTeardown = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(2))
+            guard let self, !Task.isCancelled, self.sessionRefused else { return }
+            self.connection.dropPeerSession()
+        }
+    }
+
+    private var couchAdmissionInputs: CouchAdmissionInputs {
+        CouchAdmissionInputs(routeLocal: connection.routeIsLocal, provenLinkActive: connection.provenLocalLinkActive,
+                             allowControl: allowControl, accessibility: controlPermission)
+    }
+
+    private var couchHealthInputs: CouchHealthInputs {
+        let now = ProcessInfo.processInfo.systemUptime
+        return CouchHealthInputs(
+            routeLocal: connection.routeIsLocal, provenLinkActive: connection.provenLocalLinkActive,
+            heartbeatAge: lastPhoneHeartbeatAt.map { now - $0 },
+            screenLocked: screenLocked || HostScreenLock.isLocked(), consoleUserActive: Self.consoleUserActive(),
+            allowControl: allowControl, accessibility: controlPermission, phonePaused: phonePause.isPaused)
+    }
+
+    /// Returns the fresh value; on a healthy → unhealthy edge input stops and tokens expire at once.
+    @discardableResult
+    private func refreshCouchHealth() -> Bool {
+        guard sessionState == .couch else { couchHealthy = false; return false }
+        // A pending sleep/lock/user-switch teardown must not be re-admitted by the next tick before it stops the session.
+        let healthy = unavailabilityTeardown == nil && CouchHealth.isHealthy(couchHealthInputs)
+        if couchHealthy && !healthy {
+            invalidateTextFocus()
+            releaseRemoteInput(notifyPhone: true)
+            inputFreshness.expireTokens()
+        }
+        couchHealthy = healthy
+        input.enabled = HostControlPolicy.isEnabled(userConsent: allowControl, accessibilityPermission: controlPermission,
+                                                    session: sessionState, captureHealthy: captureHealthy, couchHealthy: healthy)
+        return healthy
+    }
+
+    private static func consoleUserActive() -> Bool {
+        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+        return session[kCGSessionOnConsoleKey as String] as? Bool ?? false
+    }
+
     private func endCapture() {
         liftCurtain()
         curtainLocallyDismissed = false
@@ -1581,6 +1735,12 @@ final class RemoteHostModel: ObservableObject {
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
         _ = capture.stop()
+        couchHUD.hide()
+        sessionState = .picture
+        couchHealthy = false
+        lastPhoneHeartbeatAt = nil
+        pendingModeReason = nil
+        refusalTeardown?.cancel(); refusalTeardown = nil
         updatePowerAssertions()
         reconcileCurtain()
     }
@@ -1630,18 +1790,19 @@ final class RemoteHostModel: ObservableObject {
             return
         }
         if action.action == "heartbeat" {
-            if connection.connected, action.epoch == inputEpoch.value, let quality = action.streamQuality {
+            lastPhoneHeartbeatAt = ProcessInfo.processInfo.systemUptime
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, let quality = action.streamQuality {
                 capture.setQuality(quality)
             }
-            if connection.connected, action.epoch == inputEpoch.value, let pixels = action.screenPixels {
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, let pixels = action.screenPixels {
                 capture.setClientPixels(pixels)
             }
-            if connection.connected, action.epoch == inputEpoch.value, StreamTuning.current.viewportCapture {
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, StreamTuning.current.viewportCapture {
                 // A heartbeat without a viewport means the phone can no longer describe its
                 // visible area. Return to the whole display instead of retaining an old crop.
                 capture.setViewport(action.viewport)
             }
-            if connection.connected, action.epoch == inputEpoch.value {
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value {
                 phoneLoad = action.phoneLoad
                 phoneLoadReceivedAt = action.phoneLoad == nil ? nil : ProcessInfo.processInfo.systemUptime
             }
@@ -1659,12 +1820,21 @@ final class RemoteHostModel: ObservableObject {
             receivePointerProbe(action)
             return
         }
+        if action.action == RemoteAction.modeAction {
+            receiveModeRequest(action)
+            return
+        }
         if RemoteAction.sessionExtensionActions.contains(action.action) {
             receiveSessionExtension(action)
             return
         }
         if RemoteAction.displayActions.contains(action.action) {
             receiveDisplaySelection(action)
+            return
+        }
+        if sessionRefused {
+            countInput("rejected-refused")
+            if action.action == "text" { sendTextResult(for: action.key, accepted: false) }
             return
         }
 
@@ -1679,6 +1849,11 @@ final class RemoteHostModel: ObservableObject {
                 releaseRemoteInput(notifyPhone: true)
             }
             if action.action == "text" { sendTextResult(for: action.key, accepted: false) }
+            return
+        }
+        // The driver's bounds in Couch are the union of every display, so an absolute point has no safe meaning.
+        if sessionState == .couch, action.action == "moveTo" {
+            countInput("rejected-couch-moveTo")
             return
         }
 
@@ -1698,10 +1873,13 @@ final class RemoteHostModel: ObservableObject {
             return
         }
 
+        if sessionState == .couch { refreshCouchHealth() }
         input.enabled = HostControlPolicy.isEnabled(
             userConsent: allowControl,
             accessibilityPermission: controlPermission,
-            captureHealthy: captureHealthy
+            session: sessionState,
+            captureHealthy: captureHealthy,
+            couchHealthy: couchHealthy
         )
         #if DEBUG
         // E2E harness interlock: injected input may only reach the Farside Test Pad.
@@ -1782,7 +1960,7 @@ final class RemoteHostModel: ObservableObject {
                          active: active && !terminating,
                          connected: connection.connected && connection.media === peer,
                          controlEnabled: allowControl && input.enabled && inputAccess.accessibility.isGranted,
-                         captureHealthy: captureHealthy)
+                         captureHealthy: sessionHealthy)
     }
 
     private func invalidateTextFocus() {
@@ -1792,6 +1970,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func captureHealthChanged(_ healthy: Bool) {
+        guard sessionState == .picture else { return }
         // The capture reports every 0.4 s; the 4 Hz lifecycle timer already re-checks Accessibility,
         // reconciles the curtain and sends capture status, so only a change needs handling here.
         if healthy == captureHealthy && (healthy || captureUnhealthySince != nil) { return }
@@ -1811,6 +1990,10 @@ final class RemoteHostModel: ObservableObject {
             userConsent: allowControl,
             accessibilityPermission: controlPermission,
             captureHealthy: healthy
+            accessibilityPermission: accessibilityPermission,
+            session: sessionState,
+            captureHealthy: healthy,
+            couchHealthy: couchHealthy
         )
         sendCaptureHealth(healthy)
     }
@@ -1884,7 +2067,7 @@ final class RemoteHostModel: ObservableObject {
             busyState = busy
             connection.media?.busyState = busy
         }
-        if change.ladder != nil || change.busy != nil { sendCaptureHealth(captureHealthy) }
+        if change.ladder != nil || change.busy != nil { sendCaptureHealth(sessionHealthy) }
     }
 
     /// A switched-off experiment is not advertised, so the phone never sends what the host would ignore.
@@ -1892,11 +2075,13 @@ final class RemoteHostModel: ObservableObject {
         let tuning = StreamTuning.current
         return SessionFeature.host.filter {
             ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
-        }
+        } + [SessionFeature.couch]
     }
 
-    private func sendCaptureHealth(_ healthy: Bool, presence: HostPresence? = nil) {
+    private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil) {
         guard connection.connected else { return }
+        // A caller's Couch flag can be up to one tick old; a token must reflect health at this moment.
+        let healthy = sessionState == .couch ? requestedHealthy && refreshCouchHealth() : requestedHealthy
         let features = connection.peerFeatures
         let state = MacShareBlocker.sessionState(
             presence: presence ?? (displayAsleep ? .displayAsleep : nil),
@@ -1904,11 +2089,11 @@ final class RemoteHostModel: ObservableObject {
             controlAllowed: allowControl, accessibilityGranted: controlPermission.isGranted,
             captureApprovalPending: captureApproval.isPending,
             phoneUnderstandsApproval: features.contains(MacShareBlocker.approvalFeature))
-        let capability = inputFreshness.capability(
+        let capability = sessionState.issuesTokens(healthy: healthy) ? inputFreshness.capability(
             epoch: inputEpoch.value,
             now: ProcessInfo.processInfo.systemUptime,
             doubleClickInterval: min(2, max(0.1, NSEvent.doubleClickInterval))
-        )
+        ) : nil
         let event = recoveryEventForPhone
         let alert = agentAlertOutbox.first
         let sent = connection.sendControl(RemoteAction(
@@ -1920,16 +2105,45 @@ final class RemoteHostModel: ObservableObject {
             curtain: curtainState.rawValue, hostEvent: event,
             display: capturedDisplayID, agentAlert: alert,
             captureRegion: capture.appliedCaptureRegion, ladder: ladderState, busy: busyState,
-            macVitals: vitalsMonitor?.current(now: ProcessInfo.processInfo.systemUptime)
+            macVitals: vitalsMonitor?.current(now: ProcessInfo.processInfo.systemUptime),
+            mode: sessionState.wireMode, modeReason: pendingModeReason?.rawValue ?? sessionState.wireReason
         ))
         if sent && event != nil { recoveryNoticeDelivered = true }
         if sent && alert != nil { agentAlertOutbox.removeFirst() }
+        if sent { pendingModeReason = nil }
+    }
+
+    // MARK: Session mode
+
+    private func receiveModeRequest(_ action: RemoteAction) {
+        guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused,
+              let requested = action.mode.flatMap(SessionMode.init(rawValue:)) else { return }
+        switch (sessionState, requested) {
+        case (.couch, .picture):
+            guard CGPreflightScreenCaptureAccess() else {
+                pendingModeReason = .screenRecording
+                sendCaptureHealth(sessionHealthy)
+                return
+            }
+            events.record(.session, "Phone switched to the picture")
+            beginCapture()
+        case (.picture, .couch):
+            if let refusal = CouchAdmission.decide(couchAdmissionInputs) {
+                pendingModeReason = refusal
+                sendCaptureHealth(sessionHealthy)
+                return
+            }
+            events.record(.session, "Phone switched to Couch mode")
+            beginCouch()
+        default:
+            sendCaptureHealth(sessionHealthy)
+        }
     }
 
     // MARK: Session extensions
 
     private func receiveSessionExtension(_ action: RemoteAction) {
-        let current = connection.connected && active && action.epoch == inputEpoch.value
+        let current = connection.connected && active && action.epoch == inputEpoch.value && !sessionRefused
         let controlEffective = allowControl && controlPermission.isGranted
         switch action.action {
         case "wake":
@@ -1944,10 +2158,14 @@ final class RemoteHostModel: ObservableObject {
         case "file":
             if let frame = action.file { fileTransfer.receive(frame) }
         case "curtain":
+            guard sessionState == .picture else {
+                sendCaptureHealth(sessionHealthy)
+                return
+            }
             // Covering the Mac's own screen needs the same authority as controlling it.
             guard current, controlEffective, !phonePause.isPaused,
                   let request = action.curtain.flatMap(PrivacyCurtainRequest.init(rawValue:)) else {
-                sendCaptureHealth(captureHealthy)
+                sendCaptureHealth(sessionHealthy)
                 return
             }
             events.record(.curtain, "Phone asked to \(request == .up ? "hide" : "show") the screen")
@@ -1960,11 +2178,12 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Display selection
 
     private func receiveDisplaySelection(_ action: RemoteAction) {
-        guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused else { return }
+        guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused, !sessionRefused else { return }
         switch action.action {
         case "displays":
             sendDisplayList()
         case "display":
+            guard sessionState == .picture else { sendDisplayList(); return }
             guard let requested = action.display else { return }
             let decision = HostDisplayCatalog.decide(
                 requested: requested, available: displays.map(\.displayID), streaming: capturedDisplayID,
@@ -2025,6 +2244,7 @@ final class RemoteHostModel: ObservableObject {
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
         _ = capture.stop()
+        couchHealthy = false
         updatePowerAssertions()
         reconcileCurtain()
     }
@@ -2033,7 +2253,7 @@ final class RemoteHostModel: ObservableObject {
     private func resumeAfterPhoneBackground() {
         guard phonePause.isPaused else { return }
         phonePause.clear()
-        beginCapture()
+        if sessionState == .couch { beginCouch() } else { beginCapture() }
     }
 
     private func expirePhonePause() {
@@ -2078,10 +2298,10 @@ final class RemoteHostModel: ObservableObject {
             displayAsleep = true
             guard active, connection.connected else { return }
             releaseRemoteInput(notifyPhone: true)
-            sendCaptureHealth(captureHealthy)
+            sendCaptureHealth(sessionHealthy)
         case .displayAwake:
             displayAsleep = false
-            if connection.connected { sendCaptureHealth(captureHealthy) }
+            if connection.connected { sendCaptureHealth(sessionHealthy) }
         }
         reconcileCurtain()
     }
@@ -2101,6 +2321,7 @@ final class RemoteHostModel: ObservableObject {
         inputFreshness.expireTokens()
         input.enabled = false
         captureHealthy = false
+        couchHealthy = false
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
@@ -2269,6 +2490,8 @@ extension RemoteHostModel {
             "active": active,
             "wantsSharing": wantsSharing,
             "captureHealthy": captureHealthy,
+            "sessionMode": sessionState.wireMode,
+            "couchHealthy": couchHealthy,
             "allowControl": allowControl,
             "inputEnabled": input.enabled,
             "held": input.held,

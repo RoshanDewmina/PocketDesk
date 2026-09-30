@@ -53,6 +53,10 @@ struct RemoteAction: Codable {
     var busy: BusyState? = nil
     /// Battery, temperature, Low Power Mode and whole-Mac load, on `capture` status (`SessionFeature.macVitals`).
     var macVitals: MacVitals? = nil
+    /// Couch mode: the phone's `mode` request, or the Mac's mode on `capture` status. Validated in CouchProtocol.swift.
+    var mode: String? = nil
+    /// One-shot reason the Mac did not switch, on `capture` status.
+    var modeReason: String? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
@@ -78,6 +82,7 @@ struct RemoteAction: Codable {
         guard file == nil || action == "file" else { throw RemoteError.invalidMessage }
         try validateFocusGeometry()
         // Also before the early returns, so no other action can carry a display list.
+        if try validateSessionMode() { return }
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }
         if try validatePointerSync() { return }

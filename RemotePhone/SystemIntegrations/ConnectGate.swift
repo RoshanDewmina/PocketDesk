@@ -31,7 +31,7 @@ enum ConnectGate {
     }
 
     @discardableResult
-    static func connect(model: PhoneRemoteModel, onboarding: OnboardingFlow, restartsRunning: Bool,
+    static func connect(model: PhoneRemoteModel, onboarding: OnboardingFlow, restartsRunning: Bool, mode: SessionMode = .picture,
                         access: AnywhereAccess = .shared, owner: DeviceOwnerGate? = nil,
                         showServerData: @escaping () -> Void) -> Decision {
         let owner = owner ?? .live
@@ -45,10 +45,11 @@ enum ConnectGate {
         case .proceed:
             model.error = ""
             let start = {
+                model.prepareConnection(mode: mode)
                 onboarding.beforeConnect {
                     Task { @MainActor in
                         // Only waits when this phone has Anywhere and its token is due; never more than a few seconds.
-                        await access.prepareForConnection()
+                        if mode == .picture { await access.prepareForConnection() }
                         guard access.phoneConnectionAllowed else { showServerData(); return }
                         connection.start()
                     }

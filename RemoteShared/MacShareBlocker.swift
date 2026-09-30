@@ -26,8 +26,16 @@ enum MacShareBlocker: String, Codable, Equatable {
     /// The phone's handshake request body. Older Macs ignore a request body.
     struct Handshake: Codable, Equatable {
         var features: [String]
+        var mode: String? = nil
 
         static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature])
+
+        static func requestedMode(in body: Data?) -> SessionMode {
+            guard let body, body.count <= 1024,
+                  let decoded = try? JSONDecoder().decode(Handshake.self, from: body),
+                  decoded.features.count <= 8 else { return .picture }
+            return decoded.mode.flatMap(SessionMode.init(rawValue:)) ?? .picture
+        }
 
         /// At most eight short names; anything else counts as no features.
         static func features(in body: Data?) -> Set<String> {

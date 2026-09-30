@@ -7,17 +7,18 @@ struct FriendlyError: Identifiable, Equatable {
         case napping, unreachable, busy, locked, switchedUser, needsPlan, codeRejected, declined,
              approvalTimedOut, verifyFailed, keychain, relayUnavailable, connectionLost, sessionGlitch,
              serviceNotReady, screenSharingOff, anywhereUnverified, macNotResponding, screenRecordingOff,
-             localNetworkOff, screenRecordingApproval
+             localNetworkOff, screenRecordingApproval, couchNotLocal, couchControlOff
     }
 
     enum Action: Equatable {
-        case retry, pairAgain, seePlans, openSettings
+        case retry, pairAgain, seePlans, openSettings, connectWithPicture
         var title: String {
             switch self {
             case .retry: "Try again"
             case .pairAgain: "Pair again"
             case .seePlans: "See Farside Anywhere"
             case .openSettings: "Open Settings"
+            case .connectWithPicture: CouchCopy.connectWithPicture
             }
         }
     }
@@ -43,12 +44,12 @@ struct FriendlyError: Identifiable, Equatable {
     var scene: FarsideArt.Scene {
         switch kind {
         case .napping: FarsideArt.nap
-        case .locked, .switchedUser, .verifyFailed, .keychain, .declined: FarsideArt.locked
+        case .locked, .switchedUser, .verifyFailed, .keychain, .declined, .couchControlOff: FarsideArt.locked
         case .needsPlan, .relayUnavailable, .serviceNotReady, .anywhereUnverified: FarsideArt.anywhere
         case .codeRejected: FarsideArt.staleCode
         case .screenSharingOff, .screenRecordingOff, .screenRecordingApproval: FarsideArt.screenOff
         case .localNetworkOff: FarsideArt.priming(.localNetwork)
-        case .unreachable, .busy, .approvalTimedOut, .connectionLost, .sessionGlitch, .macNotResponding: FarsideArt.unreachable
+        case .unreachable, .busy, .approvalTimedOut, .connectionLost, .sessionGlitch, .macNotResponding, .couchNotLocal: FarsideArt.unreachable
         }
     }
 
@@ -73,6 +74,8 @@ struct FriendlyError: Identifiable, Equatable {
         case .anywhereUnverified: "Anywhere not confirmed"
         case .macNotResponding: "Found it · not answering"
         case .localNetworkOff: "Local Network off · turn it on in Settings"
+        case .couchNotLocal: "Not on your Mac’s network"
+        case .couchControlOff: "Control is off on the Mac"
         }
     }
 
@@ -202,6 +205,30 @@ struct FriendlyError: Identifiable, Equatable {
     static let sessionGlitch = FriendlyError(kind: .sessionGlitch, headline: "Ended to be safe",
                                              message: "The connection glitched, so Farside ended the session to keep your Mac safe.",
                                              fix: "Reconnect to pick up where you left off.")
+
+    static func couch(_ reason: SessionModeRefusal) -> FriendlyError {
+        switch reason {
+        case .controlOff:
+            FriendlyError(kind: .couchControlOff, headline: "Control is off", accent: "off", message: CouchCopy.controlOff,
+                          fix: "Or connect with the picture to watch.", action: .connectWithPicture, secondary: .retry)
+        case .notLocal, .screenRecording:
+            FriendlyError(kind: .couchNotLocal, headline: "Not on the same network", accent: "same",
+                          message: CouchCopy.notLocal, fix: "Or connect with the picture instead.",
+                          action: .connectWithPicture, secondary: .retry)
+        }
+    }
+
+    static let couchProofFailures: Set<String> = [
+        "No directly attached Wi-Fi or Ethernet link is available.",
+        "The devices could not verify a directly attached local link.",
+        "The local network changed. Reconnect to verify the route again.",
+        "Local link proof could not start.",
+        CouchCopy.phoneRefusedStatus
+    ]
+
+    static func forCouch(status: String, requestedCouch: Bool) -> FriendlyError? {
+        requestedCouch && couchProofFailures.contains(status) ? couch(.notLocal) : nil
+    }
 
     /// The service limited this attempt to the same network (contract §4: a non-closing
     /// `entitlement_required`) and it then failed to reach the Mac: say what Anywhere would change.

@@ -114,6 +114,15 @@ final class MacShareBlockerTests: XCTestCase {
         XCTAssertNil(host.media, "Nothing is streamed, and nothing pretends to be")
     }
 
+    func testAPhoneThatOnlyKnowsBlockerOneHearsScreenRecordingOffWhileTheMacWaitsForApproval() throws {
+        let (host, signaling, phone) = try pairedHost(blocker: .screenRecordingApproval)
+        let replies = try handshake(signaling, phone: phone, features: [MacShareBlocker.feature])
+        let refusal = try JSONDecoder().decode(MacShareBlocker.Refusal.self, from: try XCTUnwrap(replies.first?.body))
+        XCTAssertEqual(refusal.reason, .screenRecordingOff)
+        XCTAssertTrue(host.hostRegistered)
+        XCTAssertNil(host.media)
+    }
+
     func testReasonsAreToldOnlyInWordsThePhoneCanRead() {
         let both: Set<String> = [MacShareBlocker.feature, MacShareBlocker.approvalFeature]
         XCTAssertEqual(MacShareBlocker.screenRecordingApproval.told(to: both), .screenRecordingApproval)

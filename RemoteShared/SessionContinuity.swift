@@ -31,6 +31,8 @@ enum SessionFeature {
     static let fileTransfer = "file.1"
     /// A requested focused field rect, without contents or labels.
     static let focusGeometry = "focus.rect.1"
+    /// Couch mode: trackpad and keys with no picture, on a proven local link. Advertised by the host itself, not in `host`.
+    static let couch = "couch.1"
     static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
                        momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]
@@ -96,7 +98,7 @@ extension RemoteAction {
     /// is a session-extension action that is now fully validated.
     func validateSessionExtension() throws -> Bool {
         if let features {
-            guard action == "capture", features.count <= 16, features.allSatisfy(Self.isFeatureName) else {
+            guard action == "capture", features.count <= 32, features.allSatisfy(Self.isFeatureName) else {
                 throw RemoteError.invalidMessage
             }
         }

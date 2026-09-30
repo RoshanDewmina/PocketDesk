@@ -69,6 +69,13 @@ const revokeBackoffMs = (attempts: number) => {
 
 class IssuanceRateLimited extends Error {}
 
+/** A registration that did not ask for remote access (Couch mode) must stay on the proven local route. */
+export function unentitledRelayPass(config: { allowUnentitledRelay: boolean; devRelayRooms: Set<string> },
+  room: string | undefined, remoteAware: boolean): boolean {
+  if (config.allowUnentitledRelay) return true;
+  return remoteAware && room !== undefined && config.devRelayRooms.has(room);
+}
+
 export class RoomDO extends DurableObject<Env> {
   /** A pairing hash survives transient host disconnect so the phone can opt out while offline. */
   async authenticatePush(room: string, clientToken: string): Promise<boolean> {
@@ -538,8 +545,8 @@ export class RoomDO extends DurableObject<Env> {
    * still have access. Storage trouble at registration means no relay (a token is at most 24 h old, so a short
    * outage costs at most a local-only session); an established session keeps its credentials through `stillEntitled`.
    */
-  private async checkEntitlement(token: string | undefined): Promise<Entitlement> {
-    if (!token) return this.unentitledRelayAllowed() ? { entitled: true } : { entitled: false };
+  private async checkEntitlement(token: string | undefined, remoteAware: boolean): Promise<Entitlement> {
+    if (!token) return this.unentitledRelayAllowed(remoteAware) ? { entitled: true } : { entitled: false };
     const now = Date.now();
     const payload = await verifyEntitlementToken(this.env.ENTITLEMENT_TOKEN_KEY, token, now, this.config.environmentName);
     if (!payload) return { entitled: false };
@@ -554,11 +561,10 @@ export class RoomDO extends DurableObject<Env> {
     }
   }
 
-  private unentitledRelayAllowed(): boolean {
-    if (this.config.allowUnentitledRelay) return true;
-    const room = this.state().room;
-    if (!room || !this.config.devRelayRooms.has(room)) return false;
-    log("dev_relay_pass_used", { room: fingerprint(room) });
+  private unentitledRelayAllowed(remoteAware: boolean): boolean {
+    const room = this.state().room ?? undefined;
+    if (!unentitledRelayPass(this.config, room, remoteAware)) return false;
+    if (!this.config.allowUnentitledRelay && room !== undefined) log("dev_relay_pass_used", { room: fingerprint(room) });
     return true;
   }
 
@@ -569,7 +575,7 @@ export class RoomDO extends DurableObject<Env> {
     const state = this.state();
     const entitlementId = attachment.entitlementId ?? state.entitlement_id;
     const deviceId = attachment.deviceId ?? state.entitled_device;
-    if (!entitlementId || !deviceId) return this.unentitledRelayAllowed() ? "valid" : "invalid";
+    if (!entitlementId || !deviceId) return this.unentitledRelayAllowed(attachment.remoteAware) ? "valid" : "invalid";
     try {
       const row = await withTimeout(entitlementForDevice(this.env.DB, entitlementId, deviceId), STORAGE_TIMEOUT_MS, "entitlement lookup");
       return row !== null && hasAccess(row, now) && row.device_room === state.room ? "valid" : "invalid";
@@ -802,7 +808,7 @@ export class RoomDO extends DurableObject<Env> {
       this.error(ws, "upgrade_required"); return;
     }
 
-    let entitlement = await this.checkEntitlement(msg.entitlement);
+    let entitlement = await this.checkEntitlement(msg.entitlement, remoteAware);
     if (entitlement.entitled && entitlement.entitlementId && entitlement.deviceId) {
       // Mark this pending socket before crossing into D1. A forget/revoke push can then close it
       // even while TURN issuance or the ownership claim is in flight.

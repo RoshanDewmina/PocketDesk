@@ -228,6 +228,9 @@ final class PeerMedia: NSObject {
         return localPathAuthorized
     }
 
+    /// The media path is the proven one-hop local link and is still selected.
+    var provenLocalLinkActive: Bool { localLink != nil && localGateOpen() }
+
     private func authorizeLocalPath() -> Bool {
         localRouteLock.lock(); defer { localRouteLock.unlock() }
         guard !localPathEverAuthorized || localPathAuthorized else { return false }
