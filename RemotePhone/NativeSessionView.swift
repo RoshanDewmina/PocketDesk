@@ -33,6 +33,7 @@ struct NativeSessionView: View {
     @State private var clickAcknowledged = false
     @State private var zoomBadge: String?
     @State private var zoomBadgeToken = 0
+    @State private var pinchRevision: UInt64 = 0
     @State private var revision: UInt64 = 0
     @AppStorage("pointerSensitivity") private var sensitivity = 1.0
     @AppStorage(TouchInputMode.key) private var touchMode: TouchInputMode = .trackpad
@@ -143,20 +144,25 @@ struct NativeSessionView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
+            if phase != .active { cancelGesture() }
             if phase == .background { cancelVoiceInput() }
             else if phase == .inactive && voiceInput.phase != .requestingPermission {
                 voiceInput.pauseForInterruption()
             }
         }
         .onChange(of: connection.connected) { _, connected in
-            if !connected { cancelVoiceInput() }
+            if !connected { cancelGesture(); cancelVoiceInput() }
             if !offlineLayoutCheck && !model.fresh { lockVisible = true }
         }
-        .onChange(of: model.contentConcealed) { _, concealed in if concealed { cancelVoiceInput() } }
+        .onChange(of: model.contentConcealed) { _, concealed in
+            if concealed { cancelGesture(); cancelVoiceInput() }
+        }
         .onChange(of: model.privacyShield) { _, shielded in
+            if shielded { cancelGesture() }
             if shielded && voiceInput.phase != .requestingPermission { voiceInput.pauseForInterruption() }
         }
         .onChange(of: model.canControl) { _, allowed in
+            if !allowed { cancelGesture() }
             if !allowed && voiceInput.phase == .listening { voiceInput.pauseForInterruption() }
         }
         .onChange(of: model.autoKeyboardRevision) { _, value in
@@ -266,7 +272,7 @@ struct NativeSessionView: View {
             }
             #endif
         }
-        .onDisappear { model.cancelInput(); cancelVoiceInput() }
+        .onDisappear { cancelGesture(); cancelVoiceInput() }
         .task(id: model.acceptedClicks) {
             guard model.acceptedClicks > 0 else { return }
             clickAcknowledged = true
@@ -2072,6 +2078,7 @@ struct NativeSessionView: View {
         switch command {
         case .zoomToggle(let anchor):
             model.pointerLocator.clear()
+            pinchRevision &+= 1
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
                 viewport.toggleZoom(anchoredAt: anchor)
             }
@@ -2080,18 +2087,37 @@ struct NativeSessionView: View {
             return true
         case .navigate(let factor, let anchor, let translation):
             model.pointerLocator.clear()
-            viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
-            viewport.pan(by: translation)
+            pinchRevision &+= 1
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
+                viewport.pan(by: translation)
+            }
             showZoomBadge()
             return true
         case .zoom(let factor, let anchor):
             model.pointerLocator.clear()
-            viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
+            pinchRevision &+= 1
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
+            }
             showZoomBadge()
             return true
         case .zoomEnded:
+            let endedPinch = pinchRevision
+            let endedInputRevision = revision
+            let endedModelInputRevision = model.inputRevision
+            let endedGeometry = model.geometryEpoch
             DispatchQueue.main.async {
-                guard !controlsBlockInput, !model.privacyShield, !model.contentConcealed else { return }
+                // A new pinch, cancellation or display change can precede this queued settle.
+                guard pinchRevision == endedPinch, revision == endedInputRevision,
+                      model.inputRevision == endedModelInputRevision,
+                      model.geometryEpoch == endedGeometry, scenePhase == .active,
+                      !controlsBlockInput, !showVoiceInput,
+                      !model.privacyShield, !model.contentConcealed else { return }
                 withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
                     _ = viewport.settleZoom()
                 }
@@ -2298,6 +2324,7 @@ struct NativeSessionView: View {
     }
 
     private func cancelGesture() {
+        pinchRevision &+= 1
         model.cancelInput()
         revision &+= 1
     }
