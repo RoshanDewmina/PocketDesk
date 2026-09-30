@@ -2,6 +2,16 @@
 
 **Historical research notice — refreshed 29 September 2026:** The missing-StoreKit, missing-icons/manifests and private-service-only source claims below describe the 28 September snapshot. StoreKit, backend route enforcement, privacy manifests and dependency notices are now implemented. Production readiness, the original forced-expiry discrepancy, real sandbox purchases/expiry, APNs, physical removal/input and distribution acceptance remain gates. Use [CURRENT-REVIEW-PACKET.md](CURRENT-REVIEW-PACKET.md) for current evidence; the historical legal/review analysis is not a current sign-off.
 
+**Commerce and review refresh, 30 September 2026** (branch `farside-commerce-review`; sources in section 11):
+- 4.2.7 re-read. The guidelines still say "Last Updated: June 8, 2026", and clause (e) is intact. The section 4 analysis stands.
+- Row 4.5.4 is rewritten: push exists, and its copy is now fixed and generic.
+- Added:
+  - multiseat (3.1.2, B15);
+  - age assurance for Texas SB 2420, Utah and Louisiana (section 5a, B16);
+  - agreements, including EU Attachment 14 (B17);
+  - the age-rating questionnaire, including the social-media questions (B18);
+  - the privacy-manifest file-timestamp note (section 8).
+
 Prepared 28 September 2026 for the 3 November 2026 submission target. Documentation and research only; nothing was submitted, created in App Store Connect, or changed in source.
 
 **Naming:** the product is now called **Farside** (renamed from PocketDesk on 28 Sep 2026). Bundle IDs stay `com.roshan.PocketDesk.*`, and code identifiers, target names, file paths and Info.plist keys (`PocketDeskRemote`, `PocketDeskServiceURL`, `PocketDeskStreamStats`) still say PocketDesk until engineering renames them; they are quoted verbatim.
@@ -56,14 +66,15 @@ Risk scale: Low (design already fits), Medium (needs a deliberate fix or note), 
 | 2.5.14 Consent and indication when recording | Explicit consent and a clear indication when recording or logging activity, including screen recording, camera, microphone. | Mac capture is behind macOS Screen Recording consent plus a persistent menu-bar state and Stop Sharing. Voice input has an explicit mic button and listening UI. No keystroke or screen logging in code. [R] | Low | Keep a persistent Mac indicator and a visible "listening" state on the phone. |
 | 3.1.1 In-app purchase | Unlock features with IAP; own license keys, QR codes and similar mechanisms not allowed; restore mechanism required. | No purchase code yet. The pairing QR must never unlock anything paid. | High until built | See SUBSCRIPTION-SETUP.md. Restore Purchases button (`AppStore.sync()`) in paywall and Settings. |
 | 3.1.2(a) Subscriptions | Ongoing value, at least 7 days, works on all the user's devices, no extra tasks (social posts, check-ins). Cloud/SaaS support is an example. Free trials via ASC are allowed. | Relay and NAT-traversal service is genuine ongoing value. Monthly and yearly satisfy the minimum. Same Apple ID unlocks iPhone and iPad. | Low | Explain the value concretely in the paywall. |
+| 3.1.2 Multiseat (new 16 Sep 2026) | Apple: "Starting today, multiseat purchases are enabled by default" for auto-renewable subscriptions. An organization or group buys seats and assigns them. The seat's transaction has `inAppOwnershipType` `ASSIGNED`. Taking a seat back sends `revocationType` `ASSIGNMENT_REVOKE`. Turning it off later ("No, don't allow multiseat purchases" under "Can a customer purchase multiple seats for this subscription?") stops new seat purchases. Existing group subscriptions "continue to renew until the group purchaser cancels", so any seat sold before then stays a paying customer that Farside refuses. The research note's "cancels at renewal" is wrong. [V] | Anywhere is a personal plan (3 devices, one Apple Account). The backend accepts only `PURCHASED` transactions. An assigned or family-shared seat gets 401 `not_purchased`, logged by ownership kind only. Seat notifications, including `ASSIGNMENT_REVOKE`, are recorded and never change a purchaser's subscription (`Backend/src/entitlement/verify.ts`, `notifications.ts`). [R] | Medium until ASC is set | [O] Set Multiseat to No on both Anywhere products **before the first approval** (B15, LAUNCH-CHECKLIST). |
 | 3.1.2(b)/(c) Upgrade paths and disclosure | Single group so users cannot buy two variants; describe what they get before asking; Schedule 2 terms. | One group, monthly and yearly at one level. | Medium | Paywall needs price, period, renewal and cancel text, and Terms and Privacy links. `SubscriptionStoreView` shows the ASC-supplied ones. |
 | 3.1.3(b) Multiplatform | Users may access features bought elsewhere if also purchasable in-app. | Mac companion sells nothing. | N/A | Website and Mac app must not sell the subscription. |
 | 3.1.1(a) External purchase links | Steering to non-IAP purchase is barred outside the US storefront and entitlement cases. | Canada-priced product. | Low | No web checkout, no "cheaper on our site" language. |
 | 4.1 / 4.3 Copycat and spam | Original apps; no indistinguishable variants of crowded categories. | Remote desktop is crowded but not on the named list. | Low | Lead with the differentiators (no account, trackpad-first, voice, haptics). |
 | 4.2 Minimum functionality | More than a repackaged website. | Native streaming and input app. | Low | None. |
 | **4.2.3(i)** | The app should work on its own without installing another app. | Needs the Mac companion. | Medium | Precedent below; explain in notes; make the on-phone onboarding excellent. |
-| **4.2.7** | Extra rules for remote desktop apps that mirror specific software or services rather than a generic host mirror. | Farside is a generic host mirror. | Low if positioned generically | Section 4. |
-| 4.5.4 Push notifications (only if used) | Push must not be required for the app to function, must not be used for promotions without explicit opt-in, and should not carry sensitive information. | Not implemented in the app. APNs key preparation appears in another workstream (`Docs/launch/APPLE-PORTAL-SETUP-2026-09-28.md`, task 2). | Low | If shipped: ask for permission after the user has seen value, never gate any feature on it, no marketing pushes, no screen or session content in payloads, declare the device push token (Identifiers: Device ID, already in the privacy answers) and add it to the policy. |
+| **4.2.7** | Extra rules for remote desktop apps that mirror specific software or services rather than a generic host mirror. | Farside is a generic host mirror. Re-read 30 Sep 2026: unchanged. | Low if positioned generically | Section 4. Alerts no longer name agents, which keeps them generic too. |
+| 4.5.4 Push notifications | Push "must not be required for the app to function, and should not be used to send sensitive personal or confidential information"; no promotions without explicit opt-in and an in-app opt-out (text re-read 30 Sep 2026). 4.5.3 was clarified on 8 Jun 2026 to name Live Activities. [V] | **Implemented** (refreshed 30 Sep 2026): agent alerts (opt-in beta, off by default, iOS permission asked only when turned on) and an end-only session Live Activity. The payload is fixed keys only: `title-loc-key` `AGENT_NEEDS_YOU_TITLE` = "A task on your Mac needs you", `loc-key` body, generic categories `AGENT_HELP`/`AGENT_HELP_REMINDER`, an opaque id and pairing hash. It has no `title-loc-args`, no agent or product name (the "Show agent name" option was removed), and no prompt, file name or screen content. Details load in the app. No feature is gated on push; no marketing pushes. (`Backend/src/push.ts`, `RemotePhone/SystemIntegrations/AgentAlertPayload.swift`, `Localizable.strings`) [R] | Low | Keep the title fixed (Shortcuts recipes match it, `SHORTCUTS-RECIPES.md`). Declare the push token in the privacy answers and policy. Real APNs delivery is still an acceptance gate. |
 | 4.8 Login services | Equivalent option if using third-party or social login as the primary account method. | No accounts at all. | N/A | Keep it that way; avoid adding Google or Apple login for v1. |
 | 5.1.1(i) Privacy policy | Link in ASC metadata and inside the app; states data, uses, retention, deletion and consent withdrawal, and that partners match the policy. | No policy or in-app link exists. | High | PRIVACY-POLICY.md draft; [O] host it; [E] Settings link. |
 | 5.1.1(ii)-(iv) Consent and minimization | Consent for collection; paid features must not depend on data consent; respect permission choices, offer alternatives. | Camera denied gives paste code; microphone denied gives typing; Local Network denied needs help text. | Low | Verify each denial path on device. |
@@ -72,6 +83,8 @@ Risk scale: Low (design already fits), Medium (needs a deliberate fix or note), 
 | 5.2.1 / 5.2.5 IP and Apple products | No third-party trademarks, misleading names or confusing imitation of Apple products. Apple lets a trademark owner file a claim against an app name (ASC). | "Farside" versus THE FAR SIDE (FarWorks, Inc., US Reg. 6255846, Class 41 entertainment services, live; other FarWorks marks reported for prints, books, cards and calendars [V for 6255846; I for the rest]) and two apps already named Farside or FarSide. Apple device art in screenshots. | Medium | Trademark opinion before submission; keep the name one word, never "Far Side" or "The Far Side"; no cartoon imagery; use Apple marketing-resource device frames only if licensed, or none. |
 
 ## 4. Guideline 4.2.7 in detail
+
+**Re-checked 30 September 2026.** The raw guidelines HTML still carries "Last Updated: June 8, 2026", and the 4.2.7 text below, clause (e) included, is unchanged. Nothing in this section's analysis changes. The alert change (row 4.5.4) removes the one place the app named third-party products outside the Mac's own screen.
 
 **Text [V, raw guidelines HTML].** If a remote desktop app acts as a mirror of specific software or services rather than a generic mirror of the host device, it must satisfy (a) connect only to a user-owned personal computer or dedicated game console, with host and client on the same local, LAN-based network; (b) all software runs and renders on the host and the client may not use APIs or platform features beyond streaming the remote desktop; (c) all account creation and management is initiated from the host; (d) the client UI must not resemble an iOS or App Store view, offer a store-like interface, or let the user browse, select or purchase software they do not already own; and (e) thin clients for cloud-based apps are not appropriate for the App Store. (The first web summary I obtained dropped clause (e); the raw page text has it.)
 
@@ -105,6 +118,45 @@ If a future release adds workflow features tied to specific products, re-read 4.
 - The reviewer must be able to reach the paywall and complete a sandbox purchase without a paired Mac.
 
 **Design consequence to decide now (decision D1).** A free user on cellular whose Mac is behind a friendly NAT can often connect peer-to-peer using STUN alone, at no cost to us. If "remote is paid", decide whether that direct path is allowed. See SUBSCRIPTION-SETUP.md section 2; the recommended answer is to hard-gate only what costs money (TURN credentials) and enforce "same network" for free users at the candidate level on the Mac. Whatever is chosen, the metadata must match the behaviour.
+
+## 5a. Age assurance: Texas SB 2420, Utah, Louisiana (decision, 30 Sep 2026)
+
+**What the laws and Apple require [V].**
+- **Texas SB 2420.** It applies to new Texas Apple Accounts since 4 Jun 2026, after a court lifted the injunction. Minors under 18 need parent or guardian consent for downloads, In-App Purchases and "significant changes". A parent "can withdraw consent for any app, which will block launching of the app on the child or teen's device". Apple says "it's the developer's responsibility to determine when there's a significant change". Texas law treats an age-rating change as significant.
+- **Utah and Louisiana.** Age categories are shared for new Apple Accounts in Utah from 6 May 2026 and in Louisiana from 1 Jul 2026. The same Declared Age Range, Significant Change and Significant Update tools apply.
+- **Apple's tools:**
+  - Declared Age Range (`AgeRangeService.requiredRegulatoryFeatures`, iOS 26.4, which reports `significantAppChangeRequiresParentalConsent`, `significantAppChangeRequiresAdultNotification` and `declaredAgeRangeRequired`);
+  - PermissionKit's Significant Change API;
+  - the App Store Server Notification `RESCIND_CONSENT`. It "indicates the parent or guardian has withdrawn consent for a child's app usage". Its payload carries `appData.signedAppTransactionInfo` instead of `data`.
+
+**What Farside does.**
+1. **Server: consent withdrawal stops Anywhere** (`Backend/src/entitlement/notifications.ts`, migration `0004_consent_stop.sql`).
+   - On a verified `RESCIND_CONSENT`, the service stores an HMAC of the app transaction's `appTransactionId`. Every Anywhere subscription verified under it stops, and live rooms end at once.
+   - Later verifications under that app transaction answer `consent_revoked`, even after a renewal or a new purchase.
+   - This complements Apple's own launch block: it also ends a paid relay session that is already running.
+   - Recovery after a parent re-consents is a manual support step. The stop row is deleted 365 days after it no longer refers to any subscription.
+2. **Phone: record only.** `RegulatoryFeatureCheck` (`RemotePhone/Anywhere/AnywhereStore.swift`) asks `requiredRegulatoryFeatures` at launch on iOS 26.4 or later (`#available`-guarded). It stores the answer in this phone's UserDefaults and logs only a count.
+   - It blocks no one, adults included, and shows no UI. Nothing in the API makes UI mandatory by itself: the features describe what *a significant change* needs.
+   - Without the Declared Age Range entitlement the call answers "unavailable" and nothing is recorded. Enabling the capability is an owner decision, together with the privacy-label wording.
+3. **No significant change is planned.** Farside's content does not vary with age, and the expected rating is 4+ (section 5b).
+   - If a future release changes the age rating or adds a feature a parent would reasonably need to approve, that release must adopt PermissionKit's Significant Change flow for minors, and `showSignificantUpdateAcknowledgment` for adults where `significantAppChangeRequiresAdultNotification` is required, before shipping.
+   - Add this to the release checklist for every version.
+
+**Why this is enough for 1.0 [I; not legal advice].**
+- Farside collects no age data and has no accounts.
+- Its only purchasable feature is already gated by Apple's own parental purchase consent (Ask to Buy / SB 2420 purchase consent).
+- Apple enforces download consent and the post-revocation launch block.
+- The developer duties that remain are to react to revocation (done server-side) and to judge significant changes (none planned). Record counsel's view if one is obtained.
+
+## 5b. App Store Connect gates added 30 Sep 2026
+
+- **Agreements.** Apple added Attachment 14 to the Apple Developer Program License Agreement, covering updated EU terms (alternative distribution, alternative payments, business terms), "effective October 1, 2026". The Account Holder must "sign in to your account to accept the updated terms". Unaccepted agreements block submission and paid-app changes [V] (B17).
+- **Age-rating questionnaire, all answers "No".** Answer every question in App Store Connect, including the social-media questions added 9 Jul 2026 and required for submissions from September 2026 [V] (B18).
+  - In-App Controls: Parental Controls No, Age Assurance No.
+  - Capabilities: Unrestricted Web Access No, User-Generated Content No, **Social Media No** (no feed or discovery of user content; Apple's definition is "redistribute, amplify, or interact with user-generated content through a social feed or similar discovery method"), Messaging and Chat No, Advertising No.
+  - Mature Themes, Medical or Wellness, Sexuality or Nudity, Violence, and Chance-Based Activities: all No.
+  - Expected result: 4+, matching Jump Desktop, Screens 5 and Astropad Workbench.
+  - **Web access judgement [I].** Farside shows the owner's own Mac, which may include a browser the owner runs there. The app has no browser, fetches no web content and has no URL field, so "Unrestricted Web Access" is answered No, as the approved remote-desktop precedents are rated. If App Review disagrees, the fallback is to answer Yes (the rating becomes 18+) rather than argue.
 
 ## 6. How competitors got through (evidence only)
 
@@ -180,6 +232,12 @@ Add before submission: `PrivacyInfo.xcprivacy` (required-reason APIs: UserDefaul
 
 Also check: the iPad orientation set. `project.yml` lists only portrait and both landscapes for the shared target; historically iPad multitasking apps had to list all four orientations or opt out of multitasking (ITMS-90474). This may be obsolete on iPadOS 26 windowing. [I] Verify at the first TestFlight upload rather than assume.
 
+**File timestamps (checked 30 Sep 2026).** Any read of file creation or modification dates is a required-reason API (`NSPrivacyAccessedAPICategoryFileTimestamp`). WebRTC is not on Apple's list of SDKs that need their own signed manifest.
+- **Phone target.** This branch reads no file timestamps in Release. `RemoteShared/E2ESupport.swift` reads one, but it is `#if DEBUG`.
+- **Mac companion.** `RemoteHost/HostLoginItem.swift` already reads the bundled helper's modification date, and `RemoteHost/PrivacyInfo.xcprivacy` does not declare FileTimestamp yet.
+- **File transfer** (branch `farside-transfer`, commit `4450ecf`, not yet on `pocketdesk-remote-chat`) declares FileTimestamp with `C617.1` (files in the app or app-group container) and `3B52.1` (files the person picked) in the phone, Mac and share-extension manifests. That covers both.
+- **Rule.** When file transfer integrates, keep `C617.1` in every manifest whose target reads timestamps. If file transfer slips, add `C617.1` to the Mac manifest on its own. Re-check the phone's Xcode Privacy Report on the archive.
+
 Opt out of "iPhone and iPad apps on Apple silicon Macs" in ASC (Pricing and Availability). A phone app that controls a Mac makes no sense running on a Mac, and ASC makes availability opt-out, not opt-in. [V]
 
 ## 9. Go/no-go list
@@ -202,6 +260,10 @@ Severity: **BLOCKER** stops submission, **HIGH** likely rejection or bad first w
 | B12 | Export compliance decision and, if needed, France declaration or exclusion; annual BIS report plan | PRIVACY-POLICY.md section 4 | Owner and counsel | O | 9 Oct |
 | B13 | Fresh-user test: someone who has never seen the app completes install, pair, control, purchase | PRODUCT section 9 acceptance | Two dry runs | O | 28 Oct |
 | B14 | Persistent Content Capture request filed (affects Mac re-approval prompts, not iOS review) | Apple form exists; approval time unknown | [O] Submit now | O | 2 Oct |
+| B15 | Anywhere products: Multiseat = No | Multiseat on by default since 16 Sep 2026. Disabling it after approval leaves existing group subscriptions renewing, and the backend refuses those `ASSIGNED` seats. | [O] Set before the first approval (LAUNCH-CHECKLIST) | O | Before submission |
+| B16 | Age-assurance handling deployed | `RESCIND_CONSENT` handling and migration `0004_consent_stop.sql` are in source (`farside-commerce-review`), not deployed | [E] Apply migration 0004 and deploy to staging, then production, after approval | E | 23 Oct (staging), 30 Oct (prod) |
+| B17 | Updated agreements accepted (EU Attachment 14, effective 1 Oct 2026) | Apple news 18 Aug 2026 | [O] Account Holder accepts in the developer account | O | 1 Oct |
+| B18 | Age-rating questionnaire complete, social-media questions included | Required for submissions from Sep 2026 | [O] Answer all "No" (section 5b) | O | 30 Oct |
 
 **Gate on 2 November (go/no-go):** all BLOCKER rows closed; sandbox purchase and restore verified on TestFlight; a cellular session and a forced-relay session pass on two different real networks; NAT64 pass; 50 connection cycles and a 30-minute session (PRODUCT section 9); privacy answers entered; review notes and video finished; production backend has run 72 hours without a restart-worthy incident. If B1 or B2 is red on 23 October, use the fallback in LAUNCH-CHECKLIST.md (ship 1.0 as free local-network only and add Farside Remote in 1.1).
 
@@ -220,6 +282,15 @@ Severity: **BLOCKER** stops submission, **HIGH** likely rejection or bad first w
 | "Mirror of specific software" | 4.2.7 | Show the metadata is generic, no launcher, no named services. If they still classify it as specific, ask before conceding (a): the LAN-only condition would end remote access. |
 
 Appeals: one appeal to the App Review Board per rejection, after responding to any information request. Expedited review is only for critical bug fixes or event-tied apps, not launch dates. [V] Timeline reference: Apple states about 90% of submissions are reviewed in under 24 hours, so a 3 Nov submission leaves room for about two rejection cycles before 17 Nov if each fix is resubmitted the same day (this is my planning estimate, not an Apple commitment). [V for the statistic]
+
+## 11. Sources for the 30 September 2026 refresh
+
+- App Review Guidelines, raw HTML re-read 30 Sep 2026 ("Last Updated: June 8, 2026"; 4.2.7 and 4.5.4 text): https://developer.apple.com/app-store/review/guidelines/
+- Multiseat on by default (16 Sep 2026): https://developer.apple.com/news/?id=likeohx4 ; purchase options: https://developer.apple.com/help/app-store-connect/manage-subscriptions/manage-purchase-options-for-auto-renewable-subscriptions
+- `inAppOwnershipType` (`ASSIGNED`): https://developer.apple.com/documentation/appstoreserverapi/inappownershiptype ; `revocationType` (`ASSIGNMENT_REVOKE`): https://developer.apple.com/documentation/appstoreserverapi/revocationtype ; notifications changelog: https://developer.apple.com/documentation/appstoreservernotifications/app-store-server-notifications-changelog
+- `RESCIND_CONSENT`: https://developer.apple.com/documentation/appstoreservernotifications/notificationtype ; `appData`: https://developer.apple.com/documentation/appstoreservernotifications/appdata ; `responseBodyV2DecodedPayload`: https://developer.apple.com/documentation/appstoreservernotifications/responsebodyv2decodedpayload
+- Texas: https://developer.apple.com/news/?id=sg176nne (3 Jun 2026), https://developer.apple.com/news/?id=2ezb6jhj ; Utah and Louisiana: https://developer.apple.com/news/?id=f5zj08ey ; `requiredRegulatoryFeatures`: https://developer.apple.com/documentation/declaredagerange/agerangeservice/requiredregulatoryfeatures (also the Xcode 27.0 27A266a `DeclaredAgeRange.swiftinterface`)
+- Agreements / Attachment 14: https://developer.apple.com/news/?id=0cgo95n6 ; social-media age-rating questions: https://developer.apple.com/news/?id=tlur8uvi ; age-rating values: https://developer.apple.com/help/app-store-connect/reference/app-information/age-ratings-values-and-definitions/
 
 ## Sources (all checked 2026-09-28)
 

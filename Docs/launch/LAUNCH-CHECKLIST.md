@@ -151,13 +151,14 @@ Checkboxes are for you to tick. "Done when" is an observable check.
 ## 4. Apple Developer Program and App Store Connect: steps only the owner can do
 
 1. Confirm the membership, Account Holder, account type and renewal date (Membership details).
-2. Business: sign the **Paid Apps Agreement**, add **bank account**, submit **tax forms**. Non-US developers complete a US tax form (W-8BEN, W-8BEN-E or W-8ECI as directed) and any local forms. The tax forms must be in place before banking is processed. [V]
+2. Business: sign the **Paid Apps Agreement**, and accept every updated agreement, including **Attachment 14** of the Developer Program License Agreement (EU terms, effective 1 Oct 2026; APP-REVIEW-RISKS B17). Add a **bank account** and submit **tax forms**. Non-US developers complete a US tax form (W-8BEN, W-8BEN-E or W-8ECI as directed) and any local forms. The tax forms must be in place before banking is processed. [V]
 3. Enroll in the **Small Business Program** (15% instead of 30% first-year commission). [V]
 4. Declare **DSA trader status** and publishable contact details. [V]
 5. Certificates, Identifiers and Profiles: Developer ID Application certificate (Account Holder); App ID `com.roshan.PocketDesk.Remote` with capabilities (In-App Purchase; Push Notifications and Associated Domains only if D8 says yes); App ID `com.roshan.PocketDesk.RemoteHost` for the Mac; APNs key if push is in scope (see APPLE-PORTAL-SETUP-2026-09-28.md; move the `.p8` to a private folder and never share it).
 6. **Persistent Content Capture** request form (Apple sign-in required). [V]
-7. Create the app record; set name, subtitle, categories, age rating, privacy policy URL, copyright, Support and Marketing URLs; App Privacy; export compliance; DSA; availability including the Apple-silicon-Mac opt-out; pricing (free).
+7. Create the app record; set name, subtitle, categories, age rating (answer every questionnaire item, including the social-media questions; all "No", expected 4+; APP-REVIEW-RISKS section 5b), privacy policy URL, copyright, Support and Marketing URLs; App Privacy; export compliance; DSA; availability including the Apple-silicon-Mac opt-out; pricing (free).
 8. Monetization: subscription group, products, prices, free trial, Family Sharing off, billing grace, review screenshot; App Store Server Notifications URLs; In-App Purchase key download (one time). See SUBSCRIPTION-SETUP.md section 9.
+   - [ ] **Anywhere subscription: Multiseat = No (set before first approval).** On both products, open Purchase Options and choose "No, don't allow multiseat purchases". It is on by default since 16 Sep 2026. Existing group seats keep renewing after a late switch-off, and the backend refuses `ASSIGNED` seats (APP-REVIEW-RISKS B15).
 9. TestFlight: test information, internal and external groups, public link if wanted, export compliance per build.
 10. Submission: attach build, IAP group and products; App Review information (contact, notes, demo video); version release option.
 11. Later: reply to App Review messages; appeal if needed; release.
