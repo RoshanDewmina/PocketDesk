@@ -44,6 +44,7 @@ struct RemoteAction: Codable {
     var agentAlert: AgentAlertFrame? = nil
     /// Clock-sync probe on a heartbeat: the phone sends it, the host echoes it (see `ClockProbe`).
     var clock: ClockProbe? = nil
+    var videoFeedback: VideoFeedback? = nil
     /// The client's screen in device pixels, on heartbeats, so the host caps the capture to it.
     var screenPixels: PixelSize? = nil
     /// G4: the desktop region the phone shows, on heartbeats (only after `SessionFeature.viewportCapture`).
@@ -97,6 +98,8 @@ try pencil?.validate(action: action, interaction: interaction)
         guard action != "inputApplied" || inputAppliedReceipt != nil else { throw RemoteError.invalidMessage }
         try hostStream?.validate()
         guard hostStream == nil || action == "capture" else { throw RemoteError.invalidMessage }
+        try videoFeedback?.validate()
+        guard videoFeedback == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
         try clock?.validate()
         guard clock == nil || action == "heartbeat" else { throw RemoteError.invalidMessage }
         try screenPixels?.validate()

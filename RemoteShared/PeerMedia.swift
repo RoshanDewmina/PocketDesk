@@ -217,6 +217,7 @@ final class PeerMedia: NSObject {
         StreamTuning.prepareRuntime()
         RTCInitializeSSL()
     }()
+    let videoFeedback = VideoFeedbackContext()
     private var sessionVideoFactory: RTCPeerConnectionFactory?
     private static let compatibleFactory: RTCPeerConnectionFactory = {
         StreamTuning.prepareRuntime()
@@ -321,6 +322,65 @@ final class PeerMedia: NSObject {
     #endif
     #endif
     private var connection: RTCPeerConnection?
+    static let refinementChannelLabel = "refinement-1"
+    private let refinementLock = NSLock()
+    private var refinementChannel: RTCDataChannel?
+    private var refinementEnded = false
+    private let refinementQueue = DispatchQueue(label: "farside.video.refinement-channel")
+    private let refinementQueueKey = DispatchSpecificKey<UInt8>()
+    private let refinementPipe = VideoRefinementChannel()
+    private var refinementTimer: DispatchSourceTimer?
+    private var requestedRefinementCapture = false
+    var refinementCaptureEnabled: Bool { refinementLock.lock(); defer { refinementLock.unlock() }; return !refinementEnded && requestedRefinementCapture }
+    func requestRefinementCapture(_ enabled: Bool) {
+        refinementLock.lock(); if !refinementEnded { requestedRefinementCapture = enabled && nativeDesktopCodecs }; refinementLock.unlock()
+    }
+    func configureVideoRefinement(enabled: Bool, geometry: UInt64, scope: UInt64) {
+        if enabled && isHost { openRefinementChannel() }
+        let operation = { self.refinementPipe.configure(enabled: enabled, geometry: geometry, scope: scope) }
+        if DispatchQueue.getSpecific(key: refinementQueueKey) != nil { operation() } else { refinementQueue.sync(execute: operation) }
+    }
+    private func openRefinementChannel() {
+        refinementLock.lock(); let needed = !refinementEnded && refinementChannel == nil; refinementLock.unlock()
+        guard needed, let connection else { return }
+        let config = RTCDataChannelConfiguration(); config.isOrdered = true
+        guard let next = connection.dataChannel(forLabel: Self.refinementChannelLabel, configuration: config) else { return }
+        refinementLock.lock(); let adopt = !refinementEnded && refinementChannel == nil
+        if adopt { refinementChannel = next }; refinementLock.unlock()
+        if adopt { next.delegate = self } else { next.close() }
+    }
+    private func adoptRefinementChannel(_ channel: RTCDataChannel) -> Bool {
+        refinementLock.lock(); defer { refinementLock.unlock() }
+        guard !isHost, nativeDesktopCodecs, !refinementEnded, refinementChannel == nil,
+              channel.isOrdered, channel.isReliable else { return false }
+        refinementChannel = channel; return true // Dormant until authenticated capture capabilities/epoch arrive.
+    }
+    private func isRefinementChannel(_ channel: RTCDataChannel) -> Bool {
+        refinementLock.lock(); defer { refinementLock.unlock() }; return refinementChannel === channel
+    }
+    private var aggregateBulkBuffered: UInt64? {
+        fileLock.lock(); refinementLock.lock()
+        let file = fileChannel, image = refinementChannel, ended = refinementEnded
+        refinementLock.unlock(); fileLock.unlock()
+        guard !ended, file == nil || file?.readyState == .open, image == nil || image?.readyState == .open else { return nil }
+        // Retained native references stay alive; getters run outside Swift locks/callback ownership.
+        let (total, overflow) = (file?.bufferedAmount ?? 0).addingReportingOverflow(image?.bufferedAmount ?? 0)
+        return overflow ? nil : total
+    }
+    private func sendRefinement(_ data: Data) -> Bool {
+        guard data.count <= BulkAdmissionPolicy.maximumMessageBytes, localGateOpen(),
+              let packet = try? JSONDecoder().decode(VideoRefinementChunk.self, from: data),
+              videoFeedback.permitsRefinement(packet.identity, sender: isHost && !packet.ack),
+              resourceBudget.permits(bytes: data.count, at: ProcessInfo.processInfo.systemUptime,
+                controlBuffered: controlBufferedAmount, fileBuffered: aggregateBulkBuffered) else { return false }
+        refinementLock.lock()
+        let target = refinementEnded ? nil : refinementChannel
+        refinementLock.unlock()
+        guard let target, target.readyState == .open, localGateOpen() else { return false }
+        // Only the refinement owner queue sends; close drains that queue before detachment.
+        // Never hold a Swift channel lock while entering a public native send/callback.
+        return target.sendData(RTCDataBuffer(data: data, isBinary: true))
+    }
     private let pointerLock = NSLock()
     private var pointerChannel: RTCDataChannel?
     private var pointerAllowed = false
@@ -476,7 +536,7 @@ final class PeerMedia: NSObject {
     }
 
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true,
-         localLink: ProvenLocalLink? = nil, fileChannel: Bool = false, hevc: Bool? = nil) {
+         localLink: ProvenLocalLink? = nil, fileChannel: Bool = false, hevc: Bool? = nil, videoLTR: Bool = false) {
         self.isHost = isHost
         acceptsFileChannel = fileChannel
         self.forceRelay = forceRelay
@@ -499,6 +559,16 @@ final class PeerMedia: NSObject {
             }
             monitor.start(queue: DispatchQueue(label: "farside.quality.link"))
         }
+        refinementQueue.setSpecific(key: refinementQueueKey, value: 1)
+        refinementPipe.send = { [weak self] data, _ in self?.sendRefinement(data) ?? false }
+        refinementPipe.image = { [weak self] image in self?.videoFeedback.acceptRefinement(image) }
+        videoFeedback.setRefinementImage { [weak self] image in
+            self?.refinementQueue.async { [weak self] in self?.refinementPipe.offer(image, at: ProcessInfo.processInfo.systemUptime) }
+        }
+        let timer = DispatchSource.makeTimerSource(queue: refinementQueue)
+        timer.schedule(deadline: .now() + 0.05, repeating: 0.05)
+        timer.setEventHandler { [weak self] in self?.refinementPipe.pump(at: ProcessInfo.processInfo.systemUptime) }
+        refinementTimer = timer; timer.resume()
         let configuration = RTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan
         configuration.enableDscp = nativeDesktopCodecs && localLink != nil // Request only; wire/network behavior unmeasured.
@@ -516,8 +586,8 @@ final class PeerMedia: NSObject {
                 self.onState?("failed")
             }
         }
-        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure)
-        let ownedDecoderFactory = PocketDeskVideoDecoderFactory(hevc: useHEVC, frameTiming: frameTimingReceiver?.log, onHEVCFailure: codecFailure)
+        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, preferLTR: videoLTR)
+        let ownedDecoderFactory = PocketDeskVideoDecoderFactory(hevc: useHEVC, frameTiming: frameTimingReceiver?.log, onHEVCFailure: codecFailure, videoFeedback: videoFeedback)
         var configuredFactory: RTCPeerConnectionFactory?
         #if os(macOS)
         if isHost {
@@ -1141,6 +1211,16 @@ final class PeerMedia: NSObject {
     }
 
     func close() {
+        videoFeedback.end()
+        let retireRefinement = { () -> RTCDataChannel? in
+            self.refinementPipe.end()
+            self.refinementLock.lock(); self.refinementEnded = true
+            let retired = self.refinementChannel; self.refinementChannel = nil; self.refinementLock.unlock()
+            return retired
+        }
+        let refinement = DispatchQueue.getSpecific(key: refinementQueueKey) != nil ? retireRefinement() : refinementQueue.sync(execute: retireRefinement)
+        refinement?.delegate = nil; refinement?.close()
+        refinementTimer?.cancel(); refinementTimer = nil
         pointerLock.lock(); pointerEnded = true; pointerAllowed = false; pendingPointer = nil
         let pointer = pointerChannel; pointerChannel = nil; pointerLock.unlock()
         pointer?.delegate = nil; pointer?.close()
@@ -1175,6 +1255,7 @@ final class PeerMedia: NSObject {
         file?.delegate = nil; file?.close()
         connection?.delegate = nil; connection?.close(); connection = nil
         candidates.removeAll(); video = nil
+        videoFeedback.end()
         sessionVideoFactory = nil
         #if os(iOS)
         phoneAudioFactory = nil
@@ -1257,6 +1338,9 @@ extension PeerMedia: RTCPeerConnectionDelegate {
         // as the channel opens, and the WebRTC wrapper drops any message that arrives while the
         // channel has no delegate. Main-queue order still adopts the channel before its messages.
         dataChannel.delegate = self
+        if dataChannel.label == Self.refinementChannelLabel {
+            if !adoptRefinementChannel(dataChannel) { dataChannel.delegate = nil; dataChannel.close() }; return
+        }
         if dataChannel.label == Self.pointerChannelLabel {
             if !adoptPointerChannel(dataChannel) { dataChannel.delegate = nil; dataChannel.close() }
             return
@@ -1310,15 +1394,17 @@ extension PeerMedia: FileChannelLink {
     func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool {
         guard localGateOpen() else { return false }
         return resourceBudget.permits(bytes: bytes, at: now,
-            controlBuffered: controlBufferedAmount, fileBuffered: fileBufferedAmount)
+            controlBuffered: controlBufferedAmount, fileBuffered: fileChannelOpen ? aggregateBulkBuffered : nil)
     }
 }
 extension PeerMedia: RTCDataChannelDelegate {
     func dataChannel(_ dataChannel: RTCDataChannel, didChangeBufferedAmount amount: UInt64) {
+        if isRefinementChannel(dataChannel) { onFileBufferedAmountChange?(); return }
         guard isFileChannel(dataChannel) else { return }
         onFileBufferedAmountChange?()
     }
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        if isRefinementChannel(dataChannel) { return }
         if isPointerChannel(dataChannel) { return }
         if isFileChannel(dataChannel) {
             if dataChannel.readyState == .closed { onFileBufferedAmountChange?() }
@@ -1334,6 +1420,15 @@ extension PeerMedia: RTCDataChannelDelegate {
         }
     }
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        if isRefinementChannel(dataChannel) {
+            guard buffer.isBinary, buffer.data.count <= BulkAdmissionPolicy.maximumMessageBytes, localGateOpen(),
+                  let packet = try? JSONDecoder().decode(VideoRefinementChunk.self, from: buffer.data), packet.ack == isHost else { return }
+            refinementQueue.async { [weak self] in
+                guard let self, self.localGateOpen() else { return }
+                self.refinementPipe.receive(buffer.data, at: ProcessInfo.processInfo.systemUptime)
+            }
+            return
+        }
         if isPointerChannel(dataChannel) {
             if buffer.isBinary { receivePointer(buffer.data) }
             return

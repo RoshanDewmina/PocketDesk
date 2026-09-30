@@ -1118,7 +1118,7 @@ final class RemoteCoordinator: ObservableObject {
             sessionFailed(serverRequired ? "The connection service requires a relay, but none was provided." : "Relay-only test requires a configured TURN service.")
             return
         }
-        let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink, fileChannel: true)
+        let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink, fileChannel: true, videoLTR: isHost && peerFeatures.contains(SessionFeature.videoLTR))
         media = peer
         if let engine = fileTransfer {
             peer.onFileMessage = { [weak engine] data in engine?.receiveChunk(data) }

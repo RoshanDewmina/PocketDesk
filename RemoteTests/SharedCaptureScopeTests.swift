@@ -25,7 +25,7 @@ final class SharedCaptureScopeTests: XCTestCase {
             }
             let features = SharedCaptureScopePolicy.features(SessionFeature.host + [SessionFeature.couch, SessionFeature.displayScale], kind: kind)
             XCTAssertEqual(Set(features), [SessionFeature.captureScope, SessionFeature.backgroundPause,
-                                          SessionFeature.ladder, SessionFeature.macVitals, SessionFeature.liveViewOnly])
+                                          SessionFeature.ladder, SessionFeature.macVitals, SessionFeature.liveViewOnly, SessionFeature.videoLTR, SessionFeature.videoRefinement])
         }
     }
 

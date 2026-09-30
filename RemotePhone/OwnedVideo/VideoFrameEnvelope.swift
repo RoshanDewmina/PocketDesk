@@ -9,6 +9,7 @@ struct VideoFrameEnvelope {
     let arrivalMs: Double
     let marker: BenchMarker?
     let originalSource: Bool
+    var videoTag: VideoFrameTag? = nil
 
     struct Pixels {
         let buffer: CVPixelBuffer

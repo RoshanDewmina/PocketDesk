@@ -567,6 +567,7 @@ struct NativeSessionView: View {
                                        onOriginalSourcePresented: { [weak model] identity, receipt in
                                            Task { @MainActor in model?.originalSourcePresented(identity, receipt: receipt) }
                                        },
+                                       videoFeedback: connection.media?.videoFeedback,
                                        onFrame: model.frameReceived)
                         .frame(width: picture.width, height: picture.height)
                         .offset(x: picture.minX, y: picture.minY)

@@ -37,21 +37,26 @@ final class PocketDeskVideoEncoderFactory: NSObject, RTCVideoEncoderFactory {
     private let frameTiming: HostFrameTimingLog?
     private let hevc: Bool
     private let onHEVCFailure: (() -> Void)?
-    init(hevc: Bool = false, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil, onHEVCFailure: (() -> Void)? = nil) {
-        self.onHEVCFailure = onHEVCFailure; self.hevc = hevc; self.counters = counters; self.frameTiming = frameTiming
+    private let videoFeedback: VideoFeedbackContext?
+    private let preferLTR: Bool
+    init(hevc: Bool = false, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil, onHEVCFailure: (() -> Void)? = nil, videoFeedback: VideoFeedbackContext? = nil, preferLTR: Bool = false) {
+        self.preferLTR = preferLTR; self.videoFeedback = videoFeedback; self.onHEVCFailure = onHEVCFailure; self.hevc = hevc; self.counters = counters; self.frameTiming = frameTiming
         super.init()
     }
     func supportedCodecs() -> [RTCVideoCodecInfo] {
-        (hevc ? [OwnedHEVCConfiguration.codecInfo] : []) + (NativeCodecCapability.supportsLevel52 ? H264LevelPolicy.codecs(fallback.supportedCodecs()) : fallback.supportedCodecs())
+        let codecs = NativeCodecCapability.supportsLevel52 ? H264LevelPolicy.codecs(fallback.supportedCodecs()) : fallback.supportedCodecs()
+        let high = codecs.filter { $0.name == kRTCVideoCodecH264Name && OwnedVTConfiguration(parameters: $0.parameters)?.lowLatency == true }
+        let ordered = preferLTR ? high + codecs.filter { value in !high.contains { $0.name == value.name && $0.parameters == value.parameters } } : codecs
+        return (hevc ? [OwnedHEVCConfiguration.codecInfo] : []) + ordered
     }
     func createEncoder(_ info: RTCVideoCodecInfo) -> (any RTCVideoEncoder)? {
         if hevc, info.name == "H265", let configuration = OwnedHEVCConfiguration(parameters: info.parameters) {
-            return ResilientVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, onFailure: onHEVCFailure)
+            return ResilientVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, onFailure: onHEVCFailure, videoFeedback: videoFeedback)
         }
         if info.name == kRTCVideoCodecH264Name {
             #if os(macOS)
             if !VideoEncoderCompatibility.isOn, let configuration = OwnedVTConfiguration(parameters: info.parameters) {
-                return ResilientVTEncoder(configuration: configuration, codecInfo: info, counters: counters, frameTiming: frameTiming)
+                return ResilientVTEncoder(configuration: configuration, codecInfo: info, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback)
             }
             #endif
             return StreamTuning.current.encoderRestart ? DesktopH264Encoder(codecInfo: info, counters: counters, frameTiming: frameTiming) : RTCVideoEncoderH264(codecInfo: info)
@@ -65,14 +70,16 @@ final class PocketDeskVideoDecoderFactory: NSObject, RTCVideoDecoderFactory {
     private let frameTiming: PhoneFrameTimingLog?
     private let hevc: Bool
     private let onHEVCFailure: (() -> Void)?
-    init(hevc: Bool = false, frameTiming: PhoneFrameTimingLog? = nil, onHEVCFailure: (() -> Void)? = nil) { self.onHEVCFailure = onHEVCFailure; self.hevc = hevc; self.frameTiming = frameTiming; super.init() }
+    private let videoFeedback: VideoFeedbackContext?
+    init(hevc: Bool = false, frameTiming: PhoneFrameTimingLog? = nil, onHEVCFailure: (() -> Void)? = nil, videoFeedback: VideoFeedbackContext? = nil) { self.videoFeedback = videoFeedback; self.onHEVCFailure = onHEVCFailure; self.hevc = hevc; self.frameTiming = frameTiming; super.init() }
     func supportedCodecs() -> [RTCVideoCodecInfo] {
         (hevc ? [OwnedHEVCConfiguration.codecInfo] : []) + (NativeCodecCapability.supportsLevel52 ? H264LevelPolicy.codecs(fallback.supportedCodecs()) : fallback.supportedCodecs())
     }
     func createDecoder(_ info: RTCVideoCodecInfo) -> (any RTCVideoDecoder)? {
-        if hevc, info.name == "H265", let configuration = OwnedHEVCConfiguration(parameters: info.parameters) { return OwnedHEVCDecoder(configuration: configuration, timing: frameTiming, onFailure: onHEVCFailure) }
+        if hevc, info.name == "H265", let configuration = OwnedHEVCConfiguration(parameters: info.parameters) { let decoder = OwnedHEVCDecoder(configuration: configuration, timing: frameTiming, onFailure: onHEVCFailure); return videoFeedback.map { VideoFeedbackDecoder(inner: decoder, context: $0, hevc: true) } ?? decoder }
         if info.name == kRTCVideoCodecH264Name {
-            return frameTiming.map { TimedH264Decoder(log: $0) } ?? RTCVideoDecoderH264()
+            let decoder: any RTCVideoDecoder = frameTiming.map { TimedH264Decoder(log: $0) } ?? RTCVideoDecoderH264()
+            return videoFeedback.map { VideoFeedbackDecoder(inner: decoder, context: $0) } ?? decoder
         }
         return fallback.createDecoder(info)
     }

@@ -10,6 +10,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     var counters: StreamCounters?
     var beforeDraw: ((MTKView) -> Void)?
     var fillsFrame = false
+    var videoFeedback: VideoFeedbackContext?
     /// Only an actual original source drawable presentation may report this receipt.
     /// Consumers enqueue owner-validated work; they must not synchronously hop to main.
     private var originalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
@@ -91,6 +92,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         fence.invalidate(); mailbox.invalidate()
         wakeLock.lock(); closed = true; wakeLock.unlock()
         beforeDraw = nil; timingAvailable = false
+        videoFeedback = nil
         originalSourcePresented = nil // The terminal fence already drained any earlier callback.
         metal.isPaused = true; metal.isHidden = true
         fallback?.isEnabled = false; fallback?.removeFromSuperview(); fallback = nil
@@ -155,6 +157,23 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                         Float(crop.width / CGFloat(CVPixelBufferGetWidth(buffer))), Float(crop.height / CGFloat(CVPixelBufferGetHeight(buffer)))),
             color: SIMD4(pixels.conversion?.kr ?? 0, pixels.conversion?.kb ?? 0, pixels.conversion?.yOffset ?? 0, pixels.conversion?.yScale ?? 1),
             range: SIMD4(pixels.conversion?.uvScale ?? 1, Float((pixels.bgra ? 0.5 : 1) / Double(CVPixelBufferGetWidth(buffer))), Float((pixels.bgra ? 0.5 : 1) / Double(CVPixelBufferGetHeight(buffer))), pixels.transfer == .srgb ? 1 : 0))
+        var refinement = RefinementUniform(rect: .zero, options: .zero)
+        var refinementPixels: CVPixelBuffer?
+        var refinementTexture: MTLTexture?
+        if envelope.originalSource, let tag = envelope.videoTag, let roi = tag.refinement,
+           roi.width == CVPixelBufferGetWidth(buffer), roi.height == CVPixelBufferGetHeight(buffer),
+           let pixels = videoFeedback?.refinement(for: tag, at: ProcessInfo.processInfo.systemUptime) {
+            var wrapper: CVMetalTexture?
+            if CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault, cache, pixels, nil, .bgra8Unorm,
+                roi.roiWidth, roi.roiHeight, 0, &wrapper) == kCVReturnSuccess, let wrapper, let texture = CVMetalTextureGetTexture(wrapper) {
+                wrappers.append(wrapper); refinementPixels = pixels; refinementTexture = texture
+                refinement = RefinementUniform(rect: SIMD4(Float(roi.x) / Float(roi.width), Float(roi.y) / Float(roi.height),
+                    Float(roi.roiWidth) / Float(roi.width), Float(roi.roiHeight) / Float(roi.height)),
+                    options: SIMD4(1, roi.transfer == "srgb" ? 1 : 0, 0.5 / Float(roi.roiWidth), 0.5 / Float(roi.roiHeight)))
+            }
+        }
+        encoder.setFragmentBytes(&refinement, length: MemoryLayout<RefinementUniform>.stride, index: 1)
+        encoder.setFragmentTexture(refinementTexture ?? first, index: 2)
         encoder.setRenderPipelineState(pipeline)
         encoder.setVertexBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
@@ -174,8 +193,8 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             }
         }
         #endif
-        command.addCompletedHandler { [mailbox, wrappers, envelope] _ in
-            withExtendedLifetime((wrappers, envelope)) { mailbox.completed(submission.id) }
+        command.addCompletedHandler { [mailbox, wrappers, envelope, refinementPixels] _ in
+            withExtendedLifetime((wrappers, envelope, refinementPixels)) { mailbox.completed(submission.id) }
         }
         command.present(drawable); command.commit()
     }
@@ -189,6 +208,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         stamp = max(stamp + 1, Int64(ProcessInfo.processInfo.systemUptime * 1e9))
         fallback?.renderFrame(RTCVideoFrame(buffer: envelope.frame.buffer, rotation: envelope.frame.rotation, timeStampNs: stamp))
     }
+    private struct RefinementUniform { var rect: SIMD4<Float>; var options: SIMD4<Float> }
     private struct Uniforms {
         var extent: SIMD2<Float>; var rotation: Int32; var bgra: Int32
         var crop: SIMD4<Float>; var color: SIMD4<Float>; var range: SIMD4<Float>
@@ -197,9 +217,19 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     #include <metal_stdlib>
     using namespace metal;
     struct U { float2 extent; int rotation; int bgra; float4 crop; float4 color; float4 range; };
+    struct R { float4 rect; float4 options; };
     struct V { float4 position [[position]]; float2 uv; };
     float3 displayEncoded(float3 rgb, constant U &u) {
         if(u.range.w==0) return rgb;
+        float3 v=max(rgb,float3(0));
+        float3 linear=select(pow((v+0.055)/1.055,float3(2.4)),v/12.92,v<=0.04045);
+        return select(1.099*pow(linear,float3(0.45))-0.099,4.5*linear,linear<0.018);
+    }
+    float3 refined(float3 base, float2 uv, constant R &r, texture2d<float> image) {
+        if(r.options.x==0 || any(uv<r.rect.xy) || any(uv>=r.rect.xy+r.rect.zw)) return base;
+        constexpr sampler s(filter::linear,address::clamp_to_edge);
+        float3 rgb=image.sample(s,clamp((uv-r.rect.xy)/r.rect.zw,r.options.zw,1-r.options.zw)).rgb;
+        if(r.options.y==0) return rgb;
         float3 v=max(rgb,float3(0));
         float3 linear=select(pow((v+0.055)/1.055,float3(2.4)),v/12.92,v<=0.04045);
         return select(1.099*pow(linear,float3(0.45))-0.099,4.5*linear,linear<0.018);
@@ -213,18 +243,18 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         if(u.rotation==3) uv=float2(1-uv.y,uv.x);
         V o; o.position=float4(p[i]*u.extent,0,1); o.uv=u.crop.xy+uv*u.crop.zw; return o;
     }
-    fragment float4 fragmentNV12(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> y [[texture(0)]], texture2d<float> uv [[texture(1)]]) {
+    fragment float4 fragmentNV12(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> y [[texture(0)]], texture2d<float> uv [[texture(1)]], constant R &r [[buffer(1)]], texture2d<float> refinement [[texture(2)]]) {
         constexpr sampler s(filter::linear,address::clamp_to_edge);
         float2 t=clamp(v.uv,u.crop.xy+u.range.yz,u.crop.xy+u.crop.zw-u.range.yz);
         float l=(y.sample(s,t).r-u.color.z)*u.color.w;
         float2 c=(uv.sample(s,t).rg-float2(128.0/255.0))*u.range.x;
         float kr=u.color.x,kb=u.color.y,kg=1-kr-kb;
-        return float4(displayEncoded(float3(l+2*(1-kr)*c.y,l-2*kb*(1-kb)/kg*c.x-2*kr*(1-kr)/kg*c.y,l+2*(1-kb)*c.x),u),1);
+        return float4(refined(displayEncoded(float3(l+2*(1-kr)*c.y,l-2*kb*(1-kb)/kg*c.x-2*kr*(1-kr)/kg*c.y,l+2*(1-kb)*c.x),u),v.uv,r,refinement),1);
     }
-    fragment float4 fragmentBGRA(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> image [[texture(0)]]) {
+    fragment float4 fragmentBGRA(V v [[stage_in]], constant U &u [[buffer(0)]], texture2d<float> image [[texture(0)]], constant R &r [[buffer(1)]], texture2d<float> refinement [[texture(2)]]) {
         constexpr sampler s(filter::linear,address::clamp_to_edge);
         float2 t=clamp(v.uv,u.crop.xy+u.range.yz,u.crop.xy+u.crop.zw-u.range.yz);
-        return float4(displayEncoded(image.sample(s,t).rgb,u),1);
+        return float4(refined(displayEncoded(image.sample(s,t).rgb,u),v.uv,r,refinement),1);
     }
     """
 }

@@ -415,6 +415,7 @@ final class PhoneRemoteModel: ObservableObject {
         usefulSession.invalidate()
         usefulPicture.invalidate()
         VideoPresentationSession.invalidateActive()
+        if !keepingPiP { connection.media?.videoFeedback.configure(allowed: false, geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1) }
         inlinePresentationAdmission = nil
         if !keepingPiP {
             // A queued enter may already have suspended the host. Retiring its content
@@ -445,6 +446,20 @@ final class PhoneRemoteModel: ObservableObject {
             captureHealthAt: lastCaptureHealth, healthy: captureHealthy, picture: sessionMode == .picture,
             trackPresent: connection.remoteVideo != nil, blocked: blocked, now: now)
         let inline = sceneIsActive && !privacyShield && !contentConcealed ? proof : nil
+        if let peer = connection.media {
+            let supportsLTR = hostFeatures.contains(SessionFeature.videoLTR)
+            peer.videoFeedback.configure(allowed: proof != nil && (supportsLTR || hostFeatures.contains(SessionFeature.videoRefinement)),
+                ltr: supportsLTR, refinement: hostFeatures.contains(SessionFeature.videoRefinement), geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
+            peer.configureVideoRefinement(enabled: proof != nil && hostFeatures.contains(SessionFeature.videoRefinement), geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
+            peer.videoFeedback.setFeedback { [weak self, weak peer] packet, epoch in
+                DispatchQueue.main.async {
+                    guard let self, let peer, self.connection.media === peer, self.geometryEpoch == epoch,
+                          self.captureHealthy, self.hostFeatures.contains(SessionFeature.videoLTR),
+                          self.connection.presentationDeadline(at: ProcessInfo.processInfo.systemUptime) != nil else { return }
+                    _ = self.connection.sendControl(RemoteAction(action: "heartbeat", epoch: epoch, videoFeedback: packet))
+                }
+            }
+        }
         if inlinePresentationAdmission?.identity != inline?.identity { VideoPresentationSession.invalidateActive() }
         inlinePresentationAdmission = inline
         let mayPreroll = sceneIsActive && !privacyShield && !contentConcealed
@@ -2743,6 +2758,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
     /// Raw decoded source callback; must be thread-safe (LivePiPController.offer is thread-safe).
     var onSourceFrame: ((VideoFrameEnvelope) -> Void)?
     var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
+    var videoFeedback: VideoFeedbackContext?
     let onFrame: () -> Void
 
     static func contentMode(fillsFrame: Bool) -> UIView.ContentMode { fillsFrame ? .scaleToFill : .scaleAspectFit }
@@ -2774,7 +2790,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
         context.coordinator.session?.onOriginalSourcePresented = onOriginalSourcePresented
         context.coordinator.session?.configure(admission: admission, counters: counters, statistics: statistics,
             sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth, fillsFrame: fillsFrame,
-            mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame)
+            mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame, videoFeedback: videoFeedback)
     }
     static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.invalidate(); view.subviews.forEach { $0.removeFromSuperview() } }
 }

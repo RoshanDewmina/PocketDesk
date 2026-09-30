@@ -1768,6 +1768,7 @@ final class RemoteHostModel: ObservableObject {
         if displaysStaleFromCouch { restartForDisplaysChangedInCouch(); return }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
+        peer.requestRefinementCapture(connection.peerFeatures.contains(SessionFeature.videoRefinement))
         peer.setSystemAudioEnabled(!captureScopeViewOnly && allowSystemAudio && !liveViewOnly)
         if sessionStartedAt == nil {
             sessionStartedAt = Date()
@@ -2155,6 +2156,10 @@ final class RemoteHostModel: ObservableObject {
             return
         }
         if action.action == "heartbeat" {
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, sessionHealthy,
+               connection.peerFeatures.contains(SessionFeature.videoLTR), let feedback = action.videoFeedback {
+                connection.media?.videoFeedback.receive(feedback, epoch: action.epoch)
+            }
             lastPhoneHeartbeatAt = ProcessInfo.processInfo.systemUptime
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, let quality = action.streamQuality {
                 capture.setQuality(quality)
@@ -2498,6 +2503,7 @@ final class RemoteHostModel: ObservableObject {
     private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
         let base = SessionFeature.host.filter {
+            if ($0 == SessionFeature.videoLTR || $0 == SessionFeature.videoRefinement) && !connection.peerFeatures.contains($0) { return false }
             if $0 == SessionFeature.pencilInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.pencilInput) || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             if $0 == SessionFeature.causalInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             return ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
@@ -2513,6 +2519,10 @@ final class RemoteHostModel: ObservableObject {
         // A caller's Couch flag can be up to one tick old; a token must reflect health at this moment.
         let healthy = sessionState == .couch ? requestedHealthy && refreshCouchHealth() : requestedHealthy
         let features = connection.peerFeatures
+        connection.media?.videoFeedback.configure(allowed: healthy && sessionState == .picture && active && !phonePause.isPaused &&
+            (features.contains(SessionFeature.videoLTR) || features.contains(SessionFeature.videoRefinement)),
+            ltr: features.contains(SessionFeature.videoLTR), refinement: features.contains(SessionFeature.videoRefinement), geometry: inputEpoch.value, scope: captureScopeEpoch)
+        connection.media?.configureVideoRefinement(enabled: healthy && sessionState == .picture && active && !phonePause.isPaused && features.contains(SessionFeature.videoRefinement), geometry: inputEpoch.value, scope: captureScopeEpoch)
         let state = MacShareBlocker.sessionState(
             presence: presence ?? (displayAsleep ? .displayAsleep : nil),
             phoneUnderstands: features.contains(MacShareBlocker.feature) || features.contains(MacShareBlocker.approvalFeature),
@@ -2992,6 +3002,8 @@ final class RemoteHostModel: ObservableObject {
         inputEpoch.beginSession()
         input.invalidateQueued(); inputFreshness.expireTokens()
         input.resetNativeSequence()
+        connection.media?.videoFeedback.configure(allowed: false, geometry: inputEpoch.value, scope: captureScopeEpoch)
+        connection.media?.configureVideoRefinement(enabled: false, geometry: inputEpoch.value, scope: captureScopeEpoch)
         connection.setHostInputEpoch(inputEpoch.value)
     }
 
