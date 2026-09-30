@@ -210,7 +210,7 @@ export function supportPage(assets: Assets) {
 ${pageHero({
   crumbs,
   cap: "Support",
-  title: html`Help is near.`,
+  title: html`Help is <em>near.</em>`,
   lead: html`Setup steps, how to steer, what every message in the app means, and how to reach a person. Most fixes are <b>one step</b>.`,
 })}
 <div class="w">

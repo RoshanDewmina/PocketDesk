@@ -189,7 +189,7 @@ export function privacyPage(assets: Assets) {
 ${pageHero({
   crumbs,
   cap: "Privacy policy",
-  title: html`Your screen is yours.`,
+  title: html`Your screen is <em>yours.</em>`,
   lead: html`How Farside handles information across the iPhone and iPad app, the Mac helper, our connection service and this website. The short version: <b>no account, no ads, no tracking</b>, and we never see your screen.`,
   extra: html`<p class="meta-row"><span class="cap">Last updated · <b>${config.legalUpdated}</b></span><span class="cap">Effective · <b>to be confirmed</b></span></p>`,
 })}

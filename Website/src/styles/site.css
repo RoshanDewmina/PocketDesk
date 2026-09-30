@@ -1966,16 +1966,19 @@ a.store {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  opacity: 0.5;
-  background:
-    radial-gradient(circle, rgba(237, 232, 223, 0.9) 0 1px, transparent 1.6px) 13px 29px / 173px 131px,
-    radial-gradient(circle, rgba(237, 232, 223, 0.55) 0 0.8px, transparent 1.3px) 71px 7px / 97px 89px,
-    radial-gradient(circle, rgba(237, 232, 223, 0.35) 0 0.7px, transparent 1.2px) 41px 53px / 61px 67px;
-  -webkit-mask: linear-gradient(90deg, transparent, #000 40%);
-  mask: linear-gradient(90deg, transparent, #000 40%);
+  opacity: 0.6;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='480' height='360'%3E%3Cg fill='%23EDE8DF'%3E%3Ccircle cx='79.2' cy='248.3' r='1.07' fill-opacity='0.66'/%3E%3Ccircle cx='230.0' cy='77.8' r='1.21' fill-opacity='0.77'/%3E%3Ccircle cx='387.8' cy='184.5' r='0.95' fill-opacity='0.58'/%3E%3Ccircle cx='113.3' cy='1.1' r='0.83' fill-opacity='0.49'/%3E%3Ccircle cx='281.0' cy='24.9' r='1.21' fill-opacity='0.77'/%3E%3Ccircle cx='111.5' cy='83.8' r='0.54' fill-opacity='0.28'/%3E%3Ccircle cx='478.8' cy='265.9' r='1.29' fill-opacity='0.82'/%3E%3Ccircle cx='295.6' cy='12.3' r='0.80' fill-opacity='0.46'/%3E%3Ccircle cx='238.8' cy='41.7' r='1.36' fill-opacity='0.87'/%3E%3Ccircle cx='176.9' cy='55.7' r='1.24' fill-opacity='0.78'/%3E%3Ccircle cx='59.9' cy='334.1' r='0.91' fill-opacity='0.54'/%3E%3Ccircle cx='265.0' cy='123.5' r='0.94' fill-opacity='0.57'/%3E%3Ccircle cx='89.7' cy='13.4' r='1.28' fill-opacity='0.81'/%3E%3Ccircle cx='112.7' cy='280.9' r='0.69' fill-opacity='0.39'/%3E%3Ccircle cx='465.0' cy='321.8' r='1.18' fill-opacity='0.74'/%3E%3Ccircle cx='366.1' cy='209.1' r='1.16' fill-opacity='0.72'/%3E%3Ccircle cx='58.8' cy='171.5' r='1.24' fill-opacity='0.79'/%3E%3Ccircle cx='96.5' cy='332.3' r='1.30' fill-opacity='0.83'/%3E%3Ccircle cx='196.6' cy='131.5' r='0.91' fill-opacity='0.54'/%3E%3Ccircle cx='185.2' cy='358.1' r='0.85' fill-opacity='0.50'/%3E%3Ccircle cx='12.9' cy='33.6' r='1.15' fill-opacity='0.72'/%3E%3Ccircle cx='476.6' cy='178.6' r='0.94' fill-opacity='0.57'/%3E%3Ccircle cx='264.2' cy='269.3' r='0.70' fill-opacity='0.39'/%3E%3Ccircle cx='292.3' cy='200.3' r='1.06' fill-opacity='0.65'/%3E%3Ccircle cx='86.7' cy='61.2' r='0.81' fill-opacity='0.48'/%3E%3Ccircle cx='445.0' cy='124.8' r='1.04' fill-opacity='0.64'/%3E%3Ccircle cx='147.2' cy='37.2' r='0.56' fill-opacity='0.29'/%3E%3Ccircle cx='390.6' cy='279.7' r='0.84' fill-opacity='0.49'/%3E%3Ccircle cx='328.0' cy='243.3' r='1.31' fill-opacity='0.83'/%3E%3Ccircle cx='460.0' cy='146.5' r='1.39' fill-opacity='0.89'/%3E%3Ccircle cx='461.5' cy='212.6' r='1.29' fill-opacity='0.82'/%3E%3Ccircle cx='235.6' cy='135.2' r='0.72' fill-opacity='0.41'/%3E%3Ccircle cx='420.5' cy='58.4' r='0.56' fill-opacity='0.30'/%3E%3Ccircle cx='386.5' cy='278.6' r='0.93' fill-opacity='0.56'/%3E%3Ccircle cx='401.8' cy='18.8' r='0.73' fill-opacity='0.42'/%3E%3Ccircle cx='139.1' cy='151.0' r='0.65' fill-opacity='0.36'/%3E%3Ccircle cx='33.3' cy='121.7' r='1.31' fill-opacity='0.83'/%3E%3Ccircle cx='472.1' cy='268.5' r='0.93' fill-opacity='0.56'/%3E%3Ccircle cx='121.1' cy='345.2' r='0.97' fill-opacity='0.59'/%3E%3Ccircle cx='349.7' cy='10.2' r='0.69' fill-opacity='0.39'/%3E%3Ccircle cx='402.4' cy='286.3' r='1.29' fill-opacity='0.82'/%3E%3Ccircle cx='288.7' cy='153.4' r='1.02' fill-opacity='0.63'/%3E%3Ccircle cx='407.7' cy='110.9' r='0.98' fill-opacity='0.60'/%3E%3Ccircle cx='132.5' cy='276.6' r='0.51' fill-opacity='0.26'/%3E%3Ccircle cx='328.9' cy='343.4' r='0.52' fill-opacity='0.27'/%3E%3Ccircle cx='285.0' cy='231.8' r='1.27' fill-opacity='0.80'/%3E%3C/g%3E%3C/svg%3E") 0 0 / 480px 360px;
+  -webkit-mask: linear-gradient(90deg, transparent 60%, #000 85%);
+  mask: linear-gradient(90deg, transparent 60%, #000 85%);
+  display: none;
 }
 .page-hero {
   isolation: isolate;
+}
+@media (min-width: 900px) {
+  .page-hero::before {
+    display: block;
+  }
 }
 .page-hero .cap,
 .page-hero .eyebrow {

@@ -181,7 +181,7 @@ export function comparePage(assets: Assets) {
   const body = html`${guideHero({
     crumbs,
     cap: `Compare · as of ${AS_OF}`,
-    title: html`Farside, compared.`,
+    title: html`Farside, <em>compared.</em>`,
     lead: html`How Farside lines up against other ways to use a Mac from an iPhone or iPad, from each product’s public information. Farside isn’t released yet, so its column describes what’s in the beta and what’s planned.`,
     meta: "Facts checked 28 September 2026",
   })}
