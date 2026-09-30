@@ -85,6 +85,7 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var displayAsleep = false
     @Published private(set) var openAtLogin = false
     @Published private(set) var chimeOnConnect: Bool
+    @Published private(set) var allowSystemAudio = false
     @Published private(set) var allowFileTransfer: Bool
     @Published private(set) var timedPause = HostTimedPause()
     @Published private(set) var unavailableReason: HostAvailabilityNote?
@@ -296,6 +297,7 @@ final class RemoteHostModel: ObservableObject {
             openAtLogin: openAtLogin,
             chimeOnConnect: chimeOnConnect,
             allowFileTransfer: allowFileTransfer,
+            allowSystemAudio: allowSystemAudio,
             pausedUntil: timedPause.resumesAt,
             session: status.isSessionLive ? HostSessionReadout.parse(connection.diagnostics) : nil,
             sessionStartedAt: status.isSessionLive ? sessionStartedAt : nil,
@@ -781,6 +783,14 @@ final class RemoteHostModel: ObservableObject {
         timedPauseTask?.cancel()
         timedPauseTask = nil
         timedPause.cancel()
+    }
+
+    func setAllowSystemAudio(_ enabled: Bool) {
+        guard allowSystemAudio != enabled else { return }
+        allowSystemAudio = enabled
+        connection.media?.setSystemAudioEnabled(enabled)
+        capture.setSystemAudioEnabled(enabled)
+        if connection.connected, active, !phonePause.isPaused, sessionState == .picture { beginCapture() }
     }
 
     func setAllowFileTransfer(_ enabled: Bool) {
@@ -1516,6 +1526,7 @@ final class RemoteHostModel: ObservableObject {
         if displaysStaleFromCouch { restartForDisplaysChangedInCouch(); return }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
+        peer.setSystemAudioEnabled(allowSystemAudio)
         if sessionStartedAt == nil {
             sessionStartedAt = Date()
             sessionsThisLaunch += 1

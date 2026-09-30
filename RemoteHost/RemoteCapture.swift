@@ -183,6 +183,13 @@ final class RemoteCapture {
     private var exclusionGeneration: UInt64 = 0
     private var exclusionTask: Task<Bool, Never>?
 
+    /// System output is a separate, explicit host consent. All apps on the Mac may be audible.
+    /// The host restarts capture after this immediate fence so the SCK configuration matches consent.
+    func setSystemAudioEnabled(_ enabled: Bool) {
+        streamPeer?.setSystemAudioEnabled(enabled)
+        session?.fenceAudio()
+    }
+
     func setQuality(_ quality: StreamQuality) {
         guard quality != requestedQuality else { return }
         requestedQuality = quality
@@ -237,6 +244,7 @@ final class RemoteCapture {
         resetCursor()
         streamPeer = nil
         let previous = session
+        previous?.fenceAudio()
         session = nil
         await previous?.stop()
         try Task.checkCancellation()
@@ -320,6 +328,7 @@ final class RemoteCapture {
         captureStarted = false
         streamPeer = nil
         let previous = session
+        previous?.fenceAudio()
         session = nil
         guard let previous else { return nil }
         return Task { await previous.stop() }
@@ -507,7 +516,7 @@ enum RemoteCaptureConfiguration {
     /// it to. Without a crop the configuration is the whole-display one, unchanged.
     static func streamConfiguration(output: CapturePixelDimensions, region: CaptureRegion?, showsCursor: Bool,
                                     fps: Int, displayRefreshHz: Double?,
-                                    tuning: StreamTuning) -> SCStreamConfiguration {
+                                    tuning: StreamTuning, capturesAudio: Bool = false) -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
         configuration.width = output.width
         configuration.height = output.height
@@ -521,7 +530,11 @@ enum RemoteCaptureConfiguration {
                                                                   displayRefreshHz: displayRefreshHz)
         configuration.queueDepth = CaptureRatePolicy.queueDepth(for: fps)
         configuration.showsCursor = showsCursor
-        configuration.capturesAudio = false
+        configuration.capturesAudio = capturesAudio
+        configuration.excludesCurrentProcessAudio = true
+        configuration.sampleRate = 48_000
+        configuration.channelCount = 2
+        configuration.captureMicrophone = false
         configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         configuration.colorSpaceName = StreamColor.captureColorSpaceName
         configuration.colorMatrix = StreamColor.captureYCbCrMatrix
@@ -541,6 +554,12 @@ private struct CaptureInputs: Equatable {
 private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDelegate {
     private let queue = DispatchQueue(label: "PocketDesk.capture", qos: .userInteractive)
     private var stream: SCStream!
+    private let audioConverter = SystemAudioPCMConverter()
+    private let audioEpoch: UInt64
+    private let capturesAudio: Bool
+    private let audioPeer: PeerMedia
+
+    func fenceAudio() { audioPeer.endSystemAudioCapture(audioEpoch) }
     private var peer: PeerMedia?
     private var timer: DispatchSourceTimer?
     private var health = CaptureHealthState()
@@ -593,10 +612,13 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             throw CaptureSizingError.invalidSource
         }
         let configuration = RemoteCaptureConfiguration.streamConfiguration(
-            output: output, region: nil, showsCursor: true, fps: fps, displayRefreshHz: refresh, tuning: tuning
+            output: output, region: nil, showsCursor: true, fps: fps, displayRefreshHz: refresh, tuning: tuning, capturesAudio: peer.systemAudioEnabled
         )
         self.display = display
         self.peer = peer
+        audioPeer = peer
+        capturesAudio = peer.systemAudioEnabled
+        audioEpoch = peer.beginSystemAudioCapture()
         self.tuning = tuning
         self.geometry = geometry
         let inputs = CaptureInputs(quality: quality, showsCursor: true, clientLongEdge: clientLongEdge)
@@ -711,7 +733,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         let configuration = RemoteCaptureConfiguration.streamConfiguration(
             output: output, region: region, showsCursor: inputs.showsCursor,
             fps: min(targetFPS, inputs.ladderFPS ?? targetFPS),
-            displayRefreshHz: displayRefreshHz, tuning: tuning
+            displayRefreshHz: displayRefreshHz, tuning: tuning, capturesAudio: capturesAudio
         )
         let previousRegion = appliedRegion
         let bufferVersionAtStart = bufferVersion
@@ -774,6 +796,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     func start() async throws {
         try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: queue)
+        if capturesAudio { try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: queue) }
         try await stream.startCapture()
         let stoppedDuringStart = queue.sync { stopping }
         if stoppedDuringStart {
@@ -795,7 +818,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     }
 
     func stop() async {
+        fenceAudio()
         queue.sync {
+            audioConverter.reset()
             if !stopping {
                 stopping = true
                 timer?.cancel()
@@ -821,6 +846,11 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of type: SCStreamOutputType
     ) {
+        if type == .audio {
+            guard !stopping, capturesAudio, let peer else { return }
+            for packet in audioConverter.packets(from: sampleBuffer) { peer.submitSystemAudio(packet.pcm, epoch: audioEpoch, hostTime: packet.hostTime) }
+            return
+        }
         guard type == .screen, sampleBuffer.isValid,
               let attachments = CMSampleBufferGetSampleAttachmentsArray(
                 sampleBuffer,
@@ -853,6 +883,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private func reportStopped(_ error: Error) {
         guard !stopping, !failureReported else { return }
         failureReported = true
+        fenceAudio()
+        audioConverter.reset()
         health.observe(.stopped, at: CACurrentMediaTime())
         publishHealthAndIdleFrame()
         let callback = onFailure

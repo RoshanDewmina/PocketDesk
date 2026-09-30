@@ -148,6 +148,7 @@ extension HostActions {
             setAllowControl: model.setControl,
             setKeepAwake: model.setKeepAwake,
             setChimeOnConnect: model.setChimeOnConnect,
+            setAllowSystemAudio: model.setAllowSystemAudio,
             setAllowFileTransfer: model.setAllowFileTransfer,
             setOpenAtLogin: model.setOpenAtLogin,
             setAutomaticRecovery: model.setAutomaticRecovery,

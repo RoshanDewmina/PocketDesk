@@ -220,6 +220,7 @@ targets:
           destination: executables
     settings:
       base:
+        SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost
         # D35: Apple silicon only (M1 or later), in every configuration.
         ARCHS: arm64
@@ -271,6 +272,7 @@ targets:
       - package: WebRTC
     settings:
       base:
+        SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_IDENTITY: '-'
@@ -305,6 +307,7 @@ targets:
       - RemoteShared/ThirdPartyNotices.txt
     settings:
       base:
+        SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_IDENTITY: '-'
@@ -319,6 +322,7 @@ targets:
       - package: WebRTC
     settings:
       base:
+        SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.BrowserFixture
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: PocketDesk Synthetic Browser Test
@@ -334,6 +338,7 @@ targets:
               RemoteShared/LegibilityChart.swift, RemoteShared/BenchRenderers.swift]
     settings:
       base:
+        SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.FarsideTestPad
         PRODUCT_NAME: Farside Test Pad
         GENERATE_INFOPLIST_FILE: YES
@@ -353,6 +358,7 @@ targets:
       - package: WebRTC
     settings:
       base:
+        SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.E2EStubHost
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Farside E2E Stub Host

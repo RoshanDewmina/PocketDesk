@@ -2218,6 +2218,13 @@ struct NativeSessionView: View {
 
     @ViewBuilder private var pictureSection: some View {
         Section {
+            Toggle("Listen to Mac audio", isOn: Binding(get: { !model.macAudioMuted },
+                                                       set: { model.setMacAudioMuted(!$0) }))
+                .accessibilityIdentifier("remote.macAudio")
+            Text("Requires Share Mac audio on your Mac. Sound may come from every app. Stops when you leave Farside or dictate.")
+                .font(.footnote).foregroundStyle(Farside.Palette.ash)
+        } header: { sectionHeader("Mac audio") }
+        Section {
             FarsideSegmented(label: "Picture quality",
                              options: StreamQuality.allCases.map { (value: $0, title: $0.title) },
                              selection: $model.streamQuality)
