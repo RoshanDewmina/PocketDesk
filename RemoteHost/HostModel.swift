@@ -2408,7 +2408,7 @@ final class RemoteHostModel: ObservableObject {
                       connection.connected, active, !sessionRefused, !liveViewOnly, !captureScopeViewOnly, !phonePause.isPaused,
                       expected.epoch == inputEpoch.value, expected.sessionID == connection.presentationSessionID.uuidString,
                       expected.valid(at: now), connection.presentationDeadline(at: now) != nil else { return .denied }
-                return operation()
+                return peer.withInputPostingAuthority { operation() } ?? .denied
             }
         }
         guard connection.media === peer, connection.invitation == invitation else { return }
@@ -2657,7 +2657,10 @@ final class RemoteHostModel: ObservableObject {
             }
             guard released else { connection.dropPeerSession(); return }
             invalidateTextFocus(); clipboard.reset(); fileTransfer.reset()
-            connection.media?.setSystemAudioEnabled(false); capture.setSystemAudioEnabled(false)
+            // Restore only the Mac owner's existing producer consent when leaving live PiP.
+            // Phone playback remains muted until the person explicitly enables it again.
+            let audio = allowSystemAudio && !captureScopeViewOnly && !next
+            connection.media?.setSystemAudioEnabled(audio); capture.setSystemAudioEnabled(audio)
             applyControlState(notifyPhone: true)
             sendCaptureHealth(sessionHealthy, viewOnlyRequestID: action.liveViewOnlyRequestID)
         case "pause":
