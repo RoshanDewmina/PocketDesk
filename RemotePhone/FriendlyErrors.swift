@@ -6,7 +6,7 @@ struct FriendlyError: Identifiable, Equatable {
     enum Kind: String {
         case napping, unreachable, busy, locked, switchedUser, needsPlan, codeRejected, declined,
              approvalTimedOut, verifyFailed, keychain, relayUnavailable, connectionLost, sessionGlitch,
-             serviceNotReady, screenSharingOff, anywhereUnverified
+             serviceNotReady, screenSharingOff, anywhereUnverified, screenRecordingOff
     }
 
     enum Action: Equatable {
@@ -44,7 +44,7 @@ struct FriendlyError: Identifiable, Equatable {
         case .locked, .switchedUser, .verifyFailed, .keychain, .declined: FarsideArt.locked
         case .needsPlan, .relayUnavailable, .serviceNotReady, .anywhereUnverified: FarsideArt.anywhere
         case .codeRejected: FarsideArt.staleCode
-        case .screenSharingOff: FarsideArt.screenOff
+        case .screenSharingOff, .screenRecordingOff: FarsideArt.screenOff
         case .unreachable, .busy, .approvalTimedOut, .connectionLost, .sessionGlitch: FarsideArt.unreachable
         }
     }
@@ -65,6 +65,7 @@ struct FriendlyError: Identifiable, Equatable {
         case .relayUnavailable, .serviceNotReady: "Relay unavailable"
         case .unreachable, .connectionLost: "Couldn’t reach it"
         case .screenSharingOff: "Screen sharing stopped"
+        case .screenRecordingOff: "Screen Recording off on Mac"
         case .anywhereUnverified: "Anywhere not confirmed"
         }
     }
@@ -105,6 +106,12 @@ struct FriendlyError: Identifiable, Equatable {
     static let screenSharingOff = FriendlyError(kind: .screenSharingOff, headline: "Your Mac stopped sharing",
                                                 message: "Its screen stopped reaching Farside. Screen Recording may need renewing, and only someone at the Mac can do that.",
                                                 fix: "Open Farside on your Mac and check Screen Recording.")
+
+    /// The Mac answered and said so itself: it has no Screen Recording grant.
+    static let screenRecordingOff = FriendlyError(kind: .screenRecordingOff, headline: "Screen Recording is off on your Mac",
+                                                  accent: "off",
+                                                  message: "Your Mac answered, but Farside there isn’t allowed to record the screen, so it can’t share it.",
+                                                  fix: "On your Mac: System Settings → Privacy & Security → Screen Recording → Farside.")
 
     static let busy = FriendlyError(kind: .busy, headline: "Hang on a second",
                                     message: "Farside is still closing your last session.",
@@ -174,6 +181,7 @@ struct FriendlyError: Identifiable, Equatable {
     /// Maps a stopped connection's status. `previous` tells an approval timeout from any other.
     static func from(status: String, previous: String?, macName: String) -> FriendlyError? {
         let lower = status.lowercased()
+        if lower == "mac unavailable: \(MacShareBlocker.screenRecordingOff.rawValue.lowercased())" { return .screenRecordingOff }
         if lower.hasPrefix("connection timed out") {
             return previous == "Approve this phone on your Mac" ? .approvalTimedOut : .unreachable(macName)
         }

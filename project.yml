@@ -101,7 +101,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: $(FARSIDE_ENTITLEMENTS_$(FARSIDE_ENABLE_PUSH))
         FARSIDE_ENABLE_PUSH: 'NO'
         FARSIDE_APNS_ENVIRONMENT: development
-        FARSIDE_ENTITLEMENTS_NO: ''
+        # The App Group (Connect widget snapshot) is in both; only push and domains wait for the flag.
+        FARSIDE_ENTITLEMENTS_NO: RemotePhone/FarsideAppGroup.entitlements
         FARSIDE_ENTITLEMENTS_YES: RemotePhone/Farside.entitlements
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect directly to your paired Mac when it's on the same Wi-Fi.
@@ -141,6 +142,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_FILE: FarsideWidgets/Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Farside
+        CODE_SIGN_ENTITLEMENTS: FarsideWidgets/FarsideWidgets.entitlements
         SKIP_INSTALL: YES
   RemotePhoneTests:
     type: bundle.unit-test

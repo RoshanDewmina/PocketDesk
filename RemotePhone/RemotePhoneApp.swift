@@ -106,6 +106,8 @@ final class PhoneRemoteModel: ObservableObject {
     /// Why the last session ended, for the Lock Screen and Dynamic Island.
     private(set) var sessionEndReason: FarsideSessionAttributes.EndReason?
     @Published private(set) var hostPresence: HostPresence?
+    /// A grant the Mac reports missing during this session (only `accessibilityOff` arrives here).
+    @Published private(set) var sessionBlocker: MacShareBlocker?
     /// The Mac's privacy curtain, or nil when the Mac does not support one.
     @Published private(set) var curtainState: PrivacyCurtainState?
     /// A short explanation shown over the live session, cleared after a few seconds.
@@ -114,6 +116,8 @@ final class PhoneRemoteModel: ObservableObject {
     private var recoveryNoticeShown = false
     /// Why the last session ended, when the Mac itself said so.
     @Published private(set) var macNotice: String?
+    /// What the Mac said as the last session ended (asleep, locked, another user), until the next session.
+    @Published private(set) var lastDeparture: HostPresence?
     private var departureReason: HostPresence?
     private var continuity = BackgroundContinuity()
     private let background: BackgroundExecution
@@ -243,6 +247,7 @@ final class PhoneRemoteModel: ObservableObject {
             self.contentConcealed = false
             self.resumeState = .none
             self.macNotice = nil
+            self.lastDeparture = nil
             self.sessionEndReason = nil
             self.backgroundHoldEndsAt = nil
             self.phoneLoad = nil
@@ -1129,6 +1134,7 @@ final class PhoneRemoteModel: ObservableObject {
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             hostFeatures = Set(action.features ?? [])
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
+            sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
             let previousCurtain = curtainState
             curtainState = curtainSupported
                 ? action.curtain.flatMap(PrivacyCurtainState.init(rawValue:)) ?? .off : nil
@@ -1403,6 +1409,7 @@ final class PhoneRemoteModel: ObservableObject {
         textStatus = ""
         hostFeatures = []
         hostPresence = nil
+        sessionBlocker = nil
         curtainState = nil
         recoveryNoticeShown = false
         reducedPictureNoticeShown = false
@@ -1410,6 +1417,7 @@ final class PhoneRemoteModel: ObservableObject {
         heartbeatsSent = 0
         if let departureReason {
             macNotice = Self.notice(for: departureReason)
+            lastDeparture = departureReason
             if sessionEndReason == nil { sessionEndReason = .macStopped }
         }
         departureReason = nil

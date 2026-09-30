@@ -400,28 +400,20 @@ struct HomeView: View {
         Task { @MainActor in
             let outcome = await MacReachabilityProbe().check(invitation)
             checking = false
+            MacWidgetSync.shared.update(macName: invitation.name, observed: MacWidgetSync.presence(for: outcome))
             guard !connection.isRunning, !connection.connected else { return }
             checkedHealth = .checked(outcome, lastReached: lastReached.map { LastReached.spoken($0) })
         }
     }
 
     private func connect() {
-        let access = AnywhereAccess.shared
         guard !checking else { return }
-        guard !access.removalPending, !access.localCleanupPending, !access.removalRecoveryRequired else {
+        let decision = ConnectGate.connect(model: model, onboarding: onboarding, restartsRunning: true) {
             showServerData = true
-            return
         }
-        lastFailure = nil
-        checkedHealth = nil
-        model.error = ""
-        onboarding.beforeConnect {
-            Task { @MainActor in
-                // Only waits when this phone has Anywhere and its token is due; never more than a few seconds.
-                await AnywhereAccess.shared.prepareForConnection()
-                guard AnywhereAccess.shared.phoneConnectionAllowed else { showServerData = true; return }
-                connection.start()
-            }
+        if decision == .proceed {
+            lastFailure = nil
+            checkedHealth = nil
         }
     }
 

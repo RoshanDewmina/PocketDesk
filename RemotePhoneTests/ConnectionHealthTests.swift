@@ -115,6 +115,43 @@ final class ConnectionHealthTests: XCTestCase {
         XCTAssertEqual(session(capture: false)?.isSlowOnly, false)
     }
 
+    func testTheMacsScreenRecordingRefusalBecomesItsOwnState() {
+        let error = FriendlyError.from(status: "Mac unavailable: screenRecordingOff", previous: nil, macName: "Studio Mac")
+        XCTAssertEqual(error?.kind, .screenRecordingOff)
+        let health = ConnectionHealth.after(FriendlyError.screenRecordingOff)
+        XCTAssertEqual(health.state, .screenRecordingOff)
+        XCTAssertEqual(health.title, "Screen Recording is off on your Mac")
+        XCTAssertEqual(health.nextStep, "On your Mac: System Settings → Privacy & Security → Screen Recording → Farside.")
+        XCTAssertFalse(health.causeUnknown)
+        XCTAssertNil(FriendlyError.from(status: "Mac unavailable: somethingElse", previous: nil, macName: "Studio Mac"),
+                     "An unknown reason is not guessed at")
+    }
+
+    func testAccessibilityOffIsReportedOnlyWhenTheMacSaysSo() {
+        let health = ConnectionHealth.session(.init(connected: true, fresh: true, captureHealthy: true,
+                                                    route: "Direct", roundTripMs: 12, blocker: .accessibilityOff))
+        XCTAssertEqual(health?.state, .accessibilityOff)
+        XCTAssertEqual(health?.nextStep, "On your Mac: System Settings → Privacy & Security → Accessibility → Farside.")
+        XCTAssertEqual(health?.isSlowOnly, false)
+        XCTAssertEqual(session(capture: false)?.state, .sharingStopped)
+        XCTAssertNil(session(), "A view-only session without the Mac's report is not blamed on Accessibility")
+    }
+
+    func testEveryConnectTakesTheSamePreConnectChecks() {
+        XCTAssertEqual(ConnectGate.decide(paired: true, connected: false, running: false, restartsRunning: false,
+                                          removalBlocked: true), .serverData, "A pending removal is checked for Siri and links too")
+        XCTAssertEqual(ConnectGate.decide(paired: true, connected: false, running: false, restartsRunning: false,
+                                          removalBlocked: false), .proceed)
+        XCTAssertEqual(ConnectGate.decide(paired: false, connected: false, running: false, restartsRunning: true,
+                                          removalBlocked: true), .notPaired)
+        XCTAssertEqual(ConnectGate.decide(paired: true, connected: true, running: true, restartsRunning: true,
+                                          removalBlocked: false), .alreadyUnderWay)
+        XCTAssertEqual(ConnectGate.decide(paired: true, connected: false, running: true, restartsRunning: false,
+                                          removalBlocked: false), .alreadyUnderWay, "A system request never restarts an attempt")
+        XCTAssertEqual(ConnectGate.decide(paired: true, connected: false, running: true, restartsRunning: true,
+                                          removalBlocked: false), .proceed, "The Home button may")
+    }
+
     func testTheConnectPromptAsksOnlyAnIdlePairedPhone() {
         XCTAssertEqual(ConnectPromptSheet.macName(paired: "Studio Mac", connected: false, running: false), "Studio Mac")
         XCTAssertNil(ConnectPromptSheet.macName(paired: nil, connected: false, running: false), "Not paired: Home shows pairing")

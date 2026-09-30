@@ -10,7 +10,7 @@ struct ConnectionHealth: Equatable {
         case macAsleep, macLocked, otherUser, displayAsleep, sharingStopped, pictureStalled, reconnecting,
              needsAnywhere, anywhereUnconfirmed, relayUnavailable, relaySlow, networkSlow, sessionClosing,
              macBusy, notApproved, stoppedToStaySafe, pairingProblem, serviceUnreachable, macAnswering,
-             unreachable
+             unreachable, screenRecordingOff, accessibilityOff
     }
 
     enum Action: Equatable {
@@ -61,6 +61,9 @@ struct ConnectionHealth: Equatable {
             return ConnectionHealth(state: .sharingStopped, title: "Mac stopped sharing its screen",
                                     detail: "Your Mac reported that its screen capture stopped.",
                                     nextStep: step)
+        case .screenRecordingOff:
+            return ConnectionHealth(state: .screenRecordingOff, title: failure.headline,
+                                    detail: failure.message, nextStep: failure.fix, action: .retry)
         case .needsPlan:
             return ConnectionHealth(state: .needsAnywhere, title: "Different network · Anywhere needed",
                                     detail: "Farside’s service allowed only a same-network route, and your Mac didn’t answer on it.",
@@ -130,6 +133,8 @@ struct ConnectionHealth: Equatable {
         /// "Direct" or "Relay" from the stream statistics.
         var route: String?
         var roundTripMs: Int?
+        /// A grant the Mac reported missing during the session.
+        var blocker: MacShareBlocker?
     }
 
     /// Nil while nothing is wrong. Order matters: a dropped connection explains a stalled picture,
@@ -155,6 +160,11 @@ struct ConnectionHealth: Equatable {
             return ConnectionHealth(state: .pictureStalled, title: "Picture paused",
                                     detail: "No new picture has arrived for a moment. The cause is unknown. Controls are paused.",
                                     nextStep: "Wait for it to return, or end and reconnect.")
+        }
+        if evidence.blocker == .accessibilityOff {
+            return ConnectionHealth(state: .accessibilityOff, title: "Accessibility is off on your Mac",
+                                    detail: "Your Mac reported that Farside there isn’t allowed to control it, so this session is view only.",
+                                    nextStep: "On your Mac: System Settings → Privacy & Security → Accessibility → Farside.")
         }
         if let rtt = evidence.roundTripMs, rtt >= slowRoundTripMs {
             if evidence.route == "Relay" {
