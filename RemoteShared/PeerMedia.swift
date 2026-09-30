@@ -162,6 +162,9 @@ final class PeerMedia: NSObject {
     var onDiagnostics: ((String) -> Void)?
     var onStreamStatistics: ((StreamStatsReport) -> Void)?
     var onSenderStatistics: ((StreamStatsReport) -> Void)?
+    /// `file` channel messages, delivered on WebRTC's thread; the receiver hops to its own queue.
+    var onFileMessage: ((Data) -> Void)?
+    var onFileBufferedAmountChange: (() -> Void)?
     let counters = StreamCounters()
     var captureMaximumDimension: Int?
     /// Phone: the latest sender stages forwarded by the Mac with its capture heartbeat.
@@ -203,6 +206,10 @@ final class PeerMedia: NSObject {
     }()
     private var connection: RTCPeerConnection?
     private var channel: RTCDataChannel?
+    /// Guarded by `fileLock`: file sends and receives run off the main thread.
+    private var fileChannel: RTCDataChannel?
+    private let fileLock = NSLock()
+    private let acceptsFileChannel: Bool
     private var source: RTCVideoSource?
     private var capturer: RTCVideoCapturer?
     private var video: RTCVideoTrack?
@@ -282,8 +289,9 @@ final class PeerMedia: NSObject {
     }
 
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true,
-         localLink: ProvenLocalLink? = nil) {
+         localLink: ProvenLocalLink? = nil, fileChannel: Bool = false) {
         self.isHost = isHost
+        acceptsFileChannel = fileChannel
         self.forceRelay = forceRelay
         self.localLink = localLink
         self.nativeDesktopCodecs = nativeDesktopCodecs
@@ -305,6 +313,14 @@ final class PeerMedia: NSObject {
             let config = RTCDataChannelConfiguration(); config.isOrdered = true
             channel = connection?.dataChannel(forLabel: "control", configuration: config)
             channel?.delegate = self
+            if fileChannel {
+                // A second ordered, reliable channel so file bytes never queue ahead of input. Older
+                // phones close any channel not labelled "control", which leaves their session untouched.
+                let fileConfig = RTCDataChannelConfiguration(); fileConfig.isOrdered = true
+                let file = connection?.dataChannel(forLabel: Self.fileChannelLabel, configuration: fileConfig)
+                file?.delegate = self
+                self.fileChannel = file
+            }
         }
     }
     func offer() {
@@ -572,6 +588,19 @@ final class PeerMedia: NSObject {
         return sent
     }
 
+    static let fileChannelLabel = "file"
+
+    private var openFileChannel: RTCDataChannel? {
+        fileLock.lock(); defer { fileLock.unlock() }
+        guard let fileChannel, fileChannel.readyState == .open else { return nil }
+        return fileChannel
+    }
+
+    var fileChannelOpen: Bool { openFileChannel != nil }
+
+    /// True when the selected route runs through a TURN relay.
+    var isRelayRoute: Bool { needsRelayRefresh }
+
     var controlBufferedAmount: UInt64? {
         guard !closed, let channel, channel.readyState == .open else { return nil }
         return channel.bufferedAmount
@@ -733,6 +762,8 @@ final class PeerMedia: NSObject {
         cadenceRenderer = nil; observedTrack = nil
         captureLock.lock(); closed = true; source = nil; capturer = nil; frameTransform = nil; captureLock.unlock()
         channel?.delegate = nil; channel?.close(); channel = nil
+        fileLock.lock(); let file = fileChannel; fileChannel = nil; fileLock.unlock()
+        file?.delegate = nil; file?.close()
         connection?.delegate = nil; connection?.close(); connection = nil
         candidates.removeAll(); video = nil
     }
@@ -808,6 +839,7 @@ extension PeerMedia: RTCPeerConnectionDelegate {
         // as the channel opens, and the WebRTC wrapper drops any message that arrives while the
         // channel has no delegate. Main-queue order still adopts the channel before its messages.
         dataChannel.delegate = self
+        if dataChannel.label == Self.fileChannelLabel, adoptFileChannel(dataChannel) { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.closed, dataChannel.label == "control", self.channel == nil else {
                 dataChannel.delegate = nil; dataChannel.close(); return
@@ -820,8 +852,38 @@ extension PeerMedia: RTCPeerConnectionDelegate {
         }
     }
 }
+extension PeerMedia: FileChannelLink {
+    /// Phone: adopts the host's `file` channel synchronously, so no early chunk finds it unowned.
+    fileprivate func adoptFileChannel(_ dataChannel: RTCDataChannel) -> Bool {
+        fileLock.lock(); defer { fileLock.unlock() }
+        guard !isHost, acceptsFileChannel, fileChannel == nil, dataChannel.isOrdered else { return false }
+        fileChannel = dataChannel
+        return true
+    }
+
+    fileprivate func isFileChannel(_ dataChannel: RTCDataChannel) -> Bool {
+        fileLock.lock(); defer { fileLock.unlock() }
+        return fileChannel === dataChannel
+    }
+
+    func sendFile(_ data: Data) -> Bool {
+        guard localGateOpen(), data.count <= FileTransferLimits.maximumMessageBytes,
+              let file = openFileChannel else { return false }
+        return file.sendData(RTCDataBuffer(data: data, isBinary: true))
+    }
+
+    var fileBufferedAmount: UInt64? { openFileChannel?.bufferedAmount }
+}
 extension PeerMedia: RTCDataChannelDelegate {
+    func dataChannel(_ dataChannel: RTCDataChannel, didChangeBufferedAmount amount: UInt64) {
+        guard isFileChannel(dataChannel) else { return }
+        onFileBufferedAmountChange?()
+    }
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        if isFileChannel(dataChannel) {
+            if dataChannel.readyState == .closed { onFileBufferedAmountChange?() }
+            return
+        }
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.closed, self.channel === dataChannel else { return }
             if dataChannel.readyState == .open {
@@ -832,6 +894,11 @@ extension PeerMedia: RTCDataChannelDelegate {
         }
     }
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        if isFileChannel(dataChannel) {
+            guard buffer.isBinary, buffer.data.count <= FileTransferLimits.maximumMessageBytes, localGateOpen() else { return }
+            onFileMessage?(buffer.data)
+            return
+        }
         arrivalLock.lock(); lastControlArrivalMs = MachClock.nowMs(); arrivalLock.unlock()
         guard buffer.isBinary, buffer.data.count <= 16384 else {
             DispatchQueue.main.async { [weak self] in

@@ -47,6 +47,8 @@ final class RemoteCoordinator: ObservableObject {
     /// the routes permitted by the service and clients; empty ICE alone is not a LAN boundary.
     @Published private(set) var entitlementRequired = false
     var media: PeerMedia?
+    /// Receives the `file` channel's chunks and buffer changes for every session's peer.
+    weak var fileTransfer: FileTransferEngine?
     private(set) var hostPair: HostPair?
     private(set) var invitation: PairInvitation?
     /// Sanitized mutation phase and Security status only; never pairing data.
@@ -600,8 +602,12 @@ final class RemoteCoordinator: ObservableObject {
             sessionFailed(serverRequired ? "The connection service requires a relay, but none was provided." : "Relay-only test requires a configured TURN service.")
             return
         }
-        let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink)
+        let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink, fileChannel: true)
         media = peer
+        if let engine = fileTransfer {
+            peer.onFileMessage = { [weak engine] data in engine?.receiveChunk(data) }
+            peer.onFileBufferedAmountChange = { [weak engine] in engine?.fileBufferedAmountChanged() }
+        }
         if isHost { peer.offer() }
         peer.onDiagnostics = { [weak self, weak peer] value in
             Task { @MainActor in if let self, let peer, self.media === peer { self.diagnostics = value } }

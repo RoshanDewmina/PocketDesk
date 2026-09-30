@@ -18,6 +18,8 @@ struct RemoteAction: Codable {
     var textFocusEditable: Bool? = nil
     // Session extensions (clipboard, background pause). Validated in SessionContinuity.swift.
     var clipboard: ClipboardFrame? = nil
+    /// File transfer control (`file` action, after `SessionFeature.fileTransfer`); bytes use the `file` channel.
+    var file: FileFrame? = nil
     var features: [String]? = nil
     var hostState: String? = nil
     /// Sender-side stream stages for the phone's optional statistics overlay. Older phones ignore it.
@@ -63,6 +65,7 @@ struct RemoteAction: Codable {
         guard (captureRegion == nil && ladder == nil && busy == nil) || action == "capture" else {
             throw RemoteError.invalidMessage
         }
+        guard file == nil || action == "file" else { throw RemoteError.invalidMessage }
         // Also before the early returns, so no other action can carry a display list.
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }

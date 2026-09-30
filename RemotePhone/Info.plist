@@ -15,6 +15,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>FarsidePrivacyURL</key>
 	<string>$(FARSIDE_PRIVACY_URL)</string>
 	<key>FarsideServiceBaseURL</key>
@@ -32,6 +34,8 @@
 		<string>Doto-Variable.ttf</string>
 		<string>InstrumentSerif-Italic.ttf</string>
 	</array>
+	<key>UIFileSharingEnabled</key>
+	<true/>
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
 </dict>

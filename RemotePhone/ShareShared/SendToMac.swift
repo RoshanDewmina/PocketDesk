@@ -1,0 +1,160 @@
+import Foundation
+
+/// What the app tells the Send to My Mac share extension through the App Group: the paired Mac's
+/// display name and whether a session is live now or was recently. Never keys, rooms, tokens or content.
+struct SendToMacBeacon: Codable, Equatable {
+    var macName: String
+    /// A live, foreground session that can take an item right away; refreshed while connected.
+    var liveUntil: Date?
+    var lastConnected: Date?
+    var filesSupported: Bool
+
+    /// Farside reconnects by itself within this window after leaving the screen.
+    static let reconnectWindow: TimeInterval = 15 * 60
+
+    func isLive(at now: Date) -> Bool { liveUntil.map { $0 > now } ?? false }
+
+    /// Live now, or connected recently enough that opening Farside reconnects without a tap.
+    func isConnectable(at now: Date) -> Bool {
+        isLive(at: now) || lastConnected.map { now.timeIntervalSince($0) <= Self.reconnectWindow } ?? false
+    }
+}
+
+/// One item from the share sheet waiting for the app. It expires quickly and the app asks before
+/// sending anything the extension could not hand over while Farside was live.
+struct SendToMacItem: Codable, Equatable, Identifiable {
+    enum Kind: String, Codable { case file, text, link }
+    let id: String
+    let kind: Kind
+    var name: String?
+    var bytes: Int64?
+    var text: String?
+    let created: Date
+    let expires: Date
+    /// Staged while the app was live, so the app sends it without asking again.
+    var immediate: Bool
+
+    static let lifetime: TimeInterval = 10 * 60
+    static let maximumTextBytes = 256 * 1024
+    static let maximumFileBytes: Int64 = 1 << 30
+    static let maximumLinkBytes = 2048
+}
+
+/// The app's report on an item it took, for the extension's progress view.
+struct SendToMacReceipt: Codable, Equatable {
+    enum State: String, Codable { case sending, sent, failed }
+    let id: String
+    var state: State
+    var fraction: Double?
+    var message: String
+}
+
+enum SendToMacOutbox {
+    static let appGroup = "group.com.roshan.PocketDesk"
+    static let outboxNotification = "com.roshan.PocketDesk.sendToMac.outbox"
+
+    static var root: URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
+            .appendingPathComponent("SendToMac", isDirectory: true)
+    }
+
+    // MARK: Beacon
+
+    static func loadBeacon(root: URL? = root) -> SendToMacBeacon? {
+        guard let url = root?.appendingPathComponent("beacon.json"),
+              let data = try? Data(contentsOf: url), data.count <= 4096 else { return nil }
+        return try? JSONDecoder().decode(SendToMacBeacon.self, from: data)
+    }
+
+    static func storeBeacon(_ beacon: SendToMacBeacon?, root: URL? = root) {
+        guard let root else { return }
+        let url = root.appendingPathComponent("beacon.json")
+        guard let beacon else { try? FileManager.default.removeItem(at: url); return }
+        guard let data = try? JSONEncoder().encode(beacon) else { return }
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try? data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+    }
+
+    // MARK: Items
+
+    private static func folder(_ id: String, root: URL?) -> URL? {
+        guard isValidID(id) else { return nil }
+        return root?.appendingPathComponent("Outbox", isDirectory: true).appendingPathComponent(id, isDirectory: true)
+    }
+
+    static func isValidID(_ id: String) -> Bool {
+        id.utf8.count == 32 && id.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+
+    static func makeID() -> String {
+        UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+    }
+
+    /// Stages an item with `payload` (a file the share sheet handed over) moved beside it.
+    static func stage(_ item: SendToMacItem, payload: URL? = nil, root: URL? = root) throws {
+        guard let folder = folder(item.id, root: root) else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        if let payload {
+            try FileManager.default.moveItem(at: payload, to: folder.appendingPathComponent("payload", isDirectory: false))
+        }
+        try JSONEncoder().encode(item).write(to: folder.appendingPathComponent("item.json"), options: .atomic)
+    }
+
+    static func payloadURL(for item: SendToMacItem, root: URL? = root) -> URL? {
+        folder(item.id, root: root)?.appendingPathComponent("payload", isDirectory: false)
+    }
+
+    /// Unexpired items, oldest first. Expired or unreadable ones are deleted on the way.
+    static func pending(at now: Date = Date(), root: URL? = root) -> [SendToMacItem] {
+        guard let outbox = root?.appendingPathComponent("Outbox", isDirectory: true),
+              let entries = try? FileManager.default.contentsOfDirectory(at: outbox, includingPropertiesForKeys: nil)
+        else { return [] }
+        var items: [SendToMacItem] = []
+        for entry in entries {
+            guard let data = try? Data(contentsOf: entry.appendingPathComponent("item.json")), data.count <= 512 * 1024,
+                  let item = try? JSONDecoder().decode(SendToMacItem.self, from: data),
+                  item.id == entry.lastPathComponent, item.expires > now
+            else {
+                try? FileManager.default.removeItem(at: entry)
+                continue
+            }
+            items.append(item)
+        }
+        return items.sorted { $0.created < $1.created }
+    }
+
+    static func remove(_ id: String, root: URL? = root) {
+        guard let folder = folder(id, root: root) else { return }
+        try? FileManager.default.removeItem(at: folder)
+    }
+
+    // MARK: Receipts
+
+    private static func receiptURL(_ id: String, root: URL?) -> URL? {
+        guard isValidID(id) else { return nil }
+        return root?.appendingPathComponent("Receipts", isDirectory: true).appendingPathComponent(id + ".json")
+    }
+
+    static func storeReceipt(_ receipt: SendToMacReceipt, root: URL? = root) {
+        guard let url = receiptURL(receipt.id, root: root), let data = try? JSONEncoder().encode(receipt) else { return }
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: url, options: .atomic)
+    }
+
+    static func loadReceipt(_ id: String, root: URL? = root) -> SendToMacReceipt? {
+        guard let url = receiptURL(id, root: root), let data = try? Data(contentsOf: url), data.count <= 4096 else { return nil }
+        return try? JSONDecoder().decode(SendToMacReceipt.self, from: data)
+    }
+
+    static func removeReceipt(_ id: String, root: URL? = root) {
+        guard let url = receiptURL(id, root: root) else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    // MARK: Signalling
+
+    static func postOutboxChanged() {
+        CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                             CFNotificationName(outboxNotification as CFString), nil, nil, true)
+    }
+}

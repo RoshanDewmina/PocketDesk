@@ -471,6 +471,7 @@ struct NativeSessionView: View {
                 .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
                 .transition(.opacity)
             }
+            FileTransferCapsule(files: model.files, inbox: model.sendToMac, hidesNotice: showControls)
             clipboardStatus
             if let notice = model.sessionNotice {
                 FarsideNotice(message: notice, tone: .info)
@@ -807,6 +808,8 @@ struct NativeSessionView: View {
                     .disabled(!model.clipboardAvailable || model.clipboard.isBusy)
                     .accessibilityHint("Copies what is already on your Mac’s clipboard to this iPhone")
             }
+            Divider().overlay(Farside.Palette.line)
+            FileTransferRow(model: model, files: model.files)
         }
         .padding(14)
         .farsidePlate(22, fill: Farside.Palette.ink)
