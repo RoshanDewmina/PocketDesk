@@ -44,6 +44,8 @@ struct RemoteAction: Codable {
     var ladder: LadderState? = nil
     /// The Mac's load state for the phone's pill, on `capture` status.
     var busy: BusyState? = nil
+    /// Away mode on `capture` status (`SessionFeature.away`). Older phones ignore it.
+    var away: String? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
