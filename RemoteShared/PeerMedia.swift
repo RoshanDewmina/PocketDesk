@@ -585,7 +585,7 @@ final class PeerMedia: NSObject {
         }
     }
     func offer() {
-        configureRepairPreferences()
+        guard configureRepairPreferences() else { return }
         connection?.offer(for: RTCMediaConstraints(mandatoryConstraints: ["OfferToReceiveAudio": "false", "OfferToReceiveVideo": "false"], optionalConstraints: nil)) { [weak self] description, error in
             DispatchQueue.main.async { self?.setLocal(description, error: error) }
         }
@@ -602,6 +602,7 @@ final class PeerMedia: NSObject {
     #if DEBUG
     /// Loopback tests cannot produce a real relay route; this stands in for one.
     var routeOverrideForTesting: String?
+    var repairPreferenceFailureForTesting = false
     #endif
 
     /// Applies fresh relay credentials to the live connection without touching the media. They take
@@ -691,7 +692,7 @@ final class PeerMedia: NSObject {
                 for candidate in self.candidates { self.connection?.add(candidate, completionHandler: { _ in }) }
                 self.candidates.removeAll()
                 if signal.kind == "offer" {
-                    self.configureRepairPreferences()
+                    guard self.configureRepairPreferences() else { return }
                     self.connection?.answer(for: RTCMediaConstraints(mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": "true"], optionalConstraints: nil)) { [weak self] description, error in
                         DispatchQueue.main.async { self?.setLocal(description, error: error) }
                     }
@@ -707,23 +708,41 @@ final class PeerMedia: NSObject {
     private(set) var repairCodecNegotiationRequested = false
     private var repairOfferPending = false
     private var lastRepairPolicy: Bool?
-    private func configureRepairPreferences() {
-        guard let factory = sessionVideoFactory, let connection else { return }
-        let allow = isHost ? PacketRepairPreferences.maySend(native: nativeDesktopCodecs, provenLocal: localLink != nil, selectedRelay: needsRelayRefresh) : nativeDesktopCodecs && localLink == nil
+    private func configureRepairPreferences() -> Bool {
+        guard !closed, let factory = sessionVideoFactory, let connection else { return false }
+        let allow = isHost ? PacketRepairPreferences.maySend(native: nativeDesktopCodecs, provenLocal: localLink != nil, selectedRelay: selectedRepairRelay) : nativeDesktopCodecs && localLink == nil
         let capabilities = isHost ? factory.rtpSenderCapabilities(forKind: kRTCMediaStreamTrackKindVideo) : factory.rtpReceiverCapabilities(forKind: kRTCMediaStreamTrackKindVideo)
         let codecs = capabilities.codecs.filter { allow || $0.name.lowercased() != "flexfec-03" }
+        guard !codecs.isEmpty else { return retireRepairPreferenceFailure() }
         var applied = false
         for transceiver in connection.transceivers where transceiver.mediaType == .video {
+            #if DEBUG
+            if repairPreferenceFailureForTesting { return retireRepairPreferenceFailure() }
+            #endif
             do { try transceiver.setCodecPreferences(codecs, error: ()); applied = true }
-            catch { /* Retain normal RTP fallback; preferences are not measured repair. */ }
+            catch { return retireRepairPreferenceFailure() } // Old/default preferences may still contain forbidden FEC.
         }
         lastRepairPolicy = allow
         repairCodecNegotiationRequested = allow && applied && codecs.contains { $0.name.lowercased() == "flexfec-03" }
+        return applied
+    }
+    private func retireRepairPreferenceFailure() -> Bool {
+        repairCodecNegotiationRequested = false; repairOfferPending = false
+        let callback = onState
+        close() // Fence capture and stop RTP before reporting a failed policy application.
+        callback?("failed")
+        return false
+    }
+    private var selectedRepairRelay: Bool {
+        #if DEBUG
+        if let routeOverrideForTesting { return routeOverrideForTesting == "Relay" }
+        #endif
+        return lastRoute == "Relay" // Requested/forced ICE policy alone is not an observed selected route.
     }
     private func followRepairRoute() {
         guard isHost, nativeDesktopCodecs, localLink == nil, PacketRepairPreferences.activeThisLaunch, !closed,
               remoteDescriptionReady, let connection else { return }
-        let desired = needsRelayRefresh
+        let desired = selectedRepairRelay
         guard desired != lastRepairPolicy else { return }
         if connection.signalingState != .stable { repairOfferPending = true; return }
         repairOfferPending = false; offer() // Public codec preferences renegotiation; no ICE generation rewrite.
