@@ -138,6 +138,22 @@ final class PhoneTrustStoreTests: XCTestCase {
         try trust.forget(hostID: XCTUnwrap(selected.selectedHostID))
         XCTAssertNil(try trust.snapshot().selected)
     }
+    func testForgetDeletesHistoricalBackupAfterDurableHostChangesRoom() throws {
+        let legacy = TrustFixturePersistence(), records = TrustFixturePersistence()
+        var old = try pair()
+        try legacy.save(old)
+        let trust = PhoneTrustStore(records: records, legacy: legacy)
+        let legacyID = try XCTUnwrap(trust.snapshot().selectedHostID)
+        old.durableHostID = try SecureRandom.token(); old.ownerPairID = try SecureRandom.token()
+        try trust.saveApproved(old)
+        old.room = try SecureRandom.token(); old.key = try SecureRandom.bytes(); old.token = try SecureRandom.token()
+        try trust.saveApproved(old)
+        XCTAssertEqual(try trust.snapshot().selectedHostID, legacyID)
+        XCTAssertNotNil(legacy.data)
+        try trust.forget(hostID: legacyID)
+        XCTAssertNil(legacy.data, "A historical rollback credential must be removed with its host")
+        XCTAssertNil(try trust.snapshot().selected)
+    }
     func testAtomicSnapshotRejectsDuplicateHostsAndMissingSelection() throws {
         let invitation = try pair(identified: true)
         let host = PhoneHostTrust(id: try SecureRandom.token(), durableHostID: invitation.durableHostID,

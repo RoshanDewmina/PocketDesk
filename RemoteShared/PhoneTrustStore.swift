@@ -22,8 +22,16 @@ struct PhoneTrustSnapshot: Codable, Equatable {
             throw RemoteError.invalidPairing
         }
         var identities = Set<String>()
+        var rooms = Set<String>()
+        var aliases = Set<String>()
         for host in hosts {
-            guard SecureRandom.isToken(host.id), host.legacyAliases.count <= 8 else { throw RemoteError.invalidPairing }
+            guard SecureRandom.isToken(host.id), host.legacyAliases.count <= 8,
+                  rooms.insert(host.invitation.room).inserted else { throw RemoteError.invalidPairing }
+            for alias in host.legacyAliases {
+                guard alias.hasPrefix("m_"), alias.count == 18,
+                      SecureRandom.isToken(String(repeating: String(alias.dropFirst(2)), count: 4)),
+                      aliases.insert(alias).inserted else { throw RemoteError.invalidPairing }
+            }
             try host.invitation.validate(enrollment: false)
             if let identity = host.durableHostID {
                 guard SecureRandom.isToken(identity), identities.insert(identity).inserted,
@@ -105,7 +113,8 @@ final class PhoneTrustStore {
             var next = try load()
             guard let host = next.hosts.first(where: { $0.id == hostID }) else { return }
             if let backup = try legacy.read(PairInvitation.self),
-               backup.room == host.invitation.room && backup.server == host.invitation.server {
+               (backup.room == host.invitation.room && backup.server == host.invitation.server)
+                || host.legacyAliases.contains(Self.legacyAlias(room: backup.room)) {
                 try legacy.delete()
                 guard try legacy.read(PairInvitation.self) == nil else { throw RemoteError.invalidPairing }
             }

@@ -29,6 +29,18 @@ final class LocalOwnerAdmissionTests: XCTestCase {
                                 invitation: invitation, now: now)
         XCTAssertTrue(newAdmission.consumed)
     }
+    func testRealDateWireRoundTripPreservesAuthenticatedTranscript() throws {
+        let invitation = try pair()
+        let challenge = try LocalOwnerChallenge.make(invitation: invitation)
+        let encodedChallenge = try JSONEncoder().encode(challenge)
+        let decodedChallenge = try JSONDecoder().decode(LocalOwnerChallenge.self, from: encodedChallenge)
+        XCTAssertEqual(decodedChallenge, challenge)
+        let proof = try LocalOwnerResponse.make(challenge: decodedChallenge, invitation: invitation)
+        let decodedProof = try JSONDecoder().decode(LocalOwnerResponse.self, from: JSONEncoder().encode(proof))
+        var admission = LocalOwnerAdmission(challenge: challenge)
+        try admission.accept(decodedProof, invitation: invitation)
+        XCTAssertTrue(admission.consumed)
+    }
     func testSpoofedHostOwnerPairOrExpiredChallengeCannotAuthenticate() throws {
         let invitation = try pair(), now = Date(timeIntervalSince1970: 2000)
         let challenge = try LocalOwnerChallenge.make(invitation: invitation, now: now)
