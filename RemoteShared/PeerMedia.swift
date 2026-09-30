@@ -501,6 +501,7 @@ final class PeerMedia: NSObject {
         }
         let configuration = RTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan
+        configuration.enableDscp = nativeDesktopCodecs && localLink != nil // Request only; wire/network behavior unmeasured.
         configuration.iceTransportPolicy = forceRelay ? .relay : .all
         configuration.continualGatheringPolicy = .gatherContinually
         configuration.iceServers = servers.map { RTCIceServer(urlStrings: $0.urls, username: $0.username ?? "", credential: $0.credential ?? "") }
@@ -590,6 +591,7 @@ final class PeerMedia: NSObject {
         }
     }
     func offer() {
+        configureRepairPreferences()
         connection?.offer(for: RTCMediaConstraints(mandatoryConstraints: ["OfferToReceiveAudio": "false", "OfferToReceiveVideo": "false"], optionalConstraints: nil)) { [weak self] description, error in
             DispatchQueue.main.async { self?.setLocal(description, error: error) }
         }
@@ -695,6 +697,7 @@ final class PeerMedia: NSObject {
                 for candidate in self.candidates { self.connection?.add(candidate, completionHandler: { _ in }) }
                 self.candidates.removeAll()
                 if signal.kind == "offer" {
+                    self.configureRepairPreferences()
                     self.connection?.answer(for: RTCMediaConstraints(mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": "true"], optionalConstraints: nil)) { [weak self] description, error in
                         DispatchQueue.main.async { self?.setLocal(description, error: error) }
                     }
@@ -707,12 +710,37 @@ final class PeerMedia: NSObject {
             }
         }
     }
+    private(set) var repairCodecNegotiationRequested = false
+    private var repairOfferPending = false
+    private var lastRepairPolicy: Bool?
+    private func configureRepairPreferences() {
+        guard let factory = sessionVideoFactory, let connection else { return }
+        let allow = isHost ? PacketRepairPreferences.maySend(native: nativeDesktopCodecs, provenLocal: localLink != nil, selectedRelay: needsRelayRefresh) : nativeDesktopCodecs && localLink == nil
+        let capabilities = isHost ? factory.rtpSenderCapabilities(forKind: kRTCMediaStreamTrackKindVideo) : factory.rtpReceiverCapabilities(forKind: kRTCMediaStreamTrackKindVideo)
+        let codecs = capabilities.codecs.filter { allow || $0.name.lowercased() != "flexfec-03" }
+        var applied = false
+        for transceiver in connection.transceivers where transceiver.mediaType == .video {
+            do { try transceiver.setCodecPreferences(codecs, error: ()); applied = true }
+            catch { /* Retain normal RTP fallback; preferences are not measured repair. */ }
+        }
+        lastRepairPolicy = allow
+        repairCodecNegotiationRequested = allow && applied && codecs.contains { $0.name.lowercased() == "flexfec-03" }
+    }
+    private func followRepairRoute() {
+        guard isHost, nativeDesktopCodecs, localLink == nil, PacketRepairPreferences.activeThisLaunch, !closed,
+              remoteDescriptionReady, let connection else { return }
+        let desired = needsRelayRefresh
+        guard desired != lastRepairPolicy else { return }
+        if connection.signalingState != .stable { repairOfferPending = true; return }
+        repairOfferPending = false; offer() // Public codec preferences renegotiation; no ICE generation rewrite.
+    }
     private func configureNativeSender() {
         guard isHost, nativeDesktopCodecs, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return }
         let parameters = sender.parameters
         let ceiling = tuning.maximumBitrateBps(for: streamQuality)
         let rate = currentSenderRate
         for encoding in parameters.encodings {
+            encoding.networkPriority = localLink != nil ? .high : .medium
             encoding.maxFramerate = NSNumber(value: rate.maxFramerate)
             encoding.maxBitrateBps = NSNumber(value: tuning.qualityBitrates ? ceiling : 12_000_000)
         }
@@ -978,6 +1006,7 @@ final class PeerMedia: NSObject {
                 }
                 let route = MediaRoute.classify(selected: pair != nil, local: localType, remote: remoteType)
                 self.lastRoute = route
+                self.followRepairRoute()
                 let rtp = stats.values.first { ($0.type == "inbound-rtp" || $0.type == "outbound-rtp") && ($0.values["kind"] as? String == "video" || $0.values["mediaType"] as? String == "video") }
                 let codec = (rtp?.values["codecId"] as? String).flatMap { stats[$0]?.values["mimeType"] as? String } ?? "codec pending"
                 let fps = (rtp?.values["framesPerSecond"] as? NSNumber).map { String(format: "%.0f fps", $0.doubleValue) } ?? "fps pending"
@@ -1140,8 +1169,9 @@ extension PeerMedia: RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {
         guard stateChanged == .stable else { return }
         DispatchQueue.main.async { [weak self] in
-            guard let self, !self.closed, self.restartPending else { return }
-            self.restartICE()
+            guard let self, !self.closed else { return }
+            if self.restartPending { self.restartICE() }
+            else if self.repairOfferPending { self.followRepairRoute() }
         }
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {

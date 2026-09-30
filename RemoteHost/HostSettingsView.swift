@@ -30,6 +30,7 @@ struct HostSettingsView: View {
                         permissionsSection
                         generalSection
                         availabilitySection
+                        TransportPreferenceRows()
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
