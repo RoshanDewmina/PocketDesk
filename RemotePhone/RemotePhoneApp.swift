@@ -545,6 +545,7 @@ final class PhoneRemoteModel: ObservableObject {
         #if DEBUG
         if let inputProbe { return inputProbe.record(action) }
         #endif
+        SmoothMotionController.noteOutgoing(action: action.action, dragging: dragging)
         return connection.sendControl(action)
     }
 
@@ -1543,6 +1544,8 @@ struct RemoteVideoSurface: UIViewRepresentable {
     var displayedPixelWidth: CGFloat = 0
     /// G4: the frames of a cropped capture span their region exactly, whatever the stream's aspect.
     var fillsFrame = false
+    var smoothMotion: SmoothMotionMode = .defaultMode
+    var smoothMotionUpscale = false
     let onFrame: () -> Void
 
     static func contentMode(fillsFrame: Bool) -> UIView.ContentMode {
@@ -1559,6 +1562,8 @@ struct RemoteVideoSurface: UIViewRepresentable {
         context.coordinator.presentation = VideoPresentationProbe.install(on: view)
         context.coordinator.presentation?.counters = counters
         configureStatistics(context.coordinator)
+        configureSmoothMotion(context.coordinator.smoothMotion)
+        context.coordinator.smoothMotion.activate()
         track.add(context.coordinator)
         return view
     }
@@ -1568,8 +1573,10 @@ struct RemoteVideoSurface: UIViewRepresentable {
         if view.videoContentMode != mode { view.videoContentMode = mode }
         context.coordinator.presentation?.counters = counters
         configureStatistics(context.coordinator)
+        configureSmoothMotion(context.coordinator.smoothMotion)
         if context.coordinator.track !== track {
             context.coordinator.track?.remove(context.coordinator)
+            context.coordinator.smoothMotion.resetSession()
             context.coordinator.track = track
             track.add(context.coordinator)
         }
@@ -1582,6 +1589,12 @@ struct RemoteVideoSurface: UIViewRepresentable {
         coordinator.legibility.configure(enabled: false, counters: nil, sourceSize: .zero, displayedPixelWidth: 0)
         coordinator.presentation?.uninstall()
         coordinator.presentation = nil
+        coordinator.smoothMotion.deactivate()
+    }
+
+    private func configureSmoothMotion(_ controller: SmoothMotionController) {
+        controller.setMode(smoothMotion)
+        controller.setUpscale(smoothMotionUpscale)
     }
 
     private func configureStatistics(_ coordinator: FrameObserver) {
@@ -1601,6 +1614,7 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
     var presentation: VideoPresentationProbe? {
         didSet {
             lock.lock(); tracker = presentation?.tracker; refreshProbe = presentation; lock.unlock()
+            presentation?.beforeDraw = { [smoothMotion] view in smoothMotion.displayTick(view) }
             connectMarkers()
         }
     }
@@ -1621,14 +1635,19 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
     let legibility = LegibilityProbe()
     let onFrame: () -> Void
     let forward = RestampingRenderer()
+    let smoothMotion: SmoothMotionController
     private let lock = NSLock()
     private var last = 0.0
     private var tracker: PresentationTracker?
     private weak var refreshProbe: VideoPresentationProbe?
     private var markerReading = false
+    private var deliveredSize: CGSize?
 
-    init(onFrame: @escaping () -> Void) {
+    init(onFrame: @escaping () -> Void, smoothMotion: SmoothMotionController = SmoothMotionController()) {
         self.onFrame = onFrame
+        self.smoothMotion = smoothMotion
+        super.init()
+        smoothMotion.deliver = { [weak self] output in self?.deliver(output.frame, marker: output.marker) }
     }
 
     func setSize(_ size: CGSize) {
@@ -1639,19 +1658,15 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
         guard let frame else { return }
         lock.lock()
         let reading = markerReading
-        let tracker = tracker
         let refreshProbe = refreshProbe
         lock.unlock()
-        let register: (RestampingRenderer.ForwardedFrame) -> Void = { forwarded in
-            tracker?.frameWillForward(stampNs: forwarded.stampNs, atMs: forwarded.arrivalMs)
-        }
         if reading {
             let decoded = (frame.buffer as? RTCCVPixelBuffer).flatMap { DecodedLuma($0) }
             let marker = decoded?.readMarker()
-            forward.renderFrame(frame, marker: marker, beforeForward: register)
+            smoothMotion.receive(frame, marker: marker)
             if let decoded { legibility.frameArrived(decoded.pixelBuffer, visible: decoded.visible, marker: marker) }
         } else {
-            forward.renderFrame(frame, beforeForward: register)
+            smoothMotion.receive(frame, marker: nil)
         }
         refreshProbe?.frameForwarded()
         lock.lock()
@@ -1661,6 +1676,29 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
         lock.unlock()
         if notify {
             DispatchQueue.main.async { [weak self] in self?.onFrame() }
+        }
+    }
+
+    /// Hands a frame to the Metal view, directly or when `smoothMotion` paces it onto a draw.
+    private func deliver(_ frame: RTCVideoFrame, marker: BenchMarker?) {
+        lock.lock()
+        let reading = markerReading
+        let tracker = tracker
+        let size = frame.rotation.rawValue % 180 == 0
+            ? CGSize(width: Int(frame.width), height: Int(frame.height))
+            : CGSize(width: Int(frame.height), height: Int(frame.width))
+        let resized = deliveredSize != nil && deliveredSize != size
+        deliveredSize = size
+        lock.unlock()
+        // An upscaled smooth-motion frame differs from the size WebRTC announced.
+        if resized { forward.setSize(size) }
+        let register: (RestampingRenderer.ForwardedFrame) -> Void = { forwarded in
+            tracker?.frameWillForward(stampNs: forwarded.stampNs, atMs: forwarded.arrivalMs)
+        }
+        if reading {
+            forward.renderFrame(frame, marker: marker, beforeForward: register)
+        } else {
+            forward.renderFrame(frame, beforeForward: register)
         }
     }
 

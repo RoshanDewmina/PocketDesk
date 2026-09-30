@@ -47,6 +47,8 @@ struct NativeSessionView: View {
     @AppStorage(StreamDebug.defaultsKey) private var streamStatsEnabled = false
     @AppStorage(StreamDebug.markerReadingKey) private var markerReadingEnabled = true
     @AppStorage(StreamTuning.legacyDefaultsKey) private var legacyStreamTuning = false
+    @AppStorage(SmoothMotionMode.key) private var smoothMotion: SmoothMotionMode = .defaultMode
+    @AppStorage(SmoothMotionController.upscaleKey) private var smoothMotionUpscale = false
     @AppStorage("dockHintSessions") private var dockHintSessions = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -381,6 +383,7 @@ struct NativeSessionView: View {
                                         ? model.sourceSize : .zero,
                                        displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
                                        fillsFrame: model.captureRegion != nil,
+                                       smoothMotion: smoothMotion, smoothMotionUpscale: smoothMotionUpscale,
                                        onFrame: model.frameReceived)
                         .frame(width: picture.width, height: picture.height)
                         .offset(x: picture.minX, y: picture.minY)
@@ -453,7 +456,7 @@ struct NativeSessionView: View {
             }
             if streamStatsEnabled && !model.streamSummaryLines.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    let lines = model.streamSummaryLines + [model.cropSummary?.caption].compactMap { $0 }
+                    let lines = model.streamSummaryLines + [model.cropSummary?.caption, SmoothMotionController.overlayLine].compactMap { $0 }
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                         Text(line).lineLimit(1).minimumScaleFactor(0.7)
                     }
@@ -1935,7 +1938,7 @@ struct NativeSessionView: View {
         reportSettledViewport()
     }
 
-    private var pictureSection: some View {
+    @ViewBuilder private var pictureSection: some View {
         Section {
             FarsideSegmented(label: "Picture quality",
                              options: StreamQuality.allCases.map { (value: $0, title: $0.title) },
@@ -1953,6 +1956,11 @@ struct NativeSessionView: View {
             }
         } header: {
             sectionHeader("Quality")
+        }
+        Section {
+            SmoothMotionPictureRows(mode: $smoothMotion)
+        } header: {
+            sectionHeader("Smooth motion")
         }
     }
 
@@ -1988,6 +1996,7 @@ struct NativeSessionView: View {
                     .accessibilityIdentifier("remote.codecDiagnostics")
                     .listRowBackground(Farside.Palette.panel)
             }
+            SmoothMotionDiagnosticsRows(upscale: $smoothMotionUpscale, showsTestingControls: streamStatsEnabled)
             Toggle("Stream statistics", isOn: $streamStatsEnabled)
                 .toggleStyle(FarsideSwitchStyle())
                 .listRowBackground(Farside.Palette.panel)
@@ -2197,6 +2206,7 @@ struct NativeSessionView: View {
             guard let source = DragAutoPan.step(&next, pointerSource: pointer, usable: followUsableRect, dt: dt),
                   model.pointTo(source) else { continue }
             viewport = next
+            SmoothMotionController.note(.autoPan)
         }
     }
 
