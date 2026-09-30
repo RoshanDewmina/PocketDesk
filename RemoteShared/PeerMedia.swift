@@ -229,6 +229,8 @@ final class PeerMedia: NSObject {
     }()
     private var connection: RTCPeerConnection?
     private var channel: RTCDataChannel?
+    // Main owns mutations; bulk admission reads the channel lifetime from its I/O queue.
+    private let controlLock = NSLock()
     /// Guarded by `fileLock`: file sends and receives run off the main thread.
     private var fileChannel: RTCDataChannel?
     private let fileLock = NSLock()
@@ -354,10 +356,12 @@ final class PeerMedia: NSObject {
             let track = factory.videoTrack(with: source, trackId: "desktop")
             video = track; connection?.add(track, streamIds: ["desktop"])
             let config = RTCDataChannelConfiguration(); config.isOrdered = true
+            controlLock.lock()
             channel = connection?.dataChannel(forLabel: "control", configuration: config)
+            controlLock.unlock()
             channel?.delegate = self
             if fileChannel {
-                // A second ordered, reliable channel so file bytes never queue ahead of input. Older
+                // A separate ordered channel bounds file buffering independently. Older
                 // phones close any channel not labelled "control", which leaves their session untouched.
                 let fileConfig = RTCDataChannelConfiguration(); fileConfig.isOrdered = true
                 let file = connection?.dataChannel(forLabel: Self.fileChannelLabel, configuration: fileConfig)
@@ -672,7 +676,8 @@ final class PeerMedia: NSObject {
     var isRelayRoute: Bool { needsRelayRefresh }
 
     var controlBufferedAmount: UInt64? {
-        guard !closed, let channel, channel.readyState == .open else { return nil }
+        controlLock.lock(); defer { controlLock.unlock() }
+        guard let channel, channel.readyState == .open else { return nil }
         return channel.bufferedAmount
     }
     /// `displayMs` is the frame's ScreenCaptureKit display time in mach ms, 0 for a re-send.
@@ -852,7 +857,8 @@ final class PeerMedia: NSObject {
         if let cadenceRenderer { observedTrack?.remove(cadenceRenderer) }
         cadenceRenderer = nil; observedTrack = nil
         captureLock.lock(); closed = true; source = nil; capturer = nil; frameTransform = nil; captureLock.unlock()
-        channel?.delegate = nil; channel?.close(); channel = nil
+        controlLock.lock(); let control = channel; channel = nil; controlLock.unlock()
+        control?.delegate = nil; control?.close()
         fileLock.lock(); let file = fileChannel; fileChannel = nil; fileLock.unlock()
         file?.delegate = nil; file?.close()
         connection?.delegate = nil; connection?.close(); connection = nil
@@ -935,7 +941,7 @@ extension PeerMedia: RTCPeerConnectionDelegate {
             guard let self, !self.closed, dataChannel.label == "control", self.channel == nil else {
                 dataChannel.delegate = nil; dataChannel.close(); return
             }
-            self.channel = dataChannel
+            self.controlLock.lock(); self.channel = dataChannel; self.controlLock.unlock()
             if dataChannel.readyState == .open {
                 self.localPathStartedAt = ProcessInfo.processInfo.systemUptime
                 self.startDiagnostics(); self.publishConnectedIfReady()
