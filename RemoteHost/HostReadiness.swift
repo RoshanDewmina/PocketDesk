@@ -218,6 +218,8 @@ struct HostPreferences {
         static let chimeOnConnect = "chimeOnConnect"
         static let privacyCurtain = "privacyCurtainWhileSharing"
         static let agentAlerts = "agentAlertsEnabled"
+        static let awayMode = "awayModeWhileSharing"
+        static let awayIntroShown = "awayModeIntroShown"
     }
 
     let defaults: UserDefaults
@@ -270,6 +272,17 @@ struct HostPreferences {
     var agentAlerts: Bool {
         get { defaults.bool(forKey: Key.agentAlerts) }
         nonmutating set { defaults.set(newValue, forKey: Key.agentAlerts) }
+    }
+
+    /// Off unless the person turns it on at the Mac.
+    var awayMode: Bool {
+        get { defaults.bool(forKey: Key.awayMode) }
+        nonmutating set { defaults.set(newValue, forKey: Key.awayMode) }
+    }
+
+    var awayIntroShown: Bool {
+        get { defaults.bool(forKey: Key.awayIntroShown) }
+        nonmutating set { defaults.set(newValue, forKey: Key.awayIntroShown) }
     }
 
     var serviceAddress: String? {
