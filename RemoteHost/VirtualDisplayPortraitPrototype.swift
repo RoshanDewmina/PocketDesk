@@ -146,6 +146,7 @@ private final class PortraitController: NSObject, NSWindowDelegate {
                   CGDisplaySerialNumber(owned.displayID) == (options.mode == .one ? 0x4361 : 0x4362) else {
                 throw PortraitPrototypeFailure.rejected("display/screen discovery timed out or was cancelled")
             }
+            if options.mode == .two { try await prepareOwnedHiDPIMode(owned) }
             guard admission.accepts(token), let screen = Self.screen(owned.displayID), let mode = CGDisplayCopyDisplayMode(owned.displayID) else {
                 throw PortraitPrototypeFailure.rejected("owned display disappeared before mode inspection")
             }
@@ -251,7 +252,7 @@ private final class PortraitController: NSObject, NSWindowDelegate {
     private func verifiedCaptureWindow(_ owned: PortraitResources, window: NSWindow, screen: NSScreen,
                                        initializerRect: CGRect) async throws -> SCWindow {
         let beganMs = MachClock.nowMs()
-        let deadline = PortraitPlacementDeadline(startMs: beganMs)
+        let deadline = PortraitStageDeadline(startMs: beganMs)
         let requestedWindowID = CGWindowID(window.windowNumber)
         var attempts = 0
         while admission.accepts(owned.token), deadline.remainingNanoseconds(nowMs: MachClock.nowMs()) != nil {
@@ -285,7 +286,7 @@ private final class PortraitController: NSObject, NSWindowDelegate {
         }
         throw PortraitPrototypeFailure.rejected("capture identity/placement deadline or cancellation")
     }
-    private func discover(_ owned: PortraitResources, within deadline: PortraitPlacementDeadline) async throws -> SCShareableContent {
+    private func discover(_ owned: PortraitResources, within deadline: PortraitStageDeadline) async throws -> SCShareableContent {
         guard let remaining = deadline.remainingNanoseconds(nowMs: MachClock.nowMs()) else {
             throw PortraitPrototypeFailure.rejected("shareable-content deadline")
         }
@@ -300,6 +301,80 @@ private final class PortraitController: NSObject, NSWindowDelegate {
             }
             Task { try? await Task.sleep(nanoseconds: remaining); gate.resolve(.failure(PortraitPrototypeFailure.rejected("shareable-content deadline"))) }
         }
+    }
+    private func prepareOwnedHiDPIMode(_ owned: PortraitResources) async throws {
+        let id = owned.displayID
+        let beganMs = MachClock.nowMs()
+        let deadline = PortraitStageDeadline(startMs: beganMs)
+        guard admission.accepts(owned.token), let current = CGDisplayCopyDisplayMode(id) else {
+            throw PortraitPrototypeFailure.rejected("cancelled or missing owned mode before HiDPI inspection")
+        }
+        var selection: [String: Any] = ["targetDisplayID": id, "before": Self.modeReport(current)]
+        report["modeSelection"] = selection
+        if Self.modeCandidate(current).matches(options) {
+            selection["action"] = "already-exact"; report["modeSelection"] = selection
+        } else {
+            let offered = CGDisplayCopyAllDisplayModes(id, nil) as? [CGDisplayMode] ?? []
+            selection["offeredCount"] = offered.count
+            selection["offeredModes"] = offered.prefix(64).map(Self.modeReport)
+            selection["offeredReportTruncated"] = offered.count > 64
+            report["modeSelection"] = selection
+            let target = try ownedModeTarget(owned)
+            let index = try PortraitDisplayModeSelection.select(options, candidates: offered.map(Self.modeCandidate), target: target) { index in
+                // Revalidate immediately before the only public mode mutation; never follow a changed ID.
+                guard admission.accepts(owned.token), deadline.remainingNanoseconds(nowMs: MachClock.nowMs()) != nil,
+                      try ownedModeTarget(owned).permitsSelection else {
+                    throw PortraitPrototypeFailure.rejected("owned mode target changed or selection deadline expired")
+                }
+                selection["selected"] = Self.modeReport(offered[index])
+                selection["action"] = "set-owned-display-mode"
+                report["modeSelection"] = selection
+                // Public and synchronous. Its process-lifetime scope is documented; mirrored targets were rejected.
+                let result = CGDisplaySetDisplayMode(id, offered[index], nil)
+                selection["setResultCode"] = result.rawValue
+                selection["synchronousCallElapsedMs"] = MachClock.nowMs() - beganMs
+                report["modeSelection"] = selection
+                guard result == .success else { throw PortraitPrototypeFailure.rejected("owned CGDisplaySetDisplayMode failed(\(result.rawValue))") }
+            }
+            selection["selectedIndex"] = index; report["modeSelection"] = selection
+        }
+        // CG switching is synchronous, but NSScreen's cached topology can settle later. Share the original budget.
+        while admission.accepts(owned.token), deadline.remainingNanoseconds(nowMs: MachClock.nowMs()) != nil {
+            guard try ownedModeTarget(owned).permitsSelection else { throw PortraitPrototypeFailure.rejected("owned mode target changed while settling") }
+            if let mode = CGDisplayCopyDisplayMode(id), let screen = Self.screen(id),
+               Self.modeCandidate(mode).matches(options),
+               options.accepts(logicalWidth: screen.frame.width, logicalHeight: screen.frame.height,
+                               pixelsWide: mode.pixelWidth, pixelsHigh: mode.pixelHeight,
+                               backingScale: screen.backingScaleFactor, refresh: mode.refreshRate) {
+                selection["after"] = Self.modeReport(mode); selection["backingScale"] = screen.backingScaleFactor
+                selection["elapsedMs"] = MachClock.nowMs() - beganMs; selection["verified"] = true
+                report["modeSelection"] = selection; return
+            }
+            guard let remaining = deadline.remainingNanoseconds(nowMs: MachClock.nowMs()) else { break }
+            try? await Task.sleep(nanoseconds: min(25_000_000, remaining))
+        }
+        if let mode = CGDisplayCopyDisplayMode(id) { selection["after"] = Self.modeReport(mode) }
+        if let screen = Self.screen(id) { selection["backingScale"] = screen.backingScaleFactor }
+        selection["elapsedMs"] = MachClock.nowMs() - beganMs; selection["verified"] = false
+        if reportToken == owned.token { report["modeSelection"] = selection }
+        throw PortraitPrototypeFailure.rejected("owned HiDPI mode/NSScreen did not settle within five seconds or was cancelled")
+    }
+    private func ownedModeTarget(_ owned: PortraitResources) throws -> PortraitOwnedModeTarget {
+        let id = owned.displayID
+        let actualID = try owned.creation.display.map { try PortraitPrivateDisplay.displayID($0) } ?? 0
+        let expectedIdentity: UInt32 = options.mode == .one ? 0x4361 : 0x4362
+        return PortraitOwnedModeTarget(requestedID: id, retainedObjectID: actualID, objectRetained: owned.creation.display != nil,
+            online: Self.onlineIDs().contains(id),
+            identityMatches: CGDisplayVendorNumber(id) == 0xFA51 && CGDisplayModelNumber(id) == expectedIdentity && CGDisplaySerialNumber(id) == expectedIdentity,
+            isMain: CGDisplayIsMain(id) != 0, isMirrored: CGDisplayIsInMirrorSet(id) != 0)
+    }
+    private static func modeCandidate(_ mode: CGDisplayMode) -> PortraitDisplayModeCandidate {
+        PortraitDisplayModeCandidate(logicalWidth: mode.width, logicalHeight: mode.height, pixelWidth: mode.pixelWidth,
+                                     pixelHeight: mode.pixelHeight, refreshHz: mode.refreshRate)
+    }
+    private static func modeReport(_ mode: CGDisplayMode) -> [String: Any] {
+        ["logicalWidth": mode.width, "logicalHeight": mode.height, "pixelWidth": mode.pixelWidth,
+         "pixelHeight": mode.pixelHeight, "refreshHz": mode.refreshRate, "desktopGUIUsable": mode.isUsableForDesktopGUI()]
     }
     private func stop(reason: String) async {
         guard let owned = resources else { return }

@@ -43,13 +43,60 @@ final class VirtualDisplayPrototypePolicyTests: XCTestCase {
         XCTAssertTrue(matches(bounds))
     }
     func testPlacementRediscoverySharesOneFiveSecondDeadline() {
-        let deadline = PortraitPlacementDeadline(startMs: 100)
+        let deadline = PortraitStageDeadline(startMs: 100)
         XCTAssertEqual(deadline.remainingNanoseconds(nowMs: 100), 5_000_000_000)
         XCTAssertEqual(deadline.remainingNanoseconds(nowMs: 2500), 2_600_000_000)
         XCTAssertEqual(deadline.remainingNanoseconds(nowMs: 5099), 1_000_000)
         XCTAssertNil(deadline.remainingNanoseconds(nowMs: 5100)); XCTAssertNil(deadline.remainingNanoseconds(nowMs: 8000))
         XCTAssertNil(deadline.remainingNanoseconds(nowMs: .nan))
-        XCTAssertNil(PortraitPlacementDeadline(startMs: .infinity).remainingNanoseconds(nowMs: 100))
+        XCTAssertNil(PortraitStageDeadline(startMs: .infinity).remainingNanoseconds(nowMs: 100))
+    }
+    private func modeTarget(id: UInt32 = 7, retainedID: UInt32 = 7, retained: Bool = true,
+                            online: Bool = true, identity: Bool = true, main: Bool = false, mirrored: Bool = false) -> PortraitOwnedModeTarget {
+        PortraitOwnedModeTarget(requestedID: id, retainedObjectID: retainedID, objectRetained: retained,
+                                online: online, identityMatches: identity, isMain: main, isMirrored: mirrored)
+    }
+    private var exactHiDPI: PortraitDisplayModeCandidate {
+        PortraitDisplayModeCandidate(logicalWidth: 430, logicalHeight: 932, pixelWidth: 860, pixelHeight: 1864, refreshHz: 60)
+    }
+    func testHiDPIModeSelectionRequiresExactPointsPixelsAndRefresh() throws {
+        let two = try options(["--portrait-mode", "2x"])
+        let native = PortraitDisplayModeCandidate(logicalWidth: 860, logicalHeight: 1864, pixelWidth: 860, pixelHeight: 1864, refreshHz: 60)
+        let unknownRate = PortraitDisplayModeCandidate(logicalWidth: 430, logicalHeight: 932, pixelWidth: 860, pixelHeight: 1864, refreshHz: 0)
+        let wrongHeight = PortraitDisplayModeCandidate(logicalWidth: 430, logicalHeight: 932, pixelWidth: 860, pixelHeight: 932, refreshHz: 60)
+        XCTAssertFalse(native.matches(two)); XCTAssertFalse(unknownRate.matches(two)); XCTAssertFalse(wrongHeight.matches(two))
+        XCTAssertFalse(exactHiDPI.matches(try options()))
+        XCTAssertFalse(PortraitDisplayModeCandidate(logicalWidth: 430, logicalHeight: 932, pixelWidth: 860, pixelHeight: 1864, refreshHz: .nan).matches(two))
+        var applied: [Int] = []
+        XCTAssertEqual(try PortraitDisplayModeSelection.select(two, candidates: [native, unknownRate, wrongHeight, exactHiDPI], target: modeTarget(), apply: { applied.append($0) }), 3)
+        XCTAssertEqual(applied, [3])
+    }
+    func testMainMirroredMissingOrWrongOwnedIdentityNeverInvokeModeMutation() throws {
+        let two = try options(["--portrait-mode", "2x"])
+        for target in [modeTarget(id: 0, retainedID: 0), modeTarget(retainedID: 8), modeTarget(retained: false),
+                       modeTarget(online: false), modeTarget(identity: false), modeTarget(main: true), modeTarget(mirrored: true)] {
+            var called = false
+            XCTAssertThrowsError(try PortraitDisplayModeSelection.select(two, candidates: [exactHiDPI], target: target, apply: { _ in called = true }))
+            XCTAssertFalse(called)
+        }
+        var called = false
+        XCTAssertThrowsError(try PortraitDisplayModeSelection.select(two, candidates: [], target: modeTarget(), apply: { _ in called = true }))
+        XCTAssertFalse(called)
+    }
+    @MainActor
+    func testPublicModeApplyFailureRetainsDisplayAndLeaseForVerifiedTeardown() throws {
+        var displayReleases = 0; var leaseReleases = 0
+        let creation = PortraitDisplayCreationOwner<LifetimeProbe, LifetimeProbe>()
+        try creation.create(lease: LifetimeProbe { leaseReleases += 1 }, construct: { LifetimeProbe { displayReleases += 1 } },
+                            identify: { _ in 7 }, configure: { _ in })
+        let two = try options(["--portrait-mode", "2x"])
+        XCTAssertThrowsError(try PortraitDisplayModeSelection.select(two, candidates: [exactHiDPI], target: modeTarget(), apply: { _ in
+            throw PortraitPrototypeFailure.rejected("public-setter-failed")
+        }))
+        XCTAssertNotNil(creation.display); XCTAssertNotNil(creation.lease)
+        XCTAssertEqual(displayReleases, 0); XCTAssertEqual(leaseReleases, 0)
+        creation.releaseDisplay(); XCTAssertEqual(displayReleases, 1); XCTAssertEqual(leaseReleases, 0)
+        creation.acknowledgeRemoval(); XCTAssertEqual(leaseReleases, 1)
     }
     func testCLIFailsClosedBeforeHostStartup() throws {
         for extra in [["--portrait-mode"], ["--portrait-mode", "landscape"], ["--portrait-action", "unknown"],

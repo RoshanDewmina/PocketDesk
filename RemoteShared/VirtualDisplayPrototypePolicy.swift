@@ -27,12 +27,51 @@ enum PortraitWindowPlacement {
     }
 }
 
-struct PortraitPlacementDeadline {
+struct PortraitStageDeadline {
     private let endMs: Double
     init(startMs: Double) { endMs = startMs + 5000 }
     func remainingNanoseconds(nowMs: Double) -> UInt64? {
         guard endMs.isFinite, nowMs.isFinite, nowMs < endMs else { return nil }
         return UInt64(max(1, min(5000, endMs - nowMs) * 1_000_000))
+    }
+}
+
+struct PortraitDisplayModeCandidate {
+    let logicalWidth: Int
+    let logicalHeight: Int
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let refreshHz: Double
+    func matches(_ options: PortraitPrototypeOptions) -> Bool {
+        logicalWidth == 430 && logicalHeight == 932 && pixelWidth == options.pixelWidth && pixelHeight == options.pixelHeight
+            && refreshHz.isFinite && abs(refreshHz - 60) < 0.5
+    }
+}
+
+struct PortraitOwnedModeTarget {
+    let requestedID: UInt32
+    let retainedObjectID: UInt32
+    let objectRetained: Bool
+    let online: Bool
+    let identityMatches: Bool
+    let isMain: Bool
+    let isMirrored: Bool
+    var permitsSelection: Bool {
+        requestedID != 0 && requestedID == retainedObjectID && objectRetained && online && identityMatches && !isMain && !isMirrored
+    }
+}
+
+enum PortraitDisplayModeSelection {
+    /// Apply only an actually offered exact mode, and only to the retained experiment display.
+    @discardableResult
+    static func select(_ options: PortraitPrototypeOptions, candidates: [PortraitDisplayModeCandidate],
+                       target: PortraitOwnedModeTarget, apply: (Int) throws -> Void) throws -> Int {
+        guard target.permitsSelection else { throw PortraitPrototypeFailure.rejected("mode selection target is not the owned non-main non-mirrored display") }
+        guard let index = candidates.firstIndex(where: { $0.matches(options) }) else {
+            throw PortraitPrototypeFailure.rejected("owned display offers no exact requested logical/backing/60-Hz mode")
+        }
+        try apply(index)
+        return index
     }
 }
 
