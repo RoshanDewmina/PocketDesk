@@ -551,7 +551,7 @@ final class RemoteCoordinator: ObservableObject {
             // TN3179: a backgrounded attempt is denied silently and never prompts. Wait for the foreground.
             if !isHost, !(await LocalNetworkAccess.waitUntilForeground()) {
                 guard let self, !self.stopped, self.session == session else { return }
-                self.fail("Open Farside to finish connecting on this Wi-Fi."); return
+                self.sessionFailed("Open Farside to finish connecting on this Wi-Fi."); return
             }
             let proof = await Task.detached(priority: .userInitiated) {
                 LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key)
@@ -574,7 +574,7 @@ final class RemoteCoordinator: ObservableObject {
                 // With the alert still up, iOS denies first and retries after Allow; only an active app's denial is final.
                 guard let self, let proof, self.localLinkProof === proof, LocalNetworkAccess.appIsActive else { return }
                 self.localProofSummary = proof.stageSummary()
-                self.fail(LocalNetworkAccess.deniedStatus)
+                self.sessionFailed(LocalNetworkAccess.deniedStatus)
             }
             proof.onProven = { [weak self, weak proof] link in
                 guard let self, let proof, self.localLinkProof === proof,
@@ -589,7 +589,7 @@ final class RemoteCoordinator: ObservableObject {
                 guard !Task.isCancelled, let self else { return }
                 if let proof = self.localLinkProof {
                     LocalLinkProof.log.error("timed out after 8 s: \(proof.stageSummary(), privacy: .public)")
-                    if proof.isLocalNetworkDenied { self.fail(LocalNetworkAccess.deniedStatus); return }
+                    if proof.isLocalNetworkDenied { self.sessionFailed(LocalNetworkAccess.deniedStatus); return }
                 }
                 self.sessionFailed("The devices could not verify a directly attached local link.")
             }
