@@ -22,7 +22,7 @@ final class WatchGlanceSessionTests: XCTestCase {
     }
 
     private func words(_ glance: WatchGlance) -> [String] {
-        var words = [glance.title]
+        var words = [glance.displayTitle]
         if let note = glance.note { words.append(note) }
         switch glance.detail {
         case .text(let text): words.append(text)
@@ -34,7 +34,9 @@ final class WatchGlanceSessionTests: XCTestCase {
     func testLiveShowsTheLabelAnElapsedClockAndWhereToEndIt() {
         let g = glance(.live(route: .direct))
         XCTAssertEqual(g.mark, .plain)
-        XCTAssertEqual(g.title, "Live · Your Mac")
+        XCTAssertEqual(g.title, "Live")
+        XCTAssertEqual(g.sensitiveTitleSuffix, "Your Mac")
+        XCTAssertEqual(g.displayTitle, "Live · Your Mac")
         XCTAssertEqual(g.detail, .clock(prefix: nil, interval: started...started.addingTimeInterval(8 * 3600), countsDown: false))
         XCTAssertEqual(g.note, "End it on your iPhone.")
     }
@@ -120,12 +122,14 @@ final class WatchGlanceSessionTests: XCTestCase {
     }
 
     func testTheMacNameOnlyAppearsThroughTheLabel() {
-        XCTAssertEqual(glance(.live(), label: "Your Mac").title, "Live · Your Mac")
-        XCTAssertEqual(glance(.live(), label: "Roshan's Mac").title, "Live · Roshan's Mac")
+        XCTAssertEqual(glance(.live(), label: "Your Mac").displayTitle, "Live · Your Mac")
+        XCTAssertEqual(glance(.live(), label: "Roshan's Mac").displayTitle, "Live · Roshan's Mac")
         for state in everyState {
             for stale in [false, true] {
                 let g = glance(state, label: "Roshan's Mac", stale: stale)
                 XCTAssertFalse(g.accessibilityLabel.contains("Roshan"))
+                XCTAssertFalse(g.title.contains("Roshan"), "The name is only ever in the redactable suffix")
+                XCTAssertFalse(g.note?.contains("Roshan") ?? false)
                 let named = words(g).filter { $0.contains("Roshan") }
                 if state.phase == .live, !stale {
                     XCTAssertEqual(named, ["Live · Roshan's Mac"])
@@ -138,7 +142,7 @@ final class WatchGlanceSessionTests: XCTestCase {
 
     func testPreviewIsLabelled() {
         XCTAssertEqual(glance(.live(), preview: true).note, "Sample · preview", "Replaces the live note")
-        XCTAssertEqual(glance(.live(), preview: true).title, "Live · Your Mac")
+        XCTAssertEqual(glance(.live(), preview: true).displayTitle, "Live · Your Mac")
         XCTAssertEqual(glance(.paused(graceEnds: grace), preview: true).note, "Sample · preview")
         XCTAssertEqual(glance(.ended(.timeout), preview: true).note, "Sample · preview")
         XCTAssertEqual(glance(.live(), preview: true, stale: true).note, "Sample · preview")

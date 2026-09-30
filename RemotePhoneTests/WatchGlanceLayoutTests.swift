@@ -129,10 +129,11 @@ final class WatchGlanceLayoutTests: XCTestCase {
     private static let fixtures: [(name: String, glance: WatchGlance)] = {
         let now = Date.now
         return [
-            ("live", WatchGlance(mark: .plain, title: "Live · Your Mac",
+            ("live", WatchGlance(mark: .plain, title: "Live",
                                  detail: .clock(prefix: nil, interval: now.addingTimeInterval(-724)...now.addingTimeInterval(8 * 3600),
                                                 countsDown: false),
-                                 note: "End it on your iPhone.", accessibilityLabel: "Live on Your Mac")),
+                                 note: "End it on your iPhone.", accessibilityLabel: "Live on Your Mac",
+                                 sensitiveTitleSuffix: "Your Mac")),
             ("paused", WatchGlance(mark: .plain, title: "Paused",
                                    detail: .clock(prefix: "Lets go in", interval: now...now.addingTimeInterval(42), countsDown: true),
                                    note: nil, accessibilityLabel: "Paused")),

@@ -11,11 +11,18 @@ struct WatchGlanceView: View {
         VStack(alignment: .leading, spacing: M.lineSpacing) {
             HStack(spacing: M.glyphSpacing) {
                 mark
-                Text(glance.title)
-                    .font(.system(size: M.titleSize, weight: .semibold))
-                    .foregroundStyle(Farside.Palette.bone)
-                    .lineLimit(1)
-                    .minimumScaleFactor(M.titleMinimumScale)
+                HStack(spacing: 0) {
+                    Text(glance.title)
+                        .layoutPriority(1)
+                    if let suffix = glance.sensitiveTitleSuffix {
+                        Text(verbatim: " · " + suffix)
+                            .privacySensitive()
+                    }
+                }
+                .font(.system(size: M.titleSize, weight: .semibold))
+                .foregroundStyle(Farside.Palette.bone)
+                .lineLimit(1)
+                .minimumScaleFactor(M.titleMinimumScale)
             }
             detail
                 .foregroundStyle(Farside.Palette.ash)
@@ -78,9 +85,10 @@ private enum WatchGlancePreview {
 #Preview("Live session") {
     let now = Date.now
     WatchGlancePreview.framed(WatchGlance(
-        mark: .plain, title: "Live · Your Mac",
+        mark: .plain, title: "Live",
         detail: .clock(prefix: nil, interval: now.addingTimeInterval(-724)...now.addingTimeInterval(8 * 3600), countsDown: false),
-        note: "End it on your iPhone.", accessibilityLabel: "Live on Your Mac"))
+        note: "End it on your iPhone.", accessibilityLabel: "Live on Your Mac",
+        sensitiveTitleSuffix: "Your Mac"))
 }
 
 #Preview("Paused") {

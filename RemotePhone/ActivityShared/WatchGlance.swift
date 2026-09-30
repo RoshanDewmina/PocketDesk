@@ -16,6 +16,11 @@ struct WatchGlance: Equatable {
     var detail: Detail
     var note: String?
     var accessibilityLabel: String
+    /// Drawn after the title as ` · <suffix>` and redacted like the Lock Screen's line: it carries the Mac's
+    /// name when the person opted in to showing it.
+    var sensitiveTitleSuffix: String? = nil
+
+    var displayTitle: String { [title, sensitiveTitleSuffix].compactMap { $0 }.joined(separator: " · ") }
 }
 
 enum SessionGlance {
@@ -32,16 +37,16 @@ enum SessionGlance {
 
     private static func body(attributes: FarsideSessionAttributes, state: FarsideSessionAttributes.ContentState,
                              isStale: Bool, now: Date) -> WatchGlance {
-        func make(_ title: String, _ detail: WatchGlance.Detail, note: String? = nil) -> WatchGlance {
-            WatchGlance(mark: .plain, title: title, detail: detail, note: note, accessibilityLabel: "")
+        func make(_ title: String, _ detail: WatchGlance.Detail, note: String? = nil, suffix: String? = nil) -> WatchGlance {
+            WatchGlance(mark: .plain, title: title, detail: detail, note: note, accessibilityLabel: "", sensitiveTitleSuffix: suffix)
         }
         if isStale { return make("Session ended?", .text("Check your iPhone.")) }
         switch state.phase {
         case .live:
             let started = attributes.startedAt
-            return make("Live · \(attributes.macLabel)",
-                          .clock(prefix: nil, interval: started...started.addingTimeInterval(8 * 60 * 60), countsDown: false),
-                          note: "End it on your iPhone.")
+            return make("Live",
+                        .clock(prefix: nil, interval: started...started.addingTimeInterval(8 * 60 * 60), countsDown: false),
+                        note: "End it on your iPhone.", suffix: attributes.macLabel)
         case .paused:
             if let grace = state.graceEndsAt, grace > now {
                 return make("Paused", .clock(prefix: "Lets go in", interval: now...grace, countsDown: true))
@@ -61,8 +66,8 @@ enum SessionGlance {
 }
 
 /// Mac presence as LA2's content state will carry it (names from the Mac vitals spec). Every field is
-/// optional and an unknown state decodes as not seen, because a state that fails to decode silently
-/// stops a Live Activity from updating.
+/// optional, and an unknown state or a field of the wrong type decodes as absent, because a state that
+/// fails to decode silently stops a Live Activity from updating.
 struct MacPresence: Codable, Hashable {
     enum State: String { case awake, asleep, notSeen }
 
@@ -70,6 +75,21 @@ struct MacPresence: Codable, Hashable {
     var macSeenUnix: Int?
     var batteryPercent: Int?
     var power: String?
+
+    init(macState: String? = nil, macSeenUnix: Int? = nil, batteryPercent: Int? = nil, power: String? = nil) {
+        self.macState = macState
+        self.macSeenUnix = macSeenUnix
+        self.batteryPercent = batteryPercent
+        self.power = power
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        macState = try? container.decodeIfPresent(String.self, forKey: .macState)
+        macSeenUnix = try? container.decodeIfPresent(Int.self, forKey: .macSeenUnix)
+        batteryPercent = try? container.decodeIfPresent(Int.self, forKey: .batteryPercent)
+        power = try? container.decodeIfPresent(String.self, forKey: .power)
+    }
 
     var state: State { State(rawValue: macState ?? "") ?? .notSeen }
     var seenAt: Date? { macSeenUnix.map { Date(timeIntervalSince1970: TimeInterval($0)) } }

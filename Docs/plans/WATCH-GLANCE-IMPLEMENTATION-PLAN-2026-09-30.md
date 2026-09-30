@@ -225,7 +225,7 @@ Each test file: `import XCTest` / `@testable import PocketDeskRemote` / `final c
 
 `mark` is always `.plain`. `accessibilityLabel` is `SessionActivityCopy.accessibilitySummary(for: state, stale: isStale)`, prefixed with `Sample. ` for a preview.
 
-**Mac line** (`MacGlanceLine.text`). `HH:MM` is `Date.FormatStyle().hour().minute()` with the given locale and time zone.
+**Mac line** (`MacGlanceLine.text`). `HH:MM` is `Date.FormatStyle().hour().minute()` with the given locale and time zone (superseded after review: Gregorian calendar and a narrow am/pm marker, spec Amendment 3).
 
 | Input | Output |
 |---|---|

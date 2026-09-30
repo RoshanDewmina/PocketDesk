@@ -33,7 +33,8 @@ final class MacGlanceLineTests: XCTestCase {
         func line(_ presence: MacPresence) -> String? {
             MacGlanceLine.text(for: presence, isStale: false, timeZone: utc, locale: unitedStates)
         }
-        XCTAssertEqual(line(presence("awake", seen: seen1141, battery: 64)), "Mac · seen 11:41\u{202F}a · 64%")
+        let note = "ICU's narrow marker (spec Amendment 3); a runtime update may change the spacing, not the meaning"
+        XCTAssertEqual(line(presence("awake", seen: seen1141, battery: 64)), "Mac · seen 11:41\u{202F}a · 64%", note)
         XCTAssertEqual(line(presence("awake", seen: seen1259, battery: 100)), "Mac · seen 12:59\u{202F}p · 100%")
         XCTAssertEqual(line(presence("asleep", seen: seen1259)), "Mac · asleep since 12:59\u{202F}p")
         XCTAssertEqual(line(presence("notSeen", seen: seen0905)), "Not seen since 9:05\u{202F}a")
@@ -114,6 +115,17 @@ final class MacGlanceLineTests: XCTestCase {
         XCTAssertEqual(decoded.seenAt, Date(timeIntervalSince1970: TimeInterval(seen1141)))
         XCTAssertEqual(presence("asleep").state, .asleep)
         XCTAssertEqual(presence("notSeen").state, .notSeen)
+    }
+
+    func testAFieldOfTheWrongTypeDecodesAsAbsentInsteadOfFailingTheState() throws {
+        let wrong = #"{"macState":7,"macSeenUnix":"soon","batteryPercent":64.5,"power":false}"#
+        let decoded = try JSONDecoder().decode(MacPresence.self, from: Data(wrong.utf8))
+        XCTAssertEqual(decoded, MacPresence())
+        XCTAssertEqual(decoded.state, .notSeen)
+        let partly = try JSONDecoder().decode(MacPresence.self, from: Data(#"{"macState":"awake","macSeenUnix":"x","batteryPercent":64}"#.utf8))
+        XCTAssertEqual(partly, MacPresence(macState: "awake", batteryPercent: 64))
+        XCTAssertEqual(MacGlanceLine.text(for: partly, isStale: false, timeZone: utc, locale: britain), "Mac not seen lately",
+                       "Awake without a readable seen time is not claimed")
     }
 
     func testPresenceEncodesToPlainStringsAndIntegers() throws {
