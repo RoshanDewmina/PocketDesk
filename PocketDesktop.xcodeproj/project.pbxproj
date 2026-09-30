@@ -543,6 +543,7 @@
 		A1C384890651627CA5353EF0 /* CouchPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 921A4223E58B7486642CE004 /* CouchPresentationTests.swift */; };
 		A221773615A10E8DA72B4D32 /* SessionContinuity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 643A13E08A654E915062CB1B /* SessionContinuity.swift */; };
 		A23CA132BE232C97A7EDCEE0 /* ScriptedSessionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79EB73E1E886FA5A57E8D89E /* ScriptedSessionSupport.swift */; };
+		A2889047DFD9C297D9ACC3FC /* PeerAudioLifetimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3213600B3AABB6616A17F34E /* PeerAudioLifetimeTests.swift */; };
 		A2DEDB25A587F1EFC23B2F52 /* FriendlyErrors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52F19B9B86CA153FF5CE827B /* FriendlyErrors.swift */; };
 		A2F9FBA066F5F6BD4783EDAA /* WatchGlanceMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19A17B97DD4A341463A71EC0 /* WatchGlanceMetrics.swift */; };
 		A373DAFF8795B767158CA3D9 /* BusyPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A3E2750D58B12A1C8B8D835 /* BusyPresentation.swift */; };
@@ -1024,6 +1025,7 @@
 		3113E7FFC8DA6DCE50ED6ACC /* HostModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostModel.swift; sourceTree = "<group>"; };
 		317BFB7BF5716BA9625EA3CF /* NativeCodecCapabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeCodecCapabilityTests.swift; sourceTree = "<group>"; };
 		3202E338FB2B626C99B54D80 /* MacVitalsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacVitalsUITests.swift; sourceTree = "<group>"; };
+		3213600B3AABB6616A17F34E /* PeerAudioLifetimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerAudioLifetimeTests.swift; sourceTree = "<group>"; };
 		3318E05BBB4D76E29BF69351 /* PrecisionTap.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PrecisionTap.swift; sourceTree = "<group>"; };
 		346F5D16AA33CBD8D2A65487 /* HostHangWatchdog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostHangWatchdog.swift; sourceTree = "<group>"; };
 		351DF32594870C24F9E64138 /* VideoToolboxInterpolationEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoToolboxInterpolationEngine.swift; sourceTree = "<group>"; };
@@ -1781,6 +1783,7 @@
 				CE2406BCA00220ED02C01518 /* NativeInputSafetyTests.swift */,
 				974DBC6590A3D7D66B8C20B1 /* NativeProtocolTests.swift */,
 				66FDE764B193EF993CFCF635 /* PairStoreDeletionTests.swift */,
+				3213600B3AABB6616A17F34E /* PeerAudioLifetimeTests.swift */,
 				5B45BA3810586D5E7548CC90 /* PointerLocationTests.swift */,
 				0C792ABF9D495176D081B6D7 /* PointerTelemetryTests.swift */,
 				C13285CDA2C161AF5F8091E3 /* PolishPackTests.swift */,
@@ -3249,6 +3252,7 @@
 				21C10529944B07483A4164A6 /* NetworkPathWatcher.swift in Sources */,
 				F614EBB3B5796328CD19E445 /* PairStoreDeletionTests.swift in Sources */,
 				1C1C88B47E7708FA8010F74A /* Pairing.swift in Sources */,
+				A2889047DFD9C297D9ACC3FC /* PeerAudioLifetimeTests.swift in Sources */,
 				AE9AC143ECFF68174B9561FF /* PeerMedia.swift in Sources */,
 				02FDADF396A35E9CDCBA9E51 /* PhoneSystemAudioDevice.swift in Sources */,
 				647D0FD25F73AAE67602CCA9 /* PocketDeskStyle.swift in Sources */,
@@ -3649,7 +3653,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.PocketDesk.FarsideTestPad;
 				PRODUCT_NAME = "Farside Test Pad";
 				SDKROOT = macosx;
-				SWIFT_OBJC_BRIDGING_HEADER = "RemoteShared/SystemAudio-Bridging-Header.h";
 			};
 			name = Debug;
 		};
@@ -3989,6 +3992,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.RemoteCoreTests;
 				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) AUDIO_LIFETIME_TESTS";
 				SWIFT_OBJC_BRIDGING_HEADER = "RemoteShared/SystemAudio-Bridging-Header.h";
 			};
 			name = Release;
@@ -4043,6 +4047,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.RemoteCoreTests;
 				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) AUDIO_LIFETIME_TESTS";
 				SWIFT_OBJC_BRIDGING_HEADER = "RemoteShared/SystemAudio-Bridging-Header.h";
 			};
 			name = Debug;
@@ -4143,7 +4148,6 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.HostUISnapshotTests;
 				SDKROOT = macosx;
-				SWIFT_OBJC_BRIDGING_HEADER = "RemoteShared/SystemAudio-Bridging-Header.h";
 			};
 			name = Release;
 		};
@@ -4207,7 +4211,6 @@
 				MACOSX_DEPLOYMENT_TARGET = 26.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.HostUISnapshotTests;
 				SDKROOT = macosx;
-				SWIFT_OBJC_BRIDGING_HEADER = "RemoteShared/SystemAudio-Bridging-Header.h";
 			};
 			name = Debug;
 		};
@@ -4471,7 +4474,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.roshan.PocketDesk.FarsideTestPad;
 				PRODUCT_NAME = "Farside Test Pad";
 				SDKROOT = macosx;
-				SWIFT_OBJC_BRIDGING_HEADER = "RemoteShared/SystemAudio-Bridging-Header.h";
 			};
 			name = Release;
 		};

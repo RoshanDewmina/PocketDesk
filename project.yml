@@ -273,6 +273,7 @@ targets:
     settings:
       base:
         SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) AUDIO_LIFETIME_TESTS"
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_IDENTITY: '-'
@@ -307,7 +308,6 @@ targets:
       - RemoteShared/ThirdPartyNotices.txt
     settings:
       base:
-        SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
         GENERATE_INFOPLIST_FILE: YES
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_IDENTITY: '-'
@@ -338,7 +338,6 @@ targets:
               RemoteShared/LegibilityChart.swift, RemoteShared/BenchRenderers.swift]
     settings:
       base:
-        SWIFT_OBJC_BRIDGING_HEADER: RemoteShared/SystemAudio-Bridging-Header.h
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.FarsideTestPad
         PRODUCT_NAME: Farside Test Pad
         GENERATE_INFOPLIST_FILE: YES
