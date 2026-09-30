@@ -34,14 +34,43 @@ struct OwnedVTConfiguration: Equatable {
     enum Profile: Equatable { case constrainedBaseline, baseline, main, constrainedHigh, high }
     let profile: Profile
     let level: UInt8
-    var lowLatency: Bool { profile == .high || profile == .constrainedHigh }
-    var profileProperty: CFString {
+    var lowLatency: Bool { level == 52 && (profile == .high || profile == .constrainedHigh) }
+    // Conservative baseline bitrate bounds apply to all profiles, including High.
+    var maximumKbps: UInt32 {
+        let rates: [UInt8: UInt32] = [10: 64, 11: 192, 12: 384, 13: 768, 20: 2000, 21: 4000, 22: 4000,
+            30: 10000, 31: 14000, 32: 20000, 40: 20000, 41: 50000, 42: 50000, 50: 100000, 51: 100000, 52: 100000]
+        return rates[level] ?? 64
+    }
+    func acceptsSPS(_ sps: Data) -> Bool {
+        guard sps.count >= 4, sps[0] & 31 == 7, sps[3] <= level else { return false }
+        let observed = sps[1], constraints = sps[2]
         switch profile {
-        case .constrainedBaseline: kVTProfileLevel_H264_ConstrainedBaseline_AutoLevel
-        case .baseline: kVTProfileLevel_H264_Baseline_AutoLevel
-        case .main: kVTProfileLevel_H264_Main_AutoLevel
-        case .constrainedHigh: kVTProfileLevel_H264_ConstrainedHigh_AutoLevel
-        case .high: kVTProfileLevel_H264_High_AutoLevel
+        case .constrainedBaseline: return observed == 0x42 && constraints & 0x40 != 0
+        case .baseline: return observed == 0x42
+        case .main: return observed == 0x4d
+        case .constrainedHigh: return observed == 0x64 && constraints & 0x0c == 0x0c
+        case .high: return observed == 0x64
+        }
+    }
+    var profileProperty: CFString {
+        // Low-latency hardware path requires AutoLevel, admitted only at the
+        // highest advertised level. Other standard profiles use exact levels
+        // where public VT exposes them; every output still passes the SPS fence.
+        if lowLatency {
+            return profile == .constrainedHigh ? kVTProfileLevel_H264_ConstrainedHigh_AutoLevel : kVTProfileLevel_H264_High_AutoLevel
+        }
+        switch profile {
+        case .baseline:
+            let levels: [UInt8: CFString] = [13: kVTProfileLevel_H264_Baseline_1_3, 30: kVTProfileLevel_H264_Baseline_3_0, 31: kVTProfileLevel_H264_Baseline_3_1, 32: kVTProfileLevel_H264_Baseline_3_2, 40: kVTProfileLevel_H264_Baseline_4_0, 41: kVTProfileLevel_H264_Baseline_4_1, 42: kVTProfileLevel_H264_Baseline_4_2, 50: kVTProfileLevel_H264_Baseline_5_0, 51: kVTProfileLevel_H264_Baseline_5_1, 52: kVTProfileLevel_H264_Baseline_5_2]
+            return levels[level] ?? kVTProfileLevel_H264_Baseline_AutoLevel
+        case .main:
+            let levels: [UInt8: CFString] = [30: kVTProfileLevel_H264_Main_3_0, 31: kVTProfileLevel_H264_Main_3_1, 32: kVTProfileLevel_H264_Main_3_2, 40: kVTProfileLevel_H264_Main_4_0, 41: kVTProfileLevel_H264_Main_4_1, 42: kVTProfileLevel_H264_Main_4_2, 50: kVTProfileLevel_H264_Main_5_0, 51: kVTProfileLevel_H264_Main_5_1, 52: kVTProfileLevel_H264_Main_5_2]
+            return levels[level] ?? kVTProfileLevel_H264_Main_AutoLevel
+        case .high:
+            let levels: [UInt8: CFString] = [30: kVTProfileLevel_H264_High_3_0, 31: kVTProfileLevel_H264_High_3_1, 32: kVTProfileLevel_H264_High_3_2, 40: kVTProfileLevel_H264_High_4_0, 41: kVTProfileLevel_H264_High_4_1, 42: kVTProfileLevel_H264_High_4_2, 50: kVTProfileLevel_H264_High_5_0, 51: kVTProfileLevel_H264_High_5_1, 52: kVTProfileLevel_H264_High_5_2]
+            return levels[level] ?? kVTProfileLevel_H264_High_AutoLevel
+        case .constrainedBaseline: return kVTProfileLevel_H264_ConstrainedBaseline_AutoLevel
+        case .constrainedHigh: return kVTProfileLevel_H264_ConstrainedHigh_AutoLevel
         }
     }
     init?(parameters: [String: String]) {
@@ -49,6 +78,7 @@ struct OwnedVTConfiguration: Equatable {
               let text = parameters["profile-level-id"], text.count == 6,
               let packed = UInt32(text, radix: 16) else { return nil }
         level = UInt8(packed & 255)
+        guard [10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40, 41, 42, 50, 51, 52].contains(level) else { return nil }
         let constraints = UInt8((packed >> 8) & 255)
         switch packed >> 16 {
         case 0x42: profile = constraints & 0x40 != 0 ? .constrainedBaseline : .baseline
@@ -113,8 +143,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             invalidate()
             width = Int32(settings.width); height = Int32(settings.height)
             fps = max(1, min(120, settings.maxFramerate))
-            bitrate = max(1, min(100_000, settings.startBitrate))
-            maximumQP = max(1, min(51, settings.qpMax == 0 ? 30 : Int(settings.qpMax)))
+            bitrate = max(1, min(configuration.maximumKbps, settings.startBitrate))
+            maximumQP = max(1, min(30, settings.qpMax == 0 ? 30 : Int(settings.qpMax)))
             let limit = H264FrameBudget.level(configuration.level)
             let macroblocks = ((Int(width) + 15) / 16) * ((Int(height) + 15) / 16)
             guard width > 0, height > 0, width <= 4096, height <= 4096,
@@ -183,7 +213,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     }
     func setBitrate(_ bitrateKbit: UInt32, framerate: UInt32) -> Int32 {
         serialized {
-            bitrate = max(1, min(100_000, bitrateKbit))
+            bitrate = max(1, min(configuration.maximumKbps, bitrateKbit))
             let frameMacroblocks = ((Int(width) + 15) / 16) * ((Int(height) + 15) / 16)
             let maximumFPS = frameMacroblocks > 0 ? H264FrameBudget.level(configuration.level).macroblocksPerSecond / frameMacroblocks : 1
             if framerate > 0 { fps = UInt32(max(1, min(120, min(Int(framerate), maximumFPS)))) }
@@ -241,8 +271,12 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     }
     private func completed(id: UInt64, epoch: UUID, status: OSStatus, flags: VTEncodeInfoFlags, sample: CMSampleBuffer?) {
         guard epoch == self.epoch, let entry = pending.removeValue(forKey: id), entry.epoch == epoch else { return }
-        guard status == noErr, !flags.contains(.frameDropped), let sample,
-              let data = Self.annexB(sample) else { counters?.encoderSilentlyDropped(1); return }
+        guard status == noErr, !flags.contains(.frameDropped), let sample else { counters?.encoderSilentlyDropped(1); return }
+        guard let data = Self.annexB(sample, configuration: configuration) else {
+            counters?.encoderSilentlyDropped(1)
+            invalidate(); storedLastStatus = kVTParameterErr
+            return // Never publish a bitstream outside the negotiated profile/level.
+        }
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
         let isKey = (attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool) != true
         let now = MachClock.nowMs()
@@ -259,7 +293,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         frameTiming?.encoded(key: entry.captureMs, localRtp: entry.timestamp, bytes: data.count, atMs: now)
         if callback?(image, codec) == true { counters?.encodedFrameAccepted() }
     }
-    private static func annexB(_ sample: CMSampleBuffer) -> Data? {
+    private static func annexB(_ sample: CMSampleBuffer, configuration: OwnedVTConfiguration) -> Data? {
         guard let block = CMSampleBufferGetDataBuffer(sample), let format = CMSampleBufferGetFormatDescription(sample) else { return nil }
         let count = CMBlockBufferGetDataLength(block)
         guard count > 0, count <= H264AnnexB.maximumBytes else { return nil }
@@ -270,7 +304,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         var pointer: UnsafePointer<UInt8>?, size = 0
         guard CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: 0, parameterSetPointerOut: &pointer,
             parameterSetSizeOut: &size, parameterSetCountOut: &setCount, nalUnitHeaderLengthOut: &lengthBytes) == noErr,
-              setCount <= 8 else { return nil }
+              setCount > 0, setCount <= 8, let firstPointer = pointer, size >= 4,
+              configuration.acceptsSPS(Data(bytes: firstPointer, count: size)) else { return nil }
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
         let isKey = (attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool) != true
         var sets: [Data] = []
@@ -299,47 +334,159 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     var supportsNativeHandle: Bool { true }
 }
 
+/// One callback in progress plus one newest pending image. Never invoke an
+/// outward RTC callback on the queue that owns VideoToolbox or codec selection.
+final class VideoEncoderCallbackDelivery: @unchecked Sendable {
+    private struct Output {
+        let epoch: UUID
+        let image: RTCEncodedImage
+        let info: any RTCCodecSpecificInfo
+    }
+    private let fence = NSRecursiveLock()
+    private let mailbox = NSLock()
+    private let queue = DispatchQueue(label: "farside.video.encoder-callback")
+    private var epoch = UUID()
+    private var closed = true
+    private var pending: Output?
+    private var scheduled = false
+    private var callback: RTCVideoEncoderCallback?
+    private weak var counters: StreamCounters?
+    init(counters: StreamCounters? = nil) { self.counters = counters }
+    func setCallback(_ next: RTCVideoEncoderCallback?) {
+        fence.lock(); defer { fence.unlock() }
+        callback = next
+        mailbox.lock(); pending = nil; mailbox.unlock()
+    }
+    func activate() -> UUID {
+        fence.lock(); defer { fence.unlock() }
+        mailbox.lock(); defer { mailbox.unlock() }
+        epoch = UUID(); closed = false; pending = nil
+        return epoch
+    }
+    func isCurrent(_ candidate: UUID) -> Bool {
+        mailbox.lock(); defer { mailbox.unlock() }
+        return !closed && epoch == candidate
+    }
+    func enqueue(_ image: RTCEncodedImage, info: any RTCCodecSpecificInfo, epoch candidate: UUID) {
+        // This path may run on the owned encoder queue. It must NEVER wait for
+        // the callback fence, whose caller may synchronously release that encoder.
+        mailbox.lock()
+        guard !closed, epoch == candidate else { mailbox.unlock(); return }
+        let replaced = pending != nil
+        pending = Output(epoch: candidate, image: image, info: info)
+        let shouldSchedule = !scheduled
+        scheduled = true
+        mailbox.unlock()
+        if replaced { counters?.encoderDeliveryDropped() }
+        if shouldSchedule { queue.async { [weak self] in self?.deliver() } }
+    }
+    private func deliver() {
+        while true {
+            fence.lock()
+            mailbox.lock()
+            guard let output = pending else {
+                scheduled = false; mailbox.unlock(); fence.unlock(); return
+            }
+            pending = nil
+            let valid = !closed && output.epoch == epoch
+            mailbox.unlock()
+            if valid, callback?(output.image, output.info) == true, isCurrent(output.epoch) { counters?.encodedFrameAccepted() }
+            fence.unlock()
+        }
+    }
+    func invalidate() {
+        // Waits for an earlier outward callback; a callback may itself retire
+        // this delivery through the recursive fence without an encoder queue cycle.
+        fence.lock(); defer { fence.unlock() }
+        mailbox.lock(); closed = true; epoch = UUID(); pending = nil; mailbox.unlock()
+    }
+}
+
 /// Prefer the owned public path; a rejected public VT configuration retains the
 /// same negotiated codec in the compatibility encoder. Fallback is per session.
 final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
-    private let owned: OwnedVTEncoder
-    private let fallback: DesktopH264Encoder
+    private let owned: any RTCVideoEncoder
+    private let fallback: any RTCVideoEncoder
+    private let maximumKbps: UInt32
+    private let delivery: VideoEncoderCallbackDelivery
     private let queue = DispatchQueue(label: "farside.video.encoder-selection")
     private let key = DispatchSpecificKey<UInt8>()
     private var active: (any RTCVideoEncoder)?
-    private var callback: RTCVideoEncoderCallback?
+    private var settings: RTCVideoEncoderSettings?
+    private var cores: Int32 = 1
+    private var deliveryEpoch: UUID?
+    private var usingOwned = false
     init(configuration: OwnedVTConfiguration, codecInfo: RTCVideoCodecInfo,
          counters: StreamCounters?, frameTiming: HostFrameTimingLog?) {
         owned = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming)
         fallback = DesktopH264Encoder(codecInfo: codecInfo, counters: counters, frameTiming: frameTiming)
+        maximumKbps = configuration.maximumKbps
+        delivery = VideoEncoderCallbackDelivery(counters: counters)
         super.init(); queue.setSpecific(key: key, value: 1)
     }
+    #if DEBUG
+    init(preferred: any RTCVideoEncoder, fallback: any RTCVideoEncoder, counters: StreamCounters? = nil) {
+        owned = preferred; self.fallback = fallback; maximumKbps = 100_000
+        delivery = VideoEncoderCallbackDelivery(counters: counters)
+        super.init(); queue.setSpecific(key: key, value: 1)
+    }
+    #endif
     private func serialized<T>(_ body: () -> T) -> T {
         DispatchQueue.getSpecific(key: key) != nil ? body() : queue.sync(execute: body)
     }
-    func setCallback(_ callback: RTCVideoEncoderCallback?) {
-        serialized { self.callback = callback; active?.setCallback(callback) }
-    }
+    func setCallback(_ callback: RTCVideoEncoderCallback?) { delivery.setCallback(callback) }
     func startEncode(with settings: RTCVideoEncoderSettings, numberOfCores: Int32) -> Int {
-        serialized {
+        // Fence operations precede acquisition of the selection queue. An outward
+        // callback can ask for implementationName/release/rate synchronously.
+        let epoch = delivery.activate()
+        return serialized {
             if let active { _ = active.release() }
             active = nil
-            owned.setCallback(callback)
-            let result = owned.startEncode(with: settings, numberOfCores: numberOfCores)
-            if result == 0 { active = owned; return 0 }
+            guard delivery.isCurrent(epoch) else { return -1 }
+            let saved = RTCVideoEncoderSettings()
+            saved.name = settings.name; saved.width = settings.width; saved.height = settings.height
+            saved.startBitrate = min(maximumKbps, max(1, settings.startBitrate))
+            saved.maxBitrate = min(maximumKbps, settings.maxBitrate)
+            saved.minBitrate = min(saved.startBitrate, settings.minBitrate)
+            saved.maxFramerate = settings.maxFramerate; saved.qpMax = settings.qpMax; saved.mode = settings.mode
+            self.settings = saved; cores = numberOfCores; deliveryEpoch = epoch
+            let enqueue: RTCVideoEncoderCallback = { [delivery] image, info in
+                delivery.enqueue(image, info: info, epoch: epoch)
+                // Actual acceptance is counted after the outward callback returns.
+                return false
+            }
+            owned.setCallback(enqueue)
+            let result = owned.startEncode(with: saved, numberOfCores: numberOfCores)
+            if result == 0 { active = owned; usingOwned = true; return 0 }
             _ = owned.release()
-            fallback.setCallback(callback)
-            let compatible = fallback.startEncode(with: settings, numberOfCores: numberOfCores)
-            if compatible == 0 { active = fallback }
+            fallback.setCallback(enqueue)
+            let compatible = fallback.startEncode(with: saved, numberOfCores: numberOfCores)
+            if compatible == 0 { active = fallback; usingOwned = false }
             return compatible
         }
     }
-    func release() -> Int { serialized { let old = active; active = nil; return old?.release() ?? 0 } }
+    func release() -> Int {
+        delivery.invalidate()
+        return serialized { let old = active; active = nil; settings = nil; deliveryEpoch = nil; return old?.release() ?? 0 }
+    }
     func encode(_ frame: RTCVideoFrame, codecSpecificInfo info: (any RTCCodecSpecificInfo)?, frameTypes: [NSNumber]) -> Int {
-        serialized { active?.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes) ?? -1 }
+        serialized {
+            let result = active?.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes) ?? -1
+            guard result != 0, usingOwned, let settings, let epoch = deliveryEpoch, delivery.isCurrent(epoch) else { return result }
+            _ = owned.release()
+            fallback.setCallback { [delivery] image, info in delivery.enqueue(image, info: info, epoch: epoch); return false }
+            guard fallback.startEncode(with: settings, numberOfCores: cores) == 0 else { active = nil; return -1 }
+            active = fallback; usingOwned = false
+            return fallback.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes)
+        }
     }
     func setBitrate(_ bitrateKbit: UInt32, framerate: UInt32) -> Int32 {
-        serialized { active?.setBitrate(bitrateKbit, framerate: framerate) ?? -1 }
+        serialized {
+            let bounded = max(1, min(maximumKbps, bitrateKbit))
+            settings?.startBitrate = bounded
+            if framerate > 0 { settings?.maxFramerate = framerate }
+            return active?.setBitrate(bounded, framerate: framerate) ?? -1
+        }
     }
     func implementationName() -> String { serialized { active?.implementationName() ?? "Farside owned VT with codec-compatible fallback" } }
     func scalingSettings() -> RTCVideoEncoderQpThresholds? { serialized { active?.scalingSettings() } }

@@ -18,6 +18,38 @@ final class OwnedVTEncoderTests: XCTestCase {
         XCTAssertNil(OwnedVTConfiguration(parameters: ["profile-level-id": "640034", "packetization-mode": "0"]))
         XCTAssertNil(OwnedVTConfiguration(parameters: ["profile-level-id": "f40034", "packetization-mode": "1"]))
     }
+    func testNegotiatedLevelCapsRateAndRejectsHigherOrDifferentSPS() throws {
+        let config = try XCTUnwrap(OwnedVTConfiguration(parameters: ["profile-level-id": "64001f", "packetization-mode": "1"]))
+        XCTAssertFalse(config.lowLatency)
+        XCTAssertEqual(config.maximumKbps, 14_000)
+        XCTAssertTrue(config.acceptsSPS(Data([0x67, 0x64, 0, 31])))
+        XCTAssertFalse(config.acceptsSPS(Data([0x67, 0x64, 0, 32])))
+        XCTAssertFalse(config.acceptsSPS(Data([0x67, 0x42, 0, 31])))
+        XCTAssertFalse(config.acceptsSPS(Data([0x67, 0x64, 0])))
+    }
+
+    func testOutwardCallbackCanSynchronouslyInspectRateAndReleaseOwnedQueue() throws {
+        let preferred = QueueOwnedFixtureEncoder()
+        let counters = StreamCounters()
+        let wrapper = ResilientVTEncoder(preferred: preferred, fallback: QueueOwnedFixtureEncoder(), counters: counters)
+        let settings = RTCVideoEncoderSettings()
+        settings.width = 16; settings.height = 16; settings.startBitrate = 100; settings.maxBitrate = 100
+        settings.maxFramerate = 30; settings.name = "H264"
+        let retired = expectation(description: "Callback retires encoder without queue inversion")
+        wrapper.setCallback { _, _ in
+            XCTAssertEqual(wrapper.implementationName(), "queue-owned fixture")
+            XCTAssertEqual(wrapper.setBitrate(200, framerate: 30), 0)
+            XCTAssertEqual(wrapper.release(), 0)
+            retired.fulfill()
+            return true
+        }
+        XCTAssertEqual(wrapper.startEncode(with: settings, numberOfCores: 1), 0)
+        preferred.produce()
+        wait(for: [retired], timeout: 2)
+        XCTAssertEqual(counters.encodedTotal, 0, "Retired callback is not accepted into the new session")
+        XCTAssertEqual(wrapper.release(), 0)
+    }
+
     func testEvidenceRejectsImpossibleCompatibilityAndUnboundedQPClaims() throws {
         XCTAssertThrowsError(try VideoEncoderEvidence(path: .compatibility, maximumQPBound: 30, lowLatencyRequested: false, hardwareRequired: false, hardwareReported: nil).validate())
         XCTAssertThrowsError(try VideoEncoderEvidence(path: .ownedVideoToolbox, maximumQPBound: 52, lowLatencyRequested: true, hardwareRequired: true, hardwareReported: nil).validate())
@@ -81,5 +113,26 @@ final class OwnedVTEncoderTests: XCTestCase {
         wait(for: [encoded, decoded], timeout: 5)
         _ = encoder.release()
         XCTAssertEqual(encoder.encode(frame, codecSpecificInfo: nil, frameTypes: []), -1)
+    }
+}
+
+private final class QueueOwnedFixtureEncoder: NSObject, RTCVideoEncoder {
+    private let queue = DispatchQueue(label: "farside.test.queue-owned-encoder")
+    private var callback: RTCVideoEncoderCallback?
+    func setCallback(_ callback: RTCVideoEncoderCallback?) { queue.sync { self.callback = callback } }
+    func startEncode(with settings: RTCVideoEncoderSettings, numberOfCores: Int32) -> Int { queue.sync { 0 } }
+    func release() -> Int { queue.sync { callback = nil; return 0 } }
+    func setBitrate(_ bitrateKbit: UInt32, framerate: UInt32) -> Int32 { queue.sync { 0 } }
+    func implementationName() -> String { queue.sync { "queue-owned fixture" } }
+    func scalingSettings() -> RTCVideoEncoderQpThresholds? { nil }
+    var resolutionAlignment: Int { 2 }
+    var applyAlignmentToAllSimulcastLayers: Bool { true }
+    var supportsNativeHandle: Bool { true }
+    func encode(_ frame: RTCVideoFrame, codecSpecificInfo: (any RTCCodecSpecificInfo)?, frameTypes: [NSNumber]) -> Int { 0 }
+    func produce() {
+        queue.async { [self] in
+            let image = RTCEncodedImage(); image.buffer = Data([0, 0, 0, 1, 0x65])
+            _ = callback?(image, RTCCodecSpecificInfoH264())
+        }
     }
 }

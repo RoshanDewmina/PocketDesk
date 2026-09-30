@@ -1029,6 +1029,7 @@ final class PeerMedia: NSObject {
         file?.delegate = nil; file?.close()
         connection?.delegate = nil; connection?.close(); connection = nil
         candidates.removeAll(); video = nil
+        sessionVideoFactory = nil
         #if os(iOS)
         phoneAudioFactory = nil
         #endif
