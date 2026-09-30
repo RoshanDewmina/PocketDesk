@@ -14,8 +14,9 @@ struct StreamTuning: Equatable {
     /// frames queued behind a stall are fast-forwarded. Process-wide: set before any factory exists.
     var playoutDelayMinMs: Int?
     var playoutDelayMaxMs: Int?
-    /// Sender-side `WebRTC-Video-Pacing` trial parameters (`factor:…,max_delay:…ms`), bounding how long
-    /// a large key frame can sit in the pacer queue. Nil keeps libwebrtc's 1.1x factor and 2 s queue.
+    /// Sender-side `WebRTC-Video-Pacing` trial parameters (`factor:…,max_delay:…ms`). The desktop track
+    /// is a screencast, so libwebrtc paces it with `WebRTC-ProbingScreenshareBwe` (factor 1.0, 2875 ms
+    /// queue) and ignores this trial (PERF-PACK-2026-09-30 item 3); it only affects camera-type streams.
     var videoPacing: String?
     /// Seed the bandwidth estimate and cap the encoder per picture mode instead of starting at
     /// libwebrtc's 300 kbps and ramping for tens of seconds at maximum QP.
@@ -24,6 +25,9 @@ struct StreamTuning: Equatable {
     /// with it the pacer (which sends at ~1.1x the estimate), exceed the encoder's average rate so a
     /// large key or full-screen frame drains faster. The estimate still only grows where the path allows.
     var bandwidthHeadroom: Int = 1
+    /// Perf pack item 3: `bandwidthHeadroom` for a LAN route only (`CeilingRouteTracker`), 1…2; probes
+    /// are capped at 2x the encoder maximum, so more has no effect. Off (1) until a physical A/B.
+    var lanBandwidthHeadroom: Int = 1
     var degradationPreference: RTCDegradationPreference?
     /// Restart the VideoToolbox session when the target rate has doubled, so text is not left at the
     /// quality of a 300 kb/s start (see `EncoderRestartPolicy`).
@@ -107,12 +111,13 @@ struct StreamTuning: Equatable {
     static let viewportCaptureKey = "PocketDeskViewportCapture"
     static let ladderKey = "PocketDeskLadder"
     static let encoderMaxInFlightKey = "PocketDeskEncoderMaxInFlight"
+    static let lanHeadroomKey = "PocketDeskLANHeadroom"
     static let idleVideoRefreshKey = "PocketDeskIdleVideoRefresh"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
-                                 viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey]
+                                 viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -170,6 +175,10 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: ladderKey) != nil {
             tuning.ladder = defaults.bool(forKey: ladderKey)
         }
+        if defaults.object(forKey: lanHeadroomKey) != nil {
+            let headroom = defaults.integer(forKey: lanHeadroomKey)
+            tuning.lanBandwidthHeadroom = (1...2).contains(headroom) ? headroom : 1
+        }
         if defaults.object(forKey: encoderMaxInFlightKey) != nil {
             // 0 (or anything outside 1…8) lets frames queue, as before the default changed.
             let limit = defaults.integer(forKey: encoderMaxInFlightKey)
@@ -221,6 +230,7 @@ struct StreamTuning: Equatable {
         if !viewportCapture { parts.append("whole-display capture") }
         if !ladder { parts.append("no ladder") }
         if let encoderMaxInFlight { parts.append("max in-flight \(encoderMaxInFlight)") }
+        if lanBandwidthHeadroom > 1 { parts.append("LAN headroom \(lanBandwidthHeadroom)") }
         if presentAtDisplayMaximum && !idleVideoRefresh { parts.append("no idle refresh") }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
@@ -302,6 +312,32 @@ enum SeedRoute: String, Equatable {
         case "relay": return .relay
         default: return nil
         }
+    }
+}
+
+/// The estimate ceiling for the route in use: the encoder ceiling times `bandwidthHeadroom`, and on a
+/// LAN route times `lanBandwidthHeadroom`, so a large key frame can drain faster where the link has room.
+/// Internet P2P, relay and unknown routes are never raised.
+enum BandwidthCeilingPolicy {
+    static func maxBitrateBps(ceiling: Int, route: SeedRoute?, tuning: StreamTuning) -> Int {
+        let headroom = route == .lan ? max(tuning.bandwidthHeadroom, tuning.lanBandwidthHeadroom) : tuning.bandwidthHeadroom
+        return ceiling * max(1, headroom)
+    }
+}
+
+/// The route class the estimate ceiling follows, with hysteresis so a busy LAN whose round trip
+/// wanders around `SeedRoute.lanRoundTripLimitMs` does not flip the ceiling every second.
+struct CeilingRouteTracker: Equatable {
+    static let lanExitRoundTripMs = 25.0
+    private(set) var route: SeedRoute?
+
+    /// True when the class changed and the ceiling must be re-applied.
+    mutating func observe(detail: String?, rttMs: Double?) -> Bool {
+        var next = SeedRoute.classify(detail: detail, rttMs: rttMs)
+        if route == .lan, detail == "lan", let rttMs, rttMs < Self.lanExitRoundTripMs { next = .lan }
+        guard next != route else { return false }
+        route = next
+        return true
     }
 }
 

@@ -176,6 +176,8 @@ final class PeerMedia: NSObject {
     private(set) var streamQuality: StreamQuality = .balanced
     private var latestHostSummary: HostStreamSummary?
     private var bandwidthSeed = BandwidthSeedPolicy()
+    private var ceilingRoute = CeilingRouteTracker()
+    private var appliedBweMaxBps: Int?
     private let isHost: Bool
     private let nativeDesktopCodecs: Bool
     private var previousSample: StreamStatsSample?
@@ -457,9 +459,27 @@ final class PeerMedia: NSObject {
         sender.parameters = parameters
         appliedRate = rate
         if tuning.qualityBitrates {
-            _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: nil,
-                                                 maxBitrateBps: NSNumber(value: ceiling * max(1, tuning.bandwidthHeadroom)))
+            let maximum = bandwidthCeilingBps
+            _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: nil, maxBitrateBps: NSNumber(value: maximum))
+            appliedBweMaxBps = maximum
         }
+    }
+
+    /// The estimate ceiling for the current picture mode and route class (`BandwidthCeilingPolicy`).
+    private var bandwidthCeilingBps: Int {
+        BandwidthCeilingPolicy.maxBitrateBps(ceiling: tuning.maximumBitrateBps(for: streamQuality),
+                                             route: ceilingRoute.route, tuning: tuning)
+    }
+
+    /// Re-applies the ceiling when the route class changed (LAN headroom on, or back off after an ICE
+    /// restart onto relay). The current estimate is left alone, so nothing is re-seeded.
+    private func followCeilingRoute(detail: String?, rttMs: Double?) {
+        guard isHost, nativeDesktopCodecs, tuning.qualityBitrates,
+              ceilingRoute.observe(detail: detail, rttMs: rttMs), !closed, remoteDescriptionReady else { return }
+        let maximum = bandwidthCeilingBps
+        guard maximum != appliedBweMaxBps else { return }
+        _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: nil, maxBitrateBps: NSNumber(value: maximum))
+        appliedBweMaxBps = maximum
     }
 
     /// G5: the capture session's target rate and display. Written on the main queue under
@@ -538,8 +558,10 @@ final class PeerMedia: NSObject {
         let seedBps = seedRoute.map { streamQuality.startBitrateBps(for: $0) } ?? streamQuality.startBitrateBps
         guard bandwidthSeed.observe(eligible: seedRoute != nil, estimateKbps: stats.availableOutgoingKbps,
                                     lossPercent: stats.remoteLossPercent, seedKbps: Double(seedBps) / 1000) else { return }
+        let maximum = bandwidthCeilingBps
         _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: NSNumber(value: seedBps),
-                                             maxBitrateBps: NSNumber(value: tuning.maximumBitrateBps(for: streamQuality) * max(1, tuning.bandwidthHeadroom)))
+                                             maxBitrateBps: NSNumber(value: maximum))
+        appliedBweMaxBps = maximum
     }
 
     /// Host: the encoder ceiling actually applied to the video sender, in kbps.
@@ -711,6 +733,7 @@ final class PeerMedia: NSObject {
                 stats.captureRegion = captureRegion
             }
             stats.maxKbps = appliedSenderMaxKbps
+            followCeilingRoute(detail: sample.routeDetail, rttMs: stats.rttMs)
             seedBandwidthEstimate(stats, route: sample.route, detail: sample.routeDetail)
             latestHostSummary = stats.hostSummary
         } else {

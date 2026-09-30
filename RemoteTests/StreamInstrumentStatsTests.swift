@@ -23,16 +23,76 @@ final class StreamInstrumentStatsTests: XCTestCase {
         trace.submitted(key: 116, atMs: 1_016)
         trace.submitted(key: 133, atMs: 1_033)
         XCTAssertEqual(trace.inFlight, 3)
-        let second = trace.completed(key: 116, atMs: 1_040)
-        XCTAssertEqual(second, EncoderLatencyTrace.Sample(latencyMs: 24, inFlight: 2))
+        let first = trace.completed(key: 100, atMs: 1_030)
+        XCTAssertEqual(first, EncoderLatencyTrace.Sample(latencyMs: 30, inFlight: 1))
         let unknown = trace.completed(key: 999, atMs: 1_045)
-        XCTAssertEqual(unknown, EncoderLatencyTrace.Sample(latencyMs: 45, inFlight: 1), "an unknown key takes the oldest submission")
+        XCTAssertEqual(unknown, EncoderLatencyTrace.Sample(latencyMs: 29, inFlight: 2), "an unknown key takes the oldest submission")
+        XCTAssertEqual(trace.takeSilentDrops(), 0, "an unknown key retires nothing")
         XCTAssertEqual(trace.inFlight, 1)
         XCTAssertNil(trace.completed(key: 133, atMs: 3_000), "a frame older than a second was forgotten")
         XCTAssertEqual(trace.inFlight, 0)
         trace.submitted(key: 1, atMs: 5_000)
         trace.reset()
         XCTAssertEqual(trace.inFlight, 0)
+    }
+
+    /// VideoToolbox returns frames in submit order (the ObjC encoder turns frame reordering off), so a
+    /// completion for a later frame means every older pending frame was dropped without a callback.
+    func testCompletionRetiresOlderPendingFramesAsSilentDrops() {
+        var trace = EncoderLatencyTrace()
+        trace.submitted(key: 100, atMs: 1_000)
+        trace.submitted(key: 116, atMs: 1_016)
+        trace.submitted(key: 133, atMs: 1_033)
+        XCTAssertEqual(trace.completed(key: 133, atMs: 1_040), EncoderLatencyTrace.Sample(latencyMs: 7, inFlight: 3))
+        XCTAssertEqual(trace.inFlight, 0)
+        XCTAssertEqual(trace.takeSilentDrops(), 2)
+        XCTAssertEqual(trace.takeSilentDrops(), 0, "taking resets the count")
+    }
+
+    func testSilentDropOpensTheNewestFrameWinsGateAtTheNextCompletionOrAfterTheWindow() {
+        let window = DesktopH264Encoder.inFlightWindowMs
+        XCTAssertEqual(window, 100)
+        var trace = EncoderLatencyTrace()
+        trace.submitted(key: 1, atMs: 0)
+        XCTAssertEqual(trace.pending(withinMs: window, now: 99), 1, "still counted inside the window")
+        XCTAssertEqual(trace.pending(withinMs: window, now: 101), 0, "a frame that never calls back stops blocking")
+        trace.submitted(key: 2, atMs: 101)
+        _ = trace.completed(key: 2, atMs: 110)
+        XCTAssertEqual(trace.pending(withinMs: window, now: 110), 0)
+        XCTAssertEqual(trace.takeSilentDrops(), 1)
+    }
+
+    func testFailedSubmitIsCancelledSoItNeverHoldsTheGate() {
+        var trace = EncoderLatencyTrace()
+        trace.submitted(key: 5, atMs: 0)
+        trace.submitted(key: 6, atMs: 8)
+        trace.cancel(key: 6)
+        XCTAssertEqual(trace.inFlight, 1)
+        XCTAssertEqual(trace.pending(withinMs: 100, now: 9), 1)
+        trace.cancel(key: 42)
+        XCTAssertEqual(trace.inFlight, 1, "an unknown key cancels nothing")
+        _ = trace.completed(key: 5, atMs: 12)
+        XCTAssertEqual(trace.takeSilentDrops(), 0, "a cancelled frame is not a silent drop")
+    }
+
+    func testSilentDropsReachTheHostSummary() throws {
+        let counters = StreamCounters()
+        counters.encoded(latencyMs: 12, bytes: 40_000, isKeyFrame: false, inFlight: 1)
+        counters.encoderSilentlyDropped(3)
+        let snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.encoderSilentDrops, 3)
+        XCTAssertNil(counters.drain(inputBufferedBytes: nil).encoderSilentDrops, "reset after each sample")
+        var report = StreamStatsReport(role: "host", previous: StreamStatsSample(entries: []),
+                                       current: StreamStatsSample(entries: []), counters: snapshot)
+        report.encoderSilentDrops = snapshot.encoderSilentDrops
+        let summary = report.hostSummary
+        XCTAssertEqual(summary.encoderSilentDrops, 3)
+        XCTAssertNoThrow(try summary.validate())
+        let decoded = try JSONDecoder().decode(HostStreamSummary.self, from: JSONEncoder().encode(summary))
+        XCTAssertEqual(decoded.encoderSilentDrops, 3)
+        var bad = summary
+        bad.encoderSilentDrops = -1
+        XCTAssertThrowsError(try bad.validate())
     }
 
     func testCountersReportGlassLatencyCadenceAndInputToPhoton() {

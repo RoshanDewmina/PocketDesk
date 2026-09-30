@@ -73,8 +73,10 @@ struct EncoderRestartPolicy {
 }
 
 /// Per-frame bookkeeping for the encoder trace: when each frame went into VideoToolbox and how many
-/// were already inside. Frames are matched back by their capture time (ms); a frame VideoToolbox
-/// drops never calls back and is forgotten after `staleAfterMs`.
+/// were already inside. Frames are matched back by their capture time (ms). VideoToolbox returns
+/// frames in submit order (the ObjC encoder turns frame reordering off), so a completion retires every
+/// older pending frame as a silent drop (an encode error or `kVTEncodeInfo_FrameDropped`, which never
+/// call back); anything else is forgotten after `staleAfterMs`.
 struct EncoderLatencyTrace {
     struct Sample: Equatable {
         var latencyMs: Double
@@ -84,6 +86,7 @@ struct EncoderLatencyTrace {
 
     var staleAfterMs = 1_000.0
     private var pending: [(key: Int64, atMs: Double, inFlight: Int)] = []
+    private var silentDrops = 0
 
     var inFlight: Int { pending.count }
 
@@ -103,8 +106,22 @@ struct EncoderLatencyTrace {
         prune(now: atMs)
         guard !pending.isEmpty else { return nil }
         let index = pending.firstIndex { $0.key == key } ?? 0
-        let entry = pending.remove(at: index)
+        let entry = pending[index]
+        silentDrops += index
+        pending.removeFirst(index + 1)
         return Sample(latencyMs: max(0, atMs - entry.atMs), inFlight: entry.inFlight)
+    }
+
+    /// A submission VideoToolbox refused synchronously; it will never call back.
+    mutating func cancel(key: Int64) {
+        guard let index = pending.lastIndex(where: { $0.key == key }) else { return }
+        pending.remove(at: index)
+    }
+
+    /// Frames retired as silently dropped since the last call.
+    mutating func takeSilentDrops() -> Int {
+        defer { silentDrops = 0 }
+        return silentDrops
     }
 
     mutating func reset() { pending.removeAll() }
@@ -157,7 +174,9 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     private var framerate: UInt32 = 60
     private var callback: RTCVideoEncoderCallback?
     private var maxInFlight: Int?
-    static let inFlightWindowMs = 250.0
+    /// Backstop for a silent drop with no later completion to retire it: still more than 3x the
+    /// contended VideoToolbox p90 (28.6 ms, efficiency audit), so a slow frame is not double-counted.
+    static let inFlightWindowMs = 100.0
 
     init(codecInfo: RTCVideoCodecInfo) {
         inner = RTCVideoEncoderH264(codecInfo: codecInfo)
@@ -180,8 +199,10 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
             if let self {
                 self.lock.lock()
                 let sample = self.latency.completed(key: image.captureTimeMs, atMs: now)
+                let silentDrops = self.latency.takeSilentDrops()
                 if isKey { self.policy.lastKeyFrameBytes = image.buffer.count }
                 self.lock.unlock()
+                if silentDrops > 0 { self.counters?.encoderSilentlyDropped(silentDrops) }
                 if let sample {
                     self.counters?.encoded(latencyMs: sample.latencyMs, bytes: image.buffer.count,
                                            isKeyFrame: isKey, inFlight: sample.inFlight)
@@ -243,9 +264,14 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
             }
         }
         lock.lock()
-        latency.submitted(key: frame.timeStampNs / 1_000_000, atMs: MachClock.nowMs())
+        let key = frame.timeStampNs / 1_000_000
+        latency.submitted(key: key, atMs: MachClock.nowMs())
         lock.unlock()
-        return inner.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes)
+        let result = inner.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes)
+        if result != 0 {
+            lock.lock(); latency.cancel(key: key); lock.unlock()
+        }
+        return result
     }
 
     func setBitrate(_ bitrateKbit: UInt32, framerate: UInt32) -> Int32 {

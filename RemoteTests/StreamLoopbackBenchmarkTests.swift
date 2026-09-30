@@ -13,6 +13,7 @@ import WebRTC
 ///   [POCKETDESK_BENCH_SCENES=window,scroll,jump] [POCKETDESK_BENCH_SIZES=2560x1664,1920x1248] \
 ///   xcrun xctest -XCTest RemoteCoreTests.StreamLoopbackBenchmarkTests <bundle>
 /// Individual overrides: POCKETDESK_BENCH_PLAYOUT=none|min,max  POCKETDESK_BENCH_BITRATES=0|1
+///   POCKETDESK_BENCH_LAN_HEADROOM=1|2  POCKETDESK_BENCH_MAX_IN_FLIGHT=0|1|2
 /// POCKETDESK_BENCH_DEGRADATION=none|framerate|resolution|balanced
 final class StreamLoopbackBenchmarkTests: XCTestCase {
     fileprivate static let markerBits = 5
@@ -74,6 +75,10 @@ final class StreamLoopbackBenchmarkTests: XCTestCase {
         if let bitrates = environment["POCKETDESK_BENCH_BITRATES"] { tuning.qualityBitrates = bitrates == "1" }
         if let refresh = environment["POCKETDESK_BENCH_REFRESH"] { tuning.encoderRestart = refresh == "1" }
         if let headroom = environment["POCKETDESK_BENCH_BWE_HEADROOM"].flatMap(Int.init) { tuning.bandwidthHeadroom = headroom }
+        if let headroom = environment["POCKETDESK_BENCH_LAN_HEADROOM"].flatMap(Int.init) { tuning.lanBandwidthHeadroom = headroom }
+        if let limit = environment["POCKETDESK_BENCH_MAX_IN_FLIGHT"].flatMap(Int.init) {
+            tuning.encoderMaxInFlight = limit > 0 ? limit : nil
+        }
         if let pacing = environment["POCKETDESK_BENCH_PACING"] { tuning.videoPacing = pacing == "none" ? nil : pacing }
         switch environment["POCKETDESK_BENCH_DEGRADATION"] {
         case "none": tuning.degradationPreference = nil
