@@ -62,9 +62,13 @@ final class CouchPhoneModelTests: XCTestCase {
 
     func testARefusalEndsTheAttemptAndSaysWhy() throws {
         let model = connected(mode: .couch)
+        model.connection.status = "Connected"
         try deliver(status(false, mode: SessionModeStatus.refused, reason: "controlOff", features: couchFeatures), to: model)
         XCTAssertEqual(model.couchRefusal, .controlOff)
         XCTAssertFalse(model.canControl)
+        XCTAssertEqual(model.sessionEndReason, .error)
+        XCTAssertEqual(model.connection.status, "Disconnected", "the refusal stopped the coordinator")
+        XCTAssertFalse(model.connection.connected)
         XCTAssertFalse(model.connection.isRunning)
         model.clearCouchRefusal()
         XCTAssertNil(model.couchRefusal)
@@ -89,6 +93,18 @@ final class CouchPhoneModelTests: XCTestCase {
         XCTAssertEqual(model.sessionMode, .picture)
         XCTAssertFalse(model.canControl, "the picture path needs its first frame again")
         XCTAssertEqual(model.connection.sessionModeRequest, .picture)
+    }
+
+    func testThePictureStartPreflightDoesNotLookLikeAnOlderMac() throws {
+        let model = try liveCouch()
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 3), to: model)
+        try deliver(RemoteAction(action: "capture", x: 0, epoch: 3), to: model)
+        XCTAssertNotEqual(model.sessionNotice, CouchCopy.updateMac)
+        XCTAssertEqual(model.requestedMode, .couch)
+        XCTAssertFalse(model.canControl)
+        try deliver(status(true, epoch: 3, mode: "picture", features: couchFeatures), to: model)
+        XCTAssertEqual(model.sessionMode, .picture)
+        XCTAssertNotEqual(model.sessionNotice, CouchCopy.updateMac)
     }
 
     func testAModeReasonIsShownOnceAsANotice() throws {
