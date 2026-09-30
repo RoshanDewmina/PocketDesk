@@ -52,6 +52,7 @@ struct HostViewState: Equatable {
     var chimeOnConnect = true
     var allowFileTransfer = true
     var localOnly = false
+    var allowSystemAudio = false
     var pausedUntil: Date?
     var session: HostSessionReadout?
     /// When the current phone session began, for the popover's elapsed time.
@@ -119,6 +120,7 @@ struct HostActions {
     var setKeepAwake: (Bool) -> Void = { _ in }
     var setChimeOnConnect: (Bool) -> Void = { _ in }
     var setLocalOnly: (Bool) -> Void = { _ in }
+    var setAllowSystemAudio: (Bool) -> Void = { _ in }
     var setAllowFileTransfer: (Bool) -> Void = { _ in }
     var setOpenAtLogin: (Bool) -> Void = { _ in }
     var setAutomaticRecovery: (Bool) -> Void = { _ in }

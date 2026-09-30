@@ -158,6 +158,7 @@ struct SenderOutputFormat: Equatable {
 final class PeerMedia: NSObject {
     var onSignal: ((MediaSignal) -> Void)?
     var onRemoteVideo: ((RTCVideoTrack) -> Void)?
+    var onAudioPlaybackFailure: (() -> Void)?
     var onControl: ((Data) -> Void)?
     var onState: ((String) -> Void)?
     var onDiagnostics: ((String) -> Void)?
@@ -227,6 +228,46 @@ final class PeerMedia: NSObject {
         #endif
         return factory
     }()
+    #if os(macOS)
+    private var systemAudioDevice: FPSystemAudioDevice?
+    private var sessionAudioFactory: RTCPeerConnectionFactory?
+    private var systemAudioTrack: RTCAudioTrack?
+    #endif
+    #if os(iOS)
+    private var phoneAudioDevice: PhoneSystemAudioDevice?
+    private var phoneAudioFactory: RTCPeerConnectionFactory?
+    #endif
+    private var remoteAudioTrack: RTCAudioTrack?
+    private var remoteAudioMuted = true
+
+    /// Explicit local playback choice; the phone never creates a sending microphone track.
+    func setRemoteAudioMuted(_ muted: Bool) {
+        remoteAudioMuted = muted
+        #if os(iOS)
+        phoneAudioDevice?.setConsent(!muted && localGateOpen() && !closed)
+        #endif
+        remoteAudioTrack?.isEnabled = !muted && localGateOpen() && !closed
+    }
+
+    private func observeRemoteAudio() {
+        guard !isHost else { return }
+        remoteAudioTrack = connection?.receivers.compactMap { $0.track as? RTCAudioTrack }.first
+        remoteAudioTrack?.isEnabled = !remoteAudioMuted && localGateOpen() && !closed
+    }
+
+    #if os(macOS)
+    var systemAudioEnabled: Bool { systemAudioDevice?.consentEnabled == true }
+    func setSystemAudioEnabled(_ enabled: Bool) {
+        systemAudioDevice?.setConsent(enabled && !closed)
+        systemAudioTrack?.isEnabled = enabled && !closed
+    }
+    func beginSystemAudioCapture() -> UInt64 { systemAudioDevice?.beginCapture() ?? 0 }
+    func endSystemAudioCapture(_ epoch: UInt64) { systemAudioDevice?.endCapture(epoch) }
+    func submitSystemAudio(_ pcm: Data, epoch: UInt64, hostTime: UInt64) {
+        guard localGateOpen(), !closed else { return }
+        _ = systemAudioDevice?.submitPCM(pcm, captureEpoch: epoch, hostTime: hostTime)
+    }
+    #endif
     private var connection: RTCPeerConnection?
     private var channel: RTCDataChannel?
     // Main owns mutations; bulk admission reads the channel lifetime from its I/O queue.
@@ -269,6 +310,13 @@ final class PeerMedia: NSObject {
         localRouteLock.lock(); defer { localRouteLock.unlock() }
         let hadAuthorized = localPathEverAuthorized
         localPathAuthorized = false
+        remoteAudioTrack?.isEnabled = false
+        #if os(iOS)
+        phoneAudioDevice?.setConsent(false)
+        #endif
+        #if os(macOS)
+        systemAudioDevice?.setConsent(false)
+        #endif
         return hadAuthorized
     }
     private var connectedPublished = false
@@ -348,9 +396,48 @@ final class PeerMedia: NSObject {
         configuration.iceTransportPolicy = forceRelay ? .relay : .all
         configuration.continualGatheringPolicy = .gatherContinually
         configuration.iceServers = servers.map { RTCIceServer(urlStrings: $0.urls, username: $0.username ?? "", credential: $0.credential ?? "") }
-        let factory = nativeDesktopCodecs ? Self.factory : Self.compatibleFactory
+        var factory = nativeDesktopCodecs ? Self.factory : Self.compatibleFactory
+        #if os(macOS)
+        if isHost {
+            let device = FPSystemAudioDevice()
+            // One ADM per peer: the shared video factories must never share captured samples.
+            factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? PocketDeskVideoEncoderFactory() : RTCDefaultVideoEncoderFactory(),
+                                               decoderFactory: nativeDesktopCodecs ? PocketDeskVideoDecoderFactory() : RTCDefaultVideoDecoderFactory(),
+                                               audioDevice: device)
+            sessionAudioFactory = factory
+            systemAudioDevice = device
+            #if DEBUG
+            E2EMedia.restrictToLoopbackIfNeeded(factory)
+            #endif
+        }
+        #endif
+        #if os(iOS)
+        if !isHost {
+            let device = PhoneSystemAudioDevice()
+            device.onFailure = { [weak self] in self?.onAudioPlaybackFailure?() }
+            factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? PocketDeskVideoEncoderFactory() : RTCDefaultVideoEncoderFactory(),
+                                               decoderFactory: nativeDesktopCodecs ? PocketDeskVideoDecoderFactory() : RTCDefaultVideoDecoderFactory(), audioDevice: device)
+            phoneAudioDevice = device; phoneAudioFactory = factory
+            #if DEBUG
+            E2EMedia.restrictToLoopbackIfNeeded(factory)
+            #endif
+        }
+        #endif
         connection = factory.peerConnection(with: configuration, constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
         if isHost {
+            #if os(macOS)
+            let audioConstraints = RTCMediaConstraints(mandatoryConstraints: [
+                "googEchoCancellation": "false", "googAutoGainControl": "false",
+                "googNoiseSuppression": "false", "googHighpassFilter": "false"
+            ], optionalConstraints: nil)
+            let audioSource = factory.audioSource(with: audioConstraints)
+            let audio = factory.audioTrack(with: audioSource, trackId: "mac-system-output")
+            audio.isEnabled = false
+            systemAudioTrack = audio
+            let audioInit = RTCRtpTransceiverInit()
+            audioInit.direction = .sendOnly
+            _ = connection?.addTransceiver(with: audio, init: audioInit)
+            #endif
             let source = factory.videoSource(forScreenCast: true)
             self.source = source; capturer = RTCVideoCapturer(delegate: source)
             let track = factory.videoTrack(with: source, trackId: "desktop")
@@ -476,10 +563,11 @@ final class PeerMedia: NSObject {
                 for candidate in self.candidates { self.connection?.add(candidate, completionHandler: { _ in }) }
                 self.candidates.removeAll()
                 if signal.kind == "offer" {
-                    self.connection?.answer(for: RTCMediaConstraints(mandatoryConstraints: ["OfferToReceiveAudio": "false", "OfferToReceiveVideo": "true"], optionalConstraints: nil)) { [weak self] description, error in
+                    self.connection?.answer(for: RTCMediaConstraints(mandatoryConstraints: ["OfferToReceiveAudio": "true", "OfferToReceiveVideo": "true"], optionalConstraints: nil)) { [weak self] description, error in
                         DispatchQueue.main.async { self?.setLocal(description, error: error) }
                     }
                 }
+                self.observeRemoteAudio()
                 if let track = self.connection?.receivers.compactMap({ $0.track as? RTCVideoTrack }).first {
                     self.observeRemoteVideo(track)
                     if self.localGateOpen() { self.onRemoteVideo?(track) }
@@ -852,6 +940,14 @@ final class PeerMedia: NSObject {
     func close() {
         resourceBudget.end()
         linkMonitor?.cancel(); linkMonitor = nil
+        #if os(iOS)
+        phoneAudioDevice?.setConsent(false)
+        #endif
+        remoteAudioTrack?.isEnabled = false; remoteAudioTrack = nil
+        #if os(macOS)
+        systemAudioDevice?.setConsent(false)
+        systemAudioTrack?.isEnabled = false
+        #endif
         preGateControl.removeAll(); preGateBytes = 0
         statisticsTimer?.invalidate(); statisticsTimer = nil
         if let cadenceRenderer { observedTrack?.remove(cadenceRenderer) }
@@ -863,6 +959,12 @@ final class PeerMedia: NSObject {
         file?.delegate = nil; file?.close()
         connection?.delegate = nil; connection?.close(); connection = nil
         candidates.removeAll(); video = nil
+        #if os(iOS)
+        phoneAudioDevice = nil; phoneAudioFactory = nil
+        #endif
+        #if os(macOS)
+        systemAudioTrack = nil; systemAudioDevice = nil; sessionAudioFactory = nil
+        #endif
     }
 }
 extension PeerMedia: RTCPeerConnectionDelegate {
@@ -877,6 +979,7 @@ extension PeerMedia: RTCPeerConnectionDelegate {
         if let track = stream.videoTracks.first {
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.observeRemoteAudio()
                 self.observeRemoteVideo(track)
                 if self.localGateOpen() { self.onRemoteVideo?(track) }
             }

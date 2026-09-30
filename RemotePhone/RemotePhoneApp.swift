@@ -259,6 +259,16 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var pairingCode = ""
     @Published var error = ""
     @Published var pairingEntry: PairingEntry?
+    @Published private(set) var macAudioMuted = true
+    private let macAudioPlayback = PhoneSystemAudioPlayback()
+    func setMacAudioMuted(_ muted: Bool) {
+        if !muted {
+            guard connection.connected, !contentConcealed, sceneIsActive, macAudioPlayback.begin() else { return }
+        }
+        macAudioMuted = muted
+        connection.media?.setRemoteAudioMuted(muted)
+        if muted { macAudioPlayback.end() }
+    }
     @Published private(set) var privacyShield = false
     private var hasBeenActive = false
     @Published var draft = "" { didSet { secureTextFocus.draftChanged(draft) } }
@@ -360,6 +370,7 @@ final class PhoneRemoteModel: ObservableObject {
             UserDefaults.standard.removeObject(forKey: "miniMap.phoneLandscape")
             UserDefaults.standard.removeObject(forKey: "miniMap.pad")
         }
+        macAudioPlayback.onMustMute = { [weak self] in self?.setMacAudioMuted(true) }
         connection.restore()
         linkHints.start()
         linkHints.$hint.removeDuplicates().assign(to: &$linkHint)
@@ -382,6 +393,11 @@ final class PhoneRemoteModel: ObservableObject {
             self.dismissedQualityBanners = []
             self.resumeCount = 0
             if let peer = self.connection.media {
+                peer.onAudioPlaybackFailure = { [weak self, weak peer] in
+                    guard let self, let peer, self.connection.media === peer else { return }
+                    self.setMacAudioMuted(true)
+                    self.showSessionNotice("Mac audio couldn’t start. Try Listen again.")
+                }
                 peer.onStreamStatistics = { [weak self, weak peer] report in
                     Task { @MainActor in
                         guard let self, let peer, self.connection.media === peer else { return }
@@ -1471,6 +1487,7 @@ final class PhoneRemoteModel: ObservableObject {
             sceneWasBackground = false
             returnToForeground()
         case .inactive:
+            setMacAudioMuted(true)
             sceneIsActive = false
             if hasBeenActive {
                 cancelInput()
@@ -1495,6 +1512,7 @@ final class PhoneRemoteModel: ObservableObject {
     func enterBackground() {
         resumeTiming.cancel(.leftAgain)
         resetQuality()
+        setMacAudioMuted(true)
         let now = ProcessInfo.processInfo.systemUptime
         // A held connection can resume before the age limit. Require a new statistics sample
         // after pause so a pre-background report cannot become new ladder evidence.
@@ -1640,6 +1658,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func sessionEnded() {
+        setMacAudioMuted(true)
         end()
         if sessionEndReason != .user { persistResume() }
         guard continuity.isHolding else { return }
@@ -1681,6 +1700,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func prepareVoiceInput() {
+        setMacAudioMuted(true)
         if pendingText?.origin != .voice && voiceRetryTranscript.isEmpty { voiceDeliveryStatus = .idle }
     }
 

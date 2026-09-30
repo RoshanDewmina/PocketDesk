@@ -81,6 +81,10 @@ struct HostSettingsView: View {
                            set: actions.setChimeOnConnect)
                     .accessibilityIdentifier("farside.settings.chime")
             }
+            HostSettingsRow("Share Mac audio", subtitle: "Sound from all apps, even outside the shared display. Off after restarting Farside.") {
+                HostSwitch(label: "Share Mac audio", isOn: state.allowSystemAudio, set: actions.setAllowSystemAudio)
+                    .accessibilityIdentifier("farside.settings.systemAudio")
+            }
             HostSettingsRow("Allow file transfer", subtitle: "Files from your iPhone go to Downloads › Farside") {
                 HostSwitch(label: "Allow file transfer", isOn: state.allowFileTransfer, set: actions.setAllowFileTransfer)
                     .accessibilityIdentifier("farside.settings.allowFileTransfer")
