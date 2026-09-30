@@ -11,6 +11,8 @@ struct RemoteAction: Codable {
     var modifiers: [String] = []
     var epoch: UInt64 = 1
     var interaction: NativeInteraction? = nil
+    /// Available only after input.pencil.1; existing checkpoint/barrier authority still applies.
+    var pencil: PencilFrame? = nil
     var pointerLocatorSupported: Bool? = nil
     var pointerProbe: String? = nil
     var pointerLocation: PointerLocation? = nil
@@ -65,6 +67,7 @@ struct RemoteAction: Codable {
     var scaleRequestID: String? = nil
 
     func validate() throws {
+        try pencil?.validate(action: action, interaction: interaction)
         // Before the extension early returns, so no other action can carry an unchecked summary.
         guard liveViewOnly == nil || action == "viewOnly" || action == "capture" else { throw RemoteError.invalidMessage }
         try hostStream?.validate()

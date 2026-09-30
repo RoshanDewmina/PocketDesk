@@ -548,6 +548,40 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     /// The Mac accepts `moveTo`, triple-click counts and hardware modifier flags on pointer actions.
+    @Published var pencilEnabled = false { didSet { if !pencilEnabled { cancelInput() } } }
+    var pencilSupported: Bool { sessionMode == .picture && supports(SessionFeature.pencilInput) && absolutePointerSupported && connection.causalInputNegotiated }
+    @discardableResult
+    func pencil(at point: CGPoint, frame: PencilFrame) -> Bool {
+        if frame.phase == .ended || frame.phase == .cancelled {
+            guard activeHold == frame.stream else { return false }
+            if frame.phase == .ended, canControl {
+                var moved = frame; moved.phase = .moved
+                _ = sendPencilPoint(point, frame: moved)
+            }
+            let accepted = sendInput("dragUp", count: 1, hold: frame.stream, pencil: frame)
+            release(); return accepted
+        }
+        guard pencilEnabled, pencilSupported, canControl, point.x.isFinite, point.y.isFinite,
+              point.x >= 0, point.y >= 0 else { return false }
+        if frame.phase == .began {
+            // End any prior hold without changing the canvas revision of this new contact.
+            displayTickInput.cancel(); release()
+            let hover = frame.zeroed(.hover)
+            guard sendPencilPoint(point, frame: hover),
+                  sendInput("dragDown", count: 1, hold: frame.stream, pencil: frame) else { return false }
+            activeHold = frame.stream; activeHoldCount = 1; dragging = true
+            return true
+        }
+        if frame.phase == .moved { guard activeHold == frame.stream else { return false } }
+        return sendPencilPoint(point, frame: frame)
+    }
+    private func sendPencilPoint(_ point: CGPoint, frame: PencilFrame) -> Bool {
+        let ordinal = pointerOverlay.reserveMoveOrdinal()
+        let accepted = sendInput("moveTo", x: point.x, y: point.y, count: frame.phase == .moved ? 1 : nil,
+            hold: frame.phase == .moved ? frame.stream : nil, pointerSync: ordinal.map { PointerSync(move: $0) }, pencil: frame)
+        if accepted { pointerLocator.clear(); pointerOverlay.localWarp(ordinal: ordinal, to: point) }
+        return accepted
+    }
     var absolutePointerSupported: Bool { supports(SessionFeature.absolutePointer) }
     var middleButtonSupported: Bool { supports(SessionFeature.middleButton) }
     var momentumScrollSupported: Bool { supports(SessionFeature.momentumScroll) }
@@ -1327,7 +1361,7 @@ final class PhoneRemoteModel: ObservableObject {
                            count: Int? = nil, hold: String? = nil,
                            phase: String? = nil, stream: String? = nil,
                            text: String = "", key: String = "", modifiers: [String] = [],
-                           probeTextFocus: Bool = false, pointerSync: PointerSync? = nil) -> Bool {
+                           probeTextFocus: Bool = false, pointerSync: PointerSync? = nil, pencil: PencilFrame? = nil) -> Bool {
         textFocusProbe.invalidate()
         guard canControl else { return false }
         // Moves still go while the Mac is behind, so it can catch up; presses wait.
@@ -1351,7 +1385,7 @@ final class PhoneRemoteModel: ObservableObject {
         let pointerModifiers = modifiers.isEmpty && absolutePointerSupported && Self.pointerActions.contains(name)
             ? hardwareModifiers : modifiers
         let accepted = transmit(RemoteAction(action: name, x: x, y: y,
-            text: text, key: key, modifiers: pointerModifiers, epoch: geometryEpoch, interaction: envelope,
+            text: text, key: key, modifiers: pointerModifiers, epoch: geometryEpoch, interaction: envelope, pencil: pencil,
             pointerSync: pointerSync, textFocusProbe: focusProbe,
             textFocusGeometry: focusProbe != nil && focusGeometrySupported ? true : nil))
         if !accepted { textFocusProbe.invalidate() }

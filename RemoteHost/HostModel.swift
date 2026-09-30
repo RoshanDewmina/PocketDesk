@@ -1922,6 +1922,8 @@ final class RemoteHostModel: ObservableObject {
             }
             return
         }
+        guard (semantic?.pencil == nil && context.segments.allSatisfy({ $0.action.pencil == nil })) ||
+            (sessionState == .picture && connection.peerFeatures.contains(SessionFeature.pencilInput)) else { return }
         invalidateTextFocus()
         if sessionState == .couch { refreshCouchHealth() }
         input.enabled = HostControlPolicy.isEnabled(userConsent: sessionControlAllowed, accessibilityPermission: controlPermission,
@@ -1970,6 +1972,7 @@ final class RemoteHostModel: ObservableObject {
             countInput("rejected-parse"); stop(); return
         }
         countInput("received")
+        guard action.pencil == nil || (sessionState == .picture && connection.peerFeatures.contains(SessionFeature.pencilInput)) else { return }
         if action.action == "release" || Self.userInputActions.contains(action.action) {
             invalidateTextFocus()
         }
@@ -2290,6 +2293,7 @@ final class RemoteHostModel: ObservableObject {
     private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
         let base = SessionFeature.host.filter {
+            if $0 == SessionFeature.pencilInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.pencilInput) || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             if $0 == SessionFeature.causalInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             return ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
         } + [SessionFeature.couch]

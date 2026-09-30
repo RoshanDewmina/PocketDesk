@@ -18,6 +18,8 @@ struct NativeTrackpadSurface: UIViewRepresentable {
     var hardwareKeys: Bool = false
     /// A mouse or trackpad on iPad places the Mac pointer and clicks.
     var hardwarePointer: Bool = false
+    var pencilEnabled: Bool = false
+    var onPencil: (CGPoint, PencilFrame) -> Bool = { _, _ in false }
     /// Hold first responder so hardware keys arrive without the on-screen keyboard.
     var keyboardFocus: Bool = false
     var remapShortcuts: Bool = true
@@ -41,6 +43,9 @@ struct NativeTrackpadSurface: UIViewRepresentable {
                               sensitivity: sensitivity, pointerScale: pointerScale,
                               doubleClickInterval: doubleClickInterval, direct: direct,
                               precision: direct ? precision : .off)
+        view.pencilInputEnabled = pencilEnabled && enabled
+        view.pencil.configure(enabled: view.pencilInputEnabled, revision: revision)
+        view.pencil.send = onPencil
         view.engine.onCommand = onCommand
         view.engine.onPointerMotionEnded = onPointerMotionEnded
         view.engine.momentumEnabled = momentumScroll
@@ -53,6 +58,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
         view.keyDiagnostic = onKeyDiagnostic
         view.setHidesSystemPointer(hardwarePointer)
         view.setKeyboardFocus(keyboardFocus)
+        if view.window != nil { view.bindPeripheralHandlers() }
         view.updateAccessibility(panMode: panMode, direct: direct, middleClick: middleClickAvailable)
     }
 }
@@ -63,6 +69,9 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
                                      doubleClickInterval: 0.5, onCommand: { _ in false })
     let pointer = HardwarePointerRouter(onCommand: { _ in false })
     let keyboard = HardwareKeyboardRouter()
+    let pencil = PencilContactRouter()
+    private var pencilTouch: ObjectIdentifier?
+    var pencilInputEnabled = false
     var hardwareKeys = false {
         didSet {
             if !hardwareKeys { keyboard.releaseAll() }
@@ -140,6 +149,12 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         if window == nil {
             interruptInput()
         } else {
+            bindPeripheralHandlers()
+            claimKeyboardFocus()
+        }
+    }
+
+    func bindPeripheralHandlers() {
             HardwarePeripherals.shared.onMiddleButton = { [weak self] pressed in
                 guard let self, !pressed else { return }
                 self.pointer.middleClick()
@@ -149,8 +164,6 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
                 self.pointer.auxiliaryClick(button)
             }
             HardwarePeripherals.shared.onKeyboardDisconnect = { [weak self] in self?.keyboard.releaseAll() }
-            claimKeyboardFocus()
-        }
     }
 
     // MARK: - Hardware keyboard
@@ -281,7 +294,11 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
 
     private func installHardwarePointer() {
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(hovered(_:)))
+        hover.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
         addGestureRecognizer(hover)
+        let pencilHover = UIHoverGestureRecognizer(target: self, action: #selector(pencilHovered(_:)))
+        pencilHover.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
+        addGestureRecognizer(pencilHover)
 
         // Scroll wheels and two-finger trackpad scrolls only; touches never reach it.
         let scroll = UIPanGestureRecognizer(target: self, action: #selector(scrolled(_:)))
@@ -312,10 +329,24 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         hidesSystemPointer ? .hidden() : nil
     }
 
+    @objc private func pencilHovered(_ recognizer: UIHoverGestureRecognizer) {
+        guard !engine.hasActiveTouches, !pointer.isPressed, recognizer.state == .began || recognizer.state == .changed else { return }
+        let tilt = Self.pencilTilt(altitude: recognizer.altitudeAngle, azimuth: recognizer.azimuthAngle(in: self))
+        pencil.hover(at: recognizer.location(in: self), tiltX: tilt.x, tiltY: tilt.y)
+    }
+    private static func pencilTilt(altitude: CGFloat, azimuth: CGFloat) -> (x: Double, y: Double) {
+        (Double(cos(azimuth) * cos(altitude)), Double(sin(azimuth) * cos(altitude)))
+    }
+    private func pencilValues(_ touch: UITouch) -> (pressure: Double, x: Double, y: Double) {
+        let tilt = Self.pencilTilt(altitude: touch.altitudeAngle, azimuth: touch.azimuthAngle(in: self))
+        let pressure = touch.maximumPossibleForce > 0 ? min(1, max(0, touch.force / touch.maximumPossibleForce)) : 0
+        return (Double(pressure), tilt.x, tilt.y)
+    }
+
     @objc private func hovered(_ recognizer: UIHoverGestureRecognizer) {
         keyboard.updateModifiers(recognizer.modifierFlags)
         // Apple Pencil hover reports a height above the glass; only a pointer moves the Mac.
-        guard recognizer.zOffset == 0 else { return }
+        guard recognizer.zOffset == 0, !HardwarePeripherals.shared.pointerIsLocked, pencil.active == nil else { return }
         switch recognizer.state {
         case .began, .changed: pointer.hover(to: recognizer.location(in: self))
         default: break
@@ -365,6 +396,15 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         VideoPresentationProbe.noteUserActivity()
         if let event { keyboard.updateModifiers(event.modifierFlags) }
+        for touch in touches where touch.type == .pencil && pencilInputEnabled {
+            guard pencilTouch == nil else { continue }
+            contacts.removeAll(); engine.update([], at: touch.timestamp, cancelled: true); pointer.cancel()
+            let values = pencilValues(touch)
+            if pencil.begin(at: touch.location(in: self), pressure: values.pressure, tiltX: values.x, tiltY: values.y) {
+                pencilTouch = ObjectIdentifier(touch)
+            }
+        }
+        guard pencil.active == nil, !HardwarePeripherals.shared.pointerIsLocked else { return }
         for touch in touches where touch.type == .indirectPointer {
             let button = pointerButton(event)
             pointerButtons[ObjectIdentifier(touch)] = button
@@ -389,6 +429,16 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         VideoPresentationProbe.noteUserActivity()
+        for touch in touches where touch.type == .pencil && ObjectIdentifier(touch) == pencilTouch {
+            let samples = event?.coalescedTouches(for: touch) ?? [touch]
+            // At most24 source samples per callback; the final actual touch is always included.
+            let bounded = samples.count <= 24 ? samples : Array(samples.prefix(23)) + [touch]
+            for sample in bounded {
+                let values = pencilValues(sample)
+                _ = pencil.move(to: sample.location(in: self), pressure: values.pressure, tiltX: values.x, tiltY: values.y)
+            }
+        }
+        guard pencil.active == nil, !HardwarePeripherals.shared.pointerIsLocked else { return }
         for touch in touches where touch.type == .indirectPointer {
             pointer.moved(to: touch.location(in: self), time: touch.timestamp)
         }
@@ -396,7 +446,19 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         publish(at: timestamp(touches))
     }
 
+    override func touchesEstimatedPropertiesUpdated(_ touches: Set<UITouch>) {
+        guard pencil.active != nil,
+              let touch = touches.first(where: { $0.type == .pencil && ObjectIdentifier($0) == pencilTouch }) else { return }
+        let values = pencilValues(touch)
+        // An estimated old sample cannot warp the contact back to an earlier position.
+        pencil.updatePressure(pressure: values.pressure, tiltX: values.x, tiltY: values.y)
+    }
+
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        if let touch = touches.first(where: { $0.type == .pencil && ObjectIdentifier($0) == pencilTouch }) {
+            pencil.end(at: touch.location(in: self)); pencilTouch = nil
+        }
+        guard !HardwarePeripherals.shared.pointerIsLocked else { return }
         for touch in touches where touch.type == .indirectPointer {
             let button = pointerButtons.removeValue(forKey: ObjectIdentifier(touch)) ?? .primary
             pointer.up(button, at: touch.location(in: self), time: touch.timestamp)
@@ -410,6 +472,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        pencil.cancel(); pencilTouch = nil
         if touches.contains(where: { $0.type == .indirectPointer }) {
             pointerButtons.removeAll()
             pointer.cancel()
@@ -449,6 +512,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     }
 
     @objc private func interruptInput() {
+        pencil.cancel(); pencilTouch = nil
         contacts.removeAll()
         pointerButtons.removeAll()
         engine.update([], at: ProcessInfo.processInfo.systemUptime, cancelled: true)

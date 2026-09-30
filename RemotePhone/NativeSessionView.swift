@@ -50,6 +50,8 @@ struct NativeSessionView: View {
     @State private var miniMap = MiniMapVisibility()
     @State private var miniMapToken = 0
     @ObservedObject private var peripherals = HardwarePeripherals.shared
+    @State private var lockedMouseRequested = false
+    @State private var lockedMouseNotice = ""
     @AppStorage(PointerSizePreference.key) private var pointerSize: PointerSizePreference = .medium
     @AppStorage(PointerFollowStyle.key) private var followStyle: PointerFollowStyle = .smooth
     @AppStorage(StreamDebug.defaultsKey) private var streamStatsEnabled = false
@@ -71,6 +73,14 @@ struct NativeSessionView: View {
     private var sessionChrome: AnyView {
         AnyView(ZStack {
             stage.ignoresSafeArea()
+            LockedMousePresenter(requested: $lockedMouseRequested,
+                eligible: model.canControl && scenePhase == .active && !showControls && !showVoiceInput && !keyboardOpen && !panMode,
+                revision: model.inputRevision &+ revision, gain: Double(sensitivity), remapShortcuts: remapShortcuts,
+                send: { model.gesture($0) }, key: { model.hardwareKey($0, modifiers: $1) },
+                modifiers: { model.hardwareModifiers = $0 }, cleanup: { model.cancelInput() }, ended: { message in
+                    lockedMouseNotice = message
+                }).frame(width: 0, height: 0)
+
             if !couch { PrecisionLoupeOverlay(controller: precisionTap, model: model, viewport: viewport,
                                   track: connection.remoteVideo, offline: offlineLayoutCheck)
                 .ignoresSafeArea() }
@@ -386,6 +396,15 @@ struct NativeSessionView: View {
                                   // Couch has no picture to place an absolute pointer on: relative motion only.
                                   hardwarePointer: !couch && model.canControl && model.absolutePointerSupported
                                     && !controlsBlockInput && !showVoiceInput,
+                                  pencilEnabled: !couch && model.pencilEnabled && model.pencilSupported,
+                                  onPencil: { point, frame in
+                                      guard let source = DirectTouchMapping.sourcePoint(for: point, in: viewport) else {
+                                          guard frame.phase == .ended || frame.phase == .cancelled else { return false }
+                                          // A lift outside the picture still releases its exact contact; never warp there.
+                                          return model.pencil(at: .zero, frame: frame.zeroed())
+                                      }
+                                      return model.pencil(at: source, frame: frame)
+                                  },
                                   keyboardFocus: !keyboardOpen && !showControls && !showVoiceInput
                                     && !primingMicrophone && scenePhase == .active,
                                   remapShortcuts: remapShortcuts,
@@ -924,6 +943,10 @@ struct NativeSessionView: View {
                             .minimumScaleFactor(0.8)
                     }
                 }
+                if !lockedMouseNotice.isEmpty {
+                    Text(lockedMouseNotice).font(.footnote).foregroundStyle(Farside.Palette.bone)
+                        .accessibilityIdentifier("remote.mouse.status")
+                }
                 Text(status)
                     .font(.footnote)
                     .foregroundStyle(Farside.Palette.ash)
@@ -931,7 +954,7 @@ struct NativeSessionView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : "\(linkAccessibility). \(status)")
+            .accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : "\(linkAccessibility). \(status). \(lockedMouseNotice)")
             Spacer(minLength: 4)
             if !couch {
                 Button { openControls() } label: {
@@ -2150,6 +2173,17 @@ struct NativeSessionView: View {
                 Label("Mouse or trackpad connected", systemImage: "computermouse")
                     .foregroundStyle(Farside.Palette.bone)
                     .listRowBackground(Farside.Palette.panel)
+            }
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                Button("Lock relative mouse") { model.cancelInput(); lockedMouseNotice = ""; showControls = false; lockedMouseRequested = true }
+                    .disabled(!peripherals.mouseConnected || !model.canControl)
+                    .accessibilityIdentifier("remote.mouse.lock")
+                if !lockedMouseNotice.isEmpty { Text(lockedMouseNotice).font(.footnote) }
+                Toggle("Apple Pencil input", isOn: $model.pencilEnabled)
+                    .disabled(!model.pencilSupported)
+                    .accessibilityIdentifier("remote.pencil.enabled")
+                Text(model.pencilSupported ? "Pencil places the pointer, presses with pressure and ignores resting fingers during contact. Drawing support depends on the Mac app." : "Pencil input needs a compatible Mac and a live picture session.")
+                    .font(.footnote)
             }
             Toggle("Use ⌃⌥ for shortcuts iPadOS keeps", isOn: $remapShortcuts)
                 .toggleStyle(FarsideSwitchStyle())

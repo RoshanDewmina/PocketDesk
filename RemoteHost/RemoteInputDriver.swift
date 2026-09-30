@@ -94,6 +94,7 @@ struct RemoteInputEventSink {
         var count: Int64
         /// Modifier keys held on the phone's hardware keyboard (⌘-click, ⇧-click, ⌥-drag).
         var flags: CGEventFlags = []
+        var pencil: PencilFrame? = nil
     }
 
     var pointerLocation: () -> CGPoint
@@ -103,19 +104,29 @@ struct RemoteInputEventSink {
     var text: ([UniChar]) -> Bool
     var key: (CGKeyCode, CGEventFlags) -> Bool
 
+    static func makeMouseEvent(_ description: MouseEvent) -> CGEvent? {
+        guard let event = CGEvent(mouseEventSource: RemoteInputEventSource.shared,
+            mouseType: description.type, mouseCursorPosition: description.point, mouseButton: description.button) else { return nil }
+        event.setIntegerValueField(.mouseEventClickState, value: description.count)
+        if !description.flags.isEmpty { event.flags = description.flags }
+        if let pen = description.pencil {
+            event.setIntegerValueField(.mouseEventSubtype, value: Int64(CGEventMouseSubtype.tabletPoint.rawValue))
+            event.setDoubleValueField(.mouseEventPressure, value: pen.pressure)
+            event.setDoubleValueField(.tabletEventPointPressure, value: pen.pressure)
+            event.setDoubleValueField(.tabletEventTiltX, value: pen.tiltX)
+            event.setDoubleValueField(.tabletEventTiltY, value: pen.tiltY)
+            event.setIntegerValueField(.tabletEventPointButtons, value: pen.phase == .hover || pen.phase == .ended || pen.phase == .cancelled ? 0 : 1)
+            // No invented system tablet/device identity or private driver interface.
+        }
+        return event
+    }
+
     static let live = RemoteInputEventSink(
         pointerLocation: { CGEvent(source: nil)?.location ?? .zero },
         mouseSequence: { descriptions in
             var events: [CGEvent] = []
             for description in descriptions {
-                guard let event = CGEvent(
-                    mouseEventSource: RemoteInputEventSource.shared,
-                    mouseType: description.type,
-                    mouseCursorPosition: description.point,
-                    mouseButton: description.button
-                ) else { return false }
-                event.setIntegerValueField(.mouseEventClickState, value: description.count)
-                if !description.flags.isEmpty { event.flags = description.flags }
+                guard let event = makeMouseEvent(description) else { return false }
                 events.append(event)
             }
             for event in events { RemoteInputTag.mark(event); event.post(tap: .cghidEventTap) }
@@ -221,6 +232,7 @@ final class RemoteInputDriver {
     private var scrollDeadline: TimeInterval = 0
     private(set) var momentum = ScrollMomentumGate()
     private let eventSink: RemoteInputEventSink
+    private var activePencil: PencilFrame?
     private let isTrusted: () -> Bool
 
     init(
@@ -282,6 +294,12 @@ final class RemoteInputDriver {
 
     func handle(_ input: RemoteAction, upgraded: Bool = false, now: TimeInterval = ProcessInfo.processInfo.systemUptime, pointerSnapshot: CGPoint? = nil) -> RemoteInputOutcome {
         let requestID = input.action == "text" ? input.key : nil
+        if let pen = input.pencil {
+            guard upgraded, (try? pen.validate(action: input.action, interaction: input.interaction)) != nil else { return RemoteInputOutcome(textRequestID: requestID) }
+            if pen.phase == .hover { guard !held else { return RemoteInputOutcome() } }
+            else if pen.phase != .began { guard held, activePencil?.stream == pen.stream else { return RemoteInputOutcome() } }
+        }
+        if activePencil != nil && ["move", "moveTo", "dragUp"].contains(input.action) && input.pencil == nil { return RemoteInputOutcome() }
         if input.action != "holdRenew", !Self.isMomentum(input) { endMomentum() }
         if input.action == "release" {
             let hadHold = held
@@ -337,9 +355,10 @@ final class RemoteInputDriver {
                 point: point,
                 button: .left,
                 count: wasHeld ? heldClickCount : 1,
-                flags: flags
+                flags: flags, pencil: input.pencil
             )
             guard eventSink.mouseSequence([event]) else { break }
+            if input.pencil?.phase == .moved { activePencil = input.pencil }
             notePosted(point, at: now)
             if !wasHeld, let semanticPoint = lastSemanticPoint,
                hypot(point.x - semanticPoint.x, point.y - semanticPoint.y) > 5 { resetClickSequence() }
@@ -435,8 +454,9 @@ final class RemoteInputDriver {
             let point = eventPoint(in: bounds)
             let count = upgraded ? Int64(input.interaction!.clickCount!) : 1
             let event = RemoteInputEventSink.MouseEvent(type: .leftMouseDown, point: point, button: .left,
-                                                        count: count, flags: flags)
+                                                        count: count, flags: flags, pencil: input.pencil)
             guard eventSink.mouseSequence([event]) else { break }
+            activePencil = input.pencil
             notePosted(point, at: now)
             held = true
             heldClickCount = count
@@ -538,10 +558,11 @@ final class RemoteInputDriver {
             type: .leftMouseUp,
             point: lastPoint,
             button: .left,
-            count: heldClickCount
+            count: heldClickCount, pencil: activePencil?.zeroed()
         )
         guard eventSink.mouseSequence([event]) else { return false }
         held = false
+        activePencil = nil
         holdID = nil
         externalHoldID = nil
         heldClickCount = 1
