@@ -5,10 +5,10 @@ import { addressKey, allow } from "../ratelimit";
 import type { RoomDO } from "../room";
 import { BodyTooLarge, isRecord, json, readJsonBody } from "../util";
 import {
-  audit, devicesForEntitlement, entitlementIdFor, getEntitlement, notificationSeen, recordNotification, upsertEntitlement,
-  type EntitlementRow, type EntitlementStatus,
+  appTransactionHashFor, audit, devicesForEntitlement, entitlementIdFor, getEntitlement, notificationSeen, recordNotification, stopForConsent,
+  upsertEntitlement, type EntitlementRow, type EntitlementStatus,
 } from "./store";
-import { checkTransactionPolicy, parseTransactionPayload, statusFromTransaction, type TransactionInfo } from "./verify";
+import { checkTransactionPolicy, ownershipForLog, parseTransactionPayload, statusFromTransaction, type TransactionInfo } from "./verify";
 
 // A V2 notification wraps two further JWS (transaction and renewal info), each with its own three-certificate
 // chain, so the outer token is several times the size of a bare transaction.
@@ -32,6 +32,11 @@ async function verifyEmbedded(compact: unknown, config: Config, now: number): Pr
 
 export type NotificationOutcome = "recorded" | "duplicate" | "applied" | "ignored_other_app";
 
+/** A seat an organization or group assigned, or took back. Anywhere never grants one, so it never changes a purchaser's row. */
+const isNotOwnPurchase = (tx: TransactionInfo) => tx.inAppOwnershipType !== "PURCHASED" || tx.revocationType === "ASSIGNMENT_REVOKE";
+
+const APP_RECEIPT_TYPES = new Set(["Production", "Sandbox", "Xcode", "LocalTesting"]);
+
 /** A refund is undone only by REFUND_REVERSED or by a purchase made after it; nothing older may clear it. */
 function resolveRevokedAt(existing: EntitlementRow | null, tx: TransactionInfo, notificationType: string): number | null {
   if (tx.revocationDate !== undefined) return tx.revocationDate;
@@ -46,11 +51,17 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
   const subtype = typeof decoded.subtype === "string" ? decoded.subtype : undefined;
   const uuid = typeof decoded.notificationUUID === "string" && decoded.notificationUUID.length <= 64 ? decoded.notificationUUID : undefined;
   const data = isRecord(decoded.data) ? decoded.data : undefined;
-  const environment = typeof data?.environment === "string" ? data.environment : undefined;
+  // RESCIND_CONSENT carries `appData` (app metadata plus a signed app transaction) instead of `data`.
+  const appData = !data && isRecord(decoded.appData) ? decoded.appData : undefined;
+  const container = data ?? appData;
+  const rawEnvironment = typeof container?.environment === "string" ? container.environment : undefined;
+  const environment = rawEnvironment?.toLowerCase() === "production" ? "Production" : rawEnvironment?.toLowerCase() === "sandbox" ? "Sandbox" : rawEnvironment;
 
-  if (data && typeof data.bundleId === "string" && data.bundleId !== config.bundleId) return "ignored_other_app";
-  if (data && environment === "Production" && config.appAppleId !== undefined && data.appAppleId !== config.appAppleId) return "ignored_other_app";
+  if (container && typeof container.bundleId === "string" && container.bundleId !== config.bundleId) return "ignored_other_app";
+  if (container && environment === "Production" && config.appAppleId !== undefined && container.appAppleId !== config.appAppleId) return "ignored_other_app";
   if (uuid && (await notificationSeen(env.DB, uuid))) return "duplicate";
+
+  if (notificationType === "RESCIND_CONSENT") return applyConsentRescinded(env, config, appData, { uuid, subtype, environment }, now);
 
   let tx: TransactionInfo | undefined;
   let renewal: RenewalInfo = {};
@@ -60,7 +71,8 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
     const renewalPayload = await verifyEmbedded(data.signedRenewalInfo, config, now);
     if (renewalPayload) renewal = parseRenewalInfo(renewalPayload);
   }
-  const originalTransactionId = tx?.originalTransactionId ?? renewal.originalTransactionId;
+  const seat = tx !== undefined && isNotOwnPurchase(tx);
+  const originalTransactionId = seat ? undefined : tx?.originalTransactionId ?? renewal.originalTransactionId;
   const entitlementId = originalTransactionId ? await entitlementIdFor(env.ENTITLEMENT_HASH_KEY, originalTransactionId) : undefined;
   log("notification", { type: notificationType, subtype, environment, entitlement: fingerprint(entitlementId) });
 
@@ -70,6 +82,12 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
     return outcome;
   };
 
+  if (tx && seat) {
+    // Multiseat: an assigned seat was never entitled, so an assignment or its revocation (ASSIGNMENT_REVOKE)
+    // is recorded and left alone. Logged by kind only; the seat's transaction ids go nowhere.
+    log("notification_seat_ignored", { type: notificationType, ownership: ownershipForLog(tx), assignmentRevoke: tx.revocationType === "ASSIGNMENT_REVOKE" });
+    return finish("recorded");
+  }
   if (!tx || !entitlementId) return finish("recorded");
   const policy = checkTransactionPolicy(tx, config);
   if (policy && policy !== "environment_not_accepted") return finish("recorded");
@@ -129,6 +147,43 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
       return finish("recorded");
   }
   await audit(env.DB, "notification_applied", { entitlementId, detail: `${notificationType}${subtype ? `/${subtype}` : ""}` }, now);
+  return finish("applied");
+}
+
+type NotificationMeta = { uuid?: string; subtype?: string; environment?: string };
+
+/**
+ * A parent or guardian withdrew consent for a child's use of the app (Texas SB 2420 and similar laws).
+ * Apple names the app transaction, not a subscription, so every Anywhere subscription verified under that
+ * app transaction stops, its live rooms end, and later verifications under it are refused.
+ */
+async function applyConsentRescinded(env: Env, config: Config, appData: Record<string, unknown> | undefined, meta: NotificationMeta, now: number): Promise<NotificationOutcome> {
+  const finish = async (outcome: NotificationOutcome) => {
+    if (meta.uuid) await recordNotification(env.DB, { uuid: meta.uuid, type: "RESCIND_CONSENT", subtype: meta.subtype, environment: meta.environment }, now);
+    return outcome;
+  };
+  let app: Record<string, unknown> | undefined;
+  try {
+    app = appData ? await verifyEmbedded(appData.signedAppTransactionInfo, config, now) : undefined;
+  } catch (error) {
+    if (!(error instanceof JwsVerificationError)) throw error;
+  }
+  const appTransactionId = typeof app?.appTransactionId === "string" && app.appTransactionId.length > 0 && app.appTransactionId.length <= 64 ? app.appTransactionId : undefined;
+  const receiptType = typeof app?.receiptType === "string" && APP_RECEIPT_TYPES.has(app.receiptType) ? app.receiptType : undefined;
+  if (!app || app.bundleId !== config.bundleId || !appTransactionId || !receiptType) {
+    log("notification_consent_unusable", { environment: meta.environment });
+    return finish("recorded");
+  }
+  if (receiptType === "Sandbox" && !config.acceptSandbox) return finish("recorded");
+  if ((receiptType === "Xcode" || receiptType === "LocalTesting") && !config.allowXcode) return finish("recorded");
+
+  const appTransactionHash = await appTransactionHashFor(env.ENTITLEMENT_HASH_KEY, appTransactionId);
+  const stopped = await stopForConsent(env.DB, appTransactionHash, receiptType === "LocalTesting" ? "Xcode" : receiptType, now);
+  for (const entitlementId of stopped) {
+    await pushRevocation(env, entitlementId, now);
+    await audit(env.DB, "consent_rescinded", { entitlementId }, now);
+  }
+  log("notification_consent_rescinded", { environment: meta.environment, subscriptions: stopped.length });
   return finish("applied");
 }
 

@@ -21,7 +21,7 @@ final class AgentAlertPayloadTests: XCTestCase {
         let payload = try XCTUnwrap(AgentAlertPayload(userInfo: Self.sample("agent-needs-you.apns")))
         XCTAssertEqual(payload.helpRequestID, "h_20af")
         XCTAssertEqual(payload.pairingIdentity, "bb4e6754bace2ee18161742a1bfbab72ac3865454f5f00951e7523912d1e7122")
-        XCTAssertEqual(payload.kind, .claudeCode)
+        XCTAssertEqual(payload.kind, .other, "A push names no agent")
         XCTAssertEqual(payload.threadID, "mac-7f3a")
         XCTAssertEqual(payload.interruption, .timeSensitive)
         XCTAssertFalse(payload.isReminder)
@@ -32,10 +32,10 @@ final class AgentAlertPayloadTests: XCTestCase {
     func testEachSampleFileRoutesTheWayItsNameSays() throws {
         struct Expected { var id: String; var kind: AgentKind; var interruption: AgentAlertPayload.Interruption; var reminder = false }
         let routed: [String: Expected] = [
-            "agent-needs-you.apns": .init(id: "h_20af", kind: .claudeCode, interruption: .timeSensitive),
-            "agent-needs-you-active.apns": .init(id: "h_3b71", kind: .codex, interruption: .active),
+            "agent-needs-you.apns": .init(id: "h_20af", kind: .other, interruption: .timeSensitive),
+            "agent-needs-you-active.apns": .init(id: "h_3b71", kind: .other, interruption: .active),
             "agent-needs-you-unknown-agent.apns": .init(id: "h_5c02", kind: .other, interruption: .active),
-            "agent-snooze-reminder.apns": .init(id: "h_20af", kind: .claudeCode, interruption: .passive, reminder: true)
+            "agent-snooze-reminder.apns": .init(id: "h_20af", kind: .other, interruption: .passive, reminder: true)
         ]
         for (file, expected) in routed {
             let payload = try XCTUnwrap(AgentAlertPayload(userInfo: Self.sample(file)), file)
@@ -65,21 +65,32 @@ final class AgentAlertPayloadTests: XCTestCase {
         for name in ["agent-needs-you.apns", "agent-needs-you-active.apns", "agent-needs-you-unknown-agent.apns", "agent-snooze-reminder.apns"] {
             let aps = try XCTUnwrap(Self.sample(name)["aps"] as? [String: Any])
             let alert = try XCTUnwrap(aps["alert"] as? [String: Any])
-            XCTAssertNil(alert["title"], "The alert is keys and an agent name, never prose: \(name)")
-            XCTAssertNil(alert["body"], "The alert is keys and an agent name, never prose: \(name)")
+            XCTAssertNil(alert["title"], "The alert is keys only, never prose: \(name)")
+            XCTAssertNil(alert["body"], "The alert is keys only, never prose: \(name)")
             XCTAssertNotNil(alert["title-loc-key"])
             XCTAssertNotNil(alert["loc-key"])
+            if name != "agent-needs-you-unknown-agent.apns" {
+                XCTAssertNil(alert["title-loc-args"], "Current pushes name no agent: \(name)")
+            }
+        }
+        for file in files {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            for product in ["Claude", "Codex", "Cursor"] {
+                XCTAssertFalse(text.contains(product), "\(file.lastPathComponent) names \(product)")
+            }
         }
     }
 
     // MARK: Hostile and broken input
 
-    func testUnfamiliarAgentNamesAreNeverEchoed() {
-        XCTAssertEqual(AgentKind(displayName: "rm -rf /"), .other)
-        XCTAssertEqual(AgentKind(displayName: ""), .other)
-        XCTAssertEqual(AgentKind(displayName: "  claude code "), .claudeCode)
-        XCTAssertEqual(AgentKind(displayName: "CODEX"), .codex)
-        XCTAssertEqual(AgentKind.other.displayName, "An agent")
+    func testNamesInAnOlderPushAreIgnored() throws {
+        let legacy = try XCTUnwrap(AgentAlertPayload(userInfo: Self.sample("agent-needs-you-unknown-agent.apns")))
+        XCTAssertEqual(legacy.kind, .other)
+        var userInfo = try Self.sample("agent-needs-you.apns")
+        var aps = try XCTUnwrap(userInfo["aps"] as? [String: Any])
+        aps["alert"] = ["title-loc-key": "AGENT_NEEDS_YOU_TITLE", "title-loc-args": ["Claude Code"]]
+        userInfo["aps"] = aps
+        XCTAssertEqual(try XCTUnwrap(AgentAlertPayload(userInfo: userInfo)).kind, .other)
         XCTAssertEqual(AgentKind(wire: "claude_code"), .claudeCode)
         XCTAssertEqual(AgentKind(wire: "nonsense"), .other)
         XCTAssertEqual(AgentKind(wire: nil), .other)
@@ -116,7 +127,15 @@ final class AgentAlertPayloadTests: XCTestCase {
         let payload = try XCTUnwrap(AgentAlertPayload(userInfo: userInfo))
         XCTAssertNil(payload.threadID)
         XCTAssertNil(payload.interruption)
-        XCTAssertEqual(payload.kind, .other, "A first argument that is not a name from the list is not used")
+        XCTAssertEqual(payload.kind, .other, "title-loc-args are never read")
+    }
+
+    func testALocalTwinCarriesNoNameTheSystemWouldShow() throws {
+        let payload = AgentAlertPayload(helpRequestID: "h_abc9", kind: .claudeCode, threadID: "mac-1")
+        let aps = try XCTUnwrap(payload.userInfo["aps"] as? [String: Any])
+        let alert = try XCTUnwrap(aps["alert"] as? [String: Any])
+        XCTAssertEqual(alert as NSDictionary, ["title-loc-key": "AGENT_NEEDS_YOU_TITLE", "loc-key": "AGENT_NEEDS_YOU_BODY"] as NSDictionary)
+        XCTAssertEqual(aps["category"] as? String, "AGENT_HELP")
     }
 
     func testALocalTwinParsesBackToTheSamePayload() throws {
@@ -146,7 +165,7 @@ final class AgentAlertPayloadTests: XCTestCase {
         }
         XCTAssertTrue(help.options.contains(.customDismissAction))
         XCTAssertTrue(help.options.contains(.hiddenPreviewsShowTitle))
-        XCTAssertEqual(help.hiddenPreviewsBodyPlaceholder, "An agent needs you.")
+        XCTAssertEqual(help.hiddenPreviewsBodyPlaceholder, "Tap to look at your Mac.")
 
         let reminder = try XCTUnwrap(categories.first { $0.identifier == "AGENT_HELP_REMINDER" })
         XCTAssertEqual(reminder.actions.map(\.identifier), ["NOT_NOW"], "The one reminder cannot be snoozed again")
@@ -154,7 +173,10 @@ final class AgentAlertPayloadTests: XCTestCase {
     }
 
     func testAlertCopyLivesInTheBundleAndIsLiteral() {
-        XCTAssertEqual(String(format: NSLocalizedString("AGENT_NEEDS_YOU_TITLE", comment: ""), "Claude Code"), "Claude Code needs you")
+        XCTAssertEqual(NSLocalizedString("AGENT_NEEDS_YOU_TITLE", comment: ""), "A task on your Mac needs you",
+                       "Fixed: Shortcuts automations and Focus filters match this title")
+        XCTAssertEqual(String(format: NSLocalizedString("AGENT_NEEDS_YOU_TITLE", comment: ""), "Claude Code"), "A task on your Mac needs you",
+                       "A stray name from an older service has nowhere to go")
         XCTAssertEqual(NSLocalizedString("AGENT_NEEDS_YOU_BODY", comment: ""),
                        "Stuck on something only a human can click. Tap to look at your Mac.")
         XCTAssertEqual(NSLocalizedString("AGENT_REMINDER_BODY", comment: ""), "Still waiting on you.")

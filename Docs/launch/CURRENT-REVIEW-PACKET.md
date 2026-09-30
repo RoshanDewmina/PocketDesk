@@ -4,6 +4,31 @@ This is the current engineering preparation record. Older launch research remain
 
 Latest app-only continuation: the human-approved **Farside: Remote Desktop** App Store Connect record is created and verified, numeric app ID `6817532560`, existing phone bundle, SKU `farside-ios`, primary English (U.S.), Limited Access, version 1.0 Prepare for Submission. Local configured-ID transaction verification now follows Apple's transaction schema while preserving outer production notification app-ID validation. Fresh independent review passes 129 backend tests and typecheck. Integrated notification parsing passes 17 XCTest checks; all 22 release fixture methods pass, including malformed app/widget manifest rejection. W6 HEVC probe preparation is integrated and compiles for Mac and generic iOS device/simulator targets, signing disabled; four Mac probes skip without explicit opt-in. No actual HEVC measurements or codec-default change occurred. Installed `.11`, uninstalled `.12` and the human's physical-testing deferral remain unchanged. No upload, deployment, installation or submission occurred in this continuation.
 
+## Commerce and App Review refresh — 30 September 2026
+
+Branch `farside-commerce-review`. Source, tests and documents only. There was no deployment, no App Store Connect change and no install. Details and sources: APP-REVIEW-RISKS.md (header, rows 3.1.2 Multiseat and 4.5.4, sections 4, 5a, 5b, 8, go/no-go B15–B18).
+
+- **Multiseat.** Server verification accepts only `inAppOwnershipType` `PURCHASED`. Assigned multiseat seats (and family-shared or unmarked ones) get 401 `not_purchased`, logged by ownership kind with no identifiers. Seat notifications, including `ASSIGNMENT_REVOKE`, never touch a purchaser's subscription. **Owner:** set Multiseat = No on both products before the first approval (LAUNCH-CHECKLIST §4 item 8).
+- **Consent revocation (Texas SB 2420, Utah, Louisiana).** A verified `RESCIND_CONSENT` notification stops Anywhere for every subscription verified under that app transaction. It ends live rooms, and later verification answers `consent_revoked`. It needs migration `0004_consent_stop.sql`.
+  - The phone records `AgeRangeService.requiredRegulatoryFeatures` (iOS 26.4+, guarded). It blocks no one and adds no UI.
+  - The decision is written in APP-REVIEW-RISKS section 5a.
+- **Generic alerts (4.5.4).** APNs and local alerts carry only `title-loc-key`/`loc-key`, with no `title-loc-args`. The "Show agent name" setting is gone, and the in-app sheet and banner use the same fixed words. The service ignores an older phone's `showAgentName`.
+- **Offer codes.** On iOS 27 the paywall uses `offerCodeRedemption(options:isPresented:onCompletion:)`. The returned verified transaction is finished and sent for server verification at once. iOS 26 keeps the earlier overload.
+- **Shortcuts.** SHORTCUTS-RECIPES.md: the Notification automation trigger is iOS 27+, and the stable title to filter on is "A task on your Mac needs you".
+- **4.2.7** was re-read on 30 Sep: "Last Updated: June 8, 2026", clause (e) intact, analysis unchanged.
+- **Age rating.** Answer every questionnaire item "No", including the social-media questions (required for submissions since September 2026). Expected rating 4+.
+- **Agreements.** The Account Holder accepts the updated Developer Program License Agreement, whose Attachment 14 (EU terms) takes effect 1 Oct 2026.
+- **Privacy manifests.**
+  - The phone reads no file timestamps in Release on this branch.
+  - The Mac companion's login-item fingerprint already reads a modification date, and its manifest lacks FileTimestamp.
+  - File transfer (`farside-transfer`, `4450ecf`) adds FileTimestamp `C617.1` and `3B52.1` to all its manifests. Keep `C617.1` wherever timestamps are read.
+- **Needed deploy (not done; needs approval):**
+  1. `wrangler d1 migrations apply` for `0004_consent_stop.sql` on staging, then deploy the Worker to staging.
+  2. Run the sandbox plan, adding an `ASSIGNED` sandbox transaction and a sandbox `RESCIND_CONSENT` where Apple's sandbox can produce them.
+  3. After acceptance, apply the same migration and deploy to production.
+
+  The migration only adds columns and a table, so the currently deployed Worker keeps working after it is applied.
+
 ## Product and identifiers
 
 - Farside phone app: `com.roshan.PocketDesk.Remote`, iPhone and iPad, iOS/iPadOS 26 or later.
@@ -17,7 +42,7 @@ Farside lets a person view and control their own paired Mac from an iPhone or iP
 
 Free access is limited to a verified directly attached Wi-Fi or Ethernet path. Internet, VPN, routed, and unverifiable paths require Farside Anywhere. Server policy bounds each session by its verified access deadline. Purchases remain disabled until the intended production service is explicitly marked ready. Restore and server verification must be demonstrated with the review build and sandbox account before submission.
 
-Agent alerts are an optional beta for blocking Claude Code and Codex permission events. Payloads contain generic alert metadata rather than prompts, file names, screen content, or chat text. Tapping an alert opens a prompt to Connect; it does not silently control the Mac or approve an agent action. Session Live Activities have an end-only server adapter so a suspended phone can remove an ended session. These source paths still require real APNs acceptance.
+Agent alerts are an optional beta for a coding agent's blocking permission prompts on the user's own Mac. Every alert says the same fixed words, "A task on your Mac needs you". It names no agent or product and carries no prompt, file name, screen content or chat text. Tapping an alert opens a prompt to Connect; it does not silently control the Mac or approve an agent action. Session Live Activities have an end-only server adapter so a suspended phone can remove an ended session. These source paths still require real APNs acceptance.
 
 ## Current data-flow corrections for the privacy draft
 

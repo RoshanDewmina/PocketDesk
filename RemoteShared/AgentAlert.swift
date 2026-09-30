@@ -4,8 +4,8 @@ import Foundation
 /// no free text at all, so an agent that is compromised, or steered by an injected prompt, can never
 /// put its own words on a person's lock screen or into a spoken reply.
 ///
-/// Names are descriptive, as an AI coding tool is commonly called. Farside ships no product logos or
-/// launchers for them, and stays a generic Mac mirror.
+/// `displayName` is for the Mac companion's own activity log only. The phone never shows it and
+/// no push carries it: phone alerts use fixed generic copy (Guideline 4.5.4, and 4.2.7's generic mirror).
 enum AgentKind: String, CaseIterable, Sendable {
     case claudeCode = "claude_code"
     case codex
@@ -19,16 +19,6 @@ enum AgentKind: String, CaseIterable, Sendable {
         case .cursor: "Cursor"
         case .other: "An agent"
         }
-    }
-
-    /// The generic name shown when the person turned "Show agent name" off.
-    static let genericName = AgentKind.other.displayName
-
-    /// Maps a name in an alert back onto the fixed list. Anything unfamiliar is "An agent", so an
-    /// unexpected string is never echoed to the screen.
-    init(displayName: String) {
-        let folded = displayName.trimmingCharacters(in: .whitespaces).lowercased()
-        self = Self.allCases.first { $0 != .other && $0.displayName.lowercased() == folded } ?? .other
     }
 
     /// Parses the wire spelling, `claude_code` and friends. Unknown spellings are `other`.

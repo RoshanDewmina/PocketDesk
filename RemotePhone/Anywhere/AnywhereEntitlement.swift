@@ -126,7 +126,7 @@ struct PlanOffer: Identifiable, Equatable {
     var periodNoun: String { period == .year ? "year" : "month" }
     var hasTrial: Bool { trialPhrase != nil }
 
-    /// "CA$4.17 a month" for the yearly plan.
+    /// "CA$5.00 a month" for the yearly plan.
     var monthlyEquivalent: String? {
         guard period == .year else { return nil }
         let perMonth = price / 12
@@ -196,6 +196,10 @@ enum AnywhereCopy {
             return "This subscription is already in use on \(deviceLimitWord) devices, the most one plan covers. Same Wi-Fi still works here."
         case "expired", "revoked":
             return "Farside’s service says this plan is no longer active. If you just renewed, try Restore Purchases."
+        case "not_purchased":
+            return "\(name) needs a plan bought with your own Apple Account. Plans assigned by an organization or group aren’t supported. Same Wi-Fi still works."
+        case "consent_revoked":
+            return "Permission to use Farside was withdrawn for this Apple Account, so \(name) is off."
         default:
             return "Farside’s service couldn’t confirm this plan. Try Restore Purchases; same Wi-Fi still works."
         }

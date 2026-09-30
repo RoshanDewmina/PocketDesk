@@ -4,7 +4,8 @@ import UserNotifications
 
 // MARK: - Alert sheet
 
-/// What a tap on "needs you" opens. It tells you who asked and how long ago, then offers one way in.
+/// What a tap on "needs you" opens. It says how long ago it asked, then offers one way in. Never an agent's
+/// or product's name: the copy is the same fixed words as the notification.
 /// Nothing connects until the person taps Open your Mac.
 struct AgentAlertSheet: View {
     let item: AgentAlertPresentation
@@ -15,7 +16,6 @@ struct AgentAlertSheet: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
 
     private var payload: AgentAlertPayload { item.payload }
-    private var name: String { center.preferences.showAgentName ? payload.kind.displayName : AgentKind.genericName }
     private var declined: Bool { center.wasDeclined(item.id) }
     private var old: Bool { item.freshness(at: center.now()) == .old }
     private var pairingExpired: Bool { !payload.isTest && !center.isCurrentPairing(payload) }
@@ -23,7 +23,7 @@ struct AgentAlertSheet: View {
     private var headline: String {
         if payload.isTest { return "Test alert received." }
         if pairingExpired { return "This alert has expired." }
-        return "\(name) needs you."
+        return "A task on your Mac needs you."
     }
 
     private var accent: String? { payload.isTest ? "received" : "needs" }
@@ -113,16 +113,13 @@ struct AgentAlertSheet: View {
 /// Over a live session the picture already shows the Mac, so a "needs you" is one quiet line.
 struct AgentAlertBanner: View {
     let item: AgentAlertPresentation
-    let showName: Bool
     let dismiss: () -> Void
-
-    private var name: String { showName ? item.payload.kind.displayName : AgentKind.genericName }
 
     var body: some View {
         HStack(spacing: 12) {
             LiveDot(state: .attention)
             VStack(alignment: .leading, spacing: 1) {
-                Text("\(name) needs you")
+                Text("A task on your Mac needs you")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Farside.Palette.bone)
                 Text("Stuck on something only a human can click.")
@@ -157,7 +154,6 @@ struct AgentAlertsSettingsSheet: View {
     @Environment(\.openURL) private var openURL
     @AppStorage(AgentAlertPreferences.Key.alerts) private var alertsOn = false
     @AppStorage(AgentAlertPreferences.Key.breakThroughFocus) private var breakThroughFocus = false
-    @AppStorage(AgentAlertPreferences.Key.showAgentName) private var showAgentName = true
     @AppStorage(AgentAlertPreferences.Key.sessionActivity) private var sessionActivity = true
     @AppStorage(AgentAlertPreferences.Key.showMacName) private var showMacName = false
     @State private var showPriming = false
@@ -219,13 +215,6 @@ struct AgentAlertsSettingsSheet: View {
                             .toggleStyle(FarsideSwitchStyle())
                             .disabled(!alertsOn || !focusAvailable)
                             .accessibilityIdentifier("agent.settings.focus")
-                        }
-                        row(divider: true) {
-                            Toggle(isOn: $showAgentName) {
-                                label("Show agent name", "Off says “An agent”. Only Claude Code, Codex or Cursor are ever named.")
-                            }
-                            .toggleStyle(FarsideSwitchStyle())
-                            .accessibilityIdentifier("agent.settings.name")
                         }
                         row(divider: false) {
                             Button(action: sendTest) {

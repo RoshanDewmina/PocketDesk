@@ -56,7 +56,7 @@ final class AgentAlertFromMacTests: XCTestCase {
         XCTAssertEqual(request.identifier, "agent-mac-h_0a1b2c3d4e5f")
         XCTAssertEqual(request.content.categoryIdentifier, AgentAlertPayload.categoryIdentifier)
         XCTAssertTrue(request.trigger is UNTimeIntervalNotificationTrigger)
-        XCTAssertEqual(request.content.title, "Claude Code needs you")
+        XCTAssertEqual(request.content.title, "A task on your Mac needs you")
         XCTAssertNil(center.banner)
 
         let payload = try XCTUnwrap(AgentAlertPayload(userInfo: request.content.userInfo),
@@ -67,13 +67,17 @@ final class AgentAlertFromMacTests: XCTestCase {
                        "A local control-channel notification keeps its exact pairing through a reminder")
     }
 
-    func testTheNotificationNamesAnAgentOnlyWhenThePersonAllowsIt() async throws {
+    func testTheNotificationNeverNamesTheAgent() async throws {
         appInFront = false
-        center.preferences.showAgentName = false
         center.receive(fromMac: frame(kind: .codex))
         let requests = await scheduled()
         let request = try XCTUnwrap(requests.first)
-        XCTAssertEqual(request.content.title, "An agent needs you")
+        XCTAssertEqual(request.content.title, "A task on your Mac needs you")
+        let aps = try XCTUnwrap(request.content.userInfo["aps"] as? [String: Any])
+        XCTAssertNil((aps["alert"] as? [String: Any])?["title-loc-args"])
+        for text in [request.content.title, request.content.subtitle, request.content.body] {
+            XCTAssertFalse(text.contains("Codex"), text)
+        }
     }
 
     func testTheFocusChoiceDecidesHowHardItInterrupts() async throws {

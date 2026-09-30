@@ -1,5 +1,7 @@
+import DeclaredAgeRange
 import Foundation
 import StoreKit
+import os
 
 /// StoreKit 2 for Farside Anywhere: products, purchase, restore, the transaction listener and the
 /// entitlement the rest of the app observes. Started once at launch so renewals, refunds, Ask to Buy
@@ -90,13 +92,15 @@ final class AnywhereStore: ObservableObject {
         }
     }
 
-    /// Re-reads the subscription group's status from StoreKit.
-    func refresh() async {
+    /// Re-reads the subscription group's status from StoreKit. `redeemed` joins this one read: a
+    /// transaction StoreKit just handed back, which the group status may not show yet.
+    func refresh(including redeemed: SubscriptionSnapshot? = nil) async {
         if groupID == nil { groupID = await groupIDFromHistory() }
         var snapshots: [SubscriptionSnapshot] = []
         if let groupID, let statuses = try? await Product.SubscriptionInfo.status(for: groupID) {
             snapshots = statuses.map(SubscriptionSnapshot.init)
         }
+        if let redeemed { snapshots.append(redeemed) }
         let best = AnywhereEntitlement.best(snapshots)
         signedTransactionValue = best.entitlement.hasAccess ? best.snapshot?.signedTransaction : nil
         if entitlement != best.entitlement { entitlement = best.entitlement }
@@ -149,6 +153,18 @@ final class AnywhereStore: ObservableObject {
         } catch {
             purchaseState = .failed("The purchase didn’t go through. Nothing was charged. Try again in a moment.")
         }
+    }
+
+    /// An offer code redeemed through the iOS 27 sheet, which returns its transaction. A verified
+    /// Anywhere transaction is finished and becomes the signed transaction the service verifies next,
+    /// without waiting for `Transaction.updates` or the group status to catch up.
+    func redeemed(_ result: VerificationResult<Transaction>) async {
+        guard case .verified(let transaction) = result, productIDs.contains(transaction.productID) else {
+            await refresh()
+            return
+        }
+        await transaction.finish()
+        await refresh(including: SubscriptionSnapshot(redeemed: transaction, signedTransaction: result.jwsRepresentation))
     }
 
     /// Only from an explicit tap: `AppStore.sync()` can ask the person to sign in.
@@ -208,6 +224,15 @@ final class AnywhereStore: ObservableObject {
 }
 
 extension SubscriptionSnapshot {
+    /// A verified transaction from an offer-code redemption, read as a subscribed status until
+    /// StoreKit's own group status reflects it.
+    init(redeemed transaction: Transaction, signedTransaction: String) {
+        self.init(renewal: transaction.revocationDate == nil ? .subscribed : .revoked, productID: transaction.productID,
+                  expirationDate: transaction.expirationDate, revocationDate: transaction.revocationDate,
+                  isFreeTrial: transaction.offer?.paymentMode == .freeTrial, willAutoRenew: true,
+                  gracePeriodExpirationDate: nil, verified: true, signedTransaction: signedTransaction)
+    }
+
     init(_ status: Product.SubscriptionInfo.Status) {
         let transaction: Transaction
         let verified: Bool
@@ -253,5 +278,95 @@ extension PlanOffer {
         }
         self.init(id: product.id, period: unit == .year ? .year : .month, displayPrice: product.displayPrice,
                   price: product.price, currencyCode: product.priceFormatStyle.currencyCode, trialPhrase: trial)
+    }
+}
+
+/// Age-assurance laws (Texas SB 2420, Utah, Louisiana): records which regulatory features Apple says
+/// apply to this person, on this phone only. It never blocks anyone and shows nothing. Farside has no
+/// age-gated content and no planned "significant change", so a recorded need is a flag for the
+/// developer, not a gate. Decision: Docs/launch/APP-REVIEW-RISKS.md, "Age assurance".
+enum RegulatoryFeatureCheck {
+    enum Outcome: Equatable {
+        case noneRequired
+        case required([String])
+        /// The service answered with an error: no Declared Age Range entitlement yet, or it is down.
+        case unavailable
+        /// Before iOS 26.4 there is no API to ask.
+        case unsupportedOS
+    }
+
+    static let requiredKey = "compliance.requiredRegulatoryFeatures"
+    static let checkedAtKey = "compliance.regulatoryFeaturesCheckedAt"
+
+    /// Without the Declared Age Range entitlement the call never returns on the iOS 27 simulator,
+    /// and it ignores cancellation, so the answer races a timer instead of a task group.
+    static func check(timeout: Duration = .seconds(10)) async -> Outcome {
+        guard #available(iOS 26.4, *) else { return .unsupportedOS }
+        return await withCheckedContinuation { continuation in
+            let once = ResumeOnce(continuation)
+            Task {
+                do {
+                    let features = try await AgeRangeService.shared.requiredRegulatoryFeatures
+                    once.resume(features.isEmpty ? .noneRequired : .required(features.map(name).sorted()))
+                } catch {
+                    once.resume(.unavailable)
+                }
+            }
+            Task {
+                try? await Task.sleep(for: timeout)
+                once.resume(.unavailable)
+            }
+        }
+    }
+
+    private final class ResumeOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Outcome, Never>?
+
+        init(_ continuation: CheckedContinuation<Outcome, Never>) { self.continuation = continuation }
+
+        func resume(_ outcome: Outcome) {
+            lock.lock()
+            let pending = continuation
+            continuation = nil
+            lock.unlock()
+            pending?.resume(returning: outcome)
+        }
+    }
+
+    @available(iOS 26.4, *)
+    static func name(_ feature: AgeRangeService.RegulatoryFeature) -> String {
+        switch feature {
+        case .significantAppChangeRequiresAdultNotification: "significantAppChangeRequiresAdultNotification"
+        case .significantAppChangeRequiresParentalConsent: "significantAppChangeRequiresParentalConsent"
+        case .declaredAgeRangeRequired: "declaredAgeRangeRequired"
+        @unknown default: "unknown"
+        }
+    }
+
+    /// Keeps the last real answer: an unavailable service leaves an earlier one in place.
+    static func record(_ outcome: Outcome, defaults: UserDefaults = .standard, now: Date = Date()) {
+        switch outcome {
+        case .noneRequired: defaults.set([String](), forKey: requiredKey)
+        case .required(let names): defaults.set(names, forKey: requiredKey)
+        case .unavailable, .unsupportedOS: return
+        }
+        defaults.set(now.timeIntervalSince1970, forKey: checkedAtKey)
+    }
+
+    static func recorded(defaults: UserDefaults = .standard) -> [String]? {
+        defaults.stringArray(forKey: requiredKey)
+    }
+
+    static func run(defaults: UserDefaults = .standard) async {
+        let outcome = await check()
+        record(outcome, defaults: defaults)
+        let log = Logger(subsystem: "com.roshan.PocketDesk.Remote", category: "compliance")
+        switch outcome {
+        case .required(let names): log.notice("Regulatory features required: \(names.count, privacy: .public)")
+        case .noneRequired: log.info("No regulatory features required")
+        case .unavailable: log.info("Regulatory feature check unavailable")
+        case .unsupportedOS: break
+        }
     }
 }

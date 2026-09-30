@@ -275,13 +275,13 @@ Cautions:
 - People whose device language is Spanish or French will see these product pages, so the name, subtitle and description must be genuinely translated. Only the keyword field is invisible.
 - Do not fill Arabic, Chinese, Korean, Portuguese, Russian or Vietnamese with English keyword filler. Those readers would see an untranslated page (worse conversion, worse quality signals) and stuffing irrelevant terms risks Guideline 2.3.7. Add them later, with real translations, if the data shows demand.
 - Screenshots for a new locale inherit the primary language's until you upload localized ones. Localise the first three later if the French or Spanish traffic is meaningful.
-- Subscription display names must not contain diacritics or special characters [A] (auto-renewable subscription page), so keep the French and Spanish subscription names ASCII ("Farside Remote - Mensuel", "Farside Remote - Mensual").
+- Subscription display names must not contain diacritics or special characters [A] (auto-renewable subscription page), so keep the French and Spanish subscription names ASCII ("Farside Anywhere - Mensuel", "Farside Anywhere - Mensual").
 
 ### 3.5 In-app purchase names that help search
 
 - The in-app purchase display name is 2 to 30 characters and the description up to 45 [A] (In-App Purchase information page). The auto-renewable subscription page I fetched lists no numeric limit, and `SUBSCRIPTION-SETUP.md` quotes 35 and 55, so check the counter in App Store Connect; every string below fits 30 and 45 anyway.
 - IAP names appear in the product page's "In-App Purchases" list next to the price (visible on Screens 5, Remote Mac Desktop Control, Splashtop, Duet and others [M]). Whether they help search is [I]/unproven, so choose for clarity first.
-- Recommendation: keep `Farside Remote` as the group and marketing name (consistent with `SUBSCRIPTION-SETUP.md`, the paywall and the description). Optional, low-risk hedge for the unproven indexing: name the two products `Remote Access - Monthly` (23) and `Remote Access - Yearly` (22), because "access" is the strongest head word missing from the title and subtitle. If you would rather keep every doc consistent, `Farside Remote - Monthly` (24) and `Farside Remote - Yearly` (23) from `SUBSCRIPTION-SETUP.md` are fine. Use a plain hyphen, not an en dash.
+- Recommendation: `Farside Anywhere` is the group and marketing name (PRODUCT D41, 30 Sep 2026; consistent with `SUBSCRIPTION-SETUP.md`, the paywall and the description). Optional, low-risk hedge for the unproven indexing: name the two products `Remote Access - Monthly` (23) and `Remote Access - Yearly` (22), because "access" is the strongest head word missing from the title and subtitle. If you would rather keep every doc consistent, `Farside Anywhere - Monthly` (26) and `Farside Anywhere - Yearly` (25) from `SUBSCRIPTION-SETUP.md` are fine. Use a plain hyphen, not an en dash.
 - Descriptions (45 max): monthly `Reach your Mac from anywhere, any network` (41); yearly `Best value. Reach your Mac from anywhere.` (41). No prices in names or descriptions.
 - Promotional in-app purchases can show in search and on the product page after release [A]; consider promoting the yearly plan once the app is live, and only if the paywall it opens satisfies Guideline 3.1.2(c).
 
@@ -366,12 +366,14 @@ Competitor prices read from their App Store pages on 28 Sep 2026 [M] unless note
 | Splashtop | Free download; Anywhere Access Pack US$5.99 a month, US$23.99 a year |
 | Duet Display | Free download; Duet Air US$5.99 a month, US$49.99 a year |
 | Happy (Codex and Claude Code) | Free download; Plus US$19.99 a month |
-| Farside (proposed) | Free download; CA$5.99 a month, CA$49.99 a year, 7-day trial |
+| Farside (D41, 30 Sep 2026) | Free download; CA$7.99 a month, CA$59.99 a year, 7-day trial on both |
 
 What that means:
 
 - A free download with "Offers In-App Purchases" removes the price barrier that a US$14.99 paid app (Jump) still has, which helps tap-to-download, velocity and the review base. The price then shows in the IAP list on the product page, so the name and price of each plan are part of the conversion story.
-- CA$5.99 and CA$49.99 sit between Screens 5 and Remote Mac Desktop Control and below Workbench. The yearly plan is a 30% discount on twelve months (CA$4.17 a month). Set the US prices explicitly (for example US$4.99 and US$39.99) instead of taking Apple's automatic conversion, so the IAP list reads cleanly in both storefronts.
+- CA$7.99 (about US$5.75) is just under Remote Mac Desktop Control's US$7.99 monthly. CA$59.99 (about US$43.19) sits between Screens 5 and Remote Mac Desktop Control yearly, and both are below Workbench.
+- The yearly plan is a 37% discount on twelve months (CA$5.00 a month).
+- Set the US prices explicitly instead of taking Apple's automatic conversion, so the IAP list reads cleanly in both storefronts. The exact US prices are an owner decision; equalization at 0.72 USD per CAD gives about US$5.75 and US$43.19.
 - The trial is not visible in the product page IAP list; it shows in the paywall (StoreKit `SubscriptionStoreView`). Say "7 days free" in the promotional text and description, not in screenshots (2.3.7).
 - RevenueCat's 2026 report says about half of paid conversions happen on day 0 and short trials convert worse than long ones (25.5% median under four days versus 42.5% for 17 to 32 days) [I]. A 7-day trial is standard; do not lengthen it for launch. Keep the billed amount the most prominent price on the paywall and any monthly equivalent secondary (Guideline 3.1.2(c)).
 

@@ -42,7 +42,7 @@ Every claim carries a tag so Higgsfield-documented facts stay separate from prac
 | D1 | Approve the stage-0 test (about 30 credits) | Yes | Answers the only real unknown: does the generated plate survive the dither pass and read as intentional? |
 | D2 | Hero concept family | Decide after the test. My ranking for video: **Transmission** (0 credits, real UI), **Reach** (real hand plus procedural cursor), **Overgrown** (pure generative, best use of Higgsfield), **Afterglow** (riskiest: face plus phone glow) | `PRODUCT.md` D31 says Higgsfield generation waits for a chosen concept |
 | D3 | Launch date on creatives | Use "This November" until the 2 Nov go/no-go | 17 Nov is proposed and conditional [REPO] |
-| D4 | "Anywhere / from any network" in videos | Show only if Farside Remote is live in the RC build; otherwise say "Free on your Wi-Fi" | Relay and signaling were not deployed on 28 Sep [REPO] |
+| D4 | "Anywhere / from any network" in videos | Show only if Farside Anywhere is live in the RC build; otherwise say "Free on your Wi-Fi" | Relay and signaling were not deployed on 28 Sep [REPO] |
 | D5 | "Agent needs you" alert on screen | Capture the real push on the RC build, or leave the 15 s cut for later | Ships as beta (D29); a staged fake alert would misstate the product |
 | D6 | The brief's own voice line "Your Mac is on the far side. You're not." (and the `22-far-side` concept name) | Prefer "Your Mac is over there. You're not." in video copy. Get counsel's view first | The listing notes flag THE FAR SIDE mark (US Reg. 6255846, live) and say never write "Far Side" in copy, keywords or URLs [REPO] |
 | D7 | Music | Licensed track with cross-platform rights, or sound design only | TikTok's business library covers TikTok only [3P] |

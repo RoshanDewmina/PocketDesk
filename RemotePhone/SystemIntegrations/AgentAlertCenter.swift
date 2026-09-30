@@ -314,7 +314,7 @@ final class AgentAlertCenter: ObservableObject {
             remember(id, in: Self.snoozedKey)
             let request = UNNotificationRequest(
                 identifier: AgentNotification.reminderIdentifier(for: id),
-                content: AgentNotification.reminderContent(for: payload, showAgentName: preferences.showAgentName),
+                content: AgentNotification.reminderContent(for: payload),
                 trigger: UNTimeIntervalNotificationTrigger(timeInterval: AgentNotification.snoozeDelay, repeats: false))
             _ = await center.add(request)
         case .notNow:
@@ -346,7 +346,7 @@ final class AgentAlertCenter: ObservableObject {
         presentation = AgentAlertPresentation(payload: payload, receivedAt: deliveredAt)
     }
 
-    /// From a link that names only the request. The link carries no agent name, so it says "An agent".
+    /// From a link that names only the request.
     func open(linkedRequest id: String) {
         open(AgentAlertPayload(helpRequestID: id, kind: .other,
                                pairingIdentity: currentPairingIdentity?()), deliveredAt: now())

@@ -204,7 +204,7 @@ struct FarsideSystemRoutes: ViewModifier {
             }
             .overlay(alignment: .top) {
                 if let banner = alerts.banner {
-                    AgentAlertBanner(item: banner, showName: alerts.preferences.showAgentName) { alerts.dismissBanner() }
+                    AgentAlertBanner(item: banner) { alerts.dismissBanner() }
                         .padding(.top, 6)
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }

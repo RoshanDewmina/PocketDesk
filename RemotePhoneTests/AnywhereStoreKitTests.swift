@@ -65,10 +65,10 @@ final class AnywhereStoreKitTests: XCTestCase {
         XCTAssertEqual(try monthly.subscription?.subscriptionPeriod, .monthly)
         let offers = store.offers
         XCTAssertEqual(offers.map(\.period), [.year, .month])
-        XCTAssertTrue(offers[0].displayPrice.contains("49.99"), offers[0].displayPrice)
-        XCTAssertTrue(offers[1].displayPrice.contains("5.99"), offers[1].displayPrice)
+        XCTAssertTrue(offers[0].displayPrice.contains("59.99"), offers[0].displayPrice)
+        XCTAssertTrue(offers[1].displayPrice.contains("7.99"), offers[1].displayPrice)
         XCTAssertEqual(offers.map(\.currencyCode), ["CAD", "CAD"])
-        XCTAssertEqual(PlanOffer.yearlySaving(yearly: offers[0], monthly: offers[1]), 30)
+        XCTAssertEqual(PlanOffer.yearlySaving(yearly: offers[0], monthly: offers[1]), 37)
         XCTAssertEqual(store.entitlement.phase, .unknown, "Nothing read yet")
     }
 
@@ -218,6 +218,23 @@ final class AnywhereStoreKitTests: XCTestCase {
     func testRestoreWithNothingToRestoreSaysSo() async {
         await store.restore()
         XCTAssertEqual(store.restoreMessage, "Couldn’t confirm an active Farside Anywhere subscription yet. Check your Apple Account and try Restore Purchases again.")
+    }
+
+    /// Stands in for the iOS 27 offer-code sheet, which hands back the same `VerificationResult<Transaction>`.
+    func testARedeemedTransactionIsFinishedAndReadyForTheServiceAtOnce() async throws {
+        await store.refresh()
+        XCTAssertFalse(store.entitlement.hasAccess)
+        guard case .success(let verification) = try await monthly.purchase() else { return XCTFail("no transaction") }
+        await store.redeemed(verification)
+        XCTAssertTrue(store.entitlement.hasAccess)
+        XCTAssertEqual(store.entitlement.productID, AnywherePlan.monthlyID)
+        let signed = await store.signedTransaction()
+        XCTAssertEqual(signed?.split(separator: ".").count, 3, "A compact JWS for the service")
+        var unfinished = 0
+        for await result in Transaction.unfinished {
+            if case .verified(let transaction) = result, transaction.productID == AnywherePlan.monthlyID { unfinished += 1 }
+        }
+        XCTAssertEqual(unfinished, 0, "The redeemed transaction is finished")
     }
 
     func testListenerSeesPurchasesMadeOutsideTheApp() async throws {

@@ -22,13 +22,16 @@ bundle=com.roshan.PocketDesk.Remote
 
 # sample : text on the banner : sheet expected : sheet heading
 typeset -A banner sheet title
-banner=(agent-needs-you "Claude Code needs you" agent-needs-you-active "Codex needs you"
-        agent-needs-you-unknown-agent "An agent needs you" agent-malformed-id "Claude Code needs you"
+# Every alert has the same fixed title; the unknown-agent sample is an old-format push whose stray
+# title-loc-args must never reach the screen.
+generic="A task on your Mac needs you"
+banner=(agent-needs-you "$generic" agent-needs-you-active "$generic"
+        agent-needs-you-unknown-agent "$generic" agent-malformed-id "$generic"
         agent-wrong-category "A notification that is not an agent alert.")
 sheet=(agent-needs-you yes agent-needs-you-active yes agent-needs-you-unknown-agent yes
        agent-malformed-id no agent-wrong-category no)
-title=(agent-needs-you "Claude Code needs you." agent-needs-you-active "Codex needs you."
-       agent-needs-you-unknown-agent "An agent needs you.")
+title=(agent-needs-you "$generic." agent-needs-you-active "$generic."
+       agent-needs-you-unknown-agent "$generic.")
 
 samples=("$@")
 [ ${#samples[@]} -gt 0 ] || samples=(agent-needs-you agent-needs-you-active agent-needs-you-unknown-agent agent-malformed-id agent-wrong-category agent-needs-you:actions)

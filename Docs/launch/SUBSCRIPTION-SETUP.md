@@ -1,17 +1,19 @@
-# Farside Remote: subscription setup
+# Farside Anywhere: subscription setup
 
 **Historical research notice — refreshed 29 September 2026:** The no-StoreKit/source-enforcement statements below are superseded by implemented native StoreKit and Backend `route.1` policy. Current UI calls the plan Farside Anywhere; existing product identifiers stay unchanged. Free access requires proven directly attached Wi-Fi/Ethernet; VPN, routed and unverifiable paths require Anywhere. Purchases remain disabled pending intended-service acceptance; sandbox expiry and production Apple app configuration remain open. Use [CURRENT-REVIEW-PACKET.md](CURRENT-REVIEW-PACKET.md) for current gates rather than this earlier proposed setup.
+
+**Pricing decision, 30 September 2026 (PRODUCT D41):** CA$7.99 a month or CA$59.99 a year, each with a 7-day free trial. The plan and subscription group are named **Farside Anywhere**, and "Farside Remote" is retired. Roshan is enrolling in the Small Business Program (15% commission). Product IDs are unchanged. Sections 1, 3, 8 and 9 below are updated to match.
 
 Prepared 28 September 2026. Design and research only: no App Store Connect records, keys or servers were created.
 
 **Naming:** the product is **Farside** (renamed from PocketDesk on 28 Sep 2026). Bundle IDs stay `com.roshan.PocketDesk.*`, and so do the proposed product IDs below, so App Store Connect identifiers stay consistent. Code identifiers still say PocketDesk until engineering renames them.
 
-Labels: **[V]** verified today from a primary source; **[R]** verified in the repo; **[I]** inference or unverified; **[O]** owner action; **[E]** engineering. The subscription is called **Farside Remote**.
+Labels: **[V]** verified today from a primary source; **[R]** verified in the repo; **[I]** inference or unverified; **[O]** owner action; **[E]** engineering. The subscription is called **Farside Anywhere**.
 
 ## 1. Summary
 
 - **Free:** everything on the same network, unlimited, no account.
-- **Farside Remote:** one auto-renewable subscription group, monthly CA$5.99 and yearly CA$49.99, 7-day free trial, that lets the phone reach the Mac from anywhere through relay and network-traversal servers.
+- **Farside Anywhere:** one auto-renewable subscription group, monthly CA$7.99 and yearly CA$59.99, each with a 7-day free trial, that lets the phone reach the Mac from anywhere through relay and network-traversal servers.
 - **Enforcement** is server-side and costs-first: TURN credentials are issued only to rooms whose phone has proved an active subscription. There are no accounts; identity is Apple's own transaction identity.
 - **Current state:** no StoreKit code exists in the app, and `Server/` issues TURN credentials to any approved room with no entitlement check. Both are launch blockers (APP-REVIEW-RISKS.md B1 and B2). [R] A parallel workstream (commit `cbafcea`, `Docs/research/2026-09-28-round2/RELAY-DEPLOYMENT-RUNBOOK.md`) has added Cloudflare relay readiness and deployment scripts for a single-owner relay run from the owner's Mac; it keeps manual room approval, four peers and 30-minute rooms, so it does not change this section. Its `policy` field on the `ice` message and `POCKETDESK_TEST_FORCE_RELAY` switch are test-only and must be off in production. [R]
 
@@ -39,7 +41,7 @@ Today the app cannot pair without the signaling service: the QR invitation must 
 
 | Option | What free users get | Enforcement | Pros | Cons |
 |---|---|---|---|---|
-| **A. Local only (recommended)** | Connection only when the selected ICE candidate pair is local (host candidates on private, link-local or ULA addresses) | Server issues no STUN and no TURN to free rooms; phone drops non-local candidates; the Mac checks the selected pair after ICE connects and tears down non-local sessions for rooms without a remote grant, showing "Remote needs Farside Remote" | Matches the pricing sentence exactly; clean upgrade moment | Client-side enforcement is soft (a modified client could get free direct WAN paths, which cost us nothing) |
+| **A. Local only (recommended)** | Connection only when the selected ICE candidate pair is local (host candidates on private, link-local or ULA addresses) | Server issues no STUN and no TURN to free rooms; phone drops non-local candidates; the Mac checks the selected pair after ICE connects and tears down non-local sessions for rooms without a remote grant, showing "Remote needs Farside Anywhere" | Matches the pricing sentence exactly; clean upgrade moment | Client-side enforcement is soft (a modified client could get free direct WAN paths, which cost us nothing) |
 | B. Free direct, paid relay | Anything that connects peer-to-peer, including over the internet | Only TURN is gated | Least code | Marketing becomes "free when devices connect directly"; inconsistent behaviour is a support burden and weakens conversion |
 
 Implementation sketch for A: the server returns a signed "remote grant" (short-lived, Ed25519, public key baked into the Mac app) inside the `registered` or `peer` message for entitled rooms; the Mac accepts a non-local candidate pair only with a valid grant. The costly resource (TURN) stays strictly server-enforced.
@@ -48,15 +50,15 @@ Implementation sketch for A: the server returns a signed "remote grant" (short-l
 
 | Item | Value |
 |---|---|
-| Subscription group reference name | Farside Remote |
-| Group display name (localized) | Farside Remote |
+| Subscription group reference name | Farside Anywhere |
+| Group display name (localized) | Farside Anywhere |
 | Products | Two, in one group (one group is best practice so customers cannot buy two variants at once [V]) |
-| Monthly | Product ID `com.roshan.PocketDesk.remote.monthly`; duration 1 month; price CA$5.99 (verify in ASC); display name "Farside Remote - Monthly" (24 characters; limit 35); description "Reach your Mac from anywhere." (29; limit 55) |
-| Yearly | Product ID `com.roshan.PocketDesk.remote.yearly`; duration 1 year; price CA$49.99 (verify in ASC); display name "Farside Remote - Yearly" (23) |
+| Monthly | Product ID `com.roshan.PocketDesk.remote.monthly`; duration 1 month; price CA$7.99 (D41; check Apple's equalized prices in ASC); display name "Farside Anywhere - Monthly" (26 characters; limit 35); description "Reach your Mac from anywhere." (29; limit 55) |
+| Yearly | Product ID `com.roshan.PocketDesk.remote.yearly`; duration 1 year; price CA$59.99 (D41); display name "Farside Anywhere - Yearly" (25) |
 | Levels | Yearly at level 1, monthly at level 2. Monthly to yearly is then an immediate upgrade (prorated refund of the unused month); yearly to monthly is a downgrade effective at the next renewal. Same-level products with different durations only cross-grade at the next renewal. [V, ASC subscription information page] |
 | Introductory offer | Free trial, 1 week, on both products. One introductory offer per person per subscription group, chosen at purchase, cannot be edited after creation (delete and recreate) [V]. Check `Product.SubscriptionInfo.isEligibleForIntroOffer` and only show trial wording if `introductoryOffer` is non-nil, because the flag can be true even when no offer is configured [V]. |
 | Family Sharing | Off (see section 6). |
-| Multiseat purchases | On by default for all auto-renewable subscriptions and required for Apple Business and School Manager sales [V]. Turn off and make the product available from the App Store only, unless you want organization seat sales. Exact controls live under "Manage purchase options"; verify in App Store Connect. [I] |
+| Multiseat purchases | On by default for all auto-renewable subscriptions since 16 Sep 2026, and required for Apple Business and School Manager sales [V]. **Turn off before the first approval:** Purchase Options › "Can a customer purchase multiple seats for this subscription?" › "No, don't allow multiseat purchases" [V, ASC help 30 Sep 2026]. Turning it off later stops new seats, but existing group subscriptions keep renewing until the purchaser cancels. The backend accepts only `inAppOwnershipType` `PURCHASED` and refuses assigned seats (`not_purchased`). |
 | Billing Grace Period | App-level setting, options 3, 16 or 28 days for monthly and yearly (weekly is capped at 6). Choose 16 days, "Only Paid to Paid Renewals", enable in Sandbox first, test, then Production. [V] |
 | Availability | Follows app availability; consider countries after the tax and support review. |
 | Localizations | English first; subscription and group localizations are reviewed independently. [V] |
@@ -73,8 +75,8 @@ Non-App-Store channels: none. The Mac app and website must not sell the subscrip
 Principle: users experience the product before they are asked to pay, and there is always an honest free path.
 
 1. **First launch:** onboarding is install-on-Mac, scan, approve. No paywall.
-2. **Home:** below the Mac card, a quiet "Farside Remote: use your Mac from anywhere" row opens the paywall sheet. Also available as Settings > Farside Remote, reachable with **no Mac paired**, so App Review can find it (Guideline 2.1(b)). [V]
-3. **Contextual:** when a connection attempt needs a route the free tier does not include, show a calm state: "Your Mac isn't on this network. Farside Remote connects you from anywhere." with "Try free for 7 days" and "Not now".
+2. **Home:** below the Mac card, a quiet "Farside Anywhere: use your Mac from anywhere" row opens the paywall sheet. Also available as Settings > Farside Anywhere, reachable with **no Mac paired**, so App Review can find it (Guideline 2.1(b)). [V]
+3. **Contextual:** when a connection attempt needs a route the free tier does not include, show a calm state: "Your Mac isn't on this network. Farside Anywhere connects you from anywhere." with "Try free for 7 days" and "Not now".
 4. **Never:** at launch, before pairing, mid-session, or as a blocker for local use.
 5. **Paywall sheet** uses `SubscriptionStoreView` for the group. It draws localized names and prices, shows Terms and Privacy buttons taken from App Store Connect, and includes a Close button. Add marketing content: title, three lines (reach your Mac on cellular or any Wi-Fi; no VPN or port forwarding; cancel anytime), a visible **Restore Purchases** control (`AppStore.sync()` must be called only from an explicit tap because it prompts for App Store sign-in [V]), and a Manage Subscription link. Price, period, renewal and cancellation text must be visible before the purchase button (Guideline 3.1.2(c)). [V]
 
@@ -85,7 +87,7 @@ State table:
 | Not subscribed, on the same network | Normal session, route chip "Local" | Free |
 | Not subscribed, off network | Contextual card (item 3) | No relay |
 | In free trial | "Trial ends [date]" in Settings | Full remote |
-| Subscribed | "Farside Remote active until [date]" | Full remote |
+| Subscribed | "Farside Anywhere active until [date]" | Full remote |
 | Billing retry, in grace | Quiet notice "There is a payment problem. Update it in Apple Account settings." | Remote continues until grace ends |
 | Expired | Contextual card and paywall | Local only |
 | Refunded or revoked | Same as expired | TURN credentials revoked immediately |
@@ -165,17 +167,38 @@ Recommendation: leave it **off** at launch. Turning it on is permanent; once on,
 | Remote Mac Desktop Control | US$7.99/month, US$47.99/year, US$99.99 lifetime; free tier for local use with optional relay | App Store listing [V] |
 | Jump Desktop | iOS app US$14.99, Mac client US$34.99 (App Store); Jump Desktop Connect about US$4 per computer per month | App Store [V]; Connect price from secondary sources only [I] |
 
-Farside at CA$5.99 is roughly US$4.31 and CA$49.99 roughly US$35.99 at an assumed 0.72 USD per CAD (replace with the day's rate) [I]. That sits between Screens and Remote Mac Desktop Control and well below Workbench. Yearly is a 30% discount on twelve monthly payments (5.99 x 12 = 71.88). Workbench discounts its annual plan by about 55%.
+Farside at CA$7.99 is roughly US$5.75, and CA$59.99 roughly US$43.19, at an assumed 0.72 USD per CAD (replace with the day's rate) [I].
+- The monthly plan sits just under Remote Mac Desktop Control's US$7.99 and well below Workbench. The yearly plan sits between Screens and Remote Mac Desktop Control.
+- Yearly is a 37% discount on twelve monthly payments: 7.99 × 12 = 95.88, and (95.88 − 59.99) / 95.88 = 37.4%. The paywall rounds this down and shows "Save 37%".
+- Workbench discounts its annual plan by about 55%.
 
 ### Relay cost versus revenue
 
 Cloudflare TURN bills US$0.05 per GB of data sent from the edge to clients, after the first 1,000 GB per month; STUN is free. [V, page dated 14 Jul 2026] Video dominates, and it flows toward the phone. At 8 Mb/s that is 3.6 GB per hour, or about 3.96 GB per hour with 10% overhead, about US$0.20 per relayed hour. The repo's planning model (20 hours of use a month, 30% relayed) gives about 23.8 GB, about US$1.19 per user per month. [R, `Docs/research/2026-09-28/NETWORK-AND-SESSION.md`]
 
+Working (D41 prices, the assumptions below):
+- **Relay cost per hour:**
+  - 8 Mb/s × 3,600 s ÷ 8 = 3.6 GB; plus 10% overhead = 3.96 GB; × US$0.05 = **US$0.198 per relayed hour**.
+  - At a 4 Mb/s cap it is half: US$0.099.
+- **Monthly:**
+  - Gross: CA$7.99 × 0.72 = US$5.753.
+  - Net: × 0.85 = **US$4.89**.
+  - Break-even: 4.89 ÷ 0.198 = **24.7 h**; at 4 Mb/s, 4.89 ÷ 0.099 = 49.4 h.
+- **Yearly:**
+  - Gross: CA$59.99 × 0.72 = US$43.19 a year, ÷ 12 = US$3.599 a month.
+  - Net: × 0.85 = **US$3.06**.
+  - Break-even: 3.06 ÷ 0.198 = **15.5 h**; at 4 Mb/s, 30.9 h.
+- **Without the Small Business Program** (70% in year one):
+  - Monthly: 5.753 × 0.70 = US$4.03, which covers 20.3 h.
+  - Yearly: 3.599 × 0.70 = US$2.52, which covers 12.7 h.
+- **Planning-model user** (23.8 GB, US$1.19 a month): margin is about US$3.70 a month on monthly and US$1.87 on yearly.
+
 | Plan | Gross per month (USD, before tax) | Net after 15% commission | Relayed hours per month before relay cost equals net, at 8 Mb/s | At a 4 Mb/s relay cap |
 |---|---|---|---|---|
-| Monthly CA$5.99 | 4.31 | 3.67 | about 18 h | about 37 h |
-| Yearly CA$49.99 (per month) | 3.00 | 2.55 | about 13 h | about 26 h |
-| Yearly, if not in the Small Business Program (70% in year one) | 3.00 | 2.10 | about 11 h | about 21 h |
+| Monthly CA$7.99 | 5.75 | 4.89 | about 24 h | about 49 h |
+| Yearly CA$59.99 (per month) | 3.60 | 3.06 | about 15 h | about 31 h |
+| Monthly, if not in the Small Business Program (70% in year one) | 5.75 | 4.03 | about 20 h | about 41 h |
+| Yearly, if not in the Small Business Program (70% in year one) | 3.60 | 2.52 | about 13 h | about 25 h |
 
 Assumptions: 0.72 USD per CAD, 15% commission, tax handled by Apple, relay cost only (no signaling hosting, support, or Apple's FX). The free 1,000 GB per month covers roughly 250 relayed hours a month across all users at 8 Mb/s. [I on FX; V on commission and Cloudflare prices]
 
@@ -193,7 +216,7 @@ Owner in App Store Connect [O]:
 
 1. Sign the Paid Apps Agreement (Account Holder only), enter banking, submit tax forms (non-US developers complete a US form such as W-8BEN or W-8BEN-E plus any local forms). [V]
 2. Enroll in the App Store Small Business Program. [V]
-3. Create the app record after the name and trademark decision (STORE-LISTING.md), then Monetization, Subscriptions: create group "Farside Remote", the two products, prices, the 1-week free trial, localizations, review screenshot and notes. Leave them "Ready to Submit".
+3. Create the app record after the name and trademark decision (STORE-LISTING.md), then Monetization, Subscriptions: create group "Farside Anywhere", the two products at CA$7.99 and CA$59.99 (D41), the 1-week free trial, localizations, review screenshot and notes. Leave them "Ready to Submit".
 4. Turn on the Billing Grace Period in sandbox, then production. Leave Family Sharing off.
 5. Enter the App Store Server Notifications URLs (production and sandbox).
 6. Generate the In-App Purchase key; give it to engineering through a secure channel (never chat or email). It downloads once.

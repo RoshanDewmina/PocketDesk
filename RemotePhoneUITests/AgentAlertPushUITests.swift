@@ -1,7 +1,7 @@
 import XCTest
 
 /// A real push, delivered by `xcrun simctl push`, tapped on the real notification banner, must open the
-/// alert sheet for the right agent. A UI test cannot run `simctl`, so `script/push-samples/verify-routing.sh`
+/// alert sheet with the fixed generic copy. A UI test cannot run `simctl`, so `script/push-samples/verify-routing.sh`
 /// starts a test, waits for it to write its ready file, pushes the sample, and reads the result.
 /// Skipped in ordinary runs.
 ///
@@ -65,7 +65,7 @@ final class AgentAlertPushUITests: XCTestCase {
         if expectSheet {
             XCTAssertTrue(sheet.waitForExistence(timeout: 15), "Tapping the banner must open the alert sheet")
             let title = try XCTUnwrap(environment["FARSIDE_PUSH_EXPECT_TITLE"])
-            XCTAssertTrue(app.staticTexts[title].waitForExistence(timeout: 5), "The sheet names who asked: \(title)")
+            XCTAssertTrue(app.staticTexts[title].waitForExistence(timeout: 5), "The sheet shows the fixed copy: \(title)")
             attach("Routed sheet: \(title)")
         } else {
             Thread.sleep(forTimeInterval: 4)

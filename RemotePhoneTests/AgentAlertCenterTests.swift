@@ -38,7 +38,6 @@ final class AgentAlertCenterTests: XCTestCase {
         let preferences = AgentAlertPreferences(defaults: defaults)
         XCTAssertFalse(preferences.alertsEnabled, "Nothing is on until the person turns it on")
         XCTAssertFalse(preferences.breakThroughFocus)
-        XCTAssertTrue(preferences.showAgentName)
         XCTAssertFalse(preferences.showMacNameOnLockScreen, "Lock screens are visible to other people")
         XCTAssertTrue(preferences.sessionLiveActivity)
         preferences.alertsEnabled = true
@@ -104,7 +103,7 @@ final class AgentAlertCenterTests: XCTestCase {
         XCTAssertTrue(sent)
         let request = try XCTUnwrap(fake.added.first)
         XCTAssertEqual(request.content.categoryIdentifier, "AGENT_HELP")
-        XCTAssertEqual(request.content.title, "An agent needs you")
+        XCTAssertEqual(request.content.title, "A task on your Mac needs you")
         XCTAssertEqual(request.content.body, "This is a test. Nothing on your Mac is stuck.")
         XCTAssertEqual(request.content.interruptionLevel, .active, "Time Sensitive only after the person turned it on")
         XCTAssertEqual((request.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval, 3)
@@ -150,7 +149,7 @@ final class AgentAlertCenterTests: XCTestCase {
         XCTAssertEqual(request.content.categoryIdentifier, "AGENT_HELP_REMINDER")
         XCTAssertEqual(request.content.interruptionLevel, .passive, "The reminder never lights the screen or breaks Focus")
         XCTAssertEqual(request.content.threadIdentifier, "mac-7f3a")
-        XCTAssertEqual(request.content.title, "Claude Code needs you")
+        XCTAssertEqual(request.content.title, "A task on your Mac needs you")
         XCTAssertEqual(request.content.body, "Still waiting on you.")
         XCTAssertEqual(request.content.relevanceScore, 0.3)
         let routed = try XCTUnwrap(AgentAlertPayload(userInfo: request.content.userInfo))
@@ -173,10 +172,11 @@ final class AgentAlertCenterTests: XCTestCase {
         XCTAssertTrue(fake.added.isEmpty)
     }
 
-    func testTheReminderRespectsTheHideAgentNameChoice() async {
-        center.preferences.showAgentName = false
+    func testTheReminderNamesNoAgent() async throws {
         await center.respond(.snooze, to: payload(kind: .codex), deliveredAt: clock, notificationIdentifier: nil)
-        XCTAssertEqual(fake.added.first?.content.title, "An agent needs you")
+        let content = try XCTUnwrap(fake.added.first?.content)
+        XCTAssertEqual(content.title, "A task on your Mac needs you")
+        XCTAssertFalse(content.title.contains("Codex") || content.body.contains("Codex"))
     }
 
     func testSwipingAwayIsNotADecision() async {
@@ -455,7 +455,7 @@ final class PushRegistrarTests: XCTestCase {
         XCTAssertEqual(record.deviceToken, "010203")
         XCTAssertTrue(record.alertsEnabled)
         XCTAssertTrue(record.timeSensitive)
-        XCTAssertTrue(record.showAgentName)
+        XCTAssertFalse(record.showAgentName, "Alerts never name an agent, so the service is never asked to")
         XCTAssertEqual(record.updatedAt, 1_790_000_000)
         XCTAssertEqual(record.environment, "sandbox", "The environment comes from signed-build configuration")
         let keys = Set(try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any]).keys)

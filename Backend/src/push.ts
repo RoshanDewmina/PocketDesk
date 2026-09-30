@@ -140,10 +140,11 @@ export async function apnsToken(env: PushEnv): Promise<string> {
 
 function sendAPNs(env: PushEnv, saved: SavedRegistration, input: Record<string, unknown>, bearer: string,
   notificationIdentity: string): Promise<Response> {
-  const name = saved.showAgentName ? (input.kind === "claude_code" ? "Claude Code" : "Codex") : "An agent";
+  // Fixed, generic copy (Guideline 4.5.4): never an agent or product name, whatever an older phone's
+  // registration says in `showAgentName`.
   const payload = {
     aps: {
-      alert: { "title-loc-key": "AGENT_NEEDS_YOU_TITLE", "title-loc-args": [name], "loc-key": "AGENT_NEEDS_YOU_BODY" },
+      alert: { "title-loc-key": "AGENT_NEEDS_YOU_TITLE", "loc-key": "AGENT_NEEDS_YOU_BODY" },
       category: "AGENT_HELP", "thread-id": `mac-${String(input.room).slice(0, 8)}`,
       "interruption-level": saved.timeSensitive ? "time-sensitive" : "active", sound: "default",
     }, hid: input.id, pairing: notificationIdentity,

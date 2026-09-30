@@ -43,6 +43,28 @@ async function verify(tx: Record<string, unknown>, deviceId = randomHex()) {
   return (await response.json()) as Record<string, unknown>;
 }
 
+async function rescindConsent(appTransaction: Record<string, unknown>, appData: Record<string, unknown> = {}) {
+  const decoded = {
+    notificationType: "RESCIND_CONSENT",
+    notificationUUID: crypto.randomUUID(),
+    version: "2.0",
+    signedDate: now,
+    appData: {
+      appAppleId: 1234567890,
+      bundleId: "com.roshan.PocketDesk.Remote",
+      environment: "Production",
+      signedAppTransactionInfo: await signCompactJws({
+        receiptType: "Production", appAppleId: 1234567890, bundleId: "com.roshan.PocketDesk.Remote", applicationVersion: "1",
+        originalApplicationVersion: "1", originalPurchaseDate: now - 90 * day, originalPlatform: "iOS", receiptCreationDate: now,
+        requestDate: now, ...appTransaction,
+      }, chain),
+      ...appData,
+    },
+  };
+  const response = await postJson("/v1/appstore/notifications", { signedPayload: await signCompactJws(decoded, chain) }, freshIp());
+  return { status: response.status, body: await response.json() as Record<string, unknown> };
+}
+
 // Storage is isolated per test file, not per test, so every lookup is by the subscription under test.
 const row = async (otid: string) => testEnv.DB.prepare("SELECT status, expires_at, grace_until, revoked_at FROM entitlements WHERE id = ?1")
   .bind(await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY, otid))
@@ -216,5 +238,76 @@ describe("POST /v1/appstore/notifications", () => {
     expect(foreign.body).toEqual({ error: "invalid_signature" });
     const missing = await postJson("/v1/appstore/notifications", { nope: true }, freshIp());
     expect(missing.status).toBe(400);
+  });
+
+  it("never lets an assigned multiseat seat, or its ASSIGNMENT_REVOKE, touch a purchaser's subscription", async () => {
+    const otid = `seat-${randomHex(6)}`;
+    const deviceId = randomHex();
+    expect((await verify({ originalTransactionId: otid }, deviceId)).entitled).toBe(true);
+    const before = await row(otid);
+
+    const assigned = await notification("SUBSCRIBED", { subtype: "INITIAL_BUY", tx: { originalTransactionId: otid, inAppOwnershipType: "ASSIGNED", expiresDate: now + 90 * day } });
+    expect(assigned.body.outcome).toBe("recorded");
+    const taken = await notification("REVOKE", { tx: { originalTransactionId: otid, inAppOwnershipType: "ASSIGNED", revocationType: "ASSIGNMENT_REVOKE", revocationDate: now } });
+    expect(taken.body.outcome).toBe("recorded");
+    const contradictory = await notification("REVOKE", { tx: { originalTransactionId: otid, revocationType: "ASSIGNMENT_REVOKE", revocationDate: now } });
+    expect(contradictory.body.outcome).toBe("recorded");
+    expect(await row(otid)).toEqual(before);
+    expect((await verify({ originalTransactionId: otid }, deviceId)).entitled).toBe(true);
+
+    const id = await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY, otid);
+    const stored = await testEnv.DB.prepare("SELECT COUNT(*) AS n FROM notifications WHERE entitlement_id = ?1").bind(id).first<{ n: number }>();
+    expect(stored?.n).toBe(0);
+    const seatOnly = `seat-only-${randomHex(6)}`;
+    await notification("SUBSCRIBED", { subtype: "INITIAL_BUY", tx: { originalTransactionId: seatOnly, inAppOwnershipType: "ASSIGNED" } });
+    expect(await row(seatOnly)).toBeNull();
+  });
+
+  it("RESCIND_CONSENT stops every subscription under that app transaction, ends its live room and stays stopped", async () => {
+    turn.reset();
+    const appTransactionId = `70${Date.now()}${ipCounter}`;
+    const otid = `consent-${randomHex(6)}`;
+    const deviceId = randomHex();
+    const verified = await verify({ originalTransactionId: otid, appTransactionId }, deviceId);
+    expect(verified.entitled).toBe(true);
+    const bystander = `bystander-${randomHex(6)}`;
+    expect((await verify({ originalTransactionId: bystander, appTransactionId: `${appTransactionId}9` })).entitled).toBe(true);
+
+    const p = await pairing();
+    const host = await connectHost(p, { features: ["remote.1"] });
+    const client = await connectClient(p, { features: ["remote.1"], entitlement: verified.entitlementToken });
+    expect(client.registered.access).toBe("remote");
+    await host.next(); await host.next(); await client.next();
+
+    const rescinded = await rescindConsent({ appTransactionId });
+    expect(rescinded).toEqual({ status: 200, body: { ok: true, outcome: "applied" } });
+    const [hostClose, clientClose] = await Promise.all([host.closed, client.closed]);
+    expect(hostClose.reason).toBe("entitlement_revoked");
+    expect(clientClose.reason).toBe("entitlement_revoked");
+    expect(await verify({ originalTransactionId: otid, appTransactionId }, deviceId)).toMatchObject({ entitled: false, reason: "consent_revoked" });
+
+    // A renewal does not bring it back, and neither does a new subscription under the same app transaction.
+    const renewal = await notification("DID_RENEW", { tx: { originalTransactionId: otid, appTransactionId, purchaseDate: now, expiresDate: now + 60 * day } });
+    expect(renewal.body.outcome).toBe("applied");
+    const stillStopped = await testEnv.DB.prepare("SELECT consent_stopped_at FROM entitlements WHERE id = ?1")
+      .bind(await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY, otid)).first<{ consent_stopped_at: number | null }>();
+    expect(stillStopped?.consent_stopped_at).not.toBeNull();
+    expect(await verify({ originalTransactionId: otid, appTransactionId }, deviceId)).toMatchObject({ entitled: false, reason: "consent_revoked" });
+    expect(await verify({ originalTransactionId: `consent-new-${randomHex(6)}`, appTransactionId })).toMatchObject({ entitled: false, reason: "consent_revoked" });
+    expect((await verify({ originalTransactionId: bystander, appTransactionId: `${appTransactionId}9` })).entitled).toBe(true);
+
+    const again = await rescindConsent({ appTransactionId });
+    expect(again.body.outcome).toBe("applied");
+  });
+
+  it("RESCIND_CONSENT for another app, or without a verifiable app transaction, changes nothing", async () => {
+    const appTransactionId = `71${Date.now()}${ipCounter}`;
+    const otid = `consent-keep-${randomHex(6)}`;
+    expect((await verify({ originalTransactionId: otid, appTransactionId })).entitled).toBe(true);
+    expect((await rescindConsent({ appTransactionId }, { bundleId: "com.example.other" })).body.outcome).toBe("ignored_other_app");
+    expect((await rescindConsent({ appTransactionId, bundleId: "com.example.other" })).body.outcome).toBe("recorded");
+    expect((await rescindConsent({}, { signedAppTransactionInfo: "not-a-jws" })).body.outcome).toBe("recorded");
+    expect((await rescindConsent({ appTransactionId }, { signedAppTransactionInfo: await signCompactJws({ appTransactionId, bundleId: "com.roshan.PocketDesk.Remote", receiptType: "Production" }, await generateTestChain({ now })) })).body.outcome).toBe("recorded");
+    expect((await verify({ originalTransactionId: otid, appTransactionId })).entitled).toBe(true);
   });
 });

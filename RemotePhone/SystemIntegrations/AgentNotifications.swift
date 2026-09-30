@@ -1,14 +1,13 @@
 import Foundation
 import UserNotifications
 
-/// What the person chose about agent alerts, session Live Activities and their names on the Lock
+/// What the person chose about agent alerts, session Live Activities and the Mac's name on the Lock
 /// Screen. Every default is the private one: nothing is on until the person turns it on, except the
 /// session Live Activity, which only ever exists while they hold a session.
 struct AgentAlertPreferences {
     enum Key {
         static let alerts = "agentAlerts.enabled"
         static let breakThroughFocus = "agentAlerts.breakThroughFocus"
-        static let showAgentName = "agentAlerts.showAgentName"
         static let showMacName = "lockScreen.showMacName"
         static let sessionActivity = "lockScreen.sessionActivity"
     }
@@ -29,12 +28,6 @@ struct AgentAlertPreferences {
     var breakThroughFocus: Bool {
         get { flag(Key.breakThroughFocus, default: false) }
         nonmutating set { defaults.set(newValue, forKey: Key.breakThroughFocus) }
-    }
-
-    /// Show "Claude Code needs you" rather than "An agent needs you". Only names from the fixed list.
-    var showAgentName: Bool {
-        get { flag(Key.showAgentName, default: true) }
-        nonmutating set { defaults.set(newValue, forKey: Key.showAgentName) }
     }
 
     /// Put the Mac's name on the Lock Screen and Dynamic Island. Off: "Your Mac".
@@ -62,7 +55,7 @@ enum AgentNotification {
     static let testBodyKey = "AGENT_TEST_BODY"
     static let reminderBodyKey = "AGENT_REMINDER_BODY"
     /// Shown instead of the body when the person hides previews. Generic on purpose.
-    static let hiddenPreviewPlaceholder = "An agent needs you."
+    static let hiddenPreviewPlaceholder = "Tap to look at your Mac."
     static let snoozeDelay: TimeInterval = 15 * 60
 
     static func reminderIdentifier(for id: String) -> String { "agent-snooze-\(id)" }
@@ -97,7 +90,7 @@ enum AgentNotification {
         let payload = AgentAlertPayload(helpRequestID: id, kind: .other, threadID: "mac-test",
                                         interruption: preferences.breakThroughFocus ? .timeSensitive : .active, isTest: true)
         let content = UNMutableNotificationContent()
-        content.title = String(format: NSLocalizedString(titleKey, comment: ""), AgentKind.genericName)
+        content.title = NSLocalizedString(titleKey, comment: "")
         content.body = NSLocalizedString(testBodyKey, comment: "")
         content.categoryIdentifier = AgentAlertPayload.categoryIdentifier
         content.threadIdentifier = "mac-test"
@@ -109,13 +102,12 @@ enum AgentNotification {
     }
 
     /// A "needs you" the Mac reported over the control channel while this app held the session in the
-    /// background: the local twin of the push the service would send. Same words, same routing.
+    /// background: the local twin of the push the service would send. Same fixed words, same routing.
     static func alertContent(for payload: AgentAlertPayload, preferences: AgentAlertPreferences) -> UNMutableNotificationContent {
         var shown = payload
         shown.interruption = preferences.breakThroughFocus ? .timeSensitive : .active
         let content = UNMutableNotificationContent()
-        let name = preferences.showAgentName ? payload.kind.displayName : AgentKind.genericName
-        content.title = String(format: NSLocalizedString(titleKey, comment: ""), name)
+        content.title = NSLocalizedString(titleKey, comment: "")
         content.body = NSLocalizedString(bodyKey, comment: "")
         content.categoryIdentifier = AgentAlertPayload.categoryIdentifier
         content.threadIdentifier = payload.threadID ?? "mac-agent"
@@ -127,13 +119,12 @@ enum AgentNotification {
     }
 
     /// The single quiet reminder after Snooze. Passive: no light, no sound, no Focus break-through.
-    static func reminderContent(for payload: AgentAlertPayload, showAgentName: Bool) -> UNMutableNotificationContent {
+    static func reminderContent(for payload: AgentAlertPayload) -> UNMutableNotificationContent {
         var reminder = payload
         reminder.isReminder = true
         reminder.interruption = .passive
         let content = UNMutableNotificationContent()
-        let name = showAgentName ? payload.kind.displayName : AgentKind.genericName
-        content.title = String(format: NSLocalizedString(titleKey, comment: ""), name)
+        content.title = NSLocalizedString(titleKey, comment: "")
         content.body = NSLocalizedString(reminderBodyKey, comment: "")
         content.categoryIdentifier = AgentAlertPayload.reminderCategoryIdentifier
         content.threadIdentifier = payload.threadID ?? "mac-agent"

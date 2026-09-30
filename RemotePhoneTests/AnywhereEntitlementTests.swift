@@ -58,28 +58,28 @@ final class AnywhereEntitlementTests: XCTestCase {
         XCTAssertEqual(best.snapshot?.signedTransaction, "jws-subscribed")
     }
 
-    private let yearly = PlanOffer(id: AnywherePlan.yearlyID, period: .year, displayPrice: "$49.99", price: Decimal(string: "49.99")!,
+    private let yearly = PlanOffer(id: AnywherePlan.yearlyID, period: .year, displayPrice: "$59.99", price: Decimal(string: "59.99")!,
                                    currencyCode: "CAD", trialPhrase: "7-day")
-    private let monthly = PlanOffer(id: AnywherePlan.monthlyID, period: .month, displayPrice: "$5.99", price: Decimal(string: "5.99")!,
+    private let monthly = PlanOffer(id: AnywherePlan.monthlyID, period: .month, displayPrice: "$7.99", price: Decimal(string: "7.99")!,
                                     currencyCode: "CAD", trialPhrase: nil)
 
     func testDisclosureStatesPricePeriodTrialRenewalAndCancellation() {
         let text = AnywhereCopy.disclosure(yearly)
-        for part in ["7-day free trial", "$49.99 a year", "renews automatically", "charged when the trial ends",
+        for part in ["7-day free trial", "$59.99 a year", "renews automatically", "charged when the trial ends",
                      "24 hours before the end of the trial", "Settings › Apple Account › Subscriptions", "up to three of your iPhones and iPads",
                      "same Wi-Fi stays free"] {
             XCTAssertTrue(text.contains(part), "Missing “\(part)” in: \(text)")
         }
         XCTAssertTrue(AnywhereCopy.disclosure(monthly).contains("charged when you confirm"))
-        XCTAssertEqual(AnywhereCopy.summary(yearly), "7-day free trial, then $49.99 a year. Renews automatically; cancel anytime.")
+        XCTAssertEqual(AnywhereCopy.summary(yearly), "7-day free trial, then $59.99 a year. Renews automatically; cancel anytime.")
         XCTAssertEqual(AnywhereCopy.primaryTitle(yearly), "Start 7-day free trial")
-        XCTAssertEqual(AnywhereCopy.primaryTitle(monthly), "Subscribe for $5.99 a month")
+        XCTAssertEqual(AnywhereCopy.primaryTitle(monthly), "Subscribe for $7.99 a month")
     }
 
     func testOfferArithmetic() {
-        XCTAssertEqual(PlanOffer.yearlySaving(yearly: yearly, monthly: monthly), 30, "49.99 against 12 × 5.99 = 71.88")
+        XCTAssertEqual(PlanOffer.yearlySaving(yearly: yearly, monthly: monthly), 37, "59.99 against 12 × 7.99 = 95.88")
         XCTAssertNotNil(yearly.monthlyEquivalent)
-        XCTAssertTrue(yearly.monthlyEquivalent?.contains("4.17") == true, yearly.monthlyEquivalent ?? "nil")
+        XCTAssertTrue(yearly.monthlyEquivalent?.contains("5.00") == true, yearly.monthlyEquivalent ?? "nil")
         XCTAssertNil(monthly.monthlyEquivalent)
         XCTAssertEqual(PlanOffer.trialPhrase(unit: .weekOfYear, value: 1), "7-day")
         XCTAssertEqual(PlanOffer.trialPhrase(unit: .month, value: 1), "1-month")
@@ -114,6 +114,38 @@ final class AnywhereEntitlementTests: XCTestCase {
         XCTAssertEqual(error?.kind, .needsPlan)
         XCTAssertEqual(error?.action, .seePlans)
         XCTAssertEqual(error?.secondary, .retry, "Joining the Mac's Wi-Fi stays one tap away")
+    }
+
+    func testServiceRefusalsForSeatsAndWithdrawnConsentAreExplained() {
+        XCTAssertTrue(AnywhereCopy.refusal("not_purchased").contains("your own Apple Account"))
+        XCTAssertTrue(AnywhereCopy.refusal("consent_revoked").contains("withdrawn"))
+    }
+
+    func testTheRegulatoryCheckOnlyRecordsAndKeepsTheLastRealAnswer() {
+        let defaults = makeTestDefaults("RegulatoryFeatureCheck")
+        XCTAssertNil(RegulatoryFeatureCheck.recorded(defaults: defaults))
+        RegulatoryFeatureCheck.record(.unavailable, defaults: defaults, now: now)
+        XCTAssertNil(RegulatoryFeatureCheck.recorded(defaults: defaults), "No answer is not an answer")
+        RegulatoryFeatureCheck.record(.required(["significantAppChangeRequiresParentalConsent"]), defaults: defaults, now: now)
+        XCTAssertEqual(RegulatoryFeatureCheck.recorded(defaults: defaults), ["significantAppChangeRequiresParentalConsent"])
+        XCTAssertEqual(defaults.double(forKey: RegulatoryFeatureCheck.checkedAtKey), now.timeIntervalSince1970)
+        RegulatoryFeatureCheck.record(.unavailable, defaults: defaults, now: now.addingTimeInterval(60))
+        XCTAssertEqual(RegulatoryFeatureCheck.recorded(defaults: defaults), ["significantAppChangeRequiresParentalConsent"])
+        RegulatoryFeatureCheck.record(.noneRequired, defaults: defaults, now: now)
+        XCTAssertEqual(RegulatoryFeatureCheck.recorded(defaults: defaults), [])
+    }
+
+    /// The real call, without the Declared Age Range entitlement. On the iOS 27 simulator it never
+    /// returns by itself, so this proves the timer answers instead of leaving the check hanging.
+    func testTheRealRegulatoryCheckAnswersWithoutTheEntitlement() async {
+        let started = Date()
+        let outcome = await RegulatoryFeatureCheck.check(timeout: .seconds(2))
+        XCTAssertLessThan(Date().timeIntervalSince(started), 10)
+        if #available(iOS 26.4, *) {
+            XCTAssertNotEqual(outcome, .unsupportedOS)
+        } else {
+            XCTAssertEqual(outcome, .unsupportedOS)
+        }
     }
 }
 

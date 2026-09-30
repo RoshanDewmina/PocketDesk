@@ -71,7 +71,8 @@ describe("pairing-scoped generic APNs alerts", () => {
   it("sends only generic fields, reports actions, and holds duplicates", async () => {
     const env = await configuredEnv();
     const p = await livePair();
-    expect((await register(env, p, registration())).status).toBe(200);
+    // An older phone may still ask for the agent's name; the push stays generic anyway.
+    expect((await register(env, p, { ...registration(), showAgentName: true })).status).toBe(200);
     const sent: { url: string; body: string; headers: Headers }[] = [];
     vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
       sent.push({ url, body: String(init.body), headers: new Headers(init.headers) });
@@ -86,7 +87,9 @@ describe("pairing-scoped generic APNs alerts", () => {
     const payload = JSON.parse(sent[0]!.body) as Record<string, unknown>;
     expect(payload).toMatchObject({ hid: id,
       pairing: await sha256Hex(`${p.room}:${await sha256Hex(p.clientToken)}`),
-      aps: { alert: { "title-loc-args": ["An agent"] } } });
+      aps: { alert: { "title-loc-key": "AGENT_NEEDS_YOU_TITLE", "loc-key": "AGENT_NEEDS_YOU_BODY" }, category: "AGENT_HELP" } });
+    expect((payload.aps as { alert: Record<string, unknown> }).alert).not.toHaveProperty("title-loc-args");
+    expect(sent[0]!.body).not.toMatch(/claude|codex|cursor/i);
     expect(sent[0]!.body).not.toContain(p.hostToken);
     expect(sent[0]!.body).not.toContain(p.clientToken);
     expect(sent[0]!.headers.get("apns-topic")).toBe(testEnv.APP_BUNDLE_ID);
