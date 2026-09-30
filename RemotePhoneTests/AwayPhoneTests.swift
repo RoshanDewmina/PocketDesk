@@ -59,7 +59,7 @@ final class AwayPhoneTests: XCTestCase {
         let (viewOnly, viewOnlySent) = try liveModel(features: [SessionFeature.away], control: false)
         XCTAssertFalse(viewOnly.canLockMac)
         XCTAssertFalse(viewOnly.endAndLockMac())
-        XCTAssertTrue(viewOnlySent().isEmpty, "A view-only session cannot lock the Mac")
+        XCTAssertFalse(viewOnlySent().contains { $0.action == "lockMac" }, "A view-only session cannot lock the Mac")
 
         let (older, olderSent) = try liveModel(features: SessionFeature.host, control: true)
         XCTAssertFalse(older.canLockMac)
@@ -90,6 +90,23 @@ final class AwayPhoneTests: XCTestCase {
         XCTAssertEqual(away, today + " Away mode can’t unlock it.")
         XCTAssertEqual(PhoneRemoteModel.notice(for: .sleeping, at: date, awayWasOn: true),
                        PhoneRemoteModel.notice(for: .sleeping, at: date), "Only a lock mentions Away mode")
+    }
+
+    func testLockedDepartureCarriesAwayIntoTheErrorPeopleSee() throws {
+        let date = Date(timeIntervalSince1970: 1_790_000_000)
+        let suffix = PhoneSessionNotice.awayCantUnlock
+
+        let away = try XCTUnwrap(MacDeparture(notice: PhoneRemoteModel.notice(for: .locked, at: date, awayWasOn: true)))
+        XCTAssertEqual(away.kind, .locked)
+        XCTAssertTrue(away.awayWasOn)
+        let awayError = try XCTUnwrap(FriendlyError.from(presence: away.kind, at: away.time, awayWasOn: away.awayWasOn))
+        XCTAssertTrue(awayError.message.hasSuffix(suffix))
+
+        let plain = try XCTUnwrap(MacDeparture(notice: PhoneRemoteModel.notice(for: .locked, at: date)))
+        XCTAssertFalse(plain.awayWasOn)
+        let plainError = try XCTUnwrap(FriendlyError.from(presence: plain.kind, at: plain.time, awayWasOn: plain.awayWasOn))
+        XCTAssertEqual(plainError.message, FriendlyError.locked(since: plain.time).message, "Unchanged without Away mode")
+        XCTAssertFalse(plainError.message.contains(suffix))
     }
 
     func testAwayMemoryIsPerMacAndForgettable() {

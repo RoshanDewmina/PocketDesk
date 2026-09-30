@@ -114,7 +114,11 @@ final class PhoneRemoteModel: ObservableObject {
     private var awayRemembered: AwayModeState?
     private var lockEndTask: Task<Void, Never>?
     /// How long "End and lock Mac" waits for the Mac to end the session before ending it here.
+    #if DEBUG
     static var lockEndGrace: TimeInterval = 5
+    #else
+    static let lockEndGrace: TimeInterval = 5
+    #endif
     /// A short explanation shown over the live session, cleared after a few seconds.
     @Published private(set) var sessionNotice: String?
     private var sessionNoticeTask: Task<Void, Never>?
@@ -624,7 +628,7 @@ final class PhoneRemoteModel: ObservableObject {
         awaySupported && connection.connected && controlAllowed && !privacyShield && !contentConcealed
     }
 
-    /// Asks the Mac to lock, then ends the session here if it is still open after `lockEndGrace`.
+    /// Asks the Mac to lock, then ends the session here if it is still live after `lockEndGrace`.
     @discardableResult
     func endAndLockMac() -> Bool {
         guard canLockMac, transmit(RemoteAction(action: "lockMac", epoch: geometryEpoch)) else { return false }
@@ -634,7 +638,7 @@ final class PhoneRemoteModel: ObservableObject {
             try? await Task.sleep(nanoseconds: UInt64(grace * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             self.lockEndTask = nil
-            if self.connection.connected || self.connection.isRunning { self.disconnect() }
+            if self.connection.connected { self.disconnect() }
         }
         return true
     }
@@ -912,7 +916,6 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func disconnect() {
-        lockEndTask?.cancel(); lockEndTask = nil
         sessionEndReason = .user
         clearContinuity()
         release()
@@ -1337,6 +1340,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func end() {
+        lockEndTask?.cancel(); lockEndTask = nil
         textFocusProbe.invalidate()
         pointerTimer?.invalidate()
         pointerTimer = nil

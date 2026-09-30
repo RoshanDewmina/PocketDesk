@@ -84,7 +84,7 @@ struct ServerDataRemovalView: View {
         guard let pairing = access.cleanupPairing else { return }
         let removed = try connection.removePhonePairingIfMatching(
             room: pairing.room, server: pairing.server, tokenDigest: pairing.tokenDigest)
-        AwayMemory().forget(room: pairing.room)
+        if removed { AwayMemory().forget(room: pairing.room) }
         try access.acknowledgeLocalCleanup(pairing)
         newerPairingKept = !removed
     }

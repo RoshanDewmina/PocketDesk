@@ -411,7 +411,7 @@ struct HomeView: View {
         guard let notice = model.macNotice, notice != shownNotice, !connection.isRunning else { return }
         shownNotice = notice
         guard let presence = MacDeparture(notice: notice) else { return }
-        let error = FriendlyError.from(presence: presence.kind, at: presence.time)
+        let error = FriendlyError.from(presence: presence.kind, at: presence.time, awayWasOn: presence.awayWasOn)
         lastFailure = error
         if friendlyError == nil && !covered { friendlyError = error }
     }
@@ -464,9 +464,10 @@ struct HomeView: View {
 }
 
 /// The Mac's own account of why it left, parsed from the notice the model wrote.
-private struct MacDeparture {
+struct MacDeparture {
     let kind: HostPresence
     let time: String?
+    let awayWasOn: Bool
 
     init?(notice: String) {
         if notice.contains("went to sleep") { kind = .sleeping }
@@ -474,6 +475,7 @@ private struct MacDeparture {
         else if notice.contains("Another user") { kind = .switchedUser }
         else { return nil }
         time = notice.range(of: #"\d{1,2}[:.]\d{2}(\s?[AaPp]\.?[Mm]\.?)?"#, options: .regularExpression).map { String(notice[$0]) }
+        awayWasOn = kind == .locked && notice.hasSuffix(PhoneSessionNotice.awayCantUnlock)
     }
 }
 
