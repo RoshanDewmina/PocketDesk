@@ -48,7 +48,7 @@ final class PointerLocator: ObservableObject {
     func clear() {
         followingMotion = false
         state = PointerProbeState()
-        point = nil
+        if point != nil { point = nil }
         lastMotion = -.infinity
     }
 }

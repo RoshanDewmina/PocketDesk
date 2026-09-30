@@ -749,7 +749,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         queue.sync {
             guard !stopping else { return }
             let timer = DispatchSource.makeTimerSource(queue: queue)
-            timer.schedule(deadline: .now(), repeating: 0.4)
+            timer.schedule(deadline: .now(), repeating: 0.4, leeway: .milliseconds(40))
             timer.setEventHandler { [weak self] in self?.publishHealthAndIdleFrame() }
             self.timer = timer
             timer.resume()

@@ -534,6 +534,7 @@ final class PeerMedia: NSObject {
     func startDiagnostics() {
         guard statisticsTimer == nil else { return }
         statisticsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in self?.sampleStatistics() }
+        statisticsTimer?.tolerance = 0.1
         sampleStatistics()
     }
     private func sampleStatistics() {

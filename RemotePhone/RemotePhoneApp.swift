@@ -238,8 +238,10 @@ final class PhoneRemoteModel: ObservableObject {
                 peer.onStreamStatistics = { [weak self, weak peer] report in
                     Task { @MainActor in
                         guard let self, let peer, self.connection.media === peer else { return }
-                        self.streamSummaryLines = report.summaryLines
-                        self.link = LinkSummary(report)
+                        let lines = report.summaryLines
+                        if self.streamSummaryLines != lines { self.streamSummaryLines = lines }
+                        let link = LinkSummary(report)
+                        if self.link != link { self.link = link }
                         self.acceptPhoneStats(report)
                         self.noticeReducedPicture()
                         #if DEBUG
@@ -651,7 +653,8 @@ final class PhoneRemoteModel: ObservableObject {
 
     func frameReceived() {
         lastFrame = ProcessInfo.processInfo.systemUptime
-        fresh = true
+        // A @Published set notifies even when unchanged, and this runs at 4 Hz while streaming.
+        if !fresh { fresh = true }
         #if DEBUG
         PhoneE2E.active?.frameReceived()
         #endif
