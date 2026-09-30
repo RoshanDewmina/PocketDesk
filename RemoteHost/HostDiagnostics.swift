@@ -32,7 +32,7 @@ enum DiagnosticsSanitizer {
 @MainActor
 final class HostEventLog {
     enum Kind: String {
-        case launch, sharing, session, capture, availability, curtain, recovery, settings, error
+        case launch, sharing, service, session, capture, availability, curtain, recovery, settings, error
     }
 
     struct Entry: Equatable {
@@ -83,6 +83,7 @@ struct HostDiagnosticsSnapshot {
     var detail: String?
     var localPairRemovalFailure: String?
     var serviceEnvironment = "not configured"
+    var serviceRegistration = "not registered"
 
     var curtainPreference = false
     var curtainState = "off"
@@ -140,6 +141,7 @@ enum HostDiagnosticsReport {
         row("Sharing active", yes(s.sharingActive))
         row("Phone paired", yes(s.phonePaired))
         row("Service environment", s.serviceEnvironment)
+        row("Service registration", s.serviceRegistration)
         if let failure = s.localPairRemovalFailure { row("Local pairing removal", failure) }
         row("Phone connected", yes(s.phoneConnected))
         row("Mouse and keyboard control", yes(s.controlEffective))
@@ -177,6 +179,14 @@ enum HostDiagnosticsReport {
         if hours > 0 { return "\(hours)h \(minutes)m" }
         if minutes > 0 { return "\(minutes)m \(rest)s" }
         return "\(rest)s"
+    }
+}
+
+enum HostServiceRegistration {
+    static func describe(registered: Bool, reconnecting: Bool, attempt: Int, lossReason: String?) -> String {
+        if registered { return "registered" }
+        guard reconnecting else { return "not registered" }
+        return "reconnecting (attempt \(attempt)" + (lossReason.map { "; last drop: \($0)" } ?? "") + ")"
     }
 }
 

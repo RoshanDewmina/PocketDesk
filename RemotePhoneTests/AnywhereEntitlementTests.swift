@@ -689,6 +689,25 @@ final class AnywhereAccessTests: XCTestCase {
                        "An older service, or a remote-allowed session, keeps the ordinary explanation")
         XCTAssertEqual(FriendlyError.forLocalOnly(.declined, serviceAskedForAnywhere: true, hasPlan: false).kind, .declined)
     }
+
+    func testAMacTheServiceFoundButThatNeverAnsweredIsNotAPlanProblem() {
+        let timedOut = "Connection timed out. Check that the Mac is awake and the service is reachable."
+        let silent = FriendlyError.from(status: timedOut, previous: "Authenticating your Mac…", macName: "Studio Mac")
+        XCTAssertEqual(silent?.kind, .macNotResponding, "the service found the Mac's room; the Mac itself went quiet")
+        XCTAssertEqual(silent?.action, .retry)
+        XCTAssertNil(silent?.secondary, "no upsell: Anywhere would not have made this Mac answer")
+        XCTAssertTrue(silent?.message.contains("Studio Mac") == true)
+        for hasPlan in [false, true] {
+            XCTAssertEqual(FriendlyError.forLocalOnly(silent!, serviceAskedForAnywhere: true, hasPlan: hasPlan).kind,
+                           .macNotResponding)
+        }
+        let neverFound = FriendlyError.from(status: timedOut, previous: "Connecting securely…", macName: "Studio Mac")
+        XCTAssertEqual(neverFound?.kind, .unreachable)
+        XCTAssertEqual(FriendlyError.forLocalOnly(neverFound!, serviceAskedForAnywhere: true, hasPlan: false).kind, .needsPlan,
+                       "an attempt that never reached the Mac keeps the existing local-only explanation")
+        XCTAssertEqual(FriendlyError.from(status: timedOut, previous: "Approve this phone on your Mac", macName: "Studio Mac")?.kind,
+                       .approvalTimedOut)
+    }
 }
 
 @MainActor

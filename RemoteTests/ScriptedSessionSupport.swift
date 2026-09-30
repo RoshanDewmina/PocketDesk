@@ -114,10 +114,14 @@ final class ScriptedSignaling: SignalingTransport {
 
     func close() { isOpen = false }
     func deliver(_ message: RelayMessage) { onMessage?(message) }
+    private(set) var livenessChecks = 0
+    private(set) var lastCloseReason: String?
+    func checkLiveness() { livenessChecks += 1 }
 
-    func serverCloses() {
+    func serverCloses(reason: String? = nil) {
         guard isOpen else { return }
         isOpen = false
+        lastCloseReason = reason
         onClose?()
     }
 }
