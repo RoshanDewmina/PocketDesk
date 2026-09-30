@@ -117,6 +117,7 @@ final class BenchPad: NSObject {
     private var statusLine: String {
         func word(_ on: Bool) -> String { on ? "on" : "off" }
         return "seed \(state.seed) · motion \(word(state.motion)) · scroll \(word(state.scroll)) · flash \(word(state.flash))"
+            + (state.autoFlash ? " · auto-flash" : "")
     }
 
     // MARK: Actions
@@ -157,6 +158,14 @@ final class BenchPad: NSObject {
         app.log.write("bench.flash", ["machMs": machMs, "flash": state.flash, "source": source])
     }
 
+    /// Camera kit: the flash target toggles on its own every 400-700 ms; each toggle is logged as
+    /// `bench.flashShown` with its display time, like a manual flash.
+    func setAutoFlash(_ on: Bool, source: String) {
+        let seed = UInt64.random(in: 1...UInt64.max)
+        if state.setAutoFlash(on, now: MachClock.nowMs(), seed: seed) { changed() }
+        app.log.write("bench.autoflash", ["on": state.autoFlash, "seed": String(seed), "source": source])
+    }
+
     func flashPressed(_ event: NSEvent) {
         toggleFlash(machMs: MachClock.milliseconds(fromMediaTime: event.timestamp), source: "mouse")
     }
@@ -174,7 +183,7 @@ final class BenchPad: NSObject {
             quit(source: "key")
             return true
         }
-        guard let key = event.charactersIgnoringModifiers?.lowercased(), ["c", "m", "s", "j", " ", "q"].contains(key) else {
+        guard let key = event.charactersIgnoringModifiers?.lowercased(), ["c", "m", "s", "j", "a", " ", "q"].contains(key) else {
             return false
         }
         guard !event.isARepeat else { return true }
@@ -183,6 +192,7 @@ final class BenchPad: NSObject {
         case "m": setMotion(!state.motion, source: "key")
         case "s": setScroll(!state.scroll, source: "key")
         case "j": jump(source: "key")
+        case "a": setAutoFlash(!state.autoFlash, source: "key")
         case " ": toggleFlash(machMs: MachClock.milliseconds(fromMediaTime: event.timestamp), source: "key")
         default: quit(source: "key")
         }
@@ -216,6 +226,12 @@ final class BenchPad: NSObject {
         case "bench.flash":
             toggleFlash(machMs: MachClock.nowMs(), source: "command")
             result["flash"] = state.flash
+        case "bench.autoflash":
+            guard let on = Self.switchValue(command["on"], current: state.autoFlash) else {
+                return fail(&result, "on must be true or false")
+            }
+            setAutoFlash(on, source: "command")
+            result["on"] = on
         case "bench.snapshot":
             let path = command["path"] as? String ?? "\(Self.defaultSnapshotDirectory)/bench-chart-\(state.seed).png"
             do {
@@ -229,6 +245,7 @@ final class BenchPad: NSObject {
             result["motion"] = state.motion
             result["scroll"] = state.scroll
             result["flash"] = state.flash
+            result["autoFlash"] = state.autoFlash
         default:
             return fail(&result, "unknown command")
         }
@@ -437,7 +454,7 @@ final class BenchClockView: NSView {
     static let maximumFontSize: CGFloat = 96
     static let inset: CGFloat = 16
     static let captionFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-    static let keys = "keys: c chart · m motion · s scroll · j jump · space flash · esc or q quit"
+    static let keys = "keys: c chart · m motion · s scroll · j jump · space flash · a auto-flash · esc or q quit"
     private static let wallFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
