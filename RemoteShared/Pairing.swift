@@ -112,11 +112,13 @@ struct HostPair: Codable {
     /// made before phones sent one; a new pairing starts without it.
     var phoneName: String? = nil
 
-    static func create(server: String, name: String) throws -> Self {
+    static func create(server: String, name: String, identity: HostIdentityRecord? = nil) throws -> Self {
         let token = try SecureRandom.token()
         return HostPair(hostToken: token, invitation: PairInvitation(server: server,
             room: SecureRandom.digest(token), token: try SecureRandom.token(), key: try SecureRandom.bytes(),
-            expires: Date().addingTimeInterval(120), name: String(name.prefix(100))), paired: false)
+            expires: Date().addingTimeInterval(120), name: String(name.prefix(100)),
+            durableHostID: identity?.hostID, ownerPairID: identity == nil ? nil : try SecureRandom.token(),
+            localServiceName: identity?.localServiceName), paired: false)
     }
     func rotated() throws -> Self {
         var next = self

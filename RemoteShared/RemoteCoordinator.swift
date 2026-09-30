@@ -77,6 +77,7 @@ final class RemoteCoordinator: ObservableObject {
     private(set) var pairingRemovalFailure: String?
     private let isHost: Bool
     private let store: any PairPersistence
+    private let hostIdentityStore: HostIdentityStore?
     private let relay: any SignalingTransport
     private let renewalScheduler: any RenewalScheduler
     private let advertisesRenewal: Bool
@@ -172,9 +173,12 @@ final class RemoteCoordinator: ObservableObject {
         renewalScheduler: any RenewalScheduler = SystemRenewalScheduler(),
         advertisesRenewal: Bool = true,
         handshakeTimeoutNanoseconds: UInt64 = 20_000_000_000,
-        localProofTimeoutNanoseconds: UInt64 = 8_000_000_000
+        localProofTimeoutNanoseconds: UInt64 = 8_000_000_000,
+        hostIdentityStore: HostIdentityStore? = nil
     ) {
         self.localProofTimeoutNanoseconds = localProofTimeoutNanoseconds
+        // Injected pair stores (including isolated tests) must not touch the owner's identity.
+        self.hostIdentityStore = hostIdentityStore ?? (isHost && store == nil ? HostIdentityStore() : nil)
         self.isHost = isHost
         self.store = store ?? PairStore(account: isHost ? "host" : "phone")
         self.relay = signaling ?? SignalingClient()
@@ -257,7 +261,7 @@ final class RemoteCoordinator: ObservableObject {
     }
     func createPair(server: String, name: String) throws -> PairInvitation {
         stop()
-        let pair = try HostPair.create(server: server, name: name)
+        let pair = try HostPair.create(server: server, name: name, identity: hostIdentityStore?.loadOrCreate())
         try pair.invitation.validate()
         try store.save(pair)
         hostPair = pair; invitation = pair.invitation; peerName = nil
