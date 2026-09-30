@@ -68,3 +68,32 @@ struct UsefulSessionEvidence {
         outcome = value; return true
     }
 }
+
+/// Product evidence only. Decoding/enqueueing alone cannot mark visible content. Unknown stock
+/// or simulator presentation needs the person's explicit visible-picture confirmation.
+struct UsefulPictureEvidence {
+    private(set) var context: UsefulSessionContext?
+    private(set) var receiptID: UUID?
+    private(set) var userConfirmed = false
+    private var deadline: TimeInterval = 0
+    mutating func presented(_ receipt: UUID, context: UsefulSessionContext, deadline: TimeInterval, now: TimeInterval) {
+        guard now.isFinite, deadline.isFinite, now < deadline, context.geometryEpoch > 0 else { return }
+        if self.context != context { self = Self() }
+        guard receiptID != receipt else { return } // A repeated source receipt cannot renew freshness.
+        self.context = context; receiptID = receipt; self.deadline = deadline
+    }
+    mutating func confirmVisible(context: UsefulSessionContext, deadline: TimeInterval, now: TimeInterval) {
+        guard now.isFinite, deadline.isFinite, now < deadline, context.geometryEpoch > 0 else { return }
+        if self.context != context { self = Self() }
+        self.context = context; userConfirmed = true; self.deadline = deadline
+    }
+    func visibleUntil(context: UsefulSessionContext, now: TimeInterval) -> TimeInterval? {
+        guard self.context == context, now.isFinite, now < deadline,
+              receiptID != nil || userConfirmed else { return nil }
+        return deadline
+    }
+    func visible(context: UsefulSessionContext, now: TimeInterval) -> Bool {
+        visibleUntil(context: context, now: now) != nil
+    }
+    mutating func invalidate() { self = Self() }
+}

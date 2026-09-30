@@ -7,6 +7,12 @@ import SwiftUI
     @Published private(set) var consent: Bool
     @Published private(set) var counters: [String: Int]
     @Published var blocker = ""
+    @Published private(set) var pictureConfirmationAvailable = false
+    var onConfirmVisiblePicture: (() -> Void)?
+    func setPictureConfirmationAvailable(_ value: Bool) {
+        if pictureConfirmationAvailable != value { pictureConfirmationAvailable = value }
+    }
+    func confirmVisiblePicture() { onConfirmVisiblePicture?() }
     private let defaults: UserDefaults
     private var countedReadySessions: Set<UUID> = []
     private var lastReadyHost: String?
@@ -43,8 +49,9 @@ import SwiftUI
         lastReadyHost = context.hostRecordID; lastReadySession = context.sessionID; explicitlyEnded = false
         count(kind == .picture ? "pictureReady" : "couchReady")
     }
-    func invalidate(explicitEnd: Bool = false) {
+    func invalidate(explicitEnd: Bool = false, pictureConfirmationAvailable: Bool = false) {
         evidence.invalidate()
+        setPictureConfirmationAvailable(pictureConfirmationAvailable)
         if explicitEnd { explicitlyEnded = true }
     }
     func applied(context: UsefulSessionContext, now: TimeInterval) {
