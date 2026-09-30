@@ -2230,76 +2230,49 @@ extension PhoneSessionNotice {
 struct RemoteVideoSurface: UIViewRepresentable {
     let track: RTCVideoTrack
     var counters: StreamCounters?
-    /// Stream statistics: read the bench marker from each frame and score the legibility chart.
     var statistics = false
-    /// The Mac display in points, which the chart layout is defined in.
     var sourceSize: CGSize = .zero
-    /// Width of the picture on screen in device pixels, for the "displayed" legibility score.
     var displayedPixelWidth: CGFloat = 0
-    /// G4: the frames of a cropped capture span their region exactly, whatever the stream's aspect.
     var fillsFrame = false
     var smoothMotion: SmoothMotionMode = .defaultMode
     var smoothMotionUpscale = false
+    /// Root supplies authenticated current host/grant/session/content/route admission. Nil displays no pixels.
+    var admission: VideoPresentationAdmission?
+    /// Raw decoded source callback; must be thread-safe (LivePiPController.offer is thread-safe).
+    var onSourceFrame: ((VideoFrameEnvelope) -> Void)?
     let onFrame: () -> Void
 
-    static func contentMode(fillsFrame: Bool) -> UIView.ContentMode {
-        fillsFrame ? .scaleToFill : .scaleAspectFit
+    static func contentMode(fillsFrame: Bool) -> UIView.ContentMode { fillsFrame ? .scaleToFill : .scaleAspectFit }
+    final class Coordinator {
+        var session: VideoPresentationSession?
+        func invalidate() { session?.invalidate(); session = nil }
     }
-
-    func makeCoordinator() -> FrameObserver { FrameObserver(onFrame: onFrame) }
-
-    func makeUIView(context: Context) -> RTCMTLVideoView {
-        let view = RTCMTLVideoView(frame: .zero)
-        view.videoContentMode = Self.contentMode(fillsFrame: fillsFrame)
-        context.coordinator.track = track
-        context.coordinator.view = view
-        context.coordinator.presentation = VideoPresentationProbe.install(on: view)
-        context.coordinator.presentation?.counters = counters
-        configureStatistics(context.coordinator)
-        configureSmoothMotion(context.coordinator.smoothMotion)
-        context.coordinator.smoothMotion.activate()
-        track.add(context.coordinator)
-        return view
+    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeUIView(context: Context) -> UIView {
+        let container = UIView(); container.backgroundColor = .black; container.clipsToBounds = true
+        updateUIView(container, context: context); return container
     }
-
-    func updateUIView(_ view: RTCMTLVideoView, context: Context) {
-        let mode = Self.contentMode(fillsFrame: fillsFrame)
-        if view.videoContentMode != mode { view.videoContentMode = mode }
-        context.coordinator.presentation?.counters = counters
-        configureStatistics(context.coordinator)
-        configureSmoothMotion(context.coordinator.smoothMotion)
-        if context.coordinator.track !== track {
-            context.coordinator.track?.remove(context.coordinator)
-            context.coordinator.smoothMotion.resetSession()
-            context.coordinator.track = track
-            track.add(context.coordinator)
+    func updateUIView(_ container: UIView, context: Context) {
+        guard let admission, admission.permits(at: ProcessInfo.processInfo.systemUptime) else {
+            context.coordinator.invalidate(); container.subviews.forEach { $0.removeFromSuperview() }; return
         }
+        if context.coordinator.session?.track !== track || context.coordinator.session?.admissionIdentity != admission.identity {
+            context.coordinator.invalidate(); container.subviews.forEach { $0.removeFromSuperview() }
+            let session = VideoPresentationSession(track: track, admission: admission, onFrame: onFrame)
+            context.coordinator.session = session
+            let view = session.view; view.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(view)
+            NSLayoutConstraint.activate([view.leadingAnchor.constraint(equalTo: container.leadingAnchor), view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                view.topAnchor.constraint(equalTo: container.topAnchor), view.bottomAnchor.constraint(equalTo: container.bottomAnchor)])
+        }
+        context.coordinator.session?.configure(admission: admission, counters: counters, statistics: statistics,
+            sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth, fillsFrame: fillsFrame,
+            mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame)
     }
-
-    static func dismantleUIView(_ view: RTCMTLVideoView, coordinator: FrameObserver) {
-        coordinator.track?.remove(coordinator)
-        coordinator.track = nil
-        coordinator.readsMarkers = false
-        coordinator.legibility.configure(enabled: false, counters: nil, sourceSize: .zero, displayedPixelWidth: 0)
-        coordinator.presentation?.uninstall()
-        coordinator.presentation = nil
-        coordinator.smoothMotion.deactivate()
-    }
-
-    private func configureSmoothMotion(_ controller: SmoothMotionController) {
-        controller.setMode(smoothMotion)
-        controller.setUpscale(smoothMotionUpscale)
-    }
-
-    private func configureStatistics(_ coordinator: FrameObserver) {
-        coordinator.readsMarkers = statistics
-        coordinator.legibility.configure(enabled: statistics, counters: counters, sourceSize: sourceSize,
-                                         displayedPixelWidth: displayedPixelWidth)
-    }
+    static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.invalidate(); view.subviews.forEach { $0.removeFromSuperview() } }
 }
 
-/// The track's only renderer for the main picture: it reports arrivals and passes frames on to
-/// the Metal view through `RestampingRenderer`.
+/// Legacy stock-renderer compatibility helper retained for regression fixtures.
+/// RemoteVideoSurface uses VideoPresentationSession; this helper is not owned-presentation evidence.
 final class FrameObserver: NSObject, RTCVideoRenderer {
     var track: RTCVideoTrack?
     weak var view: RTCMTLVideoView? {
