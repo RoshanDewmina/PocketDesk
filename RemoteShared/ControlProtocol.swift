@@ -51,6 +51,8 @@ struct RemoteAction: Codable {
     var ladder: LadderState? = nil
     /// The Mac's load state for the phone's pill, on `capture` status.
     var busy: BusyState? = nil
+    /// Battery, temperature, Low Power Mode and whole-Mac load, on `capture` status (`SessionFeature.macVitals`).
+    var macVitals: MacVitals? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
@@ -67,7 +69,8 @@ struct RemoteAction: Codable {
         try captureRegion?.validate()
         try ladder?.validate()
         try busy?.validate()
-        guard (captureRegion == nil && ladder == nil && busy == nil) || action == "capture" else {
+        try macVitals?.validate()
+        guard (captureRegion == nil && ladder == nil && busy == nil && macVitals == nil) || action == "capture" else {
             throw RemoteError.invalidMessage
         }
         guard textFocusSecure == nil || (action == "heartbeat" && textFocusProbe != nil && textFocusEditable != nil)

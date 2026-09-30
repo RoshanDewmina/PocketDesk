@@ -148,6 +148,17 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var captureRegion: CaptureRegion?
     /// G12: the Mac's own account of its load, for the pill; nil from a Mac without the ladder.
     @Published private(set) var busy: BusyState?
+    /// The Mac's battery, temperature and load as last received; read through `currentMacVitals(now:)`.
+    @Published private(set) var macVitals: MacVitals?
+    private var macVitalsReceivedAt: TimeInterval = 0
+    /// The session's last real reading for Home: the Mac's own sleep or lock status carries no vitals.
+    private var sessionVitals: (vitals: MacVitals, receivedAt: Date)?
+    private var vitalsNotices = MacVitalsNoticePolicy()
+    var vitalsMemory = MacVitalsMemory()
+    static let macVitalsMaxAge: TimeInterval = 3
+    #if DEBUG
+    private var vitalsPreview: (supported: Bool, active: Bool) = (false, false)
+    #endif
     private(set) var ladder: LadderState?
     private var viewportReporter = ViewportReporter()
     private var phoneLoad: PhoneLoadFeedback?
@@ -247,6 +258,17 @@ final class PhoneRemoteModel: ObservableObject {
         connection.localDisplayName = UIDevice.current.name
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
+        if LaunchOptions.demoMacName != nil || LaunchOptions.value("--ui-last-battery=") != nil {
+            // UI tests get their own last-seen battery so they never read or overwrite the real one.
+            let suite = "farside.ui-tests.vitals"
+            if let defaults = UserDefaults(suiteName: suite) {
+                defaults.removePersistentDomain(forName: suite)
+                vitalsMemory = MacVitalsMemory(defaults: defaults)
+            }
+            if let raw = LaunchOptions.value("--ui-last-battery="), let percent = Int(raw) {
+                vitalsMemory.record(MacVitals(power: "battery", batteryPercent: percent, charging: false), at: Date())
+            }
+        }
         if contentConcealed { resumeState = .needsChoice }
         if let inputProbe {
             // Behave like an upgraded Mac so drags, holds and new actions take their real paths.
@@ -473,6 +495,36 @@ final class PhoneRemoteModel: ObservableObject {
         #endif
         return hostFeatures.contains(feature)
     }
+
+    // MARK: Mac vitals
+
+    var macVitalsSupported: Bool {
+        #if DEBUG
+        if vitalsPreview.active { return vitalsPreview.supported }
+        #endif
+        return hostFeatures.contains(SessionFeature.macVitals)
+    }
+
+    var previewingVitals: Bool {
+        #if DEBUG
+        return vitalsPreview.active
+        #else
+        return false
+        #endif
+    }
+
+    func currentMacVitals(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> MacVitals? {
+        if previewingVitals { return macVitals }
+        guard macVitalsSupported, let macVitals, now - macVitalsReceivedAt <= Self.macVitalsMaxAge else { return nil }
+        return macVitals
+    }
+
+    #if DEBUG
+    func previewVitalsForTesting(_ vitals: MacVitals?, supported: Bool) {
+        vitalsPreview = (supported, true)
+        macVitals = vitals
+    }
+    #endif
 
     // MARK: Viewport capture (G4)
 
@@ -1333,6 +1385,14 @@ final class PhoneRemoteModel: ObservableObject {
                                             geometryEpoch: geometryEpoch)
             if region != captureRegion { captureRegion = region }
             if action.busy != busy { busy = action.busy }
+            let now = ProcessInfo.processInfo.systemUptime
+            let vitals = hostFeatures.contains(SessionFeature.macVitals) ? action.macVitals : nil
+            if vitals != macVitals { macVitals = vitals }
+            if let vitals {
+                macVitalsReceivedAt = now
+                sessionVitals = (vitals, Date())
+            }
+            if let notice = vitalsNotices.observe(vitals, pill: busy, now: now) { announce(notice) }
             ladder = action.ladder
             sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
         case "geometry":
@@ -1530,6 +1590,10 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func end() {
+        // Only a session that received vitals knows the battery, so a failed reconnect or an older Mac keeps
+        // what Home shows; the reading's own time stops a long background hold from renewing an old one.
+        if let sessionVitals { vitalsMemory.record(sessionVitals.vitals, at: sessionVitals.receivedAt) }
+        sessionVitals = nil
         textFocusProbe.invalidate()
         endSecureFocus()
         pointerTimer?.invalidate()
@@ -1542,6 +1606,9 @@ final class PhoneRemoteModel: ObservableObject {
         wifiStallTip = nil
         captureRegion = nil
         busy = nil
+        macVitals = nil
+        macVitalsReceivedAt = 0
+        vitalsNotices = MacVitalsNoticePolicy()
         ladder = nil
         viewportSendTask?.cancel()
         viewportSendTask = nil

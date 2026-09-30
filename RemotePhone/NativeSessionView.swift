@@ -269,6 +269,9 @@ struct NativeSessionView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { keyboardOpen = true }
             }
             if offlineLayoutCheck && LaunchOptions.has("--ui-curtain-preview") { curtainPreview = true }
+            if offlineLayoutCheck, let name = LaunchOptions.value("--ui-vitals=") {
+                model.previewVitalsForTesting(name == "old" ? nil : MacVitalsPresentation.preview(name), supported: name != "old")
+            }
             if offlineLayoutCheck && LaunchOptions.has("--ui-controls-check") { openControls() }
             if offlineLayoutCheck && LaunchOptions.has("--ui-controls-settings") {
                 openControls()
@@ -811,7 +814,7 @@ struct NativeSessionView: View {
                                               captureHealthy: model.captureHealthy, hostPresence: model.hostPresence,
                                               canWakeDisplay: model.canWakeDisplay, route: model.link?.route,
                                               roundTripMs: model.link?.roundTripMs, blocker: model.sessionBlocker,
-                                              wifiStall: model.wifiStallTip, linkHint: model.linkHint))
+                                              wifiStall: model.wifiStallTip, linkHint: model.linkHint, vitals: model.currentMacVitals()))
     }
 
     private var status: String {
@@ -1337,20 +1340,42 @@ struct NativeSessionView: View {
     private var controlsPanel: some View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
-                Text("Controls")
-                    .font(.headline)
-                    .foregroundStyle(Farside.Palette.bone)
-                    .accessibilityAddTraits(.isHeader)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Controls")
+                        .font(.headline)
+                        .foregroundStyle(Farside.Palette.bone)
+                        .accessibilityAddTraits(.isHeader)
+                    if let vitals = model.currentMacVitals() {
+                        let words = MacVitalsPresentation(vitals)
+                        ViewThatFits(in: .horizontal) {
+                            ForEach(words.captions, id: \.self) { caption in
+                                Text(caption)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(caption == words.captions.last ? 0.75 : 1)
+                            }
+                        }
+                        .font(Farside.Typeface.caption(.caption2))
+                        .foregroundStyle(words.isWarning ? Farside.Palette.bone : Farside.Palette.ash)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isStaticText)
+                        .accessibilityLabel(words.spoken)
+                        .accessibilityIdentifier("remote.controls.vitals")
+                    }
+                }
                 Spacer(minLength: 8)
                 NavigationLink(value: ControlsPage.settings) {
                     Label("Settings", systemImage: "gearshape")
                         .font(.body.weight(.medium))
                         .foregroundStyle(Farside.Palette.bone)
                 }
+                .accessibilityShowsLargeContentViewer()
                 .accessibilityIdentifier("remote.controls.settings")
                 controlsDoneButton
+                    .accessibilityShowsLargeContentViewer()
             }
             .frame(minHeight: 44)
+            // Past xxxLarge the header wraps and pushes the keys below the fixed panel height.
+            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             .padding(.bottom, 12)
             macKeys(compact: false)
             if showsCurtainRow || showsDisplayRow {
@@ -1609,6 +1634,7 @@ struct NativeSessionView: View {
         case .diagnostics:
             settingsForm("Diagnostics") {
                 connectionHealthSection
+                macVitalsSection
                 diagnosticsSection
             }
         }
@@ -2022,6 +2048,34 @@ struct NativeSessionView: View {
             .listRowBackground(Farside.Palette.panel)
         } header: {
             sectionHeader("Connection")
+        }
+    }
+
+    @ViewBuilder private var macVitalsSection: some View {
+        if !offlineLayoutCheck || model.previewingVitals {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    if !model.macVitalsSupported {
+                        Text(MacVitalsPresentation.tooOld)
+                            .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else if let vitals = model.currentMacVitals() {
+                        ForEach(MacVitalsPresentation(vitals).rows, id: \.title) { row in
+                            LabeledContent(row.title, value: row.value)
+                                .foregroundStyle(Farside.Palette.bone)
+                                .accessibilityElement(children: .combine)
+                        }
+                    } else {
+                        Text(MacVitalsPresentation.waiting)
+                            .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                    }
+                }
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("remote.vitals")
+                .listRowBackground(Farside.Palette.panel)
+            } header: {
+                sectionHeader("Mac")
+            }
         }
     }
 

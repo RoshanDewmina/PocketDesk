@@ -33,7 +33,7 @@ enum SessionFeature {
     static let focusGeometry = "focus.rect.1"
     static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
-                       momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry]
+                       momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as

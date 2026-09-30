@@ -144,8 +144,10 @@ struct HomeView: View {
     @State private var showServerData = false
     @State private var showLegal = false
     @State private var showSecurity = false
+    @State private var lastBattery: MacVitalsMemory.LastSeen?
     @ObservedObject private var anywhere = AnywhereStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -229,7 +231,14 @@ struct HomeView: View {
             #if DEBUG
             applyDebugState()
             #endif
+            refreshLastBattery()
         }
+        .onChange(of: connection.connected) { _, _ in refreshLastBattery() }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { refreshLastBattery() } }
+    }
+
+    private func refreshLastBattery() {
+        lastBattery = connection.connected ? nil : model.vitalsMemory.lastSeen(now: Date())
     }
 
     // MARK: Sections
@@ -271,7 +280,10 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 0) {
             if let macName {
                 MacCard(name: macName, status: status, health: health, checking: checking,
-                        notice: model.macNotice, lastReached: lastReached, act: act)
+                        notice: model.macNotice, lastReached: lastReached,
+                        vitalsNote: lastBattery.map(MacVitalsMemory.homeNote),
+                        vitalsCause: model.lastDeparture == .sleeping ? lastBattery.map(MacVitalsMemory.sleepNote) : nil,
+                        act: act)
                 connectControl
             } else {
                 emptyState
@@ -488,6 +500,8 @@ struct HomeView: View {
                 return
             }
             connection.revoke()
+            model.vitalsMemory.forget()
+            refreshLastBattery()
             lastReachedAt = 0
             lastFailure = nil
             checkedHealth = nil
@@ -656,6 +670,8 @@ struct MacCard: View {
     var checking = false
     var notice: String?
     var lastReached: Date?
+    var vitalsNote: String?
+    var vitalsCause: String?
     var act: (ConnectionHealth.Action) -> Void = { _ in }
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -695,6 +711,23 @@ struct MacCard: View {
                                 .padding(.leading, 16)
                                 .accessibilityIdentifier("home.health.action")
                         }
+                    }
+                    if let vitalsNote {
+                        Text(vitalsNote)
+                            .font(.footnote)
+                            .foregroundStyle(Farside.Palette.ash)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 6)
+                            .padding(.leading, 16)
+                            .accessibilityIdentifier("home.vitals")
+                    }
+                    if let vitalsCause {
+                        Text(vitalsCause)
+                            .font(.footnote)
+                            .foregroundStyle(Farside.Palette.ash)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, 16)
+                            .accessibilityIdentifier("home.vitals.cause")
                     }
                 }
                 if !typeSize.isAccessibilitySize {
