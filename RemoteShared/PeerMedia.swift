@@ -923,7 +923,9 @@ final class PeerMedia: NSObject {
         stats.thermalState = ProcessInfo.processInfo.thermalState.rawValue
         stats.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
         resourceBudget.observe(MediaCapacityObservation(at: ProcessInfo.processInfo.systemUptime,
-            route: sample.route, capacityKbps: stats.availableOutgoingKbps,
+            // A receive-only phone has no outbound-video GCC estimate for its file uploads.
+            // The transport's camera bootstrap estimate is not observed upload capacity.
+            route: sample.route, capacityKbps: isHost ? stats.availableOutgoingKbps : nil,
             videoKbps: stats.sentKbps, rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs))
         if isHost {
             if nativeDesktopCodecs {
