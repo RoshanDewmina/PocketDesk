@@ -109,6 +109,7 @@ struct HomeView: View {
     @State private var showPaywall = false
     @State private var showServerData = false
     @State private var showLegal = false
+    @State private var showSecurity = false
     @ObservedObject private var anywhere = AnywhereStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
@@ -118,7 +119,7 @@ struct HomeView: View {
 
     private var macName: String? { connection.invitation?.name ?? LaunchOptions.demoMacName }
     private var status: MacStatus { MacStatus(connection.status) }
-    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall || showServerData || showLegal }
+    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall || showServerData || showLegal || showSecurity }
 
     var body: some View {
         GeometryReader { proxy in
@@ -177,16 +178,12 @@ struct HomeView: View {
                 .farsideSheet()
         }
         .sheet(isPresented: $showLegal) { LegalNoticesView() }
+        .sheet(isPresented: $showSecurity) { SecuritySettingsSheet() }
         .sheet(isPresented: $showServerData) {
             ServerDataRemovalView(connection: connection, access: AnywhereAccess.shared).farsideSheet()
         }
         .confirmationDialog("Forget this Mac locally?", isPresented: $confirmForget, titleVisibility: .visible) {
-            Button("Forget Mac", role: .destructive) {
-                connection.revoke()
-                lastReachedAt = 0
-                lastFailure = nil
-                checkedHealth = nil
-            }
+            Button("Forget Mac", role: .destructive, action: forgetMac)
         } message: {
             Text("This removes local pairing only. Server Data removes your Anywhere device link. You’ll need to scan a new pairing code to connect again.")
         }
@@ -215,6 +212,7 @@ struct HomeView: View {
                 Button { showPaywall = true } label: { Label("Farside Anywhere", systemImage: "globe") }
                 Button { showLegal = true } label: { Label("Third-Party Notices", systemImage: "doc.text") }
                 Button { showServerData = true } label: { Label("Server Data", systemImage: "externaldrive") }
+                Button { showSecurity = true } label: { Label("Settings", systemImage: "gearshape") }
                 if connection.invitation != nil {
                     Divider()
                     Button(role: .destructive) { confirmForget = true } label: {
@@ -414,6 +412,23 @@ struct HomeView: View {
             showServerData = true
         }
         if decision == .proceed {
+            lastFailure = nil
+            checkedHealth = nil
+        }
+    }
+
+    /// With Settings → Security on, the owner confirms first; a refusal leaves the pairing as it was.
+    private func forgetMac() {
+        Task { @MainActor in
+            let gate = DeviceOwnerGate.live
+            let outcome = await gate.check(.forgetMac)
+            guard outcome.allows else {
+                model.error = DeviceOwnerGate.message(for: outcome, purpose: .forgetMac,
+                                                      biometryName: gate.authenticator.biometryName) ?? ""
+                return
+            }
+            connection.revoke()
+            lastReachedAt = 0
             lastFailure = nil
             checkedHealth = nil
         }

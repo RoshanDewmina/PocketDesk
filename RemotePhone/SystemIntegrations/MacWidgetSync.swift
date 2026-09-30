@@ -28,6 +28,7 @@ final class MacWidgetSync {
         switch failure {
         case .unreachable?, .connectionLost?: return .notAnswering
         case .screenRecordingOff?: return .screenRecordingOff
+        case .screenRecordingApproval?: return .screenRecordingApproval
         default: return nil
         }
     }

@@ -47,6 +47,7 @@ final class HostUISnapshotTests: XCTestCase {
                 $0.detail = "Couldn’t reach the connection. Check this Mac’s internet, then try again."
             }),
             ("popover-needs-setup", ready(.needsScreenRecording) { $0.screenRecording = .denied }),
+            ("popover-capture-approval", ready(.captureNeedsApproval)),
             ("popover-crash-loop", ready(.unavailable) {
                 $0.crashLoopStopped = true
                 $0.detail = "Farside stopped after repeated crashes. Sharing is paused until you resume it."
@@ -144,6 +145,12 @@ final class HostUISnapshotTests: XCTestCase {
         waitingForScreen.screenRecordingSettingsOpened = true
         try render("setup-2e-permissions-waiting-screen", HostSetupView(state: waitingForScreen, actions: .preview,
                                                                         page: .permissions))
+        var afterUpdate = fresh
+        afterUpdate.hasPairedPhone = true
+        afterUpdate.macOSMajor = 27
+        afterUpdate.permissionsTurnedOffByUpdate = [.screenRecording, .accessibility]
+        try render("setup-2f-permissions-after-macos-update", HostSetupView(state: afterUpdate, actions: .preview,
+                                                                           page: .permissions))
 
         var granted = waiting
         granted.accessibility = .granted
@@ -212,6 +219,9 @@ final class HostUISnapshotTests: XCTestCase {
             $0.agentAlerts = true
             $0.agentAlertsStatus = "Claude Code asked 2 min ago · told your iPhone"
         }, actions: .preview))
+        try render("settings-capture-approval-icon-hidden", HostSettingsView(state: ready(.captureNeedsApproval) {
+            $0.menuBarIconShown = false
+        }, actions: .preview))
     }
 
     func testCrashLoopAndCurtainAreExplained() {
@@ -221,7 +231,7 @@ final class HostUISnapshotTests: XCTestCase {
         XCTAssertEqual(HostBackgroundItemCopy.loginSubtitle(.needsApproval), "Waiting for approval in Login Items")
         XCTAssertEqual(HostCurtainCopy.subtitle(for: ready(.controlling) {
             $0.privacyCurtain = true
-            $0.accessibility = .denied
+            $0.focusAccessibility = .denied
         }), "Needs Accessibility, so Esc can always lift it")
     }
 

@@ -51,6 +51,10 @@ struct AgentAlertPreferences {
 }
 
 enum AgentNotification {
+    /// `providesAppNotificationSettings` adds "Farside Notification Settings" to iOS Settings, which
+    /// opens Agent alerts here.
+    static let authorizationOptions: UNAuthorizationOptions = [.alert, .sound, .providesAppNotificationSettings]
+
     static let snoozeAction = "SNOOZE_15"
     static let notNowAction = "NOT_NOW"
     static let titleKey = "AGENT_NEEDS_YOU_TITLE"
@@ -180,7 +184,7 @@ final class SystemNotificationCenter: AgentNotificationScheduling {
 
     func requestAuthorization() async -> Bool {
         // Never provisional: quiet delivery is wrong for "needs you". Never asked at launch.
-        (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+        (try? await center.requestAuthorization(options: AgentNotification.authorizationOptions)) ?? false
     }
 
     func add(_ request: UNNotificationRequest) async -> Bool {

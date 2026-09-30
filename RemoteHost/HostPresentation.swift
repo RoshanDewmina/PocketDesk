@@ -13,7 +13,7 @@ enum HostMarkState: Equatable, CaseIterable {
         switch status {
         case .viewing, .controlling: self = .live
         case .paused: self = .paused
-        case .needsScreenRecording, .needsPhone, .unavailable, .approvalRequested: self = .attention
+        case .needsScreenRecording, .captureNeedsApproval, .needsPhone, .unavailable, .approvalRequested: self = .attention
         case .ready, .starting, .reconnecting, .pairing: self = .idle
         }
     }
@@ -102,7 +102,7 @@ struct HostTimedPause: Equatable {
 
 enum HostPopoverAction: Equatable {
     case pause, stopSharing, resumeNow, resumeSharing, tryAgain
-    case allowPhone, declinePhone, finishSetup, pairPhone, showCode
+    case allowPhone, declinePhone, finishSetup, pairPhone, showCode, openScreenRecording
 
     var title: String {
         switch self {
@@ -116,6 +116,7 @@ enum HostPopoverAction: Equatable {
         case .finishSetup: "Finish Setup…"
         case .pairPhone: "Pair a Phone…"
         case .showCode: "Show Code…"
+        case .openScreenRecording: "Open Settings…"
         }
     }
 
@@ -132,13 +133,14 @@ enum HostPopoverAction: Equatable {
         case .finishSetup: "finishSetup"
         case .pairPhone: "pairPhone"
         case .showCode: "showCode"
+        case .openScreenRecording: "openScreenRecording"
         }
     }
 
     /// Opens another window, so the popover should close first.
     var leavesPopover: Bool {
         switch self {
-        case .finishSetup, .pairPhone, .showCode: true
+        case .finishSetup, .pairPhone, .showCode, .openScreenRecording: true
         default: false
         }
     }
@@ -256,6 +258,15 @@ struct HostPopoverPresentation: Equatable {
                 mood: .attention, headline: note.headline, title: note.title, caption: note.caption,
                 message: note.caption == nil ? (state.detail ?? "Check your internet connection, then try again.") : nil,
                 symbol: note.symbol, showsSessionToggles: false, actions: [.tryAgain]
+            )
+        case .captureNeedsApproval:
+            return Self(
+                mood: .attention, headline: "Approve screen recording",
+                title: HostStatus.captureNeedsApproval.title,
+                caption: "Your iPhone is told why it can’t connect",
+                message: HostCaptureApprovalCopy.steps(listName: state.appListName, macOSMajor: state.macOSMajor),
+                symbol: "rectangle.dashed.badge.record", showsSessionToggles: false,
+                actions: [.tryAgain, .openScreenRecording]
             )
         case .needsScreenRecording:
             return Self(
@@ -462,6 +473,9 @@ struct HostReadyCheck: Equatable, Identifiable {
                         result: .fail, fix: .tryAgain)
         case .needsScreenRecording:
             return Self(id: .connection, title: title, detail: "Needs Screen Recording first", result: .waiting)
+        case .captureNeedsApproval:
+            return Self(id: .connection, title: title, detail: HostStatus.captureNeedsApproval.title,
+                        result: .fail, fix: .openSettings(.screenRecording))
         case .needsPhone:
             return Self(id: .connection, title: title, detail: "Starts once a phone is paired", result: .waiting)
         }
@@ -506,6 +520,30 @@ enum HostBackgroundItemCopy {
         case .needsApproval: "Waiting for approval in Login Items"
         case .unavailable: "Move Farside to Applications first"
         }
+    }
+}
+
+/// What to do at the Mac when macOS paused the capture. Farside shares again by itself once allowed.
+enum HostCaptureApprovalCopy {
+    static func steps(listName: String, macOSMajor: Int) -> String {
+        "If macOS asks whether “\(listName)” may keep recording the screen, allow it. No prompt? "
+            + HostPermissionCopy.switchOn(.screenRecording, listName: listName, macOSMajor: macOSMajor)
+            + " Farside shares again by itself."
+    }
+
+    /// Setup's line after a macOS update turned permissions off.
+    static func afterUpdate(_ missing: [HostSystemSettingsPane], macOSMajor: Int) -> String? {
+        guard !missing.isEmpty else { return nil }
+        let names = missing.map { $0.title(macOSMajor: macOSMajor) }
+        return "macOS was updated and turned off \(names.joined(separator: " and ")). Switch "
+            + (missing.count == 1 ? "it" : "them") + " back on below."
+    }
+}
+
+enum HostMenuBarIconCopy {
+    static func subtitle(shown: Bool) -> String {
+        shown ? "Farside’s status and quick controls"
+            : "Hidden. Farside keeps running and sharing; open it from Applications to get here"
     }
 }
 

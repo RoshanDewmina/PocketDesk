@@ -114,6 +114,10 @@ struct HostSettingsView: View {
 
     private var generalSection: some View {
         HostSettingsSection("General", footer: generalFooter) {
+            HostSettingsRow("Show in menu bar", subtitle: HostMenuBarIconCopy.subtitle(shown: state.menuBarIconShown)) {
+                HostSwitch(label: "Show in menu bar", isOn: state.menuBarIconShown, set: actions.setMenuBarIconShown)
+                    .accessibilityIdentifier("farside.settings.showInMenuBar")
+            }
             HostSettingsRow("Open at login", subtitle: HostBackgroundItemCopy.loginSubtitle(state.loginItem)) {
                 backgroundItemAccessory(state.loginItem) {
                     HostSwitch(label: "Open at login", isOn: state.openAtLogin, set: actions.setOpenAtLogin)
@@ -186,7 +190,7 @@ struct HostSettingsView: View {
         case .reconnecting: "Reconnecting"
         case .pairing: "Pairing"
         case .paused: state.pausedUntil == nil ? "Off" : "Paused"
-        case .approvalRequested, .unavailable, .needsScreenRecording, .needsPhone: "Needs attention"
+        case .approvalRequested, .unavailable, .needsScreenRecording, .captureNeedsApproval, .needsPhone: "Needs attention"
         }
     }
 
@@ -307,6 +311,7 @@ struct HostSettingsView: View {
         case .declinePhone: actions.declinePhone()
         case .finishSetup, .showCode: actions.openSetup()
         case .pairPhone: actions.pairNewPhone()
+        case .openScreenRecording: actions.openSystemSettings(.screenRecording)
         }
     }
 }

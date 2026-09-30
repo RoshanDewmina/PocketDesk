@@ -113,9 +113,38 @@ enum DisplayRefresh {
 
 private enum CaptureSizingError: Error { case invalidSource }
 
+/// The stream reported started, or had been running, but macOS says it is not capturing.
+struct CaptureNotCapturingError: Error, Equatable {}
+
+/// Why ScreenCaptureKit stopped or refused a capture, as far as Farside acts on it.
+enum CaptureStopReason: Equatable {
+    /// macOS stopped the stream, the person declined it, or it is not capturing: someone at the Mac
+    /// has to approve screen recording before Farside can share again.
+    case needsApproval
+    case failed
+
+    static func classify(_ error: Error) -> Self {
+        if error is CaptureNotCapturingError { return .needsApproval }
+        let error = error as NSError
+        guard error.domain == SCStreamErrorDomain else { return .failed }
+        switch error.code {
+        case SCStreamError.Code.userDeclined.rawValue, SCStreamError.Code.systemStoppedStream.rawValue:
+            return .needsApproval
+        default:
+            return .failed
+        }
+    }
+
+    /// macOS 27 says whether screen recording is supported and allowed here; earlier systems cannot.
+    static var systemAllowsCapture: Bool {
+        if #available(macOS 27, *) { return SCContentSharingPicker.shared.isAvailable }
+        return true
+    }
+}
+
 @MainActor
 final class RemoteCapture {
-    var onFailure: (() -> Void)?
+    var onFailure: ((Error) -> Void)?
     var onHealth: ((Bool) -> Void)?
     var onQuality: ((StreamQuality) -> Void)?
     /// Reports changes to `cursorInVideo`.
@@ -223,10 +252,10 @@ final class RemoteCapture {
                 self.onHealth?(healthy)
             }
         }
-        next.onFailure = { [weak self, weak next] in
+        next.onFailure = { [weak self, weak next] error in
             Task { @MainActor in
                 guard let self, let next, self.ownership.owns(owner), self.session === next else { return }
-                self.onFailure?()
+                self.onFailure?(error)
             }
         }
         // Delivered on the main queue in the order applied; a Task hop could reorder two regions.
@@ -536,9 +565,12 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private var waiters: [(Bool) -> Void] = []
     private var inFlightWaiters: [(Bool) -> Void] = []
 
-    var onFailure: (() -> Void)?
+    var onFailure: ((Error) -> Void)?
     var onHealth: ((Bool) -> Void)?
     var onCaptureRegion: ((CaptureRegion) -> Void)?
+    /// Consecutive health ticks on which macOS 27 said the stream is not capturing; confined to `queue`.
+    private var notCapturingTicks = 0
+    private var failureReported = false
 
     /// The rate this session captures and the peer sends at, fixed for the session (G5).
     let targetFPS: Int
@@ -748,6 +780,10 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             try? await stream.stopCapture()
             throw CancellationError()
         }
+        if #available(macOS 27, *), !stream.isCapturing {
+            try? await stream.stopCapture()
+            throw CaptureNotCapturingError()
+        }
         queue.sync {
             guard !stopping else { return }
             let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -811,17 +847,25 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
-        queue.async { [weak self] in
-            guard let self, !self.stopping else { return }
-            self.health.observe(.stopped, at: CACurrentMediaTime())
-            self.publishHealthAndIdleFrame()
-            let callback = self.onFailure
-            DispatchQueue.main.async { callback?() }
-        }
+        queue.async { [weak self] in self?.reportStopped(error) }
+    }
+
+    private func reportStopped(_ error: Error) {
+        guard !stopping, !failureReported else { return }
+        failureReported = true
+        health.observe(.stopped, at: CACurrentMediaTime())
+        publishHealthAndIdleFrame()
+        let callback = onFailure
+        DispatchQueue.main.async { callback?(error) }
     }
 
     private func publishHealthAndIdleFrame() {
         guard !stopping else { return }
+        if #available(macOS 27, *), !failureReported {
+            notCapturingTicks = stream.isCapturing ? 0 : notCapturingTicks + 1
+            // Two ticks apart, so a stream still settling is never mistaken for one macOS stopped.
+            if notCapturingTicks >= 2 { reportStopped(CaptureNotCapturingError()); return }
+        }
         let now = CACurrentMediaTime()
         let healthy = health.isHealthy(at: now)
         let callback = onHealth

@@ -219,7 +219,7 @@ final class RemoteInputDriver {
 
     init(
         eventSink: RemoteInputEventSink = .live,
-        isTrusted: @escaping () -> Bool = { AXIsProcessTrusted() }
+        isTrusted: @escaping () -> Bool = { CGPreflightPostEventAccess() }
     ) {
         self.eventSink = eventSink
         self.isTrusted = isTrusted

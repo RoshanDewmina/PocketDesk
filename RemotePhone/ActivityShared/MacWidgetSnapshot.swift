@@ -11,6 +11,8 @@ struct MacWidgetSnapshot: Codable, Equatable {
         case asleep, locked, otherUser
         /// The Mac answered but said Screen Recording is off.
         case screenRecordingOff
+        /// The Mac answered but said macOS paused its screen recording until approved there.
+        case screenRecordingApproval
         /// A check or an attempt went unanswered. The cause is unknown.
         case notAnswering
 
@@ -21,6 +23,7 @@ struct MacWidgetSnapshot: Codable, Equatable {
             case .locked: "Locked"
             case .otherUser: "Another user"
             case .screenRecordingOff: "Screen Recording off"
+            case .screenRecordingApproval: "Approve on Mac"
             case .notAnswering: "Not answering"
             }
         }

@@ -32,7 +32,11 @@ struct HostViewState: Equatable {
     /// How this app appears in Finder and in System Settings' permission lists.
     var appListName = "Farside"
     var screenRecording: HostPermissionStatus = .unchecked
+    /// The right to control this Mac (posting events). System Settings lists it under Accessibility,
+    /// so the UI names it that.
     var accessibility: HostPermissionStatus = .unchecked
+    /// Accessibility (AX) itself, which only the focus features and the curtain need.
+    var focusAccessibility: HostPermissionStatus = .unchecked
     var screenRecordingSettingsOpened = false
     var accessibilitySettingsOpened = false
     var accessibilitySkipped = false
@@ -72,10 +76,14 @@ struct HostViewState: Equatable {
     var serverRemovalMessage: String?
     var localPairRemovalMessage: String?
     var macOSMajor = HostSystemSettingsPane.currentMacOSMajor
+    /// False after the person removed the menu bar icon; Farside keeps running.
+    var menuBarIconShown = true
+    /// Permissions a macOS update turned off, still to be switched back on.
+    var permissionsTurnedOffByUpdate: [HostSystemSettingsPane] = []
 
     var controlNeedsAccessibility: Bool { allowControl && !accessibility.isGranted }
     var selectedDisplayName: String? { displays.first { $0.id == selectedDisplayID }?.name }
-    var curtainNeedsAccessibility: Bool { privacyCurtain && !accessibility.isGranted }
+    var curtainNeedsAccessibility: Bool { privacyCurtain && focusAccessibility == .denied }
 }
 
 @MainActor
@@ -111,6 +119,7 @@ struct HostActions {
     var copyDiagnostics: () -> Void = {}
     var setNewestFrameWins: (Bool) -> Void = { _ in }
     var selectDisplay: (UInt32) -> Void = { _ in }
+    var setMenuBarIconShown: (Bool) -> Void = { _ in }
     var openSetup: () -> Void = {}
     var openSettings: () -> Void = {}
     var quit: () -> Void = {}

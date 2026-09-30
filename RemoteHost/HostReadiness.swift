@@ -24,6 +24,8 @@ enum HostSetupStep: Int, CaseIterable, Comparable {
 
 enum HostStatus: Equatable {
     case needsScreenRecording
+    /// The grant exists, but macOS stopped or declined the capture until someone at the Mac approves it.
+    case captureNeedsApproval
     case needsPhone
     case pairing
     case approvalRequested
@@ -45,6 +47,7 @@ enum HostStatus: Equatable {
         var reconnecting = false
         var connected = false
         var awaitingApproval = false
+        var captureApprovalPending = false
         var controlEffective = false
         var unavailable = false
         var displayStatus: HostDisplayRefreshStatus = .ready
@@ -55,6 +58,7 @@ enum HostStatus: Equatable {
         if inputs.awaitingApproval { return .approvalRequested }
         if !inputs.screenRecording.isGranted { return .needsScreenRecording }
         if inputs.pairingInProgress { return .pairing }
+        if inputs.captureApprovalPending && inputs.hasPairedPhone && inputs.wantsSharing { return .captureNeedsApproval }
         if !inputs.hasPairedPhone { return .needsPhone }
         if !inputs.wantsSharing { return .paused }
         if !inputs.sharingActive && (inputs.unavailable || inputs.displayStatus == .failed || inputs.displayStatus == .unavailable) { return .unavailable }
@@ -65,7 +69,7 @@ enum HostStatus: Equatable {
 
     var needsAttention: Bool {
         switch self {
-        case .needsScreenRecording, .needsPhone, .unavailable, .approvalRequested: true
+        case .needsScreenRecording, .captureNeedsApproval, .needsPhone, .unavailable, .approvalRequested: true
         default: false
         }
     }
@@ -75,6 +79,7 @@ enum HostStatus: Equatable {
     var title: String {
         switch self {
         case .needsScreenRecording: "Needs Screen Recording"
+        case .captureNeedsApproval: "Screen recording needs approval on this Mac"
         case .needsPhone: "No phone paired"
         case .pairing: "Waiting for your phone to scan"
         case .approvalRequested: "A phone wants to connect"
@@ -91,6 +96,7 @@ enum HostStatus: Equatable {
     var menuTitle: String {
         switch self {
         case .needsScreenRecording: "Needs attention"
+        case .captureNeedsApproval: "Needs approval"
         case .needsPhone: "No phone paired"
         case .pairing: "Waiting for your phone"
         case .approvalRequested: "A phone wants to connect"
@@ -106,7 +112,7 @@ enum HostStatus: Equatable {
 
     var menuBarSymbol: String {
         switch self {
-        case .needsScreenRecording, .needsPhone, .unavailable: "exclamationmark.triangle"
+        case .needsScreenRecording, .captureNeedsApproval, .needsPhone, .unavailable: "exclamationmark.triangle"
         case .approvalRequested: "person.crop.circle.badge.questionmark"
         case .paused: "pause.circle"
         case .viewing: "rectangle.inset.filled.and.person.filled"
@@ -219,6 +225,8 @@ struct HostPreferences {
         static let privacyCurtain = "privacyCurtainWhileSharing"
         static let agentAlerts = "agentAlertsEnabled"
         static let allowFileTransfer = "allowFileTransfer"
+        static let menuBarIconShown = "menuBarIconShown"
+        static let osPermissionRecord = "osPermissionRecord"
     }
 
     let defaults: UserDefaults
@@ -226,7 +234,7 @@ struct HostPreferences {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         defaults.register(defaults: [Key.allowControl: true, Key.keepAwake: true, Key.sharingEnabled: true,
-                                     Key.chimeOnConnect: true, Key.allowFileTransfer: true])
+                                     Key.chimeOnConnect: true, Key.allowFileTransfer: true, Key.menuBarIconShown: true])
     }
 
     /// A short sound when a phone connects, so someone at the Mac always knows.
@@ -278,6 +286,17 @@ struct HostPreferences {
     var agentAlerts: Bool {
         get { defaults.bool(forKey: Key.agentAlerts) }
         nonmutating set { defaults.set(newValue, forKey: Key.agentAlerts) }
+    }
+
+    /// False once the person removes the icon from the menu bar; Settings puts it back.
+    var menuBarIconShown: Bool {
+        get { defaults.bool(forKey: Key.menuBarIconShown) }
+        nonmutating set { defaults.set(newValue, forKey: Key.menuBarIconShown) }
+    }
+
+    var osPermissionRecord: HostOSPermissionRecord? {
+        get { defaults.data(forKey: Key.osPermissionRecord).flatMap { try? JSONDecoder().decode(HostOSPermissionRecord.self, from: $0) } }
+        nonmutating set { defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: Key.osPermissionRecord) }
     }
 
     var serviceAddress: String? {

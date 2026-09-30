@@ -249,6 +249,21 @@ final class AgentAlertCenter: ObservableObject {
         return true
     }
 
+    /// A person who allowed alerts before the settings link existed gets it without a prompt: iOS never
+    /// asks again once they answered. Nothing is asked when alerts are off or not yet allowed.
+    func refreshSettingsLink() async {
+        guard preferences.alertsEnabled else { return }
+        await refreshAccess()
+        guard access == .allowed else { return }
+        _ = await center.requestAuthorization()
+    }
+
+    /// iOS Settings → Notifications → Farside → "Farside Notification Settings".
+    func openSettingsFromSystem() {
+        presentation = nil
+        showsSettings = true
+    }
+
     /// "Send test alert": a local notification that looks and routes like a real one. It also gives
     /// App Review a way to see the feature without any agent.
     @discardableResult

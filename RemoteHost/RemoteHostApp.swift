@@ -14,12 +14,18 @@ struct RemoteHostApp: App {
         let model = RemoteHostModel()
         _model = StateObject(wrappedValue: model)
         appDelegate.configure { model.stopForTermination() }
-        appDelegate.onLaunch = {
+        appDelegate.onLaunch = { launchedAsLoginItem in
             HostAppActivation.shared.start()
             if model.presentsSetupAtLaunch && !Self.e2eActive { HostAppActivation.shared.bringForward() }
+            // With the icon hidden, a launch from Finder or Spotlight would otherwise show nothing.
+            else if !model.menuBarIconShown && !launchedAsLoginItem && !Self.e2eActive {
+                DispatchQueue.main.async { HostAppActivation.shared.showSetupOrSettings(needsSetup: false) }
+            }
         }
         appDelegate.onReopen = {
-            HostAppActivation.shared.showSetupOrSettings(needsSetup: model.needsSetup)
+            let destination = HostMenuBarIconPolicy.reopenDestination(needsSetup: model.needsSetup,
+                                                                      iconShown: model.menuBarIconShown)
+            HostAppActivation.shared.showSetupOrSettings(needsSetup: destination == .setup)
         }
     }
 
@@ -38,7 +44,9 @@ struct RemoteHostApp: App {
         .windowResizability(.contentSize)
         .commands { CommandGroup(after: .appInfo) { HostUpdateButton() } }
 
-        MenuBarExtra {
+        // Removing the icon (Command-drag or System Settings → Menu Bar) only hides it: the Setup and
+        // Settings scenes keep the app, and sharing, running. Settings → Show in menu bar restores it.
+        MenuBarExtra(isInserted: Binding(get: { model.menuBarIconShown }, set: model.setMenuBarIconShown)) {
             HostPopoverContainer(model: model)
         } label: {
             Image(nsImage: HostMenuBarIcon.image(for: HostMarkState(status: model.status),
@@ -153,6 +161,7 @@ extension HostActions {
             copyDiagnostics: model.copyDiagnostics,
             setNewestFrameWins: model.setNewestFrameWins,
             selectDisplay: model.selectDisplay,
+            setMenuBarIconShown: model.setMenuBarIconShown,
             openSetup: openSetup,
             openSettings: openSettings,
             quit: {

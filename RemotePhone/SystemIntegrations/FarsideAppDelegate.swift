@@ -19,6 +19,10 @@ final class AgentNotificationRouter: NSObject, UNUserNotificationCenterDelegate 
         }
     }
 
+    func userNotificationCenter(_ center: UNUserNotificationCenter, openSettingsFor notification: UNNotification?) {
+        Task { @MainActor in AgentAlertCenter.shared.openSettingsFromSystem() }
+    }
+
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse) async {
         guard let payload = AgentAlertPayload(userInfo: response.notification.request.content.userInfo),
@@ -43,7 +47,10 @@ final class FarsideAppDelegate: NSObject, UIApplicationDelegate {
             PushRegistrar.shared.forget()
         }
         // Only a person who turned alerts on has any reason to hold a push address.
-        if alerts.preferences.alertsEnabled { application.registerForRemoteNotifications() }
+        if alerts.preferences.alertsEnabled {
+            application.registerForRemoteNotifications()
+            Task { await alerts.refreshSettingsLink() }
+        }
         return true
     }
 

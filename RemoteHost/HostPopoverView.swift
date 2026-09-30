@@ -159,6 +159,7 @@ struct HostPopoverView: View {
         case .declinePhone: actions.declinePhone()
         case .finishSetup, .showCode: actions.openSetup()
         case .pairPhone: actions.pairNewPhone()
+        case .openScreenRecording: actions.openSystemSettings(.screenRecording)
         }
     }
 }

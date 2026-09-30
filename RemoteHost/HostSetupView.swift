@@ -280,7 +280,15 @@ struct HostPermissionsPage: View {
                                 .display(" we stop asking"), .plain(".")], size: 30)
             HostSetupText.body("Your Mac checks before anything can see or steer it. Good Mac. Switch both on and this window notices by itself.")
                 .padding(.top, 10)
-                .padding(.bottom, 18)
+                .padding(.bottom, updateNotice == nil ? 18 : 10)
+            if let updateNotice {
+                Label(updateNotice, systemImage: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(Farside.Palette.bone)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 14)
+                    .accessibilityIdentifier("farside.setup.updatedMacOS")
+            }
             VStack(spacing: 10) {
                 HostPermissionRow(
                     title: "Screen Recording", reason: "So your iPhone can see the screen.",
@@ -326,6 +334,10 @@ struct HostPermissionsPage: View {
             try? await Task.sleep(for: .seconds(20))
             if !Task.isCancelled { showsRecoveryLink = true }
         }
+    }
+
+    private var updateNotice: String? {
+        HostCaptureApprovalCopy.afterUpdate(state.permissionsTurnedOffByUpdate, macOSMajor: state.macOSMajor)
     }
 
     private var waiting: Bool {
