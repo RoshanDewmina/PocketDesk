@@ -275,7 +275,7 @@ final class RemoteCapture {
             resolved = HostResolvedCaptureScope(display: display,
                 filter: SCContentFilter(display: display, excludingWindows: excluding), target: nil)
         }
-        let lease = CaptureScopeLease(validUntil: target == nil ? .infinity : CACurrentMediaTime() + 1)
+        let lease = CaptureScopeLease(validUntil: target == nil ? .infinity : CACurrentMediaTime() + 1, clock: { CACurrentMediaTime() })
         let initialQuality = requestedQuality
         let initialClientLongEdge = requestedClientLongEdge
         let next = try RemoteCaptureSession(resolved: resolved, lease: lease, peer: peer, quality: initialQuality,
@@ -927,7 +927,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         of type: SCStreamOutputType
     ) {
         guard scopeTarget?.processIsAlive != false,
-              scopeLease.performIfValid(at: CACurrentMediaTime(), {}) else {
+              scopeLease.performIfValid({}) else {
             reportStopped(HostCaptureScopeError.targetUnavailable)
             return
         }
@@ -979,7 +979,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     private func publishHealthAndIdleFrame() {
         guard !stopping else { return }
-        if !failureReported && (scopeTarget?.processIsAlive == false || !scopeLease.performIfValid(at: CACurrentMediaTime(), {})) {
+        if !failureReported && (scopeTarget?.processIsAlive == false || !scopeLease.performIfValid({})) {
             reportStopped(HostCaptureScopeError.targetUnavailable); return
         }
         if #available(macOS 27, *), !failureReported {
@@ -1002,7 +1002,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0) {
         lastSentAt = time
         guard scopeTarget?.processIsAlive != false else { return }
-        scopeLease.performIfValid(at: time) {
+        scopeLease.performIfValid {
             peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs)
         }
     }

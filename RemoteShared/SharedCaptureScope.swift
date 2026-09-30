@@ -46,8 +46,11 @@ final class CaptureScopeLease: @unchecked Sendable {
     private let lock = NSLock()
     private var active = true
     private var validUntil: TimeInterval
+    private let clock: () -> TimeInterval
 
-    init(validUntil: TimeInterval = .infinity) { self.validUntil = validUntil }
+    init(validUntil: TimeInterval = .infinity, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        self.validUntil = validUntil; self.clock = clock
+    }
 
     func renew(until deadline: TimeInterval) {
         lock.lock(); defer { lock.unlock() }
@@ -60,8 +63,10 @@ final class CaptureScopeLease: @unchecked Sendable {
     }
 
     @discardableResult
-    func performIfValid(at now: TimeInterval, _ body: () -> Void) -> Bool {
+    func performIfValid(_ body: () -> Void) -> Bool {
         lock.lock(); defer { lock.unlock() }
+        // Sample after acquiring the delivery lock: queued work cannot reuse a pre-wait timestamp.
+        let now = clock()
         guard active, now.isFinite, now <= validUntil else { return false }
         body()
         return true
