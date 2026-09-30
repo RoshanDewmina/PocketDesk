@@ -49,7 +49,7 @@ extension RemoteAction {
         guard interaction == nil, pointerLocatorSupported == nil, pointerProbe == nil, pointerLocation == nil,
               pointerSync == nil, streamQuality == nil, textFocusProbe == nil, textFocusEditable == nil,
               clipboard == nil, features == nil, hostState == nil, hostStream == nil, curtain == nil, hostEvent == nil,
-              agentAlert == nil,
+              agentAlert == nil, away == nil,
               x == 0, y == 0, text.isEmpty, key.isEmpty, modifiers.isEmpty
         else { throw RemoteError.invalidMessage }
         if action == "display" {
