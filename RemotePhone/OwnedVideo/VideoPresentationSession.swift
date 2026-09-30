@@ -7,6 +7,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     let fence: VideoPresentationFence
     let view: OwnedMetalVideoView
     let smoothMotion = SmoothMotionController()
+    private let motionGate = VideoMotionGate()
     let legibility = LegibilityProbe()
     private var readsMarkers = false
     private var lastNotification: TimeInterval = 0
@@ -30,7 +31,10 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         self.onFrame = onFrame
         super.init()
         smoothMotion.deliver = { [weak self] output in self?.deliver(output.frame, marker: output.marker) }
-        view.beforeDraw = { [weak self] view in self?.smoothMotion.displayTick(view) }
+        view.beforeDraw = { [weak self] view in
+            guard let self else { return }
+            self.motionGate.perform { self.smoothMotion.displayTick(view) }
+        }
         smoothMotion.activate(); Self.active = self
         track.add(self)
     }
@@ -39,18 +43,22 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
                    mode: SmoothMotionMode, upscale: Bool, onSourceFrame: ((VideoFrameEnvelope) -> Void)?) {
         _ = fence.renew(admission)
         expiryTimer?.invalidate()
-        expiryTimer = Timer.scheduledTimer(withTimeInterval: max(0.001, admission.validUntil - ProcessInfo.processInfo.systemUptime), repeats: false) { [weak self] _ in self?.invalidate() }
-        _ = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) {
+        let timer = Timer(timeInterval: max(0.001, admission.validUntil - ProcessInfo.processInfo.systemUptime), repeats: false) { [weak self] _ in self?.invalidate() }
+        expiryTimer = timer; RunLoop.main.add(timer, forMode: .common)
+        let configured = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) {
             view.counters = counters; view.fillsFrame = fillsFrame; readsMarkers = statistics
             self.onSourceFrame = onSourceFrame
             legibility.configure(enabled: statistics, counters: counters, sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth)
-            smoothMotion.setMode(mode); smoothMotion.setUpscale(upscale)
+            return true
+        }
+        if configured == true {
+            motionGate.perform { smoothMotion.setMode(mode); smoothMotion.setUpscale(upscale) }
         }
     }
     func setSize(_ size: CGSize) {} // Actual public buffer dimensions/crop/rotation determine geometry.
     func renderFrame(_ frame: RTCVideoFrame?) {
         guard let frame else { return }
-        _ = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) {
+        let receipt = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) {
             let now = MachClock.nowMs()
             sources.append(SourceReceipt(frame, at: now))
             if sources.count > 8 { sources.removeFirst(sources.count - 8) }
@@ -58,16 +66,22 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
             let marker = decoded?.readMarker()
             let source = VideoFrameEnvelope(receiptID: sources.last!.id, identity: admissionIdentity, frame: frame,
                 arrivalMs: now, marker: marker, originalSource: true)
-            onSourceFrame?(source) // Thread-safe raw-source sink only; never UI work on this decode thread.
             if let decoded { legibility.frameArrived(decoded.pixelBuffer, visible: decoded.visible, marker: marker) }
-            smoothMotion.receive(frame, marker: marker)
             let uptime = ProcessInfo.processInfo.systemUptime
+            var notify = false
             if uptime - lastNotification > 0.25 {
                 lastNotification = uptime
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
-                    _ = self.fence.withAdmission(self.admissionIdentity, at: ProcessInfo.processInfo.systemUptime) { self.onFrame() }
-                }
+                notify = true
+            }
+            return (source, onSourceFrame, notify)
+        }
+        guard let (source, callback, notify) = receipt else { return }
+        callback?(source) // The derivative sink independently rechecks its terminal admission.
+        motionGate.perform { smoothMotion.receive(frame, marker: source.marker) }
+        if notify {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.fence.withAdmission(self.admissionIdentity, at: ProcessInfo.processInfo.systemUptime, { true }) == true else { return }
+                self.onFrame() // Never call user/model hooks while holding the presentation fence.
             }
         }
     }
@@ -87,7 +101,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         guard !stopped else { return }; stopped = true
         expiryTimer?.invalidate(); expiryTimer = nil
         view.invalidate(); track.remove(self)
-        smoothMotion.deactivate() // May flush late outputs; the fence is already closed.
+        motionGate.close { smoothMotion.deactivate() } // Late presenter flush callbacks see a closed fence.
         legibility.configure(enabled: false, counters: nil, sourceSize: .zero, displayedPixelWidth: 0)
         sources.removeAll(); onSourceFrame = nil
         if Self.active === self { Self.active = nil }

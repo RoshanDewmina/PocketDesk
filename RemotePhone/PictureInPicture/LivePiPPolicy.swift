@@ -1,5 +1,16 @@
 import Foundation
 
+/// Pausing retires work already dequeued, even if playback resumes before conversion finishes.
+struct LivePiPConversionEpoch {
+    private(set) var enabled = true
+    private(set) var generation: UInt64 = 0
+    mutating func setEnabled(_ next: Bool) {
+        if enabled != next { generation &+= 1; enabled = next }
+    }
+    var ticket: UInt64? { enabled ? generation : nil }
+    func accepts(_ ticket: UInt64) -> Bool { enabled && generation == ticket }
+}
+
 /// PiP grants view-only presentation. It never confers input or background network authority.
 struct LivePiPPolicy: Equatable {
     enum State: Equatable { case ineligible, ready, starting, active, paused, stopping }

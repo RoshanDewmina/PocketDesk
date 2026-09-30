@@ -41,7 +41,8 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
             self.controller = controller
         }
         expiryTimer?.invalidate()
-        expiryTimer = Timer.scheduledTimer(withTimeInterval: max(0.001, next.validUntil - ProcessInfo.processInfo.systemUptime), repeats: false) { [weak self] _ in self?.stop() }
+        let timer = Timer(timeInterval: max(0.001, next.validUntil - ProcessInfo.processInfo.systemUptime), repeats: false) { [weak self] _ in self?.stop() }
+        expiryTimer = timer; RunLoop.main.add(timer, forMode: .common)
         controller?.invalidatePlaybackState()
         synchronizeSource(); didChangeState?(policy.state)
     }

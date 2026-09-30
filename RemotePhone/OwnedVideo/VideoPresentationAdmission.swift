@@ -44,6 +44,25 @@ final class VideoPresentationFence: @unchecked Sendable {
     }
 }
 
+/// Motion methods can synchronously deliver while holding their own presenter lock. NEVER
+/// enter this gate or call motion/presenter methods while holding VideoPresentationFence.
+/// Close the presentation fence first, then close/drain this gate before stopping motion.
+final class VideoMotionGate: @unchecked Sendable {
+    private let lock = NSRecursiveLock()
+    private var closed = false
+    @discardableResult
+    func perform(_ action: () -> Void) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { return false }
+        action(); return true
+    }
+    func close(_ teardown: () -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { return }; closed = true
+        teardown()
+    }
+}
+
 /// One pending, one last submitted for redraw, and at most two flights. No queue per decode.
 final class NewestFrameMailbox<Frame>: @unchecked Sendable {
     private let lock = NSLock()

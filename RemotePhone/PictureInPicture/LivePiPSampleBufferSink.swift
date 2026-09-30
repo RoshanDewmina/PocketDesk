@@ -13,9 +13,9 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
     private var pending: VideoFrameEnvelope?
     private var working = false
     private var closed = false
-    private var enabled = true
+    private var conversionEpoch = LivePiPConversionEpoch()
     func setEnabled(_ value: Bool) {
-        lock.lock(); enabled = value; if !value { pending = nil }; lock.unlock()
+        lock.lock(); conversionEpoch.setEnabled(value); if !value { pending = nil }; lock.unlock()
     }
     private var pool: CVPixelBufferPool?
     private var poolSize: CGSize = .zero
@@ -29,7 +29,7 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
         guard frame.originalSource, frame.identity == identity,
               fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {}) != nil else { return }
         lock.lock()
-        guard !closed, enabled else { lock.unlock(); return }
+        guard !closed, conversionEpoch.enabled else { lock.unlock(); return }
         pending = frame
         guard !working else { lock.unlock(); return }
         working = true; lock.unlock()
@@ -44,14 +44,14 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
     private func drain() {
         while true {
             lock.lock()
-            guard !closed, let frame = pending else { working = false; lock.unlock(); return }
+            guard !closed, let generation = conversionEpoch.ticket, let frame = pending else { working = false; lock.unlock(); return }
             pending = nil; lock.unlock()
             guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {}) != nil,
                   layer.sampleBufferRenderer.isReadyForMoreMediaData,
                   let sample = makeSample(frame) else { continue }
             _ = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
                 lock.lock(); defer { lock.unlock() }
-                guard enabled, !closed else { return }
+                guard conversionEpoch.accepts(generation), !closed else { return }
                 layer.sampleBufferRenderer.enqueue(sample)
                 enqueueCount += 1
             }
