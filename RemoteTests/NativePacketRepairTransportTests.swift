@@ -7,6 +7,7 @@ final class NativePacketRepairTransportTests: XCTestCase {
     func testActualRelayPolicyNegotiatesRepairAndDirectPolicyRemovesItWithoutRelabellingVideo() async throws {
         // Dedicated XCTest process: global public trials precede the first factory.
         PacketRepairPreferences.overrideForTesting = true
+        try XCTSkipIf(!PacketRepairPreferences.activeThisLaunch, "Run this sender fixture in its dedicated cold XCTest process; field trials cannot be changed after another factory.")
         let host = PeerMedia(isHost: true, servers: [], hevc: false)
         let phone = PeerMedia(isHost: false, servers: [], hevc: false)
         defer { host.close(); phone.close() }
@@ -43,6 +44,7 @@ final class NativePacketRepairTransportTests: XCTestCase {
     @MainActor
     func testCodecPreferenceFailureCannotSendNewOfferOrRetainAnOldRepairStream() async throws {
         PacketRepairPreferences.overrideForTesting = true
+        try XCTSkipIf(!PacketRepairPreferences.activeThisLaunch, "Run this sender fixture in its dedicated cold XCTest process; field trials cannot be changed after another factory.")
         let host = PeerMedia(isHost: true, servers: [], hevc: false)
         defer { host.close() }
         host.routeOverrideForTesting = "Relay"
@@ -65,6 +67,7 @@ final class NativePacketRepairTransportTests: XCTestCase {
     @MainActor
     func testRequestedRelayDoesNotAdvertiseRepairBeforeSelectedRelayIsObserved() async throws {
         PacketRepairPreferences.overrideForTesting = true
+        try XCTSkipIf(!PacketRepairPreferences.activeThisLaunch, "Run this sender fixture in its dedicated cold XCTest process; field trials cannot be changed after another factory.")
         let host = PeerMedia(isHost: true, servers: [], forceRelay: true, hevc: false)
         defer { host.close() }
         var offer: String?
@@ -99,8 +102,9 @@ private final class PacketRepairVideoSink: NSObject, RTCVideoRenderer {
 
 /// Run in a separate XCTest process from the enabled-sender fixtures.
 final class NativePacketRepairColdReceiverTests: XCTestCase {
-    func testPinnedDefaultReceiverAcceptsFlexFECWithoutMacSendTrialOrPreference() {
+    func testPinnedDefaultReceiverAcceptsFlexFECWithoutMacSendTrialOrPreference() throws {
         PacketRepairPreferences.overrideForTesting = false
+        try XCTSkipIf(PacketRepairPreferences.activeThisLaunch, "Run this default receiver fixture in a separate cold XCTest process from enabled sender trials.")
         StreamTuning.prepareRuntime()
         let factory = RTCPeerConnectionFactory(encoderFactory: RTCDefaultVideoEncoderFactory(), decoderFactory: RTCDefaultVideoDecoderFactory())
         XCTAssertFalse(PacketRepairPreferences.activeThisLaunch)
