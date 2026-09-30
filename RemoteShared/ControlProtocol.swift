@@ -44,6 +44,8 @@ struct RemoteAction: Codable {
     var ladder: LadderState? = nil
     /// The Mac's load state for the phone's pill, on `capture` status.
     var busy: BusyState? = nil
+    var looksLikeWidth: Double? = nil
+    var scaleError: String? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
@@ -63,6 +65,8 @@ struct RemoteAction: Codable {
         guard (captureRegion == nil && ladder == nil && busy == nil) || action == "capture" else {
             throw RemoteError.invalidMessage
         }
+        if looksLikeWidth != nil, action != "displayScale" { throw RemoteError.invalidMessage }
+        if let scaleError, action != "displays" || BigTextError(rawValue: scaleError) == nil { throw RemoteError.invalidMessage }
         // Also before the early returns, so no other action can carry a display list.
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }
