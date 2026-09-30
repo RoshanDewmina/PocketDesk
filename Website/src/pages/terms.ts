@@ -11,13 +11,11 @@ const P = config.pricing;
 
 const OPEN_ITEMS = [
   "DRAFT: counsel must review everything on this page before launch. Remove the draft banner only after sign-off.",
-  "[TO FILL] Contracting party: legal name and address (config.contact.legalName / postalAddress).",
+  "[TO FILL] Contracting party: postal address (config.contact.postalAddress). The legal name is set.",
   "[TO FILL] Governing law and courts (config.contact.governingLaw).",
   "[DECIDE] Minimum age. None is set here; a minimum above the App Store age rating forces an age-rating override (PRIVACY-POLICY.md section 5).",
   "[DECIDE] Use Apple's standard Licensed Application EULA for the iOS app (assumed here) or a custom EULA with Apple's required clauses.",
-  "[CONFIRM] Liability cap wording and amount.",
-  "[CONFIRM] Relay fair-use wording against SUBSCRIPTION-SETUP.md decision D2 (no advertised unlimited remote use; disclose any limit in the paywall).",
-  "[CONFIRM] Plan naming: 'Anywhere' here, 'Farside Remote' in the App Store Connect plan.",
+  "[CONFIRM] Counsel review of the liability cap: the greater of what you paid us in the 12 months before the claim, or CA$50. Payments go through Apple, so check that 'paid us' reads correctly.",
 ];
 
 const S: Section[] = [
@@ -29,7 +27,7 @@ const S: Section[] = [
   {
     id: "what",
     title: "What Farside is",
-    body: html`<p>Farside lets you see and control your own Mac from your iPhone or iPad. It is free when your devices are on the same local network. The optional Anywhere plan adds access over the internet.</p>`,
+    body: html`<p>Farside lets you see and control your own Mac from your iPhone or iPad. It is free when your devices are on the same local network. The optional Farside Anywhere plan adds access over the internet.</p>`,
   },
   {
     id: "your-mac",
@@ -52,6 +50,7 @@ const S: Section[] = [
   <li>Anywhere is an auto-renewing subscription sold inside the app through Apple, monthly or yearly. New subscribers get a ${P.trialDays}-day free trial.</li>
   <li>The price is shown before you subscribe. Payment is charged to your Apple Account when you confirm the purchase, and the subscription renews unless you cancel at least 24 hours before the end of the current period.</li>
   <li>Manage or cancel any time in Settings › your name › Subscriptions. Refunds are handled by Apple under its policies.</li>
+  <li>One subscription works on up to 3 of your devices.</li>
   <li>Relaying encrypted traffic costs us real money. We don’t advertise unlimited use; if we ever introduce a usage limit, we will tell you in the app before it applies.</li>
 </ul>`,
   },
@@ -83,7 +82,7 @@ const S: Section[] = [
   {
     id: "disclaimers",
     title: "Disclaimers and liability",
-    body: html`<p>To the extent the law allows, Farside is provided “as is”, and we are not liable for indirect or consequential losses, lost data or lost profits. Where liability can’t be excluded, our total liability is limited to the amount you paid us for Farside in the 12 months before the claim. Nothing in these terms limits rights you have under consumer protection laws that can’t be waived.</p>`,
+    body: html`<p>To the extent the law allows, Farside is provided “as is”, and we are not liable for indirect or consequential losses, lost data or lost profits. Where liability can’t be excluded, our total liability is limited to the greater of the amounts you paid us in the 12 months before the claim, or CA$50. Nothing in these terms limits rights you have under consumer protection laws that can’t be waived.</p>`,
   },
   {
     id: "ending",

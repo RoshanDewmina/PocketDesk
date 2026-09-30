@@ -33,7 +33,7 @@ const QAS: QA[] = [
   },
   {
     q: "Can I reach my Mac when I’m away from home?",
-    a: html`<p>That’s what the Anywhere plan is for: your iPhone reaches your Mac over the internet, for example on cellular or a café’s Wi-Fi. It’s planned at ${P.monthly} a month or ${P.yearly} a year, with a ${P.trialDays}-day free trial, bought in the app through Apple. Your Mac needs to be awake and logged in.</p>`,
+    a: html`<p>That’s what the Anywhere plan is for: your iPhone reaches your Mac over the internet, for example on cellular or a café’s Wi-Fi. It’s ${P.final ? "" : "planned at "}${P.monthly} a month or ${P.yearly} a year, with a ${P.trialDays}-day free trial, bought in the app through Apple. Your Mac needs to be awake and logged in.</p>`,
   },
 ];
 
@@ -61,7 +61,7 @@ export function remoteGuidePage(assets: Assets) {
 
     <h2 id="away">Away from home: the Anywhere plan</h2>
     <p>The Anywhere plan lets your iPhone reach your Mac over the internet: on cellular, at a friend’s place, on a hotel’s Wi-Fi. When your devices can’t connect directly, an encrypted relay passes the stream along; it can’t read what it carries. There’s no port forwarding, router setup or VPN.</p>
-    <p>Anywhere is planned at ${P.monthly} a month or ${P.yearly} a year, after a ${P.trialDays}-day free trial, and is sold only inside the app through Apple. Prices are in Canadian dollars; the App Store shows yours before you subscribe.</p>
+    <p>Anywhere ${P.final ? "costs" : "is planned at"} ${P.monthly} a month or ${P.yearly} a year, after a ${P.trialDays}-day free trial, and is sold only inside the app through Apple. Prices are in Canadian dollars; the App Store shows yours before you subscribe.</p>
 
     <h2 id="how">How the connection works</h2>
     <ol>

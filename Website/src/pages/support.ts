@@ -167,7 +167,7 @@ const permissions = html`<p>If you flipped the switch but Farside still says it 
 <p>macOS sometimes asks again, every so often, whether Farside may keep recording the screen. Say yes on the Mac and sharing picks up where it left off.</p>`;
 
 const billing = html`<ul>
-  <li><b>Try it:</b> Anywhere starts with a ${config.pricing.trialDays}-day free trial, then ${config.pricing.monthly} a month or ${config.pricing.yearly} a year (planned pricing, Canadian dollars).</li>
+  <li><b>Try it:</b> Anywhere starts with a ${config.pricing.trialDays}-day free trial, then ${config.pricing.monthly} a month or ${config.pricing.yearly} a year (${config.pricing.final ? "" : "planned pricing, "}Canadian dollars).</li>
   <li><b>Cancel or change plan:</b> Settings › your name › Subscriptions on your iPhone or iPad. Cancel at least 24 hours before the renewal date to avoid the next charge.</li>
   <li><b>Refunds:</b> Apple handles them. Request one at <a href="https://reportaproblem.apple.com" rel="noopener">reportaproblem.apple.com</a>.</li>
   <li><b>New phone?</b> Use <b>Restore Purchases</b> in the app’s settings.</li>

@@ -9,30 +9,18 @@ import { breadcrumbs, graph, webPage } from "./schema";
 
 const OPEN_ITEMS = [
   "[TO FILL] Effective date (rendered as 'to be confirmed').",
-  "[TO FILL] Who we are: legal entity or individual name, registered address, country (config.contact.legalName / postalAddress).",
+  "[TO FILL] Who we are: postal address and country (config.contact.postalAddress). The legal name is set.",
   "[TO FILL] privacy@ address on the real domain (config.contact.privacyEmail).",
   "[TO FILL] EU/UK representative or data protection officer, only if counsel says one is required. Not rendered.",
-  "[CONFIRM] Clipboard wording. Rendered as user-initiated text transfer both ways, not stored or logged (PRODUCT.md, 28 Sep night merge). Check against the shipping build.",
-  "[CONFIRM] Connection-service logging and retention once the production stack is final. Recommended: no request logs beyond 7 days, none containing message bodies.",
-  "[CONFIRM] STUN configuration (rendered as 'may contact a STUN server operated by Cloudflare').",
-  "[CONFIRM] Notifications section assumes agent alerts ship in 1.0 as a beta (PRODUCT D29). Remove the section if push does not ship.",
-  "[CONFIRM] Whether Apple's original transaction ID is stored hashed (SUBSCRIPTION-SETUP.md proposes an HMAC). Add 'stored as a keyed hash' once true.",
-  "[TO FILL] Subscription record retention after the active term (rendered: 90 days, to be confirmed).",
   "[TO FILL] Support email retention (rendered: 24 months, to be confirmed).",
-  "[TO FILL] Website hosting provider (rendered: Cloudflare Pages, to be confirmed). [CONFIRM] no cookies or analytics on the site.",
-  "[CONFIRM] Sparkle update check sends only IP, app version and macOS version; system profiling off.",
   "[TO FILL] If serving the EU or UK: legal bases (for example contract and legitimate interests) and international transfers. Not rendered.",
-  "[TO FILL] Other recipients: email provider, support tool (rendered: 'our email provider, to be confirmed').",
-  "[CONFIRM] Cloudflare's role: relay, and network, DNS and hosting services.",
-  "[CONFIRM] Approved room identifiers kept until the Mac is removed or deletion is requested.",
-  "[TO FILL] Server request log retention (rendered: 7 days, to be confirmed).",
-  "[E] 'Remove this Mac and delete server data' in Settings is not built yet; only the email route is rendered.",
+  "[TO FILL] Waitlist and support email provider. No email-sending code exists yet, so the page says only that we send invites. Name the provider under 'Who receives information' once chosen.",
+  "[DECIDE] 12-month waitlist deletion. Nothing deletes waitlist rows automatically; the promise depends on the dated manual DELETE in Docs/launch/LAUNCH-CHECKLIST.md (task 8.5). Keep that task, or move the waitlist to a Worker with a cron.",
+  "[CONFIRM] RATE_SALT is set in Cloudflare Pages production. Without it the IP hash falls back to a public salt and 'we cannot turn the hash back' stops being true.",
   "[TO FILL] Rights and complaint routes under the laws that apply (PIPEDA and Quebec Law 25, EU/UK GDPR, California). Rendered generically.",
   "[TO FILL] Minimum age for 'not directed to children' (13 or 16, per counsel; rendered: 13, to be confirmed).",
-  "[TO FILL] Contact block: name, postal address, email.",
+  "[TO FILL] Contact block: postal address.",
   "NEW, not in the draft: the website loads Google Fonts, which sends visitors' IP addresses to Google. Disclosed below; self-host the fonts to remove it.",
-  "[CONFIRM] Beta waitlist section matches the shipped function (functions/api/waitlist.ts on website/infra-2026-09-29): fields, 12-month retention, 1-hour hashed IP, Cloudflare D1. Name the provider that sends waitlist emails.",
-  "NAME: the plan is 'Anywhere' on the website but 'Farside Remote' in SUBSCRIPTION-SETUP.md and STORE-LISTING.md. Pick one before launch.",
 ];
 
 const S: Section[] = [
@@ -42,11 +30,11 @@ const S: Section[] = [
     body: html`<ul class="short">
   <li>Farside lets you see and control your own Mac from your iPhone or iPad. There is no Farside account, and the apps never ask for your name, email address or phone number. If you join the beta waitlist on this website, we keep the email address you give us (see <a href="#waitlist">Beta waitlist</a>).</li>
   <li>What is on your Mac’s screen, what you type and what you say travel between your own devices, encrypted. We do not record, store or look at your screen, keystrokes, clipboard or voice.</li>
-  <li>Our servers introduce your devices to each other and, if you subscribe to the Anywhere plan, pass encrypted traffic along when your devices cannot connect directly. To do that they see technical details such as IP addresses, timing and data volume, and a random identifier for each paired Mac.</li>
+  <li>Our servers introduce your devices to each other and, if you subscribe to the Farside Anywhere plan, pass encrypted traffic along when your devices cannot connect directly. To do that they see technical details such as IP addresses, timing and data volume, and a random identifier for each paired Mac.</li>
   <li>We check your subscription with Apple. Apple handles your payment; we never see your card or Apple Account details.</li>
   <li>No ads. No tracking. No analytics or advertising SDKs. We do not sell your data.</li>
 </ul>
-<p><b>Who we are.</b> Farside is made by ${detail(config.contact.legalName, "legal name")}, ${detail(config.contact.postalAddress, "registered address")}. Privacy questions go to ${email("privacy")}.</p>`,
+<p><b>Who we are.</b> Farside is made by ${detail(config.contact.legalName, "legal name")}, ${detail(config.contact.postalAddress, "postal address")}. Privacy questions go to ${email("privacy")}.</p>`,
   },
   {
     id: "devices",
@@ -66,19 +54,24 @@ const S: Section[] = [
     id: "connect",
     title: "What our servers see to connect you",
     body: html`<p>When you pair a phone with a Mac, the Mac shows a code that contains a random room identifier, a one-time token, an encryption key and an expiry of about two minutes. The key stays on your two devices. Our connection service forwards connection-setup messages between them; those messages are encrypted with that key, so we cannot read them.</p>
-<p>Each time a device connects, our service receives its IP address (as any internet service does), the random room identifier, a random token and the time. It keeps live connection state in memory only while devices are connected. It keeps a list of approved room identifiers so that only paired Macs can use the service.</p>
-<p>If a direct connection is not possible and you have the Anywhere plan, your encrypted stream passes through a relay run by our provider Cloudflare. Cloudflare can see IP addresses, port numbers, timing and how much data passed. It cannot decrypt the stream. Relay credentials are short-lived and tied to a random room identifier, not to you. To find network addresses, connection setup may also contact a STUN server operated by Cloudflare.</p>`,
+<p>Each time a device connects, our service receives its IP address (as any internet service does), the random room identifier, a random token and the time. It stores the connection state it needs, such as hashed tokens, connection times and the status of relay credentials, and deletes it after 30 days without a connection.</p>
+<p>It also keeps a registry of Mac room identifiers, stored as a one-way hash, so it can limit abuse and block misuse. A Mac is added the first time it connects; there is no approval step. The registry entry is deleted when you choose Remove This Mac’s Server Room in the Mac app’s Settings, or after 12 months without use. Entries blocked for abuse are kept to enforce the block.</p>
+<p>Our service keeps security audit records (event names, shortened identifiers and a hashed subscription identifier) for 30 days, and service logs for up to 7 days. Neither contains IP addresses or the content of your messages.</p>
+<p>Our connection service runs on Cloudflare. If a direct connection is not possible and you have the Anywhere plan, your encrypted stream passes through a relay that Cloudflare also runs. Cloudflare can see IP addresses, port numbers, timing and how much data passed. It cannot decrypt the stream. Relay credentials are short-lived and tied to a random room identifier, not to you. To find network addresses, connection setup also contacts a STUN server operated by Cloudflare.</p>`,
   },
   {
     id: "notifications",
     title: "Notifications (agent alerts, beta)",
-    body: html`<p>Farside only asks to send notifications if you turn on agent alerts. To deliver them, your phone’s Apple push notification token is sent to our server and stored with the random room identifier of the Mac it belongs to. Alerts say which agent needs you and contain no screen contents, prompts or file names. You can turn them off in iOS Settings or in the app, which deletes the token.</p>`,
+    body: html`<p>Farside only asks to send notifications if you turn on agent alerts. To deliver them, your phone’s Apple push notification token is sent to our server and stored with the random room identifier of the Mac it belongs to, a one-way hash of your pairing, and your alert settings (whether alerts are on, whether they may break through Focus, whether to show the agent’s name), your language, the app build, your iOS version and whether it is a test or live build. To avoid repeat alerts we also keep a short record of each alert, which expires after 15 minutes.</p>
+<p>Alerts say which agent needs you and contain no screen contents, prompts or file names.</p>
+<p>Turning agent alerts off in Farside deletes the token from our server. Turning notifications off in iOS Settings only stops them from appearing; the token stays on our server until you turn agent alerts off in Farside, remove the Mac’s server room, or leave it unused for 12 months.</p>
+<p>Separately, a session Live Activity uses its own push token so we can end it on your Lock Screen. We store that token with the room identifier and delete it within 24 hours.</p>`,
   },
   {
     id: "subscription",
     title: "Subscription information",
-    body: html`<p>The Anywhere plan is an auto-renewing subscription bought through Apple. Apple, not us, processes payment. To unlock relay access, the app sends the signed transaction that Apple provides to our server. Our server verifies it with Apple and stores: which subscription product it is, when it renews or expires, Apple’s identifier for the subscription (Apple’s original transaction ID), whether it is a live or test purchase, and which paired room identifiers it has enabled.</p>
-<p>We also receive notices from Apple about renewals, cancellations and refunds so that access matches your subscription. We keep this while your subscription is active and for ${tbc("90 days")} afterwards, then delete it.</p>`,
+    body: html`<p>The Anywhere plan is an auto-renewing subscription bought through Apple. Apple, not us, processes payment. To unlock relay access, the app sends the signed transaction that Apple provides to our server. Our server verifies it with Apple and stores: which subscription product it is, when it renews or expires, Apple’s identifier for the subscription, stored only as a keyed hash of Apple’s original transaction ID, whether it is a live or test purchase, and which of your devices it is enabled on (up to 3).</p>
+<p>We also receive notices from Apple about renewals, cancellations and refunds so that access matches your subscription, and keep a record of each notice for 90 days so we do not process it twice. We keep your subscription record while your subscription is active and for 90 days afterwards, then delete it.</p>`,
   },
   {
     id: "support",
@@ -89,14 +82,15 @@ const S: Section[] = [
     id: "waitlist",
     title: "Beta waitlist",
     body: html`<p>If you join the beta waitlist on this website, we store your email address, the page you signed up from, the version of the sign-up wording you agreed to and the time you signed up. We use them only to send you the beta invite and news about the launch.</p>
-<p>We keep them until 12 months after Farside launches, or until you unsubscribe, whichever comes first. Every email we send has an unsubscribe link.</p>
-<p>To stop abuse of the sign-up form, we also keep a salted one-way hash of your IP address for at most one hour. We cannot turn the hash back into your IP address. The waitlist is stored with Cloudflare (Cloudflare D1).</p>`,
+<p>We also store a random code that lets you unsubscribe. The invite and launch news are sent by us.</p>
+<p>We keep your sign-up until 12 months after Farside launches, then delete it. Every email we send has an unsubscribe link. If you unsubscribe, we stop emailing you and keep only your address and the date you unsubscribed, so that we don’t contact you again, until that same deletion date.</p>
+<p>To stop abuse of the sign-up form, we also keep a salted one-way hash of your IP address. It is usually deleted within an hour, and at the latest the next time anyone signs up after that hour. We cannot turn the hash back into your IP address. The waitlist is stored with Cloudflare (Cloudflare D1).</p>`,
   },
   {
     id: "website",
     title: "This website and downloads",
-    body: html`<p>This website is hosted by ${tbc("Cloudflare (Cloudflare Pages)")}, which receives your IP address and the pages or files you request. The site uses no cookies, no analytics and no advertising. Its fonts load from Google Fonts, so your browser also sends your IP address to Google when it fetches them.</p>
-<p>When the Mac app checks for updates it downloads a small update file from our server; the request includes your IP address, the app version and your macOS version. It does not send a system profile.</p>`,
+    body: html`<p>This website is hosted by Cloudflare (Cloudflare Pages), which receives your IP address and the pages or files you request. The site uses no cookies, no analytics and no advertising. Your browser stores your animation preference and, for one visit, the page you pressed Join from; neither is sent to us, except the page name with a waitlist sign-up. The site’s fonts load from Google Fonts, so your browser also sends your IP address to Google when it fetches them.</p>
+<p>When you choose Check for Updates, the Mac app downloads a small update file from this website. The request includes your IP address, the app’s name and version, and the version of the Sparkle update library. It does not send a system profile, and the app does not check automatically.</p>`,
   },
   {
     id: "diagnostics",
@@ -117,10 +111,10 @@ const S: Section[] = [
     id: "recipients",
     title: "Who receives information",
     body: html`<ul>
-  <li><b>Cloudflare</b>: the relay, network services, hosting for this website, and storage for the beta waitlist (Cloudflare D1).</li>
+  <li><b>Cloudflare</b>: runs our connection service and stores its records (room identifiers, subscription records and push tokens); provides the STUN and relay servers, DNS and network services; hosts this website; and stores the beta waitlist (Cloudflare D1).</li>
   <li><b>Apple</b>: the App Store, purchases, push notifications and App Store server notifications. Apple’s own privacy policy applies to its services.</li>
   <li><b>Google</b>: fonts for this website only.</li>
-  <li><b>Our email provider</b>, to receive and answer support email and to send waitlist emails ${raw('<span class="placeholder">(provider to be confirmed)</span>')}.</li>
+  <li><b>Our email provider</b>, to receive and answer support email and to send waitlist emails.</li>
   <li>Professional advisers or authorities, when legally required.</li>
 </ul>
 <p>Each provider is bound to protect information at least as strongly as this policy states. We do not sell your information or share it for advertising.</p>`,
@@ -131,14 +125,18 @@ const S: Section[] = [
     body: html`<table class="table">
   <thead><tr><th scope="col">Information</th><th scope="col">Kept for</th></tr></thead>
   <tbody>
-    <tr><td>Live connection state</td><td>Only while devices are connected (in memory)</td></tr>
-    <tr><td>Approved room identifiers</td><td>Until you remove the Mac or ask us to delete it</td></tr>
-    <tr><td>Push notification tokens</td><td>Until you turn off agent alerts or remove the Mac</td></tr>
-    <tr><td>Subscription record</td><td>The active term plus ${tbc("90 days")}</td></tr>
-    <tr><td>Server request logs, if any</td><td>${tbc("7 days")}</td></tr>
+    <tr><td>Connection state (hashed tokens, connection times, relay-credential status)</td><td>Deleted after 30 days without a connection</td></tr>
+    <tr><td>Mac room identifiers</td><td>Until you choose Remove This Mac’s Server Room on the Mac or ask us, or after 12 months without use. Identifiers blocked for abuse are kept to enforce the block.</td></tr>
+    <tr><td>Push notification tokens and alert settings</td><td>Until you turn off agent alerts in Farside or remove the Mac’s server room, and at most 12 months unused</td></tr>
+    <tr><td>Live Activity push tokens</td><td>At most 24 hours</td></tr>
+    <tr><td>Alert records used to avoid repeats</td><td>15 minutes</td></tr>
+    <tr><td>Subscription record</td><td>The active term plus 90 days</td></tr>
+    <tr><td>Apple subscription notices</td><td>90 days</td></tr>
+    <tr><td>Security audit records (no IP addresses or content)</td><td>30 days</td></tr>
+    <tr><td>Service logs (event names and shortened identifiers, no IP addresses or content)</td><td>Up to 7 days</td></tr>
     <tr><td>Support emails</td><td>${tbc("24 months")}</td></tr>
-    <tr><td>Beta waitlist email address and sign-up details</td><td>Until 12 months after launch, or until you unsubscribe</td></tr>
-    <tr><td>Hashed IP address used to limit sign-up abuse</td><td>At most one hour</td></tr>
+    <tr><td>Beta waitlist email address and sign-up details</td><td>Until 12 months after launch. If you unsubscribe, only your address and the unsubscribe date are kept until then.</td></tr>
+    <tr><td>Hashed IP address used to limit sign-up abuse</td><td>Usually one hour; at the latest until the next sign-up after that</td></tr>
     <tr><td>Data on your devices</td><td>Until you remove the pairing or delete the app</td></tr>
   </tbody>
 </table>`,
@@ -154,7 +152,8 @@ const S: Section[] = [
     title: "Your choices and rights",
     body: html`<ul>
   <li>Stop sharing at any time from the Mac menu bar. Remove a paired phone from Farside on your Mac. Remove a Mac from the phone.</li>
-  <li>To delete what our servers hold about your Mac, email ${email("privacy")}. With no account, we may ask you to prove ownership from the device.</li>
+  <li>To delete what our servers hold about your Mac, open Settings on the Mac and choose Remove This Mac’s Server Room under Server Data. On the phone, Server Data removes that device from your subscription. Neither cancels your Apple subscription, and subscription records are still kept for 90 days after access ends, as described above. Removing a phone or a pairing on its own does not delete server data.</li>
+  <li>You can also email ${email("privacy")}. With no account, we may ask you to prove ownership from the device.</li>
   <li>Change permissions (camera, microphone, speech, local network, notifications, screen recording, accessibility) in your device settings.</li>
   <li>Cancel your subscription in your Apple Account subscription settings. Refunds are handled by Apple.</li>
   <li>You can ask what we hold about you, ask for correction or deletion, and object to processing. Depending on where you live, you may have further rights and can complain to your privacy regulator ${raw('<span class="placeholder">(details to be confirmed)</span>')}.</li>

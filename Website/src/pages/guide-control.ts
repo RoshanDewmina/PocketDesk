@@ -53,7 +53,7 @@ const STEP_DATA: { title: string; text: string; body: Html; img?: string; captio
 const QAS: QA[] = [
   {
     q: "Can I control my Mac from my iPhone for free?",
-    a: html`<p>Yes, when your iPhone and your Mac are on the same local network. Farside is free there, with no account and no ads. Reaching your Mac over the internet needs the Anywhere plan (planned at ${P.monthly} a month or ${P.yearly} a year, with a ${P.trialDays}-day free trial).</p>`,
+    a: html`<p>Yes, when your iPhone and your Mac are on the same local network. Farside is free there, with no account and no ads. Reaching your Mac over the internet needs the Anywhere plan (${P.final ? "" : "planned at "}${P.monthly} a month or ${P.yearly} a year, with a ${P.trialDays}-day free trial).</p>`,
   },
   {
     q: "Do my iPhone and Mac need to be on the same Wi-Fi?",
