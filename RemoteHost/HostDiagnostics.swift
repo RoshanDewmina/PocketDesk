@@ -118,6 +118,7 @@ struct HostDiagnosticsSnapshot {
     /// The active stream tuning, including any experiment switch left in defaults.
     var tuning: String?
 
+    var localSessionReport: String?
     var events: [HostEventLog.Entry] = []
 }
 
@@ -185,6 +186,7 @@ enum HostDiagnosticsReport {
         row("Picture quality", s.streamQuality ?? "not applied")
         row("Stream", s.stream ?? "not measured")
         row("Stream tuning", s.tuning ?? "?")
+        if let report = s.localSessionReport { section("Latest local session report"); lines.append(report) }
         section("Recent events")
         if s.events.isEmpty { lines.append("none") }
         for entry in s.events.suffix(40) {

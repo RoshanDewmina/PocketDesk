@@ -432,7 +432,8 @@ final class RemoteHostModel: ObservableObject {
             allowBigText: !captureScopeViewOnly && preferences.allowBigText,
             bigTextStatus: bigTextStatus,
             menuBarIconShown: menuBarIconShown,
-            permissionsTurnedOffByUpdate: permissionsTurnedOffByUpdate
+            permissionsTurnedOffByUpdate: permissionsTurnedOffByUpdate,
+            diagnosticReports: diagnosticReports
         )
     }
 
@@ -454,6 +455,9 @@ final class RemoteHostModel: ObservableObject {
         HostPermissionCopy.listName(fromDisplayName: FileManager.default.displayName(atPath: Bundle.main.bundlePath))
 
     private var latestSenderStatistics: StreamStatsReport?
+    private var diagnosticRecorder = DiagnosticSessionRecorder()
+    private let diagnosticStore = SessionDiagnosticStore()
+    @Published private var diagnosticReports: [SessionDiagnosticReport] = []
 
     init() {
         #if DEBUG
@@ -467,6 +471,7 @@ final class RemoteHostModel: ObservableObject {
         wantsSharing = preferences.sharingMayResumeWithoutScopeSelection
         if preferences.captureScopeRequiresSelection { preferences.sharingEnabled = false }
         accessibilitySkipped = preferences.accessibilitySkipped
+        diagnosticReports = diagnosticStore.load()
         pairingDeferred = preferences.pairingDeferred
         curtainPreference = preferences.privacyCurtain
         menuBarIconShown = preferences.menuBarIconShown
@@ -1097,6 +1102,8 @@ final class RemoteHostModel: ObservableObject {
         bigText.sessionEnded(.restoreButton)
     }
 
+    func deleteDiagnosticReport(_ id: UUID) { diagnosticStore.delete(id); diagnosticReports = diagnosticStore.load() }
+
     func copyDiagnostics() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(diagnosticsReport(), forType: .string)
@@ -1237,6 +1244,7 @@ final class RemoteHostModel: ObservableObject {
         snapshot.streamQuality = capture.appliedQuality?.title
         snapshot.stream = latestSenderStatistics.map(Self.streamDescription)
         snapshot.tuning = StreamTuning.current.liveSummary
+        snapshot.localSessionReport = diagnosticStore.load().first?.preview
         snapshot.events = events.entries
         return HostDiagnosticsReport.render(snapshot)
     }
@@ -1729,8 +1737,10 @@ final class RemoteHostModel: ObservableObject {
         }
         captureUnhealthySince = nil
         peer.onSenderStatistics = { [weak self, weak peer] report in
-            self?.latestSenderStatistics = report
-            if let peer { self?.observeLoad(report, peer: peer) }
+            guard let self, let peer, self.connection.media === peer else { return }
+            self.diagnosticRecorder.observe(report, at: ProcessInfo.processInfo.systemUptime)
+            self.latestSenderStatistics = report
+            self.observeLoad(report, peer: peer)
         }
         #if DEBUG
         if let e2e = HostE2E.active {
@@ -1938,6 +1948,14 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func endCapture() {
+        if diagnosticRecorder.samples > 0 {
+            try? diagnosticStore.save(diagnosticRecorder.finish(at: ProcessInfo.processInfo.systemUptime, additional: [
+                .init(.hostScreenRecording, CGPreflightScreenCaptureAccess() ? 1 : 0),
+                .init(.hostPostEvents, CGPreflightPostEventAccess() ? 1 : 0),
+                .init(.hostAccessibility, inputAccess.accessibility.isGranted ? 1 : 0)]))
+            diagnosticReports = diagnosticStore.load()
+        }
+        diagnosticRecorder = DiagnosticSessionRecorder()
         cancelPictureRefresh()
         liftCurtain()
         curtainLocallyDismissed = false

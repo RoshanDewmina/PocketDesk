@@ -30,6 +30,10 @@ struct RemotePhoneApp: App {
                     model.sceneChanged(phase)
                 }
                 .onChange(of: phase) { _, value in model.sceneChanged(value) }
+                .alert("Use cellular or metered data?", isPresented: $model.cellularConsentPending) {
+                    Button("Continue") { model.confirmMeteredUsage() }
+                    Button("Stop session", role: .destructive) { model.cancelMeteredUsage() }
+                } message: { Text("This network may charge for the picture, audio and files. The amount is unknown until measured; carrier billing can differ. Your authorized session continues unless you choose Stop.") }
         }
     }
 }
@@ -116,6 +120,10 @@ final class PhoneRemoteModel: ObservableObject {
     let clipboard = PhoneClipboard()
     let linkHints = PhoneLinkHintMonitor()
     @Published private(set) var linkHint: NetworkLinkHint?
+    let diagnostics = PhoneDiagnostics()
+    @Published var cellularConsentPending = false
+    private var warnedMeteredUsage = false
+    private var linkConsentObserver: AnyCancellable?
     let files = PhoneFileTransfer()
     let sendToMac = SendToMacInbox()
     private var shareLiveSessionID: String?
@@ -352,6 +360,7 @@ final class PhoneRemoteModel: ObservableObject {
         presentationHost = host
     }
     private func retireContentPresentation() {
+        diagnostics.cancel()
         invalidatePresentation()
         presentationContentEpoch &+= 1
     }
@@ -490,7 +499,13 @@ final class PhoneRemoteModel: ObservableObject {
         connection.onPresentationInvalidated = { [weak self] in self?.retireContentPresentation() }
         connection.restore()
         linkHints.start()
-        linkHints.$hint.removeDuplicates().assign(to: &$linkHint)
+        linkConsentObserver = linkHints.$hint.removeDuplicates().sink { [weak self] hint in
+            guard let self else { return }; self.linkHint = hint
+            let metered = hint?.metered == true
+            if metered && !self.warnedMeteredUsage {
+                self.warnedMeteredUsage = true; self.cellularConsentPending = true
+            }
+        }
         connection.onAuthenticated = { [weak self] in
             guard let self else { return }
             self.invalidatePresentation()
@@ -527,6 +542,7 @@ final class PhoneRemoteModel: ObservableObject {
                         report.qualityMeasuredWindows = self.qualityMonitor.measuredWindows
                         report.qualityPoorEntries = self.qualityMonitor.poorEntries
                         report.rttStdDevMs = self.roundTripSpreadMs
+                        self.diagnostics.observe(report)
                         if StreamDebug.enabled { StreamDebug.record(report) }
                         let lines = report.summaryLines
                         if self.streamSummaryLines != lines { self.streamSummaryLines = lines }
@@ -1010,6 +1026,23 @@ final class PhoneRemoteModel: ObservableObject {
         }
         guard saved < baseline, saved != current else { return }
         sendBigText(display: id, width: saved)
+    }
+
+    func confirmMeteredUsage() { cellularConsentPending = false }
+    func cancelMeteredUsage() { cellularConsentPending = false; disconnect() }
+    private var diagnosticAuthority: Bool {
+        sceneIsActive && connection.connected && !privacyShield && !contentConcealed &&
+        connection.presentationDeadline() != nil && geometryEpoch > 0 && hostPresence != .locked && hostPresence != .switchedUser
+    }
+    func testMyMac(full: Bool) {
+        let epoch = geometryEpoch, session = connection.presentationSessionID
+        diagnostics.start(full: full, session: session, epoch: epoch,
+            authorized: { [weak self] in self?.diagnosticAuthority == true && self?.geometryEpoch == epoch && self?.connection.presentationSessionID == session },
+            send: { [weak self] probe in guard let self else { return false }; return self.connection.sendControl(self.heartbeatAction(clock: probe)) },
+            facts: { [weak self] in guard let self else { return [] }; return [
+                .init(.captureHealthy, self.captureHealthy ? 1 : 0), .init(.controlAvailable, self.canControl ? 1 : 0),
+                .init(.geometryAvailable, self.sourceSize.width > 0 && self.sourceSize.height > 0 ? 1 : 0),
+                .init(.wifiBurstPossible, self.wifiStallTip != nil ? 1 : nil, source: .inferred)] })
     }
 
     // MARK: Viewport capture (G4)
@@ -1687,6 +1720,7 @@ final class PhoneRemoteModel: ObservableObject {
             sceneWasBackground = false
             returnToForeground()
         case .inactive:
+            diagnostics.cancel()
             setMacAudioMuted(true)
             sceneIsActive = false
             if hasBeenActive {
@@ -1879,6 +1913,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func sessionEnded() {
+        diagnostics.ended()
         pipBackground = false
         invalidatePresentation()
         presentationHost = nil
@@ -1948,7 +1983,11 @@ final class PhoneRemoteModel: ObservableObject {
             controlAllowed = !captureScopeViewOnly && action.x == 1
             if !controlAllowed { pointerLocator.clear(); release() }
         case "heartbeat":
-            if let clock = action.clock { receiveClockEcho(clock) }
+            if let clock = action.clock {
+                diagnostics.receive(clock, session: connection.presentationSessionID, epoch: action.epoch,
+                    authorized: diagnosticAuthority)
+                receiveClockEcho(clock)
+            }
             if let probe = action.textFocusProbe, probe == textFocusProbe.pending?.probe,
                action.epoch == geometryEpoch {
                 receiveSecureFocus(secure: action.textFocusSecure)
