@@ -99,6 +99,12 @@ final class HardwarePointerRouter {
         _ = onCommand(.middleClick)
     }
 
+    /// A side button (from GameController): Back or Forward where the pointer is.
+    func auxiliaryClick(_ button: AuxiliaryMouseButton) {
+        guard enabled, pressed == nil else { return }
+        _ = onCommand(.auxiliaryClick(button))
+    }
+
     func scroll(_ delta: CGSize, phase: ScrollPhase) {
         guard enabled, pressed == nil else { return }
         switch phase {

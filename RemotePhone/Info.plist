@@ -32,6 +32,8 @@
 		<string>Doto-Variable.ttf</string>
 		<string>InstrumentSerif-Italic.ttf</string>
 	</array>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
 	<key>UIUserInterfaceStyle</key>
 	<string>Dark</string>
 </dict>

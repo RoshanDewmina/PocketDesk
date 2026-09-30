@@ -40,7 +40,7 @@ enum SmoothMotionHint: Equatable {
         case "scroll": .scroll
         case "move", "moveTo": dragging ? .windowDrag : nil
         case "key", "text": .typing
-        case "click", "right", "double", "middle": .preciseTap
+        case "click", "right", "double", "middle", "auxClick": .preciseTap
         default: nil
         }
     }

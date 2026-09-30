@@ -198,6 +198,7 @@ struct LocalProofStage {
     var responsesSent = 0
     var proven = false
     var invalidatedBy: String?
+    var localNetworkDenied = false
 
     var summary: String {
         let rejected = LocalProbeRejection.allCases.compactMap { reason in
@@ -213,6 +214,7 @@ struct LocalProofStage {
             "responses=\(responsesSent) proven=\(proven ? "yes" : "no")",
         ]
         if let invalidatedBy { parts.append("invalidated=\(invalidatedBy)") }
+        if localNetworkDenied { parts.append("localNetwork=denied") }
         return parts.joined(separator: "; ")
     }
 }
@@ -244,6 +246,8 @@ final class LocalLinkProof {
     private var closed = false
     var onProven: ((ProvenLocalLink) -> Void)?
     var onInvalidated: (() -> Void)?
+    /// iOS reported that Local Network access is denied for this app; the proof can never pass.
+    var onLocalNetworkDenied: (() -> Void)?
     let endpoint: LocalProbeEndpoint
 
     /// Must run away from the main actor: obtaining the first Network.framework path is bounded at 2 s.
@@ -364,8 +368,13 @@ final class LocalLinkProof {
                     guard verdict == .safe else { self.invalidate("route-ready-\(verdict.reason)"); return }
                     self.routeReady = true
                     self.stage.routeReady = true
+                    self.stage.localNetworkDenied = false
                     self.log.info("gate routeReady")
                     self.maybeChallenge()
+                case .waiting:
+                    if let reason = connection.currentPath?.unsatisfiedReason, LocalNetworkAccess.isDenied(reason) {
+                        self.localNetworkDenied()
+                    }
                 case .failed, .cancelled:
                     self.invalidate("route-\(Self.stateName(state))")
                 default: break
@@ -375,6 +384,9 @@ final class LocalLinkProof {
                 guard let self, !self.closed else { return }
                 let verdict = self.classify(path)
                 self.log.info("route probe path \(String(describing: path.status), privacy: .public) verdict=\(verdict.reason, privacy: .public) interfaces=\(LocalPathClassifier.describe(path.localInterfaces), privacy: .public)")
+                if path.status == .unsatisfied, LocalNetworkAccess.isDenied(path.unsatisfiedReason) {
+                    self.localNetworkDenied(); return
+                }
                 if !self.routePathSeen && path.status != .satisfied { return }
                 if verdict != .safe {
                     self.stage.routeVerdict = verdict.reason
@@ -461,6 +473,20 @@ final class LocalLinkProof {
         log.error("invalidated: \(reason, privacy: .public) stage: \(self.stage.summary, privacy: .public)")
         finish()
         DispatchQueue.main.async { [weak self] in self?.onInvalidated?() }
+    }
+
+    /// Reported, not final: while the system alert is still up the route waits, and Network.framework
+    /// retries it by itself once the person chooses Allow. The coordinator decides.
+    private func localNetworkDenied() {
+        guard !closed, !stage.localNetworkDenied else { return }
+        stage.localNetworkDenied = true
+        log.error("Local Network access denied: \(self.stage.summary, privacy: .public)")
+        DispatchQueue.main.async { [weak self] in self?.onLocalNetworkDenied?() }
+    }
+
+    /// True while iOS is refusing this proof's route for Local Network privacy.
+    var isLocalNetworkDenied: Bool {
+        queue.sync { stage.localNetworkDenied }
     }
 
     private func signed(_ kind: String, _ nonce: String) -> ProbePacket {

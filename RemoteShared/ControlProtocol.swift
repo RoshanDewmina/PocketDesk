@@ -16,6 +16,8 @@ struct RemoteAction: Codable {
     var streamQuality: StreamQuality? = nil
     var textFocusProbe: String? = nil
     var textFocusEditable: Bool? = nil
+    /// With a focus reply, after `SessionFeature.secureFocus`: the focused field takes a password.
+    var textFocusSecure: Bool? = nil
     // Session extensions (clipboard, background pause). Validated in SessionContinuity.swift.
     var clipboard: ClipboardFrame? = nil
     var features: [String]? = nil
@@ -63,6 +65,8 @@ struct RemoteAction: Codable {
         guard (captureRegion == nil && ladder == nil && busy == nil) || action == "capture" else {
             throw RemoteError.invalidMessage
         }
+        guard textFocusSecure == nil || (action == "heartbeat" && textFocusProbe != nil && textFocusEditable != nil)
+        else { throw RemoteError.invalidMessage }
         // Also before the early returns, so no other action can carry a display list.
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }
@@ -86,7 +90,7 @@ struct RemoteAction: Codable {
         }
         guard pointerLocation == nil || (action == "heartbeat" && pointerProbe != nil),
               pointerLocatorSupported == nil || action == "capture" else { throw RemoteError.invalidMessage }
-        guard ["move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "scroll", "text", "key", "release", "heartbeat", "viewing", "geometry", "capture", "textResult", "holdRenew"].contains(action),
+        guard ["move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "scroll", "text", "key", "release", "heartbeat", "viewing", "geometry", "capture", "textResult", "holdRenew", "auxClick"].contains(action),
               x.isFinite, y.isFinite, abs(x) <= 20000, abs(y) <= 20000,
               text.utf8.count <= 4096, text.utf16.count <= 1024, key.utf8.count <= 32, modifiers.count <= 4,
               modifiers.allSatisfy({ ["command", "shift", "option", "control"].contains($0) }) else { throw RemoteError.invalidMessage }
@@ -94,6 +98,8 @@ struct RemoteAction: Codable {
         // new actions only after the host advertises `SessionFeature.absolutePointer`/`middleButton`.
         guard action != "moveTo" || (x >= 0 && y >= 0) else { throw RemoteError.invalidMessage }
         guard action != "middle" || interaction == nil || interaction?.clickCount == 1 else { throw RemoteError.invalidMessage }
+        guard action != "auxClick" || (AuxiliaryMouseButton(rawValue: key) != nil &&
+            (interaction == nil || interaction?.clickCount == 1)) else { throw RemoteError.invalidMessage }
     }
 }
 

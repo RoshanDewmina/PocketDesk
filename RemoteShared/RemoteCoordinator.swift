@@ -575,7 +575,13 @@ final class RemoteCoordinator: ObservableObject {
     private func beginLocalProof(_ policy: ServerRoutePolicy) {
         guard let key = invitation?.key, !session.isEmpty else { sessionFailed("Local link proof could not start."); return }
         let room = policy.room, epoch = policy.epoch, session = self.session
+        let isHost = self.isHost
         Task { [weak self] in
+            // TN3179: a backgrounded attempt is denied silently and never prompts. Wait for the foreground.
+            if !isHost, !(await LocalNetworkAccess.waitUntilForeground()) {
+                guard let self, !self.stopped, self.session == session else { return }
+                self.sessionFailed("Open Farside to finish connecting on this Wi-Fi."); return
+            }
             let proof = await Task.detached(priority: .userInitiated) {
                 LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key)
             }.value
@@ -593,6 +599,12 @@ final class RemoteCoordinator: ObservableObject {
                 guard let self, let proof, self.localLinkProof === proof else { return }
                 self.sessionFailed("The local network changed. Reconnect to verify the route again.")
             }
+            proof.onLocalNetworkDenied = { [weak self, weak proof] in
+                // With the alert still up, iOS denies first and retries after Allow; only an active app's denial is final.
+                guard let self, let proof, self.localLinkProof === proof, LocalNetworkAccess.appIsActive else { return }
+                self.localProofSummary = proof.stageSummary()
+                self.sessionFailed(LocalNetworkAccess.deniedStatus)
+            }
             proof.onProven = { [weak self, weak proof] link in
                 guard let self, let proof, self.localLinkProof === proof,
                       self.routePolicy?.epoch == policy.epoch, self.routePolicy?.access == .local,
@@ -606,6 +618,7 @@ final class RemoteCoordinator: ObservableObject {
                 guard !Task.isCancelled, let self else { return }
                 if let proof = self.localLinkProof {
                     LocalLinkProof.log.error("timed out after 8 s: \(proof.stageSummary(), privacy: .public)")
+                    if proof.isLocalNetworkDenied { self.sessionFailed(LocalNetworkAccess.deniedStatus); return }
                 }
                 self.sessionFailed("The devices could not verify a directly attached local link.")
             }

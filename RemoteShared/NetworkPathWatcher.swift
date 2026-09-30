@@ -36,13 +36,21 @@ final class NetworkPathWatcher {
     private var monitor: NWPathMonitor?
     private var last: NetworkPathSignature?
     var onChange: (() -> Void)?
+    /// Link quality is kept out of the signature: it fluctuates, and must never reconnect signaling.
+    private(set) var linkReading: NetworkLinkReading?
+    var onLinkChange: ((NetworkLinkHint?) -> Void)?
+    var linkHint: NetworkLinkHint? { linkReading.flatMap(NetworkLinkHint.from) }
 
     func start() {
         guard monitor == nil else { return }
         let monitor = NWPathMonitor()
         monitor.pathUpdateHandler = { [weak self] path in
             let signature = NetworkPathSignature(path)
-            Task { @MainActor in self?.observe(signature) }
+            let reading = NetworkLinkReading(path)
+            Task { @MainActor in
+                self?.observe(signature)
+                self?.observeLink(reading)
+            }
         }
         monitor.start(queue: DispatchQueue(label: "com.roshan.farside.network-path"))
         self.monitor = monitor
@@ -51,6 +59,13 @@ final class NetworkPathWatcher {
     func stop() {
         monitor?.cancel(); monitor = nil
         last = nil
+        linkReading = nil
+    }
+
+    func observeLink(_ reading: NetworkLinkReading) {
+        let before = linkHint
+        linkReading = reading
+        if linkHint != before { onLinkChange?(linkHint) }
     }
 
     func observe(_ signature: NetworkPathSignature) {

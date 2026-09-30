@@ -388,6 +388,8 @@ struct HomeView: View {
         case .seePlans: showPaywall = true
         case .pairAgain: model.pairingEntry = .scan
         case .retry: connect()
+        case .openSettings:
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
         case .wakeDisplay, .none: break
         }
     }
@@ -453,6 +455,8 @@ struct HomeView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { model.pairingEntry = .scan }
         case .seePlans:
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showPaywall = true }
+        case .openSettings:
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
         }
     }
 
@@ -648,7 +652,7 @@ struct MacCard: View {
     /// Connect below the card already retries, so the card offers only the other next actions.
     private func cardActionTitle(_ action: ConnectionHealth.Action) -> String? {
         switch action {
-        case .checkAgain, .seePlans, .pairAgain: action.title
+        case .checkAgain, .seePlans, .pairAgain, .openSettings: action.title
         case .retry, .wakeDisplay, .none: nil
         }
     }

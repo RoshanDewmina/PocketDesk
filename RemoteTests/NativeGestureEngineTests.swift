@@ -641,6 +641,7 @@ final class CommandLog {
     var dragCounts: [Int] = []
     var dragEnds = 0
     var dragEndIDs: [String] = []
+    var auxiliary: [AuxiliaryMouseButton] = []
     var acceptDrag = true
     /// Rejects `pointTo` for points matching this predicate, as a letterbox band would.
     var rejectPoint: (CGPoint) -> Bool = { _ in false }
@@ -655,6 +656,7 @@ final class CommandLog {
         case .click(let count): clicks.append(count); trace.append("click\(count)")
         case .secondaryClick: secondary += 1; trace.append("right")
         case .middleClick: middle += 1; trace.append("middle")
+        case .auxiliaryClick(let button): auxiliary.append(button); trace.append("aux-\(button.rawValue)")
         case .move(let delta): moves.append(delta); trace.append("move")
         case .pointTo(let point):
             guard !rejectPoint(point) else { trace.append("pointTo-rejected"); return false }

@@ -137,6 +137,15 @@ final class ConnectionHealthTests: XCTestCase {
         XCTAssertNil(session(), "A view-only session without the Mac's report is not blamed on Accessibility")
     }
 
+    func testLocalNetworkOffAndASilentMacMapToHealth() {
+        let local = ConnectionHealth.after(.localNetworkOff)
+        XCTAssertEqual(local.state, .localNetworkOff)
+        XCTAssertEqual(local.action, .openSettings)
+        let silent = ConnectionHealth.after(.macNotResponding("Studio Mac"))
+        XCTAssertEqual(silent.state, .unreachable)
+        XCTAssertEqual(silent.action, .retry)
+    }
+
     func testEveryConnectTakesTheSamePreConnectChecks() {
         XCTAssertEqual(ConnectGate.decide(paired: true, connected: false, running: false, restartsRunning: false,
                                           removalBlocked: true), .serverData, "A pending removal is checked for Siri and links too")

@@ -10,11 +10,11 @@ struct ConnectionHealth: Equatable {
         case macAsleep, macLocked, otherUser, displayAsleep, sharingStopped, pictureStalled, reconnecting,
              needsAnywhere, anywhereUnconfirmed, relayUnavailable, relaySlow, networkSlow, sessionClosing,
              macBusy, notApproved, stoppedToStaySafe, pairingProblem, serviceUnreachable, macAnswering,
-             unreachable, screenRecordingOff, accessibilityOff
+             unreachable, screenRecordingOff, accessibilityOff, localNetworkOff
     }
 
     enum Action: Equatable {
-        case none, retry, checkAgain, wakeDisplay, seePlans, pairAgain
+        case none, retry, checkAgain, wakeDisplay, seePlans, pairAgain, openSettings
 
         var title: String? {
             switch self {
@@ -24,6 +24,7 @@ struct ConnectionHealth: Equatable {
             case .wakeDisplay: "Wake display"
             case .seePlans: "See Farside Anywhere"
             case .pairAgain: "Pair again"
+            case .openSettings: "Open Settings"
             }
         }
     }
@@ -94,6 +95,9 @@ struct ConnectionHealth: Equatable {
         case .macNotResponding:
             return ConnectionHealth(state: .unreachable, title: failure.shortStatus, detail: failure.message,
                                     nextStep: step, action: .retry)
+        case .localNetworkOff:
+            return ConnectionHealth(state: .localNetworkOff, title: failure.headline, detail: failure.message,
+                                    nextStep: step, action: .openSettings)
         }
     }
 

@@ -99,6 +99,7 @@ final class PhoneRemoteModel: ObservableObject {
     let pointerLocator = PointerLocator()
     let pointerOverlay = PointerOverlayModel()
     let clipboard = PhoneClipboard()
+    let linkHints = PhoneLinkHintMonitor()
     @Published private(set) var hostFeatures: Set<String> = []
     @Published private(set) var resumeState: ResumeState = .none
     /// While a live session is held in the background: when Farside lets go of the Mac.
@@ -165,7 +166,8 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var pairingEntry: PairingEntry?
     @Published private(set) var privacyShield = false
     private var hasBeenActive = false
-    @Published var draft = ""
+    @Published var draft = "" { didSet { secureTextFocus.draftChanged(draft) } }
+    @Published var secureTextFocus = SecureTextFocus()
     @Published var isComposingText = false
     @Published var dragging = false
     @Published var modifiers: Set<String> = []
@@ -245,6 +247,7 @@ final class PhoneRemoteModel: ObservableObject {
             UserDefaults.standard.removeObject(forKey: "miniMap.pad")
         }
         connection.restore()
+        linkHints.start()
         connection.onAuthenticated = { [weak self] in
             guard let self else { return }
             self.contentConcealed = false
@@ -318,6 +321,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// The Mac accepts `moveTo`, triple-click counts and hardware modifier flags on pointer actions.
     var absolutePointerSupported: Bool { supports(SessionFeature.absolutePointer) }
     var middleButtonSupported: Bool { supports(SessionFeature.middleButton) }
+    var momentumScrollSupported: Bool { supports(SessionFeature.momentumScroll) }
     var extendedKeysSupported: Bool { supports(SessionFeature.extendedKeys) }
 
     /// Modifier keys held on a hardware keyboard, applied to clicks and pointer motion (⌘-click).
@@ -760,6 +764,12 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     @discardableResult
+    func auxiliaryClick(_ button: AuxiliaryMouseButton) -> Bool {
+        guard supports(SessionFeature.auxiliaryButtons), !dragging, activeHold == nil else { return false }
+        return sendInput("auxClick", count: 1, key: button.rawValue)
+    }
+
+    @discardableResult
     func middleClick(modifiers: [String] = []) -> Bool {
         guard middleButtonSupported, !dragging, activeHold == nil else { return false }
         return sendInput("middle", count: 1, modifiers: modifiers)
@@ -789,6 +799,8 @@ final class PhoneRemoteModel: ObservableObject {
             return sendInput("right", count: 1)
         case .middleClick:
             return middleClick()
+        case .auxiliaryClick(let button):
+            return auxiliaryClick(button)
         case .pointTo:
             // Canvas points need the session's viewport; the session maps them and calls `pointTo`.
             return false
@@ -948,6 +960,7 @@ final class PhoneRemoteModel: ObservableObject {
         contentConcealed = true
         resumeState = .backgrounded
         persistResume()
+        endSecureFocus()
         cancelInput()
         suspendInputReadiness()
         clipboard.cancel()
@@ -1130,6 +1143,10 @@ final class PhoneRemoteModel: ObservableObject {
             if !controlAllowed { pointerLocator.clear(); release() }
         case "heartbeat":
             if let clock = action.clock { receiveClockEcho(clock) }
+            if let probe = action.textFocusProbe, probe == textFocusProbe.pending?.probe,
+               action.epoch == geometryEpoch {
+                receiveSecureFocus(secure: action.textFocusSecure)
+            }
             if textFocusProbe.consume(probe: action.textFocusProbe, editable: action.textFocusEditable,
                                       responseEpoch: action.epoch, currentEpoch: geometryEpoch,
                                       at: ProcessInfo.processInfo.systemUptime,
@@ -1375,6 +1392,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     private func end() {
         textFocusProbe.invalidate()
+        endSecureFocus()
         pointerTimer?.invalidate()
         pointerTimer = nil
         pointerLocatorSupported = false
