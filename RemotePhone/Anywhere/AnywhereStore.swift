@@ -298,13 +298,39 @@ enum RegulatoryFeatureCheck {
     static let requiredKey = "compliance.requiredRegulatoryFeatures"
     static let checkedAtKey = "compliance.regulatoryFeaturesCheckedAt"
 
-    static func check() async -> Outcome {
+    /// Without the Declared Age Range entitlement the call never returns on the iOS 27 simulator,
+    /// and it ignores cancellation, so the answer races a timer instead of a task group.
+    static func check(timeout: Duration = .seconds(10)) async -> Outcome {
         guard #available(iOS 26.4, *) else { return .unsupportedOS }
-        do {
-            let features = try await AgeRangeService.shared.requiredRegulatoryFeatures
-            return features.isEmpty ? .noneRequired : .required(features.map(name).sorted())
-        } catch {
-            return .unavailable
+        return await withCheckedContinuation { continuation in
+            let once = ResumeOnce(continuation)
+            Task {
+                do {
+                    let features = try await AgeRangeService.shared.requiredRegulatoryFeatures
+                    once.resume(features.isEmpty ? .noneRequired : .required(features.map(name).sorted()))
+                } catch {
+                    once.resume(.unavailable)
+                }
+            }
+            Task {
+                try? await Task.sleep(for: timeout)
+                once.resume(.unavailable)
+            }
+        }
+    }
+
+    private final class ResumeOnce: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<Outcome, Never>?
+
+        init(_ continuation: CheckedContinuation<Outcome, Never>) { self.continuation = continuation }
+
+        func resume(_ outcome: Outcome) {
+            lock.lock()
+            let pending = continuation
+            continuation = nil
+            lock.unlock()
+            pending?.resume(returning: outcome)
         }
     }
 

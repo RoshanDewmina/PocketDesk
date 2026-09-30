@@ -65,10 +65,10 @@ final class AnywhereStoreKitTests: XCTestCase {
         XCTAssertEqual(try monthly.subscription?.subscriptionPeriod, .monthly)
         let offers = store.offers
         XCTAssertEqual(offers.map(\.period), [.year, .month])
-        XCTAssertTrue(offers[0].displayPrice.contains("49.99"), offers[0].displayPrice)
-        XCTAssertTrue(offers[1].displayPrice.contains("5.99"), offers[1].displayPrice)
+        XCTAssertTrue(offers[0].displayPrice.contains("59.99"), offers[0].displayPrice)
+        XCTAssertTrue(offers[1].displayPrice.contains("7.99"), offers[1].displayPrice)
         XCTAssertEqual(offers.map(\.currencyCode), ["CAD", "CAD"])
-        XCTAssertEqual(PlanOffer.yearlySaving(yearly: offers[0], monthly: offers[1]), 30)
+        XCTAssertEqual(PlanOffer.yearlySaving(yearly: offers[0], monthly: offers[1]), 37)
         XCTAssertEqual(store.entitlement.phase, .unknown, "Nothing read yet")
     }
 

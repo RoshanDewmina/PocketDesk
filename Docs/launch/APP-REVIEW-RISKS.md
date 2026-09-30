@@ -3,6 +3,7 @@
 **Historical research notice — refreshed 29 September 2026:** The missing-StoreKit, missing-icons/manifests and private-service-only source claims below describe the 28 September snapshot. StoreKit, backend route enforcement, privacy manifests and dependency notices are now implemented. Production readiness, the original forced-expiry discrepancy, real sandbox purchases/expiry, APNs, physical removal/input and distribution acceptance remain gates. Use [CURRENT-REVIEW-PACKET.md](CURRENT-REVIEW-PACKET.md) for current evidence; the historical legal/review analysis is not a current sign-off.
 
 **Commerce and review refresh, 30 September 2026** (branch `farside-commerce-review`; sources in section 11):
+- Pricing (PRODUCT D41): Farside Anywhere at CA$7.99 a month or CA$59.99 a year, each with a 7-day free trial. "Farside Remote" is retired in the review notes.
 - 4.2.7 re-read. The guidelines still say "Last Updated: June 8, 2026", and clause (e) is intact. The section 4 analysis stands.
 - Row 4.5.4 is rewritten: push exists, and its copy is now fixed and generic.
 - Added:
@@ -137,7 +138,7 @@ If a future release adds workflow features tied to specific products, re-read 4.
    - Recovery after a parent re-consents is a manual support step. The stop row is deleted 365 days after it no longer refers to any subscription.
 2. **Phone: record only.** `RegulatoryFeatureCheck` (`RemotePhone/Anywhere/AnywhereStore.swift`) asks `requiredRegulatoryFeatures` at launch on iOS 26.4 or later (`#available`-guarded). It stores the answer in this phone's UserDefaults and logs only a count.
    - It blocks no one, adults included, and shows no UI. Nothing in the API makes UI mandatory by itself: the features describe what *a significant change* needs.
-   - Without the Declared Age Range entitlement the call answers "unavailable" and nothing is recorded. Enabling the capability is an owner decision, together with the privacy-label wording.
+   - Without the Declared Age Range entitlement, the call never returns on the iOS 27 simulator (seen 30 Sep 2026). A 10-second timer then records "unavailable", and nothing is stored. Enabling the capability is an owner decision, together with the privacy-label wording.
 3. **No significant change is planned.** Farside's content does not vary with age, and the expected rating is 4+ (section 5b).
    - If a future release changes the age rating or adds a feature a parent would reasonably need to approve, that release must adopt PermissionKit's Significant Change flow for minors, and `showSignificantUpdateAcknowledgment` for adults where `significantAppChangeRequiresAdultNotification` is required, before shipping.
    - Add this to the release checklist for every version.
@@ -207,12 +208,13 @@ TEST STEPS (about 5 minutes)
 4. Stop Sharing in the Mac menu bar ends access at any time. Sending the app
    to the background ends the session by design (no background modes).
 
-IN-APP PURCHASE: "Farside Remote" (auto-renewable, group "Farside
-Remote", products [monthly ID] and [yearly ID], 7-day free trial). Remote access
+IN-APP PURCHASE: "Farside Anywhere" (auto-renewable, group "Farside
+Anywhere", com.roshan.PocketDesk.remote.monthly CA$7.99 and
+com.roshan.PocketDesk.remote.yearly CA$59.99, 7-day free trial). Remote access
 = relay + NAT traversal servers, needed when the phone is not on the Mac's
 network. On Home, tap Farside Anywhere (or ? > Farside Anywhere); no Mac is
 required to reach the paywall; Restore Purchases is on the same screen.
-[Name: the app says "Farside Anywhere"; see STOREKIT-IMPLEMENTATION.md §6.] Sandbox purchases are accepted
+Sandbox purchases are accepted
 by our server. Same-network use is free and needs no purchase.
 
 PERMISSIONS: Camera (scan pairing code), Local Network (find the paired Mac on
@@ -265,7 +267,7 @@ Severity: **BLOCKER** stops submission, **HIGH** likely rejection or bad first w
 | B17 | Updated agreements accepted (EU Attachment 14, effective 1 Oct 2026) | Apple news 18 Aug 2026 | [O] Account Holder accepts in the developer account | O | 1 Oct |
 | B18 | Age-rating questionnaire complete, social-media questions included | Required for submissions from Sep 2026 | [O] Answer all "No" (section 5b) | O | 30 Oct |
 
-**Gate on 2 November (go/no-go):** all BLOCKER rows closed; sandbox purchase and restore verified on TestFlight; a cellular session and a forced-relay session pass on two different real networks; NAT64 pass; 50 connection cycles and a 30-minute session (PRODUCT section 9); privacy answers entered; review notes and video finished; production backend has run 72 hours without a restart-worthy incident. If B1 or B2 is red on 23 October, use the fallback in LAUNCH-CHECKLIST.md (ship 1.0 as free local-network only and add Farside Remote in 1.1).
+**Gate on 2 November (go/no-go):** all BLOCKER rows closed; sandbox purchase and restore verified on TestFlight; a cellular session and a forced-relay session pass on two different real networks; NAT64 pass; 50 connection cycles and a 30-minute session (PRODUCT section 9); privacy answers entered; review notes and video finished; production backend has run 72 hours without a restart-worthy incident. If B1 or B2 is red on 23 October, use the fallback in LAUNCH-CHECKLIST.md (ship 1.0 as free local-network only and add Farside Anywhere in 1.1).
 
 ## 10. Likely rejection messages and prepared responses
 
@@ -273,7 +275,7 @@ Severity: **BLOCKER** stops submission, **HIGH** likely rejection or bad first w
 |---|---|---|
 | "We could not test without a Mac / could not complete pairing" | 2.1(a) | Point to the notarized download, the five-step notes, the video; offer a live call; check the backend logs for the reviewer's attempt. |
 | "App requires installation of another app" | 4.2.3(i) | Explain it is a remote desktop client for the user's own computer, the same architecture as approved remote desktop apps, and cite 4.2.7 recognizing host-side software. Provide the video. |
-| "Paywall or IAP not found or not functional" | 2.1(b) | Give the exact tap path (Settings, Farside Remote), the sandbox behaviour, product IDs; confirm the subscription was submitted with this version. |
+| "Paywall or IAP not found or not functional" | 2.1(b) | Give the exact tap path (Home › Farside Anywhere), the sandbox behaviour, product IDs; confirm the subscription was submitted with this version. |
 | "Subscription information missing" | 3.1.2(c) | Add price, period, renewal and cancellation text, Terms and Privacy links. |
 | "Metadata does not indicate features requiring purchase" | 2.3.2 | Add wording to the description, a screenshot caption and preview text. |
 | "App suggests changing Wi-Fi settings" | 2.4.4 | Explain it is a test diagnostic, remove the instruction. |

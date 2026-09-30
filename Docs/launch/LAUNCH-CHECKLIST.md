@@ -221,7 +221,7 @@ Use **no third-party analytics or crash SDK in 1.0.** PRODUCT section 8 already 
 | IPv6-only and network matrix | 2.5.5 and the launch claim | Deployed staging | 1 to 2 working days | 23 Oct |
 | Push notifications (if D8 yes) | Nothing else | APNs key, server | 3 to 5 working days | 16 Oct or cut |
 
-**Fallback if the backend or subscription is red on Fri 23 Oct:** ship 1.0 on 17 Nov as free, local-network only, with no in-app purchase, and add Farside Remote in 1.1. This removes B1 and B2 from the 3 Nov submission, and because the first subscription must ride on a new app version anyway [V], it fits Apple's process. Copy must then drop every reference to remote access (description, screenshots 6, preview 19 to 24 s, promotional text). Note that local-only still depends on the signaling service unless local direct mode ships.
+**Fallback if the backend or subscription is red on Fri 23 Oct:** ship 1.0 on 17 Nov as free, local-network only, with no in-app purchase, and add Farside Anywhere in 1.1. This removes B1 and B2 from the 3 Nov submission, and because the first subscription must ride on a new app version anyway [V], it fits Apple's process. Copy must then drop every reference to remote access (description, screenshots 6, preview 19 to 24 s, promotional text). Note that local-only still depends on the signaling service unless local direct mode ships.
 
 **Scope cuts, in order, if the schedule slips:** clipboard; push notifications; iPad-specific polish beyond a working layout; HEVC and codec experiments (engine parity work in `BUILD-PRIORITIES.md`); mini map and picture-in-picture (already research-only).
 

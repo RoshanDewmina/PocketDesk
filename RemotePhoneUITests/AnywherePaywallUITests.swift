@@ -25,8 +25,8 @@ final class AnywherePaywallUITests: XCTestCase {
         let yearly = app.buttons["anywhere.plan.yearly"]
         XCTAssertTrue(yearly.waitForExistence(timeout: 15), "Plans load from the StoreKit configuration")
         let monthly = app.buttons["anywhere.plan.monthly"]
-        XCTAssertTrue(yearly.label.contains("49.99"), yearly.label)
-        XCTAssertTrue(monthly.label.contains("5.99"), monthly.label)
+        XCTAssertTrue(yearly.label.contains("59.99"), yearly.label)
+        XCTAssertTrue(monthly.label.contains("7.99"), monthly.label)
         XCTAssertTrue(yearly.isSelected, "Yearly is the default choice")
         attach(app, "paywall")
 
@@ -34,7 +34,7 @@ final class AnywherePaywallUITests: XCTestCase {
         let subscribe = app.buttons["anywhere.subscribe"]
         XCTAssertTrue(summary.exists && subscribe.exists)
         XCTAssertTrue(summary.label.contains("7-day free trial, then"), summary.label)
-        XCTAssertTrue(summary.label.contains("49.99 a year"), summary.label)
+        XCTAssertTrue(summary.label.contains("59.99 a year"), summary.label)
         XCTAssertTrue(summary.label.contains("Renews automatically"), summary.label)
         XCTAssertEqual(subscribe.label, "Start 7-day free trial")
         XCTAssertTrue(summary.isHittable && subscribe.isHittable, "Terms and the button are both on screen")
@@ -51,11 +51,11 @@ final class AnywherePaywallUITests: XCTestCase {
         XCTAssertTrue(monthly.isHittable)
         XCTAssertLessThan(monthly.frame.maxY, summary.frame.minY - 8, "The plan must be above the purchase bar before tapping")
         monthly.tap()
-        let monthlySummary = NSPredicate(format: "label CONTAINS %@", "5.99 a month")
+        let monthlySummary = NSPredicate(format: "label CONTAINS %@", "7.99 a month")
         expectation(for: monthlySummary, evaluatedWith: summary)
         waitForExpectations(timeout: 5)
         XCTAssertTrue(monthly.isSelected)
-        XCTAssertTrue(summary.label.contains("5.99 a month"), summary.label)
+        XCTAssertTrue(summary.label.contains("7.99 a month"), summary.label)
 
         let disclosure = app.staticTexts["anywhere.disclosure"]
         XCTAssertTrue(disclosure.exists)

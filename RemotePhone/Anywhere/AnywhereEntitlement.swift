@@ -126,7 +126,7 @@ struct PlanOffer: Identifiable, Equatable {
     var periodNoun: String { period == .year ? "year" : "month" }
     var hasTrial: Bool { trialPhrase != nil }
 
-    /// "CA$4.17 a month" for the yearly plan.
+    /// "CA$5.00 a month" for the yearly plan.
     var monthlyEquivalent: String? {
         guard period == .year else { return nil }
         let perMonth = price / 12
