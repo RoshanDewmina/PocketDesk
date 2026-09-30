@@ -9,6 +9,7 @@ final class GuestMediaPeer: NSObject, @unchecked Sendable {
     var onSignal: ((MediaSignal) -> Void)? // main thread, root rechecks exact grant/session
     var onEnded: (() -> Void)?
     private var transportSampler = GuestTransportSampler()
+    private var previousSample: StreamStatsSample?
     private var statisticsPending = false
     func sampleTransport(_ completion: @escaping (GuestTransportObservation) -> Void) {
         precondition(Thread.isMainThread)
@@ -20,11 +21,18 @@ final class GuestMediaPeer: NSObject, @unchecked Sendable {
                 self.statisticsPending = false
                 let entries = report.statistics.values.map { StreamStatsEntry(id: $0.id, type: $0.type, values: $0.values, timestamp: $0.timestamp_us / 1_000_000) }
                 let sample = StreamStatsSample(entries: entries)
+                let stats = StreamStatsReport(role: "host", previous: self.previousSample, current: sample, counters: nil)
+                self.previousSample = sample
                 let transport = entries.first { $0.type == "transport" && $0.string("selectedCandidatePairId") == sample.pair?.id }
+                let rtt = (sample.pair?.number("currentRoundTripTime") ?? sample.remoteInbound?.number("roundTripTime")).map { $0 * 1000 }
+                let delay = sample.outbound?.number("totalPacketSendDelay"), packets = sample.outbound?.number("packetsSent")
+                let invalidPacer = [delay, packets].compactMap { $0 }.contains { !$0.isFinite || $0 < 0 }
+                let pacer: Double? = invalidPacer ? .nan : stats.pacerDelayMs
                 let rate = self.transportSampler.sample(identity: transport.flatMap { item in sample.pair.map { item.id + "/" + $0.id } },
-                    timestamp: transport?.timestamp, bytesSent: transport?.number("bytesSent"), rttMs: nil)
+                    timestamp: transport?.timestamp, bytesSent: transport?.number("bytesSent"), rttMs: rtt)
                 completion(GuestTransportObservation(at: ProcessInfo.processInfo.systemUptime, totalKbps: rate.kbps,
-                    capacityKbps: sample.pair?.number("availableOutgoingBitrate").map { $0 / 1000 }, rttMs: nil, baselineRTTMs: nil, pacerDelayMs: nil, controlBufferedBytes: nil))
+                    capacityKbps: stats.availableOutgoingKbps, rttMs: rtt, baselineRTTMs: rate.baselineRTT,
+                    pacerDelayMs: pacer, controlBufferedBytes: nil))
             }
         }
     }
@@ -40,6 +48,7 @@ final class GuestMediaPeer: NSObject, @unchecked Sendable {
     private var remoteReady = false // main only
     private var candidates: [RTCIceCandidate] = [] // main only
     private var ceiling: Double = GuestBudgetPolicy.maximumKbps
+    private var codecPreferencesApplied = false
 
     init(servers: [ICEServerConfiguration], lease: GuestCaptureLease) {
         self.lease = lease
@@ -56,13 +65,19 @@ final class GuestMediaPeer: NSObject, @unchecked Sendable {
         let track = factory.videoTrack(with: source, trackId: "guest-video")
         let connection = factory.peerConnection(with: configuration, constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
         let transceiver = RTCRtpTransceiverInit(); transceiver.direction = .sendOnly
-        _ = connection?.addTransceiver(with: track, init: transceiver)
+        let video = connection?.addTransceiver(with: track, init: transceiver)
+        // A process-wide owner FlexFEC trial must never silently expand guest media.
+        let codecs = factory.rtpSenderCapabilities(forKind: kRTCMediaStreamTrackKindVideo).codecs.filter { $0.name.lowercased() != "flexfec-03" }
+        if let video, !codecs.isEmpty {
+            do { try video.setCodecPreferences(codecs, error: ()); codecPreferencesApplied = true }
+            catch { codecPreferencesApplied = false }
+        }
         self.factory = factory; self.connection = connection; self.source = source; self.capturer = capturer; self.track = track
     }
     private func liveConnection() -> RTCPeerConnection? { lock.lock(); defer { lock.unlock() }; return closed ? nil : connection }
     func offer() {
         precondition(Thread.isMainThread)
-        guard let connection = liveConnection() else { return }
+        guard codecPreferencesApplied, let connection = liveConnection() else { endFromCallback(); return }
         connection.offer(for: RTCMediaConstraints(mandatoryConstraints: ["OfferToReceiveAudio": "false", "OfferToReceiveVideo": "false"], optionalConstraints: nil)) { [weak self] description, _ in
             guard let self, let description, !description.sdp.contains("m=audio"), !description.sdp.contains("m=application") else { self?.endFromCallback(); return }
             connection.setLocalDescription(description) { [weak self] error in
