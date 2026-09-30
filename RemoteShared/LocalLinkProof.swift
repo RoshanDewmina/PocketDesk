@@ -318,11 +318,14 @@ final class LocalLinkProof {
             let verdict = self.classify(path)
             self.log.info("monitor path \(String(describing: path.status), privacy: .public) verdict=\(verdict.reason, privacy: .public) interfaces=\(LocalPathClassifier.describe(path.localInterfaces), privacy: .public)")
             if !self.monitorReady && path.status != .satisfied { return }
-            // Even an apparently equivalent path update may have changed routing behind the
-            // selected ICE pair. Require a new session and physical proof.
-            if self.monitorReady || verdict != .safe {
+            // Some networks republish IPv6 every few seconds. The safe verdict already pins the one
+            // physical interface, its index and IPv4 address, and rules out VPN and cellular use; the
+            // media pair is pinned to the proven IPv4 addresses, so only an unsafe update ends the session.
+            if verdict != .safe {
                 self.stage.monitorVerdict = verdict.reason
-                self.invalidate(self.monitorReady ? "monitor-path-changed" : "monitor-\(verdict.reason)")
+                self.invalidate(self.monitorReady ? "monitor-path-changed-\(verdict.reason)" : "monitor-\(verdict.reason)")
+            } else if self.monitorReady {
+                self.log.info("equivalent monitor path update ignored")
             } else {
                 self.monitorReady = true
                 self.stage.monitorReady = true; self.stage.monitorVerdict = verdict.reason
@@ -373,9 +376,11 @@ final class LocalLinkProof {
                 let verdict = self.classify(path)
                 self.log.info("route probe path \(String(describing: path.status), privacy: .public) verdict=\(verdict.reason, privacy: .public) interfaces=\(LocalPathClassifier.describe(path.localInterfaces), privacy: .public)")
                 if !self.routePathSeen && path.status != .satisfied { return }
-                if self.routePathSeen || verdict != .safe {
+                if verdict != .safe {
                     self.stage.routeVerdict = verdict.reason
-                    self.invalidate(self.routePathSeen ? "route-path-changed" : "route-path-\(verdict.reason)")
+                    self.invalidate(self.routePathSeen ? "route-path-changed-\(verdict.reason)" : "route-path-\(verdict.reason)")
+                } else if self.routePathSeen {
+                    self.log.info("equivalent route probe path update ignored")
                 } else {
                     self.routePathSeen = true
                     self.stage.routePathSeen = true; self.stage.routeVerdict = verdict.reason
