@@ -17,8 +17,17 @@ struct SessionModeRequest: Codable, Equatable {
     static let maximumBodyBytes = 256
     var mode: String
 
-    static func body(for mode: SessionMode) -> Data? { nil }
-    static func mode(fromAcceptedAckBody body: Data?) -> SessionMode { .picture }
+    static func body(for mode: SessionMode) -> Data? {
+        guard mode != .picture else { return nil }
+        return try? JSONEncoder().encode(SessionModeRequest(mode: mode.rawValue))
+    }
+
+    static func mode(fromAcceptedAckBody body: Data?) -> SessionMode {
+        guard let body, body.count <= maximumBodyBytes,
+              let request = try? JSONDecoder().decode(SessionModeRequest.self, from: body),
+              let mode = SessionMode(rawValue: request.mode) else { return .picture }
+        return mode
+    }
 }
 
 enum CouchCopy {
@@ -38,11 +47,39 @@ enum CouchCopy {
     /// Coordinator status when the phone itself stops a Couch attempt that did not get a local route.
     static let phoneRefusedStatus = "Couch mode needs the same network as your Mac."
 
-    static func refusal(_ reason: SessionModeRefusal) -> String { "" }
+    static func refusal(_ reason: SessionModeRefusal) -> String {
+        switch reason {
+        case .notLocal: notLocal
+        case .controlOff: controlOff
+        case .screenRecording: needsScreenRecording
+        }
+    }
 }
 
 extension RemoteAction {
     static let modeAction = "mode"
 
-    func validateSessionMode() throws -> Bool { false }
+    /// Returns true when this is a complete `mode` request, which bypasses the legacy action list.
+    func validateSessionMode() throws -> Bool {
+        if action == "capture" {
+            if let mode, !ClipboardFrame.isWellFormedStatus(mode) { throw RemoteError.invalidMessage }
+            if let modeReason {
+                guard mode != nil, ClipboardFrame.isWellFormedStatus(modeReason) else { throw RemoteError.invalidMessage }
+            }
+            return false
+        }
+        guard action == Self.modeAction else {
+            guard mode == nil, modeReason == nil else { throw RemoteError.invalidMessage }
+            return false
+        }
+        guard let mode, SessionMode(rawValue: mode) != nil, modeReason == nil,
+              x == 0, y == 0, text.isEmpty, key.isEmpty, modifiers.isEmpty,
+              interaction == nil, pointerLocatorSupported == nil, pointerProbe == nil, pointerLocation == nil,
+              pointerSync == nil, streamQuality == nil, textFocusProbe == nil, textFocusEditable == nil,
+              clipboard == nil, features == nil, hostState == nil, hostStream == nil, curtain == nil, hostEvent == nil,
+              displays == nil, display == nil, agentAlert == nil, clock == nil, screenPixels == nil, viewport == nil,
+              phoneLoad == nil, captureRegion == nil, ladder == nil, busy == nil
+        else { throw RemoteError.invalidMessage }
+        return true
+    }
 }
