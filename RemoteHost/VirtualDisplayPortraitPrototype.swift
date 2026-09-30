@@ -161,15 +161,30 @@ private final class PortraitController: NSObject, NSWindowDelegate {
                 throw PortraitPrototypeFailure.rejected("unsupported actual portrait geometry/mode; physical displays untouched")
             }
             let view = PortraitSyntheticView(frame: NSRect(origin: .zero, size: screen.frame.size), scale: options.mode.scale)
-            let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false, screen: screen)
+            let relativeContentRect = PortraitWindowPlacement.screenRelativeContentRect(for: screen.frame)
+            let window = NSWindow(contentRect: relativeContentRect, styleMask: .borderless, backing: .buffered, defer: false, screen: screen)
             window.isReleasedWhenClosed = false; window.title = "Farside synthetic portrait fixture"
             window.contentView = view; window.collectionBehavior = [.canJoinAllSpaces, .stationary]
             window.orderFrontRegardless(); owned.window = window; owned.view = view
             view.start()
             let shareable = try await discover(owned)
-            guard admission.accepts(token), let ownWindow = shareable.windows.first(where: {
-                $0.windowID == CGWindowID(window.windowNumber) && $0.owningApplication?.processID == getpid()
-            }), shareable.displays.contains(where: { $0.displayID == owned.displayID }),
+            guard admission.accepts(token) else { throw PortraitPrototypeFailure.rejected("cancelled before capture identity inspection") }
+            let requestedWindowID = CGWindowID(window.windowNumber)
+            let matchingWindow = shareable.windows.first { $0.windowID == requestedWindowID }
+            let ownWindow = matchingWindow.flatMap { $0.owningApplication?.processID == getpid() ? $0 : nil }
+            let displayFound = shareable.displays.contains { $0.displayID == owned.displayID }
+            // Bound diagnostics to the exact requested window and owned screen; no titles or unrelated windows.
+            report["placement"] = ["requestedWindowID": requestedWindowID, "requestedDisplayID": owned.displayID,
+                                   "expectedOwnerPID": getpid(), "matchedWindowID": matchingWindow.map { $0.windowID } as Any? ?? NSNull(),
+                                   "matchedOwnerPID": matchingWindow?.owningApplication?.processID as Any? ?? NSNull(),
+                                   "ownWindowFound": ownWindow != nil, "displayFound": displayFound,
+                                   "windowScreenID": window.screen.map { Self.screenID($0) } as Any? ?? NSNull(),
+                                   "windowFrame": Self.rectReport(window.frame), "targetScreenFrame": Self.rectReport(screen.frame),
+                                   "windowScreenFrame": window.screen.map { Self.rectReport($0.frame) } as Any? ?? NSNull(),
+                                   "initializerContentRect": Self.rectReport(relativeContentRect),
+                                   "cgDisplayBounds": Self.rectReport(CGDisplayBounds(owned.displayID)),
+                                   "scWindowFrame": matchingWindow.map { Self.rectReport($0.frame) } as Any? ?? NSNull()]
+            guard let ownWindow, displayFound,
                   window.screen.map({ Self.screenID($0) == owned.displayID }) == true,
                   Self.nearlyEqual(ownWindow.frame, CGDisplayBounds(owned.displayID)) else {
                 throw PortraitPrototypeFailure.rejected("capture identity/placement verification failed")
@@ -347,6 +362,9 @@ private final class PortraitController: NSObject, NSWindowDelegate {
     private static func screen(_ id: CGDirectDisplayID) -> NSScreen? { NSScreen.screens.first { screenID($0) == id } }
     private static func nearlyEqual(_ a: CGRect, _ b: CGRect) -> Bool {
         abs(a.minX - b.minX) < 1 && abs(a.minY - b.minY) < 1 && abs(a.width - b.width) < 1 && abs(a.height - b.height) < 1
+    }
+    private static func rectReport(_ rect: CGRect) -> [String: Double] {
+        ["x": Double(rect.origin.x), "y": Double(rect.origin.y), "width": Double(rect.width), "height": Double(rect.height)]
     }
 }
 

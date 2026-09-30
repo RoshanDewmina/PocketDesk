@@ -18,6 +18,18 @@ final class VirtualDisplayPrototypePolicyTests: XCTestCase {
         XCTAssertFalse(two.accepts(logicalWidth: 430, logicalHeight: 932, pixelsWide: 860, pixelsHigh: 1864, backingScale: 2, refresh: .nan))
         XCTAssertEqual(try options().pixelWidth, 430)
     }
+    func testExplicitScreenWindowInitializerUsesRelativeOriginOnEveryDesktopArrangement() {
+        for origin in [CGPoint.zero, CGPoint(x: 1920, y: 0), CGPoint(x: -430, y: 0),
+                       CGPoint(x: 0, y: 1243), CGPoint(x: 0, y: -932)] {
+            let screen = CGRect(origin: origin, size: CGSize(width: 430, height: 932))
+            let content = PortraitWindowPlacement.screenRelativeContentRect(for: screen)
+            XCTAssertEqual(content.origin, .zero)
+            XCTAssertEqual(content.size, screen.size)
+            // Apply the documented initializer translation exactly once to obtain the owned global frame.
+            let global = content.offsetBy(dx: screen.origin.x, dy: screen.origin.y)
+            XCTAssertEqual(global, screen)
+        }
+    }
     func testCLIFailsClosedBeforeHostStartup() throws {
         for extra in [["--portrait-mode"], ["--portrait-mode", "landscape"], ["--portrait-action", "unknown"],
                       ["--portrait-mode", "1x", "--portrait-mode", "2x"], ["--virtual-display-spike"],

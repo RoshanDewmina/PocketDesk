@@ -10,6 +10,14 @@ enum PortraitABIEncoding {
     }
 }
 
+enum PortraitWindowPlacement {
+    /// NSWindow's initializer with an explicit NSScreen uses an origin relative to that screen.
+    /// Its global frame is only the desired size here; passing its origin would apply it twice.
+    static func screenRelativeContentRect(for screenFrame: CGRect) -> CGRect {
+        CGRect(origin: .zero, size: screenFrame.size)
+    }
+}
+
 enum PortraitCreationPreflight {
     static func acquire<Lease, Resource>(permission: () -> Bool, audit: () throws -> Void,
                                         lease: () throws -> Lease, existingIdentity: () -> Bool,
