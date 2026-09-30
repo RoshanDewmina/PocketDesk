@@ -104,4 +104,17 @@ final class CouchPhoneModelTests: XCTestCase {
         XCTAssertNil(model.pendingModeSwitch)
         XCTAssertFalse(model.couchSwitchAvailable)
     }
+
+    func testCouchFailuresOfferThePictureInstead() {
+        let proof = FriendlyError.forCouch(status: "The devices could not verify a directly attached local link.", requestedCouch: true)
+        XCTAssertEqual(proof?.kind, .couchNotLocal)
+        XCTAssertEqual(proof?.action, .connectWithPicture)
+        XCTAssertEqual(proof?.message, CouchCopy.notLocal)
+        XCTAssertEqual(FriendlyError.forCouch(status: CouchCopy.phoneRefusedStatus, requestedCouch: true)?.kind, .couchNotLocal)
+        XCTAssertNil(FriendlyError.forCouch(status: CouchCopy.phoneRefusedStatus, requestedCouch: false))
+        XCTAssertEqual(FriendlyError.couch(.controlOff).message, CouchCopy.controlOff)
+        XCTAssertEqual(FriendlyError.Action.connectWithPicture.title, "Connect with picture")
+        XCTAssertEqual(MacStatus("Connecting live desktop…", couch: true).text, CouchCopy.checking)
+        XCTAssertEqual(MacStatus("Connecting live desktop…").text, FriendlyError.cardStatus("Connecting live desktop…"))
+    }
 }

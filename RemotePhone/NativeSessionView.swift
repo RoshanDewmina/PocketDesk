@@ -31,6 +31,7 @@ struct NativeSessionView: View {
     @StateObject private var voiceInput = VoiceInputController()
     @State private var panMode = false
     @State private var clickAcknowledged = false
+    @State private var couchTouched = false
     @State private var zoomBadge: String?
     @State private var zoomBadgeToken = 0
     @State private var revision: UInt64 = 0
@@ -70,7 +71,7 @@ struct NativeSessionView: View {
             centerNotices
         }
         .overlay {
-            if !controlsCollapsed && !keyboardOpen && !showControls {
+            if !couch && !controlsCollapsed && !keyboardOpen && !showControls {
                 FarsideDotScreen()
                     .ignoresSafeArea()
                     .transition(.opacity)
@@ -93,6 +94,8 @@ struct NativeSessionView: View {
         .overlay(alignment: .bottom) {
             if !keyboardOpen && !(showControls && controlsAsOverlay) {
                 dock.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { dockFrame = $0 }
+                    .padding(.trailing, couchSideTiles ? Self.couchColumnWidth : 0)
+                if couchSideTiles { couchTileColumn }
             }
         }
         .overlay(alignment: .bottom) {
@@ -177,6 +180,15 @@ struct NativeSessionView: View {
         }
         .onChange(of: model.voiceDeliveryStatus) { _, status in
             if status == .accepted { showVoiceInput = false }
+        }
+        .onChange(of: couch, initial: true) { wasCouch, isCouch in
+            if isCouch {
+                couchTouched = false
+                setInteractionMode(false)
+                controlsCollapsed = false
+            } else if wasCouch {
+                collapseControls()
+            }
         }
         )
     }
@@ -306,13 +318,17 @@ struct NativeSessionView: View {
     /// Alternative input modes replace `inputSurface`; chrome lives in the overlays above `stage`.
     private var stage: some View {
         ZStack(alignment: .topLeading) {
-            videoLayer
-            if lockVisible {
-                ResolutionLockView(connected: connection.connected || offlineLayoutCheck, pictureReady: model.fresh,
-                                   fixedStage: LaunchOptions.value("--ui-lock-stage=").flatMap(Int.init)) {
-                    lockVisible = false
+            if couch {
+                couchRestCard
+            } else {
+                videoLayer
+                if lockVisible {
+                    ResolutionLockView(connected: connection.connected || offlineLayoutCheck, pictureReady: model.fresh,
+                                       fixedStage: LaunchOptions.value("--ui-lock-stage=").flatMap(Int.init)) {
+                        lockVisible = false
+                    }
+                    .transition(.opacity)
                 }
-                .transition(.opacity)
             }
             inputSurface
         }
@@ -327,13 +343,16 @@ struct NativeSessionView: View {
     }
 
     private var inputSurface: some View {
-            NativeTrackpadSurface(enabled: model.canControl && !panMode && !controlsBlockInput && !showVoiceInput, panMode: panMode,
-                                  direct: directTouch,
-                                  revision: model.inputRevision &+ revision, sensitivity: CGFloat(sensitivity),
-                                  pointerScale: viewport.scale, doubleClickInterval: model.doubleClickInterval,
+            NativeTrackpadSurface(enabled: model.canControl && !panMode && !controlsBlockInput && !showVoiceInput,
+                                  panMode: panMode && !couch,
+                                  direct: directTouch && !couch,
+                                  revision: model.inputRevision &+ revision,
+                                  sensitivity: CGFloat(couch ? sensitivity * CouchTuning.speed : sensitivity),
+                                  pointerScale: couch ? 1 : viewport.scale, doubleClickInterval: model.doubleClickInterval,
                                   middleClickAvailable: model.middleButtonSupported,
                                   hardwareKeys: model.canControl && !showControls && !showVoiceInput && !keyboardOpen,
-                                  hardwarePointer: model.canControl && model.absolutePointerSupported
+                                  // Couch has no picture to place an absolute pointer on: relative motion only.
+                                  hardwarePointer: !couch && model.canControl && model.absolutePointerSupported
                                     && !controlsBlockInput && !showVoiceInput,
                                   keyboardFocus: !keyboardOpen && !showControls && !showVoiceInput
                                     && !primingMicrophone && scenePhase == .active,
@@ -356,6 +375,119 @@ struct NativeSessionView: View {
 
     /// Direct touch needs a Mac that places the pointer absolutely; otherwise touches stay a trackpad.
     private var directTouch: Bool { touchMode == .direct && model.absolutePointerSupported }
+
+    // MARK: - Couch
+
+    private var couch: Bool {
+        model.sessionMode == .couch || (offlineLayoutCheck && LaunchOptions.has("--ui-couch"))
+    }
+
+    /// Landscape and iPad: the Couch keys stand on the trailing edge, beside the trackpad.
+    private var couchSideTiles: Bool { couch && controlsAsOverlay }
+
+    private static let couchColumnWidth: CGFloat = 96
+
+    /// The whole stage is the trackpad; the card only says so. Insets keep it clear of the top line and the dock.
+    private var couchRestCard: some View {
+        let insets = viewport.safeInsets
+        let dockCover = dockFrame.height > 0 && !keyboardOpen ? max(0, canvasFrame.maxY - dockFrame.minY) : 0
+        return RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .strokeBorder(Farside.Palette.line, lineWidth: 1)
+            .overlay {
+                VStack(spacing: 8) {
+                    Text(CouchCopy.restHeadline)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Farside.Palette.bone)
+                    Text(CouchCopy.restDeadpan)
+                        .font(.footnote)
+                        .foregroundStyle(Farside.Palette.ash)
+                }
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+                .opacity(couchTouched ? 0 : 1)
+                .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: couchTouched)
+            }
+            .overlay {
+                if couchTouched && model.acceptedClicks > 0 {
+                    ContactRipple(serial: Int(truncatingIfNeeded: model.acceptedClicks),
+                                  kind: ContactRipple.Kind(action: model.lastAcceptedClick))
+                }
+            }
+            .padding(EdgeInsets(top: insets.top + 40, leading: insets.left + 12,
+                                bottom: max(insets.bottom, dockCover) + 12,
+                                trailing: insets.right + 12 + (couchSideTiles ? Self.couchColumnWidth : 0)))
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("remote.couch.rest")
+    }
+
+    private var couchCaption: String {
+        var parts = [macName, "Couch"]
+        if !offlineLayoutCheck, let rtt = model.link?.roundTripMs { parts.append("\(rtt) ms") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var couchTopLine: some View {
+        HStack(spacing: 7) {
+            LiveDot(state: liveState, size: 7)
+            Text(couchCaption)
+                .farsideCaption(Farside.Palette.bone)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(linkAccessibility)
+    }
+
+    /// Keys · Mic · Clip · Picture · Controls. The row stretches; the side column keeps each key at its own width.
+    @ViewBuilder private func couchTiles(wide: Bool) -> some View {
+        Button { openKeyboard() } label: { Label("Keys", systemImage: "keyboard") }
+            .buttonStyle(FarsideTileButtonStyle())
+            .frame(maxWidth: wide ? CGFloat.infinity : nil)
+            .accessibilityLabel("Keyboard")
+            .accessibilityIdentifier("remote.couch.keys")
+        micOrReleaseTile
+            .frame(maxWidth: wide ? CGFloat.infinity : nil)
+            .accessibilityIdentifier("remote.couch.mic")
+        Button(action: toggleClipboardRow) { Label("Clip", systemImage: "list.clipboard") }
+            .buttonStyle(FarsideTileButtonStyle(selected: showClipboardRow))
+            .frame(maxWidth: wide ? CGFloat.infinity : nil)
+            .disabled(!showsClipboard || showVoiceInput)
+            .accessibilityLabel("Clipboard")
+            .accessibilityHint(showsClipboard ? "Paste to or copy from your Mac" : "Clipboard needs the updated Farside on your Mac")
+            .accessibilityIdentifier("remote.couch.clip")
+        Button { _ = model.requestMode(.picture) } label: { Label("Picture", systemImage: "photo") }
+            .buttonStyle(FarsideTileButtonStyle())
+            .frame(maxWidth: wide ? CGFloat.infinity : nil)
+            .disabled(model.pendingModeSwitch != nil)
+            .accessibilityHint("Shows your Mac’s screen on this iPhone")
+            .accessibilityIdentifier("remote.couch.picture")
+        Button { openControls() } label: { Label("Controls", systemImage: "slider.horizontal.3") }
+            .buttonStyle(FarsideTileButtonStyle())
+            .frame(maxWidth: wide ? CGFloat.infinity : nil)
+            .accessibilityIdentifier("remote.couch.controls")
+    }
+
+    private var couchTileColumn: some View {
+        ViewThatFits(in: .vertical) {
+            VStack(spacing: 10) { couchTiles(wide: false) }
+                .padding(.vertical, 12)
+            ScrollView {
+                VStack(spacing: 10) { couchTiles(wide: false) }
+                    .padding(.vertical, 12)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .frame(width: Self.couchColumnWidth - 12)
+        .farsidePlate(30, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        .accessibilityElement(children: .contain)
+    }
 
     private var videoLayer: some View {
         ZStack(alignment: .topLeading) {
@@ -415,6 +547,8 @@ struct NativeSessionView: View {
             }
             .padding(.horizontal, 20).padding(.vertical, 16)
             .farsidePlate(Farside.Radius.card, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
+        } else if couch {
+            EmptyView()
         } else if (!offlineLayoutCheck && model.fresh && !model.captureHealthy) || LaunchOptions.has("--ui-issue-sharing") {
             SessionIssueCard(error: .screenSharingOff)
                 .allowsHitTesting(false)
@@ -433,6 +567,7 @@ struct NativeSessionView: View {
 
     @ViewBuilder private var topPills: some View {
         VStack(spacing: 8) {
+            if couch { couchTopLine }
             if (!offlineLayoutCheck && !connection.connected) || LaunchOptions.has("--ui-reconnecting") {
                 ReconnectPill(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "your Mac",
                               end: model.disconnect)
@@ -479,7 +614,7 @@ struct NativeSessionView: View {
                     .transition(.opacity)
                     .allowsHitTesting(false)
             }
-            if let zoomBadge {
+            if let zoomBadge, !couch {
                 Text(zoomBadge)
                     .font(Farside.Typeface.caption(.subheadline).weight(.semibold))
                     .monospacedDigit()
@@ -535,7 +670,7 @@ struct NativeSessionView: View {
 
     private var dock: some View {
         VStack(spacing: 10) {
-            if controlsCollapsed {
+            if controlsCollapsed && !couch {
                 if model.dragging { holdChip.transition(.opacity) }
                 if dockHintVisible && !model.dragging {
                     Text("Swipe up for controls · double tap to type")
@@ -552,7 +687,7 @@ struct NativeSessionView: View {
             }
         }
         .padding(.horizontal, 8)
-        .padding(.bottom, controlsCollapsed ? 0 : 6)
+        .padding(.bottom, controlsCollapsed && !couch ? 0 : 6)
         .frame(maxWidth: compactHeight ? 620 : 560)
     }
 
@@ -560,20 +695,20 @@ struct NativeSessionView: View {
 
     private var dockPanel: some View {
         VStack(spacing: compactHeight ? 10 : 14) {
-            grabHandle
-            tilesRow
+            if !couch { grabHandle }
+            if !couchSideTiles { tilesRow }
             if showVoiceInput {
                 dictationRow
             } else if showClipboardRow {
                 clipboardRow
             }
-            if !compactHeight || !(showVoiceInput || showClipboardRow) {
+            if !couch && (!compactHeight || !(showVoiceInput || showClipboardRow)) {
                 segmentsRow
             }
             dockFooter
         }
         .padding(.horizontal, 16)
-        .padding(.top, 6)
+        .padding(.top, couch ? 16 : 6)
         .padding(.bottom, 16)
         .background {
             RoundedRectangle(cornerRadius: 30, style: .continuous)
@@ -616,7 +751,15 @@ struct NativeSessionView: View {
             .accessibilityAction(named: Text("Show keyboard")) { openKeyboard() }
     }
 
-    private var tilesRow: some View {
+    @ViewBuilder private var tilesRow: some View {
+        if couch {
+            HStack(alignment: .top, spacing: 0) { couchTiles(wide: true) }
+        } else {
+            pictureTilesRow
+        }
+    }
+
+    private var pictureTilesRow: some View {
         HStack(alignment: .top, spacing: 0) {
             Button { openKeyboard() } label: { Label("Keys", systemImage: "keyboard") }
                 .buttonStyle(FarsideTileButtonStyle())
@@ -636,6 +779,26 @@ struct NativeSessionView: View {
             .buttonStyle(FarsideTileButtonStyle())
             .frame(maxWidth: .infinity)
             .accessibilityLabel(viewport.mode == .fill ? "Fit whole display" : "Fill screen")
+            modeTile
+        }
+    }
+
+    /// A tap still toggles View and Control; holding offers Couch mode when this link can carry it.
+    @ViewBuilder private var modeTile: some View {
+        if model.couchSwitchAvailable {
+            Menu {
+                Button("Couch mode", systemImage: "sofa") { _ = model.requestMode(.couch) }
+                    .accessibilityIdentifier("remote.mode.couch")
+            } label: {
+                Label("Mode", systemImage: panMode ? "cursorarrow.motionlines" : "hand.draw")
+            } primaryAction: {
+                setInteractionMode(!panMode)
+            }
+            .menuStyle(.button)
+            .buttonStyle(FarsideTileButtonStyle())
+            .frame(maxWidth: .infinity)
+            .accessibilityLabel(panMode ? "Control desktop" : "Move view")
+        } else {
             Button { setInteractionMode(!panMode) } label: {
                 Label("Mode", systemImage: panMode ? "cursorarrow.motionlines" : "hand.draw")
             }
@@ -679,12 +842,14 @@ struct NativeSessionView: View {
     private var dockFooter: some View {
         HStack(alignment: .center, spacing: 10) {
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 7) {
-                    LiveDot(state: liveState, size: 7)
-                    Text(linkCaption)
-                        .farsideCaption(Farside.Palette.bone)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                if !couch {
+                    HStack(spacing: 7) {
+                        LiveDot(state: liveState, size: 7)
+                        Text(linkCaption)
+                            .farsideCaption(Farside.Palette.bone)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
                 }
                 Text(status)
                     .font(.footnote)
@@ -695,11 +860,13 @@ struct NativeSessionView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : "\(linkAccessibility). \(status)")
             Spacer(minLength: 4)
-            Button { openControls() } label: {
-                Image(systemName: "slider.horizontal.3")
+            if !couch {
+                Button { openControls() } label: {
+                    Image(systemName: "slider.horizontal.3")
+                }
+                .buttonStyle(FarsideRoundButtonStyle(diameter: 40))
+                .accessibilityLabel("Controls")
             }
-            .buttonStyle(FarsideRoundButtonStyle(diameter: 40))
-            .accessibilityLabel("Controls")
             Button("End session") { model.disconnect() }
                 .buttonStyle(FarsideEndButtonStyle())
                 .fixedSize()
@@ -731,7 +898,9 @@ struct NativeSessionView: View {
             .accessibilityAction(named: Text("Show keyboard")) { openKeyboard() }
     }
 
-    private var handleLive: Bool { connection.connected && model.fresh && model.captureHealthy }
+    private var handleLive: Bool {
+        connection.connected && (couch ? model.canControl : model.fresh && model.captureHealthy)
+    }
 
     private var macName: String { connection.invitation?.name ?? LaunchOptions.demoMacName ?? "Your Mac" }
 
@@ -749,6 +918,11 @@ struct NativeSessionView: View {
     }
 
     private var linkAccessibility: String {
+        if couch {
+            var parts = [macName, "Couch mode, no picture"]
+            if !offlineLayoutCheck, let rtt = model.link?.roundTripMs { parts.append("network round trip \(rtt) milliseconds") }
+            return parts.joined(separator: ", ")
+        }
         var parts = [macName]
         if let route = model.link?.route { parts.append(route == "Relay" ? "relayed connection" : "direct connection") }
         if let rtt = model.link?.roundTripMs { parts.append("network round trip \(rtt) milliseconds") }
@@ -765,6 +939,12 @@ struct NativeSessionView: View {
         if model.dragging {
             return model.explicitHoldDeadline != nil ? "Mouse button held · tap Drop to let go" : "Holding click · lift to drop"
         }
+        if couch {
+            if model.couchStalled { return CouchCopy.notAnswering }
+            if model.canControl && clickAcknowledged { return "Click sent" }
+            if model.canControl { return "Controlling your Mac · no picture" }
+            return model.controlAllowed ? "Waiting for your Mac · controls paused" : "Mouse and keyboard are off on your Mac"
+        }
         if !model.fresh || !model.captureHealthy { return "Reconnecting the picture · controls paused" }
         if panMode { return "View · drag or pinch to look around" }
         if model.canControl && clickAcknowledged { return "Click sent" }
@@ -774,6 +954,7 @@ struct NativeSessionView: View {
 
     private var liveState: LiveDot.State {
         if offlineLayoutCheck { return .idle }
+        if couch { return model.canControl || model.dragging ? .live : .busy }
         if !model.fresh || !model.captureHealthy { return .busy }
         return model.canControl || model.dragging ? .live : .idle
     }
@@ -1233,11 +1414,12 @@ struct NativeSessionView: View {
         Binding(get: { showControls && !controlsAsOverlay }, set: { if !$0 { closeControls() } })
     }
 
+    /// Couch shows no picture, so there is no display to choose and nothing to hide it from.
     private var showsCurtainRow: Bool {
-        (model.curtainSupported && model.curtainState != nil) || curtainPreview
+        !couch && ((model.curtainSupported && model.curtainState != nil) || curtainPreview)
     }
 
-    private var showsDisplayRow: Bool { model.displaySelectionSupported && model.displays.count > 1 }
+    private var showsDisplayRow: Bool { !couch && model.displaySelectionSupported && model.displays.count > 1 }
 
     /// Header, two rows of keys and up to two session rows. Nothing in the panel scrolls.
     private var panelHeight: CGFloat {
@@ -2069,6 +2251,14 @@ struct NativeSessionView: View {
 
     private func handle(_ command: NativeGestureCommand) -> Bool {
         guard !controlsBlockInput, !showVoiceInput, !model.privacyShield, !model.contentConcealed else { return false }
+        if couch {
+            // No picture to look around or aim at.
+            switch command {
+            case .zoom, .zoomEnded, .zoomToggle, .navigate, .pan, .pointTo: return false
+            default: break
+            }
+            if !couchTouched { couchTouched = true }
+        }
         switch command {
         case .zoomToggle(let anchor):
             model.pointerLocator.clear()
@@ -2119,7 +2309,7 @@ struct NativeSessionView: View {
     }
 
     private var followAllowed: Bool {
-        followStyle.follows && model.canControl && !keyboardOpen && !controlsBlockInput && !panMode
+        !couch && followStyle.follows && model.canControl && !keyboardOpen && !controlsBlockInput && !panMode
             && !model.privacyShield && !model.contentConcealed
     }
 
@@ -2167,7 +2357,7 @@ struct NativeSessionView: View {
     }
 
     private var miniMapEligible: Bool {
-        miniMapSetting && viewport.isCropped && controlsCollapsed && !keyboardOpen && !showControls
+        !couch && miniMapSetting && viewport.isCropped && controlsCollapsed && !keyboardOpen && !showControls
             && !showVoiceInput && !model.privacyShield && !model.contentConcealed && !lockVisible
     }
 
@@ -2309,7 +2499,7 @@ struct NativeSessionView: View {
     }
 
     private func collapseControls() {
-        guard !controlsCollapsed, !voiceLocked else { return }
+        guard !couch, !controlsCollapsed, !voiceLocked else { return }
         cancelGesture()
         if showVoiceInput { cancelVoiceInput() }
         withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : Farside.Motion.sheetSpring) {

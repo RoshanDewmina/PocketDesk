@@ -114,7 +114,7 @@ struct HomeView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var macName: String? { connection.invitation?.name ?? LaunchOptions.demoMacName }
-    private var status: MacStatus { MacStatus(connection.status) }
+    private var status: MacStatus { MacStatus(connection.status, couch: model.requestedMode == .couch) }
     private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall || showServerData || showLegal }
 
     var body: some View {
@@ -162,7 +162,7 @@ struct HomeView: View {
             ConnectionDetailsSheet(connection: connection)
         }
         .sheet(isPresented: $showTroubleshoot) {
-            TroubleshootSheet(macName: macName ?? "Your Mac", retry: connect)
+            TroubleshootSheet(macName: macName ?? "Your Mac", retry: { connect(mode: model.requestedMode) })
         }
         .fullScreenCover(item: $friendlyError) { error in
             FriendlyErrorView(error: error, primaryTitle: primaryTitle(for: error), primary: { resolve(error, action: error.action) },
@@ -188,8 +188,10 @@ struct HomeView: View {
         }
         .onChange(of: connection.status) { old, new in statusChanged(from: old, to: new) }
         .onChange(of: model.macNotice) { _, _ in showDepartureIfNeeded() }
+        .onChange(of: model.couchRefusal) { _, _ in showCouchRefusalIfNeeded() }
         .onAppear {
             showDepartureIfNeeded()
+            showCouchRefusalIfNeeded()
             if macName != nil && connection.invitation != nil { onboarding.offerCoach() }
             #if DEBUG
             applyDebugState()
@@ -308,11 +310,22 @@ struct HomeView: View {
                 }
                 .buttonStyle(FarsideSecondaryButtonStyle(height: 60))
             } else {
-                Button(action: connect) { ConnectPillLabel() }
+                Button { connect() } label: { ConnectPillLabel() }
                     .buttonStyle(ConnectPillStyle())
                     .accessibilityLabel("Connect")
                     .accessibilityHint("Closes the gap: opens your Mac’s screen on this iPhone")
                     .accessibilityIdentifier("home.connect")
+                VStack(spacing: 6) {
+                    Button(CouchCopy.entryTitle) { connect(mode: .couch) }
+                        .buttonStyle(FarsideSecondaryButtonStyle(height: 52))
+                        .accessibilityIdentifier("home.couch")
+                    // The caption style uppercases; the label keeps the sentence as written.
+                    Text(CouchCopy.entryCaption)
+                        .farsideCaption()
+                        .multilineTextAlignment(.center)
+                        .accessibilityLabel(CouchCopy.entryCaption)
+                }
+                .frame(maxWidth: .infinity)
             }
         }
         .padding(.top, Farside.Space.m)
@@ -371,7 +384,7 @@ struct HomeView: View {
 
     // MARK: Behaviour
 
-    private func connect() {
+    private func connect(mode: SessionMode = .picture) {
         let access = AnywhereAccess.shared
         guard !access.removalPending, !access.localCleanupPending, !access.removalRecoveryRequired else {
             showServerData = true
@@ -379,10 +392,12 @@ struct HomeView: View {
         }
         lastFailure = nil
         model.error = ""
+        model.prepareConnection(mode: mode)
         onboarding.beforeConnect {
             Task { @MainActor in
                 // Only waits when this phone has Anywhere and its token is due; never more than a few seconds.
-                await AnywhereAccess.shared.prepareForConnection()
+                // Couch sends no token, so it never waits for one.
+                if mode == .picture { await AnywhereAccess.shared.prepareForConnection() }
                 guard AnywhereAccess.shared.phoneConnectionAllowed else { showServerData = true; return }
                 connection.start()
             }
@@ -397,7 +412,13 @@ struct HomeView: View {
 
     private func statusChanged(from old: String, to new: String) {
         if MacStatus(new).tone == .busy { lastFailure = nil }
-        guard !connection.isRunning, let name = macName,
+        guard !connection.isRunning else { return }
+        if let couch = FriendlyError.forCouch(status: new, requestedCouch: model.requestedMode == .couch) {
+            lastFailure = couch
+            if !covered || friendlyError != nil { friendlyError = couch }
+            return
+        }
+        guard let name = macName,
               let error = FriendlyError.from(status: new, previous: old, macName: name) else { return }
         let shown = FriendlyError.forLocalOnly(error, serviceAskedForAnywhere: connection.entitlementRequired,
                                                hasPlan: anywhere.entitlement.hasAccess)
@@ -414,11 +435,23 @@ struct HomeView: View {
         if friendlyError == nil && !covered { friendlyError = error }
     }
 
+    /// The Mac refused Couch mode; the model already ended that attempt.
+    private func showCouchRefusalIfNeeded() {
+        guard let reason = model.couchRefusal else { return }
+        model.clearCouchRefusal()
+        let error = FriendlyError.couch(reason)
+        lastFailure = error
+        if !covered || friendlyError != nil { friendlyError = error }
+    }
+
     private func resolve(_ error: FriendlyError, action: FriendlyError.Action) {
         friendlyError = nil
         switch action {
         case .retry:
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { connect() }
+            let mode = model.requestedMode
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { connect(mode: mode) }
+        case .connectWithPicture:
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { connect(mode: .picture) }
         case .pairAgain:
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { model.pairingEntry = .scan }
         case .seePlans:
@@ -453,7 +486,8 @@ struct HomeView: View {
             "locked": .locked(since: "11:48 PM"), "needsPlan": .needsPlan, "codeRejected": .codeRejected,
             "declined": .declined, "approvalTimedOut": .approvalTimedOut, "verifyFailed": .verifyFailed,
             "relayUnavailable": .relayUnavailable, "connectionLost": .connectionLost, "sessionGlitch": .sessionGlitch,
-            "anywhereUnverified": .anywhereUnverified
+            "anywhereUnverified": .anywhereUnverified, "couchNotLocal": .couch(.notLocal),
+            "couchControlOff": .couch(.controlOff)
         ]
         lastFailure = samples[kind]
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { friendlyError = samples[kind] }
@@ -485,7 +519,15 @@ struct MacStatus: Equatable {
     /// 0 idle, 1 reaching the service, 2 the Mac answered, 3 opening the picture.
     let progress: Int
 
-    init(_ raw: String) {
+    init(_ raw: String, couch: Bool = false) {
+        if couch && raw.hasPrefix("Connecting live desktop") {
+            self.init(text: CouchCopy.checking, tone: .busy, inContact: true, progress: 3)
+        } else {
+            self.init(raw: raw, couch: couch)
+        }
+    }
+
+    private init(raw: String, couch: Bool) {
         switch raw {
         case "Ready to connect", "Disconnected", "Not connected":
             self.init(text: "Paired · ready when you are", tone: .idle)
@@ -509,6 +551,7 @@ struct MacStatus: Equatable {
                 self.init(text: "Not paired", tone: .idle)
             } else {
                 let friendly = FriendlyError.from(status: raw, previous: nil, macName: "Your Mac")
+                    ?? FriendlyError.forCouch(status: raw, requestedCouch: couch)
                 self.init(text: friendly?.shortStatus ?? raw, tone: .caution)
             }
         }
