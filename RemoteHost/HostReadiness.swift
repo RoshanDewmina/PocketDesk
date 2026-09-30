@@ -235,7 +235,12 @@ struct HostPreferences {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.allowControl: true, Key.keepAwake: true, Key.sharingEnabled: true,
+        // Freeze the migrated default once. A later login-item choice cannot enable idle
+        // assertions implicitly; explicit prior true/false values always win.
+        if defaults.object(forKey: Key.keepAwake) == nil {
+            defaults.set(defaults.bool(forKey: "launchAtLoginDefaultApplied"), forKey: Key.keepAwake)
+        }
+        defaults.register(defaults: [Key.allowControl: true, Key.sharingEnabled: true,
                                      Key.chimeOnConnect: true, Key.allowBigText: true, Key.allowFileTransfer: true, Key.menuBarIconShown: true])
     }
 

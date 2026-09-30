@@ -67,10 +67,14 @@ struct RemoteAction: Codable {
     /// Correlates Big Text requests and replies; absent for older peers.
     var scaleRequestID: String? = nil
 
+    var wakeRequest: WakeRequest? = nil
+    var wakeReply: WakeReply? = nil
+
     var inputRequestID: String? = nil
     var inputAppliedReceipt: InputAppliedReceipt? = nil
 
     func validate() throws {
+        if try validateWakeExtension() { return }
         // Before the extension early returns, so no other action can carry an unchecked summary.
       guard liveViewOnly == nil || action == "viewOnly" || action == "capture" else { throw RemoteError.invalidMessage }
         if let liveViewOnlyRequestID {
@@ -247,5 +251,20 @@ struct PointerMoveCoalescer {
         copy.y = 0
         copy.pointerSync = nil
         return try? encoder.encode(copy)
+    }
+}
+
+extension RemoteAction {
+    func validateWakeExtension() throws -> Bool {
+        guard wakeRequest != nil || wakeReply != nil || action == "wakeRequest" || action == "wakeReply" else { return false }
+        guard (action == "wakeRequest" && wakeRequest != nil && wakeReply == nil) ||
+              (action == "wakeReply" && wakeReply != nil && wakeRequest == nil),
+              x == 0, y == 0, text.isEmpty, key.isEmpty, modifiers.isEmpty, epoch > 0 else { throw RemoteError.invalidMessage }
+        // Refuse every other optional extension, including future fields, before extension returns.
+        let allowed: Set<String> = ["action", "epoch", "x", "y", "text", "key", "modifiers", "wakeRequest", "wakeReply"]
+        guard let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(self)) as? [String: Any],
+              Set(encoded.keys).isSubset(of: allowed) else { throw RemoteError.invalidMessage }
+        try wakeRequest?.validate(); try wakeReply?.validate()
+        return true
     }
 }

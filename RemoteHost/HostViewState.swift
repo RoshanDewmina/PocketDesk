@@ -52,10 +52,12 @@ struct HostViewState: Equatable {
     var pairing: HostPairingState = .idle
     var canBeginPairing = false
     var allowControl = true
-    var keepAwake = true
+    var keepAwake = false
     var openAtLogin = false
     var chimeOnConnect = true
     var allowFileTransfer = true
+    var wakeHelperHostID: String? = nil
+    var wakeOwnerPairID: String? = nil
     var localOnly = false
     var allowSystemAudio = false
     var pausedUntil: Date?

@@ -7,6 +7,7 @@ struct HostSettingsView: View {
     @State private var confirmingServerRemoval = false
     @State private var showingNotices = false
     @State private var confirmingStop = false
+    @State private var showingWakeRegistration = false
 
     var body: some View {
         let presentation = HostPopoverPresentation.make(for: state)
@@ -27,6 +28,7 @@ struct HostSettingsView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         permissionsSection
                         generalSection
+                        availabilitySection
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
@@ -39,6 +41,11 @@ struct HostSettingsView: View {
         .preferredColorScheme(.dark)
         .onAppear(perform: actions.refreshCaptureScopes)
         .sheet(isPresented: $showingNotices) { LegalNoticesView() }
+        .sheet(isPresented: $showingWakeRegistration) {
+            if let helper = state.wakeHelperHostID, let grant = state.wakeOwnerPairID {
+                WakeTargetRegistrationView(helperHostID: helper, ownerPairID: grant, store: HostWakeTargetStore())
+            }
+        }
         .confirmationDialog("Remove this Mac’s server room?", isPresented: $confirmingServerRemoval) {
             Button("Remove Server Room", role: .destructive, action: actions.removeServerRoom)
         } message: {
@@ -92,7 +99,7 @@ struct HostSettingsView: View {
                     .accessibilityIdentifier("farside.settings.allowControl")
                     .disabled(state.captureScopeViewOnly)
             }
-            HostSettingsRow("Keep this Mac awake", subtitle: "While sharing is on, so your iPhone can reach it") {
+            HostSettingsRow("Keep this Mac awake", subtitle: "Prevents idle system sleep while sharing. Does not override lid close, lock or manual Sleep.") {
                 HostSwitch(label: "Keep this Mac awake", isOn: state.keepAwake, set: actions.setKeepAwake)
                     .accessibilityIdentifier("farside.settings.keepAwake")
             }
@@ -145,6 +152,23 @@ struct HostSettingsView: View {
             .disabled(state.serverRemovalBusy || (!state.hasPairedPhone && !state.serverRemovalPending))
             .accessibilityIdentifier("farside.settings.removeServerRoom")
             if let message = state.serverRemovalMessage { Text(message).font(.footnote).fixedSize(horizontal: false, vertical: true) }
+        }
+    }
+
+    private var availabilitySection: some View {
+        HostSettingsSection("Availability", footer: "Start at login and recovery apply after you log in. Farside never stores your Mac password or unlocks FileVault. A supported production virtual-workspace creator is still required; Big Text is a separate feature.") {
+            if let hostID = state.wakeHelperHostID, state.wakeOwnerPairID != nil {
+                HostSettingsRow("This Mac’s durable host ID", subtitle: "Copy locally to an owner-configured powered helper. This ID is not permission to connect.") {
+                    Text(hostID).font(.caption.monospaced()).textSelection(.enabled)
+                }
+                Button("Register another Mac for LAN wake") { showingWakeRegistration = true }
+                    .accessibilityIdentifier("farside.settings.wakeRegistration")
+            }
+            HostSettingsRow("Awake and unlocked", subtitle: "A current authenticated connection and fresh content are required.") { EmptyView() }
+            HostSettingsRow("Display asleep", subtitle: "Farside can request display wake while this user’s Mac is awake.") { EmptyView() }
+            HostSettingsRow("System sleep or closed lid", subtitle: "Needs supported network wake and another powered LAN peer. Packet sent does not mean awake.") { EmptyView() }
+            HostSettingsRow("Locked or switched user", subtitle: "Sharing stops. Unlock or return to this user at the Mac.") { EmptyView() }
+            HostSettingsRow("Logout, restart or FileVault", subtitle: "Unavailable until this user logs in and normal permissions allow sharing.") { EmptyView() }
         }
     }
 

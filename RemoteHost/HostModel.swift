@@ -168,6 +168,10 @@ final class RemoteHostModel: ObservableObject {
     private var phoneLoadReceivedAt: TimeInterval?
     private var ladderState: LadderState?
     private var busyState: BusyState?
+    private let wakeTargets = HostWakeTargetStore()
+    private lazy var lanWake = HostLANWakeService(resolve: { [weak self] id in
+        try? self?.wakeTargets.read().first { $0.id == id }
+    }, send: { LANMagicPacketSender().send($0) })
     private let keepAwake = HostKeepAwake()
     private let remoteAccessAwake = HostKeepAwake(backend: .idleSystem)
     private let displayWake = HostDisplayWake()
@@ -400,6 +404,8 @@ final class RemoteHostModel: ObservableObject {
             openAtLogin: openAtLogin,
             chimeOnConnect: chimeOnConnect,
             allowFileTransfer: !captureScopeViewOnly && allowFileTransfer,
+            wakeHelperHostID: hasPairedPhone ? connection.invitation?.durableHostID : nil,
+            wakeOwnerPairID: hasPairedPhone ? connection.invitation?.ownerPairID : nil,
             localOnly: connection.localOnly,
             allowSystemAudio: allowSystemAudio,
             pausedUntil: timedPause.resumesAt,
@@ -1269,7 +1275,7 @@ final class RemoteHostModel: ObservableObject {
         updateHangWatchdog(curtainUp: curtain.phase != .down)
     }
 
-    /// Launch at login and automatic recovery turn on once setup is complete; later choices stick.
+    /// Reconcile existing background choices; setup alone never enables a new background item.
     private func applyBackgroundDefaults() {
         if let problem = background.applyDefaults(setupComplete: true) { events.record(.error, problem) }
         refreshBackgroundStates()
@@ -2076,6 +2082,7 @@ final class RemoteHostModel: ObservableObject {
             countInput("rejected-parse"); stop(); return
         }
         countInput("received")
+        if action.action == "wakeRequest" { receiveWakeRequest(action); return }
         guard SharedCaptureScopePolicy.permits(action.action, kind: captureScopeKind) else {
             countInput("rejected-capture-scope"); return
         }
@@ -2328,6 +2335,28 @@ final class RemoteHostModel: ObservableObject {
         sendCaptureHealth(healthy)
     }
 
+    private func receiveWakeRequest(_ action: RemoteAction) {
+        guard (try? action.validate()) != nil, let request = action.wakeRequest,
+              let invitation = connection.invitation, let helper = invitation.durableHostID,
+              let grant = invitation.ownerPairID, let peer = connection.media,
+              let deadline = connection.presentationDeadline(), hasPairedPhone else { return }
+        let receivedAt = connection.controlArrivedAt ?? connection.currentControlArrivalMs.map { $0 / 1000 } ?? ProcessInfo.processInfo.systemUptime
+        let authority = HostWakeAuthority(helperHostID: helper, ownerPairID: grant,
+            sessionID: connection.presentationSessionID.uuidString, epoch: action.epoch, validUntil: deadline)
+        let reply = lanWake.request(request, receivedAt: receivedAt, authority: authority) { [self] expected, operation in
+            input.withAuthority {
+                let now = ProcessInfo.processInfo.systemUptime
+                guard connection.media === peer, connection.invitation == invitation, hasPairedPhone,
+                      connection.connected, active, !sessionRefused, !liveViewOnly, !captureScopeViewOnly, !phonePause.isPaused,
+                      expected.epoch == inputEpoch.value, expected.sessionID == connection.presentationSessionID.uuidString,
+                      expected.valid(at: now), connection.presentationDeadline(at: now) != nil else { return .denied }
+                return operation()
+            }
+        }
+        guard connection.media === peer, connection.invitation == invitation else { return }
+        _ = connection.sendControl(RemoteAction(action: "wakeReply", epoch: action.epoch, wakeReply: reply))
+    }
+
     private func receivePointerProbe(_ action: RemoteAction) {
         guard let probe = action.pointerProbe,
               (try? action.validate()) != nil,
@@ -2400,13 +2429,20 @@ final class RemoteHostModel: ObservableObject {
         if change.ladder != nil || change.busy != nil { sendCaptureHealth(sessionHealthy) }
     }
 
+    private var wakeHelperAvailable: Bool {
+        guard hasPairedPhone, !captureScopeViewOnly, !liveViewOnly,
+              let invitation = connection.invitation, let helper = invitation.durableHostID,
+              let grant = invitation.ownerPairID, let targets = try? wakeTargets.read() else { return false }
+        return targets.contains { $0.helperHostID == helper && $0.ownerPairID == grant && WakeLANInterface.current(named: $0.interfaceName) != nil }
+    }
+
     /// A switched-off experiment is not advertised, so the phone never sends what the host would ignore.
     private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
         let base = SessionFeature.host.filter {
             if $0 == SessionFeature.causalInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             return ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
-        } + [SessionFeature.couch]
+        } + [SessionFeature.couch] + (wakeHelperAvailable ? [SessionFeature.lanWake] : [])
         return SharedCaptureScopePolicy.features(HostFeatureList.features(base: base,
             allowBigText: !captureScopeViewOnly && preferences.allowBigText,
             accessibility: inputAccess.accessibility.isGranted,

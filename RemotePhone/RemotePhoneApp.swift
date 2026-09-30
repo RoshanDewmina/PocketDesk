@@ -122,6 +122,44 @@ final class PhoneRemoteModel: ObservableObject {
     private var shareDestination: SendToMacDestination?
     private var sendToMacBeaconAt: TimeInterval = 0
     private var fileTransferWasAvailable = false
+    @Published private(set) var wakeStatus: String?
+    private var pendingWake: (request: WakeRequest, host: PhoneHostTrust, session: UUID, epoch: UInt64, sentAt: TimeInterval)?
+    private var wakeTimeout: Task<Void, Never>?
+    var canRequestLANWake: Bool {
+        !contentConcealed && !privacyShield && !captureScopeViewOnly && !viewOnlyConfirmed && !pipBackground &&
+            !pendingViewOnlyStart && !awaitingViewOnlyExit && hostFeatures.contains(SessionFeature.lanWake) &&
+            connection.presentationDeadline() != nil && connection.presentationHostTrust?.ownerPairID != nil && pendingWake == nil
+    }
+    func requestLANWake(targetID: UUID) {
+        guard canRequestLANWake, let host = connection.presentationHostTrust,
+              host.durableHostID != nil, host.ownerPairID != nil else { wakeStatus = "Connect to your paired powered helper with a registered wake target first."; return }
+        let request = WakeRequest(targetID: targetID, requestID: UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased())
+        pendingWake = (request, host, connection.presentationSessionID, geometryEpoch, ProcessInfo.processInfo.systemUptime)
+        wakeStatus = "Requesting one wake packet…"
+        guard connection.sendControl(RemoteAction(action: "wakeRequest", epoch: geometryEpoch, wakeRequest: request)) else {
+            pendingWake = nil; wakeStatus = "Couldn’t send the request. No wake result was confirmed."; return
+        }
+        wakeTimeout?.cancel()
+        wakeTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled, let self, self.pendingWake?.request == request else { return }
+            self.pendingWake = nil; self.wakeStatus = "No helper reply was confirmed. The target’s wake state is unknown."
+        }
+    }
+    private func receiveWakeReply(_ action: RemoteAction) {
+        guard (try? action.validate()) != nil, let reply = action.wakeReply, let pending = pendingWake,
+              reply.targetID == pending.request.targetID, reply.requestID == pending.request.requestID,
+              action.epoch == pending.epoch, action.epoch == geometryEpoch,
+              connection.presentationSessionID == pending.session, connection.presentationHostTrust == pending.host,
+              connection.presentationDeadline() != nil, ProcessInfo.processInfo.systemUptime - pending.sentAt <= 5 else { return }
+        pendingWake = nil; wakeTimeout?.cancel(); wakeTimeout = nil
+        switch reply.status {
+        case .sent: wakeStatus = "One wake packet was sent. The target is not yet confirmed awake or unlocked."
+        case .unsupported: wakeStatus = "This helper couldn’t send a supported LAN wake packet. Check its local interface and target configuration."
+        case .denied: wakeStatus = "The helper denied this request. Check owner registration, pairing, current connection or the one-minute cooldown."
+        }
+    }
+
     @Published private(set) var hostFeatures: Set<String> = []
     @Published private(set) var sessionMode: SessionMode = .picture { willSet { if newValue != sessionMode { retireContentPresentation() } } }
     @Published private(set) var requestedMode: SessionMode = .picture
@@ -356,6 +394,8 @@ final class PhoneRemoteModel: ObservableObject {
         presentationContentEpoch &+= 1
     }
     private func invalidatePresentation(keepingPiP: Bool = false) {
+        if pendingWake != nil { wakeStatus = "The helper session changed. No new wake result can be confirmed." }
+        pendingWake = nil; wakeTimeout?.cancel(); wakeTimeout = nil
         VideoPresentationSession.invalidateActive()
         inlinePresentationAdmission = nil
         if !keepingPiP {
@@ -1944,6 +1984,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     private func receive(_ action: RemoteAction) {
         switch action.action {
+        case "wakeReply": receiveWakeReply(action)
         case "viewing":
             controlAllowed = !captureScopeViewOnly && action.x == 1
             if !controlAllowed { pointerLocator.clear(); release() }

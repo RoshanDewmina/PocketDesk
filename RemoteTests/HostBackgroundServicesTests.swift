@@ -45,7 +45,7 @@ final class HostBackgroundServicesTests: XCTestCase {
                                installed: installed, helperFingerprint: fingerprint)
     }
 
-    func testLaunchAtLoginTurnsOnOnceAfterFirstSuccessfulSetup() {
+    func testNewSetupDoesNotEnableBackgroundItemsWithoutChoice() {
         let login = FakeBackgroundService()
         let subject = services(login: login)
 
@@ -53,17 +53,19 @@ final class HostBackgroundServicesTests: XCTestCase {
         XCTAssertEqual(login.registrations, 0, "Nothing registers before setup is complete")
 
         XCTAssertNil(subject.applyDefaults(setupComplete: true))
-        XCTAssertEqual(login.registrations, 1)
-        XCTAssertEqual(subject.loginState, .on)
-
+        XCTAssertEqual(login.registrations, 0)
+        XCTAssertEqual(subject.loginState, .off)
+        XCTAssertFalse(subject.recoveryWanted)
+        subject.setLoginItem(true)
         subject.applyDefaults(setupComplete: true)
-        XCTAssertEqual(login.registrations, 1, "The default is applied once, not on every launch")
+        XCTAssertEqual(login.registrations, 1, "Only the explicit choice registers")
+        XCTAssertFalse(services(login: login).recoveryWanted, "Choosing login never silently chooses recovery")
     }
 
     func testTurningLaunchAtLoginOffSticksAcrossLaunches() async {
         let login = FakeBackgroundService()
         let subject = services(login: login)
-        subject.applyDefaults(setupComplete: true)
+        subject.setLoginItem(true)
         subject.setLoginItem(false)
         for _ in 0..<20 where login.status != .notRegistered { await Task.yield() }
         XCTAssertEqual(login.unregistrations, 1)
@@ -100,7 +102,7 @@ final class HostBackgroundServicesTests: XCTestCase {
         let login = FakeBackgroundService()
         login.onRegister = .requiresApproval
         let subject = services(login: login)
-        subject.applyDefaults(setupComplete: true)
+        subject.setLoginItem(true)
         XCTAssertEqual(subject.loginState, .needsApproval, "Registered but not approved is not shown as on")
     }
 
@@ -108,7 +110,7 @@ final class HostBackgroundServicesTests: XCTestCase {
         let login = FakeBackgroundService()
         login.registerError = NSError(domain: "SMAppServiceErrorDomain", code: Int(kSMErrorLaunchDeniedByUser))
         let subject = services(login: login)
-        let problem = subject.applyDefaults(setupComplete: true)
+        let problem = subject.setLoginItem(true)
         XCTAssertNotNil(problem)
         XCTAssertTrue(problem?.contains("open at login") == true)
 
@@ -117,11 +119,11 @@ final class HostBackgroundServicesTests: XCTestCase {
         XCTAssertNil(services(login: already).setLoginItem(true))
     }
 
-    func testAutomaticRecoveryIsOnByDefaultAndReregistersAnUpdatedHelper() async {
+    func testExplicitRecoveryChoiceReregistersAnUpdatedHelper() async {
         let agent = FakeBackgroundService()
         let first = services(agent: agent, fingerprint: "100-1")
-        XCTAssertTrue(first.recoveryWanted)
-        first.applyDefaults(setupComplete: true)
+        XCTAssertFalse(first.recoveryWanted)
+        first.setRecovery(true, setupComplete: true)
         XCTAssertEqual(agent.registrations, 1)
         XCTAssertEqual(first.recoveryState, .on)
 
@@ -138,7 +140,7 @@ final class HostBackgroundServicesTests: XCTestCase {
     func testTurningRecoveryOffUnregistersTheHelper() async {
         let agent = FakeBackgroundService()
         let subject = services(agent: agent)
-        subject.applyDefaults(setupComplete: true)
+        subject.setRecovery(true, setupComplete: true)
         subject.setRecovery(false, setupComplete: true)
         for _ in 0..<50 where agent.unregistrations == 0 { await Task.yield() }
         XCTAssertEqual(agent.unregistrations, 1)
@@ -146,6 +148,30 @@ final class HostBackgroundServicesTests: XCTestCase {
 
         services(agent: agent).applyDefaults(setupComplete: true)
         XCTAssertEqual(agent.registrations, 1, "Recovery stays off after the person turns it off")
+    }
+
+    func testLegacyChoicesAndKeepAwakeArePreserved() {
+        defaults.set(true, forKey: "launchAtLoginDefaultApplied")
+        let subject = services(login: FakeBackgroundService(.enabled))
+        XCTAssertTrue(subject.recoveryWanted, "Preserve previous completed setup's recovery default")
+        XCTAssertTrue(HostPreferences(defaults: defaults).keepAwake)
+        subject.setRecovery(false, setupComplete: true)
+        XCTAssertFalse(services().recoveryWanted, "Explicit false survives migration/relaunch")
+        defaults.set(false, forKey: "keepAwakeWhileSharing")
+        XCTAssertFalse(HostPreferences(defaults: defaults).keepAwake)
+    }
+
+    func testRegisteredHelperRetainedAndNewKeepAwakeRequiresChoice() {
+        XCTAssertFalse(HostPreferences(defaults: defaults).keepAwake)
+        defaults.set(true, forKey: "launchAtLoginDefaultApplied")
+        XCTAssertFalse(HostPreferences(defaults: defaults).keepAwake, "Later login choice does not enable idle assertions")
+        let agent = FakeBackgroundService(.enabled)
+        let subject = services(agent: agent)
+        XCTAssertTrue(subject.recoveryWanted)
+        subject.applyDefaults(setupComplete: true)
+        XCTAssertEqual(agent.unregistrations, 0)
+        defaults.set(true, forKey: "keepAwakeWhileSharing")
+        XCTAssertTrue(HostPreferences(defaults: defaults).keepAwake)
     }
 
     func testRecoveryPolicy() {

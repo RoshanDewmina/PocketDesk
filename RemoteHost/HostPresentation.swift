@@ -507,8 +507,8 @@ struct HostReadyCheck: Equatable, Identifiable {
 
     private static func openAtLogin(_ state: HostViewState) -> Self {
         state.openAtLogin
-            ? Self(id: .openAtLogin, title: "Opens at login", detail: "Back by itself after a restart", result: .pass)
-            : Self(id: .openAtLogin, title: "Opens at login", detail: "Recommended, so a restart doesn’t strand you",
+            ? Self(id: .openAtLogin, title: "Opens at login", detail: "Opens after you log in", result: .pass)
+            : Self(id: .openAtLogin, title: "Opens at login", detail: "Choose to open Farside after you log in",
                    result: .optional, fix: .openAtLogin)
     }
 }
@@ -520,8 +520,8 @@ struct HostReadyCheck: Equatable, Identifiable {
 enum HostBackgroundItemCopy {
     static func loginSubtitle(_ state: HostBackgroundItemState) -> String {
         switch state {
-        case .on: "Back by itself after a restart"
-        case .off: "Recommended, so a restart doesn’t strand you"
+        case .on: "Opens after you log in"
+        case .off: "Choose to open Farside after you log in"
         case .needsApproval: "Waiting for approval in Login Items"
         case .unavailable: "Move Farside to Applications first"
         }
@@ -529,7 +529,7 @@ enum HostBackgroundItemCopy {
 
     static func recoverySubtitle(_ state: HostBackgroundItemState) -> String {
         switch state {
-        case .on: "A small helper reopens Farside after a crash or freeze"
+        case .on: "Reopens after a crash or freeze; your deliberate Quit stays closed"
         case .off: "Farside stays closed if it crashes"
         case .needsApproval: "Waiting for approval in Login Items"
         case .unavailable: "Move Farside to Applications first"

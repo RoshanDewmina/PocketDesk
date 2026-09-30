@@ -1939,6 +1939,14 @@ struct NativeSessionView: View {
                 summaryRow("Keyboard and pointer", "keyboard",
                            value: peripherals.keyboardConnected ? "Keyboard connected" : "", page: .keyboard)
             }
+            if session {
+                Section {
+                    NavigationLink { LANWakeView(model: model) } label: {
+                        Label("Wake another Mac on this LAN", systemImage: "power")
+                            .frame(minHeight: 44)
+                    }
+                }
+            }
             Section {
                 summaryRow("How to steer", "hand.draw", value: "", page: .steer)
                 summaryRow("Diagnostics", "waveform.path.ecg", value: streamStatsEnabled ? "Statistics on" : "", page: .diagnostics)
