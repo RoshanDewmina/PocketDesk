@@ -1,5 +1,10 @@
 import Foundation
 
+struct HostCaptureScopeOption: Identifiable, Equatable {
+    let id: String
+    let name: String
+}
+
 struct HostDisplayOption: Identifiable, Equatable {
     let id: UInt32
     let name: String
@@ -76,6 +81,10 @@ struct HostViewState: Equatable {
     var crashLoopStopped = false
     var displays: [HostDisplayOption] = []
     var selectedDisplayID: UInt32 = 0
+    var captureScopes: [HostCaptureScopeOption] = [.init(id: "display", name: "Entire display")]
+    var selectedCaptureScopeID = "display"
+    var captureScopeViewOnly = false
+    var captureScopeNeedsSelection = false
     var detail: String?
     /// Setup's Pair step was skipped; pairing happens later from the menu bar.
     var pairingDeferred = false
@@ -134,6 +143,8 @@ struct HostActions {
     var copyDiagnostics: () -> Void = {}
     var setNewestFrameWins: (Bool) -> Void = { _ in }
     var selectDisplay: (UInt32) -> Void = { _ in }
+    var refreshCaptureScopes: () -> Void = {}
+    var selectCaptureScope: (String) -> Void = { _ in }
     var setMenuBarIconShown: (Bool) -> Void = { _ in }
     var openSetup: () -> Void = {}
     var openSettings: () -> Void = {}

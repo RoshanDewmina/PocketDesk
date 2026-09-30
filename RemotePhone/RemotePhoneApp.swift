@@ -268,11 +268,17 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var pairingCode = ""
     @Published var error = ""
     @Published var pairingEntry: PairingEntry?
+    @Published private(set) var sharedCaptureScope: CaptureScopeFrame?
+    var captureScopeViewOnly: Bool { sharedCaptureScope?.viewOnly == true }
+    var captureScopeDescription: String? {
+        guard let scope = sharedCaptureScope, scope.viewOnly else { return nil }
+        return "\(scope.label) · view only · audio off"
+    }
     @Published private(set) var macAudioMuted = true
     private let macAudioPlayback = PhoneSystemAudioPlayback()
     func setMacAudioMuted(_ muted: Bool) {
         if !muted {
-            guard connection.connected, !contentConcealed, sceneIsActive, macAudioPlayback.begin() else { return }
+            guard !captureScopeViewOnly, connection.connected, !contentConcealed, sceneIsActive, macAudioPlayback.begin() else { return }
         }
         macAudioMuted = muted
         connection.media?.setRemoteAudioMuted(muted)
@@ -472,7 +478,7 @@ final class PhoneRemoteModel: ObservableObject {
     #endif
 
     var canControl: Bool {
-        guard bigText.pendingTarget == nil else { return false }
+        guard !captureScopeViewOnly, bigText.pendingTarget == nil else { return false }
         #if DEBUG
         if inputProbe != nil { return !privacyShield && !contentConcealed }
         #endif
@@ -1087,7 +1093,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// Files need a live foreground session and the Mac's `file` channel. Control is not required:
     /// the Mac's own "Allow file transfer" setting decides, and it answers with a clear refusal.
     var fileTransferAvailable: Bool {
-        fileTransferSupported && connection.connected && connection.media?.fileChannelOpen == true
+        !captureScopeViewOnly && fileTransferSupported && connection.connected && connection.media?.fileChannelOpen == true
             && !privacyShield && !contentConcealed
     }
 
@@ -1806,7 +1812,7 @@ final class PhoneRemoteModel: ObservableObject {
     private func receive(_ action: RemoteAction) {
         switch action.action {
         case "viewing":
-            controlAllowed = action.x == 1
+            controlAllowed = !captureScopeViewOnly && action.x == 1
             if !controlAllowed { pointerLocator.clear(); release() }
         case "heartbeat":
             if let clock = action.clock { receiveClockEcho(clock) }
@@ -1837,8 +1843,20 @@ final class PhoneRemoteModel: ObservableObject {
                 if let applied = sync.applied { couchAck.acknowledged(through: applied) }
             }
         case "capture":
+            if let scope = action.captureScope {
+                guard (try? scope.validate()) != nil,
+                      sharedCaptureScope.map({ scope.epoch >= $0.epoch }) ?? true else { return }
+                sharedCaptureScope = scope
+                if scope.viewOnly {
+                    controlAllowed = false
+                    inputToken = nil
+                    pointerLocator.clear()
+                    release()
+                    setMacAudioMuted(true)
+                }
+            }
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
-            hostFeatures = Set(action.features ?? [])
+            hostFeatures = Set(SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display))
             if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
             sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
@@ -1862,9 +1880,9 @@ final class PhoneRemoteModel: ObservableObject {
             if action.streamQuality != nil, action.streamQuality != streamQuality, qualityRequestedAt == nil {
                 qualityRequestedAt = ProcessInfo.processInfo.systemUptime
             }
-            pointerLocatorSupported = action.pointerLocatorSupported == true
+            pointerLocatorSupported = !captureScopeViewOnly && action.pointerLocatorSupported == true
             pointerOverlay.hostCapability(action.pointerSync)
-            if let interaction = action.interaction, interaction.version == 1 {
+            if !captureScopeViewOnly, let interaction = action.interaction, interaction.version == 1 {
                 nativeInteractionSupported = true
                 inputToken = interaction.token
                 tokenReceivedAt = ProcessInfo.processInfo.systemUptime
@@ -2163,6 +2181,7 @@ final class PhoneRemoteModel: ObservableObject {
         timer = nil
         fresh = false
         captureHealthy = false
+        sharedCaptureScope = nil
         controlAllowed = false
         dragging = false
         activeHold = nil

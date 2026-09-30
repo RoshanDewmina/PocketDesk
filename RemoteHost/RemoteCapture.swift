@@ -180,6 +180,7 @@ final class RemoteCapture {
     private var requestedLadder: LadderState?
     private var captureStarted = false
     private var qualityUpdateTask: Task<Void, Never>?
+    private var scopeMonitor: Task<Void, Never>?
     private var exclusionGeneration: UInt64 = 0
     private var exclusionTask: Task<Bool, Never>?
 
@@ -234,7 +235,9 @@ final class RemoteCapture {
     /// `keepingExclusions` starts the new stream already excluding the windows the previous one
     /// excluded, so the privacy curtain never appears in it; if any of them can no longer be found,
     /// the exclusion is dropped as usual.
-    func start(display: SCDisplay, peer: PeerMedia, keepingExclusions: Bool = false) async throws -> UInt64 {
+    func start(display: SCDisplay, peer: PeerMedia, keepingExclusions: Bool = false,
+               target: HostCaptureTarget? = nil,
+               beforeStart: ((DisplayGeometry) -> Bool)? = nil) async throws -> UInt64 {
         let owner = ownership.begin()
         if viewportDisplayID != display.displayID { requestedViewport = nil }
         viewportDisplayID = display.displayID
@@ -246,8 +249,9 @@ final class RemoteCapture {
         appliedQuality = nil
         resetCursor()
         streamPeer = nil
+        scopeMonitor?.cancel(); scopeMonitor = nil
         let previous = session
-        previous?.fenceAudio()
+        previous?.fenceCapture()
         session = nil
         await previous?.stop()
         try Task.checkCancellation()
@@ -260,10 +264,22 @@ final class RemoteCapture {
             if excluding.isEmpty { dropExclusions() }
         }
 
+        let resolved: HostResolvedCaptureScope
+        if let target {
+            peer.setSystemAudioEnabled(false)
+            requestedViewport = nil
+            resolved = try await HostCaptureScope.resolve(target)
+            try Task.checkCancellation()
+            guard ownership.owns(owner) else { throw CancellationError() }
+        } else {
+            resolved = HostResolvedCaptureScope(display: display,
+                filter: SCContentFilter(display: display, excludingWindows: excluding), target: nil)
+        }
+        let lease = CaptureScopeLease(validUntil: target == nil ? .infinity : CACurrentMediaTime() + 1)
         let initialQuality = requestedQuality
         let initialClientLongEdge = requestedClientLongEdge
-        let next = try RemoteCaptureSession(display: display, peer: peer, quality: initialQuality,
-                                            clientLongEdge: initialClientLongEdge, excluding: excluding)
+        let next = try RemoteCaptureSession(resolved: resolved, lease: lease, peer: peer, quality: initialQuality,
+                                            clientLongEdge: initialClientLongEdge)
         next.onHealth = { [weak self, weak next] healthy in
             Task { @MainActor in
                 guard let self, let next, self.ownership.owns(owner), self.session === next else { return }
@@ -283,7 +299,27 @@ final class RemoteCapture {
                 self.publishCaptureRegion(region)
             }
         }
+        guard beforeStart?(next.geometry) != false else { next.fenceCapture(); throw CancellationError() }
         session = next
+        if let target {
+            scopeMonitor = Task { [weak self, weak next] in
+                while !Task.isCancelled {
+                    do {
+                        _ = try await HostCaptureScope.resolve(target)
+                        guard let self, let next, self.ownership.owns(owner), self.session === next,
+                              !Task.isCancelled else { return }
+                        lease.renew(until: CACurrentMediaTime() + 1)
+                        try await Task.sleep(for: .milliseconds(300))
+                    } catch {
+                        guard !Task.isCancelled, let self, let next,
+                              self.ownership.owns(owner), self.session === next else { return }
+                        next.fenceCapture()
+                        self.onFailure?(HostCaptureScopeError.targetUnavailable)
+                        return
+                    }
+                }
+            }
+        }
 
         do {
             try await next.start()
@@ -308,7 +344,7 @@ final class RemoteCapture {
             scheduleQualityUpdate()
             return owner
         } catch {
-            if ownership.owns(owner), session === next { session = nil }
+            if ownership.owns(owner), session === next { scopeMonitor?.cancel(); scopeMonitor = nil; session = nil }
             await next.stop()
             throw error
         }
@@ -342,8 +378,9 @@ final class RemoteCapture {
         resetCursor()
         captureStarted = false
         streamPeer = nil
+        scopeMonitor?.cancel(); scopeMonitor = nil
         let previous = session
-        previous?.fenceAudio()
+        previous?.fenceCapture()
         session = nil
         guard let previous else { return nil }
         return Task { await previous.stop() }
@@ -586,6 +623,17 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private let audioEpoch: UInt64
     private let capturesAudio: Bool
     private let audioPeer: PeerMedia
+    private let scopeLease: CaptureScopeLease
+    private let scopeTarget: HostCaptureTarget?
+    private let captureQueueKey = DispatchSpecificKey<Bool>()
+
+    func fenceCapture() {
+        scopeLease.invalidate()
+        fenceAudio()
+        let clear = { [self] in lastBuffer = nil; audioConverter.reset() }
+        if DispatchQueue.getSpecific(key: captureQueueKey) == true { clear() }
+        else { queue.sync(execute: clear) }
+    }
 
     func fenceAudio() { audioPeer.endSystemAudioCapture(audioEpoch) }
     private var peer: PeerMedia?
@@ -627,9 +675,11 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     let geometry: DisplayGeometry
     let initialRegion: CaptureRegion
 
-    init(display: SCDisplay, peer: PeerMedia, quality: StreamQuality, clientLongEdge: Int?,
-         excluding: [SCWindow] = []) throws {
-        let filter = SCContentFilter(display: display, excludingWindows: excluding)
+    init(resolved: HostResolvedCaptureScope, lease: CaptureScopeLease, peer: PeerMedia, quality: StreamQuality, clientLongEdge: Int?) throws {
+        let display = resolved.display
+        let filter = resolved.filter
+        scopeLease = lease
+        scopeTarget = resolved.target
         let tuning = StreamTuning.current
         let refresh = DisplayRefresh.rateHz(for: display.displayID)
         let fps = CaptureRatePolicy.targetFPS(displayRefreshHz: refresh, tuning: tuning)
@@ -641,12 +691,12 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             throw CaptureSizingError.invalidSource
         }
         let configuration = RemoteCaptureConfiguration.streamConfiguration(
-            output: output, region: nil, showsCursor: true, fps: fps, displayRefreshHz: refresh, tuning: tuning, capturesAudio: peer.systemAudioEnabled
+            output: output, region: nil, showsCursor: true, fps: fps, displayRefreshHz: refresh, tuning: tuning, capturesAudio: resolved.target == nil && peer.systemAudioEnabled
         )
         self.display = display
         self.peer = peer
         audioPeer = peer
-        capturesAudio = peer.systemAudioEnabled
+        capturesAudio = resolved.target == nil && peer.systemAudioEnabled
         audioEpoch = peer.beginSystemAudioCapture()
         self.tuning = tuning
         self.geometry = geometry
@@ -662,6 +712,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         displayDescription = String(format: "%.0fx%.0f @%.0fx %@", pixels.width, pixels.height, scale,
                                     refresh.map { String(format: "%.0fHz", $0) } ?? "?Hz")
         super.init()
+        queue.setSpecific(key: captureQueueKey, value: true)
         self.stream = SCStream(filter: filter, configuration: configuration, delegate: self)
     }
 
@@ -705,7 +756,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     /// One hop onto the capture queue; the crop is applied there on the leading edge when the gate is idle.
     func requestViewport(_ viewport: ViewportRegion?) {
         queue.async { [weak self] in
-            guard let self, !self.stopping, self.viewport != viewport else { return }
+            guard let self, self.scopeTarget == nil, !self.stopping, self.viewport != viewport else { return }
             self.viewport = viewport
             self.handle(self.gate.request(at: CACurrentMediaTime(), immediate: !self.waiters.isEmpty))
         }
@@ -806,7 +857,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     /// Same display, minus the given windows. Sizing is unchanged, so the configuration stays.
     func updateExcludedWindows(_ windows: [SCWindow]) async -> Bool {
-        guard !queue.sync(execute: { stopping }) else { return false }
+        guard scopeTarget == nil, !queue.sync(execute: { stopping }) else { return false }
         do {
             try await stream.updateContentFilter(SCContentFilter(display: display, excludingWindows: windows))
             return !queue.sync { stopping }
@@ -847,7 +898,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     }
 
     func stop() async {
-        fenceAudio()
+        fenceCapture()
         queue.sync {
             audioConverter.reset()
             if !stopping {
@@ -875,6 +926,11 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of type: SCStreamOutputType
     ) {
+        guard scopeTarget?.processIsAlive != false,
+              scopeLease.performIfValid(at: CACurrentMediaTime(), {}) else {
+            reportStopped(HostCaptureScopeError.targetUnavailable)
+            return
+        }
         if type == .audio {
             guard !stopping, capturesAudio, let peer else { return }
             for packet in audioConverter.packets(from: sampleBuffer) { peer.submitSystemAudio(packet.pcm, epoch: audioEpoch, hostTime: packet.hostTime) }
@@ -912,7 +968,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private func reportStopped(_ error: Error) {
         guard !stopping, !failureReported else { return }
         failureReported = true
-        fenceAudio()
+        fenceCapture()
+        lastBuffer = nil
         audioConverter.reset()
         health.observe(.stopped, at: CACurrentMediaTime())
         publishHealthAndIdleFrame()
@@ -922,6 +979,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     private func publishHealthAndIdleFrame() {
         guard !stopping else { return }
+        if !failureReported && (scopeTarget?.processIsAlive == false || !scopeLease.performIfValid(at: CACurrentMediaTime(), {})) {
+            reportStopped(HostCaptureScopeError.targetUnavailable); return
+        }
         if #available(macOS 27, *), !failureReported {
             notCapturingTicks = stream.isCapturing ? 0 : notCapturingTicks + 1
             // Two ticks apart, so a stream still settling is never mistaken for one macOS stopped.
@@ -941,6 +1001,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0) {
         lastSentAt = time
-        peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs)
+        guard scopeTarget?.processIsAlive != false else { return }
+        scopeLease.performIfValid(at: time) {
+            peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs)
+        }
     }
 }

@@ -222,9 +222,90 @@ final class RemoteHostModel: ObservableObject {
     private var displayRefreshGeneration = HostPermissionRefreshGeneration()
     private var terminating = false
 
-    private var liveViewOnly = false
+  private var liveViewOnly = false
     private var sessionControlAllowed: Bool { allowControl && !liveViewOnly }
-    var allowControl: Bool { controlConsent.isAllowed }
+    private let captureScopes = HostCaptureScope()
+    private var captureScopeRefreshTask: Task<Void, Never>?
+    private var captureScopeSelectionTask: Task<Void, Never>?
+    private var captureScopeSelectionGeneration: UInt64 = 1
+    @Published private var captureScopeTarget: HostCaptureTarget?
+    @Published private var captureScopeNeedsSelection = false
+    @Published private var captureScopeEpoch: UInt64 = 1
+    @Published private var captureScopeOptions: [HostCaptureScopeOption] = [.init(id: "display", name: "Entire display")]
+    private var captureScopeKind: CaptureScopeFrame.Kind {
+        captureScopeTarget?.kind ?? (captureScopeNeedsSelection ? .window : .display)
+    }
+    private var captureScopeViewOnly: Bool { captureScopeKind != .display }
+    private var captureScopeStatus: CaptureScopeFrame {
+        CaptureScopeFrame(epoch: captureScopeEpoch, kind: captureScopeKind,
+            label: captureScopeKind == .display ? "Entire display" : (captureScopeKind == .application ? "Shared application" : "Shared window"),
+            viewOnly: captureScopeViewOnly)
+    }
+
+    var allowControl: Bool { !captureScopeViewOnly && controlConsent.isAllowed }
+
+    func refreshCaptureScopes() {
+        captureScopeRefreshTask?.cancel()
+        captureScopeRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await self.captureScopes.refresh(displayID: self.selected)
+                guard !Task.isCancelled else { return }
+                self.captureScopeOptions = self.captureScopes.options
+                if let target = self.captureScopeTarget, self.captureScopes.target(id: target.id) == nil {
+                    self.captureScopeLost()
+                }
+            } catch {
+                guard !Task.isCancelled else { return }
+                self.detail = "Couldn’t list shared content. Refresh and choose a live app or window."
+            }
+        }
+    }
+
+    /// Selecting content stops sharing first. Share Again is the owner's explicit restart consent.
+    func selectCaptureScope(_ id: String) {
+        captureScopeSelectionGeneration &+= 1
+        let generation = captureScopeSelectionGeneration
+        captureScopeSelectionTask?.cancel()
+        allowSystemAudio = false
+        connection.media?.setSystemAudioEnabled(false)
+        capture.setSystemAudioEnabled(false)
+        _ = capture.stop() // synchronous frame fence, before any await or peer teardown
+        clipboard.reset()
+        fileTransfer.reset()
+        stopSharing()
+        advanceEpoch()
+        captureScopeEpoch &+= 1
+        if captureScopeEpoch == 0 { captureScopeEpoch = 1 }
+        captureScopeTarget = nil
+        captureScopeNeedsSelection = id != HostCaptureScope.displayID
+        preferences.captureScopeRequiresSelection = captureScopeNeedsSelection
+        if id == HostCaptureScope.displayID {
+            detail = "Entire display selected. Share again when ready."
+            return
+        }
+        guard let target = captureScopes.target(id: id) else {
+            detail = "That content is unavailable. Refresh and choose it again."
+            return
+        }
+        captureScopeSelectionTask = Task { [weak self] in
+            do {
+                _ = try await HostCaptureScope.resolve(target)
+                guard let self, !Task.isCancelled, generation == self.captureScopeSelectionGeneration else { return }
+                self.captureScopeTarget = target
+                self.captureScopeNeedsSelection = false
+                self.detail = "View-only content selected. Audio, control and transfers are off. Share again when ready."
+            } catch {
+                guard let self, !Task.isCancelled, generation == self.captureScopeSelectionGeneration else { return }
+                self.detail = "That content closed or its app quit. Refresh and choose a live target."
+            }
+        }
+    }
+
+    private func captureScopeLost() {
+        selectCaptureScope("unavailable")
+        detail = "Shared content is unavailable. Choose it again on this Mac; sharing has stopped."
+    }
     var controlPermission: HostPermissionStatus { inputAccess.postEvents }
 
     nonisolated static func probeInputAccess() -> HostInputAccess {
@@ -318,7 +399,7 @@ final class RemoteHostModel: ObservableObject {
             keepAwake: keepAwakeEnabled,
             openAtLogin: openAtLogin,
             chimeOnConnect: chimeOnConnect,
-            allowFileTransfer: allowFileTransfer,
+            allowFileTransfer: !captureScopeViewOnly && allowFileTransfer,
             localOnly: connection.localOnly,
             allowSystemAudio: allowSystemAudio,
             pausedUntil: timedPause.resumesAt,
@@ -328,7 +409,7 @@ final class RemoteHostModel: ObservableObject {
             availability: availabilityNote,
             loginItem: loginItemState,
             automaticRecovery: recoveryState,
-            privacyCurtain: curtainPreference,
+            privacyCurtain: !captureScopeViewOnly && curtainPreference,
             curtainStatus: Self.curtainStatus(curtainState, displays: NSScreen.screens.count),
             couchMode: sessionState == .couch && connection.connected,
             agentAlerts: agentAlerts.isOn,
@@ -337,13 +418,17 @@ final class RemoteHostModel: ObservableObject {
             crashLoopStopped: crashLoopStopped,
             displays: displays.map { HostDisplayOption(id: $0.displayID, name: Self.displayName(for: $0.displayID)) },
             selectedDisplayID: selected,
+            captureScopes: captureScopeOptions,
+            selectedCaptureScopeID: captureScopeTarget?.id ?? (captureScopeNeedsSelection ? "unavailable" : HostCaptureScope.displayID),
+            captureScopeViewOnly: captureScopeViewOnly,
+            captureScopeNeedsSelection: captureScopeNeedsSelection,
             detail: detail,
             pairingDeferred: pairingDeferred,
             serverRemovalBusy: serverRemovalBusy,
             serverRemovalPending: serverRemovalPending,
             serverRemovalMessage: serverRemovalMessage,
             localPairRemovalMessage: localPairRemovalMessage,
-            allowBigText: preferences.allowBigText,
+            allowBigText: !captureScopeViewOnly && preferences.allowBigText,
             bigTextStatus: bigTextStatus,
             menuBarIconShown: menuBarIconShown,
             permissionsTurnedOffByUpdate: permissionsTurnedOffByUpdate
@@ -377,7 +462,9 @@ final class RemoteHostModel: ObservableObject {
         keepAwakeEnabled = preferences.keepAwake
         chimeOnConnect = preferences.chimeOnConnect
         allowFileTransfer = preferences.allowFileTransfer
-        wantsSharing = preferences.sharingEnabled
+        captureScopeNeedsSelection = preferences.captureScopeRequiresSelection
+        wantsSharing = preferences.sharingMayResumeWithoutScopeSelection
+        if preferences.captureScopeRequiresSelection { preferences.sharingEnabled = false }
         accessibilitySkipped = preferences.accessibilitySkipped
         pairingDeferred = preferences.pairingDeferred
         curtainPreference = preferences.privacyCurtain
@@ -387,9 +474,9 @@ final class RemoteHostModel: ObservableObject {
         background.onChange = { [weak self] in self?.refreshBackgroundStates() }
         NativeCodecCapability.warmUp()
         startWatchdog()
-        browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.active && !self.connection.connected }
+        browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.captureScopeViewOnly && !self.active && !self.connection.connected }
         connection.restore()
-        connection.startAllowed = { [weak self] in self?.serverRemovalPending == false }
+        connection.startAllowed = { [weak self] in self?.serverRemovalPending == false && self?.captureScopeNeedsSelection == false }
         connection.shareBlocker = { [weak self] in
             MacShareBlocker.current(screenRecordingGranted: CGPreflightScreenCaptureAccess(),
                                     captureApprovalPending: self?.captureApproval.isPending == true)
@@ -411,7 +498,7 @@ final class RemoteHostModel: ObservableObject {
             if action.action == "text" { self?.sendTextResult(for: action.key, accepted: false) }
         }
         clipboard.transport = { [weak self] frame in
-            guard let self, self.connection.connected else { return false }
+            guard let self, !self.captureScopeViewOnly, self.connection.connected else { return false }
             return self.connection.sendControl(RemoteAction(action: "clipboard", epoch: self.inputEpoch.value, clipboard: frame))
         }
         clipboard.bufferedAmount = { [weak self] in self?.connection.media?.controlBufferedAmount }
@@ -814,6 +901,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func resumeSharing() {
+        guard !captureScopeNeedsSelection else { detail = "Choose a live app or window, or explicitly select Entire display, before sharing."; return }
         guard removalAllowsSharing else { return }
         cancelTimedPause()
         if crashLoopStopped {
@@ -852,6 +940,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func setAllowSystemAudio(_ enabled: Bool) {
+        guard !enabled || !captureScopeViewOnly else { return }
         guard allowSystemAudio != enabled else { return }
         allowSystemAudio = enabled
         connection.media?.setSystemAudioEnabled(enabled && !liveViewOnly)
@@ -868,7 +957,7 @@ final class RemoteHostModel: ObservableObject {
     /// File transfer needs this Mac's setting and a current, unpaused session. It does not need control:
     /// the setting is the owner's permission, and files only land in Downloads › Farside, never opened.
     private var fileTransferRefusal: FileTransferStatus? {
-        guard allowFileTransfer else { return .disabled }
+        guard !captureScopeViewOnly, allowFileTransfer else { return .disabled }
         guard connection.connected, active, !phonePause.isPaused && !liveViewOnly else { return .notAllowed }
         return nil
     }
@@ -935,14 +1024,17 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func selectDisplay(_ id: CGDirectDisplayID) {
+        guard !captureScopeViewOnly else { return }
         guard id != selected, displays.contains(where: { $0.displayID == id }) else { return }
         let wasActive = active
         if wasActive { stop() }
         selected = id
+        refreshCaptureScopes()
         if wasActive { reconcileSharing() }
     }
 
     func setControl(_ enabled: Bool) {
+        guard !captureScopeViewOnly else { return }
         controlConsent.setAllowed(enabled)
         preferences.allowControl = enabled
         applyControlState(notifyPhone: true)
@@ -980,6 +1072,7 @@ final class RemoteHostModel: ObservableObject {
 
     /// The Mac's "hide screen while sharing" preference; the phone changes the same preference.
     func setPrivacyCurtain(_ enabled: Bool) {
+        guard !captureScopeViewOnly else { return }
         curtainPreference = enabled
         preferences.privacyCurtain = enabled
         if enabled {
@@ -991,6 +1084,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func setAllowBigText(_ allowed: Bool) {
+        guard !captureScopeViewOnly else { return }
         preferences.allowBigText = allowed
         events.record(.settings, "Allow a connected phone to change text size \(allowed ? "on" : "off")")
         if !allowed { bigText.sessionEnded(.restoreButton) }
@@ -1229,7 +1323,7 @@ final class RemoteHostModel: ObservableObject {
     private func reconcileCurtain() {
         let now = ProcessInfo.processInfo.systemUptime
         let inputs = PrivacyCurtainInputs(
-            preference: curtainPreference,
+            preference: !captureScopeViewOnly && curtainPreference,
             sessionLive: active && connection.connected && !terminating,
             captureHealthy: captureHealthy,
             unhealthyFor: captureUnhealthySince.map { now - $0 } ?? 0,
@@ -1306,6 +1400,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func start(display: SCDisplay) {
+        guard !captureScopeNeedsSelection else { return }
         guard removalAllowsSharing else { return }
         releaseRemoteInput(notifyPhone: true)
         input.configure(SCContentFilter(display: display, excludingWindows: []))
@@ -1604,6 +1699,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Capture session
 
     private func beginCapture(keepingExclusions: Bool = false) {
+        guard !captureScopeNeedsSelection else { stop(); return }
         guard CGPreflightScreenCaptureAccess() else {
             screenRecordingPermission = .denied
             stop()
@@ -1617,7 +1713,7 @@ final class RemoteHostModel: ObservableObject {
         if displaysStaleFromCouch { restartForDisplaysChangedInCouch(); return }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
-        peer.setSystemAudioEnabled(allowSystemAudio && !liveViewOnly)
+        peer.setSystemAudioEnabled(!captureScopeViewOnly && allowSystemAudio && !liveViewOnly)
         if sessionStartedAt == nil {
             sessionStartedAt = Date()
             sessionsThisLaunch += 1
@@ -1656,33 +1752,34 @@ final class RemoteHostModel: ObservableObject {
 
         startLifecycleTimer()
 
-        let logicalSize = display.frame.size
-        let preflight = [
-            RemoteAction(action: "geometry", x: logicalSize.width, y: logicalSize.height, epoch: inputEpoch.value),
-            RemoteAction(action: "viewing", x: sessionControlAllowed && controlPermission.isGranted ? 1 : 0, epoch: inputEpoch.value),
-            RemoteAction(action: "capture", x: 0, epoch: inputEpoch.value)
-        ]
-        guard CaptureStartPreflight.send(
-            preflight,
-            whileCurrent: { [weak self] in self?.captureStartIsCurrent(attempt, peer: peer) == true },
-            using: { [weak self] action in self?.connection.sendControl(action) == true }
-        ) else { return }
-
         captureTask = Task { [weak self] in
             guard let self else { return }
             do {
                 guard self.captureStartIsCurrent(attempt, peer: peer), !Task.isCancelled else { return }
-                let owner = try await self.capture.start(display: display, peer: peer, keepingExclusions: keepingExclusions)
+                let owner = try await self.capture.start(display: display, peer: peer,
+                    keepingExclusions: !self.captureScopeViewOnly && keepingExclusions, target: self.captureScopeTarget,
+                    beforeStart: { [weak self] geometry in
+                        guard let self else { return false }
+                        let preflight = [
+                            RemoteAction(action: "geometry", x: geometry.size.width, y: geometry.size.height, epoch: self.inputEpoch.value),
+                            RemoteAction(action: "viewing", x: self.sessionControlAllowed && self.controlPermission.isGranted ? 1 : 0, epoch: self.inputEpoch.value),
+                            RemoteAction(action: "capture", x: 0, epoch: self.inputEpoch.value, captureScope: self.captureScopeStatus)
+                        ]
+                        return CaptureStartPreflight.send(preflight,
+                            whileCurrent: { [weak self] in self?.captureStartIsCurrent(attempt, peer: peer) == true },
+                            using: { [weak self] action in self?.connection.sendControl(action) == true })
+                    })
                 guard self.captureStartIsCurrent(attempt, peer: peer), !Task.isCancelled else {
                     _ = self.capture.stop(ifOwnedBy: owner)
                     return
                 }
-                self.bigText.sessionResumed()
+                if !self.captureScopeViewOnly { self.bigText.sessionResumed() }
                 self.beginLoadMonitor(peer: peer)
             } catch is CancellationError {
                 return
             } catch {
                 guard self.captureAttempt == attempt else { return }
+                if error is HostCaptureScopeError, self.captureScopeViewOnly { self.captureScopeLost(); return }
                 self.events.record(.error, "Capture could not start (\(Self.captureErrorCode(error)))")
                 if CaptureStopReason.classify(error) == .needsApproval {
                     self.captureNeedsApproval()
@@ -1880,6 +1977,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func captureFailed(_ error: Error) {
+        if error is HostCaptureScopeError, captureScopeViewOnly { captureScopeLost(); return }
         #if DEBUG
         HostE2E.active?.event("capture.failed", ["screenRecording": CGPreflightScreenCaptureAccess()])
         #endif
@@ -1970,6 +2068,9 @@ final class RemoteHostModel: ObservableObject {
             countInput("rejected-parse"); stop(); return
         }
         countInput("received")
+        guard SharedCaptureScopePolicy.permits(action.action, kind: captureScopeKind) else {
+            countInput("rejected-capture-scope"); return
+        }
         if action.action == "release" || Self.userInputActions.contains(action.action) {
             invalidateTextFocus()
         }
@@ -1989,7 +2090,7 @@ final class RemoteHostModel: ObservableObject {
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, let pixels = action.screenPixels {
                 capture.setClientPixels(pixels)
             }
-            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, StreamTuning.current.viewportCapture {
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, !captureScopeViewOnly, StreamTuning.current.viewportCapture {
                 // A heartbeat without a viewport means the phone can no longer describe its
                 // visible area. Return to the whole display instead of retaining an old crop.
                 capture.setViewport(action.viewport)
@@ -2009,7 +2110,7 @@ final class RemoteHostModel: ObservableObject {
                 pointerTelemetry.phoneHeartbeat(action.pointerSync, epoch: action.epoch,
                                                 at: ProcessInfo.processInfo.systemUptime)
             }
-            receivePointerProbe(action)
+            if !captureScopeViewOnly { receivePointerProbe(action) }
             return
         }
         if action.action == RemoteAction.modeAction {
@@ -2293,9 +2394,10 @@ final class RemoteHostModel: ObservableObject {
             if $0 == SessionFeature.causalInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             return ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
         } + [SessionFeature.couch]
-        return HostFeatureList.features(base: base, allowBigText: preferences.allowBigText,
-                                        accessibility: inputAccess.accessibility.isGranted,
-                                        peerFeatures: connection.peerFeatures, requestedMode: connection.peerRequestedMode)
+        return SharedCaptureScopePolicy.features(HostFeatureList.features(base: base,
+            allowBigText: !captureScopeViewOnly && preferences.allowBigText,
+            accessibility: inputAccess.accessibility.isGranted,
+            peerFeatures: connection.peerFeatures, requestedMode: connection.peerRequestedMode), kind: captureScopeKind)
     }
 
     private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil) {
@@ -2309,16 +2411,16 @@ final class RemoteHostModel: ObservableObject {
             controlAllowed: sessionControlAllowed, accessibilityGranted: controlPermission.isGranted,
             captureApprovalPending: sessionState == .picture && captureApproval.isPending,
             phoneUnderstandsApproval: features.contains(MacShareBlocker.approvalFeature))
-        let capability = !liveViewOnly && sessionState.issuesTokens(healthy: healthy) ? inputFreshness.capability(
+      let capability = !liveViewOnly && !captureScopeViewOnly && sessionState.issuesTokens(healthy: healthy) ? inputFreshness.capability(
             epoch: inputEpoch.value,
             now: ProcessInfo.processInfo.systemUptime,
             doubleClickInterval: min(2, max(0.1, NSEvent.doubleClickInterval))
         ) : nil
         let event = recoveryEventForPhone
-        let alert = agentAlertOutbox.first
+        let alert = captureScopeViewOnly ? nil : agentAlertOutbox.first
         let sent = connection.sendControl(RemoteAction(
-            action: "capture", liveViewOnly: connection.peerFeatures.contains(SessionFeature.extendedFeatureList) ? liveViewOnly : nil, x: healthy ? 1 : 0, epoch: inputEpoch.value,
-            interaction: capability, pointerLocatorSupported: true,
+          action: "capture", liveViewOnly: connection.peerFeatures.contains(SessionFeature.extendedFeatureList) ? liveViewOnly : nil, x: healthy ? 1 : 0, epoch: inputEpoch.value,
+            interaction: capability, pointerLocatorSupported: !captureScopeViewOnly,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
             features: advertisedFeatures, hostState: state,
             hostStream: connection.media?.takeHostSummary(),
@@ -2326,7 +2428,8 @@ final class RemoteHostModel: ObservableObject {
             display: capturedDisplayID, agentAlert: alert,
             captureRegion: capture.appliedCaptureRegion, ladder: ladderState, busy: busyState,
             macVitals: vitalsMonitor?.current(now: ProcessInfo.processInfo.systemUptime),
-            mode: sessionState.wireMode, modeReason: pendingModeReason?.rawValue ?? sessionState.wireReason
+            mode: sessionState.wireMode, modeReason: pendingModeReason?.rawValue ?? sessionState.wireReason,
+            captureScope: captureScopeStatus
         ))
         if sent && event != nil { recoveryNoticeDelivered = true }
         if sent && alert != nil { agentAlertOutbox.removeFirst() }
@@ -2941,7 +3044,7 @@ extension RemoteHostModel: BigTextHost {
     }
 
     private var bigTextSessionStreaming: Bool {
-        active && sessionState == .picture && connection.connected && connection.media != nil && !phonePause.isPaused && !liveViewOnly && !terminating && !screenLocked
+      active && sessionState == .picture && connection.connected && connection.media != nil && !phonePause.isPaused && !liveViewOnly && !terminating && !screenLocked
     }
 
     fileprivate func handleScreenChange() {

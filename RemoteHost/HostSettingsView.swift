@@ -18,6 +18,7 @@ struct HostSettingsView: View {
                 HStack(alignment: .top, spacing: 24) {
                     VStack(alignment: .leading, spacing: 18) {
                         phoneSection
+                        captureScopeSection
                         sharingSection
                         serverDataSection
                     }
@@ -36,6 +37,7 @@ struct HostSettingsView: View {
         .frame(width: HostTheme.settingsWidth, height: HostTheme.settingsHeight)
         .background(HostTheme.windowBackground)
         .preferredColorScheme(.dark)
+        .onAppear(perform: actions.refreshCaptureScopes)
         .sheet(isPresented: $showingNotices) { LegalNoticesView() }
         .confirmationDialog("Remove this Mac’s server room?", isPresented: $confirmingServerRemoval) {
             Button("Remove Server Room", role: .destructive, action: actions.removeServerRoom)
@@ -65,12 +67,30 @@ struct HostSettingsView: View {
         }
     }
 
+    private var captureScopeSection: some View {
+        HostSettingsSection("Shared content", footer: state.captureScopeNeedsSelection
+            ? "Choose live content before sharing. A closed target never switches to your whole display."
+            : "Changing content disconnects. Share again when ready. Apps and windows are view only; audio, control, clipboard, files, screen hiding and Big Text are off.") {
+            HostSettingsRow("Content") {
+                Picker("Shared content", selection: Binding(get: { state.selectedCaptureScopeID }, set: actions.selectCaptureScope)) {
+                    if state.captureScopeNeedsSelection { Text("Choose content…").tag("unavailable") }
+                    ForEach(state.captureScopes) { Text($0.name).tag($0.id) }
+                }
+                .labelsHidden()
+                .accessibilityIdentifier("farside.settings.captureScope")
+            }
+            Button("Refresh apps and windows", action: actions.refreshCaptureScopes)
+                .accessibilityIdentifier("farside.settings.refreshCaptureScopes")
+        }
+    }
+
     private var sharingSection: some View {
         HostSettingsSection("While your iPhone is connected", footer: sessionFooter) {
             HostSettingsRow("Allow control", subtitle: state.controlNeedsAccessibility
                             ? "Needs Accessibility first" : "Off means view only") {
                 HostSwitch(label: "Allow control", isOn: state.allowControl, set: actions.setAllowControl)
                     .accessibilityIdentifier("farside.settings.allowControl")
+                    .disabled(state.captureScopeViewOnly)
             }
             HostSettingsRow("Keep this Mac awake", subtitle: "While sharing is on, so your iPhone can reach it") {
                 HostSwitch(label: "Keep this Mac awake", isOn: state.keepAwake, set: actions.setKeepAwake)
@@ -84,23 +104,27 @@ struct HostSettingsView: View {
             HostSettingsRow("Share Mac audio", subtitle: "Sound from all apps, even outside the shared display. Off after restarting Farside.") {
                 HostSwitch(label: "Share Mac audio", isOn: state.allowSystemAudio, set: actions.setAllowSystemAudio)
                     .accessibilityIdentifier("farside.settings.systemAudio")
+                    .disabled(state.captureScopeViewOnly)
             }
             HostSettingsRow("Allow file transfer", subtitle: "Files from your iPhone go to Downloads › Farside") {
                 HostSwitch(label: "Allow file transfer", isOn: state.allowFileTransfer, set: actions.setAllowFileTransfer)
                     .accessibilityIdentifier("farside.settings.allowFileTransfer")
+                    .disabled(state.captureScopeViewOnly)
             }
             HostSettingsRow("Hide this Mac’s screen", subtitle: HostCurtainCopy.subtitle(for: state)) {
                 HostSwitch(label: "Hide this Mac’s screen", isOn: state.privacyCurtain,
                            set: actions.setPrivacyCurtain)
                     .accessibilityIdentifier("farside.settings.privacyCurtain")
+                    .disabled(state.captureScopeViewOnly)
             }
             HostSettingsRow("Allow a connected phone to change text size",
                             subtitle: "Big Text. Your Mac’s size comes back when the phone disconnects. Windows on other Spaces may stay smaller.") {
                 HostSwitch(label: "Allow a connected phone to change text size", isOn: state.allowBigText,
                            set: actions.setAllowBigText)
                     .accessibilityIdentifier("farside.settings.allowBigText")
+                    .disabled(state.captureScopeViewOnly)
             }
-            if state.displays.count > 1 {
+            if state.displays.count > 1 && !state.captureScopeViewOnly {
                 HostSettingsRow("Shared display") {
                     Picker("Shared display",
                            selection: Binding(get: { state.selectedDisplayID }, set: actions.selectDisplay)) {
