@@ -10,7 +10,7 @@ struct ConnectionHealth: Equatable {
         case macAsleep, macLocked, otherUser, displayAsleep, sharingStopped, pictureStalled, reconnecting,
              needsAnywhere, anywhereUnconfirmed, relayUnavailable, relaySlow, networkSlow, sessionClosing,
              macBusy, notApproved, stoppedToStaySafe, pairingProblem, serviceUnreachable, macAnswering,
-             unreachable, screenRecordingOff, accessibilityOff
+             unreachable, screenRecordingOff, accessibilityOff, macBatteryLow, macUnderLoad
     }
 
     enum Action: Equatable {
@@ -135,6 +135,8 @@ struct ConnectionHealth: Equatable {
         var roundTripMs: Int?
         /// A grant the Mac reported missing during the session.
         var blocker: MacShareBlocker?
+        /// The Mac's latest vitals, nil when stale or from a Mac that does not report them.
+        var vitals: MacVitals? = nil
     }
 
     /// Nil while nothing is wrong. Order matters: a dropped connection explains a stalled picture,
@@ -166,6 +168,23 @@ struct ConnectionHealth: Equatable {
                                     detail: "Your Mac reported that Farside there isn’t allowed to control it, so this session is view only.",
                                     nextStep: "On your Mac: System Settings → Privacy & Security → Accessibility → Farside.")
         }
+        if let vitals = evidence.vitals {
+            let almostEmpty = (vitals.batteryPercent.map { $0 <= MacVitalsNoticePolicy.criticalPercent } ?? false)
+                || vitals.batteryWarning == MacVitalsNoticePolicy.finalWarning
+            if vitals.onBattery, almostEmpty {
+                let detail = vitals.batteryPercent.map { "Your Mac reported it’s on battery at \($0)%." }
+                    ?? "Your Mac reported its battery is almost empty."
+                return ConnectionHealth(state: .macBatteryLow, title: "Mac battery low", detail: detail,
+                                        nextStep: "Plug your Mac in, or save your work.")
+            }
+            if vitals.loadLevel == .busy {
+                let detail = vitals.cause == .memory
+                    ? "Your Mac reported that other apps are using most of its memory."
+                    : "Your Mac reported that other apps are using most of its processor."
+                return ConnectionHealth(state: .macUnderLoad, title: "Mac busy", detail: detail,
+                                        nextStep: "Quitting apps you don’t need on your Mac can help.")
+            }
+        }
         if let rtt = evidence.roundTripMs, rtt >= slowRoundTripMs {
             if evidence.route == "Relay" {
                 return ConnectionHealth(state: .relaySlow, title: "Relay slow",
@@ -181,12 +200,14 @@ struct ConnectionHealth: Equatable {
     }
 
     /// The session works, only slowly: control state stays the more useful line until a click is acknowledged.
-    var isSlowOnly: Bool { state == .relaySlow || state == .networkSlow }
+    var isSlowOnly: Bool { state == .relaySlow || state == .networkSlow || state == .macUnderLoad }
 
     /// The dock's one-line summary.
     var sessionLine: String {
         switch state {
         case .sharingStopped, .pictureStalled: "\(title) · controls paused"
+        case .macBatteryLow: "Mac battery low · plug it in"
+        case .macUnderLoad: "Mac busy · other apps are using it"
         default: "\(title) · \(nextStep)"
         }
     }
