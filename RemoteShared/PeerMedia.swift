@@ -470,7 +470,7 @@ final class PeerMedia: NSObject {
     }
 
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true,
-         localLink: ProvenLocalLink? = nil, fileChannel: Bool = false) {
+         localLink: ProvenLocalLink? = nil, fileChannel: Bool = false, hevc: Bool? = nil) {
         self.isHost = isHost
         acceptsFileChannel = fileChannel
         self.forceRelay = forceRelay
@@ -501,8 +501,16 @@ final class PeerMedia: NSObject {
         // Context is owned by this peer, including negotiation that starts after another
         // peer is created. Never publish a process-global 'next encoder' binding.
         _ = Self.codecRuntime
-        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(counters: counters, frameTiming: frameTimingLog)
-        let ownedDecoderFactory = PocketDeskVideoDecoderFactory(frameTiming: frameTimingReceiver?.log)
+        let useHEVC = hevc ?? (nativeDesktopCodecs && NativeHEVCCapability.permits(isHost: isHost))
+        let codecFailure: () -> Void = { [weak self] in
+            NativeHEVCCapability.failed() // Next session negotiates H264; never relabel active HEVC bytes.
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.closed else { return }
+                self.onState?("failed")
+            }
+        }
+        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure)
+        let ownedDecoderFactory = PocketDeskVideoDecoderFactory(hevc: useHEVC, frameTiming: frameTimingReceiver?.log, onHEVCFailure: codecFailure)
         var configuredFactory: RTCPeerConnectionFactory?
         #if os(macOS)
         if isHost {
@@ -557,7 +565,9 @@ final class PeerMedia: NSObject {
             let source = factory.videoSource(forScreenCast: true)
             self.source = source; capturer = RTCVideoCapturer(delegate: source)
             let track = factory.videoTrack(with: source, trackId: "desktop")
-            video = track; connection?.add(track, streamIds: ["desktop"])
+            video = track
+            let videoInit = RTCRtpTransceiverInit(); videoInit.direction = .sendOnly
+            _ = connection?.addTransceiver(with: track, init: videoInit)
             let config = RTCDataChannelConfiguration(); config.isOrdered = true
             controlLock.lock()
             channel = connection?.dataChannel(forLabel: "control", configuration: config)

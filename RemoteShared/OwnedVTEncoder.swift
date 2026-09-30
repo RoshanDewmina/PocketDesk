@@ -80,6 +80,7 @@ struct OwnedVTConfiguration: Equatable {
         level = UInt8(packed & 255)
         guard [10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40, 41, 42, 50, 51, 52].contains(level) else { return nil }
         let constraints = UInt8((packed >> 8) & 255)
+        guard level != 11 || constraints & 0x10 == 0 else { return nil } // Level 1b is not Level 1.1.
         switch packed >> 16 {
         case 0x42: profile = constraints & 0x40 != 0 ? .constrainedBaseline : .baseline
         case 0x4d where constraints == 0: profile = .main
@@ -103,7 +104,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         let width: Int32
         let height: Int32
     }
-    private let configuration: OwnedVTConfiguration
+    private let configuration: any OwnedVideoConfiguration
     private let queue = DispatchQueue(label: "farside.video.encoder", qos: .userInitiated)
     private let queueKey = DispatchSpecificKey<UInt8>()
     private weak var counters: StreamCounters?
@@ -126,10 +127,11 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     var hardwareRequired: Bool { true }
     private var storedLastStatus: OSStatus = noErr
     var lastStatus: OSStatus { serialized { storedLastStatus } }
+    var onFatalFailure: (() -> Void)?
     private var storedLastStage: String = "not-started"
     var lastStage: String { serialized { storedLastStage } }
 
-    init(configuration: OwnedVTConfiguration, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil) {
+    init(configuration: any OwnedVideoConfiguration, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil) {
         self.configuration = configuration; self.counters = counters; self.frameTiming = frameTiming
         super.init(); queue.setSpecific(key: queueKey, value: 1)
     }
@@ -145,11 +147,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             fps = max(1, min(120, settings.maxFramerate))
             bitrate = max(1, min(configuration.maximumKbps, settings.startBitrate))
             maximumQP = max(1, min(30, settings.qpMax == 0 ? 30 : Int(settings.qpMax)))
-            let limit = H264FrameBudget.level(configuration.level)
-            let macroblocks = ((Int(width) + 15) / 16) * ((Int(height) + 15) / 16)
-            guard width > 0, height > 0, width <= 4096, height <= 4096,
-                  macroblocks <= limit.frameMacroblocks,
-                  macroblocks * Int(fps) <= limit.macroblocksPerSecond else { return -1 }
+            guard configuration.fits(width: Int(width), height: Int(height), fps: Int(fps)) else { return -1 }
             restart = EncoderRestartPolicy(); restart.keyFrameBudgetMs = 250
             restart.sessionStarted(kbps: Double(bitrate), at: ProcessInfo.processInfo.systemUptime)
             return createSession() == noErr ? 0 : -1
@@ -160,7 +158,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         if configuration.lowLatency { specification[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true }
         var created: VTCompressionSession?
         storedLastStage = "create"
-        var status = VTCompressionSessionCreate(allocator: nil, width: width, height: height, codecType: kCMVideoCodecType_H264,
+        var status = VTCompressionSessionCreate(allocator: nil, width: width, height: height, codecType: configuration.codecType,
             encoderSpecification: specification as CFDictionary, imageBufferAttributes: nil,
             compressedDataAllocator: nil, outputCallback: nil, refcon: nil, compressionSessionOut: &created)
         guard status == noErr, let created else { storedLastStatus = status; return status }
@@ -206,7 +204,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         let rate = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: Int(bitrate) * 1000 as CFNumber)
         guard rate == noErr else { return rate }
         // Hard bounded burst window as well as a long average. A key frame is not exempt.
-        let limits: [Any] = [Int(bitrate) * 1000 / 8 * 2, 1.0, Int(bitrate) * 1000 / 8 * 5, 5.0]
+        let bytesPerSecond = Double(bitrate) * 125
+        let limits: [Double] = [bytesPerSecond * 2, 1, bytesPerSecond * 5, 5]
         let cap = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits as CFArray)
         guard cap == noErr else { return cap }
         return VTSessionSetProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: fps as CFNumber)
@@ -214,8 +213,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     func setBitrate(_ bitrateKbit: UInt32, framerate: UInt32) -> Int32 {
         serialized {
             bitrate = max(1, min(configuration.maximumKbps, bitrateKbit))
-            let frameMacroblocks = ((Int(width) + 15) / 16) * ((Int(height) + 15) / 16)
-            let maximumFPS = frameMacroblocks > 0 ? H264FrameBudget.level(configuration.level).macroblocksPerSecond / frameMacroblocks : 1
+            var maximumFPS = 120
+            while maximumFPS > 1 && !configuration.fits(width: Int(width), height: Int(height), fps: maximumFPS) { maximumFPS -= 1 }
             if framerate > 0 { fps = UInt32(max(1, min(120, min(Int(framerate), maximumFPS)))) }
             restart.updateTarget(kbps: Double(bitrate)); counters?.encoderRateUpdated()
             guard let session else { return -1 }
@@ -271,10 +270,24 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     }
     private func completed(id: UInt64, epoch: UUID, status: OSStatus, flags: VTEncodeInfoFlags, sample: CMSampleBuffer?) {
         guard epoch == self.epoch, let entry = pending.removeValue(forKey: id), entry.epoch == epoch else { return }
-        guard status == noErr, !flags.contains(.frameDropped), let sample else { counters?.encoderSilentlyDropped(1); return }
+        guard status == noErr, !flags.contains(.frameDropped), let sample else {
+            counters?.encoderSilentlyDropped(1)
+            if status != noErr { invalidate(); storedLastStatus = status; onFatalFailure?() }
+            return
+        }
+        if configuration.codecType == kCMVideoCodecType_HEVC, let format = CMSampleBufferGetFormatDescription(sample) {
+            var pointer: UnsafePointer<UInt8>?, size = 0, count = 0, header: Int32 = 0
+            if CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format, parameterSetIndex: 1, parameterSetPointerOut: &pointer,
+                parameterSetSizeOut: &size, parameterSetCountOut: &count, nalUnitHeaderLengthOut: &header) == noErr,
+               let pointer, size > 2, size <= 65536 {
+                let bytes = H26xAnnexB.rbsp(Data(bytes: pointer, count: size).dropFirst(2))
+                if bytes.count >= 13 { storedLastStage = "HEVC profile=\(bytes[1]) level=\(bytes[12])" }
+            }
+        }
         guard let data = Self.annexB(sample, configuration: configuration) else {
             counters?.encoderSilentlyDropped(1)
             invalidate(); storedLastStatus = kVTParameterErr
+            onFatalFailure?()
             return // Never publish a bitstream outside the negotiated profile/level.
         }
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
@@ -287,13 +300,13 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         image.frameType = isKey ? .videoFrameKey : .videoFrameDelta; image.rotation = entry.rotation
         image.contentType = .screenshare
         // No fabricated QP: the setter's support status is not a measured slice QP.
-        let codec = RTCCodecSpecificInfoH264(); codec.packetizationMode = .nonInterleaved
+        let codec = configuration.codecSpecificInfo()
         if isKey { restart.lastKeyFrameBytes = data.count }
         counters?.encoded(latencyMs: max(0, now - entry.submittedMs), bytes: data.count, isKeyFrame: isKey, inFlight: pending.count + 1)
         frameTiming?.encoded(key: entry.captureMs, localRtp: entry.timestamp, bytes: data.count, atMs: now)
         if callback?(image, codec) == true { counters?.encodedFrameAccepted() }
     }
-    private static func annexB(_ sample: CMSampleBuffer, configuration: OwnedVTConfiguration) -> Data? {
+    private static func annexB(_ sample: CMSampleBuffer, configuration: any OwnedVideoConfiguration) -> Data? {
         guard let block = CMSampleBufferGetDataBuffer(sample), let format = CMSampleBufferGetFormatDescription(sample) else { return nil }
         let count = CMBlockBufferGetDataLength(block)
         guard count > 0, count <= H264AnnexB.maximumBytes else { return nil }
@@ -302,18 +315,23 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         guard copied == noErr else { return nil }
         var lengthBytes: Int32 = 0, setCount = 0
         var pointer: UnsafePointer<UInt8>?, size = 0
-        guard CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: 0, parameterSetPointerOut: &pointer,
-            parameterSetSizeOut: &size, parameterSetCountOut: &setCount, nalUnitHeaderLengthOut: &lengthBytes) == noErr,
-              setCount > 0, setCount <= 8, let firstPointer = pointer, size >= 4,
+        func parameter(_ index: Int, _ count: UnsafeMutablePointer<Int>?) -> OSStatus {
+            if configuration.codecType == kCMVideoCodecType_HEVC {
+                return CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(format, parameterSetIndex: index, parameterSetPointerOut: &pointer,
+                    parameterSetSizeOut: &size, parameterSetCountOut: count, nalUnitHeaderLengthOut: &lengthBytes)
+            }
+            return CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: index, parameterSetPointerOut: &pointer,
+                parameterSetSizeOut: &size, parameterSetCountOut: count, nalUnitHeaderLengthOut: &lengthBytes)
+        }
+        let spsIndex = configuration.codecType == kCMVideoCodecType_HEVC ? 1 : 0
+        guard parameter(spsIndex, &setCount) == noErr, setCount > 0, setCount <= 8, let firstPointer = pointer, size >= 4,
               configuration.acceptsSPS(Data(bytes: firstPointer, count: size)) else { return nil }
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
         let isKey = (attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool) != true
         var sets: [Data] = []
         if isKey {
             for index in 0..<setCount {
-                guard CMVideoFormatDescriptionGetH264ParameterSetAtIndex(format, parameterSetIndex: index, parameterSetPointerOut: &pointer,
-                    parameterSetSizeOut: &size, parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil) == noErr,
-                      let pointer, size > 0, size <= 65536 else { return nil }
+                guard parameter(index, nil) == noErr, let pointer, size > 0, size <= 65536 else { return nil }
                 sets.append(Data(bytes: pointer, count: size))
             }
         }
@@ -327,7 +345,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     }
     func release() -> Int { serialized { invalidate(); return 0 } }
     deinit { if let session { VTCompressionSessionInvalidate(session) } }
-    func implementationName() -> String { "Farside public VideoToolbox H264" }
+    func implementationName() -> String { configuration.codecType == kCMVideoCodecType_HEVC ? "Farside public VideoToolbox HEVC Main" : "Farside public VideoToolbox H264" }
     func scalingSettings() -> RTCVideoEncoderQpThresholds? { nil }
     var resolutionAlignment: Int { 2 }
     var applyAlignmentToAllSimulcastLayers: Bool { true }
@@ -349,6 +367,8 @@ final class VideoEncoderCallbackDelivery: @unchecked Sendable {
     private var closed = true
     private var pending: Output?
     private var scheduled = false
+    private var requiresRecovery = false
+    private var lossGeneration: UInt64 = 0
     private var callback: RTCVideoEncoderCallback?
     private weak var counters: StreamCounters?
     init(counters: StreamCounters? = nil) { self.counters = counters }
@@ -360,24 +380,29 @@ final class VideoEncoderCallbackDelivery: @unchecked Sendable {
     func activate() -> UUID {
         fence.lock(); defer { fence.unlock() }
         mailbox.lock(); defer { mailbox.unlock() }
-        epoch = UUID(); closed = false; pending = nil
+        epoch = UUID(); closed = false; pending = nil; requiresRecovery = false; lossGeneration = 0
         return epoch
     }
     func isCurrent(_ candidate: UUID) -> Bool {
         mailbox.lock(); defer { mailbox.unlock() }
         return !closed && epoch == candidate
     }
+    var needsKeyFrame: Bool { mailbox.lock(); defer { mailbox.unlock() }; return requiresRecovery }
     func enqueue(_ image: RTCEncodedImage, info: any RTCCodecSpecificInfo, epoch candidate: UUID) {
-        // This path may run on the owned encoder queue. It must NEVER wait for
-        // the callback fence, whose caller may synchronously release that encoder.
+        // Never wait on outward callback fence from the encoder ownership queue.
         mailbox.lock()
         guard !closed, epoch == candidate else { mailbox.unlock(); return }
-        let replaced = pending != nil
-        pending = Output(epoch: candidate, image: image, info: info)
-        let shouldSchedule = !scheduled
-        scheduled = true
+        var drops = 0
+        if pending != nil {
+            pending = nil; drops += 1; requiresRecovery = true; lossGeneration &+= 1
+        }
+        if requiresRecovery && image.frameType != .videoFrameKey {
+            drops += 1; lossGeneration &+= 1
+        } else { pending = Output(epoch: candidate, image: image, info: info) }
+        let shouldSchedule = !scheduled && pending != nil
+        if shouldSchedule { scheduled = true }
         mailbox.unlock()
-        if replaced { counters?.encoderDeliveryDropped() }
+        for _ in 0..<drops { counters?.encoderDeliveryDropped() }
         if shouldSchedule { queue.async { [weak self] in self?.deliver() } }
     }
     private func deliver() {
@@ -389,8 +414,20 @@ final class VideoEncoderCallbackDelivery: @unchecked Sendable {
             }
             pending = nil
             let valid = !closed && output.epoch == epoch
+            let losses = lossGeneration
             mailbox.unlock()
-            if valid, callback?(output.image, output.info) == true, isCurrent(output.epoch) { counters?.encodedFrameAccepted() }
+            if valid {
+                let accepted = callback?(output.image, output.info) == true
+                mailbox.lock()
+                let current = !closed && output.epoch == epoch
+                if current && accepted && output.image.frameType == .videoFrameKey && lossGeneration == losses { requiresRecovery = false }
+                if current && !accepted {
+                    requiresRecovery = true; lossGeneration &+= 1
+                    if pending?.image.frameType != .videoFrameKey { pending = nil }
+                }
+                mailbox.unlock()
+                if accepted && current { counters?.encodedFrameAccepted() }
+            }
             fence.unlock()
         }
     }
@@ -406,9 +443,11 @@ final class VideoEncoderCallbackDelivery: @unchecked Sendable {
 /// same negotiated codec in the compatibility encoder. Fallback is per session.
 final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
     private let owned: any RTCVideoEncoder
-    private let fallback: any RTCVideoEncoder
+    private let fallback: (any RTCVideoEncoder)?
     private let maximumKbps: UInt32
     private let delivery: VideoEncoderCallbackDelivery
+    private var onFailure: (() -> Void)?
+    private var failureReported = false
     private let queue = DispatchQueue(label: "farside.video.encoder-selection")
     private let key = DispatchSpecificKey<UInt8>()
     private var active: (any RTCVideoEncoder)?
@@ -423,6 +462,21 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
         maximumKbps = configuration.maximumKbps
         delivery = VideoEncoderCallbackDelivery(counters: counters)
         super.init(); queue.setSpecific(key: key, value: 1)
+    }
+    init(configuration: OwnedHEVCConfiguration, counters: StreamCounters?, frameTiming: HostFrameTimingLog?, onFailure: (() -> Void)? = nil) {
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming)
+        owned = encoder
+        fallback = nil // Never label H.264 bytes as H.265. Rollback requires a new negotiation.
+        maximumKbps = configuration.maximumKbps
+        delivery = VideoEncoderCallbackDelivery(counters: counters)
+        super.init(); queue.setSpecific(key: key, value: 1)
+        self.onFailure = onFailure
+        encoder.onFatalFailure = { [weak self] in self?.queue.async { [weak self] in self?.reportFailure() } }
+    }
+    private func reportFailure() {
+        guard !failureReported else { return }; failureReported = true
+        let callback = onFailure
+        DispatchQueue.global(qos: .utility).async { callback?() }
     }
     #if DEBUG
     init(preferred: any RTCVideoEncoder, fallback: any RTCVideoEncoder, counters: StreamCounters? = nil) {
@@ -440,9 +494,9 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
         // callback can ask for implementationName/release/rate synchronously.
         let epoch = delivery.activate()
         return serialized {
+            guard delivery.isCurrent(epoch) else { return -1 }
             if let active { _ = active.release() }
             active = nil
-            guard delivery.isCurrent(epoch) else { return -1 }
             let saved = RTCVideoEncoderSettings()
             saved.name = settings.name; saved.width = settings.width; saved.height = settings.height
             saved.startBitrate = min(maximumKbps, max(1, settings.startBitrate))
@@ -459,9 +513,10 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
             let result = owned.startEncode(with: saved, numberOfCores: numberOfCores)
             if result == 0 { active = owned; usingOwned = true; return 0 }
             _ = owned.release()
-            fallback.setCallback(enqueue)
-            let compatible = fallback.startEncode(with: saved, numberOfCores: numberOfCores)
+            fallback?.setCallback(enqueue)
+            let compatible = fallback?.startEncode(with: saved, numberOfCores: numberOfCores) ?? -1
             if compatible == 0 { active = fallback; usingOwned = false }
+            else if fallback == nil { reportFailure() }
             return compatible
         }
     }
@@ -471,13 +526,15 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
     }
     func encode(_ frame: RTCVideoFrame, codecSpecificInfo info: (any RTCCodecSpecificInfo)?, frameTypes: [NSNumber]) -> Int {
         serialized {
-            let result = active?.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes) ?? -1
+            let requested = delivery.needsKeyFrame ? [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)] : frameTypes
+            let result = active?.encode(frame, codecSpecificInfo: info, frameTypes: requested) ?? -1
             guard result != 0, usingOwned, let settings, let epoch = deliveryEpoch, delivery.isCurrent(epoch) else { return result }
             _ = owned.release()
+            guard let fallback else { active = nil; reportFailure(); return -1 }
             fallback.setCallback { [delivery] image, info in delivery.enqueue(image, info: info, epoch: epoch); return false }
             guard fallback.startEncode(with: settings, numberOfCores: cores) == 0 else { active = nil; return -1 }
             active = fallback; usingOwned = false
-            return fallback.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes)
+            return fallback.encode(frame, codecSpecificInfo: info, frameTypes: [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)])
         }
     }
     func setBitrate(_ bitrateKbit: UInt32, framerate: UInt32) -> Int32 {
@@ -485,7 +542,9 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
             let bounded = max(1, min(maximumKbps, bitrateKbit))
             settings?.startBitrate = bounded
             if framerate > 0 { settings?.maxFramerate = framerate }
-            return active?.setBitrate(bounded, framerate: framerate) ?? -1
+            let result = active?.setBitrate(bounded, framerate: framerate) ?? -1
+            if result != 0, fallback == nil { reportFailure() }
+            return result
         }
     }
     func implementationName() -> String { serialized { active?.implementationName() ?? "Farside owned VT with codec-compatible fallback" } }

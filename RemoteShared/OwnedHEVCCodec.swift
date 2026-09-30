@@ -1,0 +1,201 @@
+import Foundation
+import VideoToolbox
+import WebRTC
+
+protocol OwnedVideoConfiguration {
+    var codecType: CMVideoCodecType { get }
+    var maximumKbps: UInt32 { get }
+    var lowLatency: Bool { get }
+    var profileProperty: CFString { get }
+    func fits(width: Int, height: Int, fps: Int) -> Bool
+    func acceptsSPS(_ data: Data) -> Bool
+    func codecSpecificInfo() -> any RTCCodecSpecificInfo
+}
+
+extension OwnedVTConfiguration: OwnedVideoConfiguration {
+    var codecType: CMVideoCodecType { kCMVideoCodecType_H264 }
+    func fits(width: Int, height: Int, fps: Int) -> Bool {
+        let limit = H264FrameBudget.level(level), blocks = ((width + 15) / 16) * ((height + 15) / 16)
+        return width > 0 && height > 0 && width <= 4096 && height <= 4096 && fps > 0 && blocks <= limit.frameMacroblocks && blocks * fps <= limit.macroblocksPerSecond
+    }
+    func codecSpecificInfo() -> any RTCCodecSpecificInfo {
+        let info = RTCCodecSpecificInfoH264(); info.packetizationMode = .nonInterleaved; return info
+    }
+}
+
+/// Main profile, negotiated tier and level ceiling up to 5.1. No 4:4:4/RExt or HDR claim.
+struct OwnedHEVCConfiguration: OwnedVideoConfiguration {
+    static var codecInfo: RTCVideoCodecInfo { RTCVideoCodecInfo(name: "H265", parameters: ["profile-id": "1", "tier-flag": "1", "level-id": "153", "tx-mode": "SRST"]) }
+    let level: UInt8
+    let tier: UInt8
+    var codecType: CMVideoCodecType { kCMVideoCodecType_HEVC }
+    var maximumKbps: UInt32 { [UInt8(120): 12_000, 123: 20_000, 150: 25_000, 153: 40_000][level] ?? 12_000 }
+    var lowLatency: Bool { false } // Standard HEVC hardware; no unsupported low-latency request.
+    var profileProperty: CFString { kVTProfileLevel_HEVC_Main_AutoLevel }
+    init?(parameters: [String: String]) {
+        guard parameters["profile-id"] == "1", let tier = UInt8(parameters["tier-flag"] ?? ""), tier <= 1, parameters["tx-mode"] == "SRST",
+              let level = UInt8(parameters["level-id"] ?? ""), [120, 123, 150, 153].contains(level) else { return nil }
+        self.level = level; self.tier = tier
+    }
+    func fits(width: Int, height: Int, fps: Int) -> Bool {
+        let picture = level < 150 ? 2_228_224 : 8_912_896
+        let rate = [UInt8(120): 66_846_720, 123: 133_693_440, 150: 267_386_880, 153: 534_773_760][level] ?? 0
+        guard width > 0, height > 0, width <= 4096, height <= 4096, fps > 0, fps <= 120 else { return false }
+        return width * height <= picture && width * height * fps <= rate
+    }
+    func acceptsSPS(_ data: Data) -> Bool {
+        guard data.count >= 2, (data[0] >> 1) & 63 == 33 else { return false }
+        let bytes = H26xAnnexB.rbsp(data.dropFirst(2))
+        // sps_video_parameter_set_id/max_sub_layers/temporal_nesting then general profile/tier/level.
+        guard bytes.count >= 13, bytes[1] & 0xdf == 1, (bytes[1] >> 5) & 1 <= tier, [30, 60, 63, 90, 93, 120, 123, 150, 153].contains(bytes[12]), bytes[12] <= level else { return false }
+        return true
+    }
+    func codecSpecificInfo() -> any RTCCodecSpecificInfo { GenericHEVCInfo() }
+}
+private final class GenericHEVCInfo: NSObject, RTCCodecSpecificInfo {}
+
+enum H26xAnnexB {
+    static func rbsp(_ bytes: Data.SubSequence) -> [UInt8] {
+        var result: [UInt8] = [], zeros = 0
+        for byte in bytes {
+            if zeros >= 2 && byte == 3 { zeros = 0; continue }
+            result.append(byte); zeros = byte == 0 ? zeros + 1 : 0
+        }
+        return result
+    }
+    static func split(_ data: Data) -> [Data]? {
+        guard !data.isEmpty, data.count <= H264AnnexB.maximumBytes else { return nil }
+        let bytes = [UInt8](data)
+        var starts: [(Int, Int)] = [], i = 0
+        while i + 2 < bytes.count {
+            if bytes[i] == 0 && bytes[i + 1] == 0 {
+                if bytes[i + 2] == 1 { starts.append((i, i + 3)); i += 3; continue }
+                if i + 3 < bytes.count && bytes[i + 2] == 0 && bytes[i + 3] == 1 { starts.append((i, i + 4)); i += 4; continue }
+            }
+            i += 1
+        }
+        guard starts.first?.0 == 0, starts.count <= 4096 else { return nil }
+        var result: [Data] = []
+        for index in starts.indices {
+            let end = index + 1 < starts.count ? starts[index + 1].0 : bytes.count
+            guard end > starts[index].1 else { return nil }
+            result.append(Data(bytes[starts[index].1..<end]))
+        }
+        return result
+    }
+}
+
+/// Terminal owned decoder: public output blocks retain frames, never raw refcon pointers.
+final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
+    private let lock = NSRecursiveLock()
+    private let queue = DispatchQueue(label: "farside.hevc.decode")
+    private let key = DispatchSpecificKey<UInt8>()
+    private var session: VTDecompressionSession?
+    private var format: CMVideoFormatDescription?
+    private var sets: [Int: Data] = [:]
+    private var generation = UUID()
+    private var opened = false
+    private var pending: Set<UUID> = []
+    private var callback: RTCVideoDecoderCallback?
+    private let deliveryMailbox = NSLock()
+    private let deliveryQueue = DispatchQueue(label: "farside.hevc.decoded-delivery")
+    private var deliveryPending: (RTCVideoFrame, UUID)?
+    private var deliveryScheduled = false
+    private weak var timing: PhoneFrameTimingLog?
+    private let configuration: OwnedHEVCConfiguration
+    private let onFailure: (() -> Void)?
+    init(configuration: OwnedHEVCConfiguration = OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters)!, timing: PhoneFrameTimingLog? = nil, onFailure: (() -> Void)? = nil) { self.configuration = configuration; self.timing = timing; self.onFailure = onFailure; super.init(); queue.setSpecific(key: key, value: 1) }
+    private func serialized<T>(_ body: () -> T) -> T { DispatchQueue.getSpecific(key: key) != nil ? body() : queue.sync(execute: body) }
+    func setCallback(_ callback: @escaping RTCVideoDecoderCallback) { lock.lock(); self.callback = callback; lock.unlock() }
+    func startDecode(withNumberOfCores numberOfCores: Int32) -> Int { serialized { opened = true; return 0 } }
+    func release() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return serialized { retire(); opened = false; sets.removeAll(); format = nil; deliveryMailbox.lock(); deliveryPending = nil; deliveryMailbox.unlock(); return 0 }
+    }
+    private func retire() { generation = UUID(); pending.removeAll(); if let session { VTDecompressionSessionInvalidate(session) }; session = nil }
+    func decode(_ image: RTCEncodedImage, missingFrames: Bool, codecSpecificInfo: (any RTCCodecSpecificInfo)?, renderTimeMs: Int64) -> Int {
+        serialized {
+            guard opened, abs(Double(image.captureTimeMs)) < 1e12, let nals = H26xAnnexB.split(image.buffer) else { return -1 }
+            timing?.received(wireRtp: image.timeStamp, bytes: image.buffer.count, atMs: MachClock.nowMs())
+            var changed = false, payload = Data()
+            for nal in nals {
+                guard nal.count >= 2, nal[0] & 0x81 == 0, nal[1] & 0xf8 == 0, nal[1] & 7 != 0 else { return -1 }
+                let type = Int((nal[0] >> 1) & 63)
+                if (32...34).contains(type) {
+                    guard nal.count <= 65536 else { return -1 }
+                    if sets[type] != nal { sets[type] = nal; changed = true }
+                } else {
+                    var size = UInt32(nal.count).bigEndian
+                    withUnsafeBytes(of: &size) { payload.append(contentsOf: $0) }; payload.append(nal)
+                }
+            }
+            if changed || session == nil {
+                guard let vps = sets[32], let sps = sets[33], let pps = sets[34] else { return -1 }
+                let config = configuration
+                guard config.acceptsSPS(sps) else { return -1 }
+                let data = [vps, sps, pps].map { $0 as NSData }
+                var pointers = data.map { $0.bytes.assumingMemoryBound(to: UInt8.self) }, sizes = data.map(\.length)
+                var next: CMVideoFormatDescription?
+                let created = CMVideoFormatDescriptionCreateFromHEVCParameterSets(allocator: kCFAllocatorDefault, parameterSetCount: 3,
+                    parameterSetPointers: &pointers, parameterSetSizes: &sizes, nalUnitHeaderLength: 4, extensions: nil, formatDescriptionOut: &next)
+                guard created == noErr, let next else { return -1 }
+                let dimensions = CMVideoFormatDescriptionGetDimensions(next)
+                guard config.fits(width: Int(dimensions.width), height: Int(dimensions.height), fps: 1) else { return -1 }
+                retire(); format = next
+                let result = VTDecompressionSessionCreate(allocator: kCFAllocatorDefault, formatDescription: next,
+                    decoderSpecification: [kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: true] as CFDictionary,
+                    imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                        kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, outputCallback: nil, decompressionSessionOut: &session)
+                guard result == noErr else { retire(); DispatchQueue.global(qos: .utility).async { [onFailure] in onFailure?() }; return -1 }
+            }
+            guard let session, let format, !payload.isEmpty, pending.count < 2 else { return -1 }
+            var block: CMBlockBuffer?
+            guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: payload.count,
+                blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0, dataLength: payload.count, flags: 0, blockBufferOut: &block) == noErr, let block else { return -1 }
+            guard payload.withUnsafeBytes({ CMBlockBufferReplaceDataBytes(with: $0.baseAddress!, blockBuffer: block, offsetIntoDestination: 0, dataLength: payload.count) }) == noErr else { return -1 }
+            var sample: CMSampleBuffer?, size = payload.count
+            var timingInfo = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: CMTime(value: image.captureTimeMs, timescale: 1000), decodeTimeStamp: .invalid)
+            guard CMSampleBufferCreateReady(allocator: kCFAllocatorDefault, dataBuffer: block, formatDescription: format, sampleCount: 1,
+                sampleTimingEntryCount: 1, sampleTimingArray: &timingInfo, sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample) == noErr, let sample else { return -1 }
+            let ticket = UUID(), epoch = generation, rtp = image.timeStamp, rotation = image.rotation, capture = image.captureTimeMs
+            pending.insert(ticket)
+            let result = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [._EnableAsynchronousDecompression], infoFlagsOut: nil) { [weak self] status, flags, pixels, _, _ in
+                guard let self else { return }
+                self.queue.async { [weak self] in
+                    guard let self, self.generation == epoch, self.pending.remove(ticket) != nil else { return }
+                    guard status == noErr, !flags.contains(.frameDropped), let pixels else {
+                        if status != noErr { self.retire(); DispatchQueue.global(qos: .utility).async { [onFailure = self.onFailure] in onFailure?() } }
+                        return
+                    }
+                    let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: pixels), rotation: rotation, timeStampNs: capture * 1_000_000)
+                    frame.timeStamp = Int32(bitPattern: rtp)
+                    self.timing?.decoded(rtp: frame.timeStamp, atMs: MachClock.nowMs())
+                    self.offerDecoded(frame, epoch: epoch)
+
+                }
+            }
+            if result != noErr { pending.remove(ticket) }
+            return result == noErr ? 0 : -1
+        }
+    }
+    private func offerDecoded(_ frame: RTCVideoFrame, epoch: UUID) {
+        // Decoded pixels are independent: one newest pending plus one delivery.
+        // No outward callback fence acquisition on the decoder ownership queue.
+        deliveryMailbox.lock(); deliveryPending = (frame, epoch)
+        let schedule = !deliveryScheduled; deliveryScheduled = true; deliveryMailbox.unlock()
+        if schedule { deliveryQueue.async { [weak self] in self?.deliverDecoded() } }
+    }
+    private func deliverDecoded() {
+        while true {
+            lock.lock()
+            deliveryMailbox.lock()
+            guard let next = deliveryPending else { deliveryScheduled = false; deliveryMailbox.unlock(); lock.unlock(); return }
+            deliveryPending = nil; deliveryMailbox.unlock()
+            let current = serialized { opened && generation == next.1 }
+            if current { callback?(next.0) }
+            lock.unlock()
+        }
+    }
+    func implementationName() -> String { "Farside public VideoToolbox HEVC Main" }
+    deinit { if let session { VTDecompressionSessionInvalidate(session) } }
+}

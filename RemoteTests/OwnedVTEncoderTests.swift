@@ -17,6 +17,7 @@ final class OwnedVTEncoderTests: XCTestCase {
         XCTAssertFalse(OwnedVTConfiguration(parameters: ["profile-level-id": "42e034", "packetization-mode": "1"])!.lowLatency)
         XCTAssertNil(OwnedVTConfiguration(parameters: ["profile-level-id": "640034", "packetization-mode": "0"]))
         XCTAssertNil(OwnedVTConfiguration(parameters: ["profile-level-id": "f40034", "packetization-mode": "1"]))
+        XCTAssertNil(OwnedVTConfiguration(parameters: ["profile-level-id": "42f00b", "packetization-mode": "1"]))
     }
     func testNegotiatedLevelCapsRateAndRejectsHigherOrDifferentSPS() throws {
         let config = try XCTUnwrap(OwnedVTConfiguration(parameters: ["profile-level-id": "64001f", "packetization-mode": "1"]))
@@ -48,6 +49,34 @@ final class OwnedVTEncoderTests: XCTestCase {
         wait(for: [retired], timeout: 2)
         XCTAssertEqual(counters.encodedTotal, 0, "Retired callback is not accepted into the new session")
         XCTAssertEqual(wrapper.release(), 0)
+    }
+
+    func testBlockedEncodedDeliveryDropsDependentsUntilNewKeyFrame() {
+        let delivery = VideoEncoderCallbackDelivery(), entered = DispatchSemaphore(value: 0), unblock = DispatchSemaphore(value: 0)
+        let first = expectation(description: "Earlier key completes"), recovered = expectation(description: "Fresh recovery key delivered")
+        let callbackLock = NSLock(); var timestamps: [UInt32] = []
+        delivery.setCallback { image, _ in
+            callbackLock.lock(); timestamps.append(image.timeStamp); callbackLock.unlock()
+            if image.timeStamp == 1 { entered.signal(); _ = unblock.wait(timeout: .now() + 2); first.fulfill() }
+            if image.timeStamp == 5 { recovered.fulfill() }
+            return true
+        }
+        let epoch = delivery.activate()
+        func offer(_ rtp: UInt32, _ type: RTCFrameType) {
+            let image = RTCEncodedImage(); image.timeStamp = rtp; image.frameType = type
+            delivery.enqueue(image, info: RTCCodecSpecificInfoH264(), epoch: epoch)
+        }
+        offer(1, .videoFrameKey)
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        offer(2, .videoFrameDelta); offer(3, .videoFrameDelta)
+        XCTAssertTrue(delivery.needsKeyFrame)
+        unblock.signal(); wait(for: [first], timeout: 2)
+        XCTAssertTrue(delivery.needsKeyFrame, "A key preceding the encoded loss cannot repair it")
+        offer(4, .videoFrameDelta); offer(5, .videoFrameKey)
+        wait(for: [recovered], timeout: 2)
+        delivery.invalidate()
+        callbackLock.lock(); let received = timestamps; callbackLock.unlock()
+        XCTAssertEqual(received, [1, 5], "No dependent delta crosses an encoded reference gap")
     }
 
     func testEvidenceRejectsImpossibleCompatibilityAndUnboundedQPClaims() throws {
