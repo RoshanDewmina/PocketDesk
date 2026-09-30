@@ -6,6 +6,8 @@ private final class FakePasteboard: HostPasteboardAccess, @unchecked Sendable {
     private var count = 0
     private var result: HostPasteboardRead = .refused(.empty)
     private var stored: [ClipboardPayload] = []
+    private var readCount = 0
+    var reads: Int { lock.lock(); defer { lock.unlock() }; return readCount }
     var readGate: DispatchSemaphore?
 
     var changeCount: Int { lock.lock(); defer { lock.unlock() }; return count }
@@ -15,6 +17,7 @@ private final class FakePasteboard: HostPasteboardAccess, @unchecked Sendable {
     func bump() { lock.lock(); count += 1; lock.unlock() }
 
     func read(limit: Int) -> HostPasteboardRead {
+        lock.lock(); readCount += 1; lock.unlock()
         readGate?.wait()
         lock.lock(); defer { lock.unlock() }
         return result
@@ -168,6 +171,35 @@ final class HostClipboardServiceTests: XCTestCase {
         XCTAssertTrue(sent.isEmpty)
         XCTAssertTrue(clipboard.isIdle)
     }
+    func testQueuedCompletePushCannotWriteAfterResetAndSameIDFreshPushStillWorks() throws {
+        let pasteboard = FakePasteboard(), queue = DispatchQueue(label: "fixture.clipboard-push"), gate = DispatchSemaphore(value: 0)
+        queue.async { gate.wait() }; defer { gate.signal() }
+        let clipboard = HostClipboardService(pasteboard: pasteboard, queue: queue)
+        var replies: [ClipboardFrame] = []; clipboard.transport = { replies.append($0); return true }
+        for frame in try ClipboardChunker.frames(for: ClipboardPayload(text: "revoked"), operation: "push", transfer: transfer) { clipboard.receive(frame, allowed: true) }
+        clipboard.reset()
+        for frame in try ClipboardChunker.frames(for: ClipboardPayload(text: "current"), operation: "push", transfer: transfer) { clipboard.receive(frame, allowed: true) }
+        gate.signal(); queue.sync {}
+        waitUntil("current push reply") { replies.count == 1 }
+        XCTAssertEqual(pasteboard.writes, [ClipboardPayload(text: "current")]); XCTAssertEqual(replies.first?.status, "stored")
+    }
+    func testQueuedReadDoesNotBeginAfterResetAndAlreadyStartedReadCannotExport() {
+        let pasteboard = FakePasteboard(), queue = DispatchQueue(label: "fixture.clipboard-read"), gate = DispatchSemaphore(value: 0)
+        pasteboard.set(.text(ClipboardPayload(text: "secret fixture")))
+        queue.async { gate.wait() }; defer { gate.signal() }
+        let clipboard = HostClipboardService(pasteboard: pasteboard, queue: queue)
+        var replies: [ClipboardFrame] = []; clipboard.transport = { replies.append($0); return true }
+        clipboard.receive(.pull(transfer), allowed: true); clipboard.reset(); gate.signal(); queue.sync {}
+        XCTAssertEqual(pasteboard.reads, 0); XCTAssertTrue(replies.isEmpty)
+        let readGate = DispatchSemaphore(value: 0); pasteboard.readGate = readGate; defer { readGate.signal() }
+        clipboard.receive(.pull(transfer), allowed: true)
+        waitUntil("read entered") { pasteboard.reads == 1 }
+        clipboard.reset(); readGate.signal(); queue.sync {}
+        let settled = expectation(description: "old result filtered")
+        DispatchQueue.main.async { settled.fulfill() }; wait(for: [settled], timeout: 1)
+        XCTAssertTrue(replies.isEmpty); XCTAssertTrue(clipboard.isIdle)
+    }
+
 }
 
 /// Uses private, uniquely named pasteboards, which macOS does not gate behind the

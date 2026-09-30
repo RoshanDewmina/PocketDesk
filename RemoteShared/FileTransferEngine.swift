@@ -212,8 +212,9 @@ final class FileTransferEngine {
 
     private let acceptsUnsolicitedOffers: Bool
     private let clock: () -> TimeInterval
-    private let io = FileTransferIO()
-    private var outgoingSource: FileByteSource?
+    private let io: FileTransferIO
+    private var outgoingWork: FileTransferIO.Outgoing?
+    private var incomingLease: TransferEffectLease?
     private var outgoingActivity: TimeInterval = 0
     private var incomingActivity: TimeInterval = 0
     private var incomingAdmissionID: UUID?
@@ -222,7 +223,8 @@ final class FileTransferEngine {
     private var watchdog: Timer?
 
     init(acceptsUnsolicitedOffers: Bool,
-         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }, io: FileTransferIO = FileTransferIO()) {
+        self.io = io
         self.acceptsUnsolicitedOffers = acceptsUnsolicitedOffers
         self.clock = clock
         io.events = { [weak self] event in
@@ -242,14 +244,17 @@ final class FileTransferEngine {
         let id = transfer ?? FileTransferID.make()
         let wireName = FileNameSanitizer.sanitize(name)
         let wireType = type.flatMap { FileFrame.isWellFormedType($0) ? $0 : nil }
-        guard sendControl?(.offer(id, name: wireName, bytes: source.byteCount, type: wireType)) == true else {
-            source.close()
-            return .failure(.connectionLost)
-        }
-        outgoingSource = source
+        let work = io.reserveSending(transfer: id, source: source)
+        outgoingWork = work
         outgoing = FileTransferSnapshot(transfer: id, direction: .outgoing, name: wireName, total: source.byteCount,
                                         bytes: 0, phase: .waiting)
         outgoingActivity = clock()
+        guard sendControl?(.offer(id, name: wireName, bytes: source.byteCount, type: wireType)) == true,
+              outgoingWork === work, work.lease.isActive else {
+            io.stopSending(work)
+            if outgoingWork === work { outgoingWork = nil; outgoing = nil }
+            return .failure(.connectionLost)
+        }
         startWatchdog()
         onChange?()
         return .success(id)
@@ -307,7 +312,7 @@ final class FileTransferEngine {
             receiveOffer(frame)
         case "accept":
             guard var current = outgoing, current.transfer == frame.transfer, current.phase == .waiting,
-                  let source = outgoingSource else { return }
+                  let work = outgoingWork else { return }
             guard let channel = link?() else {
                 finishOutgoing(current.transfer, .connectionLost, notify: .cancel)
                 return
@@ -316,7 +321,7 @@ final class FileTransferEngine {
             outgoing = current
             outgoingActivity = now
             let relayed = isRelayed()
-            io.beginSending(transfer: current.transfer, source: source, link: channel,
+            io.beginSending(work, link: channel,
                             chunk: FileTransferLimits.chunkPayload(relayed: relayed),
                             highWater: FileTransferLimits.highWater(relayed: relayed),
                             pacer: FilePacer(bytesPerSecond: relayed ? FileTransferLimits.relayBytesPerSecond : nil))
@@ -381,10 +386,13 @@ final class FileTransferEngine {
                                             total: bytes, bytes: 0, phase: .waiting)
             incomingActivity = clock()
             progressThrottle = FileProgressThrottle()
+            let lease = TransferEffectLease()
+            incomingLease = lease
+            let admission = lease.id
+            incomingAdmissionID = admission
             startWatchdog()
             onChange?()
-            let admission = UUID()
-            incomingAdmissionID = admission
+            guard incomingLease === lease, lease.isActive else { return }
             admit(offer) { [weak self] result in
                 guard let self else {
                     if case .success(let sink) = result { sink.discard() }
@@ -398,7 +406,8 @@ final class FileTransferEngine {
     }
 
     private func admitted(_ offer: FileTransferOffer, _ result: Result<FileByteSink, FileTransferStatus>, admission: UUID) {
-        guard incomingAdmissionID == admission, var current = incoming, current.transfer == offer.transfer, current.phase == .waiting else {
+        guard incomingAdmissionID == admission, let lease = incomingLease, lease.id == admission, lease.isActive,
+              var current = incoming, current.transfer == offer.transfer, current.phase == .waiting else {
             if case .success(let sink) = result { sink.discard() }
             return
         }
@@ -407,8 +416,8 @@ final class FileTransferEngine {
             current.phase = .transferring
             incoming = current
             incomingActivity = clock()
+            io.beginReceiving(transfer: offer.transfer, bytes: offer.bytes, sink: sink, lease: lease)
             onChange?()
-            io.beginReceiving(transfer: offer.transfer, bytes: offer.bytes, sink: sink)
         case .failure(let status):
             finishIncoming(offer.transfer, status, url: nil, notify: .result)
         }
@@ -424,14 +433,21 @@ final class FileTransferEngine {
 
     // MARK: I/O events
 
-    private func handle(_ event: FileTransferIO.Event) {
+    private func handle(_ delivery: FileTransferIO.Delivery) {
+        guard delivery.lease.isActive else { return }
+        switch delivery.event {
+        case .sent, .sendFailed:
+            guard outgoingWork?.lease === delivery.lease else { return }
+        default:
+            guard incomingLease === delivery.lease else { return }
+        }
         let now = clock()
-        switch event {
+        switch delivery.event {
         case .receiverReady(let transfer):
             guard incoming?.transfer == transfer else { return }
-            if sendControl?(.accept(transfer)) != true {
-                finishIncoming(transfer, .connectionLost, url: nil, notify: .none)
-            }
+            let accepted = sendControl?(.accept(transfer)) == true
+            guard incomingLease === delivery.lease, delivery.lease.isActive else { return }
+            if !accepted { finishIncoming(transfer, .connectionLost, url: nil, notify: .none) }
         case .received(let transfer, let bytes):
             guard var current = incoming, current.transfer == transfer else { return }
             current.bytes = bytes
@@ -450,10 +466,9 @@ final class FileTransferEngine {
             current.phase = .verifying
             outgoing = current
             outgoingActivity = now
-            if sendControl?(.complete(transfer, digest: digest)) != true {
-                finishOutgoing(transfer, .connectionLost, notify: .none)
-                return
-            }
+            let completed = sendControl?(.complete(transfer, digest: digest)) == true
+            guard outgoingWork?.lease === delivery.lease, delivery.lease.isActive else { return }
+            if !completed { finishOutgoing(transfer, .connectionLost, notify: .none); return }
             onChange?()
         case .sendFailed(let transfer, let status):
             guard outgoing?.transfer == transfer else { return }
@@ -467,10 +482,9 @@ final class FileTransferEngine {
 
     private func finishOutgoing(_ transfer: String, _ status: FileTransferStatus, notify: Notice) {
         guard let current = outgoing, current.transfer == transfer else { return }
+        if let work = outgoingWork { io.stopSending(work) }
         outgoing = nil
-        io.stopSending(transfer: transfer)
-        outgoingSource?.close()
-        outgoingSource = nil
+        outgoingWork = nil
         if notify == .cancel { _ = sendControl?(.cancel(transfer)) }
         stopWatchdogIfIdle()
         onFinish?(FileTransferFinish(transfer: transfer, direction: .outgoing, name: current.name, status: status, savedURL: nil))
@@ -479,9 +493,10 @@ final class FileTransferEngine {
 
     private func finishIncoming(_ transfer: String, _ status: FileTransferStatus, url: URL?, notify: Notice) {
         guard let current = incoming, current.transfer == transfer else { return }
+        if let lease = incomingLease { io.stopReceiving(lease) }
         incoming = nil
         incomingAdmissionID = nil
-        if status != .stored { io.stopReceiving(transfer: transfer) }
+        incomingLease = nil
         switch notify {
         case .none: break
         case .cancel: _ = sendControl?(.cancel(transfer))
@@ -533,185 +548,168 @@ final class FileTransferEngine {
     }
 }
 
-/// Everything that touches file bytes. Confined to `queue`; reports back through `events`.
+/// File-byte state and cleanup are serial; terminal leases additionally fence off-main effects.
 final class FileTransferIO: @unchecked Sendable {
     enum Event {
-        case receiverReady(String)
-        case received(String, Int64)
-        case receivedFile(String, FileTransferStatus, URL?)
-        case sent(String, String)
-        case sendFailed(String, FileTransferStatus)
+        case receiverReady(String), received(String, Int64), receivedFile(String, FileTransferStatus, URL?)
+        case sent(String, String), sendFailed(String, FileTransferStatus)
     }
-
+    struct Delivery { let event: Event; let lease: TransferEffectLease }
+    final class Outgoing: @unchecked Sendable {
+        let transfer: String, source: FileByteSource, lease = TransferEffectLease()
+        private var closed = false // IO queue only, including waiting-transfer cleanup.
+        init(transfer: String, source: FileByteSource) { self.transfer = transfer; self.source = source }
+        func closeSource() { guard !closed else { return }; closed = true; source.close() }
+    }
     private final class Sending {
-        let transfer: String
-        let source: FileByteSource
-        let link: FileChannelLink
-        let chunk: Int
-        let highWater: UInt64
-        var pacer: FilePacer
-        var hasher = SHA256()
-        var sent: Int64 = 0
-        var pumpScheduled = false
-
-        init(transfer: String, source: FileByteSource, link: FileChannelLink, chunk: Int, highWater: UInt64, pacer: FilePacer) {
-            self.transfer = transfer
-            self.source = source
-            self.link = link
-            self.chunk = chunk
-            self.highWater = highWater
-            self.pacer = pacer
+        let work: Outgoing, link: FileChannelLink, chunk: Int, highWater: UInt64
+        var pacer: FilePacer, hasher = SHA256(), sent: Int64 = 0, pumpScheduled = false
+        init(work: Outgoing, link: FileChannelLink, chunk: Int, highWater: UInt64, pacer: FilePacer) {
+            self.work = work; self.link = link; self.chunk = chunk; self.highWater = highWater; self.pacer = pacer
         }
     }
-
     private struct Receiving {
         var assembler: FileAssembler
-        let sink: FileByteSink
+        let sink: FileByteSink, lease: TransferEffectLease
         var lastReport: TimeInterval = 0
     }
-
-    let queue = DispatchQueue(label: "Farside.file-transfer", qos: .utility)
-    var events: ((Event) -> Void)?
-    private var sending: Sending?
+    let queue: DispatchQueue
+    var events: ((Delivery) -> Void)?
+    private let registryLock = NSLock()
+    private var outgoingAdmission: Outgoing?
+    private var incomingAdmission: TransferEffectLease?
+    private var sending: Sending? // IO queue only.
     private var receiving: Receiving?
     private static let chunksPerTurn = 64
+    init(queue: DispatchQueue = DispatchQueue(label: "Farside.file-transfer", qos: .utility)) { self.queue = queue }
 
-    func beginSending(transfer: String, source: FileByteSource, link: FileChannelLink, chunk: Int, highWater: UInt64,
-                      pacer: FilePacer) {
+    func reserveSending(transfer: String, source: FileByteSource) -> Outgoing {
+        let work = Outgoing(transfer: transfer, source: source)
+        registryLock.lock(); let old = outgoingAdmission; outgoingAdmission = work; registryLock.unlock()
+        if let old { stopSending(old) }
+        return work
+    }
+    func beginSending(_ work: Outgoing, link: FileChannelLink, chunk: Int, highWater: UInt64, pacer: FilePacer) {
         queue.async {
-            self.sending = Sending(transfer: transfer, source: source, link: link, chunk: chunk, highWater: highWater, pacer: pacer)
+            guard work.lease.isActive else { work.closeSource(); return }
+            self.sending = Sending(work: work, link: link, chunk: chunk, highWater: highWater, pacer: pacer)
             self.pump()
         }
     }
-
-    func stopSending(transfer: String) {
+    func stopSending(_ work: Outgoing) {
+        registryLock.lock(); if outgoingAdmission === work { outgoingAdmission = nil }; registryLock.unlock()
+        work.lease.retire() // No registry lock through an effect/retirement wait.
         queue.async {
-            guard self.sending?.transfer == transfer else { return }
-            self.sending = nil
+            if self.sending?.work === work { self.sending = nil }
+            work.closeSource()
         }
     }
-
-    func wake() {
-        queue.async { self.pump() }
+    func wake() { queue.async { self.pump() } }
+    private func emit(_ event: Event, lease: TransferEffectLease) {
+        guard lease.isActive else { return }
+        events?(Delivery(event: event, lease: lease)) // Never called inside final-effect lock.
     }
-
     private func pump() {
-        guard let sending else { return }
+        guard let sending, sending.work.lease.isActive else { return }
         sending.pumpScheduled = false
-        let total = sending.source.byteCount
+        let work = sending.work, total = work.source.byteCount
         var turns = 0
         while sending.sent < total {
+            guard work.lease.isActive else { return }
             guard let buffered = sending.link.fileBufferedAmount else { fail(sending, .connectionLost); return }
             if buffered >= sending.highWater { schedule(sending, after: 0.005); return }
             let size = Int(min(Int64(sending.chunk), total - sending.sent))
-            guard sending.link.permitsFileSend(bytes: size + FileTransferLimits.chunkHeaderBytes,
-                                              at: ProcessInfo.processInfo.systemUptime) else {
-                schedule(sending, after: 0.01)
-                return
-            }
-            guard sending.pacer.allows(size, at: ProcessInfo.processInfo.systemUptime) else {
-                schedule(sending, after: 0.01)
-                return
-            }
+            guard sending.link.permitsFileSend(bytes: size + FileTransferLimits.chunkHeaderBytes, at: ProcessInfo.processInfo.systemUptime),
+                  sending.pacer.allows(size, at: ProcessInfo.processInfo.systemUptime) else { schedule(sending, after: 0.01); return }
             let payload: Data
-            do { payload = try sending.source.read(upTo: size) } catch { fail(sending, .unreadable); return }
-            guard payload.count == size,
-                  let message = FileChunk.encode(transfer: sending.transfer, offset: sending.sent, payload: payload)
+            do { payload = try work.source.read(upTo: size) } catch { fail(sending, .unreadable); return }
+            guard payload.count == size, let message = FileChunk.encode(transfer: work.transfer, offset: sending.sent, payload: payload)
             else { fail(sending, .unreadable); return }
-            guard sending.link.sendFile(message) else { fail(sending, .connectionLost); return }
-            sending.hasher.update(data: payload)
-            sending.sent += Int64(size)
-            turns += 1
+            // Read may have blocked across revocation. Fence the actual bounded send, not only its callback.
+            guard let sent = work.lease.performIfActive({ sending.link.sendFile(message) }) else { return }
+            guard sent else { fail(sending, .connectionLost); return }
+            sending.hasher.update(data: payload); sending.sent += Int64(size); turns += 1
             if turns >= Self.chunksPerTurn, sending.sent < total { schedule(sending, after: 0); return }
         }
-        self.sending = nil
-        events?(.sent(sending.transfer, FileDigest.hex(sending.hasher.finalize())))
+        self.sending = nil; work.closeSource()
+        emit(.sent(work.transfer, FileDigest.hex(sending.hasher.finalize())), lease: work.lease)
     }
-
     private func schedule(_ sending: Sending, after delay: TimeInterval) {
-        guard !sending.pumpScheduled else { return }
+        guard sending.work.lease.isActive, !sending.pumpScheduled else { return }
         sending.pumpScheduled = true
         queue.asyncAfter(deadline: .now() + delay) { [weak sending] in
-            guard let sending, self.sending === sending else { return }
-            self.pump()
+            guard let sending, self.sending === sending else { return }; self.pump()
         }
     }
-
     private func fail(_ sending: Sending, _ status: FileTransferStatus) {
-        self.sending = nil
-        events?(.sendFailed(sending.transfer, status))
+        self.sending = nil; sending.work.closeSource()
+        emit(.sendFailed(sending.work.transfer, status), lease: sending.work.lease)
     }
-
-    func beginReceiving(transfer: String, bytes: Int64, sink: FileByteSink) {
+    func beginReceiving(transfer: String, bytes: Int64, sink: FileByteSink, lease: TransferEffectLease) {
+        guard lease.isActive else { queue.async { sink.discard() }; return }
+        registryLock.lock(); let old = incomingAdmission; incomingAdmission = lease; registryLock.unlock()
+        if let old, old !== lease { stopReceiving(old) }
         queue.async {
+            guard lease.isActive else { sink.discard(); return }
             self.receiving?.sink.discard()
-            self.receiving = Receiving(assembler: FileAssembler(transfer: transfer, expectedBytes: bytes), sink: sink)
-            self.events?(.receiverReady(transfer))
+            self.receiving = Receiving(assembler: FileAssembler(transfer: transfer, expectedBytes: bytes), sink: sink, lease: lease)
+            self.emit(.receiverReady(transfer), lease: lease)
         }
     }
-
-    func stopReceiving(transfer: String) {
+    func stopReceiving(_ lease: TransferEffectLease) {
+        registryLock.lock(); if incomingAdmission === lease { incomingAdmission = nil }; registryLock.unlock()
+        lease.retire()
         queue.async {
-            guard let receiving = self.receiving, receiving.assembler.transfer == transfer else { return }
-            receiving.sink.discard()
-            self.receiving = nil
+            guard let receiving = self.receiving, receiving.lease === lease else { return }
+            self.receiving = nil; receiving.sink.discard()
         }
     }
-
+    private func currentIncoming() -> TransferEffectLease? {
+        registryLock.lock(); defer { registryLock.unlock() }; return incomingAdmission
+    }
     func receive(_ data: Data) {
+        guard let lease = currentIncoming() else { return }
         queue.async {
-            guard var receiving = self.receiving else { return }
+            guard lease.isActive, var receiving = self.receiving, receiving.lease === lease else { return }
             guard let chunk = FileChunk.decode(data) else { self.settle(receiving, .invalid); return }
             guard chunk.transfer == receiving.assembler.transfer else { return }
             let outcome = receiving.assembler.accept(chunk)
             if outcome != .failed {
-                do { try receiving.sink.write(chunk.payload) } catch {
-                    self.settle(receiving, FolderFileSink.status(for: error))
-                    return
-                }
+                do { guard try lease.performIfActive({ try receiving.sink.write(chunk.payload) }) != nil else { return } }
+                catch { self.settle(receiving, FolderFileSink.status(for: error)); return }
             }
-            self.receiving = receiving
-            self.apply(outcome, receiving)
+            self.receiving = receiving; self.apply(outcome, receiving)
         }
     }
-
     func receiveDigest(transfer: String, digest: String) {
+        guard let lease = currentIncoming() else { return }
         queue.async {
-            guard var receiving = self.receiving, receiving.assembler.transfer == transfer else { return }
+            guard lease.isActive, var receiving = self.receiving, receiving.lease === lease, receiving.assembler.transfer == transfer else { return }
             let outcome = receiving.assembler.receiveDigest(digest)
-            self.receiving = receiving
-            self.apply(outcome, receiving)
+            self.receiving = receiving; self.apply(outcome, receiving)
         }
     }
-
     private func apply(_ outcome: FileAssembler.Outcome, _ receiving: Receiving) {
-        let transfer = receiving.assembler.transfer
+        let transfer = receiving.assembler.transfer, lease = receiving.lease
         switch outcome {
         case .progress(let bytes):
             let now = ProcessInfo.processInfo.systemUptime
             if now - receiving.lastReport >= FileTransferLimits.progressInterval / 2 {
-                self.receiving?.lastReport = now
-                events?(.received(transfer, bytes))
+                self.receiving?.lastReport = now; emit(.received(transfer, bytes), lease: lease)
             }
-        case .awaitingDigest:
-            events?(.received(transfer, receiving.assembler.receivedBytes))
+        case .awaitingDigest: emit(.received(transfer, receiving.assembler.receivedBytes), lease: lease)
         case .verified:
-            events?(.received(transfer, receiving.assembler.receivedBytes))
-            self.receiving = nil
+            emit(.received(transfer, receiving.assembler.receivedBytes), lease: lease)
             do {
-                let url = try receiving.sink.commit()
-                events?(.receivedFile(transfer, .stored, url))
-            } catch {
-                events?(.receivedFile(transfer, FolderFileSink.status(for: error), nil))
-            }
-        case .failed:
-            settle(receiving, .invalid)
+                guard let url = try lease.performIfActive({ try receiving.sink.commit() }) else { return }
+                self.receiving = nil
+                emit(.receivedFile(transfer, .stored, url), lease: lease)
+            } catch { settle(receiving, FolderFileSink.status(for: error)) }
+        case .failed: settle(receiving, .invalid)
         }
     }
-
     private func settle(_ receiving: Receiving, _ status: FileTransferStatus) {
-        receiving.sink.discard()
-        self.receiving = nil
-        events?(.receivedFile(receiving.assembler.transfer, status, nil))
+        receiving.sink.discard(); self.receiving = nil
+        emit(.receivedFile(receiving.assembler.transfer, status, nil), lease: receiving.lease)
     }
 }

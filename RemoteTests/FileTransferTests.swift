@@ -541,3 +541,172 @@ final class FileChannelLoopbackTests: XCTestCase {
         XCTAssertNotNil(host.controlBufferedAmount, "the control channel is untouched")
     }
 }
+
+private final class RevocationSource: FileByteSource, @unchecked Sendable {
+    let byteCount: Int64 = 1
+    let readStarted = DispatchSemaphore(value: 0), readRelease = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var reads = 0, closes = 0, reading = false, closeOverlapped = false
+    let blockRead: Bool
+    init(blockRead: Bool = false) { self.blockRead = blockRead }
+    var counts: (Int, Int, Bool) { lock.lock(); defer { lock.unlock() }; return (reads, closes, closeOverlapped) }
+    func read(upTo count: Int) throws -> Data {
+        lock.lock(); reads += 1; reading = true; lock.unlock()
+        readStarted.signal(); if blockRead { readRelease.wait() }
+        lock.lock(); reading = false; lock.unlock(); return Data([1])
+    }
+    func close() { lock.lock(); closes += 1; closeOverlapped = closeOverlapped || reading; lock.unlock() }
+}
+private final class RevocationLink: FileChannelLink, @unchecked Sendable {
+    private let lock = NSLock(); private var sends = 0
+    var count: Int { lock.lock(); defer { lock.unlock() }; return sends }
+    var fileBufferedAmount: UInt64? { 0 }
+    func sendFile(_ data: Data) -> Bool { lock.lock(); sends += 1; lock.unlock(); return true }
+}
+private final class RevocationSink: FileByteSink, @unchecked Sendable {
+    private let lock = NSLock(); private var writes = 0, commits = 0, discards = 0
+    let commitStarted = DispatchSemaphore(value: 0), commitRelease = DispatchSemaphore(value: 0)
+    var blockCommit = false
+    var counts: (Int, Int, Int) { lock.lock(); defer { lock.unlock() }; return (writes, commits, discards) }
+    func write(_ data: Data) throws { lock.lock(); writes += 1; lock.unlock() }
+    func commit() throws -> URL {
+        commitStarted.signal(); if blockCommit { commitRelease.wait() }
+        lock.lock(); commits += 1; lock.unlock(); return URL(fileURLWithPath: "/fixture/committed")
+    }
+    func discard() { lock.lock(); discards += 1; lock.unlock() }
+}
+
+@MainActor
+final class FileTransferRevocationTests: XCTestCase {
+    private let id = String(repeating: "a", count: 32)
+    private func drain(_ queue: DispatchQueue) async { await withCheckedContinuation { c in queue.async { c.resume() } } }
+    func testQueuedBeginSendingCannotResurrectAfterReset() async throws {
+        let queue = DispatchQueue(label: "fixture.queued-send"), gate = DispatchSemaphore(value: 0)
+        queue.async { gate.wait() }; defer { gate.signal() }
+        let io = FileTransferIO(queue: queue), engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io)
+        let source = RevocationSource(), link = RevocationLink()
+        engine.sendControl = { _ in true }; engine.link = { link }
+        _ = try engine.send(source, name: "fixture", type: nil, transfer: id).get()
+        engine.receive(.accept(id)); engine.reset() // Returns while IO queue remains deliberately blocked.
+        XCTAssertTrue(engine.isIdle); gate.signal(); await drain(queue)
+        XCTAssertEqual(source.counts.0, 0); XCTAssertEqual(source.counts.1, 1); XCTAssertEqual(link.count, 0)
+    }
+    func testBlockedSourceReadMayFinishButCannotSendAndCloseIsSerialized() async throws {
+        let queue = DispatchQueue(label: "fixture.read"), io = FileTransferIO(queue: queue)
+        let engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io), source = RevocationSource(blockRead: true), link = RevocationLink()
+        defer { source.readRelease.signal() }
+        engine.sendControl = { _ in true }; engine.link = { link }
+        _ = try engine.send(source, name: "fixture", type: nil, transfer: id).get(); engine.receive(.accept(id))
+        XCTAssertEqual(source.readStarted.wait(timeout: .now() + 2), .success)
+        engine.cancelAll(status: .notAllowed)
+        XCTAssertEqual(source.counts.1, 0, "Revocation does not close concurrently with an in-flight read")
+        source.readRelease.signal(); await drain(queue)
+        XCTAssertEqual(link.count, 0); XCTAssertEqual(source.counts.1, 1); XCTAssertFalse(source.counts.2)
+    }
+    func testQueuedReceivingBeginChunksAndDigestCannotWriteOrCommitAfterResetAndSameIDReusesNewLease() async throws {
+        let queue = DispatchQueue(label: "fixture.receive"), gate = DispatchSemaphore(value: 0)
+        queue.async { gate.wait() }; defer { gate.signal() }
+        let io = FileTransferIO(queue: queue), engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io)
+        let old = RevocationSink(), replacement = RevocationSink(); var sink: RevocationSink = old
+        engine.sendControl = { _ in true }; engine.admit = { _, answer in answer(.success(sink)) }
+        let chunk = try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: Data([1])))
+        let digest = FileDigest.hex(SHA256.hash(data: Data([1])))
+        engine.receive(.offer(id, name: "old", bytes: 1, type: nil)); engine.receiveChunk(chunk); engine.receive(.complete(id, digest: digest))
+        engine.reset(); sink = replacement
+        engine.receive(.offer(id, name: "new", bytes: 1, type: nil)); engine.receiveChunk(chunk); engine.receive(.complete(id, digest: digest))
+        gate.signal(); await drain(queue); await Task.yield()
+        XCTAssertEqual(old.counts.0, 0); XCTAssertEqual(old.counts.1, 0); XCTAssertEqual(old.counts.2, 1)
+        XCTAssertEqual(replacement.counts.0, 1); XCTAssertEqual(replacement.counts.1, 1)
+        engine.reset()
+    }
+    func testFinalDigestQueuedAfterWholeFileCannotCommitAfterCancellationReturns() async throws {
+        let queue = DispatchQueue(label: "fixture.digest"), io = FileTransferIO(queue: queue)
+        let engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io), sink = RevocationSink()
+        engine.sendControl = { _ in true }; engine.admit = { _, answer in answer(.success(sink)) }
+        engine.receive(.offer(id, name: "fixture", bytes: 1, type: nil))
+        engine.receiveChunk(try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: Data([1])))); await drain(queue)
+        XCTAssertEqual(sink.counts.0, 1)
+        let gate = DispatchSemaphore(value: 0); queue.async { gate.wait() }; defer { gate.signal() }
+        engine.receive(.complete(id, digest: FileDigest.hex(SHA256.hash(data: Data([1])))))
+        engine.cancelAll(status: .notAllowed); gate.signal(); await drain(queue)
+        XCTAssertEqual(sink.counts.1, 0); XCTAssertEqual(sink.counts.2, 1)
+    }
+    func testRetirementLinearizesWithAlreadyEnteredCommitWithoutQueueOrMainCallbackDeadlock() async throws {
+        let queue = DispatchQueue(label: "fixture.commit"), io = FileTransferIO(queue: queue), lease = TransferEffectLease(), sink = RevocationSink()
+        sink.blockCommit = true; defer { sink.commitRelease.signal() }
+        io.beginReceiving(transfer: id, bytes: 1, sink: sink, lease: lease)
+        io.receive(try XCTUnwrap(FileChunk.encode(transfer: id, offset: 0, payload: Data([1]))))
+        io.receiveDigest(transfer: id, digest: FileDigest.hex(SHA256.hash(data: Data([1]))))
+        XCTAssertEqual(sink.commitStarted.wait(timeout: .now() + 2), .success)
+        let stopped = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { io.stopReceiving(lease); stopped.signal() }
+        XCTAssertEqual(stopped.wait(timeout: .now() + 0.05), .timedOut, "Retire must wait for the irreversible operation that already won admission")
+        sink.commitRelease.signal(); XCTAssertEqual(stopped.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(sink.counts.1, 1, "Commit finished before revocation returned")
+        io.receiveDigest(transfer: id, digest: FileDigest.hex(SHA256.hash(data: Data([1])))); await drain(queue)
+        XCTAssertEqual(sink.counts.1, 1); XCTAssertFalse(lease.isActive)
+    }
+    func testReentrantFailedCompleteCannotCancelReplacementUsingSameWireID() async throws {
+        let queue = DispatchQueue(label: "fixture.reentrant-event"), io = FileTransferIO(queue: queue)
+        let engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io), link = RevocationLink()
+        engine.link = { link }; var replaced = false
+        let replacement = expectation(description: "Reentrant replacement admitted")
+        engine.sendControl = { frame in
+            if frame.op == "complete", !replaced {
+                replaced = true; engine.reset()
+                _ = engine.send(RevocationSource(), name: "replacement", type: nil, transfer: self.id)
+                replacement.fulfill(); return false
+            }
+            return true
+        }
+        _ = try engine.send(RevocationSource(), name: "old", type: nil, transfer: id).get(); engine.receive(.accept(id))
+        await drain(queue)
+        await fulfillment(of: [replacement], timeout: 2)
+        XCTAssertTrue(replaced); XCTAssertEqual(engine.outgoing?.name, "replacement")
+        XCTAssertEqual(engine.outgoing?.phase, .waiting)
+        engine.reset(); await drain(queue)
+    }
+    func testDelayedOldSentEventCannotCompleteReplacementUsingSameWireID() async throws {
+        let queue = DispatchQueue(label: "fixture.event"), io = FileTransferIO(queue: queue)
+        let engine = FileTransferEngine(acceptsUnsolicitedOffers: true, io: io), link = RevocationLink()
+        var completes = 0; engine.sendControl = { if $0.op == "complete" { completes += 1 }; return true }; engine.link = { link }
+        _ = try engine.send(RevocationSource(), name: "old", type: nil, transfer: id).get(); engine.receive(.accept(id))
+        queue.sync {} // Byte send completes; main delivery deliberately cannot run until after replacement below.
+        engine.reset(); _ = try engine.send(RevocationSource(), name: "new", type: nil, transfer: id).get()
+        await Task.yield(); await Task.yield()
+        XCTAssertEqual(engine.outgoing?.phase, .waiting); XCTAssertEqual(completes, 0)
+        engine.reset(); await drain(queue)
+    }
+}
+
+private final class RevocationPasteboard: HostPasteboardAccess, @unchecked Sendable {
+    private let lock = NSLock(); private var stored: [ClipboardPayload] = []
+    var writes: [ClipboardPayload] { lock.lock(); defer { lock.unlock() }; return stored }
+    var changeCount: Int { writes.count }
+    func read(limit: Int) -> HostPasteboardRead { .refused(.empty) }
+    func write(_ payload: ClipboardPayload) -> Bool { lock.lock(); stored.append(payload); lock.unlock(); return true }
+}
+@MainActor
+final class HostFileLinkRevocationTests: XCTestCase {
+    func testActualServiceResetAndRevokeFenceQueuedLinkWriteDismissAndOldOpen() async throws {
+        for revoke in [false, true] {
+            let queue = DispatchQueue(label: "fixture.link"), gate = DispatchSemaphore(value: 0), board = RevocationPasteboard()
+            queue.async { gate.wait() }; defer { gate.signal() }
+            var opened: [URL] = [], refusal: FileTransferStatus?
+            let offer = HostLinkOffer(showPanel: false, opener: { opened.append($0); return true })
+            let service = HostFileTransferService(destination: { nil }, pasteboard: board, queue: queue, linkOffer: offer)
+            service.refusal = { refusal }; service.engine.sendControl = { _ in true }
+            let id = String(repeating: "a", count: 32), first = "https://fixture.invalid/old", next = "https://fixture.invalid/new"
+            service.receive(.link(id, url: first)); let old = try XCTUnwrap(offer.currentID)
+            if revoke { service.revoke() } else { service.reset() }
+            XCTAssertNil(offer.currentID); offer.openOffer(old); XCTAssertTrue(opened.isEmpty)
+            gate.signal(); await withCheckedContinuation { c in queue.async { c.resume() } }
+            XCTAssertTrue(board.writes.isEmpty, "Queued URL must not overwrite clipboard after reset/revoke returns")
+            service.receive(.link(id, url: next)); let current = try XCTUnwrap(offer.currentID)
+            offer.openOffer(old); XCTAssertTrue(opened.isEmpty, "Old SwiftUI action cannot open replacement link")
+            refusal = .notAllowed; offer.openOffer(current); XCTAssertTrue(opened.isEmpty, "Current offer still needs live owner authorization")
+            refusal = nil; offer.openOffer(current); XCTAssertEqual(opened.map(\.absoluteString), [next]); XCTAssertNil(offer.currentID)
+            service.reset(); await withCheckedContinuation { c in queue.async { c.resume() } }
+        }
+    }
+}
