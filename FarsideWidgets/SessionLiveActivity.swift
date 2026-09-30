@@ -12,7 +12,7 @@ import WidgetKit
 struct SessionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: FarsideSessionAttributes.self) { context in
-            SessionLockScreenView(content: SessionActivityContent(context))
+            SessionActivityFamilyView(content: SessionActivityContent(context))
                 .activityBackgroundTint(Farside.Palette.void)
                 .activitySystemActionForegroundColor(Farside.Palette.bone)
                 .widgetURL(SessionActivityLinks.session)
@@ -42,6 +42,7 @@ struct SessionLiveActivity: Widget {
             .widgetURL(SessionActivityLinks.session)
             .keylineTint(content.keylineTint)
         }
+        .supplementalActivityFamilies([.small])
     }
 }
 
@@ -174,6 +175,24 @@ struct SessionLockScreenView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
+    }
+}
+
+/// The iPhone Lock Screen is `.medium`; the Watch Smart Stack and CarPlay are `.small`.
+struct SessionActivityFamilyView: View {
+    let content: SessionActivityContent
+    @Environment(\.activityFamily) private var family
+
+    var body: some View {
+        switch family {
+        case .small:
+            WatchGlanceView(glance: SessionGlance.glance(attributes: content.attributes, state: content.state,
+                                                         isStale: content.isStale))
+        case .medium:
+            SessionLockScreenView(content: content)
+        @unknown default:
+            SessionLockScreenView(content: content)
+        }
     }
 }
 
