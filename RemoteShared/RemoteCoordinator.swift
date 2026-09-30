@@ -356,10 +356,12 @@ final class RemoteCoordinator: ObservableObject {
             }
             return actions.allSatisfy { sendControl($0) }
         }
+        // A geometry notification may follow its anchor on reliable control. Refuse
+        // old-scope work locally without treating that normal transition as corruption.
+        guard let context = causalContext, actions.allSatisfy({ $0.epoch == context.epoch }) else { return false }
         do {
             for action in actions {
                 try action.validate()
-                guard let context = causalContext, action.epoch == context.epoch else { throw RemoteError.stale }
                 if !deferredInput.isEmpty || motionPrefix.segments.count == InputCausalEnvelope.maximumSegments {
                     guard deferredInput.count < 64 else { throw RemoteError.stale }
                     deferredInput.append(action)
@@ -436,7 +438,9 @@ final class RemoteCoordinator: ObservableObject {
         case "anchor":
             guard !isHost, let current = causalContext, input.nonce == current.nonce,
                   packet.action.action == "heartbeat" else { throw RemoteError.stale }
+            guard input.anchor != current.anchor || input.epoch != current.epoch else { return }
             causalContext = input; motionPrefix = InputMotionPrefix(); deferredInput = []
+            onCausalContext?(input)
         case "ack":
             guard !isHost, let current = causalContext, input.nonce == current.nonce,
                   input.anchor == current.anchor, input.epoch == current.epoch,
@@ -444,8 +448,10 @@ final class RemoteCoordinator: ObservableObject {
             try motionPrefix.acknowledge(input.applied); try drainDeferredInput()
         case "barrier":
             guard isHost, let current = causalContext, input.nonce == current.nonce,
-                  input.epoch == current.epoch,
                   packet.action.action == "heartbeat" || Self.causalSemantics.contains(packet.action.action) else { throw RemoteError.stale }
+            // Reliable input already in flight can belong to the retired geometry.
+            // Never let its cleanup affect a newer hold, or end a healthy session.
+            guard input.epoch == current.epoch else { onCausalRejected?(packet.action); return }
             if input.anchor != current.anchor {
                 onCausalRejected?(packet.action)
                 var anchor = current; anchor.kind = "anchor"; anchor.applied = 0; anchor.segments = []
@@ -484,7 +490,8 @@ final class RemoteCoordinator: ObservableObject {
             guard action.epoch == offeredInputEpoch, deferredInput.count < 64 else { sessionFailed("Input negotiation queue was full or stale."); return false }
             deferredInput.append(action); return true
         }
-        if !isHost, causalContext != nil, Self.causalSemantics.contains(action.action) {
+        if !isHost, let context = causalContext, Self.causalSemantics.contains(action.action) {
+            guard action.epoch == context.epoch else { return false }
             if action.action == "release" { deferredInput.removeAll() }
             if !deferredInput.isEmpty {
                 guard deferredInput.count < 64 else { sessionFailed("Input queue was full."); return false }
