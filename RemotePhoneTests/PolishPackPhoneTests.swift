@@ -54,6 +54,25 @@ final class ExactTextTraitsTests: XCTestCase {
 }
 
 @MainActor
+final class IndirectInputTests: XCTestCase {
+    func testTheAppOptsIntoIndirectPointerTouches() {
+        XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "UIApplicationSupportsIndirectInputEvents") as? Bool, true,
+                       "Without it iPadOS turns mouse and trackpad clicks into finger touches")
+    }
+
+    func testTrackpadScrollAndPinchStillHaveTheirRecognizers() {
+        let view = NativeTrackpadInputView()
+        let recognizers = view.gestureRecognizers ?? []
+        let scroll = recognizers.compactMap { $0 as? UIPanGestureRecognizer }.first
+        XCTAssertEqual(scroll?.allowedScrollTypesMask, .all, "Two-finger trackpad scroll and wheels")
+        XCTAssertEqual(scroll?.allowedTouchTypes, [], "Fingers stay with the gesture engine")
+        XCTAssertEqual(recognizers.compactMap { $0 as? UIPinchGestureRecognizer }.first?.allowedTouchTypes, [])
+        XCTAssertTrue(recognizers.contains { $0 is UIHoverGestureRecognizer })
+        XCTAssertTrue(view.interactions.contains { $0 is UIPointerInteraction })
+    }
+}
+
+@MainActor
 final class SecureTextFocusTests: XCTestCase {
     func testOnlyASupportingMacCanTurnTheLockOn() {
         var state = SecureTextFocus()

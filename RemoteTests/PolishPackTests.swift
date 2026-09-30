@@ -108,8 +108,7 @@ final class MomentumDriverTests: XCTestCase {
         XCTAssertTrue(input.handle(scroll("cancelled"), upgraded: true, now: 1.05).accepted)
         XCTAssertFalse(input.handle(scroll("momentumBegan"), upgraded: true, now: 1.06).accepted,
                        "A cancelled gesture never coasts")
-        XCTAssertFalse(input.handle(scroll("momentumBegan"), upgraded: false, now: 1.06).accepted,
-                       "Legacy input has no streams")
+        XCTAssertFalse(posted.contains { $0.phase.hasPrefix("momentum") })
     }
 
     func testNewTouchOrOtherInputEndsARunningMomentumFirst() {
