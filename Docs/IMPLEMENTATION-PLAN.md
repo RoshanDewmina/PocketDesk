@@ -768,3 +768,18 @@ Implemented movement-only following with explicit pointer-motion end callback; 8
 Current verification: 96 core tests passed, including live synthetic WebRTC decode changing to 3840×2160 and back to1920×1080 in one authenticated session. Four UI scenarios passed, including picture-quality switching and fullscreen keyboard recovery. Final phone lifecycle unit rerun and both installs are in progress. These do not establish physical pointer-follow comfort, real captured 4K delivery or physical latency. Receipts in current chat work/follow-quality-build/.
 
 Follow/quality completion: final 96 core tests passed with real local 3840×2160 then 1920×1080 decode in one session; final ten phone unit tests passed and four UI scenarios passed. Fresh review cleared the requested/applied quality status correction. Both apps rebuilt and installed; device inventory confirms 0.1 (20260928.5). The host's existing grants remain valid; restored prior phone-control/keep-awake selections and enabled the existing paired-phone service. Runtime state is Ready for your paired phone. Physical feel and actual captured-frame dimensions on the phone remain unverified. Receipt and source hashes: current chat outputs/follow-quality-update.md and outputs/follow-quality-source-manifest.json.
+
+## Active portrait prototype and parallel simulator implementation — 30 September 2026
+
+Roshan authorized the portrait prototype plan, independent verification and implementation, and asked to resume the previously assigned simultaneous simulator testing. Preserve dirty main at `a567310` and all earlier continuation branches. New work is isolated; no earlier branch is implicitly installed or shipped.
+
+| Package | Owner / branch | Status and next gate |
+|---|---|---|
+| Portrait plan / shared contracts | root, `codex/virtual-display-prototype` | Revised plan independently approved before coding; PRODUCT authorization scoped to Debug synthetic-window experiment |
+| Portrait source / tests | `virtual_display_portrait_implementation`, GPT6.1 Sol/high, same isolated branch | Implementation authorized; parent owns project generation, serialized Debug/Release/XCTest gates, fresh sensitive diff review and runtime coordination |
+| Parallel simulator lanes | `parallel_simulator_implementation`, GPT6.1 Sol/high, `codex/parallel-simulator-lanes` | Parent-provisioned Simurgh clones, strictly isolated stub-only roots and no-build overlap runner; plan review pending, source held |
+| Independent plan review | `prototype_and_parallel_plan_review`, GPT6.1 Sol/high | Portrait approved with ABI/ownership/async-test corrections; simulator plan reviewing autostart, env propagation, device identity and cleanup |
+
+Current read-only environment: macOS27.0.1 /26A434, Xcode27.0 /27A266a. No booted simulator found at kickoff; system memory-free observation57%, not a sustained capacity guarantee. Installed host process is preserved. At most one heavy build under `/usr/bin/lockf -k /tmp/farside-xcodebuild.lock`; dedicated SSD DerivedData, internal simulator storage. No performance measurement overlaps builds or simulator execution. Source checks, successful builds, simulated interactions, display runtime smoke and physical phone acceptance remain separate evidence. This branch has no install/publication authorization.
+
+Detailed packages: `Docs/perf/VIRTUAL-DISPLAY-PORTRAIT-IMPLEMENTATION-2026-09-30.md`; parallel branch `Docs/testing/PARALLEL-SIMULATOR-IMPLEMENTATION-2026-09-30.md`. Next: finish source, generate scoped membership, compile/test, fresh code review, then coordinate runtime evidence. Ordinary real-Mac input stays in one serial lane.
