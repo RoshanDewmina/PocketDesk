@@ -612,3 +612,8 @@ Industry, named (all [I]):
 - Product Hunt launch guide: https://www.producthunt.com/launch ; Show HN rules: https://news.ycombinator.com/showhn.html
 
 Measured by me on 28 Sep 2026 [M]: iTunes Search API (`https://itunes.apple.com/search?term=...&entity=software&country=us|ca`, and `/lookup` for release dates and icons), App Store search hints (`https://search.itunes.apple.com/WebObjects/MZSearchHints.woa/wa/hints?clientApplication=Software&term=...` with the storefront header), and public `apps.apple.com` listings for Workbench, Jump Desktop, Screens 5, Remote Mac Desktop Control, RustDesk, TeamViewer, AnyDesk, Windows App, Splashtop, RemotePC, Remote Mouse, Remote, Mouse and Keyboard, Duet, FullControl, Macky, Control, Rimote, Happy and others. Raw outputs were kept in the session scratchpad, not in the repo; the endpoints and terms above reproduce them.
+
+
+## Current useful-session funnel (2026-09-30)
+
+Pairing or a connected session is a reachability milestone, not useful activation. Retain the unfamiliar-user install→first fresh authorized picture within 2 minutes target; separately record applied useful input, explicit user-confirmed read/edit/save outcome and later return/reconnect. Local consent counters are optional and never export automatically. See USEFUL-SESSION-ONBOARDING.md for source facts and remaining physical validation.

@@ -67,7 +67,7 @@ final class AnywhereEntitlementTests: XCTestCase {
         let text = AnywhereCopy.disclosure(yearly)
         for part in ["7-day free trial", "$59.99 a year", "renews automatically", "charged when the trial ends",
                      "24 hours before the end of the trial", "Settings › Apple Account › Subscriptions", "up to three of your iPhones and iPads",
-                     "same Wi-Fi stays free"] {
+                     "verified local network stays free"] {
             XCTAssertTrue(text.contains(part), "Missing “\(part)” in: \(text)")
         }
         XCTAssertTrue(AnywhereCopy.disclosure(monthly).contains("charged when you confirm"))
@@ -87,10 +87,23 @@ final class AnywhereEntitlementTests: XCTestCase {
     }
 
     func testHomeCaptionNeverSuggestsAccessWithoutIt() {
-        XCTAssertEqual(AnywhereCopy.homeCaption(.notSubscribed), "Free on the same Wi-Fi · Anywhere off")
-        XCTAssertEqual(AnywhereCopy.homeCaption(AnywhereEntitlement(phase: .revoked)), "Free on the same Wi-Fi · Anywhere off")
+        XCTAssertEqual(AnywhereCopy.homeCaption(.notSubscribed), "Verified local access free · Anywhere off")
+        XCTAssertEqual(AnywhereCopy.homeCaption(AnywhereEntitlement(phase: .revoked)), "Verified local access free · Anywhere off")
         XCTAssertEqual(AnywhereCopy.homeCaption(AnywhereEntitlement(phase: .billingRetry)), "Payment problem · paused")
         XCTAssertTrue(AnywhereCopy.homeCaption(AnywhereEntitlement(phase: .trial, periodEnd: now)).hasPrefix("Trial · ends"))
+    }
+
+    func testSavingRequiresSameCurrencyAndHonestYearMonthPeriods() {
+        let usd = PlanOffer(id: "usd", period: .month, displayPrice: "$7.99", price: 7.99, currencyCode: "USD")
+        XCTAssertNil(PlanOffer.yearlySaving(yearly: yearly, monthly: usd))
+        XCTAssertNil(PlanOffer.yearlySaving(yearly: monthly, monthly: monthly))
+        XCTAssertNil(PlanOffer.yearlySaving(yearly: yearly, monthly: yearly))
+        let zero = PlanOffer(id: "zero", period: .month, displayPrice: "$0", price: 0, currencyCode: "CAD")
+        XCTAssertNil(PlanOffer.yearlySaving(yearly: yearly, monthly: zero))
+        XCTAssertNil(PlanOffer.trialPhrase(unit: .day, value: -1))
+        XCTAssertNil(PlanOffer.trialPhrase(unit: .hour, value: 7))
+        XCTAssertNil(PlanOffer.trialPhrase(unit: .weekOfYear, value: Int.max))
+        XCTAssertFalse(PlanOffer(id: "bad", period: .year, displayPrice: "$0", price: 1, currencyCode: "cAd").validPrice)
     }
 
     func testServiceAddress() {

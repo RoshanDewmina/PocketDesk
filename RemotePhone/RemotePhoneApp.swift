@@ -44,6 +44,7 @@ struct PendingText {
     let payload: String
     let origin: TextOrigin
     let sentAt: TimeInterval
+    var usefulContext: UsefulSessionContext? = nil
 
     func draftAfterAcknowledgment(_ currentDraft: String, accepted: Bool) -> String {
         accepted && origin == .draft && currentDraft == payload ? "" : currentDraft
@@ -330,6 +331,8 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var pipState: LivePiPPolicy.State = .ineligible
     @Published private(set) var inlinePresentationAdmission: VideoPresentationAdmission?
     @Published private(set) var pipAdmission: VideoPresentationAdmission?
+    let usefulSession = UsefulSessionProgress()
+    private var appliedReceiptTracker = AppliedInputReceiptTracker()
     private var presentationHost: PhoneHostTrust?
     private var presentationContentEpoch: UInt64 = 1
         private var pipBackground = false
@@ -355,6 +358,9 @@ final class PhoneRemoteModel: ObservableObject {
         presentationContentEpoch &+= 1
     }
     private func invalidatePresentation(keepingPiP: Bool = false) {
+        appliedReceiptTracker.clear()
+        pendingText?.usefulContext = nil
+        usefulSession.invalidate()
         VideoPresentationSession.invalidateActive()
         inlinePresentationAdmission = nil
         if !keepingPiP {
@@ -386,6 +392,33 @@ final class PhoneRemoteModel: ObservableObject {
         pipAdmission = nextPiP
         livePiP.updateAdmission(nextPiP)
         if nextPiP != nil, let track = connection.remoteVideo { livePiP.attachSourceTrack(track) }
+    }
+    private var usefulSessionContext: UsefulSessionContext? {
+        guard let host = presentationHost, host.invitation == connection.invitation, geometryEpoch > 0 else { return nil }
+        return UsefulSessionContext(hostRecordID: host.id, sessionID: connection.presentationSessionID,
+            contentEpoch: presentationContentEpoch, geometryEpoch: geometryEpoch)
+    }
+    private func refreshUsefulSession(at now: TimeInterval) {
+        guard sceneIsActive, !privacyShield, !contentConcealed, hostPresence != .locked,
+              hostPresence != .switchedUser, captureHealthy, sourceSize.width > 0, sourceSize.height > 0,
+              let context = usefulSessionContext, let route = connection.presentationDeadline(at: now),
+              lastCaptureHealth > 0 else { usefulSession.invalidate(); return }
+        let deadline = min(route, lastCaptureHealth + 2)
+        if sessionMode == .picture, fresh, lastFrame > 0,
+           inlinePresentationAdmission?.permits(at: now) == true {
+            usefulSession.admit(.picture, context: context, deadline: min(deadline, lastFrame + 2), now: now)
+        } else if sessionMode == .couch, connection.provenLocalLinkActive,
+                  hostFeatures.contains(SessionFeature.couch), canControl {
+            usefulSession.admit(.couch, context: context, deadline: deadline, now: now)
+        } else { usefulSession.invalidate() }
+    }
+    private func receiveAppliedInput(_ action: RemoteAction) {
+        let now = ProcessInfo.processInfo.systemUptime
+        refreshUsefulSession(at: now)
+        guard hostFeatures.contains(SessionFeature.inputReceipt), let context = usefulSessionContext,
+              let receipt = action.inputAppliedReceipt,
+              appliedReceiptTracker.consume(receipt, epoch: action.epoch, context: context, at: now) else { return }
+        usefulSession.applied(context: context, now: now)
     }
     func startPictureInPicture() {
         guard sceneIsActive, !privacyShield, !contentConcealed, !awaitingViewOnlyExit, pipState == .ready,
@@ -1415,6 +1448,7 @@ final class PhoneRemoteModel: ObservableObject {
         acceptResumeMeasurement(resumeTiming.frame(at: lastFrame))
         // A @Published set notifies even when unchanged, and this runs at 4 Hz while streaming.
         if !fresh { fresh = true }
+        refreshUsefulSession(at: lastFrame)
         #if DEBUG
         PhoneE2E.active?.frameReceived()
         #endif
@@ -1453,10 +1487,16 @@ final class PhoneRemoteModel: ObservableObject {
         // A Mac that places the pointer absolutely also applies held hardware modifiers to it.
         let pointerModifiers = modifiers.isEmpty && absolutePointerSupported && Self.pointerActions.contains(name)
             ? hardwareModifiers : modifiers
-        let accepted = transmit(RemoteAction(action: name, x: x, y: y,
+        let now = ProcessInfo.processInfo.systemUptime
+        let receiptID = hostFeatures.contains(SessionFeature.inputReceipt)
+            ? usefulSessionContext.flatMap { appliedReceiptTracker.reserve(kind: name, context: $0, at: now) } : nil
+        var outbound = RemoteAction(action: name, x: x, y: y,
             text: text, key: key, modifiers: pointerModifiers, epoch: geometryEpoch, interaction: envelope,
             pointerSync: pointerSync, textFocusProbe: focusProbe,
-            textFocusGeometry: focusProbe != nil && focusGeometrySupported ? true : nil))
+            textFocusGeometry: focusProbe != nil && focusGeometrySupported ? true : nil)
+        outbound.inputRequestID = receiptID
+        let accepted = transmit(outbound)
+        if !accepted { appliedReceiptTracker.cancel(receiptID) }
         if !accepted { textFocusProbe.invalidate() }
         if accepted, let clickSentMs { connection.media?.counters.clickSent(atMs: clickSentMs) }
         if accepted && isClick {
@@ -1606,7 +1646,7 @@ final class PhoneRemoteModel: ObservableObject {
             requestID: UUID().uuidString.replacingOccurrences(of: "-", with: ""),
             payload: payload,
             origin: origin,
-            sentAt: ProcessInfo.processInfo.systemUptime
+            sentAt: ProcessInfo.processInfo.systemUptime, usefulContext: usefulSessionContext
         )
         guard sendInput("text", text: payload, key: pending.requestID) else {
             if origin == .voice { voiceDeliveryStatus = .notQueued }
@@ -1653,6 +1693,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func disconnect() {
+        usefulSession.invalidate(explicitEnd: true)
         pipBackground = false
         invalidatePresentation()
         viewOnlyConfirmed = false
@@ -2093,6 +2134,8 @@ final class PhoneRemoteModel: ObservableObject {
             captureHealthy = false
             lastFrame = 0
             lastCaptureHealth = 0
+        case "inputApplied":
+            receiveAppliedInput(action)
         case "textResult":
             receiveTextResult(action)
         case "displays":
@@ -2131,6 +2174,15 @@ final class PhoneRemoteModel: ObservableObject {
     private func receiveTextResult(_ action: RemoteAction) {
         guard let pending = pendingText, action.key == pending.requestID else { return }
         pendingText = nil
+        let now = ProcessInfo.processInfo.systemUptime
+        refreshUsefulSession(at: now)
+        // Older hosts have a correlated text result only. Modern hosts use the posting receipt.
+        if !hostFeatures.contains(SessionFeature.inputReceipt), action.x == 1,
+           let context = pending.usefulContext, context == usefulSessionContext,
+           action.epoch == context.geometryEpoch, now >= pending.sentAt,
+           now - pending.sentAt <= AppliedInputReceiptTracker.lifetime {
+            usefulSession.applied(context: context, now: now)
+        }
         if pending.origin == .voice {
             voiceDeliveryStatus = action.x == 1 ? .accepted : .refused
             if action.x == 1 { voiceRetryTranscript = "" }
@@ -2240,6 +2292,7 @@ final class PhoneRemoteModel: ObservableObject {
             showSessionNotice("Your Mac didn’t confirm live view only. Picture in Picture stopped.")
         }
         refreshPresentation(at: now)
+        refreshUsefulSession(at: now)
         if connection.connected {
             heartbeatsSent &+= 1
             let probesClock = heartbeatsSent % 2 == 0 && StreamDebug.enabled

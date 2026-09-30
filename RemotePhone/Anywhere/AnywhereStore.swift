@@ -181,12 +181,12 @@ final class AnywhereStore: ObservableObject {
                 if attempt < 9 { try? await Task.sleep(for: .milliseconds(200)) }
             }
             restoreMessage = entitlement.hasAccess
-                ? "Farside Anywhere is back on."
-                : "Couldn’t confirm an active Farside Anywhere subscription yet. Check your Apple Account and try Restore Purchases again."
+                ? CommerceLocalization.text("RESTORE_SUCCESS", "Purchase restored. Farside’s service will confirm your plan next. Restoring does not pair a Mac or grant control.")
+                : CommerceLocalization.text("RESTORE_UNCONFIRMED", "Couldn’t confirm an active Farside Anywhere subscription yet. Check your Apple Account and try Restore Purchases again.")
         } catch StoreKitError.userCancelled {
             return
         } catch {
-            restoreMessage = "Couldn’t reach the App Store. Check your connection and try again."
+            restoreMessage = CommerceLocalization.text("RESTORE_OFFLINE", "Couldn’t reach the App Store. Check your connection and try again.")
         }
     }
 
@@ -263,7 +263,7 @@ extension PlanOffer {
     init?(product: Product, trialEligible: Bool) {
         guard let subscription = product.subscription else { return nil }
         let unit = subscription.subscriptionPeriod.unit
-        guard unit == .year || unit == .month else { return nil }
+        guard (unit == .year || unit == .month), subscription.subscriptionPeriod.value == 1, product.price > 0 else { return nil }
         var trial: String?
         if trialEligible, let intro = subscription.introductoryOffer, intro.paymentMode == .freeTrial {
             let component: Calendar.Component
@@ -272,9 +272,10 @@ extension PlanOffer {
             case .week: component = .weekOfYear
             case .month: component = .month
             case .year: component = .year
-            @unknown default: component = .day
+            @unknown default: return nil
             }
-            trial = PlanOffer.trialPhrase(unit: component, value: intro.period.value * max(1, intro.periodCount))
+            let duration = intro.period.value.multipliedReportingOverflow(by: max(1, intro.periodCount))
+            trial = duration.overflow ? nil : PlanOffer.trialPhrase(unit: component, value: duration.partialValue)
         }
         self.init(id: product.id, period: unit == .year ? .year : .month, displayPrice: product.displayPrice,
                   price: product.price, currencyCode: product.priceFormatStyle.currencyCode, trialPhrase: trial)

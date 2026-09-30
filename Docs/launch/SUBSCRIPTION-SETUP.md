@@ -15,7 +15,7 @@ Labels: **[V]** verified today from a primary source; **[R]** verified in the re
 - **Free:** everything on the same network, unlimited, no account.
 - **Farside Anywhere:** one auto-renewable subscription group, monthly CA$7.99 and yearly CA$59.99, each with a 7-day free trial, that lets the phone reach the Mac from anywhere through relay and network-traversal servers.
 - **Enforcement** is server-side and costs-first: TURN credentials are issued only to rooms whose phone has proved an active subscription. There are no accounts; identity is Apple's own transaction identity.
-- **Current state:** no StoreKit code exists in the app, and `Server/` issues TURN credentials to any approved room with no entitlement check. Both are launch blockers (APP-REVIEW-RISKS.md B1 and B2). [R] A parallel workstream (commit `cbafcea`, `Docs/research/2026-09-28-round2/RELAY-DEPLOYMENT-RUNBOOK.md`) has added Cloudflare relay readiness and deployment scripts for a single-owner relay run from the owner's Mac; it keeps manual room approval, four peers and 30-minute rooms, so it does not change this section. Its `policy` field on the `ice` message and `POCKETDESK_TEST_FORCE_RELAY` switch are test-only and must be off in production. [R]
+- **Current source state:** StoreKit purchase/restore and service entitlement/route preparation exist. Live purchase, production verification, provider billing, physical route acceptance and release remain open; source readiness is not live acceptance. [R] A parallel workstream (commit `cbafcea`, `Docs/research/2026-09-28-round2/RELAY-DEPLOYMENT-RUNBOOK.md`) has added Cloudflare relay readiness and deployment scripts for a single-owner relay run from the owner's Mac; it keeps manual room approval, four peers and 30-minute rooms, so it does not change this section. Its `policy` field on the `ice` message and `POCKETDESK_TEST_FORCE_RELAY` switch are test-only and must be off in production. [R]
 
 Decisions needed from the owner:
 
@@ -23,7 +23,7 @@ Decisions needed from the owner:
 |---|---|---|
 | D1 | Does "free on your network" also block free users from connecting peer-to-peer over the internet when NAT traversal happens to work? | Yes, block it (option A in section 2). |
 | D2 | Fair-use limit on relayed hours | No advertised "unlimited" for remote. Adaptive relay bitrate cap plus monitoring at launch; introduce a soft limit only if the cost data demands it, and disclose it if you do. |
-| D3 | Lifetime purchase | Not at launch: relay costs recur (Screens and Remote Mac Desktop Control sell one [V]; that is their risk model, not yours). |
+| D3 | Lifetime and founder purchases | Current full-report scope overrides the historical no-lifetime recommendation. Prepare full unmetered lifetime and one-time founding-cohort candidates; activation awaits tail-cost/continuity economics. Do not substitute a founder subscription or hidden usage cap. See COMMERCE-DECISION-2026-09-30.md. |
 | D4 | Family Sharing | Off at launch (cannot be turned off once on). |
 | D5 | Accept sandbox transactions on the production server | Yes, flagged and rate-limited: App Review and TestFlight purchases are sandbox. |
 | D6 | Base price currency and country | Decide whether CAD or USD is the base, and inspect Apple's auto-equalized prices before confirming. |
@@ -31,11 +31,7 @@ Decisions needed from the owner:
 
 ## 2. What "free on the same network" means technically
 
-Today the app cannot pair without the signaling service: the QR invitation must carry a `wss://…/signal` URL (`PairInvitation.validServer` rejects anything else except localhost) and the Mac asks for a service address if none is baked in (`RemoteHost/HostSetupView.swift`). [R] So free local use still touches our server. That is cheap (signaling is a few small encrypted messages) but it has three consequences:
-
-1. The free tier depends on service uptime. A signaling outage blocks even same-Wi-Fi users; the "Setup service outage" state in PRODUCT section 7 already covers the message.
-2. The privacy policy must say the service sees connection metadata for every user, subscribed or not (PRIVACY-POLICY.md handles this).
-3. A "local direct" mode (Bonjour discovery plus authenticated local WebSocket using the QR key, no internet needed) would remove the dependency. PRODUCT section 10 lists service-independent LAN access as a candidate with real cost. Not required for launch; keep it on the roadmap.
+Source now includes authenticated local signaling/Bonjour admission and explicit local-network-only mode for approved owner QR/persisted pairing. Both devices must enable that mode, legacy records need a fresh owner QR, and discovery is never authority. Service-independent LAN source and adversarial fixtures do not establish physical offline first-pair/reconnect acceptance. Free access still requires exact verified local route proof; WAN is not free because a direct path happens to work. Current route, provider and installation gates remain open. See the implementation receipts and current PRODUCT authority for integrated behavior.
 
 **D1 options**
 
@@ -68,7 +64,7 @@ Implementation sketch for A: the server returns a signed "remote grant" (short-l
 | Price changes | A price decrease cannot be reversed once effective; an increase triggers notice, or required consent when it exceeds 50% and roughly US$5 per month or US$50 per year, or in some regions. Launch at the price you can hold. [V] |
 | Commission | 15% if enrolled in the App Store Small Business Program (proceeds up to US$1 million); otherwise 30% in a subscriber's first year and 15% after one year of paid service. [V] |
 
-Non-App-Store channels: none. The Mac app and website must not sell the subscription (Guideline 3.1.1(a) and 3.1.3). [V]
+Current coherent shipping preparation uses IAP. A separate web-first free-companion variant is conditional on Apple 3.1.3(f), no in-app purchase or external purchase CTA, whole-product review and owner selection; do not mix that route into the current IAP binary. Lifetime/founder economics and conditional web decision are recorded in COMMERCE-DECISION-2026-09-30.md.
 
 ## 4. Paywall placement and states
 
