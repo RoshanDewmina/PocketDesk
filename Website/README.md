@@ -6,7 +6,7 @@ Static marketing site for Farside, built to `design/FARSIDE-DESIGN-SYSTEM.md` an
 
 | Path | What |
 |---|---|
-| `/` | Halftone hero (fingertip meets pointer), how it works, features, the "agent needs you" beta, pricing, FAQ, guides, beta sign-up |
+| `/` | Halftone hero (fingertip meets pointer, starfield, distance readout, beta form), stats strip, "Close the gap" interaction, "See it" (the approved A2 phone + Mac demo), how it works, features, pricing, FAQ and guides, beta sign-up |
 | `/control-mac-from-iphone` | Step-by-step guide (HowTo + FAQ structured data) |
 | `/iphone-as-mac-trackpad` | Gestures, haptics, pointer, zoom (HowTo + FAQ) |
 | `/remote-desktop-for-mac` | At home vs the Anywhere plan, how the connection works, limits (HowTo + FAQ) |
@@ -59,9 +59,22 @@ Custom domain: Pages → the project → Custom domains → add the apex and `ww
 
 ## How it stays fast and safe
 
-- **No render-blocking requests.** The stylesheet (≈35 KB) is inlined; the CSP allows it by SHA-256 hash (`scripts/build.ts` computes it). Scripts are deferred modules (home ≈ 13 KB, other pages ≈ 2 KB).
+- **No render-blocking requests.** The stylesheet (≈50 KB) is inlined; the CSP allows it by SHA-256 hash (`scripts/build.ts` computes it). Scripts are deferred modules (home ≈ 38 KB, 15 KB gzipped, including the A2 demo; other pages ≈ 6 KB).
 - **Fonts** (Geist, Geist Mono, Doto, Instrument Serif from Google Fonts, `display=swap`, preconnected) load right after the first paint. Local fallback faces in `src/styles/fallbacks.css` are tuned to the web fonts' metrics, so the swap doesn't move the layout; the hero's accent word and full stop have pinned widths.
-- **The hero canvas** starts when the main thread is idle and draws in a Web Worker on an OffscreenCanvas (main-thread fallback when unsupported), at ≤ 30 fps, paused off-screen, on hidden tabs, with the on-page pause button, and replaced by a still frame for Reduce Motion or Save-Data. The step art and the 404 art are rendered once at build time.
+- **The hero canvas** starts when the main thread is idle and draws in a Web Worker on an OffscreenCanvas (main-thread fallback when unsupported), at ≤ 30 fps, paused off-screen, on hidden tabs, with the on-page pause button, and replaced by a still frame for Reduce Motion or Save-Data. "Close the gap" (`src/scripts/gap.ts`) and the A2 demo start only when they come near the viewport; the gap canvas runs on the main thread at ≤ 30 fps (24 on phones), pauses the same way, and shows still frames with a button to flip between them for Reduce Motion. The step, feature and 404 art are rendered once at build time. Scroll reveals (`src/scripts/reveal.ts`) only hide blocks that start below the fold, and do nothing for Reduce Motion or Save-Data.
+
+## Stats strip (home)
+
+Only numbers the repo backs, no latency or frame rates (`bun run check` blocks "ms"/"fps" figures on purpose; the measured ones in `Docs/perf/BASELINE-2026-09-29.md` are for one phone and one Mac):
+
+- **0** accounts to make: `Docs/launch/STORE-LISTING.md` ("No account. No sign-up.").
+- **1** code to scan, then you're paired: `Docs/launch/STORE-LISTING.md` ("Scan. Approve. Done."), PRODUCT.md F03.
+- **4** pointer sizes, Small to Extra Large: `RemotePhone/PointerOverlay.swift`.
+- **CA$0** on your own Wi‑Fi: `pricing` in `site.config.ts` and the Free plan.
+
+## Tooling on the WSL box
+
+The snap build of bun can't start the Playwright Chromium (its sandbox hides `libnspr4`). Use the plain bun in `~/.bun/bin` and point `CHROME_PATH` at `~/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell`. Lighthouse's chrome-launcher also detects WSL and wants a Windows temp folder: put any `/mnt/c/Users/<you>/AppData/...` folder on `PATH` and add `--user-data-dir=/tmp/…` to its Chrome flags.
 - Off-screen sections use `content-visibility: auto`.
 - **Headers** (`_headers`): strict CSP (`default-src 'none'`, self scripts and worker, Google Fonts only, Trusted Types with one named policy used to start the worker), HSTS, `X-Frame-Options: DENY`, `nosniff`, referrer and permissions policies, COOP.
 
