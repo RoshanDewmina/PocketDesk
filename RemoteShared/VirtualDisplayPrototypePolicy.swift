@@ -36,6 +36,13 @@ struct PortraitStageDeadline {
     }
 }
 
+enum PortraitModeVerificationAdmission {
+    /// Geometry reads may themselves cross a deadline; exact results are admitted only after those reads.
+    static func permits(exactGeometry: Bool, currentRun: Bool, deadline: PortraitStageDeadline, observedAtMs: Double) -> Bool {
+        exactGeometry && currentRun && deadline.remainingNanoseconds(nowMs: observedAtMs) != nil
+    }
+}
+
 struct PortraitDisplayModeCandidate {
     let logicalWidth: Int
     let logicalHeight: Int

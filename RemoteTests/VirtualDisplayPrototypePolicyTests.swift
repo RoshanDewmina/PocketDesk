@@ -51,6 +51,16 @@ final class VirtualDisplayPrototypePolicyTests: XCTestCase {
         XCTAssertNil(deadline.remainingNanoseconds(nowMs: .nan))
         XCTAssertNil(PortraitStageDeadline(startMs: .infinity).remainingNanoseconds(nowMs: 100))
     }
+    func testLateExactModeObservationCannotBeVerifiedAfterSharedDeadline() {
+        let deadline = PortraitStageDeadline(startMs: 100)
+        // Reads begin in-budget but finish on/after the boundary: matching dimensions alone cannot pass.
+        XCTAssertNotNil(deadline.remainingNanoseconds(nowMs: 5099))
+        XCTAssertFalse(PortraitModeVerificationAdmission.permits(exactGeometry: true, currentRun: true, deadline: deadline, observedAtMs: 5100))
+        XCTAssertFalse(PortraitModeVerificationAdmission.permits(exactGeometry: true, currentRun: true, deadline: deadline, observedAtMs: 5101))
+        XCTAssertFalse(PortraitModeVerificationAdmission.permits(exactGeometry: true, currentRun: false, deadline: deadline, observedAtMs: 5099))
+        XCTAssertFalse(PortraitModeVerificationAdmission.permits(exactGeometry: false, currentRun: true, deadline: deadline, observedAtMs: 5099))
+        XCTAssertTrue(PortraitModeVerificationAdmission.permits(exactGeometry: true, currentRun: true, deadline: deadline, observedAtMs: 5099))
+    }
     private func modeTarget(id: UInt32 = 7, retainedID: UInt32 = 7, retained: Bool = true,
                             online: Bool = true, identity: Bool = true, main: Bool = false, mirrored: Bool = false) -> PortraitOwnedModeTarget {
         PortraitOwnedModeTarget(requestedID: id, retainedObjectID: retainedID, objectRetained: retained,

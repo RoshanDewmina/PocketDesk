@@ -347,7 +347,10 @@ private final class PortraitController: NSObject, NSWindowDelegate {
                                pixelsWide: mode.pixelWidth, pixelsHigh: mode.pixelHeight,
                                backingScale: screen.backingScaleFactor, refresh: mode.refreshRate) {
                 selection["after"] = Self.modeReport(mode); selection["backingScale"] = screen.backingScaleFactor
-                selection["elapsedMs"] = MachClock.nowMs() - beganMs; selection["verified"] = true
+                let observedAtMs = MachClock.nowMs()
+                guard PortraitModeVerificationAdmission.permits(exactGeometry: true,
+                    currentRun: admission.accepts(owned.token), deadline: deadline, observedAtMs: observedAtMs) else { break }
+                selection["elapsedMs"] = observedAtMs - beganMs; selection["verified"] = true
                 report["modeSelection"] = selection; return
             }
             guard let remaining = deadline.remainingNanoseconds(nowMs: MachClock.nowMs()) else { break }
