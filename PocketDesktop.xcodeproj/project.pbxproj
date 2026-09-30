@@ -83,6 +83,7 @@
 		1D353B08718F7B84625781AD /* E2EWindowCover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16E5B189A6781A0590042A7D /* E2EWindowCover.swift */; };
 		1DE68C5B67661081EBD33F37 /* LocalLinkProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CCF7A8CB59DF99A9139093 /* LocalLinkProof.swift */; };
 		1E1BAC5F08CD001CB3685BB7 /* LegibilityScore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FA48F80909CB3A2A30044E79 /* LegibilityScore.swift */; };
+		1F0E44AE1A6F5FFF19C4A570 /* DragAutoPanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB44002E03D34E2FD4D9AD6D /* DragAutoPanTests.swift */; };
 		1F1F503FC799E3AF2EAE0D6A /* SessionLiveActivity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 20250C8B62E538F704C4D471 /* SessionLiveActivity.swift */; };
 		1F5A4C1E6571C9A8AF54E347 /* ScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0F8CA7B8BEAF31928685E31 /* ScannerView.swift */; };
 		1F5D02843C93B72FAB1F208F /* E2ESupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B88956D18BC4F22E09C83F /* E2ESupport.swift */; };
@@ -146,6 +147,7 @@
 		3410E8C37879B16EA0FFAE54 /* RemoteVideoSurfaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4813316A4C3B1FEFFD8E28B /* RemoteVideoSurfaceTests.swift */; };
 		343DC1E8E911FAF8041D4E9D /* LadderPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 974AF3B4503C231C4C9DEC57 /* LadderPolicyTests.swift */; };
 		34B0D6BABFC0B2ABDD34D6DB /* StreamQualityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B1A621E30D5EBB91E5AF5AC /* StreamQualityTests.swift */; };
+		34E103111144F16A0949E20C /* DragAutoPan.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4FF28938A1C507081A0C59 /* DragAutoPan.swift */; };
 		35573D9083519C787AEA04A8 /* HardwarePointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E5C51F87E4D48EB606171AC /* HardwarePointer.swift */; };
 		35A5776CE6228B27C9FAFCBF /* HostWatchdogReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8662E553866FF233B18209B4 /* HostWatchdogReporter.swift */; };
 		35B47562FFFFAC100C85F98F /* E2ESupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 03B88956D18BC4F22E09C83F /* E2ESupport.swift */; };
@@ -236,12 +238,14 @@
 		590BB61F304E8433502AE3E3 /* ViewportTransform.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5598D7CD9CA98C9C794406BF /* ViewportTransform.swift */; };
 		5A09352987314DBA371CEF5F /* HostLoadMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16277E0C3740408F05B8CFE5 /* HostLoadMonitor.swift */; };
 		5A359F21D1BF2375734662E7 /* SessionActivityWireTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C065A24E4F473C5D7F67BAD8 /* SessionActivityWireTests.swift */; };
+		5A546A38FF983BD4F4E663B7 /* DragAutoPan.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4FF28938A1C507081A0C59 /* DragAutoPan.swift */; };
 		5AA061CF0059AD5D6805E8D9 /* DesktopH264Encoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A8764CD274C62102BEC76EB /* DesktopH264Encoder.swift */; };
 		5B8DFC386C0A491C7013867F /* ClipboardTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F73AE673E6754C476D3A34C5 /* ClipboardTransfer.swift */; };
 		5BA5000E4CCFFD9BE9E0A8E6 /* StreamStatisticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86F35696F9CC17369CF1F761 /* StreamStatisticsTests.swift */; };
 		5CB8F1DA9C4D9D4701CAB9E5 /* BenchState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0670680AECAD20CDD24D3869 /* BenchState.swift */; };
 		5CCB6F149BB1D88AD64B493E /* DisplaySelectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76C7583A2B1DEF1B3211F4A1 /* DisplaySelectionTests.swift */; };
 		5D9686BCDF82790BEDE8F13E /* LocalLinkProof.swift in Sources */ = {isa = PBXBuildFile; fileRef = 64CCF7A8CB59DF99A9139093 /* LocalLinkProof.swift */; };
+		5EC4E5F1B62CD40FAD4A979F /* DragAutoPan.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4FF28938A1C507081A0C59 /* DragAutoPan.swift */; };
 		5F3FF79F500C77ACD64E9E09 /* ServerDataRemoval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BE5ACECBC6DADB638DD5B01 /* ServerDataRemoval.swift */; };
 		5FBEBFD28234599DD19C4ABE /* OFL-Doto.txt in Resources */ = {isa = PBXBuildFile; fileRef = D6F48E835098ABC5915960B7 /* OFL-Doto.txt */; };
 		5FFD66A68938F2CDCC7BFF23 /* StreamWire.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDB43E9A47D0C0BFAB1B5988 /* StreamWire.swift */; };
@@ -436,6 +440,7 @@
 		B1812D1C9F6D5FF855BB1FDE /* StreamTuning.swift in Sources */ = {isa = PBXBuildFile; fileRef = E36FFD3DA225862D411FE682 /* StreamTuning.swift */; };
 		B223E9B74D83BE1BF3D378DC /* ClockSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 711D8412A6A174565628DA0E /* ClockSync.swift */; };
 		B29A31D81174DE2A61F56200 /* SessionActivityPushTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5063D6202644969D52900F4C /* SessionActivityPushTests.swift */; };
+		B3565C0DFC64EC3128BA1A45 /* DragAutoPan.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4FF28938A1C507081A0C59 /* DragAutoPan.swift */; };
 		B38CCCFFF27B2903E9C6F58B /* SignalingKeepalive.swift in Sources */ = {isa = PBXBuildFile; fileRef = 63BD565389B3DA4F2A9D2122 /* SignalingKeepalive.swift */; };
 		B44A0938166D83F6A7991B33 /* AgentAlert.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0675CE1974FD239B86F4A520 /* AgentAlert.swift */; };
 		B4B92C3287E3EFE97DC5C5B2 /* SessionRenewal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FFA4B68F5D8B2568395C232 /* SessionRenewal.swift */; };
@@ -470,6 +475,7 @@
 		C060D0AB8251A0D0B4EF5F16 /* BenchState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0670680AECAD20CDD24D3869 /* BenchState.swift */; };
 		C1ED9FCC36FF29ED9A9DC921 /* BrowserFrameMarker.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB6DA47FDA33D0407262019B /* BrowserFrameMarker.swift */; };
 		C20AC78A6D67C31712E16C1E /* NativeGestureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EBEF9617A31797FAF4B8D81 /* NativeGestureEngine.swift */; };
+		C214B04BC732A4E72FB8B78B /* DragAutoPan.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC4FF28938A1C507081A0C59 /* DragAutoPan.swift */; };
 		C222C7CB01209C673B23A75B /* HostWatchdogState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD40D734BD76517695211C26 /* HostWatchdogState.swift */; };
 		C248F289C302E2ED14807D44 /* QuickWinTuningTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F6C9A973D1FE3BD9F3FB4D16 /* QuickWinTuningTests.swift */; };
 		C2F8B07623AA7247798B5A57 /* StreamLadder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07376E3C40243FD1FB65D2BC /* StreamLadder.swift */; };
@@ -939,6 +945,7 @@
 		A80921367AA2D6A17ED291F5 /* HostSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostSettingsView.swift; sourceTree = "<group>"; };
 		A899CCAC0EDBAD3B9C45B3DA /* RemoteSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RemoteSession.swift; sourceTree = "<group>"; };
 		A9A7ABD6CBA79EEDC321211A /* WatchdogE2ETests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchdogE2ETests.swift; sourceTree = "<group>"; };
+		AB44002E03D34E2FD4D9AD6D /* DragAutoPanTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragAutoPanTests.swift; sourceTree = "<group>"; };
 		ABC5305205008EFB73744EAF /* HostSetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostSetupView.swift; sourceTree = "<group>"; };
 		AE7793DE9E37376440C4953A /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		AEEE5C348F42FA46B06A1422 /* FarsideSystemIntegrations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FarsideSystemIntegrations.swift; sourceTree = "<group>"; };
@@ -970,6 +977,7 @@
 		C8AE50D1FC982D390284FAC5 /* HostApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostApp.swift; sourceTree = "<group>"; };
 		C8FA26A1189200ABA8338712 /* TouchInputMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TouchInputMode.swift; sourceTree = "<group>"; };
 		CB33A6416891A0F0EE699654 /* E2ETouchSynthesizer.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = E2ETouchSynthesizer.h; sourceTree = "<group>"; };
+		CC4FF28938A1C507081A0C59 /* DragAutoPan.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragAutoPan.swift; sourceTree = "<group>"; };
 		CDB43E9A47D0C0BFAB1B5988 /* StreamWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamWire.swift; sourceTree = "<group>"; };
 		CDCB2DCE29C9A401C6C942C5 /* PhoneClipboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneClipboardTests.swift; sourceTree = "<group>"; };
 		CDD57C8DD57D3F96F61B2A25 /* HostDisplayCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostDisplayCatalog.swift; sourceTree = "<group>"; };
@@ -1105,6 +1113,7 @@
 				8A8764CD274C62102BEC76EB /* DesktopH264Encoder.swift */,
 				2F26E11F9C5B96C8C8E24570 /* DirectTouchMapping.swift */,
 				F558FCF48250642B556870C7 /* DisplaySelection.swift */,
+				CC4FF28938A1C507081A0C59 /* DragAutoPan.swift */,
 				8E609125CE2A4A1E42653D11 /* E2EMedia.swift */,
 				03B88956D18BC4F22E09C83F /* E2ESupport.swift */,
 				16E5B189A6781A0590042A7D /* E2EWindowCover.swift */,
@@ -1335,6 +1344,7 @@
 				623D4E7C80996C8F073FB4B0 /* DirectTouchMappingTests.swift */,
 				0CA0571A4D3A5DB8B1BF96B9 /* DirectTouchTests.swift */,
 				76C7583A2B1DEF1B3211F4A1 /* DisplaySelectionTests.swift */,
+				AB44002E03D34E2FD4D9AD6D /* DragAutoPanTests.swift */,
 				B6A57C1633C1D2CD5334A7ED /* E2EHooksTests.swift */,
 				B5DC5941798CC9570708F6E3 /* E2EWindowCoverTests.swift */,
 				BE3B23B7943C8B5AB9208153 /* HardwareInputTests.swift */,
@@ -2159,6 +2169,7 @@
 				8A13775D741C19DFCAD014EE /* DesktopH264Encoder.swift in Sources */,
 				8DD292897CBE87CA063D1E3B /* DirectTouchMapping.swift in Sources */,
 				35E805569B3501D8C7DCB2A7 /* DisplaySelection.swift in Sources */,
+				5EC4E5F1B62CD40FAD4A979F /* DragAutoPan.swift in Sources */,
 				4A9BEBE3594092E25713D9FA /* E2EMedia.swift in Sources */,
 				FD676BCFB3FC60E65BDD984E /* E2ESupport.swift in Sources */,
 				8C22CB1E0980A5B6408F73EE /* E2EWindowCover.swift in Sources */,
@@ -2262,6 +2273,7 @@
 				6BF04489AA311C9D9C2E1AA9 /* DesktopH264Encoder.swift in Sources */,
 				50E9789A447D61ABFE709E28 /* DirectTouchMapping.swift in Sources */,
 				376A74AAEB49E7F90985AF3F /* DisplaySelection.swift in Sources */,
+				B3565C0DFC64EC3128BA1A45 /* DragAutoPan.swift in Sources */,
 				C39508042C84FB038528F0BC /* E2EMedia.swift in Sources */,
 				8D13F5445D84C2BB74CF5B90 /* E2EStubHostApp.swift in Sources */,
 				C5FDF5C52EBC263D0224DBE7 /* E2ESupport.swift in Sources */,
@@ -2333,6 +2345,7 @@
 				5AA061CF0059AD5D6805E8D9 /* DesktopH264Encoder.swift in Sources */,
 				71B3F23A8E9EA6183131FD29 /* DirectTouchMapping.swift in Sources */,
 				BE61BD8C9721AD98853635AA /* DisplaySelection.swift in Sources */,
+				34E103111144F16A0949E20C /* DragAutoPan.swift in Sources */,
 				F631B70328B2173231051AE8 /* E2EMedia.swift in Sources */,
 				1F5D02843C93B72FAB1F208F /* E2ESupport.swift in Sources */,
 				1D353B08718F7B84625781AD /* E2EWindowCover.swift in Sources */,
@@ -2490,6 +2503,8 @@
 				44734C646549A35790BEF0B9 /* DirectTouchTests.swift in Sources */,
 				4DD5BB500A4B68F2BEF2C35C /* DisplaySelection.swift in Sources */,
 				5CCB6F149BB1D88AD64B493E /* DisplaySelectionTests.swift in Sources */,
+				C214B04BC732A4E72FB8B78B /* DragAutoPan.swift in Sources */,
+				1F0E44AE1A6F5FFF19C4A570 /* DragAutoPanTests.swift in Sources */,
 				D0151F16A80FAD2777D8603A /* E2EHooksTests.swift in Sources */,
 				0DCCBFE1FB70CBE01B449751 /* E2EMedia.swift in Sources */,
 				51576017096AA354D185CC12 /* E2ESupport.swift in Sources */,
@@ -2640,6 +2655,7 @@
 				78B8A5A364FC79E9A79B864B /* DesktopPreview.swift in Sources */,
 				060FB7553401E4BF933EB75D /* DirectTouchMapping.swift in Sources */,
 				58B956EA03D3AD8F1A9A40EE /* DisplaySelection.swift in Sources */,
+				5A546A38FF983BD4F4E663B7 /* DragAutoPan.swift in Sources */,
 				86DC84A8063BAED8239C76B6 /* E2EMedia.swift in Sources */,
 				35B47562FFFFAC100C85F98F /* E2ESupport.swift in Sources */,
 				46D6FC40E09380A6A189442E /* E2EWindowCover.swift in Sources */,

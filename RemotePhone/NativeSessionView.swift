@@ -322,6 +322,7 @@ struct NativeSessionView: View {
         }
         .onReceive(model.pointerLocator.followUpdates, perform: follow)
         .onReceive(model.pointerOverlay.followUpdates, perform: follow)
+        .task(id: model.dragging) { await runDragAutoPan() }
         .privacySensitive()
     }
 
@@ -2111,15 +2112,44 @@ struct NativeSessionView: View {
         }
     }
 
-    private func follow(_ point: CGPoint) {
-        guard followStyle.follows, model.canControl, !model.dragging, !keyboardOpen, !controlsBlockInput, !panMode,
-              !model.privacyShield, !model.contentConcealed else { return }
+    private var followUsableRect: CGRect {
         // With Controls open, the pointer stays clear of the panel rather than the dock.
-        let usable = PointerFollowLayout.usableRect(safeRect: viewport.safeRect,
-                                                   canvasFrame: canvasFrame,
-                                                   dockFrame: showControls ? panelFrame : dockFrame)
+        PointerFollowLayout.usableRect(safeRect: viewport.safeRect, canvasFrame: canvasFrame,
+                                       dockFrame: showControls ? panelFrame : dockFrame)
+    }
+
+    private var followAllowed: Bool {
+        followStyle.follows && model.canControl && !keyboardOpen && !controlsBlockInput && !panMode
+            && !model.privacyShield && !model.contentConcealed
+    }
+
+    private func follow(_ point: CGPoint) {
+        // D34 amendment: follow also applies while a click is held. Then the margin only catches a
+        // pointer pushed past the edge band; the band itself belongs to drag auto-pan.
+        guard followAllowed else { return }
+        let margin = model.dragging ? DragAutoPan.revealMargin : followStyle.margin
         withAnimation(followStyle.animation(reduceMotion: reduceMotion)) {
-            _ = viewport.reveal(sourcePoint: point, in: usable, margin: followStyle.margin)
+            _ = viewport.reveal(sourcePoint: point, in: followUsableRect, margin: margin)
+        }
+    }
+
+    /// While a click is held, a pointer resting in the edge band scrolls the picture toward that
+    /// edge. The pointer keeps its screen position and the Mac pointer moves to the source point
+    /// now under it, so what is dropped lands where it is drawn.
+    private func runDragAutoPan() async {
+        guard model.dragging else { return }
+        var last = ProcessInfo.processInfo.systemUptime
+        while !Task.isCancelled, model.dragging {
+            try? await Task.sleep(nanoseconds: 16_000_000)
+            let now = ProcessInfo.processInfo.systemUptime
+            let dt = now - last
+            last = now
+            guard followAllowed, model.absolutePointerSupported,
+                  let pointer = model.pointerOverlay.displayedPoint else { continue }
+            var next = viewport
+            guard let source = DragAutoPan.step(&next, pointerSource: pointer, usable: followUsableRect, dt: dt),
+                  model.pointTo(source) else { continue }
+            viewport = next
         }
     }
 

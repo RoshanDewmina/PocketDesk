@@ -48,7 +48,7 @@ final class PointerOverlayTests: XCTestCase {
         XCTAssertEqual(model.render?.point, CGPoint(x: 212, y: 146), "No network round trip before the pointer moves")
         XCTAssertEqual(followed, [CGPoint(x: 212, y: 146)])
         model.localMove(ordinal: model.reserveMoveOrdinal()!, delta: CGSize(width: 1, height: 0), follow: false)
-        XCTAssertEqual(followed.count, 1, "Drags never pan the view")
+        XCTAssertEqual(followed.count, 1, "A move sent without follow never pans the view")
 
         now += 0.05
         model.receive(sample(3, x: 213, y: 146, videoCursor: false, shape: .iBeam, applied: 2))

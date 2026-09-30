@@ -150,6 +150,9 @@ final class PointerOverlayModel: ObservableObject {
 
     func advertisement() -> PointerSync? { policy.advertisement(at: clock()) }
 
+    /// The predicted Mac pointer position in source coordinates, drawn or not.
+    var displayedPoint: CGPoint? { predictor.displayed(at: clock()) }
+
     func refresh() {
         #if DEBUG
         if let previewRender {

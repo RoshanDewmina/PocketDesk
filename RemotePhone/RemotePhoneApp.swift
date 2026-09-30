@@ -741,7 +741,7 @@ final class PhoneRemoteModel: ObservableObject {
             let accepted = sendInput("move", x: delta.width, y: delta.height,
                                      pointerSync: ordinal.map { PointerSync(move: $0) })
             if accepted {
-                pointerOverlay.localMove(ordinal: ordinal, delta: delta, follow: !dragging)
+                pointerOverlay.localMove(ordinal: ordinal, delta: delta, follow: true)
                 if !dragging && !pointerOverlay.hostSupported {
                     pointerLocator.moved(at: ProcessInfo.processInfo.systemUptime)
                 }
