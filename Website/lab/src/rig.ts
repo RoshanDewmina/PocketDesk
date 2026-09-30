@@ -441,7 +441,7 @@ export class Rig {
       typed += ch;
       for (const p of this.phones) p.flashKey(ch);
       onChar(typed);
-      if (!(await this.clock.wait(ch === " " ? 95 : 62, tok))) return false;
+      if (!(await this.clock.wait(ch === " " ? 85 : 54, tok))) return false;
     }
     return true;
   }

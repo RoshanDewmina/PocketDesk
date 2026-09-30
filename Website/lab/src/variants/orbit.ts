@@ -112,7 +112,7 @@ export function orbitVariant(): Variant {
     },
     async run(x, tok: Tok) {
       const r = x.rig, c = x.clock, W = (ms: number) => c.wait(ms, tok);
-      if (!(await c.tween(1300, (e) => (A.intro = e), tok, EASE))) return false;
+      if (!(await c.tween(1100, (e) => (A.intro = e), tok, EASE))) return false;
       if (!(await W(300))) return false;
 
       // Select a file in Finder.
@@ -125,12 +125,12 @@ export function orbitVariant(): Variant {
       if (!(await r.regrip({ x: 44, y: r.chE * 0.62 }, tok))) return false;
       if (!(await r.glide({ x: r.P.x + 140, y: r.P.y - 20 }, 1900, tok, undefined, LIN))) return false;
       r.fade(0, 0, 260, tok);
-      if (!(await W(900))) return false;
+      if (!(await W(650))) return false;
 
       // Pinch in on the chat, then back out.
       if (!(await r.travel(r.ctr(".ch-body .in", 0.4, 0.5), tok))) return false;
-      if (!(await r.pinch(3.6, 900, tok))) return false;
-      if (!(await W(500))) return false;
+      if (!(await r.pinch(3.6, 850, tok))) return false;
+      if (!(await W(350))) return false;
       if (!(await r.pinch(2.3, 850, tok))) return false;
       if (!(await W(200))) return false;
 
@@ -158,7 +158,7 @@ export function orbitVariant(): Variant {
       if (!(await r.regrip({ x: r.cw * 0.12, y: r.chE * 0.55 }, tok))) return false;
       if (!(await r.glide({ x: Math.min(780, r.P.x + 260), y: r.P.y - 50 }, 1700, tok, undefined, LIN))) return false;
       r.fade(0, 0, 300, tok);
-      if (!(await W(1500))) return false;
+      if (!(await W(1000))) return false;
       return c.tween(600, (e) => (A.world = 1 - e), tok, REVEAL);
     },
     still(x) {

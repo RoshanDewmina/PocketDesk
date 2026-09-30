@@ -15,6 +15,7 @@ export function lidVariant(): Variant {
   let bits: HTMLElement[] = [];
   let wall: HTMLElement | null = null;
   let bootKey = "";
+  let first = true;
 
   function drawBoot(x: Instance) {
     const cv = x.boot, b = A.boot;
@@ -66,7 +67,7 @@ export function lidVariant(): Variant {
       r.setTerm([prompt("")]);
       r.focus("chat");
       for (const p of r.phones) p.setOrient(0);
-      park(r, { x: 175, y: 250 }, 0);
+      park(r, { x: 300, y: 250 }, 0);
       r.outlineO = 0;
       r.ptrO = 0;
       const home = r.ph.home!;
@@ -94,14 +95,15 @@ export function lidVariant(): Variant {
     },
     async run(x, tok: Tok) {
       const r = x.rig, c = x.clock, W = (ms: number) => c.wait(ms, tok);
-      if (!(await W(450))) return false;
-      c.tween(1700, (e) => (A.pov = lerp(-140, 36, e)), tok, EASE);
-      if (!(await c.tween(1500, (e) => (A.lid = lerp(-90, 0, e)), tok, EASE))) return false;
-      if (!(await c.tween(1000, (e) => (A.boot = e), tok, LIN))) return false;
+      if (!(await W(first ? 700 : 350))) return false;
+      first = false;
+      c.tween(1500, (e) => (A.pov = lerp(-140, 36, e)), tok, EASE);
+      if (!(await c.tween(1300, (e) => (A.lid = lerp(-90, 0, e)), tok, EASE))) return false;
+      if (!(await c.tween(750, (e) => (A.boot = e), tok, LIN))) return false;
       c.tween(750, (e) => (A.scene = e), tok, REVEAL);
-      if (!(await W(200))) return false;
-      if (!(await c.tween(950, (e) => (A.rise = e), tok, EASE))) return false;
-      if (!(await W(250))) return false;
+      if (!(await W(100))) return false;
+      if (!(await c.tween(850, (e) => (A.rise = e), tok, EASE))) return false;
+      if (!(await W(150))) return false;
 
       // Tap Connect: ember contact on the glass, a pulse crosses the gap and lands on the Mac.
       const ph = r.ph, home = ph.home!;
@@ -109,8 +111,8 @@ export function lidVariant(): Variant {
       home.label.textContent = "Connecting…";
       r.fade(0, 0, 220, tok);
       const land = { x: r.C.x + r.vw / 2, y: r.C.y + r.vh / 2 };
-      x.field.pulse(x.stagePt(home.arrow), x.macPt(land.x, land.y), 820);
-      if (!(await W(820))) return false;
+      x.field.pulse(x.stagePt(home.arrow), x.macPt(land.x, land.y), 720);
+      if (!(await W(720))) return false;
       r.ring(r.macScr, land.x * r.ms, land.y * r.ms, 2.4, "m");
       const lp = x.macPt(land.x, land.y);
       x.field.ripple(lp.x, lp.y);
@@ -122,20 +124,20 @@ export function lidVariant(): Variant {
       c.tween(700, (e) => (A.home = e), tok, EASE);
       r.ptrO = 1;
       const view = { x: r.C.x, y: r.C.y, w: r.vw, h: r.vh };
-      if (!(await c.tween(850, (e) => {
+      if (!(await c.tween(620, (e) => {
         r.outlineO = Math.min(1, e * 1.6);
         r.lock = Math.sin(Math.PI * e);
         r.outlineRect = lerpRect({ x: 0, y: 0, w: DW, h: DH }, view, e);
       }, tok, EASE))) return false;
       r.outlineRect = null;
       r.lock = 0;
-      if (!(await W(250))) return false;
-
-      // Pan to the terminal (the view eases after the pointer near the edge), pinch in on zsh.
-      if (!(await r.travel({ x: 520, y: 236 }, tok))) return false;
       if (!(await W(150))) return false;
-      if (!(await r.pinch(2.7, 950, tok))) return false;
+
+      // Pan to the zsh prompt (the view eases after the pointer near the edge), pinch in, tap.
       if (!(await r.travel(promptEnd(r, ""), tok))) return false;
+      if (!(await W(120))) return false;
+      if (!(await r.pinch(2.7, 820, tok))) return false;
+      if (!(await r.regrip({ x: r.cw * 0.5, y: r.chE * 0.55 }, tok))) return false;
       if (!(await r.tap(tok))) return false;
       r.focus("term");
       r.fade(0, 0, 240, tok);
@@ -146,15 +148,15 @@ export function lidVariant(): Variant {
       r.enter();
       for (let i = 1; i <= OUT.length; i++) {
         r.setTerm([prompt(CMD), ...OUT.slice(0, i)], false);
-        if (!(await W(i === 1 ? 380 : 440))) return false;
+        if (!(await W(i === 1 ? 300 : 340))) return false;
       }
       r.setTerm([prompt(CMD), ...OUT, prompt("")]);
       if (!(await r.keyboard(0, 320, tok))) return false;
-      if (!(await r.pinch(r.minZ(), 900, tok))) return false;
+      if (!(await r.pinch(r.minZ(), 780, tok))) return false;
       if (!(await W(200))) return false;
 
       // Landscape, then play Slow Orbit.
-      if (!(await r.rotate(1, 950, tok))) return false;
+      if (!(await r.rotate(1, 850, tok))) return false;
       if (!(await W(250))) return false;
       if (!(await r.travel(r.ctr(".mu-ctl .pl"), tok))) return false;
       if (!(await W(90))) return false;
@@ -162,7 +164,7 @@ export function lidVariant(): Variant {
       r.focus("mus");
       r.flag("paused", false);
       r.fade(0, 0, 400, tok);
-      if (!(await W(1900))) return false;
+      if (!(await W(950))) return false;
       return c.tween(550, (e) => (A.world = 1 - e), tok, LIN);
     },
     still(x) {

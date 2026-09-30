@@ -105,7 +105,9 @@ export class Instance {
       while (!tok.dead) {
         this.v.reset(this);
         this.field.clear();
+        const t0 = this.clock.time;
         if (!(await this.v.run(this, tok))) return;
+        this.fig.dataset.loopMs = String(Math.round(this.clock.time - t0));
       }
     })();
   }

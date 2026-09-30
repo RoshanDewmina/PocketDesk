@@ -31,6 +31,27 @@ const SHOTS: Record<string, number[]> = {
 
 const browser = await launch();
 const errors: string[] = [];
+if (video) {
+  // One full loop per variant and size, as .webm (puppeteer screencast, needs ffmpeg).
+  for (const size of SIZES) {
+    for (const id of Object.keys(SHOTS)) {
+      if (only && !only.includes(id)) continue;
+      const page = await browser.newPage();
+      page.on("pageerror", (e) => errors.push(`${id}/${size.name}/video: ${e}`));
+      await page.setViewport({ width: size.width, height: size.height, deviceScaleFactor: 1, isMobile: size.mobile, hasTouch: size.mobile });
+      await page.goto(`http://localhost:${port}/lab/${id}`, { waitUntil: "networkidle0" });
+      const rec = await page.screencast({ path: join(out, `${id}-${size.name}.webm`) as `${string}.webm` });
+      await new Promise((r) => setTimeout(r, 23000));
+      await rec.stop();
+      const loop = await page.evaluate(() => document.querySelector<HTMLElement>(".lx")?.dataset.loopMs);
+      console.log(`${id} ${size.name}: loop ${loop ?? "?"} ms`);
+      await page.close();
+    }
+  }
+  await browser.close();
+  console.log(errors.length ? `console problems:\n${errors.join("\n")}` : "no console errors");
+  process.exit(0);
+}
 for (const size of SIZES) {
   for (const [id, times] of Object.entries(SHOTS)) {
     if (only && !only.includes(id)) continue;
@@ -40,17 +61,12 @@ for (const size of SIZES) {
     await page.setViewport({ width: size.width, height: size.height, deviceScaleFactor: size.dpr, isMobile: size.mobile, hasTouch: size.mobile });
     await page.goto(`http://localhost:${port}/lab/${id}`, { waitUntil: "networkidle0" });
     await page.evaluate(() => document.fonts.ready.then(() => true));
-    const rec = video && size.name === "desktop" ? await page.screencast({ path: join(out, `${id}-${size.name}.webm`) as `${string}.webm` }) : null;
     const since = await page.evaluate(() => performance.now());
     const t0 = Date.now() - since;
     for (const t of times) {
       const wait = t * 1000 - (Date.now() - t0);
       if (wait > 0) await new Promise((r) => setTimeout(r, wait));
       await page.screenshot({ path: join(out, `${id}-${size.name}-${String(Math.round(t * 10)).padStart(3, "0")}.png`) as `${string}.png` });
-    }
-    if (rec) {
-      await new Promise((r) => setTimeout(r, 2500));
-      await rec.stop();
     }
     await page.close();
   }
