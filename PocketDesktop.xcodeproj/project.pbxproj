@@ -210,6 +210,7 @@
 		3AC3A3D816007CC98DD3BEAD /* PointerGlyph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40F2AC5A22A82DCC4F04012B /* PointerGlyph.swift */; };
 		3ADB0383A5EF0BAF522D3223 /* LocalMacDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 846E6DC5A2B05AC0648494B0 /* LocalMacDiscovery.swift */; };
 		3AE8F27B46F5AD62B327C393 /* WatchdogE2E.swift in Sources */ = {isa = PBXBuildFile; fileRef = 66837EB113FE152C4BBA7BBA /* WatchdogE2E.swift */; };
+		3B14FB36A4DA2AD091432DDF /* OwnerLocalCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6260AE7D364B38797238AE24 /* OwnerLocalCoordinatorTests.swift */; };
 		3B30DB3503D3088FE42A3989 /* HardwareKeyboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F7DB3CD464CCCD43602306B /* HardwareKeyboard.swift */; };
 		3B47CAB4D0462D19974A86EA /* MediaResourceBudget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36959078D4590A9845D7D57A /* MediaResourceBudget.swift */; };
 		3B7328637F0D619C9CC08488 /* NetworkPathWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1BE4EC5D37AD339CC4073ED /* NetworkPathWatcher.swift */; };
@@ -935,10 +936,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -968,10 +969,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1143,6 +1144,7 @@
 		605C05707C7B4FBAF453DCE5 /* MiniMapVideoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMapVideoTests.swift; sourceTree = "<group>"; };
 		61439D711D81DE84D4388236 /* SecurityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecurityTests.swift; sourceTree = "<group>"; };
 		623D4E7C80996C8F073FB4B0 /* DirectTouchMappingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectTouchMappingTests.swift; sourceTree = "<group>"; };
+		6260AE7D364B38797238AE24 /* OwnerLocalCoordinatorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OwnerLocalCoordinatorTests.swift; sourceTree = "<group>"; };
 		63BD565389B3DA4F2A9D2122 /* SignalingKeepalive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignalingKeepalive.swift; sourceTree = "<group>"; };
 		641018F06FE5E45EF98441DE /* ViewportCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportCapture.swift; sourceTree = "<group>"; };
 		64383AFDC6694A5849AC3D64 /* FarsideWidgets.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = FarsideWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -1830,6 +1832,7 @@
 				DAC85148D3F395A0D9046A13 /* NativeGestureEngineTests.swift */,
 				CE2406BCA00220ED02C01518 /* NativeInputSafetyTests.swift */,
 				974DBC6590A3D7D66B8C20B1 /* NativeProtocolTests.swift */,
+				6260AE7D364B38797238AE24 /* OwnerLocalCoordinatorTests.swift */,
 				66FDE764B193EF993CFCF635 /* PairStoreDeletionTests.swift */,
 				48398D8D2C7942261624C9D8 /* PhoneTrustStoreTests.swift */,
 				5B45BA3810586D5E7548CC90 /* PointerLocationTests.swift */,
@@ -3316,6 +3319,7 @@
 				D59A2D04E0D66384CE5E4986 /* NativeProtocolTests.swift in Sources */,
 				5E79B3F03730A0B32F57FE5D /* NetworkLinkHint.swift in Sources */,
 				21C10529944B07483A4164A6 /* NetworkPathWatcher.swift in Sources */,
+				3B14FB36A4DA2AD091432DDF /* OwnerLocalCoordinatorTests.swift in Sources */,
 				F614EBB3B5796328CD19E445 /* PairStoreDeletionTests.swift in Sources */,
 				1C1C88B47E7708FA8010F74A /* Pairing.swift in Sources */,
 				AE9AC143ECFF68174B9561FF /* PeerMedia.swift in Sources */,
