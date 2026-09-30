@@ -53,7 +53,8 @@ struct OwnChangeRecognizer {
             return before.matches(online: online, frames: frames, modeIDs: modeIDs) ? .ours : .foreign
         }
         if configurationMatches(online: online, frames: frames, modeIDs: modeIDs, applied: true) { return .ours }
-        guard now - startedAt <= Self.timeout, modeIDs[display] != target.ioModeID else { return .foreign }
+        guard now - startedAt <= Self.timeout,
+              modeIDs[display] == nil || modeIDs[display] == before.modeIDs[display] else { return .foreign }
         var baselineModes = modeIDs
         baselineModes[display] = before.modeIDs[display]
         var targetModes = modeIDs

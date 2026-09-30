@@ -698,6 +698,24 @@ final class BigTextControllerTests: XCTestCase {
         XCTAssertTrue(controller.restorePending, "unreadable owned mode retains a baseline for later retry")
     }
 
+    func testReadableThirdTargetModeStopsObserverEvenWithOwnedGeometry() async {
+        let manual = mode(1280, 832, id: 99)
+        switcher.onApply = { [unowned self] mode, display in
+            self.switcher.framesByDisplay[display] = CGRect(x: 0, y: 0, width: mode.width, height: mode.height)
+            self.switcher.currentByDisplay[display] = manual
+            XCTAssertEqual(self.controller.screenChangeVerdict, .foreign)
+            self.notifyScreenParametersChanged()
+        }
+        await apply(1280)
+        XCTAssertEqual(observerStops, 1)
+        XCTAssertEqual(observerRefits, 0)
+        XCTAssertTrue(host.resumes.isEmpty)
+        XCTAssertEqual(errors, [.failed])
+        XCTAssertEqual(switcher.currentByDisplay[1], manual)
+        XCTAssertNil(controller.baseline, "a readable third mode is the person's choice")
+        XCTAssertEqual(appliedModes, [large], "never restore our baseline over the manual choice")
+    }
+
     func testPendingTargetDoesNotHideOtherDisplayChangeFromObserver() async {
         switcher.onApply = { [unowned self] mode, display in
             self.switcher.framesByDisplay[display] = CGRect(x: 0, y: 0, width: mode.width, height: mode.height)
