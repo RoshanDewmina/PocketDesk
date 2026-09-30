@@ -63,6 +63,7 @@ final class SystemIntegrationsUITests: XCTestCase {
         let toggle = element(app, "agent.settings.alerts")
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
         let sendTest = element(app, "agent.settings.test")
+        let sendWatchTest = element(app, "agent.settings.testWatch")
 
         func waitForValue(_ expected: String, _ message: String) {
             let matches = NSPredicate(format: "value == %@", expected)
@@ -93,11 +94,14 @@ final class SystemIntegrationsUITests: XCTestCase {
         waitForValue("1", "Alerts turn on once iOS allows them")
         XCTAssertTrue(sendTest.waitForExistence(timeout: 5))
         XCTAssertTrue(sendTest.isEnabled, "Send test alert works once alerts are on")
+        XCTAssertTrue(sendWatchTest.exists, "The iPhone offers a delayed test alert for the Watch")
+        XCTAssertTrue(sendWatchTest.isEnabled, "Send test alert in 10 s works once alerts are on")
         attach("Alerts on")
 
         toggle.tap()
         waitForValue("0", "The switch turns alerts off again")
         XCTAssertFalse(sendTest.isEnabled)
+        XCTAssertFalse(sendWatchTest.isEnabled)
     }
 
     @MainActor

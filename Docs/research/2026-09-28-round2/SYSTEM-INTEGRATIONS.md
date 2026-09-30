@@ -482,7 +482,7 @@ Copy. English strings live in the app bundle (`Localizable.strings`), so the ser
 | Key | Text | Why |
 |---|---|---|
 | `AGENT_NEEDS_YOU_TITLE` | `%@ needs you` | Literal, self-contained, survives summarization |
-| `AGENT_NEEDS_YOU_BODY` | Stuck on something only a human can click. Tap to look at your Mac. | The personality is one deadpan clause; the meaning stands alone |
+| `AGENT_NEEDS_YOU_BODY` | Stuck on something only a human can click. Open Farside on your iPhone to look. | The personality is one deadpan clause; the meaning stands alone. Changed 30 Sep 2026 from "Tap to look at your Mac.": on a Watch a tap leads nowhere (`Docs/plans/WATCH-GLANCE-DESIGN-2026-09-30.md` §3) |
 | Placeholder | An agent needs you. | Shown when previews are hidden |
 | Snooze reminder (passive) | Still waiting on you. | Sent at most once |
 
