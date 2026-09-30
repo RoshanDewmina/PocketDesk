@@ -644,6 +644,14 @@ final class RemoteInputDriver {
         return resolvedBase(now: now, in: bounds).point
     }
 
+    /// A physical pointer intervention invalidates a causal anchor. Recently posted points
+    /// may still be reported by WindowServer, so the existing chain window is respected.
+    func pointerMatchesCausalAnchor(_ anchor: CGPoint?, now: TimeInterval) -> Bool {
+        guard let bounds = validBounds, let anchor else { return false }
+        let base = resolvedBase(now: now, in: bounds)
+        return base.chained || hypot(base.point.x - anchor.x, base.point.y - anchor.y) <= Self.pointerChainTolerance
+    }
+
     private func notePosted(_ point: CGPoint, at now: TimeInterval) {
         lastPoint = point
         lastPostedAt = now

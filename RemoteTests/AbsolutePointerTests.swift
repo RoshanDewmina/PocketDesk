@@ -36,7 +36,7 @@ final class AbsolutePointerProtocolTests: XCTestCase {
     func testHostAdvertisesTheNewCapabilities() {
         XCTAssertTrue(SessionFeature.host.contains(SessionFeature.absolutePointer))
         XCTAssertTrue(SessionFeature.host.contains(SessionFeature.middleButton))
-        XCTAssertLessThanOrEqual(SessionFeature.host.count, 16, "The capture validator allows at most 16 features")
+        XCTAssertLessThanOrEqual(SessionFeature.host.count, 32, "The current capture validator allows at most 32 features")
         XCTAssertNoThrow(try RemoteAction(action: "capture", features: SessionFeature.host).validate())
     }
 }

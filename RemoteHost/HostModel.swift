@@ -46,7 +46,7 @@ final class RemoteHostModel: ObservableObject {
             if selected != oldValue {
                 pointerLocator.reset()
                 releaseRemoteInput(notifyPhone: true)
-                inputFreshness.expireTokens()
+                input.invalidateQueued(); inputFreshness.expireTokens()
                 input.resetNativeSequence()
                 browserSession.stop()
             }
@@ -138,7 +138,7 @@ final class RemoteHostModel: ObservableObject {
     #endif
     private var pendingServerRemoval: PendingHostRoomRemoval?
     private var serverRemovalReadFailed = false
-    private lazy var input = RemoteInputDriver(isTrusted: { [unowned self] in self.controlPermission.isGranted })
+    private let input = HostInputExecutor()
     private let capture = RemoteCapture()
     private lazy var bigText = BigTextController(
         switcher: LiveDisplayModeSwitcher(), windows: BigTextWindowKeeper(access: LiveWindowAccess()),
@@ -179,7 +179,6 @@ final class RemoteHostModel: ObservableObject {
     private var phonePause = HostPhonePause()
     private var lifecycleTimer: Timer?
     private var permissionTimer: Timer?
-    private var inputLease = RemoteInputLease()
     private var observers: [NSObjectProtocol] = []
     private var connectionObserver: AnyCancellable?
     /// D39: the live session's activity for the popover and the menu-bar mark.
@@ -369,6 +368,9 @@ final class RemoteHostModel: ObservableObject {
     private var latestSenderStatistics: StreamStatsReport?
 
     init() {
+        #if DEBUG
+        connection.allowsCausalInput = HostE2E.active == nil
+        #endif
         controlConsent = HostControlConsentState(isAllowed: preferences.allowControl)
         keepAwakeEnabled = preferences.keepAwake
         chimeOnConnect = preferences.chimeOnConnect
@@ -397,6 +399,15 @@ final class RemoteHostModel: ObservableObject {
             self?.reconcileAvailabilityAfterCoordinatorReset()
         }
         connection.onControl = { [weak self] data in self?.receive(data) }
+        connection.onCausalContext = { [weak self] context in
+            guard let self else { return }
+            self.input.beginCausalContext(context)
+            self.inputFreshness.noteCausalUpgrade()
+        }
+        connection.onCausalInput = { [weak self] context, action in self?.receiveCausalInput(context, semantic: action) }
+        connection.onCausalRejected = { [weak self] action in
+            if action.action == "text" { self?.sendTextResult(for: action.key, accepted: false) }
+        }
         clipboard.transport = { [weak self] frame in
             guard let self, self.connection.connected else { return false }
             return self.connection.sendControl(RemoteAction(action: "clipboard", epoch: self.inputEpoch.value, clipboard: frame))
@@ -1633,7 +1644,7 @@ final class RemoteHostModel: ObservableObject {
         releaseRemoteInput(notifyPhone: true)
         sessionState = .picture
         couchHealthy = false
-        inputLease.changeDuration(to: RemoteInputLease.pictureDuration, at: ProcessInfo.processInfo.systemUptime)
+        input.changeLeaseDuration(to: RemoteInputLease.pictureDuration, at: ProcessInfo.processInfo.systemUptime)
         couchHUD.hide()
         input.configure(SCContentFilter(display: display, excludingWindows: []))
         captureHealthy = false
@@ -1700,11 +1711,11 @@ final class RemoteHostModel: ObservableObject {
                     return
                 }
                 self.input.expireMomentum()
-                if self.inputLease.isExpired(at: ProcessInfo.processInfo.systemUptime) {
+                if self.input.leaseExpired(at: ProcessInfo.processInfo.systemUptime) {
                     let releasedHold = self.input.externalHoldID
                     let releaseEpoch = self.inputEpoch.value
                     if !self.input.held || self.input.release() {
-                        self.inputLease.cancel()
+                        self.input.cancelLease()
                         self.sendReleaseNotice(releasedHold: releasedHold, epoch: releaseEpoch)
                     }
                 }
@@ -1746,7 +1757,7 @@ final class RemoteHostModel: ObservableObject {
         let rects = HostCouchDisplays.current()
         guard let main = rects.first else { stop(); return }
         input.configure(displays: rects)
-        inputLease.changeDuration(to: RemoteInputLease.couchDuration, at: ProcessInfo.processInfo.systemUptime)
+        input.changeLeaseDuration(to: RemoteInputLease.couchDuration, at: ProcessInfo.processInfo.systemUptime)
         captureHealthy = false
         couchHealthy = false
         input.enabled = false
@@ -1806,7 +1817,7 @@ final class RemoteHostModel: ObservableObject {
         if couchHealthy && !healthy {
             invalidateTextFocus()
             releaseRemoteInput(notifyPhone: true)
-            inputFreshness.expireTokens()
+            input.invalidateQueued(); inputFreshness.expireTokens()
         }
         couchHealthy = healthy
         input.enabled = HostControlPolicy.isEnabled(userConsent: allowControl, accessibilityPermission: controlPermission,
@@ -1843,7 +1854,7 @@ final class RemoteHostModel: ObservableObject {
         clipboard.reset()
         fileTransfer.reset()
         releaseRemoteInput(notifyPhone: false)
-        inputFreshness.invalidate()
+        input.endCausalContext(); inputFreshness.invalidate()
         input.resetNativeSequence()
         lifecycleTimer?.invalidate(); lifecycleTimer = nil
         captureHealthy = false
@@ -1893,6 +1904,64 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
+    private func receiveCausalInput(_ context: InputCausalEnvelope, semantic: RemoteAction?) {
+        guard connection.connected, active, context.epoch == inputEpoch.value, !sessionRefused, !phonePause.isPaused,
+              let peer = connection.media else { return }
+        if let semantic, semantic.action == "release" {
+            input.withAuthority {
+                let scope = input.releaseScope(for: semantic)
+                let scopedIdleCleanup = scope == nil && semantic.epoch == inputEpoch.value && semantic.interaction?.version == 1
+                if scopedIdleCleanup || inputFreshness.acceptsRelease(semantic, epoch: inputEpoch.value, activeHold: scope) {
+                    releaseRemoteInput(notifyPhone: false)
+                    input.discardCausalPrefix(context)
+                    connection.acknowledgeCausalInput(context, applied: input.appliedOrdinal)
+                }
+            }
+            return
+        }
+        invalidateTextFocus()
+        if sessionState == .couch { refreshCouchHealth() }
+        input.enabled = HostControlPolicy.isEnabled(userConsent: allowControl, accessibilityPermission: controlPermission,
+                                                   session: sessionState, captureHealthy: captureHealthy, couchHealthy: couchHealthy)
+        let steps = context.segments.map { segment in
+            HostInputExecutor.Admitted(action: segment.action, upgraded: true,
+                                       expires: inputFreshness.postingDeadline(for: segment.action, epoch: inputEpoch.value))
+        }
+        if sessionState == .couch, context.segments.contains(where: { $0.action.action == "moveTo" }) { return }
+        let admittedSemantic = semantic.map { action in
+            HostInputExecutor.Admitted(action: action, upgraded: true,
+                                       expires: inputFreshness.postingDeadline(for: action, epoch: inputEpoch.value))
+        }
+        let generation = input.currentGeneration
+        let preparation = semantic.map { $0.action == "key" && $0.key == "c" && $0.modifiers == ["command"] } == true && input.enabled
+            ? clipboard.prepareForCopyShortcut() : nil
+        let post = { [weak self, weak peer] in
+            guard let self, let peer, self.connection.media === peer, self.input.currentGeneration == generation else { return }
+            let accepted = self.input.submitCausal(context, steps: steps, semantic: admittedSemantic, preparation: preparation,
+                routeAuthority: { operation in peer.withInputPostingAuthority(operation) ?? RemoteInputOutcome() },
+                completion: { [weak self, weak peer] receipt in
+                    MainActor.assumeIsolated {
+                        guard let self, let peer, self.connection.media === peer, self.input.currentGeneration == receipt.generation else { return }
+                        for (action, result) in receipt.results {
+                            self.pointerTelemetry.moveProcessed(action)
+                            self.finishInput(action, outcome: result.outcome, upgraded: true, now: ProcessInfo.processInfo.systemUptime,
+                                             point: result.point, activeHold: result.externalHold, startedMs: result.startedMs,
+                                             endedMs: result.endedMs, arrivedMs: nil)
+                        }
+                        if receipt.intervention {
+                            self.releaseRemoteInput(notifyPhone: true)
+                            if let semantic, semantic.action == "text" { self.sendTextResult(for: semantic.key, accepted: false) }
+                            self.connection.rebaseCausalInput()
+                        } else if receipt.failed {
+                            self.stop(); self.detail = "Input checkpoint expired. Reconnect from the phone."
+                        } else { self.connection.acknowledgeCausalInput(context, applied: receipt.applied) }
+                    }
+                })
+            if !accepted { self.stop(); self.detail = "Input queue was full. Reconnect from the phone." }
+        }
+        post()
+    }
+
     private func receive(_ data: Data) {
         guard let action = try? JSONDecoder().decode(RemoteAction.self, from: data) else {
             countInput("rejected-parse"); stop(); return
@@ -1902,10 +1971,10 @@ final class RemoteHostModel: ObservableObject {
             invalidateTextFocus()
         }
         if action.action == "release" {
-            if inputFreshness.acceptsRelease(
-                action, epoch: inputEpoch.value, activeHold: input.externalHoldID
-            ) {
-                releaseRemoteInput(notifyPhone: false)
+            input.withAuthority {
+                if inputFreshness.acceptsRelease(action, epoch: inputEpoch.value, activeHold: input.releaseScope(for: action)) {
+                    releaseRemoteInput(notifyPhone: false)
+                }
             }
             return
         }
@@ -1986,7 +2055,7 @@ final class RemoteHostModel: ObservableObject {
             detail = "The phone’s input session expired. Reconnect from the phone."
             return
         }
-        if inputLease.isExpired(at: now) {
+        if input.leaseExpired(at: now) {
             countInput("rejected-lease-expired")
             releaseRemoteInput(notifyPhone: true)
             if action.action == "text" { sendTextResult(for: action.key, accepted: false) }
@@ -2001,51 +2070,72 @@ final class RemoteHostModel: ObservableObject {
             captureHealthy: captureHealthy,
             couchHealthy: couchHealthy
         )
+        let arrivedMs = connection.currentControlArrivalMs
+        let expires = inputFreshness.postingDeadline(for: action, epoch: inputEpoch.value)
+        let admittedGeneration = input.currentGeneration
         #if DEBUG
-        // E2E harness interlock: injected input may only reach the Farside Test Pad.
-        var fenced: RemoteAction? = action
-        var fenceVerdict = "allow"
-        var pointerSnapshot: CGPoint?
         if let e2e = HostE2E.active {
-            pointerSnapshot = input.nextPointerBase(now: now)
-            (fenced, fenceVerdict) = e2e.fence(action, held: input.held, pointer: pointerSnapshot)
+            let outcome = input.withAuthority { () -> RemoteInputOutcome in
+                let pointer = input.nextPointerBase(now: now)
+                let (fenced, verdict) = e2e.fence(action, held: input.held, pointer: pointer)
+                if action.action == "key", action.key == "c", action.modifiers == ["command"], input.enabled, fenced != nil {
+                    clipboard.prepareForCopyShortcut()
+                }
+                let result = fenced.map { input.handle($0, upgraded: admission == .upgraded, now: now, pointerSnapshot: pointer) }
+                    ?? RemoteInputOutcome(textRequestID: action.action == "text" ? action.key : nil)
+                e2e.recordInput(action, accepted: result.accepted, fence: verdict, clickPoint: result.clickPoint)
+                return result
+            }
+            finishInput(action, outcome: outcome, upgraded: admission == .upgraded, now: now,
+                        point: input.lastPoint, activeHold: input.externalHoldID, startedMs: MachClock.nowMs(),
+                        endedMs: MachClock.nowMs(), arrivedMs: arrivedMs)
+            return
         }
-        if action.action == "key", action.key == "c", action.modifiers == ["command"], input.enabled, fenced != nil {
-            clipboard.prepareForCopyShortcut()
-        }
-        let handleStartedMs = MachClock.nowMs()
-        let outcome = fenced.map { input.handle($0, upgraded: admission == .upgraded, now: now, pointerSnapshot: pointerSnapshot) }
-            ?? RemoteInputOutcome(textRequestID: action.action == "text" ? action.key : nil)
-        HostE2E.active?.recordInput(action, accepted: outcome.accepted, fence: fenceVerdict, clickPoint: outcome.clickPoint)
-        #else
-        if action.action == "key", action.key == "c", action.modifiers == ["command"], input.enabled {
-            clipboard.prepareForCopyShortcut()
-        }
-        let handleStartedMs = MachClock.nowMs()
-        let outcome = input.handle(action, upgraded: admission == .upgraded, now: now)
         #endif
+        guard let peer = connection.media else { return }
+        let preparation = action.action == "key" && action.key == "c" && action.modifiers == ["command"] && input.enabled
+            ? clipboard.prepareForCopyShortcut() : nil
+        let post = { [weak self, weak peer] in
+            guard let self, let peer, self.connection.media === peer else { return }
+            let submitted = self.input.submit(action, upgraded: admission == .upgraded, expires: expires, expectedGeneration: admittedGeneration, preparation: preparation,
+                routeAuthority: { operation in peer.withInputPostingAuthority(operation) ?? RemoteInputOutcome() },
+                completion: { [weak self, weak peer] receipt in
+                    MainActor.assumeIsolated {
+                        guard let self, let peer, self.connection.media === peer, self.input.accepts(receipt) else { return }
+                        self.finishInput(action, outcome: receipt.outcome, upgraded: admission == .upgraded,
+                                         now: ProcessInfo.processInfo.systemUptime, point: receipt.point,
+                                         activeHold: receipt.externalHold, startedMs: receipt.startedMs,
+                                         endedMs: receipt.endedMs, arrivedMs: arrivedMs)
+                    }
+                })
+            if !submitted { self.stop(); self.detail = "Input queue was full. Reconnect from the phone." }
+        }
+        post()
+    }
+
+    private func finishInput(_ action: RemoteAction, outcome: RemoteInputOutcome, upgraded: Bool,
+                             now: TimeInterval, point: CGPoint, activeHold: String?, startedMs: Double,
+                             endedMs: Double, arrivedMs: Double?) {
         connection.media?.counters.inputHandled(
-            mainDelayMs: connection.currentControlArrivalMs.map { max(0, handleStartedMs - $0) },
-            postMs: max(0, MachClock.nowMs() - handleStartedMs))
+            mainDelayMs: arrivedMs.map { max(0, startedMs - $0) },
+            postMs: max(0, endedMs - startedMs))
         countInput(outcome.accepted ? "posted" : (input.enabled ? "refused-by-driver" : "refused-control-disabled"))
         if outcome.accepted { activity.record(action: action.action) }
         if action.action == "move" || action.action == "moveTo", outcome.accepted {
-            pointerTelemetry.moveInjected(globalPoint: input.lastPoint, at: now)
+            pointerTelemetry.moveInjected(globalPoint: point, at: now)
         }
-        if admission == .upgraded, action.action == "dragDown", !outcome.accepted,
+        if upgraded, action.action == "dragDown", !outcome.accepted,
            let notice = inputFreshness.rejectedDragDownNotice(
-                action, activeHold: input.externalHoldID
+                action, activeHold: activeHold
            ) {
             _ = connection.sendControl(notice)
         }
-        inputLease.record(action: action.action, accepted: outcome.accepted, at: now)
-        if outcome.holdEvent == .ended { inputLease.cancel() }
-        if admission == .upgraded, outcome.accepted,
+        if upgraded, outcome.accepted,
            (action.action == "click" || action.action == "double"),
            HostTextFocusProbe.isValidID(action.textFocusProbe),
            let probe = action.textFocusProbe, let point = outcome.clickPoint {
             scheduleTextFocusProbe(probe, point: point, geometry: action.textFocusGeometry == true, issuedAt: now)
-        } else if admission == .upgraded, outcome.accepted, action.action == "text" || action.action == "key",
+        } else if upgraded, outcome.accepted, action.action == "text" || action.action == "key",
                   action.textFocusGeometry == true, HostTextFocusProbe.isValidID(action.textFocusProbe),
                   let probe = action.textFocusProbe {
             scheduleTextFocusProbe(probe, point: nil, geometry: true, issuedAt: now)
@@ -2102,7 +2192,7 @@ final class RemoteHostModel: ObservableObject {
         if captureHealthy && !healthy {
             invalidateTextFocus()
             releaseRemoteInput(notifyPhone: true)
-            inputFreshness.expireTokens()
+            input.invalidateQueued(); inputFreshness.expireTokens()
         }
         if healthy {
             captureUnhealthySince = nil
@@ -2197,10 +2287,12 @@ final class RemoteHostModel: ObservableObject {
     private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
         let base = SessionFeature.host.filter {
-            ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
+            if $0 == SessionFeature.causalInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
+            return ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
         } + [SessionFeature.couch]
         return HostFeatureList.features(base: base, allowBigText: preferences.allowBigText,
-                                        accessibility: inputAccess.accessibility.isGranted)
+                                        accessibility: inputAccess.accessibility.isGranted,
+                                        peerFeatures: connection.peerFeatures, requestedMode: connection.peerRequestedMode)
     }
 
     private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil) {
@@ -2448,7 +2540,7 @@ final class RemoteHostModel: ObservableObject {
         fileTransfer.reset()
         invalidateTextFocus()
         releaseRemoteInput(notifyPhone: false)
-        inputFreshness.expireTokens()
+        input.invalidateQueued(); inputFreshness.expireTokens()
         input.enabled = false
         captureHealthy = false
         capturedDisplayID = nil
@@ -2536,7 +2628,7 @@ final class RemoteHostModel: ObservableObject {
         invalidateTextFocus()
         pointerTelemetry.end()
         releaseRemoteInput(notifyPhone: true)
-        inputFreshness.expireTokens()
+        input.invalidateQueued(); inputFreshness.expireTokens()
         input.enabled = false
         captureHealthy = false
         couchHealthy = false
@@ -2581,34 +2673,40 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func releaseRemoteInput(notifyPhone: Bool) {
-        let releasedHold = input.externalHoldID
-        let releaseEpoch = inputEpoch.value
-        guard let holdID = input.holdID else {
-            inputLease.cancel()
-            if notifyPhone { sendReleaseNotice(releasedHold: releasedHold, epoch: releaseEpoch) }
-            return
-        }
-        if input.release() {
-            inputLease.cancel()
-            if notifyPhone { sendReleaseNotice(releasedHold: releasedHold, epoch: releaseEpoch) }
-        } else if !terminating {
-            retryRelease(
-                holdID: holdID, releasedHold: releasedHold, epoch: releaseEpoch,
-                notifyPhone: notifyPhone, remaining: 8
-            )
+        input.withAuthority {
+            input.invalidateQueued()
+            let releasedHold = input.externalHoldID
+            let releaseEpoch = inputEpoch.value
+            guard let holdID = input.holdID else {
+                input.cancelLease()
+                if notifyPhone { sendReleaseNotice(releasedHold: releasedHold, epoch: releaseEpoch) }
+                return
+            }
+            if input.release() {
+                input.cancelLease()
+                if notifyPhone { sendReleaseNotice(releasedHold: releasedHold, epoch: releaseEpoch) }
+            } else if !terminating {
+                retryRelease(
+                    holdID: holdID, releasedHold: releasedHold, epoch: releaseEpoch,
+                    notifyPhone: notifyPhone, remaining: 8
+                )
+            }
         }
     }
 
     private func releaseRemoteInputSynchronously() {
-        let releasedHold = input.externalHoldID
-        let releaseEpoch = inputEpoch.value
-        if input.held {
-            for _ in 0..<8 {
-                if input.release() { break }
+        input.withAuthority {
+            input.invalidateQueued()
+            let releasedHold = input.externalHoldID
+            let releaseEpoch = inputEpoch.value
+            if input.held {
+                for _ in 0..<8 {
+                    if input.release() { break }
+                }
             }
+            input.cancelLease()
+            sendReleaseNotice(releasedHold: releasedHold, epoch: releaseEpoch)
         }
-        inputLease.cancel()
-        sendReleaseNotice(releasedHold: releasedHold, epoch: releaseEpoch)
     }
 
     private func retryRelease(
@@ -2618,15 +2716,18 @@ final class RemoteHostModel: ObservableObject {
         guard remaining > 0, !terminating else { return }
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000)
-            guard let self, !self.terminating, self.input.holdID == holdID else { return }
+            guard let self, !self.terminating else { return }
+            self.input.withAuthority {
+            guard self.input.holdID == holdID else { return }
             if self.input.release() {
-                self.inputLease.cancel()
+                self.input.cancelLease()
                 if notifyPhone { self.sendReleaseNotice(releasedHold: releasedHold, epoch: epoch) }
             } else {
                 self.retryRelease(
                     holdID: holdID, releasedHold: releasedHold, epoch: epoch,
                     notifyPhone: notifyPhone, remaining: remaining - 1
                 )
+            }
             }
         }
     }
@@ -2645,8 +2746,9 @@ final class RemoteHostModel: ObservableObject {
     private func advanceEpoch() {
         invalidateTextFocus()
         inputEpoch.beginSession()
-        inputFreshness.expireTokens()
+        input.invalidateQueued(); inputFreshness.expireTokens()
         input.resetNativeSequence()
+        connection.setHostInputEpoch(inputEpoch.value)
     }
 
     private func releaseKeepAwake() {
@@ -2698,7 +2800,7 @@ extension RemoteHostModel: BigTextHost {
         bigTextScreenSnapshot = nil
         invalidateTextFocus()
         releaseRemoteInput(notifyPhone: true)
-        inputFreshness.expireTokens()
+        input.invalidateQueued(); inputFreshness.expireTokens()
         input.enabled = false
         captureHealthy = false
         pointerLocator.reset()

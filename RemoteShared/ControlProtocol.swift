@@ -135,6 +135,7 @@ struct ControlPacket: Codable {
     var session: String
     var sequence: UInt64
     var action: RemoteAction
+    var input: InputCausalEnvelope? = nil
 }
 
 /// Perf pack item 1a (Moonlight's move accumulator): while the control channel is backed up, pointer

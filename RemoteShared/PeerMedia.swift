@@ -320,6 +320,62 @@ final class PeerMedia: NSObject {
     #endif
     #endif
     private var connection: RTCPeerConnection?
+    private let pointerLock = NSLock()
+    private var pointerChannel: RTCDataChannel?
+    private var pointerAllowed = false
+    private var pointerEnded = false
+    private var pendingPointer: Data?
+    private var pointerDeliveryScheduled = false
+    var onPointerMessage: ((Data) -> Void)?
+    static let pointerChannelLabel = "pointer-causal-1"
+
+    func allowPointerChannel() { pointerLock.lock(); if !pointerEnded { pointerAllowed = true }; pointerLock.unlock() }
+    func openPointerChannel() {
+        allowPointerChannel()
+        guard isHost, let connection else { return }
+        let config = RTCDataChannelConfiguration(); config.isOrdered = false; config.maxRetransmits = 0
+        guard let created = connection.dataChannel(forLabel: Self.pointerChannelLabel, configuration: config) else { return }
+        pointerLock.lock()
+        let adopt = !pointerEnded && pointerAllowed && pointerChannel == nil
+        if adopt { pointerChannel = created }
+        pointerLock.unlock()
+        if adopt { created.delegate = self } else { created.close() }
+    }
+    private func adoptPointerChannel(_ channel: RTCDataChannel) -> Bool {
+        guard channel.label == Self.pointerChannelLabel else { return false }
+        pointerLock.lock(); defer { pointerLock.unlock() }
+        guard !isHost, !pointerEnded, pointerAllowed, pointerChannel == nil, !channel.isOrdered, channel.maxRetransmits == 0 else { return false }
+        pointerChannel = channel
+        return true
+    }
+    private func isPointerChannel(_ channel: RTCDataChannel) -> Bool {
+        pointerLock.lock(); defer { pointerLock.unlock() }
+        return pointerChannel === channel
+    }
+    func sendPointer(_ data: Data) -> Bool {
+        guard data.count <= 16384, localGateOpen() else { return false }
+        pointerLock.lock(); defer { pointerLock.unlock() }
+        guard !pointerEnded, let pointerChannel, pointerChannel.readyState == .open,
+              pointerChannel.bufferedAmount + UInt64(data.count) <= 32 * 1024 else { return false }
+        return pointerChannel.sendData(RTCDataBuffer(data: data, isBinary: true))
+    }
+    private func receivePointer(_ data: Data) {
+        guard data.count <= 16384, localGateOpen() else { return }
+        pointerLock.lock()
+        guard !pointerEnded else { pointerLock.unlock(); return }
+        pendingPointer = data // The newest full prefix recovers motion omitted from this mailbox.
+        if pointerDeliveryScheduled { pointerLock.unlock(); return }
+        pointerDeliveryScheduled = true
+        pointerLock.unlock()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pointerLock.lock()
+            let value = self.pendingPointer; self.pendingPointer = nil; self.pointerDeliveryScheduled = false
+            let ended = self.pointerEnded
+            self.pointerLock.unlock()
+            if !ended, self.localGateOpen(), let value { self.onPointerMessage?(value) }
+        }
+    }
     private var channel: RTCDataChannel?
     // Main owns mutations; bulk admission reads the channel lifetime from its I/O queue.
     private let controlLock = NSLock()
@@ -988,12 +1044,25 @@ final class PeerMedia: NSObject {
         }
     }
 
+    /// Lock order for input: executor authority → local route → control lifetime.
+    /// A route cut/close cannot pass the final check while a CGEvent is being posted.
+    func withInputPostingAuthority<T>(_ post: () -> T) -> T? {
+        localRouteLock.lock(); defer { localRouteLock.unlock() }
+        controlLock.lock(); defer { controlLock.unlock() }
+        guard localLink == nil || localPathAuthorized,
+              let channel, channel.readyState == .open else { return nil }
+        return post()
+    }
+
     private var localPathNeverAuthorized: Bool {
         localRouteLock.lock(); defer { localRouteLock.unlock() }
         return !localPathEverAuthorized
     }
 
     func close() {
+        pointerLock.lock(); pointerEnded = true; pointerAllowed = false; pendingPointer = nil
+        let pointer = pointerChannel; pointerChannel = nil; pointerLock.unlock()
+        pointer?.delegate = nil; pointer?.close()
         resourceBudget.end()
         linkMonitor?.cancel(); linkMonitor = nil
         let retiredAudioTracks: [RTCAudioTrack] = withAudioLifetime { _ in
@@ -1105,6 +1174,10 @@ extension PeerMedia: RTCPeerConnectionDelegate {
         // as the channel opens, and the WebRTC wrapper drops any message that arrives while the
         // channel has no delegate. Main-queue order still adopts the channel before its messages.
         dataChannel.delegate = self
+        if dataChannel.label == Self.pointerChannelLabel {
+            if !adoptPointerChannel(dataChannel) { dataChannel.delegate = nil; dataChannel.close() }
+            return
+        }
         if dataChannel.label == Self.fileChannelLabel, adoptFileChannel(dataChannel) { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.closed, dataChannel.label == "control", self.channel == nil else {
@@ -1152,6 +1225,7 @@ extension PeerMedia: RTCDataChannelDelegate {
         onFileBufferedAmountChange?()
     }
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        if isPointerChannel(dataChannel) { return }
         if isFileChannel(dataChannel) {
             if dataChannel.readyState == .closed { onFileBufferedAmountChange?() }
             return
@@ -1166,6 +1240,10 @@ extension PeerMedia: RTCDataChannelDelegate {
         }
     }
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
+        if isPointerChannel(dataChannel) {
+            if buffer.isBinary { receivePointer(buffer.data) }
+            return
+        }
         if isFileChannel(dataChannel) {
             guard buffer.isBinary, buffer.data.count <= FileTransferLimits.maximumMessageBytes, localGateOpen() else { return }
             onFileMessage?(buffer.data)

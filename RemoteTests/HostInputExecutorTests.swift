@@ -1,0 +1,210 @@
+import XCTest
+import AppKit
+
+private final class ExecutorSink {
+    var pointer = CGPoint(x: 100, y: 100)
+    var events: [RemoteInputEventSink.MouseEvent] = []
+    var keys: [CGKeyCode] = []
+    var refuse = false
+    var beforeMouse: (() -> Void)?
+    var sink: RemoteInputEventSink {
+        RemoteInputEventSink(pointerLocation: { self.pointer }, mouseSequence: { events in
+            self.beforeMouse?()
+            guard !self.refuse else { return false }
+            self.events += events; self.pointer = events.last?.point ?? self.pointer; return true
+        }, scroll: { _, _, _ in true }, text: { _ in true }, key: { key, _ in self.keys.append(key); return true })
+    }
+    func executor(queue: DispatchQueue = DispatchQueue(label: "input-test"), clock: @escaping () -> TimeInterval = { 10 }) -> HostInputExecutor {
+        let result = HostInputExecutor(driver: RemoteInputDriver(eventSink: sink, isTrusted: { true }), queue: queue, clock: clock)
+        result.configure(bounds: CGRect(x: 0, y: 0, width: 200, height: 200)); result.enabled = true
+        return result
+    }
+}
+final class HostInputExecutorTests: XCTestCase {
+    private let authority: (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome = { $0() }
+    private func context(_ moves: [Double] = []) -> InputCausalEnvelope {
+        InputCausalEnvelope(kind: "barrier", nonce: String(repeating: "a", count: 32), anchor: String(repeating: "b", count: 32), epoch: 7, applied: UInt64(moves.count),
+                            segments: moves.enumerated().map { InputMotionSegment(ordinal: UInt64($0.offset + 1), action: RemoteAction(action: "move", x: $0.element, epoch: 7)) })
+    }
+    private func admitted(_ action: RemoteAction) -> HostInputExecutor.Admitted { .init(action: action, upgraded: true, expires: 11) }
+    func testReliableClickPostsMissingClampedPathAndLateDuplicateDoesNotMoveAgain() {
+        let sink = ExecutorSink(), executor = sink.executor(), prefix = context([500, -80])
+        executor.beginCausalContext(context())
+        let click = RemoteAction(action: "click", epoch: 7, interaction: NativeInteraction(clickCount: 1))
+        let done = expectation(description: "click after state")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: admitted(click), routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.failed); XCTAssertEqual(receipt.applied, 2); done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(sink.events.count, 4)
+        for (event, expected) in zip(sink.events, [200.0, 120.0, 120.0, 120.0]) {
+            XCTAssertEqual(event.point.x, expected, accuracy: 0.000001)
+        }
+        let duplicate = expectation(description: "duplicate")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: nil, routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.failed); XCTAssertTrue(receipt.results.isEmpty); duplicate.fulfill()
+        }
+        wait(for: [duplicate], timeout: 2)
+        XCTAssertEqual(sink.events.count, 4)
+    }
+    func testRevocationWhileQueuedPreventsPostingAndCompletionCannotRestoreAuthority() {
+        let queue = DispatchQueue(label: "blocked-input"), sink = ExecutorSink(), executor = sink.executor(queue: queue)
+        queue.suspend()
+        let done = expectation(description: "rejected")
+        executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: .infinity, routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.outcome.accepted); XCTAssertFalse(executor.accepts(receipt)); done.fulfill()
+        }
+        executor.enabled = false
+        queue.resume(); wait(for: [done], timeout: 2)
+        XCTAssertTrue(sink.keys.isEmpty)
+    }
+    func testDeadlineAndRouteAreCheckedAfterQueueDelay() {
+        let sink = ExecutorSink(), executor = sink.executor()
+        let done = expectation(description: "expired")
+        executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: 9, routeAuthority: { _ in XCTFail("expired must not reach route"); return RemoteInputOutcome() }) { receipt in
+            XCTAssertFalse(receipt.outcome.accepted); done.fulfill()
+        }
+        wait(for: [done], timeout: 2)
+        let cut = expectation(description: "route cut")
+        executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: 11, routeAuthority: { _ in RemoteInputOutcome() }) { receipt in
+            XCTAssertFalse(receipt.outcome.accepted); cut.fulfill()
+        }
+        wait(for: [cut], timeout: 2); XCTAssertTrue(sink.keys.isEmpty)
+    }
+    func testCopyPreparationReservesFIFOAndDoesNotBlockRevocation() {
+        let sink = ExecutorSink(), executor = sink.executor(), baseline = DispatchGroup()
+        baseline.enter()
+        let done = expectation(description: "two keys"); done.expectedFulfillmentCount = 2
+        executor.submit(RemoteAction(action: "key", key: "c"), upgraded: false, expires: 11, preparation: baseline, routeAuthority: authority) { _ in done.fulfill() }
+        executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: 11, routeAuthority: authority) { _ in done.fulfill() }
+        XCTAssertTrue(sink.keys.isEmpty)
+        baseline.leave(); wait(for: [done], timeout: 2)
+        XCTAssertEqual(sink.keys, [8, 0])
+    }
+    func testQueuedHoldReleaseCancelsBeforeMouseDownAndWrongHoldCannotOwnScope() {
+        let queue = DispatchQueue(label: "release-input"), sink = ExecutorSink(), executor = sink.executor(queue: queue)
+        queue.suspend()
+        let down = RemoteAction(action: "dragDown", interaction: NativeInteraction(hold: "pending", clickCount: 1))
+        let done = expectation(description: "cancelled down")
+        executor.submit(down, upgraded: true, expires: 11, routeAuthority: authority) { result in XCTAssertFalse(result.outcome.accepted); done.fulfill() }
+        XCTAssertEqual(executor.releaseScope(for: RemoteAction(action: "release", interaction: NativeInteraction(hold: "wrong"))), "pending")
+        XCTAssertEqual(executor.releaseScope(for: RemoteAction(action: "release", interaction: NativeInteraction(hold: "pending"))), "pending")
+        executor.invalidateQueued(); executor.release()
+        queue.resume(); wait(for: [done], timeout: 2)
+        XCTAssertTrue(sink.events.isEmpty); XCTAssertFalse(executor.held)
+    }
+    func testPhysicalInterventionAndSinkFailureRefuseSemanticAndDoNotAcknowledgeUnpostedState() {
+        let sink = ExecutorSink(), executor = sink.executor(), prefix = context([2])
+        executor.beginCausalContext(context()); executor.drain(); sink.pointer.x = 50
+        let intervention = expectation(description: "physical intervention")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: admitted(RemoteAction(action: "key", key: "a")), routeAuthority: authority) { result in
+            XCTAssertTrue(result.intervention); XCTAssertTrue(result.failed); XCTAssertEqual(result.applied, 0); intervention.fulfill()
+        }
+        wait(for: [intervention], timeout: 2); XCTAssertTrue(sink.keys.isEmpty)
+        executor.beginCausalContext(context()); sink.refuse = true
+        let rejected = expectation(description: "sink refused")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: admitted(RemoteAction(action: "key", key: "a")), routeAuthority: authority) { result in
+            XCTAssertTrue(result.failed); XCTAssertFalse(result.intervention); XCTAssertEqual(result.applied, 0); rejected.fulfill()
+        }
+        wait(for: [rejected], timeout: 2); XCTAssertTrue(sink.keys.isEmpty)
+    }
+    func testNewEpochCancelsQueuedOldCheckpointWithoutMainQueueDrain() {
+        let queue = DispatchQueue(label: "epoch-input"), sink = ExecutorSink(), executor = sink.executor(queue: queue)
+        executor.beginCausalContext(context()); queue.suspend()
+        let prefix = context([3]), done = expectation(description: "old epoch cancelled")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: nil, routeAuthority: authority) { result in XCTAssertTrue(result.failed); done.fulfill() }
+        var next = context(); next.epoch = 8; next.anchor = String(repeating: "c", count: 32)
+        executor.beginCausalContext(next)
+        queue.resume(); wait(for: [done], timeout: 2); XCTAssertTrue(sink.events.isEmpty)
+    }
+    func testReleaseLinearizesAfterInFlightPostingAndEmitsOneUp() {
+        let sink = ExecutorSink(), executor = sink.executor()
+        let started = DispatchSemaphore(value: 0), unblock = DispatchSemaphore(value: 0), released = DispatchSemaphore(value: 0)
+        sink.beforeMouse = { started.signal(); _ = unblock.wait(timeout: .now() + 2) }
+        let done = expectation(description: "posted down")
+        executor.submit(RemoteAction(action: "dragDown", interaction: NativeInteraction(hold: "owned", clickCount: 1)),
+                        upgraded: true, expires: 11, routeAuthority: authority) { result in
+            XCTAssertTrue(result.outcome.accepted); done.fulfill()
+        }
+        XCTAssertEqual(started.wait(timeout: .now() + 1), .success)
+        DispatchQueue.global().async { executor.release(); released.signal() }
+        XCTAssertEqual(released.wait(timeout: .now() + 0.02), .timedOut, "release cannot pass an in-flight posting fence")
+        unblock.signal(); unblock.signal()
+        XCTAssertEqual(released.wait(timeout: .now() + 2), .success)
+        wait(for: [done], timeout: 2)
+        XCTAssertEqual(sink.events.map(\.type), [.leftMouseDown, .leftMouseUp]); XCTAssertFalse(executor.held)
+    }
+    func testBoundedQueueRejectsAdditionalAcceptedWorkAndCleanupCancelsBacklog() {
+        let queue = DispatchQueue(label: "full-input"), sink = ExecutorSink(), executor = sink.executor(queue: queue)
+        queue.suspend()
+        let done = expectation(description: "all queued cancelled"); done.expectedFulfillmentCount = HostInputExecutor.maximumQueued
+        for _ in 0..<HostInputExecutor.maximumQueued {
+            XCTAssertTrue(executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: 11, routeAuthority: authority) { result in
+                XCTAssertFalse(result.outcome.accepted); done.fulfill()
+            })
+        }
+        XCTAssertFalse(executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: 11, routeAuthority: authority) { _ in XCTFail("overflow must not enter queue") })
+        executor.release(); queue.resume(); wait(for: [done], timeout: 2)
+        XCTAssertTrue(sink.keys.isEmpty)
+    }
+
+    func testNegotiationHandoffRetainsAlreadyAdmittedLegacyPathBeforeAnchor() {
+        let queue = DispatchQueue(label: "handoff-input"), sink = ExecutorSink(), executor = sink.executor(queue: queue)
+        queue.suspend()
+        let legacy = expectation(description: "legacy state")
+        executor.submit(RemoteAction(action: "move", x: 10), upgraded: false, expires: 11, routeAuthority: authority) { result in
+            XCTAssertTrue(result.outcome.accepted); legacy.fulfill()
+        }
+        executor.beginCausalContext(context())
+        let upgraded = expectation(description: "upgraded state"), prefix = context([20])
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: nil, routeAuthority: authority) { result in
+            XCTAssertFalse(result.failed); XCTAssertFalse(result.intervention); upgraded.fulfill()
+        }
+        queue.resume(); wait(for: [legacy, upgraded], timeout: 2)
+        XCTAssertEqual(sink.pointer.x, 130, accuracy: 0.00001)
+    }
+
+    func testHealthyReenableEstablishesAnchorAfterDisabledEpochInvalidation() {
+        let sink = ExecutorSink(), executor = sink.executor()
+        executor.enabled = false; executor.beginCausalContext(context())
+        executor.invalidateQueued(); executor.resetNativeSequence()
+        sink.pointer.x = 70
+        executor.enabled = true
+        let prefix = context([5]), done = expectation(description: "new healthy epoch")
+        executor.submitCausal(prefix, steps: prefix.segments.map { admitted($0.action) }, semantic: nil, routeAuthority: authority) { result in
+            XCTAssertFalse(result.failed); XCTAssertFalse(result.intervention); done.fulfill()
+        }
+        wait(for: [done], timeout: 2); XCTAssertEqual(sink.pointer.x, 75, accuracy: 0.00001)
+    }
+
+    func testQueueWaitRechecksBothFreshnessDeadlineAndActiveHoldLease() {
+        let queue = DispatchQueue(label: "lease-input"), sink = ExecutorSink()
+        var now: TimeInterval = 10
+        let executor = sink.executor(queue: queue, clock: { now })
+        let down = expectation(description: "held")
+        executor.submit(RemoteAction(action: "dragDown", interaction: NativeInteraction(hold: "lease", clickCount: 1)), upgraded: true,
+                        expires: 100, routeAuthority: authority) { result in XCTAssertTrue(result.outcome.accepted); down.fulfill() }
+        wait(for: [down], timeout: 2)
+        queue.suspend()
+        let late = expectation(description: "late"); late.expectedFulfillmentCount = 2
+        executor.submit(RemoteAction(action: "move", x: 5, interaction: NativeInteraction(hold: "lease")), upgraded: true,
+                        expires: 100, routeAuthority: authority) { result in XCTAssertFalse(result.outcome.accepted); late.fulfill() }
+        executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false,
+                        expires: 11, routeAuthority: authority) { result in XCTAssertFalse(result.outcome.accepted); late.fulfill() }
+        now = 12; queue.resume(); wait(for: [late], timeout: 2)
+        XCTAssertEqual(sink.events.count, 1); XCTAssertTrue(sink.keys.isEmpty)
+        XCTAssertTrue(executor.release()); XCTAssertEqual(sink.events.count, 2)
+    }
+    func testRevokeDuringCopyPreparationCannotPostOrReviveAuthority() {
+        let sink = ExecutorSink(), executor = sink.executor(), preparation = DispatchGroup()
+        preparation.enter()
+        let done = expectation(description: "revoked prepared copy")
+        executor.submit(RemoteAction(action: "key", key: "c"), upgraded: false, expires: 11,
+                        preparation: preparation, routeAuthority: authority) { result in
+            XCTAssertFalse(result.outcome.accepted); XCTAssertFalse(executor.accepts(result)); done.fulfill()
+        }
+        executor.enabled = false; preparation.leave()
+        wait(for: [done], timeout: 2); XCTAssertTrue(sink.keys.isEmpty)
+    }
+
+}
