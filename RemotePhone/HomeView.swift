@@ -10,7 +10,6 @@ struct PhoneRemoteView: View {
     /// `showsSession`, changed inside an animation so the session opens and closes with D38's motion.
     @State private var presentedSession = false
     @State private var irisAnchor = UnitPoint(x: 0.52, y: 0.25)
-    @State private var screenSize: CGSize = .zero
     @State private var returningFromSession = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -40,13 +39,11 @@ struct PhoneRemoteView: View {
                 NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true)
             }
         }
-        .background {
-            Color.clear.ignoresSafeArea()
-                .onGeometryChange(for: CGSize.self) { $0.size } action: { screenSize = $0 }
-        }
+        // Read once per change of Home's art, never on keyboard or rotation frames of the session.
         .onPreferenceChange(ReachMeetingPointKey.self) { point in
-            guard let point, screenSize.width > 0, screenSize.height > 0 else { return }
-            irisAnchor = UnitPoint(x: point.x / screenSize.width, y: point.y / screenSize.height)
+            guard let point, let screen = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.screen.bounds.size,
+                  screen.width > 0, screen.height > 0 else { return }
+            irisAnchor = UnitPoint(x: point.x / screen.width, y: point.y / screen.height)
         }
         .onAppear { presentedSession = showsSession }
         .onChange(of: showsSession) { was, now in

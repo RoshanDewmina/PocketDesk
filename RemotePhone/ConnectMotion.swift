@@ -399,7 +399,7 @@ struct ReconnectVeil: View {
                         removal: .modifier(active: VeilOpening(progress: 1), identity: VeilOpening(progress: 0))))
             }
         }
-        .ignoresSafeArea()
+        .ignoresSafeArea(.container)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
         .animation(reduceMotion ? .easeInOut(duration: 0.25) : Farside.Motion.easeOut(0.44), value: active)
