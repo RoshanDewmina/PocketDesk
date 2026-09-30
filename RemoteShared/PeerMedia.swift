@@ -503,16 +503,15 @@ final class PeerMedia: NSObject {
         _ = Self.codecRuntime
         let ownedEncoderFactory = PocketDeskVideoEncoderFactory(counters: counters, frameTiming: frameTimingLog)
         let ownedDecoderFactory = PocketDeskVideoDecoderFactory(frameTiming: frameTimingReceiver?.log)
-        var factory = nativeDesktopCodecs
-            ? RTCPeerConnectionFactory(encoderFactory: ownedEncoderFactory, decoderFactory: ownedDecoderFactory)
-            : Self.compatibleFactory
+        var configuredFactory: RTCPeerConnectionFactory?
         #if os(macOS)
         if isHost {
             let device = FPSystemAudioDevice()
             // One ADM per peer: the shared video factories must never share captured samples.
-            factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? ownedEncoderFactory : RTCDefaultVideoEncoderFactory(),
+            let factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? ownedEncoderFactory : RTCDefaultVideoEncoderFactory(),
                                                decoderFactory: nativeDesktopCodecs ? ownedDecoderFactory : RTCDefaultVideoDecoderFactory(),
                                                audioDevice: device)
+            configuredFactory = factory
             sessionAudioFactory = factory
             withAudioLifetime { _ in systemAudioDevice = device }
             #if DEBUG
@@ -524,14 +523,18 @@ final class PeerMedia: NSObject {
         if !isHost {
             let device = PhoneSystemAudioDevice()
             device.onFailure = { [weak self] in self?.onAudioPlaybackFailure?() }
-            factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? ownedEncoderFactory : RTCDefaultVideoEncoderFactory(),
+            let factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? ownedEncoderFactory : RTCDefaultVideoEncoderFactory(),
                                                decoderFactory: nativeDesktopCodecs ? ownedDecoderFactory : RTCDefaultVideoDecoderFactory(), audioDevice: device)
+            configuredFactory = factory
             withAudioLifetime { _ in phoneAudioDevice = device }; phoneAudioFactory = factory
             #if DEBUG
             E2EMedia.restrictToLoopbackIfNeeded(factory)
             #endif
         }
         #endif
+        let factory = configuredFactory ?? (nativeDesktopCodecs
+            ? RTCPeerConnectionFactory(encoderFactory: ownedEncoderFactory, decoderFactory: ownedDecoderFactory)
+            : Self.compatibleFactory)
         #if DEBUG
         E2EMedia.restrictToLoopbackIfNeeded(factory)
         #endif
