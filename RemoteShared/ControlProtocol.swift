@@ -37,6 +37,8 @@ struct RemoteAction: Codable {
     // Privacy curtain request ("curtain" action) or state (on "capture"); host lifecycle event.
     var curtain: String? = nil
     var hostEvent: String? = nil
+    /// Gated Away mode state, only on a capture status.
+    var away: String? = nil
     /// Display selection (`displays`, `display`); validated in DisplaySelection.swift.
     var displays: [DisplayDescriptor]? = nil
     var display: UInt32? = nil
