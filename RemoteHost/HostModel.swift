@@ -387,8 +387,15 @@ final class RemoteHostModel: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                if self.bigTextOwnsScreenChanges { self.curtain.refitDuringDisplayChange(); return }
-                self.handleScreenChange()
+                if self.bigTextHandlingScreenChanges {
+                    self.bigText.handleScreenChangeNotification(
+                        refit: { self.curtain.refitDuringDisplayChange() },
+                        foreign: { self.handleScreenChange() })
+                } else if self.bigTextOwnsScreenChanges {
+                    self.curtain.refitDuringDisplayChange()
+                } else {
+                    self.handleScreenChange()
+                }
             }
         })
         observers.append(NotificationCenter.default.addObserver(
@@ -2178,9 +2185,13 @@ extension RemoteHostModel: BigTextHost {
     }
 
     /// Screen changes Big Text makes are handled by its own completion, not by stopping the session.
+    private var bigTextHandlingScreenChanges: Bool {
+        bigText.isChanging || bigTextNeedsRefresh || bigTextResuming || bigTextRefreshTask != nil
+    }
+
     fileprivate var bigTextOwnsScreenChanges: Bool {
-        if bigText.isChanging || bigTextNeedsRefresh || bigTextResuming || bigTextRefreshTask != nil {
-            return bigText.ownsLiveConfiguration
+        if bigTextHandlingScreenChanges {
+            return bigText.screenChangeVerdict != .foreign
         }
         guard let snapshot = bigTextScreenSnapshot else { return false }
         let online = LiveDisplayModeSwitcher().onlineDisplays()

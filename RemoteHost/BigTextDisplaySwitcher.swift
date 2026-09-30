@@ -43,6 +43,26 @@ struct OwnChangeRecognizer {
         return before.matchesChange(display: display, target: target, online: online, frames: frames, modeIDs: modeIDs)
     }
 
+    /// Observer deferral accepts only the two configurations bracketing our apply.
+    /// Missing/transitional target mode evidence cannot authorize resuming input.
+    func screenChangeVerdict(now: TimeInterval, online: Set<CGDirectDisplayID>,
+                             frames: [CGDirectDisplayID: CGRect], modeIDs: [CGDirectDisplayID: Int32]) -> Verdict {
+        guard !sawStructuralChange, online == onlineBefore else { return .foreign }
+        guard let before else { return .foreign }
+        if preparing {
+            return before.matches(online: online, frames: frames, modeIDs: modeIDs) ? .ours : .foreign
+        }
+        if configurationMatches(online: online, frames: frames, modeIDs: modeIDs, applied: true) { return .ours }
+        guard now - startedAt <= Self.timeout, modeIDs[display] != target.ioModeID else { return .foreign }
+        var baselineModes = modeIDs
+        baselineModes[display] = before.modeIDs[display]
+        var targetModes = modeIDs
+        targetModes[display] = target.ioModeID
+        let geometryAllowed = before.matches(online: online, frames: frames, modeIDs: baselineModes) ||
+            before.matchesChange(display: display, target: target, online: online, frames: frames, modeIDs: targetModes)
+        return geometryAllowed ? .pending : .foreign
+    }
+
     init(display: CGDirectDisplayID, target: DisplayModeInfo, onlineBefore: Set<CGDirectDisplayID>, startedAt: TimeInterval, before: BigTextScreenSnapshot? = nil, preparing: Bool = false) {
         self.display = display
         self.target = target

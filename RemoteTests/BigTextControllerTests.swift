@@ -31,8 +31,9 @@ final class ControllerFakeKeeper: BigTextWindowKeeping, @unchecked Sendable {
     var snapshots = 0, settled = 0, restores = 0, discards = 0
     var onSnapshot: (@MainActor () async -> Void)?
     var onSettled: (@MainActor () async -> Void)?
+    var onPrepareStep: (@MainActor () async -> Void)?
     func snapshot(within bounds: CGRect, pids: [pid_t]) async { snapshots += 1; hasSnapshot = true; await onSnapshot?() }
-    func prepareStep() async {}
+    func prepareStep() async { await onPrepareStep?() }
     func recordSettled() async { settled += 1; await onSettled?() }
     func restore() async -> Int { restores += 1; hasSnapshot = false; return 1 }
     func discard() { discards += 1; hasSnapshot = false }
@@ -72,6 +73,8 @@ final class BigTextControllerTests: XCTestCase {
     override func setUp() async throws {
         try await super.setUp()
         clock = 0
+        observerStops = 0
+        observerRefits = 0
         switcher = ControllerFakeSwitcher()
         switcher.modesByDisplay = [1: [base, large, larger], 2: [base, large]]
         switcher.currentByDisplay = [1: base, 2: base]
@@ -629,6 +632,101 @@ final class BigTextControllerTests: XCTestCase {
         XCTAssertEqual(errors, [.failed])
         XCTAssertTrue(host.resumes.isEmpty)
         XCTAssertFalse(controller.ownsLiveConfiguration)
+    }
+
+    // Exercises the exact observer boundary used by HostModel with lifecycle callbacks.
+    private var observerStops = 0
+    private var observerRefits = 0
+    private func notifyScreenParametersChanged() {
+        controller.handleScreenChangeNotification(
+            refit: { self.observerRefits += 1 },
+            foreign: {
+                self.observerStops += 1
+                self.controller.sessionEnded(.sessionEnded)
+            })
+    }
+
+    private func installPendingObserverChange(unreadable: Bool, settle: Bool) {
+        switcher.onApply = { [unowned self] mode, display in
+            self.switcher.framesByDisplay[display] = CGRect(x: 0, y: 0, width: mode.width, height: mode.height)
+            self.switcher.currentByDisplay[display] = unreadable ? nil : self.base
+            self.controller.observe(DisplayReconfigurationEvent(display: display, flags: [.setModeFlag]))
+            XCTAssertEqual(self.controller.screenChangeVerdict, .pending)
+            XCTAssertFalse(self.controller.ownsLiveConfiguration, "pending cannot authorize input/capture resume")
+            self.notifyScreenParametersChanged()
+        }
+        controller = BigTextController(switcher: switcher, windows: keeper, now: { [unowned self] in self.clock },
+            sleep: { [unowned self] seconds in
+                self.clock += seconds
+                await Task.yield()
+                self.notifyScreenParametersChanged()
+                if settle { self.switcher.currentByDisplay[1] = self.large }
+            })
+        controller.host = host
+    }
+
+    func testUnreadableTargetObserverDefersStopUntilOwnedCompletion() async {
+        installPendingObserverChange(unreadable: true, settle: true)
+        await apply(1280)
+        XCTAssertEqual(observerStops, 0, "no baseline restore is queued by the pending observer")
+        XCTAssertGreaterThan(observerRefits, 0, "prepared coverage is refit while capture/input stay quiesced")
+        XCTAssertEqual(host.quiesces, 1)
+        XCTAssertEqual(host.resumes, [1])
+        XCTAssertEqual(appliedModes, [large])
+        XCTAssertEqual(errors, [nil])
+        XCTAssertTrue(controller.ownsLiveConfiguration)
+    }
+
+    func testTransitionalTargetObserverDefersStopUntilOwnedCompletion() async {
+        installPendingObserverChange(unreadable: false, settle: true)
+        await apply(1280)
+        XCTAssertEqual(observerStops, 0)
+        XCTAssertGreaterThan(observerRefits, 0)
+        XCTAssertEqual(host.resumes, [1])
+        XCTAssertEqual(errors, [nil])
+    }
+
+    func testPendingObserverTimeoutStopsWithoutResumingInput() async {
+        installPendingObserverChange(unreadable: true, settle: false)
+        await apply(1280)
+        XCTAssertGreaterThan(clock, OwnChangeRecognizer.timeout)
+        XCTAssertGreaterThan(observerStops, 0)
+        XCTAssertGreaterThan(observerRefits, 0)
+        XCTAssertTrue(host.resumes.isEmpty)
+        XCTAssertEqual(errors, [.failed])
+        XCTAssertEqual(host.foreign, 1)
+        XCTAssertTrue(controller.restorePending, "unreadable owned mode retains a baseline for later retry")
+    }
+
+    func testPendingTargetDoesNotHideOtherDisplayChangeFromObserver() async {
+        switcher.onApply = { [unowned self] mode, display in
+            self.switcher.framesByDisplay[display] = CGRect(x: 0, y: 0, width: mode.width, height: mode.height)
+            self.switcher.currentByDisplay[display] = nil
+            self.switcher.currentByDisplay[2] = self.large
+            XCTAssertEqual(self.controller.screenChangeVerdict, .foreign)
+            self.notifyScreenParametersChanged()
+        }
+        await apply(1280)
+        XCTAssertEqual(observerStops, 1)
+        XCTAssertEqual(observerRefits, 0)
+        XCTAssertTrue(host.resumes.isEmpty)
+        XCTAssertEqual(errors, [.failed])
+        XCTAssertEqual(switcher.currentByDisplay[2], large)
+    }
+
+    func testDelayedCompletedCallbackDuringNextPreparationIsIgnoredOnlyForUnchangedConfiguration() async {
+        await apply(1280)
+        keeper.onPrepareStep = { [unowned self] in
+            await Task.yield()
+            self.controller.observe(DisplayReconfigurationEvent(display: 1, flags: [.setModeFlag]))
+            self.notifyScreenParametersChanged()
+        }
+        await apply(1024)
+        XCTAssertEqual(observerStops, 0)
+        XCTAssertEqual(observerRefits, 1)
+        XCTAssertEqual(appliedModes, [large, larger])
+        XCTAssertEqual(errors, [nil, nil])
+        XCTAssertEqual(host.resumes, [1, 1])
     }
 
     func testEveryOwnedStepRecordsExpectedWindowGeometry() async {

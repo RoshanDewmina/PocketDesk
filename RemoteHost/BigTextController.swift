@@ -133,6 +133,11 @@ final class BigTextController {
 
     func observe(_ event: DisplayReconfigurationEvent) {
         guard recognizer == nil else {
+            // A completed callback can be delivered while the next AX preparation awaits.
+            // Ignore it only when the whole live configuration still equals that preparation's start.
+            if recognizer?.applicationStarted == false,
+               event.flags.isDisjoint(with: [.addFlag, .removeFlag, .enabledFlag, .disabledFlag, .mirrorFlag, .unMirrorFlag]),
+               configurationIsOurs(applied: false) { return }
             recognizer?.observe(event)
             return
         }
@@ -378,6 +383,22 @@ final class BigTextController {
         return completedSnapshot.matches(online: Set(live.frames.keys), frames: live.frames, modeIDs: live.modeIDs)
     }
 
+    /// Pending owns only observer deferral; resume and completed receipts still require
+    /// strict full-mode evidence through ownsLiveConfiguration.
+    var screenChangeVerdict: OwnChangeRecognizer.Verdict {
+        guard let recognizer else { return ownsLiveConfiguration ? .ours : .foreign }
+        let live = screenSnapshot()
+        return recognizer.screenChangeVerdict(now: now(), online: Set(live.frames.keys),
+                                               frames: live.frames, modeIDs: live.modeIDs)
+    }
+
+    func handleScreenChangeNotification(refit: () -> Void, foreign: () -> Void) {
+        switch screenChangeVerdict {
+        case .ours, .pending: refit()
+        case .foreign: foreign()
+        }
+    }
+
     private func handleForeignApply(mode: DisplayModeInfo, target: CGDirectDisplayID) {
         // Retain only display-mode ownership, never a window plan from a foreign configuration.
         windows.discard()
@@ -406,11 +427,8 @@ final class BigTextController {
         guard switcher.apply(mode, to: target) == .applied else { return .failed }
         while let recognizer, !Task.isCancelled {
             let live = screenSnapshot()
-            // The target can be transiently unreadable during configuration. Never accept
-            // another display's mode/arrangement change merely because the IDs stayed online.
-            if !recognizer.configurationMatches(online: Set(live.frames.keys), frames: live.frames,
-                                                modeIDs: live.modeIDs, applied: true),
-               switcher.currentMode(of: target)?.ioModeID == mode.ioModeID {
+            if recognizer.screenChangeVerdict(now: now(), online: Set(live.frames.keys),
+                                                frames: live.frames, modeIDs: live.modeIDs) == .foreign {
                 return .foreign
             }
             switch recognizer.verdict(now: now(), online: switcher.onlineDisplays(), current: switcher.currentMode(of: target)) {
