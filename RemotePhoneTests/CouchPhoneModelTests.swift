@@ -120,4 +120,57 @@ final class CouchPhoneModelTests: XCTestCase {
         XCTAssertNil(model.pendingModeSwitch)
         XCTAssertFalse(model.couchSwitchAvailable)
     }
+
+    func testEndingACouchSessionLeavesTheNextStartOnThePicture() throws {
+        let model = try liveCouch()
+        XCTAssertEqual(model.connection.sessionModeRequest, .couch)
+        model.disconnect()
+        XCTAssertEqual(model.connection.sessionModeRequest, .picture, "a Shortcut or URL connect must not start Couch")
+        XCTAssertEqual(model.requestedMode, .couch, "Home still retries the mode it asked for")
+        XCTAssertEqual(model.attemptMode, .couch)
+        XCTAssertEqual(model.sessionMode, .picture)
+    }
+
+    func testAReconnectComesBackAsTheSessionWasOnScreen() throws {
+        let fromCouch = try liveCouch()
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 3), to: fromCouch)
+        try deliver(status(true, epoch: 3, mode: "picture", features: couchFeatures), to: fromCouch)
+        fromCouch.disconnect()
+        XCTAssertEqual(fromCouch.requestedMode, .couch)
+        XCTAssertEqual(fromCouch.attemptMode, .picture, "switched to the picture in the session")
+        XCTAssertEqual(fromCouch.connection.sessionModeRequest, .picture)
+
+        let fromPicture = connected(mode: .picture)
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 2), to: fromPicture)
+        try deliver(status(true, mode: "couch", features: couchFeatures), to: fromPicture)
+        XCTAssertEqual(fromPicture.sessionMode, .couch)
+        fromPicture.disconnect()
+        XCTAssertEqual(fromPicture.attemptMode, .couch, "switched to Couch in the session")
+        XCTAssertEqual(fromPicture.connection.sessionModeRequest, .picture, "the coordinator stopped")
+
+        fromPicture.prepareConnection(mode: .picture)
+        XCTAssertNil(fromPicture.lastOnScreenMode, "Home's next Connect starts from what it asks for")
+        XCTAssertEqual(fromPicture.attemptMode, .picture)
+    }
+
+    /// The model owns a real coordinator (keychain store, network signaling) with no injection
+    /// point, so a unit test cannot hold it running; the running branch is the pure rule `end()` calls.
+    func testARunningRetryKeepsTheOnScreenModeAndAStoppedOneFallsBackToThePicture() {
+        XCTAssertEqual(PhoneRemoteModel.modeRequestAfterSessionEnd(coordinatorRunning: true, attemptMode: .couch), .couch)
+        XCTAssertEqual(PhoneRemoteModel.modeRequestAfterSessionEnd(coordinatorRunning: true, attemptMode: .picture), .picture)
+        XCTAssertEqual(PhoneRemoteModel.modeRequestAfterSessionEnd(coordinatorRunning: false, attemptMode: .couch), .picture)
+    }
+
+    func testCouchFailuresOfferThePictureInstead() {
+        let proof = FriendlyError.forCouch(status: "The devices could not verify a directly attached local link.", requestedCouch: true)
+        XCTAssertEqual(proof?.kind, .couchNotLocal)
+        XCTAssertEqual(proof?.action, .connectWithPicture)
+        XCTAssertEqual(proof?.message, CouchCopy.notLocal)
+        XCTAssertEqual(FriendlyError.forCouch(status: CouchCopy.phoneRefusedStatus, requestedCouch: true)?.kind, .couchNotLocal)
+        XCTAssertNil(FriendlyError.forCouch(status: CouchCopy.phoneRefusedStatus, requestedCouch: false))
+        XCTAssertEqual(FriendlyError.couch(.controlOff).message, CouchCopy.controlOff)
+        XCTAssertEqual(FriendlyError.Action.connectWithPicture.title, "Connect with picture")
+        XCTAssertEqual(MacStatus("Connecting live desktop…", couch: true).text, CouchCopy.checking)
+        XCTAssertEqual(MacStatus("Connecting live desktop…").text, FriendlyError.cardStatus("Connecting live desktop…"))
+    }
 }
