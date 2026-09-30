@@ -53,6 +53,10 @@ struct HostViewState: Equatable {
     var allowFileTransfer = true
     var pausedUntil: Date?
     var session: HostSessionReadout?
+    /// When the current phone session began, for the popover's elapsed time.
+    var sessionStartedAt: Date?
+    /// The paired phone as the Mac names it: its own name when it sent one, else "Your iPhone" (D39).
+    var phoneName = PhoneDisplayName.fallback
     var availability: HostAvailabilityNote?
     var loginItem: HostBackgroundItemState = .off
     var automaticRecovery: HostBackgroundItemState = .off

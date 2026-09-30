@@ -7,6 +7,11 @@ struct PhoneRemoteView: View {
     @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
     /// A live session stays on screen while it reconnects by itself, so zoom and pan survive a blip.
     @State private var sessionHeld = false
+    /// `showsSession`, changed inside an animation so the session opens and closes with D38's motion.
+    @State private var presentedSession = false
+    @State private var irisAnchor = UnitPoint(x: 0.52, y: 0.25)
+    @State private var returningFromSession = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var showsSession: Bool {
         connection.connected || connection.remoteVideo != nil
@@ -14,20 +19,40 @@ struct PhoneRemoteView: View {
     }
 
     var body: some View {
+        // Home is the first branch so the session, inserted or removed over it, draws on top.
         Group {
-            if showsSession {
+            if !presentedSession && !model.contentConcealed && !LaunchOptions.layoutCheck {
+                HomeView(model: model, connection: connection, onboarding: onboarding)
+                    .environment(\.farsideReturningFromSession, returningFromSession)
+                    .transition(.opacity)
+            } else if presentedSession {
                 // A held background session keeps its viewport; the overlay hides every remote pixel.
                 NativeSessionView(model: model, connection: connection, offlineLayoutCheck: false)
                     .overlay {
                         if model.contentConcealed { ConcealedRemoteView(model: model, connection: connection) }
                     }
+                    .transition(.farsideSession(anchor: irisAnchor, reduceMotion: reduceMotion))
+                    .zIndex(1)
             } else if model.contentConcealed {
                 ConcealedRemoteView(model: model, connection: connection)
-            } else if LaunchOptions.layoutCheck {
-                NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true)
             } else {
-                HomeView(model: model, connection: connection, onboarding: onboarding)
+                NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true)
             }
+        }
+        // Read once per change of Home's art, never on keyboard or rotation frames of the session.
+        .onPreferenceChange(ReachMeetingPointKey.self) { point in
+            guard let point, let screen = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.screen.bounds.size,
+                  screen.width > 0, screen.height > 0 else { return }
+            irisAnchor = UnitPoint(x: point.x / screen.width, y: point.y / screen.height)
+        }
+        .onAppear { presentedSession = showsSession }
+        .onChange(of: showsSession) { was, now in
+            if was && !now {
+                returningFromSession = true
+                if model.sessionEndReason == .user { ConnectHaptics.shared.play(.softEnd) }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1) { returningFromSession = false }
+            }
+            withAnimation(.farsideSession(reduceMotion: reduceMotion)) { presentedSession = now }
         }
         .fullScreenCover(item: $onboarding.step) { step in
             switch step {
@@ -40,6 +65,8 @@ struct PhoneRemoteView: View {
         .farsideSystemRoutes(model: model, onboarding: onboarding)
         .onChange(of: connection.connected) { _, connected in
             if connected {
+                // Finger meets pointer (D38). A held session coming back gets its own "back" beat.
+                if !sessionHeld { ConnectHaptics.shared.play(.meet) }
                 lastReachedAt = Date().timeIntervalSince1970
                 sessionHeld = true
             }
@@ -106,6 +133,13 @@ struct HomeView: View {
     @State private var pairedInSheet = false
     @State private var contactRipples: [HalftoneRipple] = []
     @State private var artSize: CGSize = .zero
+    /// When the current connect started waiting; drives the "still trying" rings (D38).
+    @State private var searchStart: Date?
+    /// The art's reaction to a known failure, shown briefly before the error cover.
+    @State private var failurePose: FriendlyError.Kind?
+    /// Set once when a session has just ended, so the hand eases back from the pointer.
+    @State private var retreatGap: CGFloat?
+    @Environment(\.farsideReturningFromSession) private var returning
     @State private var showPaywall = false
     @State private var showServerData = false
     @State private var showLegal = false
@@ -255,11 +289,35 @@ struct HomeView: View {
 
     private func gapArt(fullBleed: Bool) -> some View {
         let busy = status.tone == .busy
-        return ReachArt(gap: gapTarget, contact: status.inContact ? 1 : 0,
+        let gap = retreatGap ?? gapTarget
+        let rings = busy && !reduceMotion ? ReachArt.searchRings(from: searchStart, in: artSize, gap: gapTarget) : []
+        return ReachArt(gap: gap, contact: status.inContact ? 1 : 0,
                         cell: horizontalSizeClass == .regular ? 4.5 : 3.6, active: !covered,
-                        ripples: contactRipples, readoutText: busy ? status.text : nil)
+                        ripples: contactRipples + rings, readoutStage: busy ? ConnectStage(progress: status.progress) : nil,
+                        sink: failurePose == .napping ? 1 : 0, fade: failurePose == .unreachable ? 1 : 0)
             .animation(reduceMotion ? nil : Farside.Motion.easeOut(0.9), value: gapTarget)
             .animation(reduceMotion ? nil : Farside.Motion.easeOut(0.6), value: busy)
+            .animation(reduceMotion ? nil : Farside.Motion.easeOut(0.8), value: failurePose)
+            .background {
+                GeometryReader { proxy in
+                    let frame = proxy.frame(in: .global)
+                    let meet = ReachArt.meetingPoint(in: frame.size)
+                    Color.clear.preference(key: ReachMeetingPointKey.self,
+                                           value: CGPoint(x: frame.minX + meet.x, y: frame.minY + meet.y))
+                }
+            }
+            .onChange(of: busy) { _, nowBusy in
+                searchStart = nowBusy ? Date() : nil
+                if nowBusy { failurePose = nil }
+            }
+            .onChange(of: status.progress) { old, new in
+                if new == 3 && old < 3 { ConnectHaptics.shared.play(.click) }
+            }
+            .onAppear {
+                guard returning, !reduceMotion else { return }
+                retreatGap = 2
+                DispatchQueue.main.async { withAnimation(Farside.Motion.easeOut(0.9)) { retreatGap = nil } }
+            }
             .frame(height: verticalSizeClass == .compact ? 230 : (horizontalSizeClass == .regular ? 250 : 200))
             .onGeometryChange(for: CGSize.self) { $0.size } action: { artSize = $0 }
             .padding(.horizontal, fullBleed ? -20 : 0)
@@ -275,8 +333,8 @@ struct HomeView: View {
             .onChange(of: status.inContact) { _, contact in
                 guard contact, artSize != .zero else { return }
                 contactRipples = [HalftoneRipple(center: ReachArt.meetingPoint(in: artSize), date: Date())]
+                ConnectHaptics.shared.play(.contact)
             }
-            .sensoryFeedback(.impact(weight: .medium), trigger: status.inContact, condition: { _, contact in contact })
     }
 
     /// The art's gap follows the connection: reaching the service, the Mac answering, the picture opening.
@@ -414,6 +472,8 @@ struct HomeView: View {
         if decision == .proceed {
             lastFailure = nil
             checkedHealth = nil
+            failurePose = nil
+            ConnectHaptics.shared.play(.press)
         }
     }
 
@@ -448,7 +508,14 @@ struct HomeView: View {
                                                hasPlan: anywhere.entitlement.hasAccess)
         lastFailure = shown
         checkedHealth = nil
-        if !covered || friendlyError != nil { friendlyError = shown }
+        guard !covered || friendlyError != nil else { return }
+        // Let the art react to the known reason first (the pointer naps or dissolves), then explain it.
+        let pose: FriendlyError.Kind? = shown.kind == .napping || shown.kind == .unreachable ? shown.kind : nil
+        guard let pose, !reduceMotion, friendlyError == nil else { friendlyError = shown; return }
+        failurePose = pose
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+            if lastFailure == shown && friendlyError == nil { friendlyError = shown }
+        }
     }
 
     private func showDepartureIfNeeded() {

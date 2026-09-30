@@ -52,6 +52,10 @@ final class RemoteCoordinator: ObservableObject {
     private(set) var peerFeatures: Set<String> = []
     /// Phone: the grant the Mac said it is missing when it refused this attempt.
     @Published private(set) var macBlocker: MacShareBlocker?
+    /// Host: the paired phone's display name as it last reported it, if it ever did (D39).
+    @Published private(set) var peerName: String?
+    /// Phone: the name this device sends its Mac inside the sealed `acceptedAck`.
+    var localDisplayName: String?
     var media: PeerMedia?
     /// Receives the `file` channel's chunks and buffer changes for every session's peer.
     weak var fileTransfer: FileTransferEngine?
@@ -190,7 +194,7 @@ final class RemoteCoordinator: ObservableObject {
     }
     func restore() {
         do {
-            if isHost { hostPair = try store.read(HostPair.self); invitation = hostPair?.invitation }
+            if isHost { hostPair = try store.read(HostPair.self); invitation = hostPair?.invitation; peerName = hostPair?.phoneName }
             else { invitation = try store.read(PairInvitation.self) }
             status = invitation == nil ? "Pair with your Mac to get started" : "Ready to connect"
         } catch { status = error.localizedDescription }
@@ -200,7 +204,7 @@ final class RemoteCoordinator: ObservableObject {
         let pair = try HostPair.create(server: server, name: name)
         try pair.invitation.validate()
         try store.save(pair)
-        hostPair = pair; invitation = pair.invitation
+        hostPair = pair; invitation = pair.invitation; peerName = nil
         return pair.invitation
     }
     func enroll(_ code: String) throws {
@@ -269,7 +273,7 @@ final class RemoteCoordinator: ObservableObject {
                 status = "Pairing could not be removed. Try removing it again."
                 return false
             }
-            hostPair = nil; invitation = nil
+            hostPair = nil; invitation = nil; peerName = nil
             status = "Pairing removed. Old credentials no longer work."
             return true
         } catch {
@@ -519,7 +523,7 @@ final class RemoteCoordinator: ObservableObject {
                 #endif
             }
             prepareMedia()
-            send(kind: "acceptedAck")
+            send(kind: "acceptedAck", body: PhoneIdentity.body(for: localDisplayName))
         case MacShareBlocker.refusalKind where !isHost:
             guard media == nil, let body = message.body else { throw RemoteError.invalidMessage }
             let refusal = try JSONDecoder().decode(MacShareBlocker.Refusal.self, from: body)
@@ -527,6 +531,7 @@ final class RemoteCoordinator: ObservableObject {
             fail("Mac unavailable: \(refusal.reason.rawValue)")
         case "acceptedAck" where isHost:
             guard proofReceived, media == nil, !awaitingApproval else { throw RemoteError.stale }
+            recordPeerName(PhoneIdentity.decode(message.body))
             prepareMedia()
         case "media":
             guard let body = message.body else { throw RemoteError.invalidMessage }
@@ -537,6 +542,13 @@ final class RemoteCoordinator: ObservableObject {
             pendingMediaSignals.append(signal)
         default: throw RemoteError.invalidMessage
         }
+    }
+    /// Keeps the name a paired phone reports; a phone that sends none keeps the stored one.
+    private func recordPeerName(_ name: String?) {
+        guard let name, var pair = hostPair, pair.paired, pair.phoneName != name else { return }
+        pair.phoneName = name
+        do { try store.save(pair); hostPair = pair; peerName = name }
+        catch { peerName = name }
     }
     private func acceptSession() {
         do {

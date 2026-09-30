@@ -52,6 +52,13 @@ final class HostUISnapshotTests: XCTestCase {
                 $0.crashLoopStopped = true
                 $0.detail = "Farside stopped after repeated crashes. Sharing is paused until you resume it."
             }),
+            ("popover-live-named", ready(.controlling) {
+                $0.session = Self.measured
+                $0.sessionStartedAt = now.addingTimeInterval(-724)
+                $0.phoneName = "Roshan’s iPhone"
+            }),
+            ("popover-live-measuring", ready(.controlling) { $0.sessionStartedAt = now.addingTimeInterval(-3) }),
+            ("popover-pairing-code", ready(.pairing) { $0.pairing = .showingCode(Self.code, expires: Self.expires) }),
             ("popover-curtain-up", ready(.controlling) {
                 $0.session = Self.measured
                 $0.privacyCurtain = true
@@ -63,8 +70,38 @@ final class HostUISnapshotTests: XCTestCase {
             let presentation = HostPopoverPresentation.make(for: state, now: now)
             XCTAssertLessThanOrEqual(presentation.headline.count, 34, name)
             XCTAssertEqual(presentation.mood == .live, state.status.isSessionLive, name)
-            try render(name, HostPopoverReviewScene(state: state, now: now))
+            try render(name, HostPopoverReviewScene(state: state, now: now,
+                                                   activity: name == "popover-live-named" ? Self.liveFeed(now: now) : nil))
         }
+        try render("popover-stop-confirm", HostPopoverReviewScene(state: ready(.controlling) {
+            $0.session = Self.measured
+            $0.sessionStartedAt = now.addingTimeInterval(-300)
+        }, now: now, confirmingStop: true))
+    }
+
+    /// Measured round trips and a tap from just now, so the sparkline and the Taps light show.
+    private static func liveFeed(now: Date) -> HostActivityFeed {
+        let feed = HostActivityFeed()
+        for value in [13, 14, 14, 16, 13, 12, 15, 31, 18, 14, 13, 14, 15, 14] { feed.record(roundTripMs: value) }
+        return feed
+    }
+
+    func testLiveMarkFramesAnimateOnlyTheLiveMark() {
+        let frames = [HostMarkFrame(halo: 0.18), HostMarkFrame(wave: 0.5), HostMarkFrame(flash: 0.5)]
+        for frame in frames {
+            for state in HostMarkState.allCases {
+                let image = HostMenuBarIcon.image(for: state, accessibilityDescription: "Farside", frame: frame)
+                XCTAssertEqual(image.isTemplate, state != .live, "A frame never changes what tints the mark")
+            }
+        }
+        let live = Date(timeIntervalSinceReferenceDate: 50)
+        XCTAssertNotNil(HostMarkFrame.at(live.addingTimeInterval(0.2), liveSince: live, flashAt: nil).wave)
+        XCTAssertNil(HostMarkFrame.at(live.addingTimeInterval(0.6), liveSince: live, flashAt: nil).wave, "The arrival wave plays once")
+        XCTAssertNotNil(HostMarkFrame.at(live.addingTimeInterval(0.1), liveSince: nil, flashAt: live).flash)
+        XCTAssertNil(HostMarkFrame.at(live.addingTimeInterval(0.4), liveSince: nil, flashAt: live).flash)
+        let halos = stride(from: 0.0, to: 2.8, by: 0.1).map { HostMarkFrame.at(live.addingTimeInterval($0), liveSince: nil, flashAt: nil).halo }
+        XCTAssertGreaterThan(halos.max()!, halos.min()!, "The halo breathes")
+        XCTAssertTrue(halos.allSatisfy { $0 >= 0.15 && $0 <= 0.5 })
     }
 
     func testMenuBarMark() throws {
@@ -304,6 +341,8 @@ final class HostUISnapshotTests: XCTestCase {
 private struct HostPopoverReviewScene: View {
     let state: HostViewState
     let now: Date
+    var confirmingStop = false
+    var activity: HostActivityFeed?
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 8) {
@@ -323,7 +362,7 @@ private struct HostPopoverReviewScene: View {
             .padding(.horizontal, 12)
             .frame(height: 28)
             .background(Color.white.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-            HostPopoverView(state: state, actions: .preview, now: now)
+            HostPopoverView(state: state, actions: .preview, now: now, activity: activity, confirmingStop: confirmingStop)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(Farside.Palette.line2, lineWidth: 1))

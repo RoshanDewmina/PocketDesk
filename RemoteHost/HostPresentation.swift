@@ -172,6 +172,14 @@ struct HostPopoverPresentation: Equatable {
         return action == actions.last ? .primary : .plate
     }
 
+    /// The button Return presses. For an unknown phone that is Decline, so Return never lets a
+    /// phone in (D39); otherwise the bone main action, if there is one.
+    var defaultAction: HostPopoverAction? {
+        if actions.contains(.declinePhone) { return .declinePhone }
+        guard let last = actions.last, emphasis(of: last) == .primary else { return nil }
+        return last
+    }
+
     static func make(
         for state: HostViewState,
         now: Date = Date(),
@@ -183,7 +191,7 @@ struct HostPopoverPresentation: Equatable {
             return Self(
                 mood: .live,
                 headline: viewOnly ? "Connected · view only" : "Connected · sharing this Mac",
-                title: viewOnly ? "Your iPhone is watching" : "Your iPhone is steering",
+                title: viewOnly ? "\(state.phoneName) is watching" : "\(state.phoneName) is steering",
                 caption: state.session.map(\.caption).flatMap { $0.isEmpty ? nil : $0 } ?? "Measuring the connection",
                 spokenCaption: state.session.map(\.spokenCaption),
                 message: state.availability == .displayAsleep
@@ -213,7 +221,7 @@ struct HostPopoverPresentation: Equatable {
         case .pairing:
             return Self(
                 mood: .calm, headline: "Pairing · waiting for a scan", title: "Waiting for your iPhone",
-                caption: "The code is in the setup window", message: nil, symbol: "qrcode",
+                caption: "Scan it in Farside on your iPhone", message: nil, symbol: "qrcode",
                 showsSessionToggles: false, actions: [.stopSharing, .showCode]
             )
         case .approvalRequested:

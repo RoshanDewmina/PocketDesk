@@ -67,9 +67,9 @@ enum HostMenuBarIcon {
     private static let pitch: CGFloat = 2
     private static let inset: CGFloat = 2
 
-    static func image(for state: HostMarkState, accessibilityDescription: String) -> NSImage {
+    static func image(for state: HostMarkState, accessibilityDescription: String, frame: HostMarkFrame = .rest) -> NSImage {
         let image = NSImage(size: size, flipped: true) { _ in
-            draw(state)
+            draw(state, frame: state == .live ? frame : .rest)
             return true
         }
         image.isTemplate = state != .live
@@ -77,30 +77,37 @@ enum HostMenuBarIcon {
         return image
     }
 
-    private static func draw(_ state: HostMarkState) {
+    private static func draw(_ state: HostMarkState, frame: HostMarkFrame) {
         let body: NSColor = switch state {
         case .live: .labelColor
         case .paused: NSColor.black.withAlphaComponent(0.42)
         case .idle, .attention: .black
         }
-        for dot in HostMark.dots(HostMark.compact) {
+        let dots = HostMark.dots(HostMark.compact)
+        for (order, dot) in dots.enumerated() {
             let center = NSPoint(x: inset + CGFloat(dot.column) * pitch, y: inset + CGFloat(dot.row) * pitch)
             if dot.isTip {
-                drawTip(at: center, state: state, body: body)
+                drawTip(at: center, state: state, body: body, frame: frame)
             } else {
                 body.setFill()
-                circle(center, radius: 0.84).fill()
+                circle(center, radius: 0.84 + frame.swell(at: order, of: dots.count)).fill()
             }
         }
     }
 
-    private static func drawTip(at center: NSPoint, state: HostMarkState, body: NSColor) {
+    private static func drawTip(at center: NSPoint, state: HostMarkState, body: NSColor, frame: HostMarkFrame) {
         switch state {
         case .live:
-            NSColor(Farside.Palette.ember).withAlphaComponent(0.35).setFill()
+            NSColor(Farside.Palette.ember).withAlphaComponent(frame.halo).setFill()
             circle(center, radius: 2.1).fill()
             NSColor(Farside.Palette.ember).setFill()
             circle(center, radius: 1.2).fill()
+            if let flash = frame.flash {
+                NSColor(Farside.Palette.ember).withAlphaComponent(0.95 * (1 - flash)).setStroke()
+                let ring = circle(center, radius: 1.4 + 1 * flash)
+                ring.lineWidth = 0.6
+                ring.stroke()
+            }
         case .attention:
             body.setStroke()
             let ring = circle(center, radius: 1.3)

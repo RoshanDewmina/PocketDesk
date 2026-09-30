@@ -38,20 +38,23 @@ struct HostArt: View {
     private let style: HalftoneStyle
     private let animated: Bool
     private let draw: (HalftoneLayers, TimeInterval) -> Void
+    private let ripples: [HalftoneRipple]
     @State private var windowVisible = false
 
-    init(_ scene: HostArtScene) {
-        self.init(style: scene.style, animated: scene.animated, draw: scene.draw)
+    init(_ scene: HostArtScene, ripples: [HalftoneRipple] = []) {
+        self.init(style: scene.style, animated: scene.animated, ripples: ripples, draw: scene.draw)
     }
 
-    init(style: HalftoneStyle, animated: Bool = true, draw: @escaping (HalftoneLayers, TimeInterval) -> Void) {
+    init(style: HalftoneStyle, animated: Bool = true, ripples: [HalftoneRipple] = [],
+         draw: @escaping (HalftoneLayers, TimeInterval) -> Void) {
         self.style = style
         self.animated = animated
+        self.ripples = ripples
         self.draw = draw
     }
 
     var body: some View {
-        FarsideHalftone(style: style, animated: animated, active: windowVisible, stillTime: 0, scene: draw)
+        FarsideHalftone(style: style, animated: animated, active: windowVisible, stillTime: 0, ripples: ripples, scene: draw)
             .background {
                 if animated { HostWindowVisibility(isVisible: $windowVisible) }
             }

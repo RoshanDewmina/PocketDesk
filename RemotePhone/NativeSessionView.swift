@@ -28,6 +28,8 @@ struct NativeSessionView: View {
     @State private var primingMicrophone = false
     @State private var dockHintVisible = false
     @State private var lockVisible = false
+    /// A live session that dropped just came back: "Back" shows for a moment (D38).
+    @State private var reconnectBack = false
     @StateObject private var voiceInput = VoiceInputController()
     @State private var panMode = false
     @State private var clickAcknowledged = false
@@ -70,6 +72,7 @@ struct NativeSessionView: View {
             PrecisionLoupeOverlay(controller: precisionTap, model: model, viewport: viewport,
                                   track: connection.remoteVideo, offline: offlineLayoutCheck)
                 .ignoresSafeArea()
+            ReconnectVeil(active: (!offlineLayoutCheck && !connection.connected && !lockVisible) || LaunchOptions.has("--ui-reconnecting"))
             Color.clear
                 .allowsHitTesting(false)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
@@ -331,7 +334,8 @@ struct NativeSessionView: View {
         ZStack(alignment: .topLeading) {
             videoLayer
             if lockVisible {
-                ResolutionLockView(connected: connection.connected || offlineLayoutCheck, pictureReady: model.fresh,
+                ResolutionLockView(connected: connection.connected || offlineLayoutCheck,
+                                   videoTrack: connection.remoteVideo != nil, pictureReady: model.fresh,
                                    fixedStage: LaunchOptions.value("--ui-lock-stage=").flatMap(Int.init)) {
                     lockVisible = false
                 }
@@ -462,6 +466,9 @@ struct NativeSessionView: View {
                 ReconnectPill(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "your Mac",
                               end: model.disconnect)
                     .transition(.opacity)
+            } else if reconnectBack || LaunchOptions.has("--ui-reconnect-back") {
+                ReconnectBackPill(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "your Mac",
+                                  diagnostics: LaunchOptions.has("--ui-reconnect-back") ? Self.previewDiagnostics : connection.diagnostics)
             }
             if connection.connected, let busy = model.busy, busy.isVisible {
                 MacBusyPill(state: busy, device: UIDevice.current.model)
@@ -517,8 +524,20 @@ struct NativeSessionView: View {
                     .accessibilityHidden(true)
             }
         }
+        .overlay(alignment: .top) {
+            if !offlineLayoutCheck || LaunchOptions.has("--ui-arrival") {
+                SessionRouteToast(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "Your Mac",
+                                  diagnostics: LaunchOptions.has("--ui-arrival") ? Self.previewDiagnostics : connection.diagnostics,
+                                  pictureReady: model.fresh || LaunchOptions.has("--ui-arrival"))
+            }
+        }
+        .background { ReconnectWatcher(connected: connection.connected, back: $reconnectBack) }
+        .animation(Farside.Motion.easeOut(), value: reconnectBack)
         .padding(.top, 8)
     }
+
+    /// A measured route for offline layout checks and screenshots.
+    private static let previewDiagnostics = "Direct · video/H264 · 60 fps · 14 ms network RTT"
 
     @ViewBuilder private var clipboardStatus: some View {
         if model.clipboard.activity != .idle {
