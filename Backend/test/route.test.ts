@@ -1,6 +1,6 @@
 import { runDurableObjectAlarm } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
-import type { RoomDO } from "../src/room";
+import { unentitledRelayPass, type RoomDO } from "../src/room";
 import { isPublicEnvironment, loadConfig } from "../src/config";
 import { randomHex } from "../src/util";
 import { parseChain, signCompactJws, transactionPayload, type TestChain } from "./helpers/apple-chain";
@@ -27,6 +27,16 @@ async function paidToken(): Promise<string> {
 }
 
 describe("route.1 server policy", () => {
+  it("never gives a Couch registration (no remote.1, no token) the developer relay pass", () => {
+    const room = "b".repeat(64);
+    const config = { allowUnentitledRelay: false, devRelayRooms: new Set([room]) };
+    expect(unentitledRelayPass(config, room, true)).toBe(true);
+    expect(unentitledRelayPass(config, room, false)).toBe(false);
+    expect(unentitledRelayPass(config, "c".repeat(64), true)).toBe(false);
+    expect(unentitledRelayPass(config, undefined, true)).toBe(false);
+    expect(unentitledRelayPass({ allowUnentitledRelay: true, devRelayRooms: new Set() }, room, false)).toBe(true);
+  });
+
   it("requires route policy and refuses free relay on both public deployments", () => {
     expect(isPublicEnvironment("staging")).toBe(true);
     expect(isPublicEnvironment("production")).toBe(true);
