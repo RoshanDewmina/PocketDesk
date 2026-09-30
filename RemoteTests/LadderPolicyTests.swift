@@ -724,10 +724,64 @@ final class LadderPolicyTests: XCTestCase {
                                     phoneThermalState: nil, phoneLowPowerMode: nil))
     }
 
+    func testReplacementPressureUsesActualCounterWindowInsteadOfRawCount() throws {
+        let sample = StreamStatsSample(entries: [])
+        for (seconds, count, expectedRate, fires) in [(0.5, 10, 20, true), (1.0, 10, 10, true), (2.0, 10, 5, false)] {
+            var counters = StreamCounterSnapshot(interval: seconds)
+            counters.presentedFrames = Int(20 * seconds)
+            counters.supersededFrames = count
+            let report = StreamStatsReport(role: "phone", previous: nil, current: sample, counters: counters)
+            XCTAssertEqual(report.supersededFrames, count, "diagnostics keep the original count")
+            let feedback = PhoneLoadFeedback(report: report)
+            XCTAssertEqual(feedback.supersededPerSecond, expectedRate)
+            XCTAssertEqual(feedback.presentedFPS, 20)
+            XCTAssertNoThrow(try feedback.validate())
+            XCTAssertEqual(try JSONDecoder().decode(PhoneLoadFeedback.self, from: JSONEncoder().encode(feedback)), feedback)
+            var inputs = calm(targetFPS: 30)
+            inputs.phoneSupersededPerSecond = feedback.supersededPerSecond
+            inputs.phonePresentedFPS = feedback.presentedFPS
+            XCTAssertEqual(LadderTrigger.phoneSuperseded.fires(inputs, at: LadderState.rungs(targetFPS: 30)[0]), fires)
+        }
+        // Equal physical replacement rates must stay equal as the reporting window varies.
+        for seconds in [0.5, 1.0, 2.0] {
+            var counters = StreamCounterSnapshot(interval: seconds)
+            counters.presentedFrames = Int(20 * seconds)
+            counters.supersededFrames = Int(10 * seconds)
+            let report = StreamStatsReport(role: "phone", previous: nil, current: sample, counters: counters)
+            XCTAssertEqual(PhoneLoadFeedback(report: report).supersededPerSecond, 10)
+        }
+    }
+
+    func testUnknownAndInvalidReplacementRatesDoNotBecomePhonePressure() throws {
+        let sample = StreamStatsSample(entries: [])
+        var report = StreamStatsReport(role: "phone", previous: nil, current: sample, counters: nil)
+        report.supersededFrames = 999
+        XCTAssertNil(PhoneLoadFeedback(report: report).supersededPerSecond, "a count without duration is unknown")
+        let legacy = try JSONDecoder().decode(StreamStatsReport.self, from: Data(#"{"role":"phone","supersededFrames":999}"#.utf8))
+        XCTAssertNil(PhoneLoadFeedback(report: legacy).supersededPerSecond)
+        for interval in [0.0, -1, .nan, .infinity, .leastNonzeroMagnitude] {
+            var counters = StreamCounterSnapshot(interval: interval)
+            counters.presentedFrames = 20
+            counters.supersededFrames = 10
+            let invalid = StreamStatsReport(role: "phone", previous: nil, current: sample, counters: counters)
+            XCTAssertNil(invalid.supersededPerSecond, "invalid/overflow windows must not add a nonfinite report scalar")
+            XCTAssertNoThrow(try JSONEncoder().encode(invalid))
+            XCTAssertNil(PhoneLoadFeedback(report: invalid).supersededPerSecond)
+            XCTAssertNil(invalid.presentedFPS)
+        }
+        for rate in [-1.0, .nan, .infinity, 1_001] {
+            report.supersededPerSecond = rate
+            XCTAssertNil(PhoneLoadFeedback(report: report).supersededPerSecond)
+        }
+        report.supersededPerSecond = 0
+        XCTAssertEqual(PhoneLoadFeedback(report: report).supersededPerSecond, 0)
+    }
+
     func testMonitorMapsFreshPhoneReportAndExpiresIt() {
         var report = StreamStatsReport(role: "phone", previous: nil,
                                        current: StreamStatsSample(entries: []), counters: nil)
         report.supersededFrames = 31
+        report.supersededPerSecond = 31
         report.decodeMs = 9
         report.presentedFPS = 80
         report.thermalState = 2
