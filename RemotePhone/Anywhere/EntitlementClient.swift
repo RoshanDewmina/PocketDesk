@@ -11,7 +11,7 @@ struct EntitlementGrant: Equatable, Codable {
     var entitled: Bool
     var expiresAt: Date?
     var environment: String?
-    /// Why there is no access when `entitled` is false: "expired", "revoked" or "device_limit".
+    /// Why there is no access when `entitled` is false: "expired", "revoked", "device_limit" or "consent_revoked".
     var reason: String?
     var inGracePeriod = false
     var token: String?
@@ -63,7 +63,7 @@ protocol EntitlementVerifying {
 ///     POST {base}/v1/entitlements/verify   {"signedTransaction": "<JWS>", "deviceId": "<64 hex>"}
 ///     200 {"entitled": true, "expiresAt": "…", "environment": "Production", "productId": "…",
 ///          "inGracePeriod": false, "entitlementToken": "fe1…", "tokenExpiresAt": "…"}
-///     200 {"entitled": false, "reason": "expired" | "revoked" | "device_limit", …}
+///     200 {"entitled": false, "reason": "expired" | "revoked" | "device_limit" | "consent_revoked", …}
 ///
 /// The token is opaque; only `tokenExpiresAt` says how long it lasts.
 struct EntitlementWire {

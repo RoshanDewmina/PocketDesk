@@ -220,6 +220,23 @@ final class AnywhereStoreKitTests: XCTestCase {
         XCTAssertEqual(store.restoreMessage, "Couldn’t confirm an active Farside Anywhere subscription yet. Check your Apple Account and try Restore Purchases again.")
     }
 
+    /// Stands in for the iOS 27 offer-code sheet, which hands back the same `VerificationResult<Transaction>`.
+    func testARedeemedTransactionIsFinishedAndReadyForTheServiceAtOnce() async throws {
+        await store.refresh()
+        XCTAssertFalse(store.entitlement.hasAccess)
+        guard case .success(let verification) = try await monthly.purchase() else { return XCTFail("no transaction") }
+        await store.redeemed(verification)
+        XCTAssertTrue(store.entitlement.hasAccess)
+        XCTAssertEqual(store.entitlement.productID, AnywherePlan.monthlyID)
+        let signed = await store.signedTransaction()
+        XCTAssertEqual(signed?.split(separator: ".").count, 3, "A compact JWS for the service")
+        var unfinished = 0
+        for await result in Transaction.unfinished {
+            if case .verified(let transaction) = result, transaction.productID == AnywherePlan.monthlyID { unfinished += 1 }
+        }
+        XCTAssertEqual(unfinished, 0, "The redeemed transaction is finished")
+    }
+
     func testListenerSeesPurchasesMadeOutsideTheApp() async throws {
         var updates = 0
         store.onTransactionUpdate = { updates += 1 }

@@ -60,7 +60,7 @@ struct AnywherePaywallView: View {
         }
         .background(FarsideBackground())
         .manageSubscriptions(isPresented: $showManage, groupID: store.groupID)
-        .offerCodeRedemption(isPresented: $showRedeem) { _ in Task { await store.refresh() } }
+        .modifier(OfferCodeRedemption(isPresented: $showRedeem, store: store, access: access))
         .task {
             store.resetPurchaseState()
             if store.products.isEmpty { await store.loadProducts() }
@@ -323,6 +323,36 @@ struct AnywherePlanRow: View {
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+/// Redeem Code. On iOS 27 the sheet returns the redeemed transaction, which goes to the service at once;
+/// earlier systems only say the sheet closed, so the status is re-read and verified as after a purchase.
+private struct OfferCodeRedemption: ViewModifier {
+    @Binding var isPresented: Bool
+    let store: AnywhereStore
+    let access: AnywhereAccess
+
+    func body(content: Content) -> some View {
+        if #available(iOS 27.0, *) {
+            content.offerCodeRedemption(options: [], isPresented: $isPresented) { result in
+                Task {
+                    if case .success(let verification) = result { await store.redeemed(verification) } else { await store.refresh() }
+                    await verifyIfEntitled()
+                }
+            }
+        } else {
+            content.offerCodeRedemption(isPresented: $isPresented) { _ in
+                Task {
+                    await store.refresh()
+                    await verifyIfEntitled()
+                }
+            }
+        }
+    }
+
+    @MainActor private func verifyIfEntitled() async {
+        if store.entitlement.hasAccess { await access.refresh(force: true) }
+    }
 }
 
 private extension View {

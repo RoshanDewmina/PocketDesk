@@ -115,6 +115,36 @@ final class AnywhereEntitlementTests: XCTestCase {
         XCTAssertEqual(error?.action, .seePlans)
         XCTAssertEqual(error?.secondary, .retry, "Joining the Mac's Wi-Fi stays one tap away")
     }
+
+    func testServiceRefusalsForSeatsAndWithdrawnConsentAreExplained() {
+        XCTAssertTrue(AnywhereCopy.refusal("not_purchased").contains("your own Apple Account"))
+        XCTAssertTrue(AnywhereCopy.refusal("consent_revoked").contains("withdrawn"))
+    }
+
+    func testTheRegulatoryCheckOnlyRecordsAndKeepsTheLastRealAnswer() {
+        let defaults = makeTestDefaults("RegulatoryFeatureCheck")
+        XCTAssertNil(RegulatoryFeatureCheck.recorded(defaults: defaults))
+        RegulatoryFeatureCheck.record(.unavailable, defaults: defaults, now: now)
+        XCTAssertNil(RegulatoryFeatureCheck.recorded(defaults: defaults), "No answer is not an answer")
+        RegulatoryFeatureCheck.record(.required(["significantAppChangeRequiresParentalConsent"]), defaults: defaults, now: now)
+        XCTAssertEqual(RegulatoryFeatureCheck.recorded(defaults: defaults), ["significantAppChangeRequiresParentalConsent"])
+        XCTAssertEqual(defaults.double(forKey: RegulatoryFeatureCheck.checkedAtKey), now.timeIntervalSince1970)
+        RegulatoryFeatureCheck.record(.unavailable, defaults: defaults, now: now.addingTimeInterval(60))
+        XCTAssertEqual(RegulatoryFeatureCheck.recorded(defaults: defaults), ["significantAppChangeRequiresParentalConsent"])
+        RegulatoryFeatureCheck.record(.noneRequired, defaults: defaults, now: now)
+        XCTAssertEqual(RegulatoryFeatureCheck.recorded(defaults: defaults), [])
+    }
+
+    /// The real call, without the Declared Age Range entitlement: it must answer (most likely
+    /// `.unavailable`) and never crash or hang the launch it runs beside.
+    func testTheRealRegulatoryCheckAnswersWithoutTheEntitlement() async {
+        let outcome = await RegulatoryFeatureCheck.check()
+        if #available(iOS 26.4, *) {
+            XCTAssertNotEqual(outcome, .unsupportedOS)
+        } else {
+            XCTAssertEqual(outcome, .unsupportedOS)
+        }
+    }
 }
 
 // MARK: - Verify client (Backend/ENTITLEMENT-CONTRACT.md v1)

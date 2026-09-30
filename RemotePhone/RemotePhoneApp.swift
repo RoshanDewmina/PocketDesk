@@ -12,7 +12,10 @@ struct RemotePhoneApp: App {
     init() {
         // Transaction.updates must be heard from launch: renewals, refunds, Ask to Buy, other devices.
         // Unit tests host this app and drive their own store against a StoreKit test session.
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil { AnywhereStore.shared.start() }
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+            AnywhereStore.shared.start()
+            Task { await RegulatoryFeatureCheck.run() }
+        }
     }
 
     var body: some Scene {
