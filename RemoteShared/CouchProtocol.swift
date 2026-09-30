@@ -12,7 +12,7 @@ enum SessionModeStatus {
     static let refused = "refused"
 }
 
-/// The `acceptedAck` body, inside the pairing cipher. Picture sends no body, so an older Mac sees nothing new.
+/// The `acceptedAck` body, inside the pairing cipher. Mode and the optional display name share one bounded body.
 struct SessionModeRequest: Codable, Equatable {
     static let maximumBodyBytes = 256
     var mode: String
@@ -21,7 +21,9 @@ struct SessionModeRequest: Codable, Equatable {
     static func body(for mode: SessionMode, name: String? = nil) -> Data? {
         let clean = name.flatMap(PhoneIdentity.sanitized)
         guard mode != .picture || clean != nil else { return nil }
-        return try? JSONEncoder().encode(SessionModeRequest(mode: mode.rawValue, name: clean))
+        let request = SessionModeRequest(mode: mode.rawValue, name: clean)
+        if let body = try? JSONEncoder().encode(request), body.count <= maximumBodyBytes { return body }
+        return try? JSONEncoder().encode(SessionModeRequest(mode: mode.rawValue))
     }
 
     static func mode(fromAcceptedAckBody body: Data?) -> SessionMode {

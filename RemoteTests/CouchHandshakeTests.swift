@@ -222,4 +222,11 @@ final class CouchHandshakeTests: XCTestCase {
         XCTAssertEqual(MacShareBlocker.Handshake.requestedMode(in: Data(repeating: 0, count: 1025)), .picture)
     }
 
+    func testAnOversizedDisplayNameNeverChangesCouchToPicture() throws {
+        let name = String(repeating: "👨‍👩‍👧‍👦", count: 40)
+        let body = try XCTUnwrap(SessionModeRequest.body(for: .couch, name: name))
+        XCTAssertLessThanOrEqual(body.count, SessionModeRequest.maximumBodyBytes)
+        XCTAssertEqual(SessionModeRequest.mode(fromAcceptedAckBody: body), .couch)
+    }
+
 }
