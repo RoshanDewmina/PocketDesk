@@ -46,6 +46,9 @@ final class MacVitalsPowerTests: XCTestCase {
 
     func testCapacityIsARatioNotAssumedPercent() {
         XCTAssertEqual(read([battery(4200, max: 5000)], "Battery Power")?.batteryPercent, 84)
+        XCTAssertEqual(read([battery(29)], "Battery Power")?.batteryPercent, 29, "No floating-point loss at Max Capacity 100")
+        XCTAssertEqual(read([battery(57)], "Battery Power")?.batteryPercent, 57)
+        XCTAssertEqual(read([battery(58)], "Battery Power")?.batteryPercent, 58)
         XCTAssertEqual(read([battery(1, max: 3)], "Battery Power")?.batteryPercent, 33)
         XCTAssertNil(read([battery(50, max: 0)], "Battery Power")?.batteryPercent)
         XCTAssertNil(read([battery(-5, max: 100)], "Battery Power")?.batteryPercent)
