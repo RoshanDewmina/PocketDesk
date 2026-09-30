@@ -13,6 +13,11 @@
 	<!-- Time Sensitive Notifications: agent alerts that light the screen through Focus. -->
 	<key>com.apple.developer.usernotifications.time-sensitive</key>
 	<true/>
+	<!-- Always on (also in FarsideAppGroup.entitlements): the Connect widget's snapshot. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.roshan.PocketDesk</string>
+	</array>
 	<!-- Keep aligned with FarsideRoute and the launch AASA artifact. -->
 	<key>com.apple.developer.associated-domains</key>
 	<array>

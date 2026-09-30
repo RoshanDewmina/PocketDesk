@@ -23,6 +23,7 @@ final class FarsideSystemIntegrations {
     private var lastActivityPushPairing: SessionActivityPushPairing?
     private var lastSnapshot: SessionSnapshot?
     private var lastSessionActivityChoice = true
+    private var lastWidgetObservation: String?
 
     init(activity: SessionActivityController? = nil,
          activityPushSink: any SessionActivityPushSink = HTTPSessionActivityPushSink()) {
@@ -84,6 +85,7 @@ final class FarsideSystemIntegrations {
     private func modelChanged(force: Bool = false) {
         guard let model else { return }
         pairingMayHaveChanged()
+        widgetMayHaveChanged(model, force: force)
         let pushPairing = currentActivityPushPairing()
         let pushChanged = pushPairing != lastActivityPushPairing
         if pushChanged {
@@ -103,6 +105,20 @@ final class FarsideSystemIntegrations {
         return SessionActivityPushPairing(server: invitation.server, room: invitation.room,
                                           token: invitation.token, routeEpoch: epoch,
                                           pairingID: pairingID, environment: environment)
+    }
+
+    /// The Connect widget's snapshot follows only what changed: the paired Mac or an observed presence.
+    private func widgetMayHaveChanged(_ model: PhoneRemoteModel, force: Bool) {
+        let connection = model.connection
+        let failure = connection.isRunning ? nil
+            : FriendlyError.from(status: connection.status, previous: nil, macName: "")?.kind
+        let observed = MacWidgetSync.observedPresence(connected: connection.connected, departure: model.lastDeparture,
+                                                      failure: failure)
+        let name = connection.invitation?.name
+        let key = "\(name ?? "")|\(observed?.rawValue ?? "")"
+        guard force || key != lastWidgetObservation else { return }
+        lastWidgetObservation = key
+        MacWidgetSync.shared.update(macName: name, observed: observed)
     }
 
     /// Siri and Shortcuts learn the Mac's name for spoken parameters, so tell them when it changes.
@@ -133,11 +149,15 @@ struct FarsideSystemRoutes: ViewModifier {
     private enum ActiveSheet: Identifiable {
         case alert(AgentAlertPresentation)
         case settings
+        case connectPrompt(macName: String)
+        case serverData
 
         var id: String {
             switch self {
             case .alert(let item): "alert.\(item.id)"
             case .settings: "settings"
+            case .connectPrompt: "connectPrompt"
+            case .serverData: "serverData"
             }
         }
     }
@@ -172,6 +192,14 @@ struct FarsideSystemRoutes: ViewModifier {
                         .farsideSheet()
                 case .settings:
                     AgentAlertsSettingsSheet(center: alerts, registrar: .shared)
+                case .connectPrompt(let macName):
+                    ConnectPromptSheet(macName: macName,
+                                       connect: { sheet = nil; SystemRequestInbox.shared.post(.connect(macID: nil)) },
+                                       close: { sheet = nil })
+                        .presentationDetents([.medium])
+                        .farsideSheet()
+                case .serverData:
+                    ServerDataRemovalView(connection: model.connection, access: AnywhereAccess.shared).farsideSheet()
                 }
             }
             .overlay(alignment: .top) {
@@ -205,17 +233,21 @@ struct FarsideSystemRoutes: ViewModifier {
         case .route(let route):
             switch route {
             case .agentAlert(let id): alerts.open(linkedRequest: id)
-            case .openMac, .resumeSession: break
+            case .openMac:
+                let connection = model.connection
+                if let name = ConnectPromptSheet.macName(paired: connection.invitation?.name,
+                                                         connected: connection.connected, running: connection.isRunning) {
+                    sheet = .connectPrompt(macName: name)
+                }
+            case .resumeSession: break
             }
         }
     }
 
-    /// The same path as the Connect button: Local Network is explained once before the first attempt.
+    /// The same path as the Connect button, including a pending server-data removal; a system request
+    /// never restarts an attempt that is already under way.
     private func connectIfPossible() {
-        let connection = model.connection
-        guard connection.invitation != nil, !connection.connected, !connection.isRunning else { return }
-        model.error = ""
-        onboarding.beforeConnect { connection.start() }
+        ConnectGate.connect(model: model, onboarding: onboarding, restartsRunning: false) { sheet = .serverData }
     }
 }
 

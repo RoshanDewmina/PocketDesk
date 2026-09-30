@@ -104,6 +104,8 @@ final class RemoteHostModel: ObservableObject {
     private var curtainLocallyDismissed = false
     private var curtainRaiseFailed = false
     private var captureUnhealthySince: TimeInterval?
+    /// Registered without Screen Recording only so the paired phone learns why it cannot connect.
+    private var listeningWithoutSharing = false
     /// Set when this launch followed an unexpected exit; told to the first phone that connects.
     private var recoveryNoticePending = false
     private var recoveryNoticeDelivered = false
@@ -291,6 +293,7 @@ final class RemoteHostModel: ObservableObject {
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.active && !self.connection.connected }
         connection.restore()
         connection.startAllowed = { [weak self] in self?.serverRemovalPending == false }
+        connection.shareBlocker = { CGPreflightScreenCaptureAccess() ? nil : .screenRecordingOff }
         connection.onAuthenticated = { [weak self] in self?.phoneConnected() }
         connection.onEnded = { [weak self] in
             self?.endCapture()
@@ -373,7 +376,7 @@ final class RemoteHostModel: ObservableObject {
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollPermissions() }
         }
-        if screenRecordingPermission.isGranted { loadDisplays() }
+        if screenRecordingPermission.isGranted { loadDisplays() } else { reconcileSharing() }
         #if DEBUG
         HostE2E.active?.attach(self)
         #endif
@@ -702,6 +705,21 @@ final class RemoteHostModel: ObservableObject {
 
     private func reconcileSharing() {
         guard removalAllowsSharing else { return }
+        if MacShareBlocker.shouldListenWithoutSharing(
+            wantsSharing: wantsSharing,
+            suppressed: autoStart.suppressed,
+            sharingActive: active,
+            listening: listeningWithoutSharing,
+            otherAccessRunning: browserSession.controller.running,
+            screenRecordingGranted: screenRecordingPermission.isGranted,
+            hasPairedPhone: hasPairedPhone,
+            serviceConfigured: serviceAddress != nil
+        ) {
+            listeningWithoutSharing = true
+            events.record(.sharing, "Listening without Screen Recording so the phone can be told why")
+            connection.start()
+            return
+        }
         guard autoStart.shouldStart(
             wantsSharing: wantsSharing,
             sharingActive: active,
@@ -726,6 +744,7 @@ final class RemoteHostModel: ObservableObject {
         controlConsent.setAllowed(enabled)
         preferences.allowControl = enabled
         applyControlState(notifyPhone: true)
+        sendCaptureHealth(captureHealthy)
     }
 
     func setKeepAwake(_ enabled: Bool) {
@@ -1056,6 +1075,7 @@ final class RemoteHostModel: ObservableObject {
         input.configure(SCContentFilter(display: display, excludingWindows: []))
         input.enabled = false
         active = true
+        listeningWithoutSharing = false
         detail = nil
         updatePowerAssertions()
         connection.start()
@@ -1070,6 +1090,7 @@ final class RemoteHostModel: ObservableObject {
         releaseRemoteInput(notifyPhone: true)
         sendCaptureHealth(false)
         active = false
+        listeningWithoutSharing = false
         releaseKeepAwake()
         connection.stop()
     }
@@ -1107,11 +1128,13 @@ final class RemoteHostModel: ObservableObject {
             } else {
                 stop()
                 invalidateDisplays(status: .permissionDenied)
+                reconcileSharing()
             }
         }
         if trusted != accessibilityPermission {
             accessibilityPermission = trusted
             applyControlState(notifyPhone: true)
+            sendCaptureHealth(captureHealthy)
         }
         if let pairingExpires, !pairingExpired, !pairingCode.isEmpty, pairingExpires <= Date() {
             pairingExpired = true
@@ -1134,6 +1157,7 @@ final class RemoteHostModel: ObservableObject {
         guard CGPreflightScreenCaptureAccess() else {
             screenRecordingPermission = .denied
             invalidateDisplays(status: .permissionDenied)
+            reconcileSharing()
             return
         }
 
@@ -1666,7 +1690,10 @@ final class RemoteHostModel: ObservableObject {
 
     private func sendCaptureHealth(_ healthy: Bool, presence: HostPresence? = nil) {
         guard connection.connected else { return }
-        let state = presence ?? (displayAsleep ? .displayAsleep : nil)
+        let state = MacShareBlocker.sessionState(
+            presence: presence ?? (displayAsleep ? .displayAsleep : nil),
+            phoneUnderstands: connection.peerFeatures.contains(MacShareBlocker.feature),
+            controlAllowed: allowControl, accessibilityGranted: accessibilityPermission.isGranted)
         let capability = inputFreshness.capability(
             epoch: inputEpoch.value,
             now: ProcessInfo.processInfo.systemUptime,
@@ -1678,7 +1705,7 @@ final class RemoteHostModel: ObservableObject {
             action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: true,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
-            features: Self.advertisedFeatures, hostState: state?.rawValue,
+            features: Self.advertisedFeatures, hostState: state,
             hostStream: connection.media?.takeHostSummary(),
             curtain: curtainState.rawValue, hostEvent: event,
             display: capturedDisplayID, agentAlert: alert,
@@ -1990,6 +2017,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func finishIfCoordinatorStopped() {
+        if listeningWithoutSharing && !connection.isRunning { listeningWithoutSharing = false }
         guard active, !HostActiveAccessPolicy.isRunning(
             status: connection.status,
             hostRegistered: connection.hostRegistered,
