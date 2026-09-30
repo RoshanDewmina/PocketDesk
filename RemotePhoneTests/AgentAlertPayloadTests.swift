@@ -172,13 +172,28 @@ final class AgentAlertPayloadTests: XCTestCase {
         XCTAssertEqual(categories.count, 2)
     }
 
+    func testSnoozeStaysFirstSoAWatchDoubleTapOnlySnoozes() throws {
+        let reason = "Double Tap on Series 9 / Ultra 2 runs the first non-destructive action, so an accidental pinch must only snooze"
+        let categories = AgentNotification.categories()
+        let help = try XCTUnwrap(categories.first { $0.identifier == "AGENT_HELP" })
+        let first = try XCTUnwrap(help.actions.first)
+        XCTAssertEqual(first.identifier, "SNOOZE_15", reason)
+        XCTAssertFalse(first.options.contains(.destructive), reason)
+        XCTAssertFalse(first.options.contains(.foreground), reason)
+        XCTAssertFalse(first.options.contains(.authenticationRequired), reason)
+
+        let reminder = try XCTUnwrap(categories.first { $0.identifier == "AGENT_HELP_REMINDER" })
+        XCTAssertEqual(reminder.actions.first?.identifier, "NOT_NOW", "The reminder has no Snooze. " + reason)
+    }
+
     func testAlertCopyLivesInTheBundleAndIsLiteral() {
         XCTAssertEqual(NSLocalizedString("AGENT_NEEDS_YOU_TITLE", comment: ""), "A task on your Mac needs you",
                        "Fixed: Shortcuts automations and Focus filters match this title")
         XCTAssertEqual(String(format: NSLocalizedString("AGENT_NEEDS_YOU_TITLE", comment: ""), "Claude Code"), "A task on your Mac needs you",
                        "A stray name from an older service has nowhere to go")
         XCTAssertEqual(NSLocalizedString("AGENT_NEEDS_YOU_BODY", comment: ""),
-                       "Stuck on something only a human can click. Tap to look at your Mac.")
+                       "Stuck on something only a human can click. Open Farside on your iPhone to look.")
+        XCTAssertFalse(NSLocalizedString("AGENT_NEEDS_YOU_BODY", comment: "").contains("Tap"), "On a Watch, a tap leads nowhere")
         XCTAssertEqual(NSLocalizedString("AGENT_REMINDER_BODY", comment: ""), "Still waiting on you.")
         for key in ["AGENT_NEEDS_YOU_BODY", "AGENT_TEST_BODY", "AGENT_REMINDER_BODY"] {
             XCTAssertFalse(NSLocalizedString(key, comment: "").contains("!"), "Summaries read this text: keep it literal")

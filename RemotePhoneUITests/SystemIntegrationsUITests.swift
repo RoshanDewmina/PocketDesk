@@ -49,6 +49,13 @@ final class SystemIntegrationsUITests: XCTestCase {
         XCTAssertEqual(element(app, "agent.settings.alerts").value as? String, "0", "Alerts are off until the person turns them on")
         XCTAssertEqual(element(app, "agent.settings.macname").value as? String, "0", "The Mac's name is hidden by default")
         XCTAssertFalse(element(app, "agent.settings.test").isEnabled, "There is nothing to test until alerts are on")
+        let sendWatchTest = element(app, "agent.settings.testWatch")
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            XCTAssertTrue(sendWatchTest.exists, "The iPhone offers a delayed test alert for the Watch")
+            XCTAssertFalse(sendWatchTest.isEnabled, "There is nothing to test on the Watch until alerts are on")
+        } else {
+            XCTAssertFalse(sendWatchTest.exists, "A Watch pairs only with an iPhone")
+        }
         XCTAssertTrue(app.staticTexts["AGENT ALERTS · BETA"].exists || app.staticTexts["Agent alerts · Beta"].exists)
         attach("Alerts and Lock Screen settings")
     }
@@ -63,6 +70,8 @@ final class SystemIntegrationsUITests: XCTestCase {
         let toggle = element(app, "agent.settings.alerts")
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
         let sendTest = element(app, "agent.settings.test")
+        let sendWatchTest = element(app, "agent.settings.testWatch")
+        let isPhone = UIDevice.current.userInterfaceIdiom == .phone
 
         func waitForValue(_ expected: String, _ message: String) {
             let matches = NSPredicate(format: "value == %@", expected)
@@ -93,11 +102,22 @@ final class SystemIntegrationsUITests: XCTestCase {
         waitForValue("1", "Alerts turn on once iOS allows them")
         XCTAssertTrue(sendTest.waitForExistence(timeout: 5))
         XCTAssertTrue(sendTest.isEnabled, "Send test alert works once alerts are on")
+        if isPhone {
+            XCTAssertTrue(sendWatchTest.exists, "The iPhone offers a delayed test alert for the Watch")
+            XCTAssertTrue(sendWatchTest.isEnabled, "Send test alert in 10 s works once alerts are on")
+        } else {
+            XCTAssertFalse(sendWatchTest.exists, "A Watch pairs only with an iPhone")
+        }
         attach("Alerts on")
 
         toggle.tap()
         waitForValue("0", "The switch turns alerts off again")
         XCTAssertFalse(sendTest.isEnabled)
+        if isPhone {
+            XCTAssertFalse(sendWatchTest.isEnabled)
+        } else {
+            XCTAssertFalse(sendWatchTest.exists)
+        }
     }
 
     @MainActor

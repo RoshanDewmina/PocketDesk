@@ -12,7 +12,7 @@ import WidgetKit
 struct SessionLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: FarsideSessionAttributes.self) { context in
-            SessionLockScreenView(content: SessionActivityContent(context))
+            SessionActivityFamilyView(content: SessionActivityContent(context))
                 .activityBackgroundTint(Farside.Palette.void)
                 .activitySystemActionForegroundColor(Farside.Palette.bone)
                 .widgetURL(SessionActivityLinks.session)
@@ -42,6 +42,7 @@ struct SessionLiveActivity: Widget {
             .widgetURL(SessionActivityLinks.session)
             .keylineTint(content.keylineTint)
         }
+        .supplementalActivityFamilies([.small])
     }
 }
 
@@ -174,6 +175,24 @@ struct SessionLockScreenView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
+    }
+}
+
+/// The iPhone Lock Screen is `.medium`; the Watch Smart Stack and CarPlay are `.small`.
+struct SessionActivityFamilyView: View {
+    let content: SessionActivityContent
+    @Environment(\.activityFamily) private var family
+
+    var body: some View {
+        switch family {
+        case .small:
+            WatchGlanceView(glance: SessionGlance.glance(attributes: content.attributes, state: content.state,
+                                                         isStale: content.isStale))
+        case .medium:
+            SessionLockScreenView(content: content)
+        @unknown default:
+            SessionLockScreenView(content: content)
+        }
     }
 }
 
@@ -353,35 +372,6 @@ struct SessionGlyphTile: View {
         Image(systemName: name)
             .font(.system(size: size * 0.38, weight: .semibold))
             .foregroundStyle(color)
-    }
-}
-
-/// The Farside pointer with its ember tip: the mark, small enough for the compact island.
-struct FarsideMarkGlyph: View {
-    var height: CGFloat = 16
-
-    private struct Pointer: Shape {
-        func path(in rect: CGRect) -> Path {
-            let points: [CGPoint] = [.init(x: 0, y: 0), .init(x: 0, y: 250), .init(x: 60, y: 196), .init(x: 98, y: 284),
-                                     .init(x: 134, y: 268), .init(x: 96, y: 180), .init(x: 176, y: 180)]
-            var path = Path()
-            let scale = rect.height / 284
-            path.addLines(points.map { CGPoint(x: rect.minX + $0.x * scale, y: rect.minY + $0.y * scale) })
-            path.closeSubpath()
-            return path
-        }
-    }
-
-    var body: some View {
-        ZStack(alignment: .topLeading) {
-            Pointer().fill(Farside.Palette.bone)
-            Circle()
-                .fill(Farside.Palette.ember)
-                .frame(width: height * 0.3, height: height * 0.3)
-                .offset(x: -height * 0.02, y: -height * 0.02)
-        }
-        .frame(width: height * 0.62, height: height)
-        .accessibilityHidden(true)
     }
 }
 

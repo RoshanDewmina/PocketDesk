@@ -112,6 +112,24 @@ final class AgentAlertCenterTests: XCTestCase {
         XCTAssertEqual(routed.kind, .other)
     }
 
+    func testTheWatchTestAlertWaitsTenSeconds() async throws {
+        fake.accessValue = .allowed
+        _ = await center.sendTestAlert()
+        let ordinary = try XCTUnwrap(fake.added.first)
+
+        let sent = await center.sendTestAlert(after: AgentAlertCenter.watchTestDelay)
+        XCTAssertTrue(sent)
+        XCTAssertEqual(fake.added.count, 2, "One request per tap")
+        let request = try XCTUnwrap(fake.added.last)
+        XCTAssertEqual((request.trigger as? UNTimeIntervalNotificationTrigger)?.timeInterval, 10,
+                       "Long enough to lock the iPhone so the alert goes to the Watch")
+        XCTAssertEqual(request.content.title, ordinary.content.title)
+        XCTAssertEqual(request.content.body, ordinary.content.body)
+        XCTAssertEqual(request.content.categoryIdentifier, "AGENT_HELP", "Snooze stays the Watch's first action")
+        let routed = try XCTUnwrap(AgentAlertPayload(userInfo: request.content.userInfo))
+        XCTAssertTrue(routed.isTest)
+    }
+
     func testTheTestAlertBreaksThroughFocusOnlyWhenAskedTo() async throws {
         fake.accessValue = .allowed
         center.preferences.breakThroughFocus = true

@@ -158,7 +158,11 @@ struct AgentAlertsSettingsSheet: View {
     @AppStorage(AgentAlertPreferences.Key.showMacName) private var showMacName = false
     @State private var showPriming = false
     @State private var testStatus: String?
+    @State private var watchTestStatus: String?
     @State private var previewStatus: String?
+
+    /// A Watch pairs with an iPhone, never an iPad.
+    private var offersWatchTest: Bool { UIDevice.current.userInterfaceIdiom == .phone }
 
     private var alertsBinding: Binding<Bool> {
         Binding(get: { alertsOn }, set: { turnAlerts($0) })
@@ -216,7 +220,7 @@ struct AgentAlertsSettingsSheet: View {
                             .disabled(!alertsOn || !focusAvailable)
                             .accessibilityIdentifier("agent.settings.focus")
                         }
-                        row(divider: false) {
+                        row(divider: offersWatchTest) {
                             Button(action: sendTest) {
                                 HStack {
                                     label("Send test alert", testStatus ?? "A real notification, with no agent involved.")
@@ -231,6 +235,24 @@ struct AgentAlertsSettingsSheet: View {
                             .disabled(!alertsOn)
                             .opacity(alertsOn ? 1 : 0.4)
                             .accessibilityIdentifier("agent.settings.test")
+                        }
+                        if offersWatchTest {
+                            row(divider: false) {
+                                Button(action: sendWatchTest) {
+                                    HStack {
+                                        label("Send test alert in 10 s", watchTestStatus ?? "Lock your iPhone to see it on your Watch.")
+                                        Spacer(minLength: 8)
+                                        Image(systemName: "applewatch")
+                                            .foregroundStyle(Farside.Palette.ash)
+                                            .accessibilityHidden(true)
+                                    }
+                                    .contentShape(.rect)
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(!alertsOn)
+                                .opacity(alertsOn ? 1 : 0.4)
+                                .accessibilityIdentifier("agent.settings.testWatch")
+                            }
                         }
                     }
                     .farsidePlate()
@@ -347,6 +369,14 @@ struct AgentAlertsSettingsSheet: View {
         Task {
             let sent = await center.sendTestAlert()
             testStatus = sent ? "Sent. It arrives in a moment." : "Turn on agent alerts first."
+        }
+    }
+
+    private func sendWatchTest() {
+        watchTestStatus = "Sending…"
+        Task {
+            let sent = await center.sendTestAlert(after: AgentAlertCenter.watchTestDelay)
+            watchTestStatus = sent ? "Sent. Lock your iPhone now." : "Turn on agent alerts first."
         }
     }
 
