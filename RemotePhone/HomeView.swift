@@ -99,6 +99,9 @@ struct HomeView: View {
     @State private var confirmForget = false
     @State private var friendlyError: FriendlyError?
     @State private var lastFailure: FriendlyError?
+    /// The result of "Check again": a reachability check that opens no session.
+    @State private var checkedHealth: ConnectionHealth?
+    @State private var checking = false
     @State private var shownNotice: String?
     @State private var pairedInSheet = false
     @State private var contactRipples: [HalftoneRipple] = []
@@ -159,7 +162,7 @@ struct HomeView: View {
             PairingSheet(model: model, entry: entry, replacing: connection.invitation?.name) { pairedInSheet = true }
         }
         .sheet(isPresented: $showDetails) {
-            ConnectionDetailsSheet(connection: connection)
+            ConnectionDetailsSheet(connection: connection, health: health)
         }
         .sheet(isPresented: $showTroubleshoot) {
             TroubleshootSheet(macName: macName ?? "Your Mac", retry: connect)
@@ -182,6 +185,7 @@ struct HomeView: View {
                 connection.revoke()
                 lastReachedAt = 0
                 lastFailure = nil
+                checkedHealth = nil
             }
         } message: {
             Text("This removes local pairing only. Server Data removes your Anywhere device link. You’ll need to scan a new pairing code to connect again.")
@@ -234,8 +238,8 @@ struct HomeView: View {
     @ViewBuilder private var homeColumn: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let macName {
-                MacCard(name: macName, status: status, failure: status.tone == .idle ? lastFailure : nil,
-                        notice: model.macNotice, lastReached: lastReached)
+                MacCard(name: macName, status: status, health: health, checking: checking,
+                        notice: model.macNotice, lastReached: lastReached, act: act)
                 connectControl
             } else {
                 emptyState
@@ -310,6 +314,7 @@ struct HomeView: View {
             } else {
                 Button(action: connect) { ConnectPillLabel() }
                     .buttonStyle(ConnectPillStyle())
+                    .disabled(checking)
                     .accessibilityLabel("Connect")
                     .accessibilityHint("Closes the gap: opens your Mac’s screen on this iPhone")
                     .accessibilityIdentifier("home.connect")
@@ -369,15 +374,46 @@ struct HomeView: View {
         lastReachedAt > 0 ? Date(timeIntervalSince1970: lastReachedAt) : nil
     }
 
+    /// Connection Health for the card: the newest check, else what the last attempt ended with.
+    private var health: ConnectionHealth? {
+        guard status.tone != .busy else { return nil }
+        return checkedHealth ?? lastFailure.map(ConnectionHealth.after)
+    }
+
     // MARK: Behaviour
+
+    private func act(_ action: ConnectionHealth.Action) {
+        switch action {
+        case .checkAgain: checkReachability()
+        case .seePlans: showPaywall = true
+        case .pairAgain: model.pairingEntry = .scan
+        case .retry: connect()
+        case .wakeDisplay, .none: break
+        }
+    }
+
+    /// Asks the service whether the Mac's Farside is answering. It opens no session and sends nothing to
+    /// the Mac, so Connect waits until it finishes (the service allows one phone per room).
+    private func checkReachability() {
+        guard let invitation = connection.invitation, !checking, !connection.isRunning, !connection.connected else { return }
+        checking = true
+        Task { @MainActor in
+            let outcome = await MacReachabilityProbe().check(invitation)
+            checking = false
+            guard !connection.isRunning, !connection.connected else { return }
+            checkedHealth = .checked(outcome, lastReached: lastReached.map { LastReached.spoken($0) })
+        }
+    }
 
     private func connect() {
         let access = AnywhereAccess.shared
+        guard !checking else { return }
         guard !access.removalPending, !access.localCleanupPending, !access.removalRecoveryRequired else {
             showServerData = true
             return
         }
         lastFailure = nil
+        checkedHealth = nil
         model.error = ""
         onboarding.beforeConnect {
             Task { @MainActor in
@@ -396,12 +432,13 @@ struct HomeView: View {
     }
 
     private func statusChanged(from old: String, to new: String) {
-        if MacStatus(new).tone == .busy { lastFailure = nil }
+        if MacStatus(new).tone == .busy { lastFailure = nil; checkedHealth = nil }
         guard !connection.isRunning, let name = macName,
               let error = FriendlyError.from(status: new, previous: old, macName: name) else { return }
         let shown = FriendlyError.forLocalOnly(error, serviceAskedForAnywhere: connection.entitlementRequired,
                                                hasPlan: anywhere.entitlement.hasAccess)
         lastFailure = shown
+        checkedHealth = nil
         if !covered || friendlyError != nil { friendlyError = shown }
     }
 
@@ -411,6 +448,7 @@ struct HomeView: View {
         guard let presence = MacDeparture(notice: notice) else { return }
         let error = FriendlyError.from(presence: presence.kind, at: presence.time)
         lastFailure = error
+        checkedHealth = nil
         if friendlyError == nil && !covered { friendlyError = error }
     }
 
@@ -535,9 +573,12 @@ struct MacStatus: Equatable {
 struct MacCard: View {
     let name: String
     let status: MacStatus
-    var failure: FriendlyError?
+    /// What went wrong and the one next step; nil while connecting or when nothing is wrong.
+    var health: ConnectionHealth?
+    var checking = false
     var notice: String?
     var lastReached: Date?
+    var act: (ConnectionHealth.Action) -> Void = { _ in }
     @Environment(\.dynamicTypeSize) private var typeSize
 
     var body: some View {
@@ -552,7 +593,7 @@ struct MacCard: View {
                         .font(.subheadline)
                         .foregroundStyle(Farside.Palette.ash)
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        LiveDot(state: failure == nil ? status.dot : .attention)
+                        LiveDot(state: dotState)
                             .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
                         Text(statusLine)
                             .farsideCaption(Farside.Palette.bone)
@@ -561,6 +602,22 @@ struct MacCard: View {
                     .padding(.top, 10)
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Status: \(statusLine)")
+                    if let health, status.tone != .busy {
+                        Text(health.nextStep)
+                            .font(.footnote)
+                            .foregroundStyle(Farside.Palette.ash)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, 16)
+                            .accessibilityLabel("Next step: \(health.nextStep)")
+                            .accessibilityIdentifier("home.health.next")
+                        if let title = cardActionTitle(health.action) {
+                            Button(checking ? "Checking…" : title) { act(health.action) }
+                                .buttonStyle(FarsideLinkButtonStyle())
+                                .disabled(checking)
+                                .padding(.leading, 16)
+                                .accessibilityIdentifier("home.health.action")
+                        }
+                    }
                 }
                 if !typeSize.isAccessibilitySize {
                     Spacer(minLength: 0)
@@ -587,8 +644,21 @@ struct MacCard: View {
     }
 
     private var statusLine: String {
-        if let failure, status.tone != .busy { return failure.shortStatus }
+        if let health, status.tone != .busy { return health.title }
         return status.text
+    }
+
+    private var dotState: LiveDot.State {
+        guard let health, status.tone != .busy else { return status.dot }
+        return health.state == .macAnswering ? .idle : .attention
+    }
+
+    /// Connect below the card already retries, so the card offers only the other next actions.
+    private func cardActionTitle(_ action: ConnectionHealth.Action) -> String? {
+        switch action {
+        case .checkAgain, .seePlans, .pairAgain: action.title
+        case .retry, .wakeDisplay, .none: nil
+        }
     }
 
     private var lastReachedText: String {
@@ -657,11 +727,27 @@ private struct HomeRow: View {
 
 private struct ConnectionDetailsSheet: View {
     @ObservedObject var connection: RemoteCoordinator
+    var health: ConnectionHealth?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
+                if let health {
+                    Section {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(health.title).foregroundStyle(Farside.Palette.bone)
+                            Text("\(health.detail) \(health.nextStep)")
+                                .font(.footnote)
+                                .foregroundStyle(Farside.Palette.ash)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .accessibilityElement(children: .combine)
+                        .listRowBackground(Farside.Palette.panel)
+                    } header: {
+                        Text("Health").farsideCaption()
+                    }
+                }
                 Section {
                     Text(connection.diagnostics)
                         .font(.footnote.monospaced())

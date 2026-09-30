@@ -133,11 +133,13 @@ struct FarsideSystemRoutes: ViewModifier {
     private enum ActiveSheet: Identifiable {
         case alert(AgentAlertPresentation)
         case settings
+        case connectPrompt(macName: String)
 
         var id: String {
             switch self {
             case .alert(let item): "alert.\(item.id)"
             case .settings: "settings"
+            case .connectPrompt: "connectPrompt"
             }
         }
     }
@@ -172,6 +174,12 @@ struct FarsideSystemRoutes: ViewModifier {
                         .farsideSheet()
                 case .settings:
                     AgentAlertsSettingsSheet(center: alerts, registrar: .shared)
+                case .connectPrompt(let macName):
+                    ConnectPromptSheet(macName: macName,
+                                       connect: { sheet = nil; SystemRequestInbox.shared.post(.connect(macID: nil)) },
+                                       close: { sheet = nil })
+                        .presentationDetents([.medium])
+                        .farsideSheet()
                 }
             }
             .overlay(alignment: .top) {
@@ -205,7 +213,13 @@ struct FarsideSystemRoutes: ViewModifier {
         case .route(let route):
             switch route {
             case .agentAlert(let id): alerts.open(linkedRequest: id)
-            case .openMac, .resumeSession: break
+            case .openMac:
+                let connection = model.connection
+                if let name = ConnectPromptSheet.macName(paired: connection.invitation?.name,
+                                                         connected: connection.connected, running: connection.isRunning) {
+                    sheet = .connectPrompt(macName: name)
+                }
+            case .resumeSession: break
             }
         }
     }
