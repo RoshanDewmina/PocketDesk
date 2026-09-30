@@ -420,6 +420,7 @@
 		A136E29947F4DA6AADAADCB7 /* AwayPhoneTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D8C68A7A1DF0645F2A3215A /* AwayPhoneTests.swift */; };
 		A221773615A10E8DA72B4D32 /* SessionContinuity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 643A13E08A654E915062CB1B /* SessionContinuity.swift */; };
 		A23CA132BE232C97A7EDCEE0 /* ScriptedSessionSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79EB73E1E886FA5A57E8D89E /* ScriptedSessionSupport.swift */; };
+		A26D475A5F3C13053137184F /* AwayMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 174654A61130A1E8AF0BC4F8 /* AwayMemory.swift */; };
 		A2DEDB25A587F1EFC23B2F52 /* FriendlyErrors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52F19B9B86CA153FF5CE827B /* FriendlyErrors.swift */; };
 		A373DAFF8795B767158CA3D9 /* BusyPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A3E2750D58B12A1C8B8D835 /* BusyPresentation.swift */; };
 		A373EA48A7DFA707C68CB7C5 /* BusyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = FC1918C6B5ADA67679BD4464 /* BusyState.swift */; };
@@ -705,10 +706,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -737,10 +738,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -777,6 +778,7 @@
 		16277E0C3740408F05B8CFE5 /* HostLoadMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostLoadMonitor.swift; sourceTree = "<group>"; };
 		16E5B189A6781A0590042A7D /* E2EWindowCover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EWindowCover.swift; sourceTree = "<group>"; };
 		173805F45FB3C845B4C84B82 /* BrowserPeerStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserPeerStore.swift; sourceTree = "<group>"; };
+		174654A61130A1E8AF0BC4F8 /* AwayMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AwayMemory.swift; sourceTree = "<group>"; };
 		17CD4AA27077B3457AE5CAE0 /* BrowserCryptoTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BrowserCryptoTests.swift; sourceTree = "<group>"; };
 		1841EA62A98AD4B9D0990832 /* HEVCDecodeProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HEVCDecodeProbeTests.swift; sourceTree = "<group>"; };
 		18ED89AEF2291CBFDEADD39A /* AwayModeMachineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AwayModeMachineTests.swift; sourceTree = "<group>"; };
@@ -1625,6 +1627,7 @@
 			isa = PBXGroup;
 			children = (
 				B4AB78D9E67A4FB4EB1D5ADA /* Assets.xcassets */,
+				174654A61130A1E8AF0BC4F8 /* AwayMemory.swift */,
 				8E4539B888291F193DD3C21E /* CommittedTextField.swift */,
 				2B47A3584507A2F653CE0816 /* DesktopPreview.swift */,
 				FE311B68522A225B1438CB85 /* Farside.entitlements */,
@@ -2721,6 +2724,7 @@
 				3FC56BE0C08F8E9F8645CD83 /* AnywhereEntitlement.swift in Sources */,
 				49C94C1F636D1373E4FDB7C7 /* AnywherePaywallView.swift in Sources */,
 				171A1F781F56B7B30B892F35 /* AnywhereStore.swift in Sources */,
+				A26D475A5F3C13053137184F /* AwayMemory.swift in Sources */,
 				2072A32D948779587D6DE9F8 /* AwayModeProtocol.swift in Sources */,
 				77E6DD4B91E1AADAF753218B /* BenchMarker.swift in Sources */,
 				69B81C00A5C611AF16BC292F /* BenchRenderers.swift in Sources */,
