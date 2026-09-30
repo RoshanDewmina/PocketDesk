@@ -263,7 +263,7 @@ final class GestureCoachModel: ObservableObject {
             flash(at: pointer)
             note = "A three-finger tap is a middle click. Handy in 3D and CAD apps."
             return true
-        case .zoomToggle, .navigate, .pan, .pointTo, .auxiliaryClick:
+        case .zoomToggle, .navigate, .pan, .pointTo, .auxiliaryClick, .precision:
             return false
         }
     }

@@ -29,74 +29,119 @@ enum HostTextFocusPolicy {
     }
 }
 
+/// What the focus probe learned, in global CoreGraphics points. Geometry only.
+struct HostTextFocusResult: Equatable, Sendable {
+    var editable: Bool
+    var frame: CGRect? = nil
+    /// The insertion point when the app exposes it, otherwise the click.
+    var anchor: CGPoint? = nil
+
+    static let unfocused = HostTextFocusResult(editable: false)
+}
+
 enum HostTextFocusProbe {
-    private static let queue = DispatchQueue.global(qos: .userInitiated)
-    private static let inFlight = DispatchSemaphore(value: 1)
-    private static let timeout: Float = 0.12
-
-    private final class CancellationBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var cancelled = false
-
-        func cancel() { lock.lock(); cancelled = true; lock.unlock() }
-        var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return cancelled }
-    }
-
     static func isValidID(_ id: String?) -> Bool {
         guard let id, id.utf8.count == 32 else { return false }
         return id.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 
     static func editableAtClick(_ point: CGPoint) async -> Bool {
-        let cancellation = CancellationBox()
-        return await withTaskCancellationHandler {
-            await withCheckedContinuation { continuation in
-                queue.async {
-                    guard !cancellation.isCancelled,
-                          inFlight.wait(timeout: .now()) == .success else {
-                        continuation.resume(returning: false)
-                        return
-                    }
-                    defer { inFlight.signal() }
-                    let result = cancellation.isCancelled ? false : inspect(point)
-                    continuation.resume(returning: !cancellation.isCancelled && result)
-                }
-            }
-        } onCancel: {
-            cancellation.cancel()
-        }
+        await focus(at: point, geometry: false).editable
     }
 
-    private static func inspect(_ point: CGPoint) -> Bool {
-        guard point.x.isFinite, point.y.isFinite, AXIsProcessTrusted() else { return false }
+    /// `point` is an admitted click, which must land on the focused element. Nil re-checks the focus
+    /// after typing, when there is no click to compare.
+    static func focus(at point: CGPoint?, geometry: Bool,
+                      broker: HostAXBroker = .shared) async -> HostTextFocusResult {
+        if let point, !(point.x.isFinite && point.y.isFinite) { return .unfocused }
+        return await broker.run { budget in inspect(point, geometry: geometry, budget: budget) } ?? .unfocused
+    }
+
+    private static func inspect(_ point: CGPoint?, geometry: Bool, budget: HostAXBudget) -> HostTextFocusResult {
+        guard AXIsProcessTrusted() else { return .unfocused }
 
         let system = AXUIElementCreateSystemWide()
         // Apple documents that the system-wide timeout is process-wide; restore it before leaving.
-        guard AXUIElementSetMessagingTimeout(system, timeout) == .success else { return false }
+        guard budget.arm(system) else { return .unfocused }
         defer { _ = AXUIElementSetMessagingTimeout(system, 0) }
 
         guard let focused = elementAttribute(system, kAXFocusedUIElementAttribute),
-              AXUIElementSetMessagingTimeout(focused, timeout) == .success,
+              budget.arm(focused),
               let role = stringAttribute(focused, kAXRoleAttribute),
               let enabled = boolAttribute(focused, kAXEnabledAttribute),
-              enabled else { return false }
+              enabled else { return .unfocused }
 
         let editable = boolAttribute(focused, kAXIsEditableAttribute)
         let settable = valueSettable(focused)
         guard HostTextFocusPolicy.isEditable(role: role, enabled: enabled,
-                                             editable: editable, valueSettable: settable) else { return false }
+                                             editable: editable, valueSettable: settable) else { return .unfocused }
 
-        var hit: AXUIElement?
-        guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit) == .success,
-              let hit else { return false }
-        var candidate = hit
-        // The hit-tested child may be a text run inside the focused editor.
-        for _ in 0..<5 {
-            if CFEqual(candidate, focused) { return true }
-            guard let parent = elementAttribute(candidate, kAXParentAttribute) else { break }
-            candidate = parent
+        if let point {
+            var hit: AXUIElement?
+            guard budget.arm(system),
+                  AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit) == .success,
+                  let hit else { return .unfocused }
+            var candidate = hit
+            var matched = false
+            // The hit-tested child may be a text run inside the focused editor.
+            for _ in 0..<5 {
+                if CFEqual(candidate, focused) { matched = true; break }
+                guard budget.arm(candidate), let parent = elementAttribute(candidate, kAXParentAttribute) else { break }
+                candidate = parent
+            }
+            guard matched else { return .unfocused }
         }
-        return false
+
+        guard geometry, budget.arm(focused), let frame = frame(of: focused) else {
+            return HostTextFocusResult(editable: true)
+        }
+        let secure = stringAttribute(focused, kAXSubroleAttribute) == kAXSecureTextFieldSubrole
+        let caret = secure || !budget.arm(focused) ? nil : insertionPoint(of: focused, budget: budget)
+        return HostTextFocusResult(editable: true, frame: frame, anchor: caret ?? point)
+    }
+
+    private static func frame(of element: AXUIElement) -> CGRect? {
+        var origin = CGPoint.zero
+        var size = CGSize.zero
+        guard let position = attribute(element, kAXPositionAttribute),
+              CFGetTypeID(position) == AXValueGetTypeID(),
+              AXValueGetValue(position as! AXValue, .cgPoint, &origin),
+              let extent = attribute(element, kAXSizeAttribute),
+              CFGetTypeID(extent) == AXValueGetTypeID(),
+              AXValueGetValue(extent as! AXValue, .cgSize, &size),
+              size.width > 0, size.height > 0 else { return nil }
+        return CGRect(origin: origin, size: size)
+    }
+
+    /// Reads only the selection's indices and the bounds of an empty or one-character range at it.
+    private static func insertionPoint(of element: AXUIElement, budget: HostAXBudget) -> CGPoint? {
+        var range = CFRange()
+        guard let value = attribute(element, kAXSelectedTextRangeAttribute),
+              CFGetTypeID(value) == AXValueGetTypeID(),
+              AXValueGetValue(value as! AXValue, .cfRange, &range),
+              range.location >= 0 else { return nil }
+        let end = range.location + max(0, range.length)
+        if budget.arm(element), let caret = bounds(of: element, CFRange(location: end, length: 0)),
+           caret.height > 0 {
+            return CGPoint(x: caret.minX, y: caret.midY)
+        }
+        guard end > 0, budget.arm(element),
+              let previous = bounds(of: element, CFRange(location: end - 1, length: 1)),
+              previous.height > 0 else { return nil }
+        return CGPoint(x: previous.maxX, y: previous.midY)
+    }
+
+    private static func bounds(of element: AXUIElement, _ range: CFRange) -> CGRect? {
+        var range = range
+        guard let parameter = AXValueCreate(.cfRange, &range) else { return nil }
+        var value: CFTypeRef?
+        var rect = CGRect.zero
+        guard AXUIElementCopyParameterizedAttributeValue(
+                element, kAXBoundsForRangeParameterizedAttribute as CFString, parameter, &value) == .success,
+              let value, CFGetTypeID(value) == AXValueGetTypeID(),
+              AXValueGetValue(value as! AXValue, .cgRect, &rect),
+              rect.origin.x.isFinite, rect.origin.y.isFinite else { return nil }
+        return rect
     }
 
     private static func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {

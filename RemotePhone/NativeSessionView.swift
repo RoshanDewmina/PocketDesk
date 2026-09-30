@@ -34,6 +34,10 @@ struct NativeSessionView: View {
     @State private var zoomBadge: String?
     @State private var zoomBadgeToken = 0
     @State private var revision: UInt64 = 0
+    @State private var keyboardBarFrame: CGRect = .zero
+    @State private var manualViewportRevision: UInt64 = 0
+    @StateObject private var precisionTap = PrecisionTapController()
+    @AppStorage(PrecisionTapTrigger.key) private var precisionTrigger: PrecisionTapTrigger = .off
     @AppStorage("pointerSensitivity") private var sensitivity = 1.0
     @AppStorage(TouchInputMode.key) private var touchMode: TouchInputMode = .trackpad
     @AppStorage("remapReservedShortcuts") private var remapShortcuts = true
@@ -63,6 +67,9 @@ struct NativeSessionView: View {
     private var sessionChrome: AnyView {
         AnyView(ZStack {
             stage.ignoresSafeArea()
+            PrecisionLoupeOverlay(controller: precisionTap, model: model, viewport: viewport,
+                                  track: connection.remoteVideo, offline: offlineLayoutCheck)
+                .ignoresSafeArea()
             Color.clear
                 .allowsHitTesting(false)
                 .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
@@ -113,7 +120,8 @@ struct NativeSessionView: View {
         }
         .overlay {
             if keyboardOpen {
-                KeyboardLayoutDock { keyboardBar }
+                KeyboardLayoutDock(onFrame: { keyboardBarFrame = $0 }) { keyboardBar }
+                    .onDisappear { keyboardBarFrame = .zero }
                     // SwiftUI must not also move the dock for the keyboard. UIKit's keyboard
                     // layout guide owns that one offset and updates it on first presentation,
                     // interactive dismissal and rotation.
@@ -235,6 +243,10 @@ struct NativeSessionView: View {
 
     var body: some View {
         sessionResume
+        .modifier(KeyboardFocusRevealModifier(model: model, viewport: $viewport, keyboardOpen: keyboardOpen,
+                                              barFrame: keyboardBarFrame, canvasFrame: canvasFrame,
+                                              manualViewportRevision: manualViewportRevision,
+                                              preview: offlineLayoutCheck))
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
         .onAppear {
             if !offlineLayoutCheck && !model.fresh { lockVisible = true }
@@ -339,7 +351,7 @@ struct NativeSessionView: View {
 
     private var inputSurface: some View {
             NativeTrackpadSurface(enabled: model.canControl && !panMode && !controlsBlockInput && !showVoiceInput, panMode: panMode,
-                                  direct: directTouch,
+                                  direct: directTouch, precision: precisionTrigger,
                                   revision: model.inputRevision &+ revision, sensitivity: CGFloat(sensitivity),
                                   pointerScale: viewport.scale, doubleClickInterval: model.doubleClickInterval,
                                   middleClickAvailable: model.middleButtonSupported,
@@ -1561,10 +1573,15 @@ struct NativeSessionView: View {
         case .display: settingsForm("Display") { displaySection }
         case .picture: settingsForm("Picture") { pictureSection }
         case .pointer: settingsForm("Pointer") { feelSection }
-        case .touch: settingsForm("Touch") { touchSection }
+        case .touch:
+            settingsForm("Touch") {
+                touchSection
+                PrecisionTapSettingsSection(directTouch: touchMode == .direct)
+            }
         case .view:
             settingsForm("View") {
                 zoomSection
+                KeyboardViewSettingsSection()
                 miniMapSection
             }
         case .clipboard: settingsForm("Clipboard") { clipboardSettingsSection }
@@ -2132,7 +2149,10 @@ struct NativeSessionView: View {
 
     private func handle(_ command: NativeGestureCommand) -> Bool {
         guard !controlsBlockInput, !showVoiceInput, !model.privacyShield, !model.contentConcealed else { return false }
+        if command.movesViewport { manualViewportRevision &+= 1 }
         switch command {
+        case .precision(let phase, let finger):
+            return precisionTap.handle(phase, finger: finger, viewport: viewport, model: model)
         case .zoomToggle(let anchor):
             model.pointerLocator.clear()
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {

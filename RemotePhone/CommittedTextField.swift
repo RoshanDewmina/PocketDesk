@@ -6,22 +6,30 @@ import UIKit
 /// proposal when the contained editor becomes first responder immediately after insertion.
 struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
     private let content: Content
+    /// The panel's frame in window coordinates, after each layout pass that moves it with the keyboard.
+    private let onFrame: ((CGRect) -> Void)?
 
-    init(@ViewBuilder content: () -> Content) {
+    init(onFrame: ((CGRect) -> Void)? = nil, @ViewBuilder content: () -> Content) {
         self.content = content()
+        self.onFrame = onFrame
     }
 
     func makeUIViewController(context: Context) -> Controller {
-        Controller(content: content)
+        let controller = Controller(content: content)
+        controller.onFrame = onFrame
+        return controller
     }
 
     func updateUIViewController(_ controller: Controller, context: Context) {
+        controller.onFrame = onFrame
         controller.update(content)
     }
 
     @MainActor
     final class Controller: UIViewController {
         private let host: UIHostingController<Content>
+        var onFrame: ((CGRect) -> Void)?
+        private var reportedFrame: CGRect?
 
         init(content: Content) {
             host = UIHostingController(rootView: content)
@@ -53,6 +61,15 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
                 host.view.trailingAnchor.constraint(equalTo: safe.trailingAnchor),
                 host.view.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor),
             ])
+        }
+
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            guard let onFrame, view.window != nil else { return }
+            let frame = host.view.convert(host.view.bounds, to: nil)
+            guard frame != reportedFrame else { return }
+            reportedFrame = frame
+            DispatchQueue.main.async { onFrame(frame) }
         }
 
         func update(_ content: Content) {

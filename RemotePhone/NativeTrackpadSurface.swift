@@ -7,6 +7,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
     var enabled: Bool
     var panMode: Bool
     var direct: Bool = false
+    var precision: PrecisionTapTrigger = .off
     var revision: UInt64
     var sensitivity: CGFloat
     var pointerScale: CGFloat
@@ -38,7 +39,8 @@ struct NativeTrackpadSurface: UIViewRepresentable {
         // callback begins using the new session/geometry state.
         view.engine.configure(enabled: enabled, panMode: panMode, revision: revision,
                               sensitivity: sensitivity, pointerScale: pointerScale,
-                              doubleClickInterval: doubleClickInterval, direct: direct)
+                              doubleClickInterval: doubleClickInterval, direct: direct,
+                              precision: direct ? precision : .off)
         view.engine.onCommand = onCommand
         view.engine.onPointerMotionEnded = onPointerMotionEnded
         view.engine.momentumEnabled = momentumScroll

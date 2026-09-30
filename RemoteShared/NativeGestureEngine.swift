@@ -3,6 +3,20 @@ import CoreGraphics
 
 enum NativeSwipeDirection { case left, right, up, down }
 
+/// When a direct touch shows the Precision Tap loupe instead of pressing the button.
+enum PrecisionTapTrigger: String, CaseIterable, Identifiable {
+    case off
+    /// A still touch-and-hold opens the loupe; a slide still drags.
+    case hold
+    /// Every single-finger touch opens the loupe at once.
+    case always
+
+    static let key = "precisionTap"
+    var id: String { rawValue }
+}
+
+enum PrecisionPhase: Equatable { case began, moved, ended, cancelled }
+
 /// Commands emitted by direct phone touches. `move` is already in host logical points.
 enum NativeGestureCommand {
     case move(CGSize)
@@ -25,6 +39,9 @@ enum NativeGestureCommand {
     case zoomToggle(anchor: CGPoint)
     case navigate(factor: CGFloat, anchor: CGPoint, translation: CGSize)
     case pan(CGSize)
+    /// Precision Tap: the finger's canvas point. The receiver owns the loupe and decides on `ended`
+    /// whether to click; `cancelled` never clicks.
+    case precision(PrecisionPhase, CGPoint)
 }
 
 /// A deterministic, single-owner touch arbiter. Call `update` with the entire active
@@ -46,6 +63,8 @@ final class NativeGestureEngine {
     static let trackpadSlop: CGFloat = 8
     /// A still direct touch held this long presses the button, like touch-and-hold on a screen.
     static let directHoldDelay: TimeInterval = 0.5
+    /// A still direct touch held this long opens the Precision Tap loupe, before it could press.
+    static let precisionHoldDelay: TimeInterval = 0.3
     /// A three-finger tap: every finger lifts within this time and moves less than `tapTravel`.
     static let threeFingerTapDuration: TimeInterval = 0.45
     static let threeFingerTapTravel: CGFloat = 12
@@ -71,7 +90,7 @@ final class NativeGestureEngine {
     var hasMomentum: Bool { momentumStream != nil }
     private var pointerMotionActive = false
 
-    private enum Mode { case candidate, pointer, multiCandidate, scroll, zoom, pan, drag, workspaceCandidate, workspaceFired, blocked }
+    private enum Mode { case candidate, pointer, multiCandidate, scroll, zoom, pan, drag, precision, workspaceCandidate, workspaceFired, blocked }
     private var mode: Mode = .blocked
     private var active: [UInt64: CGPoint] = [:]
     private var firstPoint: CGPoint = .zero
@@ -92,6 +111,8 @@ final class NativeGestureEngine {
     private var scrollID: String?
     private var dragID: String?
     private var zoomActive = false
+    private var precisionActive = false
+    private var precisionDeclined = false
     private var residual: CGSize = .zero
     private var lastTap: (time: TimeInterval, point: CGPoint)?
     private var secondTap = false
@@ -105,6 +126,7 @@ final class NativeGestureEngine {
     private(set) var enabled: Bool
     private(set) var panMode: Bool
     private(set) var direct = false
+    private(set) var precision: PrecisionTapTrigger = .off
     private(set) var revision: UInt64
     private var sensitivity: CGFloat
     private var pointerScale: CGFloat
@@ -128,8 +150,10 @@ final class NativeGestureEngine {
     var hasActiveTouches: Bool { !active.isEmpty }
 
     func configure(enabled: Bool, panMode: Bool, revision: UInt64, sensitivity: CGFloat,
-                   pointerScale: CGFloat, doubleClickInterval: TimeInterval, direct: Bool = false) {
-        if self.enabled != enabled || self.panMode != panMode || self.revision != revision || self.direct != direct {
+                   pointerScale: CGFloat, doubleClickInterval: TimeInterval, direct: Bool = false,
+                   precision: PrecisionTapTrigger = .off) {
+        if self.enabled != enabled || self.panMode != panMode || self.revision != revision || self.direct != direct
+            || self.precision != precision {
             stopMomentum()
             cancel()
             // A surviving physical contact must lift before it can start a new command.
@@ -139,6 +163,7 @@ final class NativeGestureEngine {
         self.enabled = enabled
         self.panMode = panMode
         self.direct = direct
+        self.precision = precision
         self.revision = revision
         self.sensitivity = Self.safeSensitivity(sensitivity)
         self.pointerScale = Self.safeScale(pointerScale)
@@ -165,6 +190,7 @@ final class NativeGestureEngine {
             guard count <= 3, let point = next.values.first else { mode = .blocked; return }
             startTime = time
             lastMotionTime = time
+            precisionDeclined = false
             firstPoint = point
             lastPoint = point
             maxDistance = 0
@@ -190,6 +216,7 @@ final class NativeGestureEngine {
                     directPoint = secondTap ? lastTap?.point ?? point : point
                     if onCommand(.pointTo(directPoint)) {
                         mode = .candidate
+                        if precision == .always && !secondTap { beginPrecision(at: point) }
                     } else {
                         mode = .blocked
                         secondTap = false
@@ -292,7 +319,7 @@ final class NativeGestureEngine {
                 let clickCount = secondTap ? 2 : 1
                 let accepted = onCommand(.click(count: clickCount))
                 lastTap = accepted && clickCount == 1 ? (time, direct ? directPoint : firstPoint) : nil
-            } else if mode == .drag {
+            } else if mode == .drag || mode == .precision {
                 finishContinuous(cancelled: false)
                 lastTap = nil
             } else {
@@ -327,6 +354,9 @@ final class NativeGestureEngine {
         if secondTap {
             guard time - startTime >= 0.22 else { return }
             beginDrag(count: 2)
+        } else if direct, precision != .off, !precisionDeclined, time - startTime >= Self.precisionHoldDelay {
+            beginPrecision(at: active.values.first ?? firstPoint)
+            if mode != .precision { precisionDeclined = true }
         } else if direct, time - startTime >= Self.directHoldDelay {
             beginDrag(count: 1)
         }
@@ -370,6 +400,10 @@ final class NativeGestureEngine {
             }
         case .drag where direct:
             pointDirectly(at: point)
+        case .precision:
+            guard point != lastPoint else { return }
+            lastPoint = point
+            _ = onCommand(.precision(.moved, point))
         case .pointer, .drag:
             sendMotion(point, at: time)
         case .pan:
@@ -381,6 +415,14 @@ final class NativeGestureEngine {
             }
         default: break
         }
+    }
+
+    private func beginPrecision(at point: CGPoint) {
+        guard onCommand(.precision(.began, point)) else { return }
+        precisionActive = true
+        mode = .precision
+        lastPoint = point
+        lastTap = nil
     }
 
     private func beginDrag(count: Int) {
@@ -670,6 +712,10 @@ final class NativeGestureEngine {
         if zoomActive {
             zoomActive = false
             _ = onCommand(.zoomEnded)
+        }
+        if precisionActive {
+            precisionActive = false
+            _ = onCommand(.precision(cancelled ? .cancelled : .ended, lastPoint))
         }
     }
 

@@ -29,9 +29,11 @@ enum SessionFeature {
     static let secureFocus = "focus.secure.1"
     /// `file` actions and the `file` data channel: one file each way, and links from the share sheet.
     static let fileTransfer = "file.1"
+    /// A requested focused field rect, without contents or labels.
+    static let focusGeometry = "focus.rect.1"
     static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
-                       momentumScroll, auxiliaryButtons, secureFocus, fileTransfer]
+                       momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry]
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as

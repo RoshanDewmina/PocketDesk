@@ -57,12 +57,13 @@ enum VoiceDeliveryStatus: Equatable {
 }
 
 /// A focus reply may open the local keyboard only for the most recent admitted click.
+/// A refresh probe re-measures the focused field after typing; it never opens the keyboard.
 struct TextFocusProbeGate {
-    private(set) var pending: (probe: String, epoch: UInt64, sentAt: TimeInterval)?
+    private(set) var pending: (probe: String, epoch: UInt64, sentAt: TimeInterval, refresh: Bool)?
 
-    mutating func begin(epoch: UInt64, at now: TimeInterval) -> String {
+    mutating func begin(epoch: UInt64, at now: TimeInterval, refresh: Bool = false) -> String {
         let probe = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
-        pending = (probe, epoch, now)
+        pending = (probe, epoch, now, refresh)
         return probe
     }
 
@@ -194,6 +195,11 @@ final class PhoneRemoteModel: ObservableObject {
     /// Which click the last accepted one was ("click", "right" or "double"), for the contact ripple.
     private(set) var lastAcceptedClick = "click"
     @Published private(set) var autoKeyboardRevision: UInt64 = 0
+    /// The focused field's rect from the newest click (or, while following typing, the newest text).
+    @Published private(set) var focusTarget: FocusTarget?
+    private var focusTargetRevision: UInt64 = 0
+    /// Set by the session while the keyboard is open in Follow typing.
+    var followTyping = false
     @Published private(set) var nativeInteractionSupported = false
     @Published private(set) var doubleClickInterval: TimeInterval = 0.5
     @Published var hapticsEnabled = UserDefaults.standard.object(forKey: "clickHaptics") == nil ? true : UserDefaults.standard.bool(forKey: "clickHaptics") {
@@ -332,6 +338,7 @@ final class PhoneRemoteModel: ObservableObject {
     var absolutePointerSupported: Bool { supports(SessionFeature.absolutePointer) }
     var middleButtonSupported: Bool { supports(SessionFeature.middleButton) }
     var momentumScrollSupported: Bool { supports(SessionFeature.momentumScroll) }
+    var focusGeometrySupported: Bool { supports(SessionFeature.focusGeometry) }
     var extendedKeysSupported: Bool { supports(SessionFeature.extendedKeys) }
 
     /// Modifier keys held on a hardware keyboard, applied to clicks and pointer motion (⌘-click).
@@ -576,7 +583,18 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     #if DEBUG
-    func previewEditableFocusForTesting() { autoKeyboardRevision &+= 1 }
+    func previewEditableFocusForTesting() {
+        if LaunchOptions.has("--ui-focus-preview") {
+            let geometry = FocusGeometry(displayWidth: sourceSize.width, displayHeight: sourceSize.height,
+                                         x: sourceSize.width * 0.3, y: sourceSize.height * 0.84,
+                                         width: sourceSize.width * 0.4, height: 40,
+                                         anchorX: sourceSize.width * 0.32, anchorY: sourceSize.height * 0.84 + 20)
+            focusTargetRevision &+= 1
+            focusTarget = FocusTarget(geometry, sourceSize: sourceSize, epoch: geometryEpoch, refresh: false,
+                                      revision: focusTargetRevision)
+        }
+        autoKeyboardRevision &+= 1
+    }
 
     /// Offline screenshots of the hold states: a finger drag, or a Hold click from Controls.
     func previewHoldForTesting(explicit: Bool) {
@@ -806,8 +824,13 @@ final class PhoneRemoteModel: ObservableObject {
                            probeTextFocus: Bool = false, pointerSync: PointerSync? = nil) -> Bool {
         textFocusProbe.invalidate()
         guard canControl else { return false }
-        let focusProbe = probeTextFocus && nativeInteractionSupported && !dragging && activeHold == nil
-            ? textFocusProbe.begin(epoch: geometryEpoch, at: ProcessInfo.processInfo.systemUptime) : nil
+        let clickProbe = probeTextFocus && nativeInteractionSupported && !dragging && activeHold == nil
+        let refreshProbe = !clickProbe && followTyping && focusTarget != nil && focusGeometrySupported
+            && nativeInteractionSupported && (name == "text" || name == "key")
+        if clickProbe { focusTarget = nil }
+        let focusProbe = clickProbe || refreshProbe
+            ? textFocusProbe.begin(epoch: geometryEpoch, at: ProcessInfo.processInfo.systemUptime,
+                                   refresh: refreshProbe) : nil
         let envelope = nativeInteractionSupported
             ? NativeInteraction(token: inputToken, hold: hold ?? activeHold,
                                 clickCount: count ?? (activeHold == nil ? nil : activeHoldCount),
@@ -820,7 +843,8 @@ final class PhoneRemoteModel: ObservableObject {
             ? hardwareModifiers : modifiers
         let accepted = transmit(RemoteAction(action: name, x: x, y: y,
             text: text, key: key, modifiers: pointerModifiers, epoch: geometryEpoch, interaction: envelope,
-            pointerSync: pointerSync, textFocusProbe: focusProbe))
+            pointerSync: pointerSync, textFocusProbe: focusProbe,
+            textFocusGeometry: focusProbe != nil && focusGeometrySupported ? true : nil))
         if !accepted { textFocusProbe.invalidate() }
         if accepted, let clickSentMs { connection.media?.counters.clickSent(atMs: clickSentMs) }
         if accepted && isClick {
@@ -926,7 +950,7 @@ final class PhoneRemoteModel: ObservableObject {
             let accepted = sendInput("dragUp", count: activeHoldCount, hold: id)
             release()
             return accepted
-        case .zoom, .zoomEnded, .zoomToggle, .navigate, .pan:
+        case .zoom, .zoomEnded, .zoomToggle, .navigate, .pan, .precision:
             return false
         }
     }
@@ -1248,11 +1272,19 @@ final class PhoneRemoteModel: ObservableObject {
                action.epoch == geometryEpoch {
                 receiveSecureFocus(secure: action.textFocusSecure)
             }
+            let refresh = textFocusProbe.pending?.refresh == true
             if textFocusProbe.consume(probe: action.textFocusProbe, editable: action.textFocusEditable,
                                       responseEpoch: action.epoch, currentEpoch: geometryEpoch,
                                       at: ProcessInfo.processInfo.systemUptime,
-                                      allowed: sceneIsActive && canControl && !dragging && textEditable && !isComposingText) {
-                autoKeyboardRevision &+= 1
+                                      allowed: sceneIsActive && canControl && !dragging
+                                        && (refresh ? followTyping : textEditable && !isComposingText)) {
+                if !refresh { autoKeyboardRevision &+= 1 }
+                focusTargetRevision &+= 1
+                let target = action.textFocusRect.flatMap {
+                    FocusTarget($0, sourceSize: sourceSize, epoch: action.epoch, refresh: refresh,
+                                revision: focusTargetRevision)
+                }
+                if target != nil || !refresh { focusTarget = target }
             }
             if action.epoch == geometryEpoch, canControl, pointerLocatorSupported {
                 pointerLocator.receive(action, at: ProcessInfo.processInfo.systemUptime, sourceSize: sourceSize)

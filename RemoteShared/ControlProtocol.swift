@@ -18,6 +18,9 @@ struct RemoteAction: Codable {
     var textFocusEditable: Bool? = nil
     /// With a focus reply, after `SessionFeature.secureFocus`: the focused field takes a password.
     var textFocusSecure: Bool? = nil
+    /// The phone wants the focused field's rect with this probe's reply (`SessionFeature.focusGeometry`).
+    var textFocusGeometry: Bool? = nil
+    var textFocusRect: FocusGeometry? = nil
     // Session extensions (clipboard, background pause). Validated in SessionContinuity.swift.
     var clipboard: ClipboardFrame? = nil
     /// File transfer control (`file` action, after `SessionFeature.fileTransfer`); bytes use the `file` channel.
@@ -70,6 +73,7 @@ struct RemoteAction: Codable {
         guard textFocusSecure == nil || (action == "heartbeat" && textFocusProbe != nil && textFocusEditable != nil)
         else { throw RemoteError.invalidMessage }
         guard file == nil || action == "file" else { throw RemoteError.invalidMessage }
+        try validateFocusGeometry()
         // Also before the early returns, so no other action can carry a display list.
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }
@@ -77,7 +81,7 @@ struct RemoteAction: Codable {
         try interaction?.validate()
         try pointerLocation?.validate()
         if let textFocusProbe {
-            guard ["click", "double", "heartbeat"].contains(action),
+            guard ["click", "double", "heartbeat", "text", "key"].contains(action),
                   textFocusProbe.utf8.count == 32,
                   textFocusProbe.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) })
             else { throw RemoteError.invalidMessage }

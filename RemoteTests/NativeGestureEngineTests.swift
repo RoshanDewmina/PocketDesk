@@ -643,6 +643,9 @@ final class CommandLog {
     var dragEndIDs: [String] = []
     var auxiliary: [AuxiliaryMouseButton] = []
     var acceptDrag = true
+    var precision: [PrecisionPhase] = []
+    var precisionPoints: [CGPoint] = []
+    var acceptPrecision = true
     /// Rejects `pointTo` for points matching this predicate, as a letterbox band would.
     var rejectPoint: (CGPoint) -> Bool = { _ in false }
     /// Every command in order, for checking that the pointer moves before it clicks.
@@ -667,6 +670,9 @@ final class CommandLog {
         case .pan: pans += 1; trace.append("pan")
         case .dragBegan(let id, let count): dragBegins += 1; dragBeginIDs.append(id); dragCounts.append(count); trace.append("dragBegan\(count)"); return acceptDrag
         case .dragEnded(let id): dragEnds += 1; dragEndIDs.append(id); trace.append("dragEnded")
+        case .precision(let phase, let point):
+            precision.append(phase); precisionPoints.append(point); trace.append("precision-\(phase)")
+            return phase != .began || acceptPrecision
         }
         return true
     }
