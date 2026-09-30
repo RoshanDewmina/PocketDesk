@@ -233,6 +233,42 @@ public struct ViewportTransform {
         return abs(offset.x - previous.x) > 0.000_001 || abs(offset.y - previous.y) > 0.000_001
     }
 
+    /// Pans, without zooming, only as far as needed to bring a source rect inside the visible rectangle,
+    /// inset by `margin`. A rect larger than that keeps its leading edges in view. Unlike pointer follow
+    /// this also works at the Fit size, where the keyboard's chrome can cover the lower desktop. With
+    /// `transient`, closing the obstruction that caused it (the keyboard) still returns to the prior view.
+    @discardableResult
+    public mutating func reveal(sourceRect rect: CGRect, in visibleRect: CGRect,
+                                margin: CGFloat = 16, transient: Bool = false) -> Bool {
+        guard scale > 0, rect.origin.x.isFinite, rect.origin.y.isFinite,
+              rect.width.isFinite, rect.height.isFinite, margin.isFinite, margin >= 0,
+              visibleRect.origin.x.isFinite, visibleRect.origin.y.isFinite,
+              visibleRect.width.isFinite, visibleRect.height.isFinite,
+              contentRect.width > 0, contentRect.height > 0 else { return false }
+        let source = rect.standardized.intersection(CGRect(origin: .zero, size: sourceSize))
+        let usable = visibleRect.intersection(CGRect(origin: .zero, size: canvasSize))
+        guard !source.isNull, !usable.isNull, usable.width > 0, usable.height > 0 else { return false }
+        let target = usable.insetBy(dx: min(margin, usable.width / 4), dy: min(margin, usable.height / 4))
+        let shown = CGRect(x: contentRect.minX + source.minX * scale, y: contentRect.minY + source.minY * scale,
+                           width: source.width * scale, height: source.height * scale)
+        func delta(_ low: CGFloat, _ high: CGFloat, _ min: CGFloat, _ max: CGFloat) -> CGFloat {
+            if high - low > max - min || low < min { return min - low }
+            if high > max { return max - high }
+            return 0
+        }
+        let deltaX = delta(shown.minX, shown.maxX, target.minX, target.maxX)
+        let deltaY = delta(shown.minY, shown.maxY, target.minY, target.maxY)
+        guard abs(deltaX) > 0.000_001 || abs(deltaY) > 0.000_001 else { return false }
+        let previous = offset
+        offset = clampedOffset(CGPoint(x: offset.x + deltaX, y: offset.y + deltaY), in: usable)
+        let moved = abs(offset.x - previous.x) > 0.000_001 || abs(offset.y - previous.y) > 0.000_001
+        if moved, transient, let pending = insetReturn, pending.resultingOffset == previous, pending.resultingZoom == zoom {
+            insetReturn = InsetReturn(insets: pending.insets, offset: pending.offset, zoom: pending.zoom,
+                                      resultingOffset: offset, resultingZoom: zoom, mode: pending.mode)
+        }
+        return moved
+    }
+
     /// Scene or source geometry changed (rotation, window resize, new display).
     /// A baseline view stays at its baseline; a manual view keeps its normalized focal point.
     public mutating func resize(sourceSize: CGSize, canvasSize: CGSize) {

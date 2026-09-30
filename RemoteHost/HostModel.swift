@@ -1526,25 +1526,36 @@ final class RemoteHostModel: ObservableObject {
            (action.action == "click" || action.action == "double"),
            HostTextFocusProbe.isValidID(action.textFocusProbe),
            let probe = action.textFocusProbe, let point = outcome.clickPoint {
-            scheduleTextFocusProbe(probe, point: point, issuedAt: now)
+            scheduleTextFocusProbe(probe, point: point, geometry: action.textFocusGeometry == true, issuedAt: now)
+        } else if admission == .upgraded, outcome.accepted, action.action == "text" || action.action == "key",
+                  action.textFocusGeometry == true, HostTextFocusProbe.isValidID(action.textFocusProbe),
+                  let probe = action.textFocusProbe {
+            scheduleTextFocusProbe(probe, point: nil, geometry: true, issuedAt: now)
         }
         if action.action == "text" {
             sendTextResult(for: action.key, accepted: outcome.accepted)
         }
     }
 
-    private func scheduleTextFocusProbe(_ probe: String, point: CGPoint, issuedAt: TimeInterval) {
+    /// `point` nil re-checks the focus after typed text; only geometry is ever measured or sent.
+    private func scheduleTextFocusProbe(_ probe: String, point: CGPoint?, geometry: Bool, issuedAt: TimeInterval) {
         guard let peer = connection.media else { return }
         let ticket = HostTextFocusTicket(epoch: inputEpoch.value,
                                          revision: textFocusRevision, issuedAt: issuedAt)
+        let displayFrame = geometry ? input.displayBounds : nil
         textFocusTask = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
             guard let self, self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else { return }
-            let editable = await HostTextFocusProbe.editableAtClick(point)
-            guard self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else { return }
+            let focus = await HostTextFocusProbe.focus(at: point, geometry: displayFrame != nil)
+            guard self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled,
+                  displayFrame == nil || self.input.displayBounds == displayFrame else { return }
+            let rect = focus.editable ? focus.frame.flatMap { field in
+                displayFrame.flatMap { FocusGeometry.make(field: field, anchor: focus.anchor,
+                                                          displayFrame: $0, geometrySize: $0.size) }
+            } : nil
             _ = self.connection.sendControl(RemoteAction(
                 action: "heartbeat", epoch: ticket.epoch,
-                textFocusProbe: probe, textFocusEditable: editable
+                textFocusProbe: probe, textFocusEditable: focus.editable, textFocusRect: rect
             ))
         }
     }

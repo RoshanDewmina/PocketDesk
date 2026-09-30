@@ -21,8 +21,11 @@ enum SessionFeature {
     static let viewportCapture = "capture.viewport.1"
     /// G12: the Mac reports its ladder rung and busy state on `capture` status.
     static let ladder = "ladder.1"
+    /// A text-focus reply may carry the focused field's display-local rect when the probe asks for it.
+    static let focusGeometry = "focus.rect.1"
     static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
-                       absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder]
+                       absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
+                       focusGeometry]
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as

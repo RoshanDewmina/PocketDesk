@@ -16,6 +16,9 @@ struct RemoteAction: Codable {
     var streamQuality: StreamQuality? = nil
     var textFocusProbe: String? = nil
     var textFocusEditable: Bool? = nil
+    /// The phone wants the focused field's rect with this probe's reply (`SessionFeature.focusGeometry`).
+    var textFocusGeometry: Bool? = nil
+    var textFocusRect: FocusGeometry? = nil
     // Session extensions (clipboard, background pause). Validated in SessionContinuity.swift.
     var clipboard: ClipboardFrame? = nil
     var features: [String]? = nil
@@ -63,6 +66,7 @@ struct RemoteAction: Codable {
         guard (captureRegion == nil && ladder == nil && busy == nil) || action == "capture" else {
             throw RemoteError.invalidMessage
         }
+        try validateFocusGeometry()
         // Also before the early returns, so no other action can carry a display list.
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }
@@ -70,7 +74,7 @@ struct RemoteAction: Codable {
         try interaction?.validate()
         try pointerLocation?.validate()
         if let textFocusProbe {
-            guard ["click", "double", "heartbeat"].contains(action),
+            guard ["click", "double", "heartbeat", "text", "key"].contains(action),
                   textFocusProbe.utf8.count == 32,
                   textFocusProbe.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) })
             else { throw RemoteError.invalidMessage }
