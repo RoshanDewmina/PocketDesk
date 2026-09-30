@@ -206,8 +206,8 @@ struct NativeSessionView: View {
         .onChange(of: viewport.captureRequest(displayScale: displayScale), initial: true) { _, request in
             model.viewportChanged(request)
         }
-        .onChange(of: viewport.offset) { _, _ in pokeMiniMap() }
-        .onChange(of: viewport.zoom) { _, _ in pokeMiniMap() }
+        .onChange(of: viewport.offset) { _, _ in pokeMiniMap(); VideoPresentationProbe.noteUserActivity() }
+        .onChange(of: viewport.zoom) { _, _ in pokeMiniMap(); VideoPresentationProbe.noteUserActivity() }
         .onChange(of: viewport.canvasSize) { _, _ in pokeMiniMap() }
         .onChange(of: miniMapEligible) { _, eligible in
             // Closing the dock or a sheet after zooming shows where you are, briefly.

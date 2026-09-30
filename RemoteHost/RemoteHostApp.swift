@@ -150,6 +150,7 @@ extension HostActions {
             copyAgentHookSetup: model.copyAgentHookSetup,
             resetAgentAlertLink: model.resetAgentAlertLink,
             copyDiagnostics: model.copyDiagnostics,
+            setNewestFrameWins: model.setNewestFrameWins,
             selectDisplay: model.selectDisplay,
             openSetup: openSetup,
             openSettings: openSettings,

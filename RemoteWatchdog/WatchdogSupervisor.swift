@@ -82,18 +82,20 @@ final class WatchdogSupervisor {
         let record = WatchdogStore.read(HostRunRecord.self, from: files.hostRecord)
         let alive = record.map { HostProcessInfo.isRunning(pid: $0.pid, executablePath: $0.executablePath) } ?? false
         if let record, alive { watch(pid: record.pid) } else { watch(pid: 0) }
+        // Only an unexpected exit reads these; skip the LaunchServices query and file read otherwise.
+        let judgingExit = !alive && record?.cleanExit == false
         let observation = WatchdogObservation(
             record: record,
             ownedBundlePath: bundlePath,
             recordProcessAlive: alive,
             recordProcessTraced: alive && record.map { HostProcessInfo.isTraced(pid: $0.pid) } == true,
-            otherInstanceRunning: otherInstanceRunning(excluding: alive ? record?.pid : nil),
+            otherInstanceRunning: judgingExit && otherInstanceRunning(excluding: nil),
             bootSession: bootSession,
             now: Date(),
             uptime: ProcessInfo.processInfo.systemUptime,
             shuttingDown: shuttingDown || launchInFlight,
             hangKillIssued: record.map { $0.launchID == hangKillIssuedFor } ?? false,
-            hangNoteLaunchID: WatchdogStore.read(HostHangNote.self, from: files.hangNote)?.launchID
+            hangNoteLaunchID: judgingExit ? WatchdogStore.read(HostHangNote.self, from: files.hangNote)?.launchID : nil
         )
         let before = ledger
         let decision = policy.decide(observation, ledger: &ledger)

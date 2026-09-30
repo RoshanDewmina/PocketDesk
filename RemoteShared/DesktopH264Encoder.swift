@@ -114,6 +114,22 @@ struct EncoderLatencyTrace {
     }
 }
 
+/// Settings → Diagnostics switch for newest frame wins (`StreamTuning.encoderMaxInFlight`), read at
+/// every encode so an A/B needs no relaunch. On unless the user turned it off.
+enum NewestFrameWinsSwitch {
+    static let defaultsKey = "PocketDeskNewestFrameWins"
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var stored = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+
+    static var isOn: Bool {
+        get { lock.lock(); defer { lock.unlock() }; return stored }
+        set {
+            lock.lock(); stored = newValue; lock.unlock()
+            UserDefaults.standard.set(newValue, forKey: defaultsKey)
+        }
+    }
+}
+
 /// libwebrtc's VideoToolbox H.264 encoder plus `EncoderRestartPolicy`. Packetization, rate control,
 /// bitstream format and key-frame handling stay the stock implementation; a restart is the same
 /// release/start sequence libwebrtc itself uses when the resolution changes.
@@ -200,13 +216,14 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     }
 
     func encode(_ frame: RTCVideoFrame, codecSpecificInfo info: (any RTCCodecSpecificInfo)?, frameTypes: [NSNumber]) -> Int {
+        let newestFrameWins = NewestFrameWinsSwitch.isOn
         lock.lock()
         let restart = settings != nil && policy.shouldRestart(at: ProcessInfo.processInfo.systemUptime)
         let target = UInt32(policy.targetKbps)
         let settings = settings, cores = cores, framerate = framerate, callback = callback
         if restart { latency.reset() }
         let now = MachClock.nowMs()
-        let queued = maxInFlight.map { limit in
+        let queued = (newestFrameWins ? maxInFlight : nil).map { limit in
             (limit, latency.pending(withinMs: Self.inFlightWindowMs, now: now))
         }
         lock.unlock()

@@ -3,6 +3,7 @@ import AppKit
 import Combine
 import ScreenCaptureKit
 import ServiceManagement
+import SystemConfiguration
 
 /// Kept until both the server deletion and local Keychain cleanup have completed.
 private struct PendingHostRoomRemoval: Codable {
@@ -223,10 +224,16 @@ final class RemoteHostModel: ObservableObject {
         return .idle
     }
 
+    /// The name set in System Settings, read from configd. `Host.current()` resolves the host's
+    /// addresses and can block the main thread, and `viewState` is rebuilt on every model change.
+    nonisolated static var computerName: String? {
+        SCDynamicStoreCopyComputerName(nil, nil) as String?
+    }
+
     var viewState: HostViewState {
         let status = status
         return HostViewState(
-            macName: Host.current().localizedName ?? "this Mac",
+            macName: Self.computerName ?? "this Mac",
             appListName: Self.appListName,
             screenRecording: screenRecordingPermission,
             accessibility: accessibilityPermission,
@@ -252,6 +259,7 @@ final class RemoteHostModel: ObservableObject {
             curtainStatus: Self.curtainStatus(curtainState, displays: NSScreen.screens.count),
             agentAlerts: agentAlerts.isOn,
             agentAlertsStatus: agentAlerts.statusLine(),
+            newestFrameWins: NewestFrameWinsSwitch.isOn,
             crashLoopStopped: crashLoopStopped,
             displays: displays.map { HostDisplayOption(id: $0.displayID, name: Self.displayName(for: $0.displayID)) },
             selectedDisplayID: selected,
@@ -376,6 +384,7 @@ final class RemoteHostModel: ObservableObject {
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollPermissions() }
         }
+        permissionTimer?.tolerance = 0.2
         if screenRecordingPermission.isGranted { loadDisplays() } else { reconcileSharing() }
         #if DEBUG
         HostE2E.active?.attach(self)
@@ -466,7 +475,7 @@ final class RemoteHostModel: ObservableObject {
                 selectedDisplayID: selected,
                 availableDisplayIDs: displays.map(\.displayID),
                 create: {
-                    try connection.createPair(server: serviceAddress, name: Host.current().localizedName ?? "My Mac")
+                    try connection.createPair(server: serviceAddress, name: Self.computerName ?? "My Mac")
                 }
             ) else { return }
             preferences.serviceAddress = serviceAddress
@@ -830,6 +839,14 @@ final class RemoteHostModel: ObservableObject {
         Task { @MainActor [weak self] in await self?.agentAlerts.setEnabled(enabled) }
     }
 
+    /// Takes effect at the next encoded frame; no reconnect needed.
+    func setNewestFrameWins(_ enabled: Bool) {
+        guard NewestFrameWinsSwitch.isOn != enabled else { return }
+        NewestFrameWinsSwitch.isOn = enabled
+        events.record(.settings, "Newest frame wins \(enabled ? "on" : "off")")
+        objectWillChange.send()
+    }
+
     func resetAgentAlertLink() {
         agentAlerts.resetLink()
     }
@@ -906,7 +923,7 @@ final class RemoteHostModel: ObservableObject {
         snapshot.lastSessionFailure = connection.lastSessionFailure
         snapshot.streamQuality = capture.appliedQuality?.title
         snapshot.stream = latestSenderStatistics.map(Self.streamDescription)
-        snapshot.tuning = StreamTuning.current.summary
+        snapshot.tuning = StreamTuning.current.liveSummary
         snapshot.events = events.entries
         return HostDiagnosticsReport.render(snapshot)
     }
@@ -1321,6 +1338,7 @@ final class RemoteHostModel: ObservableObject {
                 self.reconcileCurtain()
             }
         }
+        lifecycleTimer.tolerance = 0.025
         self.lifecycleTimer = lifecycleTimer
         RunLoop.main.add(lifecycleTimer, forMode: .common)
 
@@ -1589,6 +1607,9 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func captureHealthChanged(_ healthy: Bool) {
+        // The capture reports every 0.4 s; the 4 Hz lifecycle timer already re-checks Accessibility,
+        // reconciles the curtain and sends capture status, so only a change needs handling here.
+        if healthy == captureHealthy && (healthy || captureUnhealthySince != nil) { return }
         if captureHealthy && !healthy {
             invalidateTextFocus()
             releaseRemoteInput(notifyPhone: true)

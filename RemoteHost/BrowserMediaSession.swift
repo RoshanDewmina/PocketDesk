@@ -70,6 +70,7 @@ final class BrowserMediaSession: ObservableObject {
                 self.publishStatus()
             }
         }
+        timer?.tolerance = 0.02
         task = Task { [weak self] in
             guard let self else { return }
             do {

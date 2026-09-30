@@ -77,6 +77,45 @@ final class PresentedFrameMarker: @unchecked Sendable {
     }
 }
 
+/// Efficiency audit P2: the video view's refresh while the Mac picture is static. The view drops
+/// to `idleFramesPerSecond` once `idleAfter` passes without a new frame or a touch, and returns to
+/// its full rate on the next one; a frame that ends idle is drawn at once (`raiseAndDraw`), so
+/// going idle never delays the first changed frame. Not thread-safe; the probe locks around it.
+struct VideoRefreshPolicy: Equatable {
+    static let idleFramesPerSecond = 30
+    static let idleAfter: TimeInterval = 0.25
+
+    enum Wake: Equatable { case none, raise, raiseAndDraw }
+
+    let activeFramesPerSecond: Int
+    private(set) var idle = false
+    private var lastSignal: TimeInterval
+
+    init(activeFramesPerSecond: Int, now: TimeInterval) {
+        self.activeFramesPerSecond = activeFramesPerSecond
+        lastSignal = now
+    }
+
+    var framesPerSecond: Int { idle ? min(Self.idleFramesPerSecond, activeFramesPerSecond) : activeFramesPerSecond }
+
+    /// A decoded frame (`newFrame`) or a touch, pan, zoom or pointer motion.
+    mutating func signal(at now: TimeInterval, newFrame: Bool) -> Wake {
+        lastSignal = max(lastSignal, now)
+        guard idle else { return .none }
+        idle = false
+        return newFrame ? .raiseAndDraw : .raise
+    }
+
+    /// After each draw: a frame still waiting counts as activity; otherwise go idle once quiet.
+    mutating func drew(at now: TimeInterval, framePending: Bool) {
+        if framePending {
+            lastSignal = max(lastSignal, now)
+        } else if !idle, now - lastSignal >= Self.idleAfter {
+            idle = true
+        }
+    }
+}
+
 /// Raises the WebRTC Metal view's refresh to the display maximum (120 Hz on ProMotion with
 /// `CADisableMinimumFrameDurationOnPhone`) and times decoded-frame → draw-call latency by
 /// forwarding the MTKView delegate. RTCMTLVideoView still does all rendering; if its private
@@ -98,6 +137,12 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
     var counters: StreamCounters?
     private var reportedRate = false
     private var chosenFramesPerSecond: Int?
+    /// P2, shared between the decode thread (frame arrivals) and the main thread (draws, touches).
+    private let refreshLock = NSLock()
+    private var refresh: VideoRefreshPolicy?
+    private var wakeScheduled = false
+    /// The probe on screen, for touches and input that should end idle refresh at once. Main thread.
+    private(set) static weak var active: VideoPresentationProbe?
 
     /// Stream statistics: the bench marker of the frame forwarded with this stamp.
     var markerForStamp: ((Int64) -> BenchMarker?)?
@@ -123,8 +168,13 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
             probe.chosenFramesPerSecond = preferredFramesPerSecond
             // Two drawables instead of three: one fewer frame waiting between draw and scan-out.
             (metalView.layer as? CAMetalLayer)?.maximumDrawableCount = 2
+            if StreamTuning.current.idleVideoRefresh {
+                probe.refresh = VideoRefreshPolicy(activeFramesPerSecond: preferredFramesPerSecond,
+                                                   now: ProcessInfo.processInfo.systemUptime)
+            }
         }
         metalView.delegate = probe
+        active = probe
         return probe
     }
 
@@ -138,6 +188,53 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
 
     func uninstall() {
         if let metalView, metalView.delegate === self { metalView.delegate = renderer }
+        if Self.active === self { Self.active = nil }
+        refreshLock.lock(); refresh = nil; refreshLock.unlock()
+        if let metalView, let chosenFramesPerSecond { metalView.preferredFramesPerSecond = chosenFramesPerSecond }
+    }
+
+    /// The frame refresh the view should run at now: the chosen rate, or the idle rate (P2).
+    var targetFramesPerSecond: Int? {
+        refreshLock.lock(); defer { refreshLock.unlock() }
+        return refresh?.framesPerSecond ?? chosenFramesPerSecond
+    }
+
+    /// Decode thread, after the frame reached RTCMTLVideoView: ends idle refresh and draws it now.
+    func frameForwarded(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        signal(at: now, newFrame: true)
+    }
+
+    /// Touch, pan, zoom or pointer motion on the session (main thread).
+    static func noteUserActivity(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        active?.signal(at: now, newFrame: false)
+    }
+
+    private func signal(at now: TimeInterval, newFrame: Bool) {
+        refreshLock.lock()
+        guard var policy = refresh else { refreshLock.unlock(); return }
+        let wake = policy.signal(at: now, newFrame: newFrame)
+        refresh = policy
+        let schedule = wake != .none && !wakeScheduled
+        if schedule { wakeScheduled = true }
+        refreshLock.unlock()
+        guard schedule else { return }
+        let draw = wake == .raiseAndDraw
+        if Thread.isMainThread && !draw {
+            applyWake(draw: false)
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.applyWake(draw: draw) }
+        }
+    }
+
+    private func applyWake(draw: Bool) {
+        refreshLock.lock()
+        wakeScheduled = false
+        let target = refresh?.framesPerSecond
+        refreshLock.unlock()
+        guard let metalView, let target else { return }
+        if metalView.preferredFramesPerSecond != target { metalView.preferredFramesPerSecond = target }
+        // The display link may be up to one idle interval away; draw the new frame now.
+        if draw, metalView.delegate === self, metalView.window != nil { metalView.draw() }
     }
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
@@ -148,13 +245,17 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
         let presentation = observePresentation(in: view)
         renderer?.draw(in: view)
         let drawnStamp = drawnStampReader?()
+        refreshLock.lock()
+        refresh?.drew(at: ProcessInfo.processInfo.systemUptime, framePending: tracker.hasPending)
+        let target = refresh?.framesPerSecond ?? chosenFramesPerSecond
+        refreshLock.unlock()
         // WebRTC's Metal renderer sets 30 fps on the view when it starts on the first frame.
-        if let chosen = chosenFramesPerSecond, view.preferredFramesPerSecond != chosen {
-            view.preferredFramesPerSecond = chosen
+        if let target, view.preferredFramesPerSecond != target {
+            view.preferredFramesPerSecond = target
         }
         if !reportedRate, let screen = view.window?.windowScene?.screen {
             reportedRate = true
-            counters?.setDisplayMaxFPS(min(screen.maximumFramesPerSecond, view.preferredFramesPerSecond))
+            counters?.setDisplayMaxFPS(min(screen.maximumFramesPerSecond, chosenFramesPerSecond ?? view.preferredFramesPerSecond))
         }
         guard let drawnStamp, let presented = tracker.drew(stampNs: drawnStamp) else { return }
         if let presentation {

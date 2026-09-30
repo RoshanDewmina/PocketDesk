@@ -150,6 +150,10 @@ struct HostSettingsView: View {
                     .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
                     .accessibilityIdentifier("farside.settings.copyDiagnostics")
             }
+            HostSettingsRow("Newest frame wins", subtitle: "Skip a frame the encoder can’t take yet instead of queueing it. Lower lag on a busy Mac") {
+                HostSwitch(label: "Newest frame wins", isOn: state.newestFrameWins, set: actions.setNewestFrameWins)
+                    .accessibilityIdentifier("farside.settings.newestFrameWins")
+            }
         }
     }
 

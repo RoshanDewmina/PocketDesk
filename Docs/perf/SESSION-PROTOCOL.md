@@ -63,7 +63,7 @@ Runs E (120 fps), each 60–90 s in the still / motion / taps pattern, Sharper, 
 | E4 WebRTC adaptation | `PocketDeskHighRefreshNoAdaptation -bool NO` at 120 Hz | whether libwebrtc's overuse detector cuts the rate (`limit cpu`, encode fps < 100) |
 | E5 whole-display | `PocketDeskViewportCapture -bool NO`, phone zoomed to reading size (≈2×) | encode fps and VT lat on the full 3.7 MP vs E1's crop at the same zoom |
 | E6 no client cap | `PocketDeskCapToClientPixels -bool NO` at Fit | picture size and VT lat vs E1 |
-| E7 newest frame wins | `PocketDeskEncoderMaxInFlight -int 1` at 120 Hz | VT lat p90, `in-flight`, dropped-at-submit per second, presented fps |
+| E7 newest frame wins | now the default; the A/B is host Settings → Diagnostics → Newest frame wins off vs on (no relaunch), at 120 Hz and under `bench/load/realistic-load.sh start heavy` | VT lat p90, `in-flight`, dropped-at-submit per second, presented fps, distinct/s; **release gate:** no visible drops on the physical phone |
 
 Pass marks at 120 (research checklist §2c plus the brief's targets): ≥115 distinct frames/s delivered **and** ≥115 presented/s during motion, taken from the marker, not from the requested rate; capture gap median 8.3 ± 0.5 ms; VT lat p90 ≤ 6 ms with `in-flight` ≤ 1; glass p50 ≤ 40 ms and p95 ≤ 60 ms; 11 pt legibility no worse than the 60 fps run; `limit` none; ladder at rung 0 for the whole run. Reading a failure: encode fps < 100 → encoder (compare E5/E7); encode ≥ 115 but presented < 100 → phone or link (`gap max`, superseded); glass p95 > 60 with the rest passing → link.
 
@@ -80,15 +80,15 @@ for key in PocketDeskLegacyStreamTuning PocketDeskCaptureNativeRate PocketDeskRo
            PocketDeskRestartFloorKbps PocketDeskRestartKeyFrameBudgetMs PocketDeskEncoderCeilingKbps \
            PocketDeskLevel52ProbeCache PocketDeskHighRefreshCapture PocketDeskTargetFPS \
            PocketDeskHighRefreshNoAdaptation PocketDeskCapToClientPixels PocketDeskViewportCapture \
-           PocketDeskLadder PocketDeskEncoderMaxInFlight; do
+           PocketDeskLadder PocketDeskEncoderMaxInFlight PocketDeskIdleVideoRefresh; do
   defaults delete com.roshan.PocketDesk.RemoteHost "$key" 2>/dev/null
 done
-defaults read com.roshan.PocketDesk.RemoteHost | grep -c "PocketDeskCaptureNativeRate\|PocketDeskRouteAwareSeed\|PocketDeskRestart\|PocketDeskEncoderCeiling\|PocketDeskLegacyStreamTuning\|PocketDeskLevel52ProbeCache\|PocketDeskHighRefresh\|PocketDeskTargetFPS\|PocketDeskCapToClientPixels\|PocketDeskViewportCapture\|PocketDeskLadder\|PocketDeskEncoderMaxInFlight"
+defaults read com.roshan.PocketDesk.RemoteHost | grep -c "PocketDeskCaptureNativeRate\|PocketDeskRouteAwareSeed\|PocketDeskRestart\|PocketDeskEncoderCeiling\|PocketDeskLegacyStreamTuning\|PocketDeskLevel52ProbeCache\|PocketDeskHighRefresh\|PocketDeskTargetFPS\|PocketDeskCapToClientPixels\|PocketDeskViewportCapture\|PocketDeskLadder\|PocketDeskEncoderMaxInFlight\|PocketDeskIdleVideoRefresh"
 ```
 
 (The list is `StreamTuning.experimentKeys` in code; the host's diagnostics report also shows the active `Stream tuning` line once the follow-up branch is in.)
 
-The count must print `0`. Relaunch the host, connect once, and check that the `tuning` field of the next stats sample (phone overlay first lines, or the Mac log's last line) reads exactly `playout 0-0ms · mode bitrates · keep resolution · encoder restart · max refresh`: nothing after "max refresh". On the phone, switch Stream statistics off and leave "Previous stream tuning" off. Prefer launch arguments (`-PocketDeskEncoderCeilingKbps 12000` on the host's command line) over `defaults write` for future A/Bs; they cannot outlive the process.
+The count must print `0`. Relaunch the host, connect once, and check that the `tuning` field of the next stats sample (phone overlay first lines, or the Mac log's last line) reads exactly `playout 0-0ms · mode bitrates · keep resolution · encoder restart · max refresh · max in-flight 1`: nothing after "max in-flight 1" (newest frame wins is the default since 30 Sep; "newest-frame-wins off" means the Settings → Diagnostics switch is off, and the idle-refresh key lives on the phone: `PocketDeskIdleVideoRefresh`). On the phone, switch Stream statistics off and leave "Previous stream tuning" off. Prefer launch arguments (`-PocketDeskEncoderCeilingKbps 12000` on the host's command line) over `defaults write` for future A/Bs; they cannot outlive the process.
 
 ## Screenshots
 
