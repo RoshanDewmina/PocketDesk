@@ -7,8 +7,8 @@ class E2ETestCase: XCTestCase {
     var config: E2ERunConfig!
     var app: XCUIApplication!
     let harness = HarnessClient()
-    let pad = TestPadClient()
-    let host = HostClient()
+    lazy var pad = TestPadClient()
+    lazy var host = HostClient()
     var phone: PhoneClient!
     var recorder: ScenarioRecorder!
     var cleanups: [() -> Void] = []
@@ -41,6 +41,7 @@ class E2ETestCase: XCTestCase {
     override func tearDown() {
         for cleanup in cleanups.reversed() { cleanup() }
         cleanups.removeAll()
+        guard recorder != nil, phone != nil else { super.tearDown(); return }
         let skipped = testRun?.hasBeenSkipped ?? false
         let failed = (testRun?.totalFailureCount ?? 0) > 0
         if failed { attachScreenshot("failure") }
@@ -145,6 +146,12 @@ class E2ETestCase: XCTestCase {
         if let voiceTranscript { arguments += ["--farside-e2e-voice-transcript", voiceTranscript] }
         app.launchArguments = arguments
         app.launchEnvironment = ["FARSIDE_E2E": "1", "FARSIDE_E2E_DIR": E2EPaths.root, "FARSIDE_E2E_RUN_ID": config.runID]
+        if let lane = config.lane {
+            // SIMULATOR_UDID comes from the simulator OS in the AUT, never from this dictionary.
+            app.launchEnvironment["FARSIDE_E2E_LANE_MANIFEST"] = lane.root + "/lane.json"
+            app.launchEnvironment["FARSIDE_E2E_SIGNAL_URL"] = lane.signalURL
+            app.launchEnvironment["FARSIDE_E2E_CONFIG"] = lane.root + "/run/config.json"
+        }
         // iOS can start the app by itself (a background launch or prewarm) and then bring that copy
         // forward instead of starting ours, so it runs without these arguments, outside E2E mode.
         _ = try? harness.request("phone.terminate", timeout: 20)

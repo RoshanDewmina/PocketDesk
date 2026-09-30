@@ -184,3 +184,19 @@ simulator is lenient), Dynamic Island / Live Activities, the microphone and on-d
 recognition (only the Done-to-insert delivery is tested), physical multi-touch feel and gesture
 conflicts with iOS system gestures, cellular and forced-relay routes (the E2E media is loopback
 only), real network loss, and performance on iPhone hardware.
+# Parent-provisioned parallel stub smoke
+
+`parallel-stub.py` is the separate DEBUG stub-only lane runner. It consumes exactly two
+parent-provisioned Simurgh leases and isolated, signed simulator test-product closures;
+it never builds, acquires/boots/releases devices or starts a daemon. All heavy jobs retain
+the shared `/tmp/farside-xcodebuild.lock`; only its validated `test-without-building` jobs
+overlap, with Xcode inner parallelism disabled. The installed host and existing serial
+runner keep their fixed paths and locks.
+
+See [the exact contract](../../Docs/testing/PARALLEL-SIMULATOR-IMPLEMENTATION-2026-09-30.md)
+for `prepare`, `validate`, `run` and ownership-based recovery `cleanup`, manifest/private
+path rules, external parent build receipt schema, process groups and TTL policy. A run
+passes only with two successful native assertion receipts, measured positive XCTest
+overlap, both-direction click/key negative controls and verified cleanup. No Mac capture,
+input, clipboard, Spaces or physical performance acceptance is implied. Runtime remains
+parent-coordinated after independent sensitive code review and resource approval.

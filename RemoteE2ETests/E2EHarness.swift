@@ -6,7 +6,18 @@ import CryptoKit
 /// /private/tmp/farside-e2e and ask script/e2e/run-e2e.sh for process-level actions through a
 /// request/response directory. See script/e2e/README.md.
 enum E2EPaths {
-    static let root = "/private/tmp/farside-e2e"
+    private(set) static var root = "/private/tmp/farside-e2e"
+    static func configure() throws -> E2ELaneManifest? {
+        let environment = ProcessInfo.processInfo.environment
+        guard E2ELaneContract.requested(environment) else { return nil }
+        #if targetEnvironment(simulator)
+        let lane = try E2ELaneContract.validate(environment: environment, role: .testRunner)
+        root = lane.root
+        return lane
+        #else
+        throw E2EFailure("parallel UI tests are simulator-only")
+        #endif
+    }
     static var run: String { root + "/run" }
     static var config: String { run + "/config.json" }
     static var requests: String { run + "/requests" }
@@ -130,6 +141,7 @@ final class JSONLTail {
 /// Run parameters written by run-e2e.sh.
 struct E2ERunConfig {
     let raw: JSONObject
+    let lane: E2ELaneManifest?
     var runID: String { raw.string("runID") ?? "unknown" }
     var mode: String { raw.string("mode") ?? "real" }
     var isStub: Bool { mode == "stub" }
@@ -142,11 +154,23 @@ struct E2ERunConfig {
     var roomLifetimeSeconds: Double { raw.double("roomLifetimeSeconds") ?? 1800 }
 
     static func load() throws -> E2ERunConfig {
+        let lane = try E2EPaths.configure()
         let path = ProcessInfo.processInfo.environment["FARSIDE_E2E_CONFIG"] ?? E2EPaths.config
-        guard let raw = E2EFile.json(path) else {
+        let raw: JSONObject?
+        if let lane {
+            guard path == lane.root + "/run/config.json" else { throw E2EFailure("lane config path differs") }
+            try E2ELaneContract.privateDirectory(lane.root + "/run")
+            raw = try JSONSerialization.jsonObject(with: E2ELaneContract.readPrivate(path)) as? JSONObject
+        } else { raw = E2EFile.json(path) }
+        guard let raw else {
             throw E2EFailure("No E2E run config at \(path). Start the suite with script/e2e/run-e2e.sh, not directly from Xcode.")
         }
-        return E2ERunConfig(raw: raw)
+        if let lane {
+            guard raw.string("mode") == "stub", raw.string("runID") == lane.runID,
+                  raw.string("laneID") == lane.laneID, raw.string("root") == lane.root,
+                  raw.string("signalURL") == lane.signalURL else { throw E2EFailure("lane config identity differs") }
+        }
+        return E2ERunConfig(raw: raw, lane: lane)
     }
 }
 

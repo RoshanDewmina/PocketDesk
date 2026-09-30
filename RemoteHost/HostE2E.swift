@@ -54,7 +54,8 @@ final class HostE2E {
     static func refuse(_ error: Error) -> Never {
         let message = "Farside E2E mode refused: \(error)\n"
         FileHandle.standardError.write(Data(message.utf8))
-        if (try? E2EFiles.validatePrivateDirectory(E2E.root)) != nil,
+        if !E2ELaunchOptions.current.laneRequested,
+           (try? E2EFiles.validatePrivateDirectory(E2E.root)) != nil,
            (try? E2EFiles.ensurePrivateDirectory(E2E.root + "/host")) != nil {
             try? E2EFiles.writePrivate(Data(message.utf8), to: E2E.root + "/host/refused.txt")
         }

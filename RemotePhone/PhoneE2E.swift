@@ -107,7 +107,18 @@ final class PhoneE2E: ObservableObject {
         // The simulator shares the Mac filesystem; if the harness directory is unavailable the
         // state is still published through the accessibility element.
         var recorder: E2ERecorder?
-        if let common = try? options.validatedCommon(),
+        if options.laneRequested {
+            #if targetEnvironment(simulator)
+            do {
+                guard let common = try options.validatedCommon(role: .simulatorPhone) else {
+                    refuse("lane launch was not requested")
+                }
+                recorder = try E2ERecorder(directory: common.directory + "/phone", role: "phone", runID: common.runID)
+            } catch { refuse("invalid simulator lane: \(error)") }
+            #else
+            refuse("parallel lanes are simulator-only")
+            #endif
+        } else if let common = try? options.validatedCommon(),
            (try? E2EFiles.validatePrivateDirectory(common.directory)) != nil {
             recorder = try? E2ERecorder(directory: common.directory + "/phone", role: "phone", runID: runID)
         }

@@ -40,7 +40,8 @@ struct E2ELaunchOptions {
                          environment: ProcessInfo.processInfo.environment)
     }
 
-    var requested: Bool { arguments.contains(E2E.launchArgument) }
+    var laneRequested: Bool { E2ELaneContract.requested(environment) }
+    var requested: Bool { arguments.contains(E2E.launchArgument) || laneRequested }
 
     func has(_ flag: String) -> Bool { arguments.contains(flag) }
 
@@ -50,10 +51,17 @@ struct E2ELaunchOptions {
     }
 
     /// Validates the switches every E2E process needs. Returns nil for an ordinary launch.
-    func validatedCommon() throws -> (directory: String, runID: String)? {
+    func validatedCommon(role: E2ELaneRole = .realHost) throws -> (directory: String, runID: String)? {
         guard requested else { return nil }
+        guard arguments.contains(E2E.launchArgument) else {
+            throw E2EConfigError("a lane manifest requires --farside-e2e")
+        }
         guard environment[E2E.environmentFlag] == "1" else {
             throw E2EConfigError("--farside-e2e requires FARSIDE_E2E=1 in the environment")
+        }
+        if laneRequested {
+            let lane = try E2ELaneContract.validate(environment: environment, role: role)
+            return (lane.root, lane.runID)
         }
         guard let raw = environment[E2E.directoryVariable], raw.hasPrefix("/") else {
             throw E2EConfigError("FARSIDE_E2E_DIR must be an absolute path")

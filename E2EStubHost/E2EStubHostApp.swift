@@ -30,7 +30,8 @@ final class StubHostDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 let message = "Farside E2E stub host refused: \(error)\n"
                 FileHandle.standardError.write(Data(message.utf8))
-                if (try? E2EFiles.ensurePrivateDirectory(E2E.root + "/host")) != nil {
+                if !E2ELaunchOptions.current.laneRequested,
+                   (try? E2EFiles.ensurePrivateDirectory(E2E.root + "/host")) != nil {
                     try? E2EFiles.writePrivate(Data(message.utf8), to: E2E.root + "/host/refused.txt")
                 }
                 exit(78)
@@ -64,7 +65,8 @@ final class StubHost {
     private let recorder: E2ERecorder
     private let store: E2EFilePairStore
     private let coordinator: RemoteCoordinator
-    private let testPad = E2ETestPadGeometry()
+    private let testPad: E2ETestPadGeometry
+    private let parallelLane: Bool
     private let display: CGRect
     private var pointer: CGPoint
     private var epoch: UInt64 = 0
@@ -89,9 +91,11 @@ final class StubHost {
     private var moveBatch = 0
 
     init(options: E2ELaunchOptions) throws {
-        guard let common = try options.validatedCommon() else { throw E2EConfigError("--farside-e2e is required") }
+        guard let common = try options.validatedCommon(role: .stubHost) else { throw E2EConfigError("--farside-e2e is required") }
         try E2EFiles.validatePrivateDirectory(common.directory)
         directory = common.directory
+        parallelLane = options.laneRequested
+        testPad = E2ETestPadGeometry(path: common.directory + "/testpad-state.json")
         runID = common.runID
         launchID = options.environment["FARSIDE_E2E_LAUNCH_ID"].flatMap { E2EFiles.isIdentifier($0) ? $0 : nil }
             ?? UUID().uuidString
@@ -106,7 +110,7 @@ final class StubHost {
         // Loopback-only media: this unsigned app must never talk to local-network addresses.
         E2EMedia.loopbackOnly = true
         coordinator = RemoteCoordinator(isHost: true, store: store)
-        display = CGDisplayBounds(CGMainDisplayID())
+        display = parallelLane ? CGRect(x: 0, y: 0, width: 1280, height: 720) : CGDisplayBounds(CGMainDisplayID())
         pointer = CGPoint(x: display.midX, y: display.midY)
     }
 
@@ -197,7 +201,7 @@ final class StubHost {
             "allowControl": true, "inputEnabled": true, "held": held, "screenRecording": false, "accessibility": false,
             "display": display, "epoch": epoch, "pointer": pointer, "phonePaused": paused,
             "appliedQuality": appliedQuality.rawValue, "cursorInVideo": !telemetry.wantsCursorHidden(at: uptime),
-            "testPadFrontmost": NSWorkspace.shared.frontmostApplication?.bundleIdentifier == E2E.testPadBundleID,
+            "testPadFrontmost": parallelLane ? false : NSWorkspace.shared.frontmostApplication?.bundleIdentifier == E2E.testPadBundleID,
             "stats": lastStats ?? [:], "inputAccepted": accepted, "inputRejected": rejected,
             "footprintBytes": metrics.footprintBytes, "residentBytes": metrics.residentBytes,
             "cpuSeconds": metrics.cpuSeconds, "cpuPercent": cpu.percent(now: uptime, cpuSeconds: metrics.cpuSeconds) as Any,
