@@ -49,3 +49,20 @@ final class BigTextRefreshTests: XCTestCase {
                                             coreGraphicsBounds: CGRect(x: 0, y: 0, width: 1280, height: 832)))
     }
 }
+
+final class BigTextScreenSnapshotTests: XCTestCase {
+    private let frames: [CGDirectDisplayID: CGRect] = [1: CGRect(x: 0, y: 0, width: 1280, height: 832),
+                                                     2: CGRect(x: 1280, y: 0, width: 1920, height: 1080)]
+    private let modes: [CGDirectDisplayID: Int32] = [1: 4, 2: 7]
+
+    func testLateNotificationMatchesOnlyTheCompletedDisplayGeometryAndModes() {
+        let snapshot = BigTextScreenSnapshot(frames: frames, modeIDs: modes)
+        XCTAssertTrue(snapshot.matches(online: [1, 2], frames: frames, modeIDs: modes))
+        var changed = modes; changed[1] = 5
+        XCTAssertFalse(snapshot.matches(online: [1, 2], frames: frames, modeIDs: changed), "a person's choice is foreign")
+        XCTAssertFalse(snapshot.matches(online: [1, 2, 3], frames: frames, modeIDs: modes), "a plugged-in monitor is foreign")
+        var moved = frames; moved[2] = CGRect(x: 1470, y: 0, width: 1920, height: 1080)
+        XCTAssertFalse(snapshot.matches(online: [1, 2], frames: moved, modeIDs: modes), "a changed origin is foreign")
+        XCTAssertFalse(snapshot.matches(online: [1], frames: frames, modeIDs: modes), "an unplugged display is foreign")
+    }
+}

@@ -198,6 +198,18 @@ final class HangWatchdogTests: XCTestCase {
         XCTAssertNil(HangWatchdogPolicy.threshold(curtainUp: false, recoveryEnabled: false))
     }
 
+    func testDisplayConfigurationUsesBoundedRecoveryGraceEvenWithCurtainUp() {
+        XCTAssertEqual(HangWatchdogPolicy.threshold(curtainUp: true, recoveryEnabled: false,
+                                                   bigTextEngaged: true, displayChanging: true), 12)
+        XCTAssertEqual(HangWatchdogPolicy.threshold(curtainUp: false, recoveryEnabled: true,
+                                                   displayChanging: true), 12)
+        XCTAssertEqual(HangWatchdogPolicy.threshold(curtainUp: false, recoveryEnabled: false,
+                                                   bigTextEngaged: true, displayChanging: true), 12)
+        XCTAssertNil(HangWatchdogPolicy.threshold(curtainUp: false, recoveryEnabled: false, displayChanging: true))
+        XCTAssertEqual(HangWatchdogPolicy.threshold(curtainUp: true, recoveryEnabled: false,
+                                                   bigTextEngaged: true, displayChanging: false), 4, "normal hang protection returns afterwards")
+    }
+
     func testWatchdogThreadReportsAStuckMainThread() {
         let fired = expectation(description: "hang reported")
         fired.assertForOverFulfill = false

@@ -262,6 +262,48 @@ final class PrivacyCurtainControllerTests: XCTestCase {
         XCTAssertEqual(curtain.phase, .down, "Changes nobody planned still lift it")
     }
 
+    func testPreparedGrowKeepsTheRaisedWindowsAndTheirExclusionIDs() async {
+        let window = NSWindow(contentRect: NSRect(x: -30_000, y: -30_000, width: 8, height: 8),
+                              styleMask: [.borderless], backing: .buffered, defer: false)
+        window.alphaValue = 0
+        window.ignoresMouseEvents = true
+        window.isReleasedWhenClosed = false
+        let curtain = PrivacyCurtainController(makeWindows: { [window] })
+        _ = await curtain.raise(hooks: hooks(), settle: .zero, verifyAfter: .zero)
+        let ids = curtain.windowIDs
+        let coverage = CGRect(x: -30_010, y: -30_010, width: 40, height: 40)
+        curtain.prepareForDisplayChange(coverage: coverage)
+        XCTAssertEqual(curtain.phase, .up)
+        XCTAssertEqual(curtain.windowIDs, ids, "a restart excludes the very same windows")
+        XCTAssertTrue(window.frame.contains(coverage), "growing cannot expose an edge before callbacks")
+        curtain.lift()
+    }
+
+    func testQuiescingDuringFailedExclusionCancelsInsteadOfPermanentlyFailing() async {
+        let curtain = PrivacyCurtainController(makeWindows: offscreenWindows())
+        let hooks = PrivacyCurtainController.CaptureHooks(exclude: { _ in
+            curtain.prepareForDisplayChange(coverage: CGRect(x: -40_000, y: -40_000, width: 1, height: 1))
+            return false
+        }, signature: { nil })
+        let result = await curtain.raise(hooks: hooks, settle: .zero, verifyAfter: .zero)
+        XCTAssertEqual(result, .cancelled, "capture ownership was invalidated after the intentional cancellation")
+        XCTAssertEqual(curtain.phase, .down)
+        XCTAssertTrue(curtain.windowIDs.isEmpty)
+    }
+
+    func testLateOwnScreenNotificationKeepsTheSameExclusionWindows() async {
+        let curtain = PrivacyCurtainController(makeWindows: offscreenWindows())
+        _ = await curtain.raise(hooks: hooks(), settle: .zero, verifyAfter: .zero)
+        let ids = curtain.windowIDs
+        curtain.ownsScreenChange = { true }
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        XCTAssertEqual(curtain.phase, .up)
+        XCTAssertEqual(curtain.windowIDs, ids)
+        curtain.ownsScreenChange = { false }
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        XCTAssertEqual(curtain.phase, .down)
+    }
+
     func testRefitLiftsWhenTheScreenCountNoLongerMatches() async {
         let curtain = PrivacyCurtainController(makeWindows: offscreenWindows(NSScreen.screens.count + 1))
         _ = await curtain.raise(hooks: hooks(), settle: .zero, verifyAfter: .zero)
@@ -312,5 +354,25 @@ final class CurtainProtocolTests: XCTestCase {
                      "Only a curtain that was up can be lifted at the Mac")
         XCTAssertNil(PhoneSessionNotice.curtainChange(from: .up, to: .off))
         XCTAssertEqual(PhoneSessionNotice.hostRecovered, "Your Mac’s Farside restarted — reconnected.")
+    }
+}
+
+final class CurtainDisplayCoverageTests: XCTestCase {
+    func testLaggingAppKitFrameCannotShrinkTheGuardEnvelope() {
+        let bounds = CGRect(x: 0, y: 0, width: 1470, height: 956)
+        XCTAssertFalse(CurtainDisplayCoverage.matchesAppKit(frame: CGRect(x: 0, y: 0, width: 1024, height: 665),
+                                                          bounds: bounds, mainHeight: 956))
+        XCTAssertTrue(CurtainDisplayCoverage.matchesAppKit(frame: bounds, bounds: bounds, mainHeight: 956))
+        XCTAssertTrue(CurtainDisplayCoverage.matchesAppKit(frame: CGRect(x: -1920, y: 956, width: 1920, height: 1080),
+                                                         bounds: CGRect(x: -1920, y: -1080, width: 1920, height: 1080), mainHeight: 956))
+    }
+
+    func testEnvelopeCoversGrowRestoreAndNegativeNeighbourOrigins() {
+        let before = [CGRect(x: 0, y: 0, width: 1024, height: 665), CGRect(x: -1920, y: 665, width: 1920, height: 1080)]
+        let guardFrame = CurtainDisplayCoverage.envelope(frames: before,
+                                                        currentSize: CGSize(width: 1024, height: 665), targetSize: CGSize(width: 1470, height: 956))
+        for frame in before { XCTAssertTrue(guardFrame.contains(frame)) }
+        XCTAssertTrue(guardFrame.contains(CGRect(x: 0, y: 0, width: 1470, height: 956)), "restore grows the primary")
+        XCTAssertTrue(guardFrame.contains(CGRect(x: -1920, y: 956, width: 1920, height: 1080)), "neighbours shift with primary height")
     }
 }

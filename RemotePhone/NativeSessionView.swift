@@ -414,7 +414,7 @@ struct NativeSessionView: View {
             }
             .padding(.horizontal, 20).padding(.vertical, 16)
             .farsidePlate(Farside.Radius.card, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
-        } else if (!offlineLayoutCheck && model.fresh && !model.captureHealthy) || LaunchOptions.has("--ui-issue-sharing") {
+        } else if (!offlineLayoutCheck && model.showsSharingStoppedCard) || LaunchOptions.has("--ui-issue-sharing") {
             SessionIssueCard(error: .screenSharingOff)
                 .allowsHitTesting(false)
         } else if !offlineLayoutCheck && !model.fresh && !lockVisible && model.bigText.pendingTarget == nil {

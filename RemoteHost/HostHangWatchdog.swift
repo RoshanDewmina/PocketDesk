@@ -34,7 +34,10 @@ enum HangWatchdogPolicy {
 
     /// Nil means a stall is tolerated: nothing would relaunch the host, no curtain is up and the
     /// display is not on a Big Text mode that only this process's exit reverts.
-    static func threshold(curtainUp: Bool, recoveryEnabled: Bool, bigTextEngaged: Bool = false) -> TimeInterval? {
+    static func threshold(curtainUp: Bool, recoveryEnabled: Bool, bigTextEngaged: Bool = false, displayChanging: Bool = false) -> TimeInterval? {
+        // Display configuration can synchronously block a healthy main thread. Keep a bounded
+        // recovery deadline even with the curtain up; its oversized windows remain covering.
+        if displayChanging { return curtainUp || recoveryEnabled || bigTextEngaged ? recoveryThreshold : nil }
         if curtainUp || bigTextEngaged { return curtainThreshold }
         return recoveryEnabled ? recoveryThreshold : nil
     }
@@ -47,6 +50,8 @@ final class HostHangWatchdog: @unchecked Sendable {
     private var detector = MainThreadStallDetector()
     private var curtainUp = false
     private var recoveryEnabled = true
+    private var bigTextEngaged = false
+    private var displayChanging = false
     private var started = false
     private let interval: TimeInterval
     private let onHang: @Sendable (TimeInterval) -> Void
@@ -72,10 +77,12 @@ final class HostHangWatchdog: @unchecked Sendable {
         thread.start()
     }
 
-    func update(curtainUp: Bool, recoveryEnabled: Bool) {
+    func update(curtainUp: Bool, recoveryEnabled: Bool, bigTextEngaged: Bool = false, displayChanging: Bool = false) {
         lock.lock()
         self.curtainUp = curtainUp
         self.recoveryEnabled = recoveryEnabled
+        self.bigTextEngaged = bigTextEngaged
+        self.displayChanging = displayChanging
         lock.unlock()
     }
 
@@ -90,7 +97,8 @@ final class HostHangWatchdog: @unchecked Sendable {
                 DispatchQueue.main.async { [weak self] in self?.answer() }
                 continue
             }
-            let threshold = HangWatchdogPolicy.threshold(curtainUp: curtainUp, recoveryEnabled: recoveryEnabled)
+            let threshold = HangWatchdogPolicy.threshold(curtainUp: curtainUp, recoveryEnabled: recoveryEnabled,
+                                                         bigTextEngaged: bigTextEngaged, displayChanging: displayChanging)
             let stall = detector.stall(at: now)
             let stalled = threshold.map { detector.isStalled(at: now, threshold: $0) } ?? false
             lock.unlock()

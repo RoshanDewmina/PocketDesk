@@ -17,10 +17,19 @@ final class BigTextProtocolTests: XCTestCase {
             RemoteAction(action: "displayScale", epoch: 3, display: 1, looksLikeWidth: -5),
             RemoteAction(action: "displayScale", text: "x", epoch: 3, display: 1, looksLikeWidth: 1280),
             RemoteAction(action: "click", epoch: 3, looksLikeWidth: 1280),
-            RemoteAction(action: "displays", epoch: 3, scaleError: "nonsense"),
             RemoteAction(action: "capture", epoch: 3, scaleError: "failed"),
+            RemoteAction(action: "capture", epoch: 3, scaleError: "nonsense"),
+            RemoteAction(action: "displays", epoch: 3, scaleError: String(repeating: "x", count: 65)),
         ]
         for action in invalid { XCTAssertThrowsError(try action.validate(), "\(action.action) must be rejected") }
+    }
+
+    func testUnknownScaleErrorOnDisplaysIsAccepted() throws {
+        let reply = RemoteAction(action: "displays", epoch: 3, displays: [], display: 1, scaleError: "nonsense")
+        XCTAssertNoThrow(try reply.validate(), "a newer Mac's error code must not end the session")
+        let decoded = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(reply))
+        XCTAssertNoThrow(try decoded.validate())
+        XCTAssertNil(decoded.scaleError.flatMap(BigTextError.init(rawValue:)))
     }
 
     func testDescriptorScaleFields() {

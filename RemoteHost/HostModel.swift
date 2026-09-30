@@ -131,8 +131,14 @@ final class RemoteHostModel: ObservableObject {
         sleep: { seconds in _ = try? await Task.sleep(for: .seconds(seconds)) })
     // The CoreGraphics callback holds this monitor unretained, so it lives as long as the host.
     private lazy var reconfigurationMonitor = DisplayReconfigurationMonitor { [weak self] event in
-        self?.bigText.observe(event)
+        guard let self else { return }
+        self.bigText.observe(event)
+        if self.bigTextOwnsScreenChanges, !event.flags.contains(.beginConfigurationFlag) {
+            self.curtain.refitDuringDisplayChange()
+        }
     }
+    private var bigTextLastRestoreRetry: TimeInterval = 0
+    private var bigTextScreenSnapshot: BigTextScreenSnapshot?
     private var bigTextResuming = false
     /// A Big Text change began and nothing has refreshed the display list since.
     private var bigTextNeedsRefresh = false
@@ -338,6 +344,7 @@ final class RemoteHostModel: ObservableObject {
             self.curtain.lift()
             self.reconcileCurtain()
         }
+        curtain.ownsScreenChange = { [weak self] in self?.bigTextOwnsScreenChanges ?? false }
         curtain.onLocalLift = { [weak self] in self?.curtainLiftedLocally() }
         curtain.onPhaseChange = { [weak self] _ in self?.reconcileCurtain() }
         pointerTelemetry.send = { [weak self] action in self?.connection.sendControl(action) ?? false }
@@ -378,8 +385,9 @@ final class RemoteHostModel: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, !self.bigTextOwnsScreenChanges else { return }
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if self.bigTextOwnsScreenChanges { self.curtain.refitDuringDisplayChange(); return }
                 self.handleScreenChange()
             }
         })
@@ -393,7 +401,16 @@ final class RemoteHostModel: ObservableObject {
         screenRecordingPermission = CGPreflightScreenCaptureAccess() ? .granted : .denied
         accessibilityPermission = AXIsProcessTrusted() ? .granted : .denied
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pollPermissions() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.pollPermissions()
+                let now = ProcessInfo.processInfo.systemUptime
+                if self.bigText.restorePending, !self.bigText.isChanging, !self.screenLocked,
+                   now - self.bigTextLastRestoreRetry >= 30 {
+                    self.bigTextLastRestoreRetry = now
+                    self.bigText.retryPendingRestore()
+                }
+            }
         }
         if screenRecordingPermission.isGranted { loadDisplays() }
         #if DEBUG
@@ -717,6 +734,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func phoneConnected() {
+        bigText.retryPendingRestore()
         beginCapture()
         guard chimeOnConnect, connection.connected, !terminating else { return }
         NSSound(named: NSSound.Name("Glass"))?.play()
@@ -994,7 +1012,8 @@ final class RemoteHostModel: ObservableObject {
     // A display left on a Big Text mode reverts only when this process exits, so a hang while it is
     // engaged gets the curtain's short threshold (HangWatchdogPolicy treats both alike).
     private func updateHangWatchdog(curtainUp: Bool) {
-        hangWatchdog?.update(curtainUp: curtainUp || bigText.isEngaged, recoveryEnabled: recoveryHelperRunning)
+        hangWatchdog?.update(curtainUp: curtainUp, recoveryEnabled: recoveryHelperRunning,
+                             bigTextEngaged: bigText.isEngaged, displayChanging: bigText.isChanging)
     }
 
     private static let crashLoopDetail = "Farside stopped after repeated crashes. Sharing is paused until you resume it."
@@ -2064,6 +2083,7 @@ final class RemoteHostModel: ObservableObject {
 
 extension RemoteHostModel: BigTextHost {
     func bigTextQuiesce() {
+        bigTextScreenSnapshot = nil
         invalidateTextFocus()
         releaseRemoteInput(notifyPhone: true)
         inputFreshness.expireTokens()
@@ -2092,6 +2112,7 @@ extension RemoteHostModel: BigTextHost {
             return false
         }
         guard !terminating else { return false }
+        rememberBigTextScreenSnapshot(refreshed)
         curtain.refitToScreens()
         guard active else {
             loadDisplays()
@@ -2113,6 +2134,7 @@ extension RemoteHostModel: BigTextHost {
     }
 
     func bigTextForeignChange() {
+        bigTextScreenSnapshot = nil
         bigTextNeedsRefresh = false
         curtain.followsScreenChanges = true
         handleScreenChange()
@@ -2120,6 +2142,8 @@ extension RemoteHostModel: BigTextHost {
 
     func bigTextStateChanged() {
         if bigText.isChanging {
+            prepareCurtainForBigTextChange()
+            bigTextScreenSnapshot = nil
             bigTextNeedsRefresh = true
         } else if bigTextNeedsRefresh {
             bigTextNeedsRefresh = false
@@ -2129,6 +2153,15 @@ extension RemoteHostModel: BigTextHost {
         }
         reconcileCurtain()
         objectWillChange.send()
+    }
+
+    private func prepareCurtainForBigTextChange() {
+        guard let target = bigText.changeTarget else { return }
+        let coverage = CurtainDisplayCoverage.envelope(
+            frames: NSScreen.screens.map(\.frame), currentSize: CGDisplayBounds(target.display).size,
+            targetSize: CGSize(width: target.mode.width, height: target.mode.height))
+        // Keep the IDs already excluded by capture. Cancel a half-raise before capture.stop().
+        curtain.prepareForDisplayChange(coverage: coverage)
     }
 
     func bigTextDisplayBounds(_ display: CGDirectDisplayID) -> CGRect {
@@ -2141,7 +2174,24 @@ extension RemoteHostModel: BigTextHost {
 
     /// Screen changes Big Text makes are handled by its own completion, not by stopping the session.
     fileprivate var bigTextOwnsScreenChanges: Bool {
-        bigText.isChanging || bigTextNeedsRefresh || bigTextResuming || bigTextRefreshTask != nil
+        if bigText.isChanging || bigTextNeedsRefresh || bigTextResuming || bigTextRefreshTask != nil { return true }
+        guard let snapshot = bigTextScreenSnapshot else { return false }
+        let online = LiveDisplayModeSwitcher().onlineDisplays()
+        var frames: [CGDirectDisplayID: CGRect] = [:]
+        var modes: [CGDirectDisplayID: Int32] = [:]
+        for id in online {
+            frames[id] = CGDisplayBounds(id)
+            modes[id] = CGDisplayCopyDisplayMode(id)?.ioDisplayModeID
+        }
+        return snapshot.matches(online: online, frames: frames, modeIDs: modes)
+    }
+
+    private func rememberBigTextScreenSnapshot(_ refreshed: [SCDisplay]) {
+        let frames = Dictionary(uniqueKeysWithValues: refreshed.map { ($0.displayID, $0.frame) })
+        var modes: [CGDirectDisplayID: Int32] = [:]
+        for display in refreshed { modes[display.displayID] = CGDisplayCopyDisplayMode(display.displayID)?.ioDisplayModeID }
+        guard modes.count == frames.count else { bigTextScreenSnapshot = nil; return }
+        bigTextScreenSnapshot = BigTextScreenSnapshot(frames: frames, modeIDs: modes)
     }
 
     private var bigTextSessionStreaming: Bool {
@@ -2149,6 +2199,7 @@ extension RemoteHostModel: BigTextHost {
     }
 
     fileprivate func handleScreenChange() {
+        bigTextScreenSnapshot = nil
         stop()
         invalidateDisplays(status: .notChecked)
         loadDisplays()
@@ -2158,8 +2209,8 @@ extension RemoteHostModel: BigTextHost {
     /// display is used, else stale frames would map clicks to the old size.
     private func verifiedDisplays(including display: CGDirectDisplayID?) async -> [SCDisplay]? {
         let generation = displaySnapshotGeneration
-        for attempt in 0..<2 {
-            if attempt > 0 { try? await Task.sleep(for: .milliseconds(300)) }
+        for attempt in 0..<BigTextRefresh.attempts {
+            if attempt > 0 { try? await Task.sleep(for: BigTextRefresh.retryDelay) }
             guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else { continue }
             guard generation == displaySnapshotGeneration, !terminating else { return nil }
             let list = content.displays
@@ -2188,6 +2239,8 @@ extension RemoteHostModel: BigTextHost {
             self.bigTextRefreshTask = nil
             guard !self.terminating, !self.bigText.isChanging else { return }
             guard let refreshed else { return self.handleScreenChange() }
+            self.rememberBigTextScreenSnapshot(refreshed)
+            self.curtain.refitToScreens()
             guard self.active else { return self.loadDisplays() }
             guard refreshed.contains(where: { $0.displayID == self.selected }) else { return self.handleScreenChange() }
             self.displays = refreshed

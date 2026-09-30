@@ -67,8 +67,8 @@ final class LiveDisplayModeSwitcher: DisplayModeSwitching {
             CGCancelDisplayConfiguration(config)
             return .failed(configured.rawValue)
         }
-        // Scope matters: macOS returns to the login-session configuration when this process exits,
-        // so a crash or watchdog kill cannot leave the Mac on Big Text.
+        // App-only scope reverts on application termination. SIGKILL/watchdog behaviour still
+        // needs the physical acceptance check; it is not proved by successful configuration.
         let completed = CGCompleteDisplayConfiguration(config, .forAppOnly)
         return completed == .success ? .applied : .failed(completed.rawValue)
     }
@@ -102,21 +102,23 @@ final class DisplayReconfigurationMonitor {
 
     func start() {
         guard !registered else { return }
-        registered = CGDisplayRegisterReconfigurationCallback(Self.callback, Unmanaged.passUnretained(self).toOpaque()) == .success
+        registered = CGDisplayRegisterReconfigurationCallback(displayReconfigured, Unmanaged.passUnretained(self).toOpaque()) == .success
     }
 
     func stop() {
         guard registered else { return }
-        CGDisplayRemoveReconfigurationCallback(Self.callback, Unmanaged.passUnretained(self).toOpaque())
+        CGDisplayRemoveReconfigurationCallback(displayReconfigured, Unmanaged.passUnretained(self).toOpaque())
         registered = false
     }
 
     fileprivate func deliver(_ event: DisplayReconfigurationEvent) { handler(event) }
+}
 
-    private static let callback: CGDisplayReconfigurationCallBack = { display, flags, context in
-        guard let context else { return }
-        let event = DisplayReconfigurationEvent(display: display, flags: flags)
-        let monitor = Unmanaged<DisplayReconfigurationMonitor>.fromOpaque(context).takeUnretainedValue()
-        DispatchQueue.main.async { MainActor.assumeIsolated { monitor.deliver(event) } }
-    }
+// CoreGraphics calls this on whatever thread it likes, so it must not inherit the monitor's main-actor isolation.
+private nonisolated func displayReconfigured(_ display: CGDirectDisplayID, _ flags: CGDisplayChangeSummaryFlags,
+                                     _ context: UnsafeMutableRawPointer?) {
+    guard let context else { return }
+    let event = DisplayReconfigurationEvent(display: display, flags: flags)
+    let monitor = Unmanaged<DisplayReconfigurationMonitor>.fromOpaque(context).takeUnretainedValue()
+    DispatchQueue.main.async { MainActor.assumeIsolated { monitor.deliver(event) } }
 }

@@ -66,7 +66,7 @@ struct RemoteAction: Codable {
             throw RemoteError.invalidMessage
         }
         if looksLikeWidth != nil, action != "displayScale" { throw RemoteError.invalidMessage }
-        if let scaleError, action != "displays" || BigTextError(rawValue: scaleError) == nil { throw RemoteError.invalidMessage }
+        if let scaleError, action != "displays" || scaleError.isEmpty || scaleError.utf8.count > 64 { throw RemoteError.invalidMessage }
         // Also before the early returns, so no other action can carry a display list.
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }

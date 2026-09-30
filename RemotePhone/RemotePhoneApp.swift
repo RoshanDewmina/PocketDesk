@@ -290,6 +290,7 @@ final class PhoneRemoteModel: ObservableObject {
     #endif
 
     var canControl: Bool {
+        guard bigText.pendingTarget == nil else { return false }
         #if DEBUG
         if inputProbe != nil { return !privacyShield && !contentConcealed }
         #endif
@@ -472,10 +473,12 @@ final class PhoneRemoteModel: ObservableObject {
     var bigTextClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     private var bigTextSendTask: Task<Void, Never>?
     private var bigTextDisplayID: UInt32?
+    private var bigTextTimedOut: (display: UInt32, width: Double)?
     static let bigTextDebounce: Duration = .milliseconds(600)
     static let bigTextTimeout: TimeInterval = 8
 
     var bigTextSupported: Bool { supports(SessionFeature.displayScale) }
+    var showsSharingStoppedCard: Bool { fresh && !captureHealthy && bigText.pendingTarget == nil }
     private var bigTextRoom: String? { bigTextRoomOverride ?? connection.invitation?.room }
     private var currentDescriptor: DisplayDescriptor? { displays.first { $0.id == currentDisplayID } }
 
@@ -506,6 +509,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     func checkBigTextTimeout() {
         guard let since = bigText.pendingSince, bigTextClock() - since > Self.bigTextTimeout else { return }
+        if let display = currentDisplayID, let width = bigText.pendingTarget { bigTextTimedOut = (display, width) }
         bigText.pendingTarget = nil
         bigText.pendingSince = nil
         showSessionNotice("Couldn't change text size")
@@ -532,6 +536,8 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func sendBigText(display: UInt32, width: Double) {
+        bigTextTimedOut = nil
+        cancelInput()
         lastBigTextRequest = (display, width)
         bigTextRequestsSent += 1
         // Pending even if the send failed: the 8 s timeout then tells the person, instead of silence.
@@ -543,6 +549,9 @@ final class PhoneRemoteModel: ObservableObject {
     private func updateBigText(from action: RemoteAction) {
         guard let descriptor = currentDescriptor else { return }
         if bigTextDisplayID != descriptor.id {
+            // A delayed request belongs to the old display and must not block the new one.
+            bigTextSendTask?.cancel()
+            bigTextSendTask = nil
             // A saved level belongs to one display, so a switch gets that display's level once.
             bigTextDisplayID = descriptor.id
             bigText.autoApplied = false
@@ -552,6 +561,14 @@ final class PhoneRemoteModel: ObservableObject {
         bigText.currentWidth = descriptor.scaleCurrentWidth
         if let room = bigTextRoom { bigText.savedWidth = bigTextMemory.width(forRoom: room, display: descriptor, among: displays) }
         let error = action.scaleError.flatMap(BigTextError.init(rawValue:))
+        if action.scaleError == nil, let timedOut = bigTextTimedOut, timedOut.display == descriptor.id,
+           descriptor.scaleCurrentWidth == (timedOut.width == 0 ? descriptor.scaleBaselineWidth : timedOut.width) {
+            bigTextTimedOut = nil
+            if sessionNotice == "Couldn't change text size" {
+                sessionNoticeTask?.cancel()
+                sessionNotice = nil
+            }
+        }
         if error != .busy {
             bigText.pendingTarget = nil
             bigText.pendingSince = nil
@@ -561,10 +578,16 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func applySavedBigText() {
-        guard bigTextSupported, !bigText.autoApplied, !bigText.sessionOff, let baseline = bigText.baselineWidth,
-              let saved = bigText.savedWidth, let id = currentDisplayID, id == bigTextDisplayID else { return }
+        guard bigTextSupported, !bigText.autoApplied, bigText.pendingTarget == nil, bigTextSendTask == nil,
+              let baseline = bigText.baselineWidth, let current = bigText.currentWidth,
+              let id = currentDisplayID, id == bigTextDisplayID else { return }
         bigText.autoApplied = true
-        guard saved < baseline, saved != bigText.currentWidth else { return }
+        // A different phone may have left its level during the host's disconnect grace.
+        guard !bigText.sessionOff, let saved = bigText.savedWidth else {
+            if current != baseline { sendBigText(display: id, width: 0) }
+            return
+        }
+        guard saved < baseline, saved != current else { return }
         sendBigText(display: id, width: saved)
     }
 
@@ -1475,6 +1498,7 @@ final class PhoneRemoteModel: ObservableObject {
         bigTextSendTask?.cancel()
         bigTextSendTask = nil
         bigTextDisplayID = nil
+        bigTextTimedOut = nil
         bigText = BigTextState()
         lastBigTextRequest = nil
         bigTextRequestsSent = 0

@@ -33,8 +33,9 @@ final class ControllerFakeKeeper: BigTextWindowKeeping, @unchecked Sendable {
 final class ControllerFakeHost: BigTextHost {
     var quiesces = 0, resumes: [CGDirectDisplayID] = [], replies: [(CGDirectDisplayID, BigTextError?)] = []
     var foreign = 0, stateChanges = 0
+    var resumeVerifies = true
     func bigTextQuiesce() { quiesces += 1 }
-    func bigTextResume(display: CGDirectDisplayID) async -> Bool { resumes.append(display); return true }
+    func bigTextResume(display: CGDirectDisplayID) async -> Bool { resumes.append(display); return resumeVerifies }
     func bigTextReply(display: CGDirectDisplayID, error: BigTextError?) { replies.append((display, error)) }
     func bigTextForeignChange() { foreign += 1 }
     func bigTextStateChanged() { stateChanges += 1 }
@@ -63,14 +64,18 @@ final class BigTextControllerTests: XCTestCase {
         switcher = ControllerFakeSwitcher()
         switcher.modesByDisplay = [1: [base, large, larger], 2: [base, large]]
         switcher.currentByDisplay = [1: base, 2: base]
-        switcher.onApply = { [unowned self] _, display in
-            self.controller.observe(DisplayReconfigurationEvent(display: display, flags: [.setModeFlag]))
-        }
+        observeOwnChanges()
         keeper = ControllerFakeKeeper()
         host = ControllerFakeHost()
         controller = BigTextController(switcher: switcher, windows: keeper, now: { [unowned self] in self.clock },
                                        sleep: { [unowned self] seconds in self.clock += seconds; await Task.yield() })
         controller.host = host
+    }
+
+    private func observeOwnChanges() {
+        switcher.onApply = { [unowned self] _, display in
+            self.controller.observe(DisplayReconfigurationEvent(display: display, flags: [.setModeFlag]))
+        }
     }
 
     private func apply(_ width: Double, display: CGDirectDisplayID = 1) async {
@@ -149,6 +154,122 @@ final class BigTextControllerTests: XCTestCase {
         XCTAssertFalse(controller.isEngaged)
     }
 
+    func testSleepAfterSuccessfulApplyKeepsOwnershipUntilModeIsReadable() async {
+        switcher.onApply = { [unowned self] _, _ in
+            self.switcher.currentByDisplay[1] = nil
+            self.controller.observe(DisplayReconfigurationEvent(display: 3, flags: [.removeFlag]))
+        }
+        await apply(1280)
+        XCTAssertEqual(controller.baseline, base)
+        XCTAssertEqual(controller.current, large)
+        switcher.currentByDisplay[1] = large
+        observeOwnChanges()
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
+        XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testForeignEventDuringALaterStepKeepsThePreviousStepToRestore() async {
+        await apply(1280)
+        switcher.onApply = { [unowned self] _, _ in
+            self.switcher.currentByDisplay[1] = self.large
+            self.controller.observe(DisplayReconfigurationEvent(display: 3, flags: [.addFlag]))
+        }
+        await apply(1024)
+        XCTAssertEqual(host.foreign, 1)
+        XCTAssertEqual(controller.baseline, base, "the display is still on our previous step")
+        XCTAssertEqual(controller.current, large)
+        XCTAssertEqual(keeper.discards, 0)
+        observeOwnChanges()
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
+        XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testForeignEventDuringRestoreKeepsTheBaselineWhileOurModeRemains() async {
+        await apply(1280)
+        switcher.onApply = { [unowned self] _, _ in
+            self.switcher.currentByDisplay[1] = self.large
+            self.controller.observe(DisplayReconfigurationEvent(display: 3, flags: [.addFlag]))
+        }
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertEqual(controller.baseline, base, "a monitor plugged in mid-restore must not strand the Mac on Big Text")
+        XCTAssertEqual(controller.current, large)
+        XCTAssertTrue(controller.restorePending)
+        XCTAssertEqual(controller.phase, .idle)
+        XCTAssertTrue(controller.isEngaged)
+        XCTAssertEqual(keeper.discards, 0)
+        observeOwnChanges()
+        controller.retryPendingRestore()
+        await controller.drain()
+        XCTAssertEqual(switcher.currentByDisplay[1], base, "wake or unlock restores it")
+        XCTAssertEqual(keeper.restores, 1)
+        XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testForeignEventDuringOffForThisSessionLeavesTheRestoreToTheSessionEnd() async {
+        await apply(1280)
+        switcher.onApply = { [unowned self] _, _ in
+            self.switcher.currentByDisplay[1] = self.large
+            self.controller.observe(DisplayReconfigurationEvent(display: 3, flags: [.addFlag]))
+        }
+        await apply(0)
+        XCTAssertEqual(host.foreign, 1, "the session stops as for any change we did not make")
+        XCTAssertEqual(controller.baseline, base)
+        XCTAssertTrue(controller.restorePending)
+        observeOwnChanges()
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
+        XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testForeignEventDuringRestoreForgetsOnceOurModeIsGone() async {
+        await apply(1280)
+        switcher.onApply = { [unowned self] _, _ in
+            self.controller.observe(DisplayReconfigurationEvent(display: 3, flags: [.addFlag]))
+        }
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertEqual(switcher.currentByDisplay[1], base, "the restore landed alongside the new monitor")
+        XCTAssertNil(controller.baseline)
+        XCTAssertFalse(controller.restorePending)
+        XCTAssertFalse(controller.isEngaged)
+
+        observeOwnChanges()
+        await apply(1280)
+        let chosen = mode(1024, 665, id: 9)
+        switcher.onApply = { [unowned self] _, _ in
+            self.switcher.currentByDisplay[1] = chosen
+            self.controller.observe(DisplayReconfigurationEvent(display: 3, flags: [.addFlag]))
+        }
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertEqual(switcher.currentByDisplay[1], chosen, "a mode we did not set is never restored over")
+        XCTAssertNil(controller.baseline)
+        XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testUnverifiedResumeAfterApplyRepliesFailed() async {
+        host.resumeVerifies = false
+        await apply(1280)
+        XCTAssertEqual(errors, [.failed], "the host treats the unverified display list as foreign and stops")
+        XCTAssertEqual(controller.current, large, "the mode is still ours to restore at session end")
+        XCTAssertEqual(controller.baseline, base)
+    }
+
+    func testUnverifiedResumeAfterOffForThisSessionRepliesFailed() async {
+        await apply(1280)
+        host.resumeVerifies = false
+        await apply(0)
+        XCTAssertEqual(errors, [nil, .failed])
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
+        XCTAssertFalse(controller.isEngaged)
+    }
+
     func testForeignChangeIsNeverOverwrittenWhenTheSessionEnds() async {
         await apply(1280)
         let chosen = mode(1024, 665, id: 9)
@@ -194,6 +315,39 @@ final class BigTextControllerTests: XCTestCase {
         await apply(1280)
         XCTAssertEqual(host.foreign, 1)
         XCTAssertGreaterThan(clock, OwnChangeRecognizer.timeout)
+    }
+
+    func testUnreadableModeDuringSleepRestoreKeepsTheBaselineForWake() async {
+        await apply(1280)
+        switcher.onApply = { [unowned self] _, _ in
+            self.switcher.currentByDisplay[1] = nil
+            self.controller.observe(DisplayReconfigurationEvent(display: 3, flags: [.removeFlag]))
+        }
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertEqual(controller.baseline, base, "an unreadable sleeping display is not a foreign chosen resolution")
+        XCTAssertTrue(controller.restorePending)
+        switcher.currentByDisplay[1] = large
+        observeOwnChanges()
+        controller.retryPendingRestore()
+        await controller.drain()
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
+        XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testRestoreTimeoutKeepsBaselineUntilWakeRetry() async {
+        await apply(1280)
+        switcher.onApply = { [unowned self] _, _ in self.switcher.currentByDisplay[1] = self.large }
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertGreaterThan(clock, OwnChangeRecognizer.timeout)
+        XCTAssertEqual(controller.baseline, base)
+        XCTAssertTrue(controller.restorePending)
+        observeOwnChanges()
+        controller.retryPendingRestore()
+        await controller.drain()
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
+        XCTAssertFalse(controller.isEngaged)
     }
 
     func testApplyFailureRepliesFailedAndKeepsTheMacsSize() async {
@@ -288,6 +442,51 @@ final class BigTextControllerTests: XCTestCase {
         controller.restoreForTermination()
         await controller.drain()
         XCTAssertEqual(appliedModes, [large, base], "one synchronous restore, none from the grace")
+        XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testTerminationDuringAFirstChangeRestoresTheModeAlreadySwitched() async {
+        switcher.onApply = { [unowned self] _, _ in
+            self.switcher.onApply = nil
+            self.controller.restoreForTermination()
+        }
+        await apply(1280)
+        XCTAssertEqual(appliedModes, [large, base], "quit arrived before the change was recognised")
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
+        XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testTerminationDuringALaterStepRestoresTheModeAlreadySwitched() async {
+        await apply(1280)
+        switcher.onApply = { [unowned self] _, _ in
+            self.switcher.onApply = nil
+            self.controller.restoreForTermination()
+        }
+        await apply(1024)
+        XCTAssertEqual(appliedModes, [large, larger, base])
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
+        XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testTerminationNeverRestoresOverAModeThePersonChose() async {
+        await apply(1280)
+        switcher.currentByDisplay[1] = mode(1024, 665, id: 9)
+        controller.restoreForTermination()
+        XCTAssertEqual(appliedModes, [large])
+        XCTAssertFalse(controller.isEngaged)
+    }
+
+    func testTerminationAfterAForeignRestoreStillRestores() async {
+        await apply(1280)
+        switcher.onApply = { [unowned self] _, _ in
+            self.switcher.currentByDisplay[1] = self.large
+            self.controller.observe(DisplayReconfigurationEvent(display: 3, flags: [.addFlag]))
+        }
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        observeOwnChanges()
+        controller.restoreForTermination()
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
         XCTAssertFalse(controller.isEngaged)
     }
 
