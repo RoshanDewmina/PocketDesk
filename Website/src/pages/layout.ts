@@ -133,6 +133,7 @@ function header(meta: PageMeta): Html {
     <a class="brand" href="/" aria-label="Farside home">${raw(markSvg(18))}<span class="wm" aria-hidden="true">farside</span></a>
     <nav class="nav-desk" aria-label="Main">${navLinks(meta.current)}</nav>
     <div class="bar-r">
+      <p class="status" aria-hidden="true"><span>Your Mac</span><b><i class="live"></i><span class="st-t">Reaching</span></b></p>
       <a class="pill" href="/#beta">${config.copy.cta}</a>
       <details class="nav-mob">
         <summary aria-label="Menu">${icon.menu}</summary>
@@ -158,7 +159,7 @@ function footer(): Html {
   <div class="w">
     <div class="foot-top">
       <a class="brand" href="/" aria-label="Farside home">${raw(markSvg(18))}<span class="wm" aria-hidden="true">farside</span></a>
-      <p class="foot-tag">Your Mac is far. Your reach isn’t.</p>
+      <p class="foot-tag">Your Mac is far. Your reach <em>isn’t.</em></p>
     </div>
     <nav class="foot-nav" aria-label="Footer">
       <div><h2>Farside</h2><ul role="list">
@@ -181,6 +182,7 @@ function footer(): Html {
         ? html`<div><h2>Follow</h2><ul role="list">${social.map(([key, label]) => html`<li><a href="${config.social[key]!}" rel="me noopener">${label}</a></li>`)}</ul></div>`
         : ""}
     </nav>
+    <p class="foot-wm" aria-hidden="true">farside</p>
     <div class="foot-fine">
       <p>© 2026 ${owner}. No cookies, no analytics and no ads on this site.</p>
       <p>Apple, Mac, iPhone, iPad and App Store are trademarks of Apple Inc., registered in the U.S. and other countries and regions. Farside is not affiliated with Apple. Other product names belong to their owners.</p>

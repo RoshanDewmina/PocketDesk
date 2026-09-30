@@ -22,7 +22,7 @@ export function guideHero(opts: { crumbs: [string, string][]; cap: string; title
   <div class="w">
     ${breadcrumbNav(opts.crumbs)}
     <p class="cap">${opts.cap}</p>
-    <h1 class="h-page" id="page-title">${opts.title}</h1>
+    <h1 class="h-page dw" id="page-title">${opts.title}</h1>
     <p class="lead">${opts.lead}</p>
     <p class="meta-row"><span class="cap">Updated · <b>${config.legalUpdated}</b></span>${opts.meta ? html`<span class="cap">${opts.meta}</span>` : ""}<span class="cap">Status · <b>in beta, coming soon</b></span></p>
   </div>

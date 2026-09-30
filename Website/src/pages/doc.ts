@@ -10,7 +10,7 @@ export function pageHero(opts: { cap: string; title: Html; lead: Html; extra?: H
   <div class="w">
     ${opts.crumbs ? breadcrumbNav(opts.crumbs) : ""}
     <p class="cap">${opts.cap}</p>
-    <h1 class="h-page" id="page-title">${opts.title}</h1>
+    <h1 class="h-page dw" id="page-title">${opts.title}</h1>
     <p class="lead">${opts.lead}</p>
     ${opts.extra ?? ""}
   </div>

@@ -1,6 +1,8 @@
 /**
- * Google Fonts: Doto (the wordmark, page headings and prices) and Instrument Serif italic (the footer line).
- * Everything you read uses the Apple system font (SF Pro on Apple devices), as the approved hero does, so
- * there is no web-font swap to move the text.
+ * Google Fonts (design system §2, "Type (web)"): Geist for everything you read, Geist Mono for captions and
+ * eyebrows, Doto for display lines and big numbers, Instrument Serif italic for the one accent word.
+ * They load right after the first paint; the metric-matched fallbacks in src/styles/fallbacks.css keep the
+ * swap from moving the layout.
  */
-export const FONTS_URL = "https://fonts.googleapis.com/css2?family=Doto:wght@800&family=Instrument+Serif:ital@1&display=swap";
+export const FONTS_URL =
+  "https://fonts.googleapis.com/css2?family=Doto:wght@800;900&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&family=Instrument+Serif:ital@1&display=swap";

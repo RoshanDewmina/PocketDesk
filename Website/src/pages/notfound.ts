@@ -9,7 +9,7 @@ export function notFoundPage(assets: Assets) {
   const body = html`<section class="w lost" aria-labelledby="page-title">
   <div>
     <p class="big" aria-hidden="true">404</p>
-    <h1 class="h-page" id="page-title">Page not found</h1>
+    <h1 class="h-page dw" id="page-title">Page not found</h1>
     <p class="lead">This page may have moved, or the link has a typo.</p>
     <div class="acts">
       <a class="cta" href="/">Back to the home page <span class="arr">${icon.arrow}</span></a>
