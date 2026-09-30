@@ -20,12 +20,12 @@ final class SharedCaptureScopeTests: XCTestCase {
                          "clipboard", "file", "curtain", "wake", "display", "displays", "displayScale", "mode"]
         for kind: CaptureScopeFrame.Kind in [.application, .window] {
             for action in forbidden { XCTAssertFalse(SharedCaptureScopePolicy.permits(action, kind: kind), action) }
-            for action in ["release", "heartbeat", "pause", "resume"] {
+            for action in ["release", "heartbeat", "pause", "resume", "viewOnly"] {
                 XCTAssertTrue(SharedCaptureScopePolicy.permits(action, kind: kind), action)
             }
             let features = SharedCaptureScopePolicy.features(SessionFeature.host + [SessionFeature.couch, SessionFeature.displayScale], kind: kind)
             XCTAssertEqual(Set(features), [SessionFeature.captureScope, SessionFeature.backgroundPause,
-                                          SessionFeature.ladder, SessionFeature.macVitals])
+                                          SessionFeature.ladder, SessionFeature.macVitals, SessionFeature.liveViewOnly])
         }
     }
 
