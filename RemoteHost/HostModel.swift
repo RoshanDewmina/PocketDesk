@@ -120,6 +120,7 @@ final class RemoteHostModel: ObservableObject {
     private let capture = RemoteCapture()
     /// G12: one per capture session while the ladder switch is on.
     private var loadMonitor: HostLoadMonitor?
+    private var vitalsMonitor: MacVitalsMonitor?
     private var phoneLoad: PhoneLoadFeedback?
     private var phoneLoadReceivedAt: TimeInterval?
     private var ladderState: LadderState?
@@ -1596,12 +1597,18 @@ final class RemoteHostModel: ObservableObject {
         ladderState = nil
         busyState = nil
         loadMonitor = StreamTuning.current.ladder ? HostLoadMonitor(targetFPS: peer.targetFPS) : nil
+        vitalsMonitor?.stop()
+        let vitals = MacVitalsMonitor(sources: LiveMacVitalsSources())
+        vitals.start(now: ProcessInfo.processInfo.systemUptime)
+        vitalsMonitor = vitals
     }
 
     private func endLoadMonitor() {
         phoneLoad = nil
         phoneLoadReceivedAt = nil
         loadMonitor = nil
+        vitalsMonitor?.stop()
+        vitalsMonitor = nil
         ladderState = nil
         busyState = nil
         capture.setLadder(nil)
@@ -1663,7 +1670,8 @@ final class RemoteHostModel: ObservableObject {
             hostStream: connection.media?.takeHostSummary(),
             curtain: curtainState.rawValue, hostEvent: event,
             display: capturedDisplayID, agentAlert: alert,
-            captureRegion: capture.appliedCaptureRegion, ladder: ladderState, busy: busyState
+            captureRegion: capture.appliedCaptureRegion, ladder: ladderState, busy: busyState,
+            macVitals: vitalsMonitor?.current(now: ProcessInfo.processInfo.systemUptime)
         ))
         if sent && event != nil { recoveryNoticeDelivered = true }
         if sent && alert != nil { agentAlertOutbox.removeFirst() }
