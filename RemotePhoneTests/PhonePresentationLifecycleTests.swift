@@ -20,6 +20,9 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         let exit = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" })
         XCTAssertFalse(exit.action.liveViewOnly ?? true)
         XCTAssertNotNil(exit.action.liveViewOnlyRequestID)
+        let originalDeadline = try XCTUnwrap(model.viewOnlyExitDeadlineForTesting)
+        model.stopPictureInPicture(); model.stopPictureInPicture()
+        XCTAssertEqual(model.viewOnlyExitDeadlineForTesting, originalDeadline, "Repeated cleanup cannot extend the original bound")
         // Host drops old-geometry exit; a new geometry retires the correlation request.
         try deliver(RemoteAction(action: "geometry", x: 210, y: 200, epoch: 8))
         try deliver(RemoteAction(action: "capture", liveViewOnly: true, x: 1, epoch: 8, features: SessionFeature.host, mode: "picture"))
@@ -27,6 +30,27 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         XCTAssertTrue(model.connection.connected, "Routine state is not an applied exit acknowledgment")
         model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 3)
         XCTAssertFalse(model.connection.connected, "Retirement must never erase the bounded foreground exit timeout")
+    }
+    @MainActor
+    func testActualQueuedEnterRetirementKeepsHostSuspensionCleanupBounded() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "pip-enter")
+        defer { model.connection.stop() }
+        var packets: [ControlPacket] = []
+        model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+        func deliver(_ action: RemoteAction) throws { model.connection.onControl?(try JSONEncoder().encode(action)) }
+        try deliver(RemoteAction(action: "geometry", x: 200, y: 200, epoch: 7))
+        model.sendViewOnlyEntryForTesting() // Production transaction after the public PiP admission guard.
+        XCTAssertEqual(packets.last { $0.action.action == "viewOnly" }?.action.liveViewOnly, true)
+        try deliver(RemoteAction(action: "geometry", x: 220, y: 200, epoch: 8))
+        let deadline = try XCTUnwrap(model.viewOnlyExitDeadlineForTesting)
+        try deliver(RemoteAction(action: "capture", liveViewOnly: true, x: 0, epoch: 8, features: SessionFeature.host, mode: "picture"))
+        model.expireViewOnlyExitForTesting(at: deadline - 0.2)
+        model.expireViewOnlyExitForTesting(at: deadline - 0.1)
+        XCTAssertEqual(model.viewOnlyExitDeadlineForTesting, deadline)
+        model.expireViewOnlyExitForTesting(at: deadline + 0.01)
+        XCTAssertFalse(model.connection.connected)
     }
     func testCaptureDeadlineCannotBeRenewedByLiveRouteAlone() {
         let id = identity()

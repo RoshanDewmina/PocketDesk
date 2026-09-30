@@ -400,6 +400,9 @@ final class PhoneRemoteModel: ObservableObject {
     func startPictureInPicture() {
         guard sceneIsActive, !privacyShield, !contentConcealed, !awaitingViewOnlyExit, pipState == .ready,
               hostFeatures.contains(SessionFeature.liveViewOnly), pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return }
+        requestViewOnlyEntry()
+    }
+    private func requestViewOnlyEntry() {
         releasePiPControl()
         let id = viewOnlyRequest.begin(epoch: geometryEpoch, at: ProcessInfo.processInfo.systemUptime)
         pendingViewOnlyStart = connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: true, liveViewOnlyRequestID: id, epoch: geometryEpoch))
@@ -414,7 +417,8 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private func requestViewOnlyExit() {
         awaitingViewOnlyExit = true
-        viewOnlyExitDeadline = ProcessInfo.processInfo.systemUptime + 2
+        let now = ProcessInfo.processInfo.systemUptime
+        viewOnlyExitDeadline = min(viewOnlyExitDeadline ?? (now + 2), now + 2)
         let id = viewOnlyRequest.begin(epoch: geometryEpoch, at: ProcessInfo.processInfo.systemUptime)
         viewOnlyStartDeadline = nil
         if !connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: false, liveViewOnlyRequestID: id, epoch: geometryEpoch)) { disconnect() }
@@ -488,7 +492,7 @@ final class PhoneRemoteModel: ObservableObject {
             guard let self else { return }
             self.pipState = state
             if self.pipBackground && state != .active { self.disconnect() }
-            else if state == .ineligible && !self.invalidatingPiP && self.sceneIsActive && self.viewOnlyConfirmed {
+            else if state == .ineligible && !self.invalidatingPiP && self.sceneIsActive && self.viewOnlyConfirmed && !self.awaitingViewOnlyExit {
                 self.requestViewOnlyExit()
             }
         }
@@ -2289,6 +2293,8 @@ final class PhoneRemoteModel: ObservableObject {
 
     #if DEBUG
     func expireViewOnlyExitForTesting(at now: TimeInterval) { tick(at: now) }
+    func sendViewOnlyEntryForTesting() { requestViewOnlyEntry() }
+    var viewOnlyExitDeadlineForTesting: TimeInterval? { viewOnlyExitDeadline }
     #endif
     private func tick(at suppliedNow: TimeInterval? = nil) {
         let now = suppliedNow ?? ProcessInfo.processInfo.systemUptime
