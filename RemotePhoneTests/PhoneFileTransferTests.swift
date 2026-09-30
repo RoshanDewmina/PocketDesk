@@ -94,6 +94,14 @@ final class PhoneFileTransferTests: XCTestCase {
 @MainActor
 final class SendToMacTests: XCTestCase {
     private var root: URL!
+    private let target = SendToMacDestination(hostRecordID: String(repeating: "a", count: 64), ownerPairID: String(repeating: "b", count: 64))
+    private let liveID = String(repeating: "c", count: 32)
+
+    private func configuredInbox() -> SendToMacInbox {
+        let inbox = SendToMacInbox(root: root)
+        inbox.updateDestination(target, name: "Studio", liveSessionID: liveID)
+        return inbox
+    }
 
     override func setUpWithError() throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("SendToMacTests-" + UUID().uuidString)
@@ -106,12 +114,13 @@ final class SendToMacTests: XCTestCase {
 
     private func item(_ kind: SendToMacItem.Kind, immediate: Bool, created: Date = Date(), text: String? = nil) -> SendToMacItem {
         SendToMacItem(id: SendToMacOutbox.makeID(), kind: kind, name: kind == .file ? "a.txt" : nil, bytes: kind == .file ? 5 : nil,
-                      text: text, created: created, expires: created.addingTimeInterval(SendToMacItem.lifetime), immediate: immediate)
+                      text: text, created: created, expires: created.addingTimeInterval(SendToMacItem.lifetime), immediate: immediate,
+                      destination: target, destinationName: "Studio", liveSessionID: liveID)
     }
 
     func testBeaconDistinguishesLiveConnectableAndStale() {
         let now = Date()
-        var beacon = SendToMacBeacon(macName: "Studio", liveUntil: now.addingTimeInterval(10), lastConnected: now, filesSupported: true)
+        var beacon = SendToMacBeacon(macName: "Studio", liveUntil: now.addingTimeInterval(10), lastConnected: now, filesSupported: true, destination: target, liveSessionID: liveID)
         XCTAssertTrue(beacon.isLive(at: now))
         beacon.liveUntil = nil
         XCTAssertFalse(beacon.isLive(at: now))
@@ -138,7 +147,7 @@ final class SendToMacTests: XCTestCase {
         try Data("hello".utf8).write(to: staged)
         let file = item(.file, immediate: true)
         try SendToMacOutbox.stage(file, payload: staged, root: root)
-        let inbox = SendToMacInbox(root: root)
+        let inbox = configuredInbox()
         inbox.canSend = { true }
         var sentURL: URL?
         var release: (() -> Void)?
@@ -158,7 +167,7 @@ final class SendToMacTests: XCTestCase {
     func testDeferredItemAsksFirstAndCanBeDiscarded() throws {
         let link = item(.link, immediate: false, text: "https://example.com")
         try SendToMacOutbox.stage(link, root: root)
-        let inbox = SendToMacInbox(root: root)
+        let inbox = configuredInbox()
         inbox.canSend = { false }
         inbox.check()
         XCTAssertNil(inbox.offer, "nothing is offered until a session can send")
@@ -176,7 +185,7 @@ final class SendToMacTests: XCTestCase {
     func testConfirmedTextGoesToTheClipboardPath() throws {
         let text = item(.text, immediate: false, text: "hello mac")
         try SendToMacOutbox.stage(text, root: root)
-        let inbox = SendToMacInbox(root: root)
+        let inbox = configuredInbox()
         inbox.canSendText = { true }
         var sentText: String?
         inbox.sendText = { sentText = $0; return true }
@@ -185,4 +194,109 @@ final class SendToMacTests: XCTestCase {
         XCTAssertEqual(sentText, "hello mac")
         XCTAssertEqual(SendToMacOutbox.loadReceipt(text.id, root: root)?.state, .sent)
     }
+
+    func testSwitchToOtherMacBlocksImmediateAndOrdinaryConfirm() throws {
+        let shared = item(.text, immediate: true, text: "private for A")
+        try SendToMacOutbox.stage(shared, root: root)
+        let inbox = configuredInbox()
+        let other = SendToMacDestination(hostRecordID: String(repeating: "d", count: 64), ownerPairID: String(repeating: "e", count: 64))
+        inbox.updateDestination(other, name: "Mac B", liveSessionID: liveID)
+        inbox.canSendText = { true }
+        var sent = 0
+        inbox.sendText = { _ in sent += 1; return true }
+        inbox.check()
+        inbox.confirm()
+        XCTAssertEqual(sent, 0)
+        XCTAssertEqual(inbox.offer?.id, shared.id)
+        inbox.retargetAndConfirm(to: target)
+        XCTAssertEqual(sent, 0, "a stale retarget button cannot substitute the current target")
+        inbox.retargetAndConfirm(to: other)
+        XCTAssertEqual(sent, 1, "only explicit retarget authorizes sending to B")
+    }
+
+    func testReturningToSameMacInNewSessionCannotAutoSend() throws {
+        let shared = item(.text, immediate: true, text: "private")
+        try SendToMacOutbox.stage(shared, root: root)
+        let inbox = configuredInbox()
+        inbox.updateDestination(nil, name: nil, liveSessionID: nil)
+        inbox.updateDestination(target, name: "Studio", liveSessionID: String(repeating: "d", count: 32))
+        inbox.canSendText = { true }
+        var sent = 0
+        inbox.sendText = { _ in sent += 1; return true }
+        inbox.check()
+        XCTAssertEqual(sent, 0)
+        XCTAssertEqual(inbox.offer?.id, shared.id)
+        inbox.confirm()
+        XCTAssertEqual(sent, 1, "same grant still allows an explicit confirmation")
+    }
+
+    func testReplacementGrantOnSameHostRequiresExplicitRetarget() throws {
+        var shared = item(.text, immediate: true, text: "private")
+        shared.destination?.ownerPairID = String(repeating: "f", count: 64)
+        try SendToMacOutbox.stage(shared, root: root)
+        let inbox = configuredInbox()
+        inbox.canSendText = { true }
+        var sent = 0
+        inbox.sendText = { _ in sent += 1; return true }
+        inbox.check()
+        inbox.confirm()
+        XCTAssertEqual(sent, 0)
+        XCTAssertEqual(inbox.offer?.id, shared.id)
+    }
+
+    func testLegacyDestinationlessItemNeverAutomaticallySends() throws {
+        var shared = item(.text, immediate: true, text: "legacy")
+        shared.destination = nil
+        shared.liveSessionID = nil
+        try SendToMacOutbox.stage(shared, root: root)
+        let inbox = configuredInbox()
+        inbox.canSendText = { true }
+        var sent = 0
+        inbox.sendText = { _ in sent += 1; return true }
+        inbox.check()
+        inbox.confirm()
+        XCTAssertEqual(sent, 0)
+        XCTAssertNotNil(inbox.offer)
+        inbox.retargetAndConfirm(to: target)
+        XCTAssertEqual(sent, 1)
+    }
+
+    func testMalformedDestinationAndFutureOrExpiredItemsAreNeverAutomatic() {
+        let now = Date()
+        var shared = item(.text, immediate: true, created: now.addingTimeInterval(1), text: "future")
+        XCTAssertFalse(shared.canAutomaticallySend(to: target, liveSessionID: liveID, at: now))
+        shared.destination?.hostRecordID = "../../escape"
+        XCTAssertFalse(shared.isBound(to: shared.destination))
+        let expired = item(.text, immediate: true, created: now.addingTimeInterval(-601), text: "expired")
+        XCTAssertFalse(expired.canAutomaticallySend(to: target, liveSessionID: liveID, at: now))
+    }
+
+    func testLegacyBeaconDecodesButCannotAdvertiseAutomaticDestination() throws {
+        let data = Data(#"{"macName":"Legacy","liveUntil":999999999,"lastConnected":999999999,"filesSupported":true}"#.utf8)
+        let beacon = try JSONDecoder().decode(SendToMacBeacon.self, from: data)
+        XCTAssertNil(beacon.destination)
+        XCTAssertFalse(beacon.isLive(at: Date(timeIntervalSinceReferenceDate: 100)))
+        XCTAssertFalse(beacon.isConnectable(at: Date(timeIntervalSinceReferenceDate: 100)))
+    }
+
+    func testSelectionChangesBeforePublishedBeaconRefreshCannotLeakItem() throws {
+        let shared = item(.text, immediate: true, text: "only A")
+        try SendToMacOutbox.stage(shared, root: root)
+        let inbox = configuredInbox() // UI still displays A
+        var actual: SendToMacDestination? = target
+        inbox.destinationNow = { actual }
+        inbox.liveSessionNow = { self.liveID }
+        inbox.canSendText = { true }
+        var sent = 0
+        inbox.sendText = { _ in sent += 1; return true }
+        actual = SendToMacDestination(hostRecordID: String(repeating: "d", count: 64), ownerPairID: String(repeating: "e", count: 64))
+        inbox.check()
+        inbox.confirm()
+        inbox.retargetAndConfirm(to: target)
+        XCTAssertEqual(sent, 0, "send boundary must read actual selected pair, even while the UI still shows A")
+        actual = nil
+        inbox.confirm()
+        XCTAssertEqual(sent, 0, "missing current trust must not fall back to cached A")
+    }
+
 }

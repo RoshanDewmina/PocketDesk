@@ -107,6 +107,8 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var linkHint: NetworkLinkHint?
     let files = PhoneFileTransfer()
     let sendToMac = SendToMacInbox()
+    private var shareLiveSessionID: String?
+    private var shareDestination: SendToMacDestination?
     private var sendToMacBeaconAt: TimeInterval = 0
     private var fileTransferWasAvailable = false
     @Published private(set) var hostFeatures: Set<String> = []
@@ -192,6 +194,13 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private var pointerTimer: Timer?
 
+    struct PendingPairReplacement: Identifiable {
+        var id: String { approval.request.scannedInvitationFingerprint }
+        let code: String
+        let oldName: String
+        let approval: PhoneTrustReplacementApproval
+    }
+    @Published private(set) var pendingPairReplacement: PendingPairReplacement?
     @Published var pairingCode = ""
     @Published var error = ""
     @Published var pairingEntry: PairingEntry?
@@ -841,29 +850,53 @@ final class PhoneRemoteModel: ObservableObject {
             return true
         }
         sendToMac.sendLink = { [weak self] url in self?.files.sendLink(url) ?? false }
+        sendToMac.destinationNow = { [weak self] in self?.currentShareDestination }
+        sendToMac.liveSessionNow = { [weak self] in
+            guard let self, self.currentShareDestination == self.shareDestination,
+                  self.fileTransferAvailable || self.clipboardAvailable else { return nil }
+            return self.shareLiveSessionID
+        }
         sendToMac.start()
         refreshSendToMac(force: true)
     }
 
     /// Keeps the share extension's view of the paired Mac current (name and whether a session is live),
     /// and offers anything it staged once a session can send.
+    private var currentShareDestination: SendToMacDestination? {
+        guard let invitation = connection.invitation,
+              let canonical = PairedMacs.id(for: invitation), canonical.hasPrefix("m_"),
+              let ownerPairID = invitation.ownerPairID else { return nil }
+        let value = SendToMacDestination(hostRecordID: String(canonical.dropFirst(2)), ownerPairID: ownerPairID)
+        return value.isValid ? value : nil
+    }
+
     func refreshSendToMac(force: Bool = false) {
         let now = ProcessInfo.processInfo.systemUptime
-        let available = fileTransferAvailable
-        if available && !fileTransferWasAvailable { sendToMac.check() }
-        let changed = available != fileTransferWasAvailable
+        let invitation = connection.invitation
+        let destination = currentShareDestination
+        let available = fileTransferAvailable || clipboardAvailable
+        let changed = available != fileTransferWasAvailable || destination != shareDestination
+        if !available || destination != shareDestination { shareLiveSessionID = nil }
+        if available, destination != nil, shareLiveSessionID == nil { shareLiveSessionID = SendToMacOutbox.makeID() }
+        shareDestination = destination
         fileTransferWasAvailable = available
+        sendToMac.updateDestination(destination, name: invitation?.name, liveSessionID: shareLiveSessionID)
         guard force || changed || now - sendToMacBeaconAt >= 5 else { return }
         sendToMacBeaconAt = now
-        guard let name = connection.invitation?.name else { SendToMacOutbox.storeBeacon(nil); return }
-        var beacon = SendToMacOutbox.loadBeacon() ?? SendToMacBeacon(macName: name, filesSupported: false)
+        guard let name = invitation?.name, let destination else { SendToMacOutbox.storeBeacon(nil); return }
+        let old = SendToMacOutbox.loadBeacon()
+        var beacon = old.flatMap { $0.destination == destination ? $0 : nil }
+            ?? SendToMacBeacon(macName: name, filesSupported: false)
         beacon.macName = name
+        beacon.destination = destination
+        beacon.liveSessionID = shareLiveSessionID
         beacon.liveUntil = available ? Date().addingTimeInterval(15) : nil
         if connection.connected {
             beacon.lastConnected = Date()
             beacon.filesSupported = fileTransferSupported
         }
         SendToMacOutbox.storeBeacon(beacon)
+        if available { sendToMac.check() }
     }
 
     private var clipboardUnavailableMessage: String {
@@ -931,8 +964,44 @@ final class PhoneRemoteModel: ObservableObject {
 
     @discardableResult
     func enroll(_ code: String) -> Bool {
+        guard pendingPairReplacement == nil else { return false }
         do {
-            try connection.enroll(code.trimmingCharacters(in: .whitespacesAndNewlines))
+            let code = code.trimmingCharacters(in: .whitespacesAndNewlines)
+            let invitation = try PairInvitation.parse(code)
+            if let request = try PhoneTrustStore.shared.replacementRequest(for: invitation) {
+                let oldName = try PhoneTrustStore.shared.snapshot().hosts
+                    .first { $0.id == request.existingHostRecordID }?.invitation.name ?? "this Mac"
+                pendingPairReplacement = PendingPairReplacement(code: code, oldName: oldName,
+                    approval: PhoneTrustReplacementApproval(request: request, enrollment: invitation))
+                error = ""
+                return false
+            }
+            disconnect()
+            try connection.enroll(code)
+            pairingCode = ""
+            error = ""
+            return true
+        } catch {
+            self.error = error.localizedDescription
+            return false
+        }
+    }
+
+    func cancelPairReplacement() { pendingPairReplacement = nil }
+
+    @discardableResult
+    func confirmPairReplacement(_ pending: PendingPairReplacement) -> Bool {
+        guard let current = pendingPairReplacement, current.code == pending.code,
+              current.approval.request == pending.approval.request else { return false }
+        pendingPairReplacement = nil
+        do {
+            let invitation = try PairInvitation.parse(pending.code) // rechecks QR expiry on confirmation
+            guard invitation == pending.approval.enrollment,
+                  try PhoneTrustStore.shared.replacementRequest(for: invitation) == pending.approval.request else {
+                throw RemoteError.invalidPairing
+            }
+            disconnect()
+            try connection.enroll(pending.code, replacementApproval: pending.approval)
             pairingCode = ""
             error = ""
             return true
@@ -1729,6 +1798,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func end() {
+        shareLiveSessionID = nil
         // Only a session that received vitals knows the battery, so a failed reconnect or an older Mac keeps
         // what Home shows; the reading's own time stops a long background hold from renewing an old one.
         if let sessionVitals { vitalsMemory.record(sessionVitals.vitals, at: sessionVitals.receivedAt) }

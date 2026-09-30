@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 
 /// The app side of Send to My Mac. The share extension stages one item in the App Group and posts a
 /// Darwin notification. A live foreground session sends an item staged while it was live at once;
@@ -6,6 +7,32 @@ import Foundation
 @MainActor
 final class SendToMacInbox: ObservableObject {
     @Published private(set) var offer: SendToMacItem?
+    @Published private(set) var selectedDestination: SendToMacDestination?
+    @Published private(set) var selectedName = "selected Mac"
+    private var liveSessionID: String?
+
+    /// Called before checking items, and on every End/selection change. Old handoffs stay staged,
+    /// but can never automatically regain eligibility by switching A → B → A.
+    func updateDestination(_ destination: SendToMacDestination?, name: String?, liveSessionID: String?) {
+        let valid = destination?.isValid == true ? destination : nil
+        if selectedDestination != valid { selectedDestination = valid }
+        let name = name ?? "selected Mac"
+        if selectedName != name { selectedName = name }
+        self.liveSessionID = liveSessionID
+    }
+
+    /// Production reads the coordinator's current selected pair at the actual send boundary;
+    /// the published display snapshot alone may lag a system-route selection by one main turn.
+    var destinationNow: (() -> SendToMacDestination?)?
+    var liveSessionNow: (() -> String?)?
+    private var currentDestination: SendToMacDestination? {
+        if let destinationNow { return destinationNow() }
+        return selectedDestination
+    }
+    private var currentLiveSessionID: String? {
+        if let liveSessionNow { return liveSessionNow() }
+        return liveSessionID
+    }
 
     var canSend: () -> Bool = { false }
     var canSendText: () -> Bool = { false }
@@ -45,7 +72,7 @@ final class SendToMacInbox: ObservableObject {
         let items = SendToMacOutbox.pending(at: now, root: root)
         if let offer, !items.contains(where: { $0.id == offer.id }) { self.offer = nil }
         guard let next = items.first, able(next) else { return }
-        if next.immediate && now.timeIntervalSince(next.created) < 30 {
+        if next.canAutomaticallySend(to: currentDestination, liveSessionID: currentLiveSessionID, at: now) {
             send(next)
         } else if offer?.id != next.id {
             offer = next
@@ -54,8 +81,22 @@ final class SendToMacInbox: ObservableObject {
 
     func confirm() {
         guard let offer else { return }
+        guard offer.isBound(to: currentDestination), able(offer), offer.expires > Date() else { return }
         self.offer = nil
-        guard able(offer) else { check(); return }
+        send(offer)
+    }
+
+    /// A separate, explicitly labelled action. The displayed target is captured by the view, so a
+    /// selection change between rendering and tapping cannot retarget to an unseen destination.
+    func retargetAndConfirm(to expected: SendToMacDestination) {
+        guard var offer, selectedDestination == expected, currentDestination == expected, expected.isValid,
+              able(offer), offer.expires > Date() else { return }
+        offer.destination = expected
+        offer.destinationName = selectedName
+        offer.liveSessionID = nil
+        offer.immediate = false
+        do { try SendToMacOutbox.stage(offer, root: root) } catch { return }
+        self.offer = nil
         send(offer)
     }
 
@@ -93,6 +134,7 @@ final class SendToMacInbox: ObservableObject {
     }
 
     private func send(_ item: SendToMacItem) {
+        guard item.isBound(to: currentDestination), item.expires > Date(), able(item) else { offer = item; return }
         sending = item
         switch item.kind {
         case .file:

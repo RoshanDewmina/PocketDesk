@@ -73,6 +73,19 @@ final class FarsideIntentsTests: XCTestCase {
         XCTAssertEqual(id.count, 18)
     }
 
+    func testLegacyEntityAliasResolvesOnceToCanonicalMac() async throws {
+        let canonical = PairedMac(id: "m_" + String(repeating: "a", count: 64), name: "Studio", invitation: nil,
+                                  legacyAliases: ["m_legacy"])
+        PairedMacs.loader = { [canonical] }
+        let found = try await MacEntityQuery().entities(for: [canonical.id, "m_legacy"])
+        XCTAssertEqual(found.map(\.id), [canonical.id])
+        var chosen = MacEntity(canonical)
+        chosen.id = "m_legacy"
+        let resolved = try await resolvePairedMac(chosen) { _ in XCTFail("explicit legacy alias must not disambiguate"); return chosen }
+        XCTAssertEqual(resolved.id, canonical.id)
+        XCTAssertNil(PairedMacs.mac(withID: "m_missing"))
+    }
+
     func testEntityQuerySuggestsAndResolvesPairedMacs() async throws {
         let studio = try TestPairing.mac(name: "Studio Mac")
         PairedMacs.loader = { [studio] }

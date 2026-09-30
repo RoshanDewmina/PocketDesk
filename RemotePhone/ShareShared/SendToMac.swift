@@ -1,5 +1,16 @@
 import Foundation
 
+/// Nonsecret lookup IDs. These identify a saved host record and owner grant; they confer no authority.
+struct SendToMacDestination: Codable, Equatable {
+    var hostRecordID: String
+    var ownerPairID: String
+
+    var isValid: Bool { Self.isHex(hostRecordID, count: 64) && Self.isHex(ownerPairID, count: 64) }
+    static func isHex(_ value: String, count: Int) -> Bool {
+        value.utf8.count == count && value.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
+    }
+}
+
 /// What the app tells the Send to My Mac share extension through the App Group: the paired Mac's
 /// display name and whether a session is live now or was recently. Never keys, rooms, tokens or content.
 struct SendToMacBeacon: Codable, Equatable {
@@ -8,15 +19,25 @@ struct SendToMacBeacon: Codable, Equatable {
     var liveUntil: Date?
     var lastConnected: Date?
     var filesSupported: Bool
+    var destination: SendToMacDestination? = nil
+    /// Independent handoff lifetime, never the authenticated protocol epoch or a credential.
+    var liveSessionID: String? = nil
 
     /// Farside reconnects by itself within this window after leaving the screen.
     static let reconnectWindow: TimeInterval = 15 * 60
 
-    func isLive(at now: Date) -> Bool { liveUntil.map { $0 > now } ?? false }
+    func isLive(at now: Date) -> Bool {
+        destination?.isValid == true && liveSessionID.map { SendToMacOutbox.isValidID($0) } == true
+            && (liveUntil.map { $0 > now } ?? false)
+    }
 
     /// Live now, or connected recently enough that opening Farside reconnects without a tap.
     func isConnectable(at now: Date) -> Bool {
-        isLive(at: now) || lastConnected.map { now.timeIntervalSince($0) <= Self.reconnectWindow } ?? false
+        guard destination?.isValid == true else { return false }
+        return isLive(at: now) || (lastConnected.map {
+            let age = now.timeIntervalSince($0)
+            return age >= 0 && age <= Self.reconnectWindow
+        } ?? false)
     }
 }
 
@@ -33,6 +54,21 @@ struct SendToMacItem: Codable, Equatable, Identifiable {
     let expires: Date
     /// Staged while the app was live, so the app sends it without asking again.
     var immediate: Bool
+    // Optional solely to decode pre-binding items. A destinationless item always requires retargeting.
+    var destination: SendToMacDestination? = nil
+    var destinationName: String? = nil
+    var liveSessionID: String? = nil
+
+    func isBound(to selected: SendToMacDestination?) -> Bool {
+        guard let destination, destination.isValid, let selected, selected.isValid else { return false }
+        return destination == selected
+    }
+
+    func canAutomaticallySend(to selected: SendToMacDestination?, liveSessionID current: String?, at now: Date) -> Bool {
+        let age = now.timeIntervalSince(created)
+        return isBound(to: selected) && immediate && age >= 0 && age < 30 && expires > now
+            && liveSessionID.map(SendToMacOutbox.isValidID) == true && liveSessionID == current
+    }
 
     static let lifetime: TimeInterval = 10 * 60
     static let maximumTextBytes = 256 * 1024

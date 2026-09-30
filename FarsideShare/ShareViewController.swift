@@ -63,7 +63,7 @@ final class ShareSendModel: ObservableObject {
     func load(_ providers: [NSItemProvider]) {
         _ = SendToMacOutbox.pending()
         guard SendToMacOutbox.root != nil, let beacon = SendToMacOutbox.loadBeacon() else {
-            phase = .unavailable("Pair Farside with your Mac first, then share again.")
+            phase = .unavailable("Open Farside and pair using a fresh owner-approved QR code, then share again.")
             return
         }
         self.beacon = beacon
@@ -157,7 +157,18 @@ final class ShareSendModel: ObservableObject {
 
     func send() {
         guard var item, let beacon else { return }
-        item.immediate = beacon.isLive(at: Date())
+        guard let destination = beacon.destination, destination.isValid else {
+            phase = .failed("Open Farside and select a paired Mac, then share again.")
+            return
+        }
+        // The target shown when the sheet opened is frozen. A newer beacon only decides whether
+        // this same target/session is still live; it never substitutes a different Mac or grant.
+        let current = SendToMacOutbox.loadBeacon()
+        item.destination = destination
+        item.destinationName = beacon.macName
+        item.liveSessionID = beacon.liveSessionID
+        item.immediate = beacon.isLive(at: Date()) && current?.isLive(at: Date()) == true
+            && current?.destination == destination && current?.liveSessionID == beacon.liveSessionID
         do {
             try SendToMacOutbox.stage(item, payload: payload)
         } catch {

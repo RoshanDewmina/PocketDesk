@@ -48,7 +48,8 @@ final class FarsideSystemIntegrations {
         }
         AgentAlertCenter.shared.isSessionLive = { [weak model] in model?.connection.connected == true }
         macIdentity = { [weak model] in
-            model?.connection.invitation.map { (PairedMacs.opaqueID(room: $0.room), $0.name) }
+            guard let invitation = model?.connection.invitation, let id = PairedMacs.id(for: invitation) else { return nil }
+            return (id, invitation.name)
         }
         Task {
             await AgentAlertCenter.shared.refreshAccess()
@@ -100,8 +101,8 @@ final class FarsideSystemIntegrations {
 
     private func currentActivityPushPairing() -> SessionActivityPushPairing? {
         guard let invitation = model?.connection.invitation,
+              let pairingID = PairedMacs.id(for: invitation),
               let epoch = activityRouteEpoch(), let environment = activityPushEnvironment() else { return nil }
-        let pairingID = PairedMacs.opaqueID(room: invitation.room)
         return SessionActivityPushPairing(server: invitation.server, room: invitation.room,
                                           token: invitation.token, routeEpoch: epoch,
                                           pairingID: pairingID, environment: environment)
@@ -149,7 +150,7 @@ struct FarsideSystemRoutes: ViewModifier {
     private enum ActiveSheet: Identifiable {
         case alert(AgentAlertPresentation)
         case settings
-        case connectPrompt(macName: String)
+        case connectPrompt(macID: String, invitation: PairInvitation)
         case serverData
 
         var id: String {
@@ -186,15 +187,28 @@ struct FarsideSystemRoutes: ViewModifier {
                 case .alert(let item):
                     AgentAlertSheet(item: item, center: alerts, sessionLive: model.connection.connected,
                                     openMac: { alerts.presentation = nil; sheet = nil
-                                        SystemRequestInbox.shared.post(.connect(macID: nil)) },
+                                        guard let identity = item.payload.pairingIdentity,
+                                              let mac = PairedMacs.mac(notificationIdentity: identity),
+                                              mac.invitation?.notificationIdentity == identity else {
+                                            model.error = "That alert’s Mac is no longer paired."
+                                            return
+                                        }
+                                        connectExplicitly(macID: mac.id, expected: mac.invitation) },
                                     close: { alerts.presentation = nil; sheet = nil })
                         .presentationDetents([.fraction(0.72), .large])
                         .farsideSheet()
                 case .settings:
                     AgentAlertsSettingsSheet(center: alerts, registrar: .shared)
-                case .connectPrompt(let macName):
-                    ConnectPromptSheet(macName: macName,
-                                       connect: { sheet = nil; SystemRequestInbox.shared.post(.connect(macID: nil)) },
+                case .connectPrompt(let macID, let invitation):
+                    ConnectPromptSheet(macName: invitation.name,
+                                       connect: {
+                                           sheet = nil
+                                           guard PairedMacs.mac(withID: macID)?.invitation == invitation else {
+                                               model.error = "That pairing changed. Select your Mac again."
+                                               return
+                                           }
+                                           connectExplicitly(macID: macID, expected: invitation)
+                                       },
                                        close: { sheet = nil })
                         .presentationDetents([.medium])
                         .farsideSheet()
@@ -228,20 +242,36 @@ struct FarsideSystemRoutes: ViewModifier {
 
     private func handle(_ request: SystemRequest) {
         switch request {
-        case .connect:
-            connectIfPossible()
+        case .connect(let macID):
+            if let macID {
+                connectExplicitly(macID: macID, expected: nil)
+            } else {
+                connectIfPossible()
+            }
         case .route(let route):
             switch route {
             case .agentAlert(let id): alerts.open(linkedRequest: id)
             case .openMac:
                 let connection = model.connection
-                if let name = ConnectPromptSheet.macName(paired: connection.invitation?.name,
-                                                         connected: connection.connected, running: connection.isRunning) {
-                    sheet = .connectPrompt(macName: name)
+                if ConnectPromptSheet.macName(paired: connection.invitation?.name,
+                                                         connected: connection.connected, running: connection.isRunning) != nil {
+                    if let invitation = connection.invitation, let id = PairedMacs.id(for: invitation) {
+                        sheet = .connectPrompt(macID: id, invitation: invitation)
+                    }
                 }
             case .resumeSession: break
             }
         }
+    }
+
+    private func connectExplicitly(macID: String, expected: PairInvitation?) {
+        guard let target = PairedMacs.mac(withID: macID), let invitation = target.invitation,
+              expected == nil || invitation == expected,
+              model.selectPairedMac(id: target.id), model.connection.invitation == invitation else {
+            model.error = "That Mac is no longer paired or could not be selected."
+            return
+        }
+        connectIfPossible()
     }
 
     /// The same path as the Connect button, including a pending server-data removal; a system request

@@ -26,6 +26,7 @@ private final class TrustFixturePersistence: PairPersistence {
 final class PhoneTrustStoreTests: XCTestCase {
     private func pair(name: String = "Mac", identified: Bool = false) throws -> PairInvitation {
         var invitation = try HostPair.create(server: "wss://offline.invalid/signal", name: name).rotated().invitation
+        invitation.expires = Date().addingTimeInterval(120)
         if identified {
             invitation.durableHostID = try SecureRandom.token()
             invitation.ownerPairID = try SecureRandom.token()
@@ -77,7 +78,9 @@ final class PhoneTrustStoreTests: XCTestCase {
         try trust.saveApproved(b); let bID = try XCTUnwrap(trust.snapshot().selectedHostID)
         XCTAssertNotEqual(aID, bID)
         a.room = try SecureRandom.token(); a.token = try SecureRandom.token(); a.ownerPairID = try SecureRandom.token()
-        try trust.saveApproved(a)
+        XCTAssertThrowsError(try trust.saveApproved(a))
+        let request = try XCTUnwrap(trust.replacementRequest(for: a))
+        try trust.saveApproved(a, replacementApproval: PhoneTrustReplacementApproval(request: request, enrollment: a))
         XCTAssertEqual(try trust.snapshot().selectedHostID, aID)
         XCTAssertEqual(try trust.snapshot().hosts.count, 2)
         try trust.select(hostID: bID)
@@ -145,9 +148,11 @@ final class PhoneTrustStoreTests: XCTestCase {
         let trust = PhoneTrustStore(records: records, legacy: legacy)
         let legacyID = try XCTUnwrap(trust.snapshot().selectedHostID)
         old.durableHostID = try SecureRandom.token(); old.ownerPairID = try SecureRandom.token()
-        try trust.saveApproved(old)
+        let upgrade = try XCTUnwrap(trust.replacementRequest(for: old))
+        try trust.saveApproved(old, replacementApproval: PhoneTrustReplacementApproval(request: upgrade, enrollment: old))
         old.room = try SecureRandom.token(); old.key = try SecureRandom.bytes(); old.token = try SecureRandom.token()
-        try trust.saveApproved(old)
+        let replacement = try XCTUnwrap(trust.replacementRequest(for: old))
+        try trust.saveApproved(old, replacementApproval: PhoneTrustReplacementApproval(request: replacement, enrollment: old))
         XCTAssertEqual(try trust.snapshot().selectedHostID, legacyID)
         XCTAssertNotNil(legacy.data)
         try trust.forget(hostID: legacyID)
@@ -174,4 +179,60 @@ final class PhoneTrustStoreTests: XCTestCase {
         invalid = invitation; invalid.localServiceName = "bad\nname"
         XCTAssertThrowsError(try invalid.validate(enrollment: false))
     }
+    func testReplacementApprovalBindsOldRecordAndExactScannedQRWhileAllowingAcceptedRotation() throws {
+        let records = TrustFixturePersistence(), legacy = TrustFixturePersistence()
+        let trust = PhoneTrustStore(records: records, legacy: legacy)
+        let old = try pair(identified: true)
+        try trust.saveApproved(old)
+        let initial = try trust.snapshot()
+        var qr = old
+        qr.room = try SecureRandom.token()
+        qr.ownerPairID = try SecureRandom.token()
+        let approval = PhoneTrustReplacementApproval(request: try XCTUnwrap(trust.replacementRequest(for: qr)), enrollment: qr)
+        var accepted = qr
+        accepted.key = try SecureRandom.bytes()
+        accepted.token = try SecureRandom.token()
+        XCTAssertThrowsError(try trust.saveApproved(accepted))
+        XCTAssertEqual(try trust.snapshot(), initial)
+        var hostile = accepted
+        hostile.ownerPairID = try SecureRandom.token()
+        XCTAssertThrowsError(try trust.saveApproved(hostile, replacementApproval: approval))
+        XCTAssertEqual(try trust.snapshot(), initial)
+        var changedQR = qr
+        changedQR.key = try SecureRandom.bytes()
+        let mismatched = PhoneTrustReplacementApproval(request: approval.request, enrollment: changedQR)
+        XCTAssertThrowsError(try trust.saveApproved(accepted, replacementApproval: mismatched))
+        XCTAssertEqual(try trust.snapshot(), initial)
+        try trust.saveApproved(accepted, replacementApproval: approval)
+        XCTAssertEqual(try trust.snapshot().selected?.invitation, accepted)
+        XCTAssertThrowsError(try trust.saveApproved(accepted, replacementApproval: approval), "approval cannot replay")
+    }
+
+    func testStaleApprovalCannotReplaceRotatedOrRemovedRecord() throws {
+        let trust = PhoneTrustStore(records: TrustFixturePersistence(), legacy: TrustFixturePersistence())
+        var old = try pair(identified: true)
+        try trust.saveApproved(old)
+        var qr = old; qr.ownerPairID = try SecureRandom.token()
+        let approval = PhoneTrustReplacementApproval(request: try XCTUnwrap(trust.replacementRequest(for: qr)), enrollment: qr)
+        old.token = try SecureRandom.token()
+        try trust.saveApproved(old)
+        XCTAssertThrowsError(try trust.saveApproved(qr, replacementApproval: approval))
+        XCTAssertEqual(try trust.snapshot().selected?.invitation, old)
+        try trust.forget(hostID: XCTUnwrap(trust.snapshot().selectedHostID))
+        XCTAssertThrowsError(try trust.saveApproved(qr, replacementApproval: approval))
+        XCTAssertNil(try trust.snapshot().selected)
+    }
+
+    func testOrdinaryOwnerKeyRotationRetainsHostWithoutReplacementApproval() throws {
+        let trust = PhoneTrustStore(records: TrustFixturePersistence(), legacy: TrustFixturePersistence())
+        var invitation = try pair(identified: true)
+        try trust.saveApproved(invitation)
+        let id = try XCTUnwrap(trust.snapshot().selectedHostID)
+        invitation.token = try SecureRandom.token(); invitation.key = try SecureRandom.bytes()
+        XCTAssertNil(try trust.replacementRequest(for: invitation))
+        try trust.saveApproved(invitation)
+        XCTAssertEqual(try trust.snapshot().selectedHostID, id)
+        XCTAssertEqual(try trust.snapshot().selected?.invitation, invitation)
+    }
+
 }
