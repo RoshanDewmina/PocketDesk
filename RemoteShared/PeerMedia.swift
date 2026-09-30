@@ -207,16 +207,11 @@ final class PeerMedia: NSObject {
     private var observedTrack: RTCVideoTrack?
     private var statisticsTimer: Timer?
     private var statisticsPending = false
-    private static let factory: RTCPeerConnectionFactory = {
+    private static let codecRuntime: Void = {
         StreamTuning.prepareRuntime()
         RTCInitializeSSL()
-        let factory = RTCPeerConnectionFactory(encoderFactory: PocketDeskVideoEncoderFactory(),
-                                               decoderFactory: PocketDeskVideoDecoderFactory())
-        #if DEBUG
-        E2EMedia.restrictToLoopbackIfNeeded(factory)
-        #endif
-        return factory
     }()
+    private var sessionVideoFactory: RTCPeerConnectionFactory?
     private static let compatibleFactory: RTCPeerConnectionFactory = {
         StreamTuning.prepareRuntime()
         RTCInitializeSSL()
@@ -449,6 +444,7 @@ final class PeerMedia: NSObject {
         configuration.iceServers = servers.map { RTCIceServer(urlStrings: $0.urls, username: $0.username ?? "", credential: $0.credential ?? "") }
         // Context is owned by this peer, including negotiation that starts after another
         // peer is created. Never publish a process-global 'next encoder' binding.
+        _ = Self.codecRuntime
         let ownedEncoderFactory = PocketDeskVideoEncoderFactory(counters: counters, frameTiming: frameTimingLog)
         let ownedDecoderFactory = PocketDeskVideoDecoderFactory(frameTiming: frameTimingReceiver?.log)
         var factory = nativeDesktopCodecs
@@ -483,6 +479,7 @@ final class PeerMedia: NSObject {
         #if DEBUG
         E2EMedia.restrictToLoopbackIfNeeded(factory)
         #endif
+        sessionVideoFactory = factory
         connection = factory.peerConnection(with: configuration, constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
         if isHost {
             #if os(macOS)

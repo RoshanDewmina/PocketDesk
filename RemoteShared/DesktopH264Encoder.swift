@@ -294,4 +294,3 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     var applyAlignmentToAllSimulcastLayers: Bool { inner.applyAlignmentToAllSimulcastLayers }
     var supportsNativeHandle: Bool { inner.supportsNativeHandle }
 }
-
