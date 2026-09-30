@@ -3,9 +3,11 @@ import XCTest
 final class InputAppliedReceiptTests: XCTestCase {
     func testReceiptIsPostingEvidenceWithExactBoundedKindAndRequest() throws {
         let receipt = InputAppliedReceipt(requestID: String(repeating: "a", count: 32), kind: "key", accepted: false)
-        let action = RemoteAction(action: "inputApplied", epoch: "epoch", inputAppliedReceipt: receipt)
+        let action = RemoteAction(action: "inputApplied", epoch: 42, inputAppliedReceipt: receipt)
         try action.validate()
-        XCTAssertEqual(try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(action)), action)
+        let restored = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(action))
+        XCTAssertEqual(restored.inputAppliedReceipt, receipt)
+        XCTAssertEqual(restored.epoch, 42)
         for bad in [InputAppliedReceipt(requestID: "bad", kind: "key", accepted: true),
                     InputAppliedReceipt(requestID: receipt.requestID, kind: "move", accepted: true)] {
             XCTAssertThrowsError(try bad.validate())
