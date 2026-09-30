@@ -1,6 +1,11 @@
 import Foundation
 import CoreVideo
+import os
 import WebRTC
+
+enum SessionLog {
+    static let log = Logger(subsystem: "com.roshan.PocketDesk", category: "session")
+}
 
 struct ICEServerConfiguration: Codable {
     var urls: [String]
@@ -59,11 +64,18 @@ enum MediaRoute {
 }
 
 enum LocalMediaRoute {
+    /// The selected pair must be exactly the proven host-candidate address pair. WebRTC's adapter
+    /// label is only a veto: on macOS it reports en0 as "unknown" (it names only iOS `en*` as Wi-Fi),
+    /// so an explicit VPN, cellular or loopback label, or the `vpn` flag, fails; "unknown" does not.
+    /// A VPN interface cannot carry the proven physical IPv4 address, so the address match is the boundary.
     static func matches(_ link: ProvenLocalLink, localType: String?, remoteType: String?,
-                        localAddress: String?, remoteAddress: String?, adapterType: String?) -> Bool {
-        (adapterType == "wifi" || adapterType == "ethernet") &&
-        localType == "host" && remoteType == "host" &&
-        localAddress == link.localAddress && remoteAddress == link.peerAddress
+                        localAddress: String?, remoteAddress: String?, adapterType: String?,
+                        networkType: String? = nil, vpn: Bool? = nil) -> Bool {
+        let allowed: Set<String> = ["wifi", "ethernet", "unknown"]
+        let labels = [adapterType, networkType].compactMap { $0 }
+        return !labels.isEmpty && labels.allSatisfy(allowed.contains) && vpn != true &&
+            localType == "host" && remoteType == "host" &&
+            localAddress == link.localAddress && remoteAddress == link.peerAddress
     }
 }
 
@@ -196,6 +208,8 @@ final class PeerMedia: NSObject {
         return hadAuthorized
     }
     private var connectedPublished = false
+    private var lastPairLog: String?
+    private var role: String { isHost ? "host" : "phone" }
     private var lastRoute = "Route pending"
     private var restartPending = false
     private var restartGraceUntil: TimeInterval = 0
@@ -550,20 +564,35 @@ final class PeerMedia: NSObject {
                 let remote = (pair?.values["remoteCandidateId"] as? String).flatMap { stats[$0] }
                 let localType = local?.values["candidateType"] as? String
                 let remoteType = remote?.values["candidateType"] as? String
+                let localAddress = (local?.values["address"] as? String) ?? (local?.values["ip"] as? String)
+                let remoteAddress = (remote?.values["address"] as? String) ?? (remote?.values["ip"] as? String)
+                let adapterType = local?.values["networkAdapterType"] as? String
+                let networkType = local?.values["networkType"] as? String
+                let vpn = (local?.values["vpn"] as? NSNumber)?.boolValue
+                if pair != nil {
+                    let pairLog = "\(localType ?? "?")/\(remoteType ?? "?") \(localAddress ?? "?")->\(remoteAddress ?? "?") adapter=\(adapterType ?? "nil") network=\(networkType ?? "nil") vpn=\(vpn.map(String.init) ?? "nil")"
+                    if pairLog != self.lastPairLog {
+                        self.lastPairLog = pairLog
+                        SessionLog.log.info("\(self.role, privacy: .public) selected pair \(pairLog, privacy: .public)")
+                    }
+                }
                 if let link = self.localLink {
-                    let localAddress = (local?.values["address"] as? String) ?? (local?.values["ip"] as? String)
-                    let remoteAddress = (remote?.values["address"] as? String) ?? (remote?.values["ip"] as? String)
-                    let adapterType = (local?.values["networkAdapterType"] as? String) ??
-                                      (local?.values["networkType"] as? String)
                     let matches = LocalMediaRoute.matches(link, localType: localType, remoteType: remoteType,
                                                            localAddress: localAddress, remoteAddress: remoteAddress,
-                                                           adapterType: adapterType)
-                    if pair != nil && !matches { self.onState?("failed"); return }
+                                                           adapterType: adapterType, networkType: networkType, vpn: vpn)
+                    if pair != nil && !matches {
+                        SessionLog.log.error("\(self.role, privacy: .public) media failed: selected pair is not the proven local link (\(self.lastPairLog ?? "?", privacy: .public); proven \(link.localAddress, privacy: .public)->\(link.peerAddress, privacy: .public))")
+                        self.onState?("failed"); return
+                    }
                     if matches {
-                        guard self.authorizeLocalPath() else { self.onState?("failed"); return }
+                        guard self.authorizeLocalPath() else {
+                            SessionLog.log.error("\(self.role, privacy: .public) media failed: local path re-authorization refused")
+                            self.onState?("failed"); return
+                        }
                         self.publishConnectedIfReady()
                     } else if let started = self.localPathStartedAt,
                               ProcessInfo.processInfo.systemUptime - started > 6 {
+                        SessionLog.log.error("\(self.role, privacy: .public) media failed: no selected pair 6 s after the data channel opened")
                         self.onState?("failed"); return
                     }
                 }
@@ -659,6 +688,7 @@ extension PeerMedia: RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceConnectionState) {
+        SessionLog.log.info("\(self.role, privacy: .public) ICE connection state \(newState.rawValue, privacy: .public) (0 new,1 checking,2 connected,3 completed,4 failed,5 disconnected,6 closed)")
         if localLink != nil && newState == .checking {
             let wasAuthorized = cutLocalPath()
             DispatchQueue.main.async { [weak self] in
@@ -681,9 +711,11 @@ extension PeerMedia: RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didChangeLocalCandidate local: RTCIceCandidate,
                         remoteCandidate remote: RTCIceCandidate, lastReceivedMs: Int32,
                         changeReason reason: String) {
+        SessionLog.log.info("\(self.role, privacy: .public) selected candidate pair changed: reason=\(reason, privacy: .public)")
         guard localLink != nil else { return }
         let wasAuthorized = cutLocalPath()
         if wasAuthorized {
+            SessionLog.log.error("\(self.role, privacy: .public) media failed: selected pair changed after local authorization")
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.closed else { return }
                 self.onState?("failed")

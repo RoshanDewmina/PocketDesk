@@ -157,6 +157,27 @@ final class LocalLinkProofDiagnosticsTests: XCTestCase {
         XCTAssertEqual(reason(secret: SymmetricKey(data: Data(repeating: 8, count: 32))), .hmac)
     }
 
+    /// macOS WebRTC labels en0 "unknown" (observed: networkType=unknown, networkAdapterType=unknown for
+    /// 10.0.0.114) while Tailscale's utun candidates are networkType=vpn, vpn=1.
+    func testMacUnknownAdapterOnProvenAddressesIsTheLocalLinkButVPNIsNot() {
+        let link = ProvenLocalLink(localAddress: "10.0.0.114", peerAddress: "10.0.0.40")
+        func matches(_ local: String = "10.0.0.114", adapter: String? = "unknown", network: String? = "unknown",
+                     vpn: Bool? = false, localType: String = "host") -> Bool {
+            LocalMediaRoute.matches(link, localType: localType, remoteType: "host", localAddress: local,
+                                    remoteAddress: "10.0.0.40", adapterType: adapter, networkType: network, vpn: vpn)
+        }
+        XCTAssertTrue(matches())
+        XCTAssertTrue(matches(adapter: "wifi", network: "wifi"))
+        XCTAssertTrue(matches(adapter: nil, network: "ethernet", vpn: nil))
+        XCTAssertFalse(matches("100.107.213.92", adapter: "unknown", network: "vpn", vpn: true))
+        XCTAssertFalse(matches(network: "vpn"))
+        XCTAssertFalse(matches(vpn: true))
+        XCTAssertFalse(matches(adapter: "cellular", network: "cellular"))
+        XCTAssertFalse(matches(adapter: nil, network: nil))
+        XCTAssertFalse(matches(localType: "srflx"))
+        XCTAssertFalse(matches("10.0.0.115"))
+    }
+
     func testStageSummaryCarriesNoAddresses() {
         var stage = LocalProofStage()
         stage.monitorReady = true; stage.peerSet = true; stage.challengesSent = 32; stage.packetsReceived = 32

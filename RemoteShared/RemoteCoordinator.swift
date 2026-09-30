@@ -5,7 +5,12 @@ import WebRTC
 
 @MainActor
 final class RemoteCoordinator: ObservableObject {
-    @Published var status = "Not connected"
+    @Published var status = "Not connected" {
+        didSet {
+            guard status != oldValue else { return }
+            SessionLog.log.info("\(self.isHost ? "host" : "phone", privacy: .public) status: \(self.status, privacy: .public)")
+        }
+    }
     @Published var awaitingApproval = false
     @Published var connected = false
     @Published private(set) var hostRegistered = false
@@ -83,6 +88,9 @@ final class RemoteCoordinator: ObservableObject {
     private var localLinkProof: LocalLinkProof?
     private var pendingLocalEndpoint: LocalProbeEndpoint?
     private var localProofTimeout: Task<Void, Never>?
+    /// Media signals that arrive after this side's proof started but before it finished; the faster
+    /// side can prove first and send its offer. Bounded and dropped with the session.
+    private var pendingMediaSignals: [MediaSignal] = []
     private var timeout: Task<Void, Never>?
     private var retry: Task<Void, Never>?
     private var retryCount = 0
@@ -311,6 +319,7 @@ final class RemoteCoordinator: ObservableObject {
         localProofTimeout?.cancel(); localProofTimeout = nil
         if let proof = localLinkProof { localProofSummary = proof.stageSummary() }
         localLinkProof?.close(); localLinkProof = nil
+        pendingMediaSignals.removeAll()
         pendingLocalEndpoint = nil
         registrationStability?.cancel(); registrationStability = nil
         media?.close(); media = nil
@@ -337,11 +346,13 @@ final class RemoteCoordinator: ObservableObject {
                 }
                 routePolicy = policy; routeArmed = true; routeEpochsSeen.insert(policy.epoch)
                 serviceAccess = policy.access.rawValue
+                SessionLog.log.info("route policy access=\(policy.access.rawValue, privacy: .public) expiresIn=\(Int(policy.expiresAt.timeIntervalSinceNow), privacy: .public)s revision=\(policy.revision, privacy: .public)")
                 routeExpiry?.cancel()
                 routeExpiry = Task { [weak self] in
                     let delay = max(0, policy.expiresAt.timeIntervalSinceNow)
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     guard !Task.isCancelled, let self, self.routePolicy == policy else { return }
+                    SessionLog.log.error("route policy expired")
                     self.fail("Route authorization expired. Reconnect to renew access.")
                 }
             case "registered":
@@ -476,8 +487,12 @@ final class RemoteCoordinator: ObservableObject {
             guard proofReceived, media == nil, !awaitingApproval else { throw RemoteError.stale }
             prepareMedia()
         case "media":
-            guard let body = message.body, let media else { throw RemoteError.invalidMessage }
-            media.receive(try JSONDecoder().decode(MediaSignal.self, from: body))
+            guard let body = message.body else { throw RemoteError.invalidMessage }
+            let signal = try JSONDecoder().decode(MediaSignal.self, from: body)
+            if let media { media.receive(signal); return }
+            guard localLinkProof != nil, pendingMediaSignals.count < 64 else { throw RemoteError.invalidMessage }
+            SessionLog.log.info("media \(signal.kind, privacy: .public) held until the local proof finishes")
+            pendingMediaSignals.append(signal)
         default: throw RemoteError.invalidMessage
         }
     }
@@ -555,7 +570,9 @@ final class RemoteCoordinator: ObservableObject {
 
     private func finishMedia(localLink: ProvenLocalLink?) {
         let relayOnly: Bool
-        switch NativeRelayPolicy.decide(servers: servers, policy: relayPolicy, localForce: forceRelay) {
+        let decision = NativeRelayPolicy.decide(servers: servers, policy: relayPolicy, localForce: forceRelay)
+        SessionLog.log.info("media start: relay decision=\(String(describing: decision), privacy: .public) policy=\(self.relayPolicy ?? "nil", privacy: .public) hasRelay=\(NativeRelayPolicy.hasRelay(self.servers), privacy: .public) localLink=\(localLink != nil, privacy: .public) access=\(self.routePolicy?.access.rawValue ?? "nil", privacy: .public)")
+        switch decision {
         case .proceed(let force):
             relayOnly = force
         case .relayRequiredUnavailable(let serverRequired):
@@ -596,9 +613,15 @@ final class RemoteCoordinator: ObservableObject {
                     self.connected = true; self.retryCount = 0; self.recoveringLiveSession = false
                     self.reconnecting = false
                     self.timeout?.cancel(); self.onAuthenticated?()
-                } else if state == "failed" || state == "disconnected" || state == "closed" { self.peerDisconnected() }
+                } else if state == "failed" || state == "disconnected" || state == "closed" {
+                    SessionLog.log.error("media state \(state, privacy: .public); ending session")
+                    self.peerDisconnected()
+                }
             }
         }
+        let held = pendingMediaSignals
+        pendingMediaSignals.removeAll()
+        for signal in held { peer.receive(signal) }
     }
     private func send(kind: String, body: Data? = nil, handshake: Bool = false) {
         guard let cipher else { fail("Pairing is not ready"); return }
@@ -622,6 +645,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func peerDisconnected() {
+        SessionLog.log.error("peerDisconnected (connected=\(self.connected, privacy: .public))")
         routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
         // The relay keeps the host's registered room open when its phone leaves.
         // Keep listening there; tearing down the host socket can exhaust its retry
@@ -651,6 +675,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func connectionLost(finalStatus: String = "Connection lost. Tap Connect to try again.") {
+        SessionLog.log.error("connectionLost: \(finalStatus, privacy: .public) signaling=\(self.relay.lastCloseReason ?? "nil", privacy: .public) stopped=\(self.stopped, privacy: .public) retry=\(self.retryCount, privacy: .public)")
         guard !stopped else { return }
         // A media and signaling failure can report the same outage independently.
         // The first event already closed the old transport and scheduled a retry.
@@ -682,6 +707,7 @@ final class RemoteCoordinator: ObservableObject {
         }
     }
     private func fail(_ message: String) {
+        SessionLog.log.error("fail: \(message, privacy: .public)")
         stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false
         reconnecting = false
         cancelRenewal()
