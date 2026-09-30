@@ -515,9 +515,9 @@ struct HomeView: View {
         Task { @MainActor in
             let outcome = await MacReachabilityProbe().check(invitation)
             checking = false
-            MacWidgetSync.shared.update(macName: invitation.name, observed: MacWidgetSync.presence(for: outcome))
             guard connection.invitation == invitation, !connection.localOnly,
                   !connection.isRunning, !connection.connected else { return }
+            MacWidgetSync.shared.update(macName: invitation.name, observed: MacWidgetSync.presence(for: outcome))
             checkedHealth = .checked(outcome, lastReached: lastReached.map { LastReached.spoken($0) })
         }
     }
