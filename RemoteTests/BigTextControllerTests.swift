@@ -126,17 +126,27 @@ final class BigTextControllerTests: XCTestCase {
         XCTAssertTrue(switcher.applied.isEmpty)
     }
 
-    func testForeignChangeForgetsBaselineAndStopsTheSession() async {
+    func testForeignEventDuringOurChangeStopsTheSessionAndStillRestores() async {
         switcher.onApply = { [unowned self] _, _ in
             self.controller.observe(DisplayReconfigurationEvent(display: 3, flags: [.addFlag]))
         }
         await apply(1280)
         XCTAssertEqual(host.foreign, 1)
         XCTAssertTrue(host.resumes.isEmpty, "the session stops as it does today")
+        XCTAssertEqual(controller.baseline, base, "the display still has our mode, so it is still ours to restore")
+        XCTAssertEqual(controller.current, large)
+        XCTAssertEqual(keeper.discards, 0)
+        switcher.onApply = { [unowned self] _, display in
+            self.controller.observe(DisplayReconfigurationEvent(display: display, flags: [.setModeFlag]))
+        }
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertEqual(appliedModes, [large, base], "a monitor plugged in mid-change never leaves the Mac on Big Text")
         XCTAssertNil(controller.baseline)
-        XCTAssertNil(controller.current)
         XCTAssertEqual(controller.phase, .idle)
-        XCTAssertEqual(keeper.discards, 1)
+        XCTAssertEqual(host.foreign, 1, "the restore is recognised as our own change")
+        XCTAssertEqual(keeper.restores, 1)
+        XCTAssertFalse(controller.isEngaged)
     }
 
     func testForeignChangeIsNeverOverwrittenWhenTheSessionEnds() async {

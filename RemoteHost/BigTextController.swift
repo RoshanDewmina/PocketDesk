@@ -204,7 +204,14 @@ final class BigTextController {
             _ = await host?.bigTextResume(display: target)
             reply(target, .failed)
         case .foreign:
-            forget()
+            // Something else changed too (say, a monitor was plugged in). If the display still took our
+            // mode, keep the baseline so the session end restores it; otherwise the new mode is not ours to undo.
+            if switcher.currentMode(of: target)?.ioModeID == mode.ioModeID {
+                current = mode
+                phase = .applied
+            } else {
+                forget()
+            }
             host?.bigTextForeignChange()
         case .cancelled:
             return
