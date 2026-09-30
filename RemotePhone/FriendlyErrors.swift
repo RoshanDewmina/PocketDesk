@@ -82,9 +82,10 @@ struct FriendlyError: Identifiable, Equatable {
                       footnote: "Macs can’t hear phones while they sleep. We checked.")
     }
 
-    static func locked(since time: String?) -> FriendlyError {
+    static func locked(since time: String?, awayWasOn: Bool = false) -> FriendlyError {
         FriendlyError(kind: .locked, headline: "Your Mac is locked",
-                      message: (time.map { "It was locked at \($0). " } ?? "") + "Farside can’t unlock it for you.",
+                      message: (time.map { "It was locked at \($0). " } ?? "") + "Farside can’t unlock it for you."
+                        + (awayWasOn ? " " + PhoneSessionNotice.awayCantUnlock : ""),
                       fix: "Unlock it in person, then reconnect.")
     }
 
@@ -213,10 +214,10 @@ struct FriendlyError: Identifiable, Equatable {
     }
 
     /// What the Mac said as it went away.
-    static func from(presence: HostPresence, at time: String?) -> FriendlyError? {
+    static func from(presence: HostPresence, at time: String?, awayWasOn: Bool = false) -> FriendlyError? {
         switch presence {
         case .sleeping: .napping(since: time)
-        case .locked: .locked(since: time)
+        case .locked: .locked(since: time, awayWasOn: awayWasOn)
         case .switchedUser: .switchedUser(since: time)
         case .displayAsleep: nil
         }
