@@ -538,6 +538,7 @@ struct NativeSessionView: View {
                                        displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
                                        fillsFrame: model.captureRegion != nil,
                                        smoothMotion: smoothMotion, smoothMotionUpscale: smoothMotionUpscale,
+                                       admission: model.inlinePresentationAdmission,
                                        onFrame: model.frameReceived)
                         .frame(width: picture.width, height: picture.height)
                         .offset(x: picture.minX, y: picture.minY)
@@ -2270,6 +2271,19 @@ struct NativeSessionView: View {
 
     @ViewBuilder private var pictureSection: some View {
         Section {
+            if model.pipAdmission != nil {
+                LivePiPPreview(layer: model.livePiP.displayLayer)
+                    .frame(height: 120)
+                    .accessibilityLabel("Live Mac preview for Picture in Picture")
+                Button(model.pipState == .active ? "Stop Picture in Picture" : "Start Picture in Picture") {
+                    if model.pipState == .active { model.stopPictureInPicture() }
+                    else { model.startPictureInPicture() }
+                }
+                .frame(minHeight: 44)
+                .disabled(model.pipState != .active && model.pipState != .ready)
+                Text("Live view only. Control, Mac audio, clipboard and files stop while Picture in Picture is active.")
+                    .font(.footnote)
+            }
             Toggle("Listen to Mac audio", isOn: Binding(get: { !model.macAudioMuted },
                                                        set: { model.setMacAudioMuted(!$0) }))
                 .accessibilityIdentifier("remote.macAudio")
@@ -2747,12 +2761,12 @@ struct NativeSessionView: View {
                                                         in: CGRect(origin: .zero, size: size))
             ZStack(alignment: .topLeading) {
                 Farside.Palette.void2
-                MiniMapVideo(track: track)
+                MiniMapVideo(track: track, admission: model.inlinePresentationAdmission)
                     .frame(width: placement.width, height: placement.height)
                     .offset(x: placement.minX, y: placement.minY)
             }
         } else if let track = connection.remoteVideo, !model.contentConcealed {
-            MiniMapVideo(track: track)
+            MiniMapVideo(track: track, admission: model.inlinePresentationAdmission)
         } else if offlineLayoutCheck {
             DesktopPreview(size: model.sourceSize)
                 .scaleEffect(size.width / max(model.sourceSize.width, 1), anchor: .topLeading)

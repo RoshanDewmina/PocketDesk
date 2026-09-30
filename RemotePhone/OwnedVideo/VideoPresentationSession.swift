@@ -26,7 +26,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     private static var registrations: [Registration] = []
     static weak var active: VideoPresentationSession?
 
-    init(track: RTCVideoTrack, admission: VideoPresentationAdmission, onFrame: @escaping () -> Void) {
+    init(track: RTCVideoTrack, admission: VideoPresentationAdmission, onFrame: @escaping () -> Void, primary: Bool = true) {
         self.track = track; admissionIdentity = admission.identity
         fence = VideoPresentationFence(admission)
         view = OwnedMetalVideoView(admission: admission, fence: fence)
@@ -37,7 +37,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
             guard let self else { return }
             self.motionGate.perform { self.smoothMotion.displayTick(view) }
         }
-        smoothMotion.activate(); Self.active = self
+        smoothMotion.activate(); if primary { Self.active = self }
         Self.registrations.removeAll { $0.value == nil }; Self.registrations.append(Registration(self))
         track.add(self)
     }
