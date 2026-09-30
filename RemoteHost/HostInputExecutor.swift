@@ -144,7 +144,7 @@ final class HostInputExecutor: @unchecked Sendable {
     static let maximumQueued = 128
     static let maximumQueuedBytes = 256 * 1024
 
-    init(driver: RemoteInputDriver = RemoteInputDriver(isTrusted: { true }),
+    init(driver: RemoteInputDriver = RemoteInputDriver(),
          queue: DispatchQueue = DispatchQueue(label: "farside.input.post", qos: .userInteractive),
          clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.driver = driver; self.queue = queue; self.clock = clock

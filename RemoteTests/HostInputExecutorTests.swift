@@ -58,6 +58,63 @@ final class HostInputExecutorTests: XCTestCase {
         queue.resume(); wait(for: [done], timeout: 2)
         XCTAssertTrue(sink.keys.isEmpty)
     }
+    @MainActor
+    func testQueuedHoldGeometryAnchorCancelsDownAndRefusesRetiredCleanupWithoutDisconnect() throws {
+        let queue = DispatchQueue(label: "geometry-hold"), sink = ExecutorSink(), executor = sink.executor(queue: queue)
+        let host = RemoteCoordinator(isHost: true, store: MemoryPairStore(), signaling: ScriptedSignaling())
+        let phone = RemoteCoordinator(isHost: false, store: MemoryPairStore(), signaling: ScriptedSignaling())
+        host.startInputFixtureForTesting(session: "geometry"); phone.startInputFixtureForTesting(session: "geometry")
+        defer { host.stop(); phone.stop() }
+        var upstream: [ControlPacket] = [], downstream: [ControlPacket] = []
+        host.inputPacketSenderForTesting = { downstream.append($0); return true }
+        phone.inputPacketSenderForTesting = { upstream.append($0); return true }
+        host.onCausalContext = { context in executor.release(); executor.resetNativeSequence(); executor.beginCausalContext(context) }
+        host.setHostInputEpoch(7); phone.requestCausalInput(epoch: 7)
+        try host.receiveInputFixtureForTesting(upstream.removeFirst())
+        try phone.receiveInputFixtureForTesting(downstream.removeFirst()); executor.drain()
+        queue.suspend()
+        let done = expectation(description: "retired queued down")
+        host.onCausalInput = { context, action in
+            guard let action else { return }
+            executor.submitCausal(context, steps: [], semantic: self.admitted(action), routeAuthority: self.authority) { receipt in
+                XCTAssertFalse(receipt.results.contains { $0.1.outcome.accepted }); done.fulfill()
+            }
+        }
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "dragDown", epoch: 7, interaction: NativeInteraction(hold: "old", clickCount: 1))))
+        try host.receiveInputFixtureForTesting(upstream.removeFirst())
+        XCTAssertEqual(executor.releaseScope(for: RemoteAction(action: "release")), "old")
+        // A release was sent before the new anchor reached the phone, but reaches
+        // the host after its geometry advanced. It must neither post nor disconnect.
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "release", epoch: 7, interaction: NativeInteraction(hold: "old"))))
+        let retiredRelease = upstream.removeFirst()
+        host.setHostInputEpoch(8)
+        XCTAssertNil(executor.releaseScope(for: RemoteAction(action: "release")))
+        var rejected = 0; host.onCausalRejected = { _ in rejected += 1 }
+        XCTAssertNoThrow(try host.receiveInputFixtureForTesting(retiredRelease)); XCTAssertEqual(rejected, 1)
+        try phone.receiveInputFixtureForTesting(downstream.removeFirst())
+        XCTAssertFalse(phone.sendControl(RemoteAction(action: "release", epoch: 7, interaction: NativeInteraction(hold: "old"))))
+        XCTAssertFalse(phone.sendInputMoves([RemoteAction(action: "move", x: 5, epoch: 7)]))
+        XCTAssertTrue(upstream.isEmpty); XCTAssertTrue(host.connected); XCTAssertTrue(phone.connected)
+        queue.resume(); wait(for: [done], timeout: 2); executor.drain()
+        XCTAssertFalse(executor.held); XCTAssertTrue(sink.events.isEmpty)
+        var newActions: [RemoteAction] = []; host.onCausalInput = { _, action in if let action { newActions.append(action) } }
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "a", epoch: 8)))
+        try host.receiveInputFixtureForTesting(upstream.removeFirst()); XCTAssertEqual(newActions.map(\.key), ["a"])
+    }
+    func testPostingPermissionDropAfterAdmissionIsRecheckedByDriver() {
+        let queue = DispatchQueue(label: "permission-drop"), sink = ExecutorSink()
+        var trusted = true
+        let executor = HostInputExecutor(driver: RemoteInputDriver(eventSink: sink.sink, isTrusted: { trusted }), queue: queue)
+        executor.configure(bounds: CGRect(x: 0, y: 0, width: 200, height: 200)); executor.enabled = true
+        queue.suspend()
+        let done = expectation(description: "permission refused")
+        executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: .infinity, routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.outcome.accepted); done.fulfill()
+        }
+        executor.withAuthority { trusted = false }
+        queue.resume(); wait(for: [done], timeout: 2)
+        XCTAssertTrue(sink.keys.isEmpty)
+    }
     func testDeadlineAndRouteAreCheckedAfterQueueDelay() {
         let sink = ExecutorSink(), executor = sink.executor()
         let done = expectation(description: "expired")
