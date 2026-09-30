@@ -10,7 +10,7 @@ struct ConnectionHealth: Equatable {
         case macAsleep, macLocked, otherUser, displayAsleep, sharingStopped, pictureStalled, reconnecting,
              needsAnywhere, anywhereUnconfirmed, relayUnavailable, relaySlow, networkSlow, sessionClosing,
              macBusy, notApproved, stoppedToStaySafe, pairingProblem, serviceUnreachable, macAnswering,
-             unreachable, screenRecordingOff, accessibilityOff
+             unreachable, screenRecordingOff, accessibilityOff, screenRecordingApproval
     }
 
     enum Action: Equatable {
@@ -64,6 +64,8 @@ struct ConnectionHealth: Equatable {
         case .screenRecordingOff:
             return ConnectionHealth(state: .screenRecordingOff, title: failure.headline,
                                     detail: failure.message, nextStep: failure.fix, action: .retry)
+        case .screenRecordingApproval:
+            return approval
         case .needsPlan:
             return ConnectionHealth(state: .needsAnywhere, title: "Different network · Anywhere needed",
                                     detail: "Farside’s service allowed only a same-network route, and your Mac didn’t answer on it.",
@@ -93,6 +95,10 @@ struct ConnectionHealth: Equatable {
             return unreachable(detail: "The connection dropped and retrying didn’t bring it back. The cause is unknown.")
         }
     }
+
+    static let approval = ConnectionHealth(state: .screenRecordingApproval, title: FriendlyError.screenRecordingApproval.headline,
+                                           detail: FriendlyError.screenRecordingApproval.message,
+                                           nextStep: FriendlyError.screenRecordingApprovalSteps, action: .retry)
 
     static func unreachable(detail: String) -> ConnectionHealth {
         ConnectionHealth(state: .unreachable, title: "Unreachable · cause unknown", detail: detail,
@@ -151,6 +157,8 @@ struct ConnectionHealth: Equatable {
                                     nextStep: evidence.canWakeDisplay ? "Tap Wake display." : "Press a key on the Mac to wake it.",
                                     action: evidence.canWakeDisplay ? .wakeDisplay : .none)
         }
+        // The Mac's own reason for a stopped capture beats the generic one.
+        if evidence.blocker == .screenRecordingApproval { return approval }
         if evidence.fresh && !evidence.captureHealthy {
             return ConnectionHealth(state: .sharingStopped, title: "Mac stopped sharing its screen",
                                     detail: "Your Mac reported that its screen capture stopped. Controls are paused.",

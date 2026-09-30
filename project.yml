@@ -109,6 +109,7 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing code shown on your Mac.
         INFOPLIST_KEY_NSMicrophoneUsageDescription: Use your microphone to dictate text for your Mac.
         INFOPLIST_KEY_NSSpeechRecognitionUsageDescription: Turn your speech into text on this iPhone for the active field on your Mac.
+        INFOPLIST_KEY_NSFaceIDUsageDescription: Confirm it’s you before connecting to or forgetting your Mac, when you turn that on in Settings.
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         # Farside Anywhere (Docs/launch/STOREKIT-IMPLEMENTATION.md). Release builds send a signed
         # transaction only to FARSIDE_SERVICE_BASE_URL (https); empty keeps Anywhere unverifiable.
