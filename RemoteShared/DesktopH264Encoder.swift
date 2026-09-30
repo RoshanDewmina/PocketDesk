@@ -225,6 +225,8 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         maxInFlight = tuning.encoderMaxInFlight
         latency.reset()
         lock.unlock()
+        counters?.recordEncoderEvidence(VideoEncoderEvidence(path: .compatibility, maximumQPBound: nil,
+            lowLatencyRequested: false, hardwareRequired: false, hardwareReported: nil))
         counters?.encoderSessionStarted()
         return inner.startEncode(with: settings, numberOfCores: numberOfCores)
     }

@@ -18,9 +18,19 @@ final class OwnedVTEncoderTests: XCTestCase {
         XCTAssertNil(OwnedVTConfiguration(parameters: ["profile-level-id": "640034", "packetization-mode": "0"]))
         XCTAssertNil(OwnedVTConfiguration(parameters: ["profile-level-id": "f40034", "packetization-mode": "1"]))
     }
+    func testEvidenceRejectsImpossibleCompatibilityAndUnboundedQPClaims() throws {
+        XCTAssertThrowsError(try VideoEncoderEvidence(path: .compatibility, maximumQPBound: 30, lowLatencyRequested: false, hardwareRequired: false, hardwareReported: nil).validate())
+        XCTAssertThrowsError(try VideoEncoderEvidence(path: .ownedVideoToolbox, maximumQPBound: 52, lowLatencyRequested: true, hardwareRequired: true, hardwareReported: nil).validate())
+        XCTAssertThrowsError(try VideoEncoderEvidence(path: .ownedVideoToolbox, maximumQPBound: 30, lowLatencyRequested: true, hardwareRequired: true, hardwareReported: false).validate())
+        var summary = HostStreamSummary()
+        summary.encoderEvidence = VideoEncoderEvidence(path: .ownedVideoToolbox, maximumQPBound: 30, lowLatencyRequested: true, hardwareRequired: true, hardwareReported: nil)
+        XCTAssertEqual(try JSONDecoder().decode(HostStreamSummary.self, from: JSONEncoder().encode(summary)), summary)
+    }
+
     func testOwnedHardwareEncoderProducesDecodableAnnexBWithOriginalTimestamp() throws {
         let configuration = try XCTUnwrap(OwnedVTConfiguration(parameters: ["profile-level-id": "640034", "packetization-mode": "1"]))
-        let encoder = OwnedVTEncoder(configuration: configuration)
+        let counters = StreamCounters()
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters)
         let decoder = RTCVideoDecoderH264()
         defer { _ = encoder.release(); _ = decoder.release() }
         let settings = RTCVideoEncoderSettings()
@@ -33,6 +43,11 @@ final class OwnedVTEncoderTests: XCTestCase {
         XCTAssertTrue(encoder.hardwareRequired)
         XCTAssertNotEqual(encoder.hardwareReported, false, "Optional hardware getter may be unsupported, but must never report software")
         XCTAssertTrue(encoder.lowLatencyApplied)
+        let evidence = try XCTUnwrap(counters.drain(inputBufferedBytes: nil).encoderEvidence)
+        XCTAssertEqual(evidence.path, .ownedVideoToolbox)
+        XCTAssertEqual(evidence.maximumQPBound, encoder.maximumQPApplied ? 30 : nil)
+        XCTAssertEqual(evidence.hardwareReported, encoder.hardwareReported)
+        XCTAssertNoThrow(try evidence.validate())
         let encoded = expectation(description: "Public VT encoded frame")
         let decoded = expectation(description: "Public RTC decoded frame")
         decoder.setCallback { frame in
