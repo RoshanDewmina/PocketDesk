@@ -1,6 +1,6 @@
 # Mac Vitals — design spec
 
-30 September 2026, revision 1. Status: **draft for Roshan; not approved, nothing implemented.** Once approved, record the decision in PRODUCT.md under the next free D-number after D38 (D38 is on `farside-big-text`). Labels: **VERIFIED** means read in source at `86d643a` (this worktree) or in Apple documentation/SDK headers today. **INFERRED** means reasoned but not observed. No physical behaviour has been tested.
+30 September 2026, revision 1. Status: **approved 30 September 2026 (see Decisions); implemented on `farside-mac-vitals` per `MAC-VITALS-IMPLEMENTATION-PLAN-2026-09-30.md`.** Once approved, record the decision in PRODUCT.md under the next free D-number after D38 (D38 is on `farside-big-text`). Labels: **VERIFIED** means read in source at `86d643a` (this worktree) or in Apple documentation/SDK headers today. **INFERRED** means reasoned but not observed. No physical behaviour has been tested.
 
 ## 1. What Roshan asked for
 

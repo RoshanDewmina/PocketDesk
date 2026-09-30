@@ -44,6 +44,8 @@ struct RemoteAction: Codable {
     var ladder: LadderState? = nil
     /// The Mac's load state for the phone's pill, on `capture` status.
     var busy: BusyState? = nil
+    /// Battery, temperature, Low Power Mode and whole-Mac load, on `capture` status (`SessionFeature.macVitals`).
+    var macVitals: MacVitals? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
