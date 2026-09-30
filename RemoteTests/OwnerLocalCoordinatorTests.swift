@@ -20,13 +20,13 @@ private final class OwnerLocalFixtureTransport: OwnerLocalSignalingTransport {
 
 @MainActor
 final class OwnerLocalCoordinatorTests: XCTestCase {
-    private func fixture() throws -> (RemoteCoordinator, ScriptedSignaling, OwnerLocalFixtureTransport, PairInvitation) {
+    private func fixture(builder: (@Sendable (String, String, String, Data) -> LocalLinkProof?)? = nil) throws -> (RemoteCoordinator, ScriptedSignaling, OwnerLocalFixtureTransport, PairInvitation) {
         let identity = HostIdentityRecord(hostID: String(repeating: "a", count: 64),
             localServiceName: "farside-" + String(repeating: "b", count: 32))
         let invitation = try HostPair.create(server: "wss://example.com/signal", name: "Mac", identity: identity).rotated().invitation
         let store = MemoryPairStore(); try store.save(invitation)
         let cloud = ScriptedSignaling(), local = OwnerLocalFixtureTransport()
-        let phone = RemoteCoordinator(isHost: false, store: store, signaling: cloud, localSignaling: local)
+        let phone = RemoteCoordinator(isHost: false, store: store, signaling: cloud, localSignaling: local, localProofBuilder: builder)
         phone.restore()
         return (phone, cloud, local, invitation)
     }
@@ -108,6 +108,42 @@ final class OwnerLocalCoordinatorTests: XCTestCase {
             XCTAssertEqual(phone.invitation, invitation, "Rejected identity mutation must not persist trust")
             XCTAssertFalse(phone.isRunning); XCTAssertNil(phone.media)
         }
+    }
+
+    func testDuplicateAcceptedCannotStartConcurrentLocalProofPreparation() async throws {
+        final class Counter: @unchecked Sendable {
+            let lock = NSLock(), release = DispatchSemaphore(value: 0)
+            var count = 0
+            func begin() { lock.lock(); count += 1; lock.unlock() }
+            func read() -> Int { lock.lock(); defer { lock.unlock() }; return count }
+        }
+        let counter = Counter(), started = expectation(description: "Injected proof preparation started")
+        let (phone, _, local, invitation) = try fixture { _, _, _, _ in
+            counter.begin(); started.fulfill()
+            _ = counter.release.wait(timeout: .now() + 5)
+            return nil // Never consult interfaces or start a real local listener in this fixture.
+        }
+        defer { counter.release.signal(); phone.stop() }
+        phone.setLocalOnly(true); phone.start()
+        local.onAuthenticatedLocalSignaling?(try LocalOwnerChallenge.make(invitation: invitation))
+        local.onMessage?(RelayMessage(type: "peer", online: true))
+        let cipher = try SignalCipher(key: invitation.key, room: invitation.room)
+        let request = try cipher.open(try XCTUnwrap(local.sent.last?.payload), sender: "client")
+        let session = String(repeating: "d", count: 64)
+        func incoming(_ kind: String, sequence: UInt64) throws -> RelayMessage {
+            RelayMessage(type: "signal", payload: try cipher.seal(ProtectedMessage(kind: kind,
+                request: request.request, session: session, sequence: sequence), sender: "host"))
+        }
+        local.onMessage?(try incoming("challenge", sequence: 0))
+        local.onMessage?(try incoming("accepted", sequence: 1))
+        await fulfillment(of: [started], timeout: 2)
+        local.onMessage?(try incoming("accepted", sequence: 2))
+        await Task.yield()
+        XCTAssertEqual(counter.read(), 1)
+        XCTAssertNil(phone.media); XCTAssertFalse(phone.connected)
+        phone.stop(); counter.release.signal()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(phone.isRunning); XCTAssertNil(phone.media)
     }
 
 }

@@ -136,9 +136,12 @@ final class RemoteCoordinator: ObservableObject {
     }
     private var routeExpiry: Task<Void, Never>?
     private var localLinkProof: LocalLinkProof?
+    private var localProofPreparation: Task<Void, Never>?
+    private var localProofPreparationID: UUID?
     private var pendingLocalEndpoint: LocalProbeEndpoint?
     private var localProofTimeout: Task<Void, Never>?
     private let localProofTimeoutNanoseconds: UInt64
+    private let localProofBuilder: @Sendable (String, String, String, Data) -> LocalLinkProof?
     /// Host: why the most recent phone session attempt ended without stopping sharing.
     @Published private(set) var lastSessionFailure: String?
     /// Media signals that arrive after this side's proof started but before it finished; the faster
@@ -200,9 +203,11 @@ final class RemoteCoordinator: ObservableObject {
         handshakeTimeoutNanoseconds: UInt64 = 20_000_000_000,
         localProofTimeoutNanoseconds: UInt64 = 8_000_000_000,
         hostIdentityStore: HostIdentityStore? = nil,
-        localSignaling: (any OwnerLocalSignalingTransport)? = nil
+        localSignaling: (any OwnerLocalSignalingTransport)? = nil,
+        localProofBuilder: (@Sendable (String, String, String, Data) -> LocalLinkProof?)? = nil
     ) {
         self.localProofTimeoutNanoseconds = localProofTimeoutNanoseconds
+        self.localProofBuilder = localProofBuilder ?? { LocalLinkProof.make(room: $0, epoch: $1, session: $2, pairingKey: $3) }
         // Injected pair stores (including isolated tests) must not touch the owner's identity.
         self.hostIdentityStore = hostIdentityStore ?? (isHost && store == nil ? HostIdentityStore() : nil)
         self.isHost = isHost
@@ -472,6 +477,7 @@ final class RemoteCoordinator: ObservableObject {
     private func resetSession() {
         timeout?.cancel(); timeout = nil
         localProofTimeout?.cancel(); localProofTimeout = nil
+        localProofPreparation?.cancel(); localProofPreparation = nil; localProofPreparationID = nil
         if let proof = localLinkProof { localProofSummary = proof.stageSummary() }
         localLinkProof?.close(); localLinkProof = nil
         pendingMediaSignals.removeAll()
@@ -719,22 +725,26 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func beginLocalProof(room: String, epoch: String) {
+        guard localProofPreparation == nil, localLinkProof == nil else { return }
         guard let key = invitation?.key, !session.isEmpty else { sessionFailed("Local link proof could not start."); return }
         let session = self.session
-        let isHost = self.isHost
-        Task { [weak self] in
+        let isHost = self.isHost, buildProof = localProofBuilder
+        let preparation = UUID(); localProofPreparationID = preparation
+        localProofPreparation = Task { [weak self] in
             // TN3179: a backgrounded attempt is denied silently and never prompts. Wait for the foreground.
             if !isHost, !(await LocalNetworkAccess.waitUntilForeground()) {
-                guard let self, !self.stopped, self.session == session else { return }
+                guard let self, !Task.isCancelled, !self.stopped, self.session == session,
+                      self.localProofPreparationID == preparation else { return }
                 self.sessionFailed("Open Farside to finish connecting on this Wi-Fi."); return
             }
             let proof = await Task.detached(priority: .userInitiated) {
-                LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key)
+                buildProof(room, epoch, session, key)
             }.value
-            guard let self, !self.stopped, self.session == session,
-                  self.localRouteEpoch == epoch else {
+            guard let self, !Task.isCancelled, !self.stopped, self.session == session,
+                  self.localProofPreparationID == preparation, self.localRouteEpoch == epoch else {
                 proof?.close(); return
             }
+            self.localProofPreparation = nil
             guard let proof else {
                 self.localProofSummary = "not started: no single directly attached Wi-Fi or Ethernet path"
                 self.sessionFailed("No directly attached Wi-Fi or Ethernet link is available."); return
@@ -758,9 +768,10 @@ final class RemoteCoordinator: ObservableObject {
                 self.localProofSummary = proof.stageSummary()
                 self.finishMedia(localLink: link)
             }
-            self.localProofTimeout = Task { [weak self] in
+            self.localProofTimeout = Task { [weak self, weak proof] in
                 try? await Task.sleep(nanoseconds: self?.localProofTimeoutNanoseconds ?? 8_000_000_000)
-                guard !Task.isCancelled, let self else { return }
+                guard !Task.isCancelled, let self, let proof, self.localLinkProof === proof,
+                      self.session == session, self.localRouteEpoch == epoch else { return }
                 if let proof = self.localLinkProof {
                     LocalLinkProof.log.error("timed out after 8 s: \(proof.stageSummary(), privacy: .public)")
                     if proof.isLocalNetworkDenied { self.sessionFailed(LocalNetworkAccess.deniedStatus); return }
@@ -777,6 +788,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func finishMedia(localLink: ProvenLocalLink?) {
+        guard !stopped, media == nil else { return }
         let relayOnly: Bool
         let decision = NativeRelayPolicy.decide(servers: servers, policy: relayPolicy, localForce: forceRelay)
         SessionLog.log.info("media start: relay decision=\(String(describing: decision), privacy: .public) policy=\(self.relayPolicy ?? "nil", privacy: .public) hasRelay=\(NativeRelayPolicy.hasRelay(self.servers), privacy: .public) localLink=\(localLink != nil, privacy: .public) access=\(self.routePolicy?.access.rawValue ?? "nil", privacy: .public)")
