@@ -2,6 +2,8 @@ import Foundation
 
 struct RemoteAction: Codable {
     var action: String
+    /// Host-applied control/file/audio suspension while authorized video continues.
+    var liveViewOnly: Bool? = nil
     var x: Double = 0
     var y: Double = 0
     var text: String = ""
@@ -64,6 +66,7 @@ struct RemoteAction: Codable {
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
+        guard liveViewOnly == nil || action == "viewOnly" || action == "capture" else { throw RemoteError.invalidMessage }
         try hostStream?.validate()
         guard hostStream == nil || action == "capture" else { throw RemoteError.invalidMessage }
         try clock?.validate()

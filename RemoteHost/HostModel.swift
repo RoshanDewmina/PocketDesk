@@ -222,6 +222,8 @@ final class RemoteHostModel: ObservableObject {
     private var displayRefreshGeneration = HostPermissionRefreshGeneration()
     private var terminating = false
 
+    private var liveViewOnly = false
+    private var sessionControlAllowed: Bool { allowControl && !liveViewOnly }
     var allowControl: Bool { controlConsent.isAllowed }
     var controlPermission: HostPermissionStatus { inputAccess.postEvents }
 
@@ -273,7 +275,7 @@ final class RemoteHostModel: ObservableObject {
             connected: connection.connected,
             awaitingApproval: connection.awaitingApproval,
             captureApprovalPending: captureApproval.isPending,
-            controlEffective: allowControl && controlPermission.isGranted && sessionHealthy,
+            controlEffective: sessionControlAllowed && controlPermission.isGranted && sessionHealthy,
             unavailable: autoStart.suppressed,
             displayStatus: displayRefreshStatus
         ))
@@ -852,9 +854,9 @@ final class RemoteHostModel: ObservableObject {
     func setAllowSystemAudio(_ enabled: Bool) {
         guard allowSystemAudio != enabled else { return }
         allowSystemAudio = enabled
-        connection.media?.setSystemAudioEnabled(enabled)
-        capture.setSystemAudioEnabled(enabled)
-        if connection.connected, active, !phonePause.isPaused, sessionState == .picture { beginCapture() }
+        connection.media?.setSystemAudioEnabled(enabled && !liveViewOnly)
+        capture.setSystemAudioEnabled(enabled && !liveViewOnly)
+        if connection.connected, active, !phonePause.isPaused && !liveViewOnly, sessionState == .picture { beginCapture() }
     }
 
     func setAllowFileTransfer(_ enabled: Bool) {
@@ -867,7 +869,7 @@ final class RemoteHostModel: ObservableObject {
     /// the setting is the owner's permission, and files only land in Downloads › Farside, never opened.
     private var fileTransferRefusal: FileTransferStatus? {
         guard allowFileTransfer else { return .disabled }
-        guard connection.connected, active, !phonePause.isPaused else { return .notAllowed }
+        guard connection.connected, active, !phonePause.isPaused && !liveViewOnly else { return .notAllowed }
         return nil
     }
 
@@ -1106,7 +1108,7 @@ final class RemoteHostModel: ObservableObject {
         snapshot.sharingActive = active
         snapshot.phonePaired = hasPairedPhone
         snapshot.phoneConnected = connection.connected
-        snapshot.controlEffective = allowControl && controlPermission.isGranted && sessionHealthy
+        snapshot.controlEffective = sessionControlAllowed && controlPermission.isGranted && sessionHealthy
         snapshot.keepAwake = keepAwakeEnabled
         snapshot.displayCount = displays.count
         snapshot.detail = detail
@@ -1579,11 +1581,11 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Control
 
     private func applyControlState(notifyPhone: Bool) {
-        let effective = allowControl && controlPermission.isGranted
+        let effective = sessionControlAllowed && controlPermission.isGranted
         if !effective || !inputAccess.accessibility.isGranted { invalidateTextFocus() }
         if sessionState == .couch { refreshCouchHealth() }
         input.enabled = HostControlPolicy.isEnabled(
-            userConsent: allowControl,
+            userConsent: sessionControlAllowed,
             accessibilityPermission: controlPermission,
             session: sessionState,
             captureHealthy: captureHealthy,
@@ -1615,7 +1617,7 @@ final class RemoteHostModel: ObservableObject {
         if displaysStaleFromCouch { restartForDisplaysChangedInCouch(); return }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
-        peer.setSystemAudioEnabled(allowSystemAudio)
+        peer.setSystemAudioEnabled(allowSystemAudio && !liveViewOnly)
         if sessionStartedAt == nil {
             sessionStartedAt = Date()
             sessionsThisLaunch += 1
@@ -1657,7 +1659,7 @@ final class RemoteHostModel: ObservableObject {
         let logicalSize = display.frame.size
         let preflight = [
             RemoteAction(action: "geometry", x: logicalSize.width, y: logicalSize.height, epoch: inputEpoch.value),
-            RemoteAction(action: "viewing", x: allowControl && controlPermission.isGranted ? 1 : 0, epoch: inputEpoch.value),
+            RemoteAction(action: "viewing", x: sessionControlAllowed && controlPermission.isGranted ? 1 : 0, epoch: inputEpoch.value),
             RemoteAction(action: "capture", x: 0, epoch: inputEpoch.value)
         ]
         guard CaptureStartPreflight.send(
@@ -1766,7 +1768,7 @@ final class RemoteHostModel: ObservableObject {
         pointerTelemetry.begin(displayFrame: main, epoch: inputEpoch.value)
         startLifecycleTimer()
         _ = connection.sendControl(RemoteAction(action: "geometry", x: main.width, y: main.height, epoch: inputEpoch.value))
-        _ = connection.sendControl(RemoteAction(action: "viewing", x: allowControl && controlPermission.isGranted ? 1 : 0,
+        _ = connection.sendControl(RemoteAction(action: "viewing", x: sessionControlAllowed && controlPermission.isGranted ? 1 : 0,
                                                 epoch: inputEpoch.value))
         refreshCouchHealth()
         sendCaptureHealth(couchHealthy)
@@ -1796,7 +1798,7 @@ final class RemoteHostModel: ObservableObject {
 
     private var couchAdmissionInputs: CouchAdmissionInputs {
         CouchAdmissionInputs(routeLocal: connection.routeIsLocal, provenLinkActive: connection.provenLocalLinkActive,
-                             allowControl: allowControl, accessibility: controlPermission)
+                             allowControl: sessionControlAllowed, accessibility: controlPermission)
     }
 
     private var couchHealthInputs: CouchHealthInputs {
@@ -1805,7 +1807,7 @@ final class RemoteHostModel: ObservableObject {
             routeLocal: connection.routeIsLocal, provenLinkActive: connection.provenLocalLinkActive,
             heartbeatAge: lastPhoneHeartbeatAt.map { now - $0 },
             screenLocked: screenLocked || HostScreenLock.isLocked(), consoleUserActive: Self.consoleUserActive(),
-            allowControl: allowControl, accessibility: controlPermission, phonePaused: phonePause.isPaused)
+            allowControl: sessionControlAllowed, accessibility: controlPermission, phonePaused: phonePause.isPaused)
     }
 
     /// Returns the fresh value; on a healthy → unhealthy edge input stops and tokens expire at once.
@@ -1820,7 +1822,7 @@ final class RemoteHostModel: ObservableObject {
             input.invalidateQueued(); inputFreshness.expireTokens()
         }
         couchHealthy = healthy
-        input.enabled = HostControlPolicy.isEnabled(userConsent: allowControl, accessibilityPermission: controlPermission,
+        input.enabled = HostControlPolicy.isEnabled(userConsent: sessionControlAllowed, accessibilityPermission: controlPermission,
                                                     session: sessionState, captureHealthy: captureHealthy, couchHealthy: healthy)
         return healthy
     }
@@ -1851,6 +1853,7 @@ final class RemoteHostModel: ObservableObject {
         #endif
         invalidateTextFocus()
         phonePause.clear()
+        liveViewOnly = false
         clipboard.reset()
         fileTransfer.reset()
         releaseRemoteInput(notifyPhone: false)
@@ -1905,7 +1908,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func receiveCausalInput(_ context: InputCausalEnvelope, semantic: RemoteAction?) {
-        guard connection.connected, active, context.epoch == inputEpoch.value, !sessionRefused, !phonePause.isPaused,
+        guard connection.connected, active, context.epoch == inputEpoch.value, !sessionRefused, !phonePause.isPaused && !liveViewOnly,
               let peer = connection.media else { return }
         if let semantic, semantic.action == "release" {
             input.withAuthority {
@@ -1921,7 +1924,7 @@ final class RemoteHostModel: ObservableObject {
         }
         invalidateTextFocus()
         if sessionState == .couch { refreshCouchHealth() }
-        input.enabled = HostControlPolicy.isEnabled(userConsent: allowControl, accessibilityPermission: controlPermission,
+        input.enabled = HostControlPolicy.isEnabled(userConsent: sessionControlAllowed, accessibilityPermission: controlPermission,
                                                    session: sessionState, captureHealthy: captureHealthy, couchHealthy: couchHealthy)
         let steps = context.segments.map { segment in
             HostInputExecutor.Admitted(action: segment.action, upgraded: true,
@@ -2064,7 +2067,7 @@ final class RemoteHostModel: ObservableObject {
 
         if sessionState == .couch { refreshCouchHealth() }
         input.enabled = HostControlPolicy.isEnabled(
-            userConsent: allowControl,
+            userConsent: sessionControlAllowed,
             accessibilityPermission: controlPermission,
             session: sessionState,
             captureHealthy: captureHealthy,
@@ -2174,7 +2177,7 @@ final class RemoteHostModel: ObservableObject {
                          now: ProcessInfo.processInfo.systemUptime,
                          active: active && !terminating,
                          connected: connection.connected && connection.media === peer,
-                         controlEnabled: allowControl && input.enabled && inputAccess.accessibility.isGranted,
+                         controlEnabled: sessionControlAllowed && input.enabled && inputAccess.accessibility.isGranted,
                          captureHealthy: sessionHealthy)
     }
 
@@ -2202,7 +2205,7 @@ final class RemoteHostModel: ObservableObject {
         captureHealthy = healthy
         defer { reconcileCurtain() }
         input.enabled = HostControlPolicy.isEnabled(
-            userConsent: allowControl,
+            userConsent: sessionControlAllowed,
             accessibilityPermission: controlPermission,
             session: sessionState,
             captureHealthy: healthy,
@@ -2303,10 +2306,10 @@ final class RemoteHostModel: ObservableObject {
         let state = MacShareBlocker.sessionState(
             presence: presence ?? (displayAsleep ? .displayAsleep : nil),
             phoneUnderstands: features.contains(MacShareBlocker.feature) || features.contains(MacShareBlocker.approvalFeature),
-            controlAllowed: allowControl, accessibilityGranted: controlPermission.isGranted,
+            controlAllowed: sessionControlAllowed, accessibilityGranted: controlPermission.isGranted,
             captureApprovalPending: sessionState == .picture && captureApproval.isPending,
             phoneUnderstandsApproval: features.contains(MacShareBlocker.approvalFeature))
-        let capability = sessionState.issuesTokens(healthy: healthy) ? inputFreshness.capability(
+        let capability = !liveViewOnly && sessionState.issuesTokens(healthy: healthy) ? inputFreshness.capability(
             epoch: inputEpoch.value,
             now: ProcessInfo.processInfo.systemUptime,
             doubleClickInterval: min(2, max(0.1, NSEvent.doubleClickInterval))
@@ -2314,7 +2317,7 @@ final class RemoteHostModel: ObservableObject {
         let event = recoveryEventForPhone
         let alert = agentAlertOutbox.first
         let sent = connection.sendControl(RemoteAction(
-            action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
+            action: "capture", liveViewOnly: connection.peerFeatures.contains(SessionFeature.extendedFeatureList) ? liveViewOnly : nil, x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: true,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
             features: advertisedFeatures, hostState: state,
@@ -2333,7 +2336,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Session mode
 
     private func receiveModeRequest(_ action: RemoteAction) {
-        guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused,
+        guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused && !liveViewOnly,
               let requested = action.mode.flatMap(SessionMode.init(rawValue:)) else { return }
         cancelPictureRefresh()
         switch (sessionState, requested) {
@@ -2425,17 +2428,31 @@ final class RemoteHostModel: ObservableObject {
 
     private func receiveSessionExtension(_ action: RemoteAction) {
         let current = connection.connected && active && action.epoch == inputEpoch.value && !sessionRefused
-        let controlEffective = allowControl && controlPermission.isGranted
+        let controlEffective = sessionControlAllowed && controlPermission.isGranted
         switch action.action {
         case "wake":
-            if current && controlEffective && !phonePause.isPaused { wakeDisplayForRemoteSession(force: true) }
+            if current && controlEffective && !phonePause.isPaused && !liveViewOnly { wakeDisplayForRemoteSession(force: true) }
+        case "viewOnly":
+            guard current, sessionState == .picture, connection.peerFeatures.contains(SessionFeature.extendedFeatureList),
+                  let next = action.liveViewOnly, !phonePause.isPaused else { return }
+            input.withAuthority {
+                // Close queued posting and release owned holds before publishing acknowledgment.
+                input.enabled = false
+                input.invalidateQueued(); inputFreshness.expireTokens()
+                releaseRemoteInput(notifyPhone: false)
+                liveViewOnly = next
+            }
+            invalidateTextFocus(); clipboard.reset(); fileTransfer.reset()
+            connection.media?.setSystemAudioEnabled(false); capture.setSystemAudioEnabled(false)
+            applyControlState(notifyPhone: true)
+            sendCaptureHealth(sessionHealthy)
         case "pause":
             if current { pauseForPhoneBackground() }
         case "resume":
             if current { resumeAfterPhoneBackground() }
         case "clipboard":
             guard let frame = action.clipboard else { return }
-            clipboard.receive(frame, allowed: current && !phonePause.isPaused && controlEffective)
+            clipboard.receive(frame, allowed: current && !phonePause.isPaused && !liveViewOnly && controlEffective)
         case "file":
             if let frame = action.file { fileTransfer.receive(frame) }
         case "curtain":
@@ -2444,7 +2461,7 @@ final class RemoteHostModel: ObservableObject {
                 return
             }
             // Covering the Mac's own screen needs the same authority as controlling it.
-            guard current, controlEffective, !phonePause.isPaused,
+            guard current, controlEffective, !phonePause.isPaused && !liveViewOnly,
                   let request = action.curtain.flatMap(PrivacyCurtainRequest.init(rawValue:)) else {
                 sendCaptureHealth(sessionHealthy)
                 return
@@ -2463,7 +2480,7 @@ final class RemoteHostModel: ObservableObject {
         if action.action == "displayScale", action.epoch != inputEpoch.value {
             return sendDisplayList(scaleError: .failed, scaleRequestID: action.scaleRequestID)
         }
-        guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused, !sessionRefused else { return }
+        guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused && !liveViewOnly, !sessionRefused else { return }
         switch action.action {
         case "displays":
             sendDisplayList()
@@ -2472,7 +2489,7 @@ final class RemoteHostModel: ObservableObject {
             guard let requested = action.display else { return }
             let decision = HostDisplayCatalog.decide(
                 requested: requested, available: displays.map(\.displayID), streaming: capturedDisplayID,
-                controlEffective: allowControl && controlPermission.isGranted)
+                controlEffective: sessionControlAllowed && controlPermission.isGranted)
             switch decision {
             case .resendList:
                 sendDisplayList()
@@ -2533,7 +2550,7 @@ final class RemoteHostModel: ObservableObject {
     /// session slot so a quick return resumes without renegotiation.
     private func pauseForPhoneBackground() {
         cancelPictureRefresh()
-        guard !phonePause.isPaused else { return }
+        guard !phonePause.isPaused && !liveViewOnly else { return }
         liftCurtain()
         phonePause.begin(at: ProcessInfo.processInfo.systemUptime)
         clipboard.reset()
@@ -2652,7 +2669,7 @@ final class RemoteHostModel: ObservableObject {
 
     private func updatePowerAssertions() {
         let wanted = HostPowerPolicy.assertions(keepAwake: keepAwakeEnabled, sharing: active,
-                                                phoneConnected: connection.connected && !phonePause.isPaused)
+                                                phoneConnected: connection.connected && !phonePause.isPaused && !liveViewOnly)
         if wanted.system {
             if !remoteAccessAwake.start() { detail = "Farside couldn’t keep this Mac awake. Normal sleep settings still apply." }
         } else {
@@ -2924,7 +2941,7 @@ extension RemoteHostModel: BigTextHost {
     }
 
     private var bigTextSessionStreaming: Bool {
-        active && sessionState == .picture && connection.connected && connection.media != nil && !phonePause.isPaused && !terminating && !screenLocked
+        active && sessionState == .picture && connection.connected && connection.media != nil && !phonePause.isPaused && !liveViewOnly && !terminating && !screenLocked
     }
 
     fileprivate func handleScreenChange() {
