@@ -91,11 +91,12 @@ struct ConnectionHealth: Equatable {
                                     nextStep: step, action: failure.action == .pairAgain ? .pairAgain : .retry)
         case .unreachable:
             return unreachable(detail: "Your Mac didn’t answer. Farside can’t tell whether it’s asleep, offline or quit.")
-        case .connectionLost:
-            return unreachable(detail: "The connection dropped and retrying didn’t bring it back. The cause is unknown.")
         case .macNotResponding:
+            // The service had the Mac's room open, but the Mac never finished the handshake.
             return ConnectionHealth(state: .unreachable, title: failure.shortStatus, detail: failure.message,
                                     nextStep: step, action: .retry)
+        case .connectionLost:
+            return unreachable(detail: "The connection dropped and retrying didn’t bring it back. The cause is unknown.")
         case .localNetworkOff:
             return ConnectionHealth(state: .localNetworkOff, title: failure.headline, detail: failure.message,
                                     nextStep: step, action: .openSettings)
