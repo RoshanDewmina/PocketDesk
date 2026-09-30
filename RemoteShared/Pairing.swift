@@ -10,12 +10,26 @@ struct PairInvitation: Codable, Equatable {
     var key: Data
     var expires: Date
     var name: String
+    /// Stable host and owner-pair identities are independent of renewable signaling rooms.
+    var durableHostID: String? = nil
+    var ownerPairID: String? = nil
+    /// Opaque local discovery locator; it is never authentication or route proof.
+    var localServiceName: String? = nil
 
     func validate(now: Date = Date(), enrollment: Bool = true) throws {
         guard version == 1, SecureRandom.isToken(room), SecureRandom.isToken(token), key.count == 32,
               !name.isEmpty, name.utf8.count <= 128,
               !enrollment || (expires > now && expires.timeIntervalSince(now) <= 180),
               Self.validServer(server) else { throw RemoteError.invalidPairing }
+        guard durableHostID == nil || durableHostID.map(SecureRandom.isToken) == true,
+              ownerPairID == nil || ownerPairID.map(SecureRandom.isToken) == true else {
+            throw RemoteError.invalidPairing
+        }
+        if let localServiceName {
+            guard !localServiceName.isEmpty, localServiceName.utf8.count <= 63,
+                  !localServiceName.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains)
+            else { throw RemoteError.invalidPairing }
+        }
     }
     static func validServer(_ value: String) -> Bool {
         guard let url = URL(string: value), let host = url.host, url.user == nil, url.password == nil,
