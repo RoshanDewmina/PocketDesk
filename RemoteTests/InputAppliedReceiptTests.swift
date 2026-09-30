@@ -18,7 +18,7 @@ final class InputAppliedReceiptTests: XCTestCase {
         var action = RemoteAction(action: "inputApplied", inputAppliedReceipt: receipt)
         action.text = "sensitive"; XCTAssertThrowsError(try action.validate())
         action.text = ""; action.liveViewOnly = true; XCTAssertThrowsError(try action.validate())
-        action.liveViewOnly = nil; action.streamQuality = .sharper; XCTAssertThrowsError(try action.validate())
+        action.liveViewOnly = nil; action.streamQuality = .sharp; XCTAssertThrowsError(try action.validate())
         XCTAssertThrowsError(try RemoteAction(action: "pause", inputRequestID: receipt.requestID).validate())
         XCTAssertNoThrow(try RemoteAction(action: "text", text: "hello", inputRequestID: receipt.requestID).validate())
     }
