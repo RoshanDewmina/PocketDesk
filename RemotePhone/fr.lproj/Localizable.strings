@@ -115,3 +115,9 @@
 "CONTENT_READY_NOW" = "Le contenu est autorisé et disponible maintenant";
 "PICTURE_CONFIRM_REASON" = "Confirmez uniquement si vous voyez actuellement l’image de votre Mac.";
 "CONFIRM_VISIBLE_PICTURE" = "Je vois l’image de mon Mac maintenant";
+
+"ONE_TIME_FOUNDER" = "À vie — fondateur";
+"ONE_TIME_LIFETIME" = "À vie";
+"ONE_TIME_TERMS" = "%@ en un seul paiement. Aucun renouvellement. Accès complet à Anywhere ; la vérification actuelle du service et le jumelage du Mac restent nécessaires. Un achat remboursé ou révoqué perd cet avantage. Cet achat ne résilie pas un abonnement existant.";
+"ONE_TIME_BUY" = "Acheter pour %@ une seule fois";
+"ONE_TIME_ACTIVE" = "Votre achat à vie ne se renouvelle pas. Le service Farside vérifie toujours l’accès ; le jumelage et l’autorisation du trajet actuel restent distincts.";

@@ -46,6 +46,7 @@ struct AnywhereEntitlement: Equatable {
     /// Trial end, renewal or expiry date, or the end of the billing grace period.
     var periodEnd: Date?
     var willRenew = false
+    var kind: AnywhereEntitlementKind = .subscription
 
     static let unknown = AnywhereEntitlement(phase: .unknown)
     static let notSubscribed = AnywhereEntitlement(phase: .notSubscribed)
@@ -210,6 +211,9 @@ enum AnywhereCopy {
         }
     }
     static func statusDetail(_ value: AnywhereEntitlement) -> String {
+        if value.phase == .active, value.kind != .subscription {
+            return CommerceLocalization.text("ONE_TIME_ACTIVE", "Your lifetime purchase has no subscription renewal. Farside’s service still verifies access; pairing and current route approval remain separate.")
+        }
         let date = value.periodEnd.map(short)
         switch value.phase {
         case .trial:

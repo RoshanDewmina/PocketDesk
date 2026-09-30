@@ -1,3 +1,4 @@
+import { ONE_TIME_VERIFICATION_MS, type EntitlementKind, type OneTimeCatalog } from "./one-time-policy";
 import { bytesToHex, hmacSha256 } from "../util";
 
 export type EntitlementStatus = "active" | "grace" | "expired" | "revoked";
@@ -7,6 +8,7 @@ export type EntitlementRow = {
   product_id: string;
   environment: string;
   status: EntitlementStatus;
+  kind: EntitlementKind;
   expires_at: number;
   grace_until: number | null;
   revoked_at: number | null;
@@ -22,11 +24,17 @@ export type EntitlementRow = {
 export type DeviceRow = { device_id: string; last_room: string | null };
 export type EntitlementDeviceRow = EntitlementRow & { device_room: string | null };
 
-export const accessEndMs = (row: Pick<EntitlementRow, "expires_at" | "grace_until">) =>
-  Math.max(row.expires_at, row.grace_until ?? 0);
+type AccessRow = Pick<EntitlementRow, "expires_at" | "grace_until"> & {
+  kind?: EntitlementKind; last_verified_at?: number | null; product_id?: string;
+};
+export const accessEndMs = (row: AccessRow) => row.kind === "lifetime" || row.kind === "founder"
+  ? (row.last_verified_at ?? 0) + ONE_TIME_VERIFICATION_MS : Math.max(row.expires_at, row.grace_until ?? 0);
 
-export const hasAccess = (row: Pick<EntitlementRow, "status" | "expires_at" | "grace_until"> & { consent_stopped_at?: number | null }, now: number) =>
-  (row.status === "active" || row.status === "grace") && accessEndMs(row) > now && !row.consent_stopped_at;
+export const hasAccess = (row: AccessRow & { status: EntitlementStatus; revoked_at?: number | null; consent_stopped_at?: number | null }, now: number, oneTimeProducts?: OneTimeCatalog) =>
+  (row.kind === undefined || row.kind === "subscription" || (row.product_id !== undefined && oneTimeProducts?.get(row.product_id) === row.kind)) &&
+  (row.status === "active" || row.status === "grace") && accessEndMs(row) > now &&
+  (row.kind === undefined || row.kind === "subscription" || (typeof row.last_verified_at === "number" && Number.isFinite(row.last_verified_at) && row.last_verified_at > 0 && row.last_verified_at <= now)) &&
+  row.revoked_at == null && row.consent_stopped_at == null;
 
 export async function entitlementIdFor(hashKey: string, originalTransactionId: string): Promise<string> {
   return bytesToHex(await hmacSha256(hashKey, `otid:${originalTransactionId}`));
@@ -42,6 +50,7 @@ export type UpsertEntitlement = {
   environment: string;
   status: EntitlementStatus;
   expiresAt: number;
+  kind?: EntitlementKind;
   graceUntil?: number | null;
   revokedAt?: number | null;
   /** Signed transaction purchase time; only a later purchase may clear an existing refund. */
@@ -59,11 +68,12 @@ export async function upsertEntitlement(db: D1Database, fields: UpsertEntitlemen
   const notified = fields.source === "notification" ? now : null;
   const result = await db.prepare(`
     INSERT INTO entitlements (id, product_id, environment, status, expires_at, grace_until, revoked_at, created_at, updated_at, last_verified_at, last_notification_at, purchase_at,
-      app_transaction_hash, consent_stopped_at)
+      app_transaction_hash, consent_stopped_at, kind)
     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11,
-      ?13, (SELECT stopped_at FROM consent_stops WHERE app_transaction_hash = ?13))
+      ?13, (SELECT stopped_at FROM consent_stops WHERE app_transaction_hash = ?13), ?14)
     ON CONFLICT(id) DO UPDATE SET
       product_id = excluded.product_id,
+      kind = excluded.kind,
       environment = excluded.environment,
       status = excluded.status,
       expires_at = MAX(entitlements.expires_at, excluded.expires_at),
@@ -75,12 +85,13 @@ export async function upsertEntitlement(db: D1Database, fields: UpsertEntitlemen
       last_notification_at = COALESCE(excluded.last_notification_at, entitlements.last_notification_at),
       app_transaction_hash = COALESCE(excluded.app_transaction_hash, entitlements.app_transaction_hash),
       consent_stopped_at = COALESCE(entitlements.consent_stopped_at, excluded.consent_stopped_at)
-    WHERE excluded.purchase_at >= entitlements.purchase_at
+    WHERE excluded.kind = entitlements.kind AND (excluded.kind = 'subscription' OR excluded.product_id = entitlements.product_id)
+      AND excluded.environment = entitlements.environment AND excluded.purchase_at >= entitlements.purchase_at
       AND (entitlements.revoked_at IS NULL OR excluded.revoked_at IS NOT NULL
         OR excluded.purchase_at > entitlements.revoked_at OR ?12 = 1)
   `).bind(fields.id, fields.productId, fields.environment, fields.status, fields.expiresAt,
     fields.graceUntil ?? null, fields.revokedAt ?? null, now, verified, notified,
-    fields.purchaseAt ?? 0, fields.refundReversed ? 1 : 0, fields.appTransactionHash ?? null).run();
+    fields.purchaseAt ?? 0, fields.refundReversed ? 1 : 0, fields.appTransactionHash ?? null, fields.kind ?? "subscription").run();
   return result.meta.changes > 0;
 }
 
@@ -238,8 +249,8 @@ export async function purgeRetention(db: D1Database, now: number): Promise<Recor
   const results = await db.batch([
     db.prepare("DELETE FROM notifications WHERE received_at < ?1").bind(now - 90 * DAY),
     db.prepare("DELETE FROM audit WHERE at < ?1").bind(now - 30 * DAY),
-    db.prepare("DELETE FROM entitlement_devices WHERE entitlement_id IN (SELECT id FROM entitlements WHERE MAX(expires_at, COALESCE(grace_until, 0)) < ?1)").bind(now - 90 * DAY),
-    db.prepare("DELETE FROM entitlements WHERE MAX(expires_at, COALESCE(grace_until, 0)) < ?1").bind(now - 90 * DAY),
+    db.prepare("DELETE FROM entitlement_devices WHERE entitlement_id IN (SELECT id FROM entitlements WHERE kind = 'subscription' AND MAX(expires_at, COALESCE(grace_until, 0)) < ?1)").bind(now - 90 * DAY),
+    db.prepare("DELETE FROM entitlements WHERE kind = 'subscription' AND MAX(expires_at, COALESCE(grace_until, 0)) < ?1").bind(now - 90 * DAY),
     db.prepare("DELETE FROM rooms WHERE last_seen < ?1 AND status = 'active'").bind(now - 365 * DAY),
     // A stop outlives its subscriptions by a year so a lapsed plan cannot be verified back into use right away.
     db.prepare(`DELETE FROM consent_stops WHERE stopped_at < ?1 AND NOT EXISTS
@@ -252,8 +263,8 @@ export async function purgeRetention(db: D1Database, now: number): Promise<Recor
 
 export async function readinessCounts(db: D1Database, now: number): Promise<Record<string, number>> {
   const [entitlements, sandbox, rooms, blocked, notifications] = await db.batch([
-    db.prepare("SELECT COUNT(*) AS n FROM entitlements WHERE status IN ('active','grace') AND consent_stopped_at IS NULL AND MAX(expires_at, COALESCE(grace_until, 0)) > ?1").bind(now),
-    db.prepare("SELECT COUNT(*) AS n FROM entitlements WHERE environment = 'Sandbox' AND MAX(expires_at, COALESCE(grace_until, 0)) > ?1").bind(now),
+    db.prepare("SELECT COUNT(*) AS n FROM entitlements WHERE status IN ('active','grace') AND consent_stopped_at IS NULL AND (CASE WHEN kind = 'subscription' THEN MAX(expires_at, COALESCE(grace_until, 0)) ELSE COALESCE(last_verified_at, 0) + 86400000 END) > ?1").bind(now),
+    db.prepare("SELECT COUNT(*) AS n FROM entitlements WHERE environment = 'Sandbox' AND (CASE WHEN kind = 'subscription' THEN MAX(expires_at, COALESCE(grace_until, 0)) ELSE COALESCE(last_verified_at, 0) + 86400000 END) > ?1").bind(now),
     db.prepare("SELECT COUNT(*) AS n FROM rooms WHERE last_seen > ?1").bind(now - 30 * DAY),
     db.prepare("SELECT COUNT(*) AS n FROM rooms WHERE status = 'blocked'"),
     db.prepare("SELECT COUNT(*) AS n FROM notifications WHERE received_at > ?1").bind(now - DAY),

@@ -2,7 +2,7 @@ import { GuestService, GUEST_FEATURE, type GuestOwner } from "./guest";
 import { DurableObject } from "cloudflare:workers";
 import { endRoomActivities } from "./activity";
 import { isPublicEnvironment, loadConfig, type Config } from "./config";
-import { claimDeviceRoom, entitlementForDevice, hasAccess, restoreDeviceRoom, roomStatus, touchRoom } from "./entitlement/store";
+import { accessEndMs, claimDeviceRoom, entitlementForDevice, hasAccess, restoreDeviceRoom, roomStatus, touchRoom } from "./entitlement/store";
 import { environmentLetter, verifyEntitlementToken } from "./entitlement/token";
 import { fingerprint, log, logError } from "./log";
 import { forgetPushRoom } from "./push";
@@ -415,7 +415,7 @@ export class RoomDO extends DurableObject<Env> {
     try {
       const row = await withTimeout(entitlementForDevice(this.env.DB, state.entitlement_id, state.entitled_device), STORAGE_TIMEOUT_MS, "entitlement recheck");
       if (!stillCurrent()) return;
-      if (!row || !hasAccess(row, now) || row.device_room !== state.room) {
+      if (!row || !hasAccess(row, now, this.config.oneTimeProducts) || row.device_room !== state.room) {
         log("entitlement_lapsed_live", { room: fingerprint(state.room ?? undefined) });
         this.terminate("entitlement_revoked");
       }
@@ -579,8 +579,8 @@ export class RoomDO extends DurableObject<Env> {
     if (!payload) return { entitled: false };
     try {
       const row = await withTimeout(entitlementForDevice(this.env.DB, payload.s, payload.d), STORAGE_TIMEOUT_MS, "entitlement lookup");
-      if (!row || !hasAccess(row, now) || environmentLetter(row.environment) !== payload.n) return { entitled: false };
-      const until = Math.min(payload.x * 1000, Math.max(row.expires_at, row.grace_until ?? 0));
+      if (!row || !hasAccess(row, now, this.config.oneTimeProducts) || environmentLetter(row.environment) !== payload.n) return { entitled: false };
+      const until = Math.min(payload.x * 1000, accessEndMs(row));
       return { entitled: true, entitlementId: payload.s, deviceId: payload.d, until };
     } catch (error) {
       logError("entitlement_lookup_failed", error, { entitlement: fingerprint(payload.s) });
@@ -605,7 +605,7 @@ export class RoomDO extends DurableObject<Env> {
     if (!entitlementId || !deviceId) return this.unentitledRelayAllowed(attachment.remoteAware) ? "valid" : "invalid";
     try {
       const row = await withTimeout(entitlementForDevice(this.env.DB, entitlementId, deviceId), STORAGE_TIMEOUT_MS, "entitlement lookup");
-      return row !== null && hasAccess(row, now) && row.device_room === state.room ? "valid" : "invalid";
+      return row !== null && hasAccess(row, now, this.config.oneTimeProducts) && row.device_room === state.room ? "valid" : "invalid";
     } catch (error) {
       logError("entitlement_lookup_failed", error, { entitlement: fingerprint(entitlementId) });
       return "unavailable";
@@ -942,7 +942,7 @@ export class RoomDO extends DurableObject<Env> {
         const at = Date.now();
         const row = await withTimeout(entitlementForDevice(this.env.DB, entitlement.entitlementId, entitlement.deviceId),
           STORAGE_TIMEOUT_MS, "entitlement before delivery");
-        authorized = row !== null && hasAccess(row, at) && row.device_room === room &&
+        authorized = row !== null && hasAccess(row, at, this.config.oneTimeProducts) && row.device_room === room &&
           (entitlement.until ?? 0) > at;
       } catch (error) {
         logError("entitlement_before_delivery_failed", error, { room: fingerprint(room) });
@@ -1151,7 +1151,7 @@ export class RoomDO extends DurableObject<Env> {
       // The push must not terminate the replacement room using that newer entitlement.
       const row = await withTimeout(entitlementForDevice(this.env.DB, entitlementId, deviceId),
         STORAGE_TIMEOUT_MS, "revocation freshness check");
-      if (row && hasAccess(row, Date.now()) && row.device_room === this.state().room) return false;
+      if (row && hasAccess(row, Date.now(), this.config.oneTimeProducts) && row.device_room === this.state().room) return false;
     }
     const state = this.state();
     if (state.entitlement_id !== entitlementId || state.entitled_device !== deviceId) {
