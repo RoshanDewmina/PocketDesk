@@ -10,6 +10,9 @@ struct DisplayDescriptor: Codable, Equatable, Identifiable {
     var pixelWidth: Int? = nil
     var pixelHeight: Int? = nil
     var main: Bool = false
+    var scaleSteps: [ScaleStep]? = nil
+    var scaleBaselineWidth: Double? = nil
+    var scaleCurrentWidth: Double? = nil
 
     func validate() throws {
         guard id != 0, !name.isEmpty, name.utf8.count <= 64,
@@ -18,6 +21,7 @@ struct DisplayDescriptor: Codable, Equatable, Identifiable {
               pixelWidth.map({ (1...40_000).contains($0) }) ?? true,
               pixelHeight.map({ (1...40_000).contains($0) }) ?? true
         else { throw RemoteError.invalidMessage }
+        try validateScale()
     }
 
     /// "Built-in Retina Display · 1470 × 956" (points), with pixels when they differ.
@@ -29,7 +33,7 @@ struct DisplayDescriptor: Codable, Equatable, Identifiable {
 }
 
 extension RemoteAction {
-    static let displayActions: Set<String> = ["displays", "display"]
+    static let displayActions: Set<String> = ["displays", "display", "displayScale"]
 
     /// `displays`: the phone asks for the list (no fields); the host answers with `displays` and the
     /// streamed `display`. `display`: the phone asks to stream display `display`. The host also puts
@@ -43,7 +47,7 @@ extension RemoteAction {
             try displays.forEach { try $0.validate() }
         }
         if let display {
-            guard display != 0, ["displays", "display", "capture"].contains(action) else { throw RemoteError.invalidMessage }
+            guard display != 0, ["displays", "display", "displayScale", "capture"].contains(action) else { throw RemoteError.invalidMessage }
         }
         guard Self.displayActions.contains(action) else { return false }
         guard interaction == nil, pointerLocatorSupported == nil, pointerProbe == nil, pointerLocation == nil,
@@ -54,6 +58,10 @@ extension RemoteAction {
         else { throw RemoteError.invalidMessage }
         if action == "display" {
             guard display != nil, displays == nil else { throw RemoteError.invalidMessage }
+        }
+        if action == "displayScale" {
+            guard let width = looksLikeWidth, display != nil, displays == nil,
+                  width == 0 || (width.isFinite && BigTextLimits.widthRange.contains(width)) else { throw RemoteError.invalidMessage }
         }
         return true
     }
