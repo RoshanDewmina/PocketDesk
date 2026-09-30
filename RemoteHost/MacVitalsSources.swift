@@ -51,7 +51,7 @@ enum MacPowerParser {
         guard let current = (description["Current Capacity"] as? NSNumber)?.doubleValue,
               let maximum = (description["Max Capacity"] as? NSNumber)?.doubleValue,
               maximum > 0, current >= 0 else { return nil }
-        return min(100, Int((current / maximum * 100).rounded(.down)))
+        return Int(min(100, (current * 100 / maximum).rounded(.down)))
     }
 }
 
@@ -61,17 +61,20 @@ final class LiveMacVitalsSources: MacVitalsSources {
     private(set) var memoryPressure: MacMemoryPressure = .normal
     private var powerSource: CFRunLoopSource?
     private var pressureSource: DispatchSourceMemoryPressure?
-    private var isStarted = false
+    // Retained while started so a missed stop() leaks instead of handing IOKit a freed context.
+    private var retainedSelf: Unmanaged<LiveMacVitalsSources>?
     // mach_host_self() adds a send-right reference on every call, so take it once.
     private let host = mach_host_self()
 
     init() {}
 
-    // The IOKit context is unretained: stop() must run before this object is released.
+    deinit { mach_port_deallocate(mach_task_self_, host) }
+
     func start() {
-        guard !isStarted else { return }
-        isStarted = true
-        let context = Unmanaged.passUnretained(self).toOpaque()
+        guard retainedSelf == nil else { return }
+        let retained = Unmanaged.passRetained(self)
+        retainedSelf = retained
+        let context = retained.toOpaque()
         let callback: IOPowerSourceCallbackType = { context in
             guard let context else { return }
             let sources = Unmanaged<LiveMacVitalsSources>.fromOpaque(context).takeUnretainedValue()
@@ -90,10 +93,11 @@ final class LiveMacVitalsSources: MacVitalsSources {
         }
         pressure.resume()
         pressureSource = pressure
+        memoryPressure = Self.currentPressure()
     }
 
     func stop() {
-        isStarted = false
+        guard let retained = retainedSelf else { return }
         if let powerSource {
             CFRunLoopRemoveSource(CFRunLoopGetMain(), powerSource, .commonModes)
             self.powerSource = nil
@@ -101,6 +105,20 @@ final class LiveMacVitalsSources: MacVitalsSources {
         pressureSource?.cancel()
         pressureSource = nil
         memoryPressure = .normal
+        retainedSelf = nil
+        retained.release()
+    }
+
+    // The dispatch source reports only changes, so a Mac already under pressure needs a seed.
+    private static func currentPressure() -> MacMemoryPressure {
+        var level: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        guard sysctlbyname("kern.memorystatus_vm_pressure_level", &level, &size, nil, 0) == 0 else { return .normal }
+        switch level {
+        case 4: return .critical
+        case 2: return .warning
+        default: return .normal
+        }
     }
 
     func readPower() -> MacPowerReading? {
