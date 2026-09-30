@@ -178,10 +178,16 @@ struct HostPopoverPresentation: Equatable {
         switch state.status {
         case .controlling, .viewing:
             let viewOnly = state.status == .viewing
+            let headline = state.couchMode
+                ? (viewOnly ? "Couch mode · control is off" : "Couch mode · no picture shared")
+                : (viewOnly ? "Connected · view only" : "Connected · sharing this Mac")
+            let title = state.couchMode
+                ? (viewOnly ? "Your iPhone is connected" : "Your iPhone is steering")
+                : (viewOnly ? "Your iPhone is watching" : "Your iPhone is steering")
             return Self(
                 mood: .live,
-                headline: viewOnly ? "Connected · view only" : "Connected · sharing this Mac",
-                title: viewOnly ? "Your iPhone is watching" : "Your iPhone is steering",
+                headline: headline,
+                title: title,
                 caption: state.session.map(\.caption).flatMap { $0.isEmpty ? nil : $0 } ?? "Measuring the connection",
                 spokenCaption: state.session.map(\.spokenCaption),
                 message: state.availability == .displayAsleep

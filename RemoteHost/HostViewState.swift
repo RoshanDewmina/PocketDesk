@@ -54,6 +54,8 @@ struct HostViewState: Equatable {
     var privacyCurtain = false
     /// What the curtain is doing now, when that differs from the preference alone.
     var curtainStatus: String?
+    /// A Couch-mode session: the phone steers with no picture.
+    var couchMode = false
     /// Agent alerts (beta): a hook on this Mac tells the phone an agent needs a person.
     var agentAlerts = false
     /// One line about the last agent alert, or that the Mac is listening.
