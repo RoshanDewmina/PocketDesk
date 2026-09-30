@@ -99,6 +99,12 @@ final class RemoteCoordinator: ObservableObject {
     // continuous physical one-hop proof and never supplies an ActivityKit server epoch.
     private var ownerLocalEpoch: String?
     /// Correlation only; route/grant authorization below remains the authority.
+    /// Read only the trust store that admitted this coordinator, including injected tests.
+    var presentationHostTrust: PhoneHostTrust? {
+        guard !isHost, let phone = store as? PhonePairPersistence,
+              let host = try? phone.trust.snapshot().selected, host.invitation == invitation else { return nil }
+        return host
+    }
     var onPresentationInvalidated: (() -> Void)?
     private(set) var presentationSessionID = UUID()
     private(set) var presentationTrackID = UUID()

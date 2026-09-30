@@ -346,7 +346,7 @@ final class PhoneRemoteModel: ObservableObject {
     private func cachePresentationHost() {
         presentationHost = nil
         guard let invitation = connection.invitation,
-              let host = try? PhoneTrustStore.shared.snapshot().selected,
+              let host = connection.presentationHostTrust,
               host.invitation == invitation else { return }
         presentationHost = host
     }
