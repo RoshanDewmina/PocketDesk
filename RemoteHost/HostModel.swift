@@ -109,6 +109,8 @@ final class RemoteHostModel: ObservableObject {
     private var recoveryNoticeDelivered = false
     private var setupWasComplete = false
     private var sessionsThisLaunch = 0
+    /// Input admission counts since launch, by outcome; no content.
+    private var inputCounts: [String: Int] = [:]
     private var sessionStartedAt: Date?
     private var lastSessionDuration: TimeInterval?
     #if DEBUG
@@ -880,6 +882,7 @@ final class RemoteHostModel: ObservableObject {
         snapshot.sessionsThisLaunch = sessionsThisLaunch
         snapshot.lastSessionDuration = sessionStartedAt.map { Date().timeIntervalSince($0) } ?? lastSessionDuration
         snapshot.route = connection.connected ? connection.diagnostics : nil
+        snapshot.input = connection.inputSummary + " host=[" + inputCounts.keys.sorted().map { "\($0)=\(inputCounts[$0] ?? 0)" }.joined(separator: " ") + "]"
         snapshot.localProof = connection.localProofSummary
         snapshot.streamQuality = capture.appliedQuality?.title
         snapshot.stream = latestSenderStatistics.map(Self.streamDescription)
@@ -1382,8 +1385,19 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
+    private func countInput(_ key: String) {
+        inputCounts[key, default: 0] += 1
+        let count = inputCounts[key] ?? 0
+        if InputLog.sampled(count) {
+            InputLog.log.info("host input \(key, privacy: .public) count=\(count, privacy: .public)")
+        }
+    }
+
     private func receive(_ data: Data) {
-        guard let action = try? JSONDecoder().decode(RemoteAction.self, from: data) else { stop(); return }
+        guard let action = try? JSONDecoder().decode(RemoteAction.self, from: data) else {
+            countInput("rejected-parse"); stop(); return
+        }
+        countInput("received")
         if action.action == "release" || Self.userInputActions.contains(action.action) {
             invalidateTextFocus()
         }
@@ -1436,6 +1450,7 @@ final class RemoteHostModel: ObservableObject {
 
         pointerTelemetry.moveProcessed(action)
         guard Self.userInputActions.contains(action.action), inputEpoch.accepts(action) else {
+            countInput(Self.userInputActions.contains(action.action) ? "rejected-epoch" : "rejected-unknown-action")
             if inputFreshness.upgraded || action.interaction != nil {
                 stop()
                 autoStart.suspend()
@@ -1450,12 +1465,14 @@ final class RemoteHostModel: ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         let admission = inputFreshness.admit(action, epoch: inputEpoch.value, now: now)
         if admission == .terminate {
+            countInput("rejected-freshness-terminate")
             stop()
             autoStart.suspend()
             detail = "The phone’s input session expired. Reconnect from the phone."
             return
         }
         if inputLease.isExpired(at: now) {
+            countInput("rejected-lease-expired")
             releaseRemoteInput(notifyPhone: true)
             if action.action == "text" { sendTextResult(for: action.key, accepted: false) }
             return
@@ -1492,6 +1509,7 @@ final class RemoteHostModel: ObservableObject {
         }
         let outcome = input.handle(action, upgraded: admission == .upgraded, now: now)
         #endif
+        countInput(outcome.accepted ? "posted" : (input.enabled ? "refused-by-driver" : "refused-control-disabled"))
         if action.action == "move" || action.action == "moveTo", outcome.accepted {
             pointerTelemetry.moveInjected(globalPoint: input.lastPoint, at: now)
         }

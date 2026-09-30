@@ -671,6 +671,15 @@ private struct ConnectionDetailsSheet: View {
                 } header: {
                     Text("Route").farsideCaption()
                 }
+                Section {
+                    Text(connection.inputSummary)
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(Farside.Palette.bone)
+                        .textSelection(.enabled)
+                        .listRowBackground(Farside.Palette.panel)
+                } header: {
+                    Text("Input").farsideCaption()
+                }
                 if let proof = connection.localProofSummary {
                     Section {
                         Text(proof)

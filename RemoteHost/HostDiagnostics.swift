@@ -101,6 +101,8 @@ struct HostDiagnosticsSnapshot {
     var route: String?
     /// Stage counters of the last local-link proof; no addresses, keys or nonces.
     var localProof: String?
+    /// Control-channel and input admission counts; no content.
+    var input: String?
     var streamQuality: String?
     /// Sent size, negotiated codec level, encoder and decoder-probe outcome of the last session.
     var stream: String?
@@ -162,6 +164,7 @@ enum HostDiagnosticsReport {
         row("Last session length", s.lastSessionDuration.map(duration) ?? "none")
         row("Route", s.route ?? "not measured")
         row("Local link proof", s.localProof ?? "not attempted")
+        row("Input", s.input ?? "none")
         row("Picture quality", s.streamQuality ?? "not applied")
         row("Stream", s.stream ?? "not measured")
         row("Stream tuning", s.tuning ?? "?")

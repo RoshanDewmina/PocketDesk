@@ -91,6 +91,13 @@ final class RemoteCoordinator: ObservableObject {
     /// Media signals that arrive after this side's proof started but before it finished; the faster
     /// side can prove first and send its offer. Bounded and dropped with the session.
     private var pendingMediaSignals: [MediaSignal] = []
+    private var controlNotConnectedRefusals = 0
+    private(set) var controlRejected: [String: Int] = [:]
+    /// Control-channel counts for Copy Diagnostics; no content.
+    var inputSummary: String {
+        let rejected = controlRejected.keys.sorted().map { "\($0)=\(controlRejected[$0] ?? 0)" }.joined(separator: " ")
+        return (media?.controlCounters.summary ?? "no media") + " notConnected=\(controlNotConnectedRefusals) rejected=[\(rejected)]"
+    }
     private var timeout: Task<Void, Never>?
     private var retry: Task<Void, Never>?
     private var retryCount = 0
@@ -150,12 +157,21 @@ final class RemoteCoordinator: ObservableObject {
         relay.onClose = { [weak self] in self?.connectionLost() }
     }
     func sendControl(_ action: RemoteAction) -> Bool {
-        guard connected, !session.isEmpty else { return false }
+        guard connected, !session.isEmpty else {
+            controlNotConnectedRefusals += 1
+            if InputLog.sampled(controlNotConnectedRefusals) {
+                InputLog.log.error("\(self.isHost ? "host" : "phone", privacy: .public) send refused: not connected (\(action.action, privacy: .public)) count=\(self.controlNotConnectedRefusals, privacy: .public)")
+            }
+            return false
+        }
         do {
             try action.validate()
             sentControl += 1
             let data = try JSONEncoder().encode(ControlPacket(session: session, sequence: sentControl, action: action))
-            guard media?.sendControl(data) == true else { peerDisconnected(); return false }
+            guard media?.sendControl(data) == true else {
+                InputLog.log.error("\(self.isHost ? "host" : "phone", privacy: .public) control send failed (\(action.action, privacy: .public)); ending session")
+                peerDisconnected(); return false
+            }
             return true
         } catch { connectionLost(); return false }
     }
@@ -597,11 +613,19 @@ final class RemoteCoordinator: ObservableObject {
                 guard let self, let peer, self.media === peer, data.count <= 16384 else { return }
                 do {
                     let packet = try JSONDecoder().decode(ControlPacket.self, from: data)
-                    guard packet.version == 1, packet.session == self.session, packet.sequence > self.receivedControl else { throw RemoteError.stale }
+                    guard packet.version == 1, packet.session == self.session, packet.sequence > self.receivedControl else {
+                        self.controlRejected["stale", default: 0] += 1
+                        InputLog.log.error("control rejected: stale version/session/sequence (seq \(packet.sequence, privacy: .public) after \(self.receivedControl, privacy: .public))")
+                        throw RemoteError.stale
+                    }
                     try packet.action.validate()
                     self.receivedControl = packet.sequence
                     self.onControl?(try JSONEncoder().encode(packet.action))
-                } catch { self.fail("Invalid control message. Session ended safely.") }
+                } catch {
+                    self.controlRejected["parse-or-validate", default: 0] += 1
+                    InputLog.log.error("control rejected: \(String(describing: error), privacy: .public); ending session")
+                    self.fail("Invalid control message. Session ended safely.")
+                }
             }
         }
         peer.onState = { [weak self, weak peer] state in

@@ -7,6 +7,26 @@ enum SessionLog {
     static let log = Logger(subsystem: "com.roshan.PocketDesk", category: "session")
 }
 
+enum InputLog {
+    static let log = Logger(subsystem: "com.roshan.PocketDesk", category: "input")
+    static func sampled(_ count: Int) -> Bool { count <= 3 || count % 50 == 0 }
+}
+
+/// Control-channel counts for diagnostics; no content.
+struct ControlChannelCounters {
+    var sent = 0
+    var refused: [String: Int] = [:]
+    var received = 0
+    var heldBeforeGate = 0
+    var releasedAfterGate = 0
+    var droppedAtGate = 0
+
+    var summary: String {
+        let refusals = refused.keys.sorted().map { "\($0)=\(refused[$0] ?? 0)" }.joined(separator: " ")
+        return "sent=\(sent) refused=[\(refusals)] received=\(received) heldBeforeGate=\(heldBeforeGate) releasedAfterGate=\(releasedAfterGate) droppedAtGate=\(droppedAtGate)"
+    }
+}
+
 struct ICEServerConfiguration: Codable {
     var urls: [String]
     var username: String?
@@ -217,6 +237,12 @@ final class PeerMedia: NSObject {
         return hadAuthorized
     }
     private var connectedPublished = false
+    private(set) var controlCounters = ControlChannelCounters()
+    /// Control messages that arrive before this side's first local-path authorization. The peer's
+    /// gate can open first and it sends one-time state (geometry, viewing) immediately; dropping it
+    /// left the phone without a geometry epoch, so input never enabled. Released only on authorization.
+    private var preGateControl: [Data] = []
+    private var preGateBytes = 0
     private var lastPairLog: String?
     private var role: String { isHost ? "host" : "phone" }
     private var lastRoute = "Route pending"
@@ -525,8 +551,22 @@ final class PeerMedia: NSObject {
     }
 
     func sendControl(_ data: Data) -> Bool {
-        guard !closed, localGateOpen(), data.count <= 16384,
-              let channel, channel.readyState == .open, channel.bufferedAmount < 64 * 1024 else { return false }
+        let refusal: String? = closed ? "closed" : !localGateOpen() ? "gate" : data.count > 16384 ? "size"
+            : channel == nil ? "no-channel" : channel?.readyState != .open ? "channel-not-open"
+            : (channel?.bufferedAmount ?? 0) >= 64 * 1024 ? "buffered" : nil
+        if let refusal {
+            controlCounters.refused[refusal, default: 0] += 1
+            let count = controlCounters.refused[refusal] ?? 0
+            if InputLog.sampled(count) {
+                InputLog.log.error("\(self.role, privacy: .public) send refused: \(refusal, privacy: .public) count=\(count, privacy: .public) channel=\(self.channel.map { String(describing: $0.readyState.rawValue) } ?? "nil", privacy: .public)")
+            }
+            return false
+        }
+        guard let channel else { return false }
+        controlCounters.sent += 1
+        if InputLog.sampled(controlCounters.sent) {
+            InputLog.log.info("\(self.role, privacy: .public) sent control #\(self.controlCounters.sent, privacy: .public)")
+        }
         let sent = channel.sendData(RTCDataBuffer(data: data, isBinary: true))
         counters.inputBuffered(channel.bufferedAmount)
         return sent
@@ -599,6 +639,7 @@ final class PeerMedia: NSObject {
                             SessionLog.log.error("\(self.role, privacy: .public) media failed: local path re-authorization refused")
                             self.onState?("failed"); return
                         }
+                        self.releasePreGateControl()
                         self.publishConnectedIfReady()
                     } else if let started = self.localPathStartedAt,
                               ProcessInfo.processInfo.systemUptime - started > 6 {
@@ -668,7 +709,25 @@ final class PeerMedia: NSObject {
         onState?("connected")
     }
 
+    private func releasePreGateControl() {
+        guard !preGateControl.isEmpty, localGateOpen() else { return }
+        let held = preGateControl
+        preGateControl.removeAll(); preGateBytes = 0
+        controlCounters.releasedAfterGate += held.count
+        InputLog.log.info("\(self.role, privacy: .public) released \(held.count, privacy: .public) control messages held until the local path was authorized")
+        for data in held {
+            guard !closed, localGateOpen() else { return }
+            onControl?(data)
+        }
+    }
+
+    private var localPathNeverAuthorized: Bool {
+        localRouteLock.lock(); defer { localRouteLock.unlock() }
+        return !localPathEverAuthorized
+    }
+
     func close() {
+        preGateControl.removeAll(); preGateBytes = 0
         statisticsTimer?.invalidate(); statisticsTimer = nil
         if let cadenceRenderer { observedTrack?.remove(cadenceRenderer) }
         cadenceRenderer = nil; observedTrack = nil
@@ -783,7 +842,24 @@ extension PeerMedia: RTCDataChannelDelegate {
         }
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.closed, self.channel === dataChannel else { return }
-            guard self.localGateOpen() else { return }
+            self.controlCounters.received += 1
+            guard self.localGateOpen() else {
+                if self.localLink != nil, self.localPathNeverAuthorized, self.preGateControl.count < 64,
+                   self.preGateBytes + buffer.data.count <= 256 * 1024 {
+                    self.preGateControl.append(buffer.data); self.preGateBytes += buffer.data.count
+                    self.controlCounters.heldBeforeGate += 1
+                    InputLog.log.info("\(self.role, privacy: .public) control held until local path authorization (\(self.preGateControl.count, privacy: .public) held)")
+                } else {
+                    self.controlCounters.droppedAtGate += 1
+                    if InputLog.sampled(self.controlCounters.droppedAtGate) {
+                        InputLog.log.error("\(self.role, privacy: .public) control dropped at local gate count=\(self.controlCounters.droppedAtGate, privacy: .public)")
+                    }
+                }
+                return
+            }
+            if InputLog.sampled(self.controlCounters.received) {
+                InputLog.log.info("\(self.role, privacy: .public) received control #\(self.controlCounters.received, privacy: .public)")
+            }
             self.onControl?(buffer.data)
         }
     }
