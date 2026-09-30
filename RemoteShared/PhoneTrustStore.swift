@@ -100,9 +100,14 @@ final class PhoneTrustStore {
         }
     }
 
-    func saveApproved(_ invitation: PairInvitation, replacementApproval: PhoneTrustReplacementApproval? = nil) throws {
+    func saveApproved(_ invitation: PairInvitation, scannedEnrollment: PairInvitation? = nil,
+                      replacementApproval: PhoneTrustReplacementApproval? = nil) throws {
         try locked {
             try invitation.validate(enrollment: false)
+            if let scannedEnrollment {
+                try scannedEnrollment.validate(enrollment: true)
+                guard Self.sameEnrollmentIdentity(invitation, scannedEnrollment) else { throw RemoteError.invalidPairing }
+            }
             var next = try load()
             // Reusing a room must not move credentials across an identified host.
             if let collision = next.hosts.first(where: { $0.invitation.room == invitation.room }),
@@ -110,18 +115,25 @@ final class PhoneTrustStore {
                 throw RemoteError.invalidPairing
             }
             let index = Self.existingIndex(for: invitation, in: next)
-            if let index, let required = try Self.replacementRequest(host: next.hosts[index], incoming: invitation) {
-                guard let approval = replacementApproval else { throw PhoneTrustMutationError.replacementRequiresApproval }
-                try approval.enrollment.validate(enrollment: true)
-                guard Self.sameEnrollmentIdentity(invitation, approval.enrollment),
-                      let scanned = try Self.replacementRequest(host: next.hosts[index], incoming: approval.enrollment),
-                      scanned == approval.request,
-                      required.existingHostRecordID == scanned.existingHostRecordID,
-                      required.existingInvitationFingerprint == scanned.existingInvitationFingerprint else {
+            if let index {
+                let host = next.hosts[index]
+                // A credential rotation authenticated by existing session authority is separate
+                // from explicit enrollment. Never use that exception for a supplied scanned QR.
+                if scannedEnrollment == nil {
+                    guard Self.sameEnrollmentIdentity(host.invitation, invitation), replacementApproval == nil else {
+                        throw RemoteError.invalidPairing
+                    }
+                } else if let scannedEnrollment,
+                          let required = try Self.replacementRequest(host: host, incoming: scannedEnrollment) {
+                    guard let approval = replacementApproval else { throw PhoneTrustMutationError.replacementRequiresApproval }
+                    try approval.enrollment.validate(enrollment: true)
+                    guard approval.enrollment == scannedEnrollment,
+                          required == approval.request else { throw RemoteError.invalidPairing }
+                } else if replacementApproval != nil {
                     throw RemoteError.invalidPairing
                 }
             } else if replacementApproval != nil {
-                // An approval cannot be replayed after the old record changed or was removed.
+                // An approval cannot be replayed after the old record was removed.
                 throw RemoteError.invalidPairing
             }
             if let index {
@@ -195,7 +207,7 @@ final class PhoneTrustStore {
     }
 
     private static func replacementRequest(host: PhoneHostTrust, incoming: PairInvitation) throws -> PhoneTrustReplacementRequest? {
-        guard !sameEnrollmentIdentity(host.invitation, incoming) else { return nil }
+        guard host.invitation != incoming else { return nil }
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         func fingerprint(_ invitation: PairInvitation) throws -> String {

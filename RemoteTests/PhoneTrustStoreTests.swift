@@ -80,7 +80,7 @@ final class PhoneTrustStoreTests: XCTestCase {
         a.room = try SecureRandom.token(); a.token = try SecureRandom.token(); a.ownerPairID = try SecureRandom.token()
         XCTAssertThrowsError(try trust.saveApproved(a))
         let request = try XCTUnwrap(trust.replacementRequest(for: a))
-        try trust.saveApproved(a, replacementApproval: PhoneTrustReplacementApproval(request: request, enrollment: a))
+        try trust.saveApproved(a, scannedEnrollment: a, replacementApproval: PhoneTrustReplacementApproval(request: request, enrollment: a))
         XCTAssertEqual(try trust.snapshot().selectedHostID, aID)
         XCTAssertEqual(try trust.snapshot().hosts.count, 2)
         try trust.select(hostID: bID)
@@ -149,10 +149,10 @@ final class PhoneTrustStoreTests: XCTestCase {
         let legacyID = try XCTUnwrap(trust.snapshot().selectedHostID)
         old.durableHostID = try SecureRandom.token(); old.ownerPairID = try SecureRandom.token()
         let upgrade = try XCTUnwrap(trust.replacementRequest(for: old))
-        try trust.saveApproved(old, replacementApproval: PhoneTrustReplacementApproval(request: upgrade, enrollment: old))
+        try trust.saveApproved(old, scannedEnrollment: old, replacementApproval: PhoneTrustReplacementApproval(request: upgrade, enrollment: old))
         old.room = try SecureRandom.token(); old.key = try SecureRandom.bytes(); old.token = try SecureRandom.token()
         let replacement = try XCTUnwrap(trust.replacementRequest(for: old))
-        try trust.saveApproved(old, replacementApproval: PhoneTrustReplacementApproval(request: replacement, enrollment: old))
+        try trust.saveApproved(old, scannedEnrollment: old, replacementApproval: PhoneTrustReplacementApproval(request: replacement, enrollment: old))
         XCTAssertEqual(try trust.snapshot().selectedHostID, legacyID)
         XCTAssertNotNil(legacy.data)
         try trust.forget(hostID: legacyID)
@@ -192,20 +192,20 @@ final class PhoneTrustStoreTests: XCTestCase {
         var accepted = qr
         accepted.key = try SecureRandom.bytes()
         accepted.token = try SecureRandom.token()
-        XCTAssertThrowsError(try trust.saveApproved(accepted))
+        XCTAssertThrowsError(try trust.saveApproved(accepted, scannedEnrollment: qr))
         XCTAssertEqual(try trust.snapshot(), initial)
         var hostile = accepted
         hostile.ownerPairID = try SecureRandom.token()
-        XCTAssertThrowsError(try trust.saveApproved(hostile, replacementApproval: approval))
+        XCTAssertThrowsError(try trust.saveApproved(hostile, scannedEnrollment: qr, replacementApproval: approval))
         XCTAssertEqual(try trust.snapshot(), initial)
         var changedQR = qr
         changedQR.key = try SecureRandom.bytes()
         let mismatched = PhoneTrustReplacementApproval(request: approval.request, enrollment: changedQR)
-        XCTAssertThrowsError(try trust.saveApproved(accepted, replacementApproval: mismatched))
+        XCTAssertThrowsError(try trust.saveApproved(accepted, scannedEnrollment: qr, replacementApproval: mismatched))
         XCTAssertEqual(try trust.snapshot(), initial)
-        try trust.saveApproved(accepted, replacementApproval: approval)
+        try trust.saveApproved(accepted, scannedEnrollment: qr, replacementApproval: approval)
         XCTAssertEqual(try trust.snapshot().selected?.invitation, accepted)
-        XCTAssertThrowsError(try trust.saveApproved(accepted, replacementApproval: approval), "approval cannot replay")
+        XCTAssertThrowsError(try trust.saveApproved(accepted, scannedEnrollment: qr, replacementApproval: approval), "approval cannot replay")
     }
 
     func testStaleApprovalCannotReplaceRotatedOrRemovedRecord() throws {
@@ -216,10 +216,10 @@ final class PhoneTrustStoreTests: XCTestCase {
         let approval = PhoneTrustReplacementApproval(request: try XCTUnwrap(trust.replacementRequest(for: qr)), enrollment: qr)
         old.token = try SecureRandom.token()
         try trust.saveApproved(old)
-        XCTAssertThrowsError(try trust.saveApproved(qr, replacementApproval: approval))
+        XCTAssertThrowsError(try trust.saveApproved(qr, scannedEnrollment: qr, replacementApproval: approval))
         XCTAssertEqual(try trust.snapshot().selected?.invitation, old)
         try trust.forget(hostID: XCTUnwrap(trust.snapshot().selectedHostID))
-        XCTAssertThrowsError(try trust.saveApproved(qr, replacementApproval: approval))
+        XCTAssertThrowsError(try trust.saveApproved(qr, scannedEnrollment: qr, replacementApproval: approval))
         XCTAssertNil(try trust.snapshot().selected)
     }
 
@@ -229,10 +229,54 @@ final class PhoneTrustStoreTests: XCTestCase {
         try trust.saveApproved(invitation)
         let id = try XCTUnwrap(trust.snapshot().selectedHostID)
         invitation.token = try SecureRandom.token(); invitation.key = try SecureRandom.bytes()
-        XCTAssertNil(try trust.replacementRequest(for: invitation))
+        XCTAssertNotNil(try trust.replacementRequest(for: invitation), "a fresh explicit QR still asks before replacing credentials")
         try trust.saveApproved(invitation)
         XCTAssertEqual(try trust.snapshot().selectedHostID, id)
         XCTAssertEqual(try trust.snapshot().selected?.invitation, invitation)
+    }
+
+    func testExplicitSameIdentityQRKeyOrTokenChangesRequireExactReplacementApproval() throws {
+        for changeKey in [true, false] {
+            let trust = PhoneTrustStore(records: TrustFixturePersistence(), legacy: TrustFixturePersistence())
+            let old = try pair(identified: true)
+            try trust.saveApproved(old)
+            let initial = try trust.snapshot()
+            var qr = old
+            if changeKey { qr.key = try SecureRandom.bytes() } else { qr.token = try SecureRandom.token() }
+            let approval = PhoneTrustReplacementApproval(request: try XCTUnwrap(trust.replacementRequest(for: qr)), enrollment: qr)
+            var accepted = qr
+            accepted.key = try SecureRandom.bytes(); accepted.token = try SecureRandom.token()
+            XCTAssertThrowsError(try trust.saveApproved(accepted, scannedEnrollment: qr))
+            XCTAssertEqual(try trust.snapshot(), initial)
+            try trust.saveApproved(accepted, scannedEnrollment: qr, replacementApproval: approval)
+            XCTAssertEqual(try trust.snapshot().selected?.invitation, accepted)
+        }
+    }
+
+    func testExpiredScannedEnrollmentCannotUseApprovalAtAcceptedSave() throws {
+        let trust = PhoneTrustStore(records: TrustFixturePersistence(), legacy: TrustFixturePersistence())
+        let old = try pair(identified: true)
+        try trust.saveApproved(old)
+        let initial = try trust.snapshot()
+        var qr = old; qr.key = try SecureRandom.bytes()
+        let approvedRequest = try XCTUnwrap(trust.replacementRequest(for: qr))
+        qr.expires = Date().addingTimeInterval(-1)
+        let expired = PhoneTrustReplacementApproval(request: approvedRequest, enrollment: qr)
+        var accepted = qr; accepted.expires = .distantFuture
+        XCTAssertThrowsError(try trust.saveApproved(accepted, scannedEnrollment: qr, replacementApproval: expired))
+        XCTAssertEqual(try trust.snapshot(), initial)
+    }
+
+    func testUnscannedAuthenticatedRotationCannotChangeRoutingIdentityOrConsumeEnrollmentApproval() throws {
+        let trust = PhoneTrustStore(records: TrustFixturePersistence(), legacy: TrustFixturePersistence())
+        let old = try pair(identified: true)
+        try trust.saveApproved(old)
+        let initial = try trust.snapshot()
+        var different = old; different.room = try SecureRandom.token()
+        XCTAssertThrowsError(try trust.saveApproved(different))
+        let approval = PhoneTrustReplacementApproval(request: try XCTUnwrap(trust.replacementRequest(for: different)), enrollment: different)
+        XCTAssertThrowsError(try trust.saveApproved(different, replacementApproval: approval))
+        XCTAssertEqual(try trust.snapshot(), initial)
     }
 
 }
