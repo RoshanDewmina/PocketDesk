@@ -66,11 +66,23 @@ struct RemoteAction: Codable {
     /// Correlates Big Text requests and replies; absent for older peers.
     var scaleRequestID: String? = nil
 
+    var inputRequestID: String? = nil
+    var inputAppliedReceipt: InputAppliedReceipt? = nil
+
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
       guard liveViewOnly == nil || action == "viewOnly" || action == "capture" else { throw RemoteError.invalidMessage }
         try captureScope?.validate()
         guard captureScope == nil || action == "capture" else { throw RemoteError.invalidMessage }
+        if let inputRequestID {
+            guard InputCausalEnvelope.validID(inputRequestID), InputAppliedReceipt.actions.contains(action) else { throw RemoteError.invalidMessage }
+        }
+        if let inputAppliedReceipt {
+            guard action == "inputApplied", inputRequestID == nil, interaction == nil, x == 0, y == 0, text.isEmpty, key.isEmpty,
+                  modifiers.isEmpty, features == nil, liveViewOnly == nil, captureScope == nil else { throw RemoteError.invalidMessage }
+            try inputAppliedReceipt.validate()
+        }
+        guard action != "inputApplied" || inputAppliedReceipt != nil else { throw RemoteError.invalidMessage }
         try hostStream?.validate()
         guard hostStream == nil || action == "capture" else { throw RemoteError.invalidMessage }
         try clock?.validate()
@@ -124,7 +136,7 @@ struct RemoteAction: Codable {
         }
         guard pointerLocation == nil || (action == "heartbeat" && pointerProbe != nil),
               pointerLocatorSupported == nil || action == "capture" else { throw RemoteError.invalidMessage }
-        guard ["move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "scroll", "text", "key", "release", "heartbeat", "viewing", "geometry", "capture", "textResult", "holdRenew", "auxClick"].contains(action),
+        guard ["move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "scroll", "text", "key", "release", "heartbeat", "viewing", "geometry", "capture", "textResult", "holdRenew", "auxClick", "inputApplied"].contains(action),
               x.isFinite, y.isFinite, abs(x) <= 20000, abs(y) <= 20000,
               text.utf8.count <= 4096, text.utf16.count <= 1024, key.utf8.count <= 32, modifiers.count <= 4,
               modifiers.allSatisfy({ ["command", "shift", "option", "control"].contains($0) }) else { throw RemoteError.invalidMessage }

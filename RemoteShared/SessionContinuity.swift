@@ -41,7 +41,7 @@ enum SessionFeature {
   static let legacyHost = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
                        momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]
-    static let host = [causalInput, liveViewOnly, captureScope] + legacyHost
+    static let host = [causalInput, liveViewOnly, captureScope, inputReceipt] + legacyHost
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as
