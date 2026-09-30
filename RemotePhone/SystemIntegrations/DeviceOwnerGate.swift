@@ -16,7 +16,9 @@ protocol DeviceOwnerAuthenticating: AnyObject {
 
 @MainActor
 final class LocalDeviceOwnerAuthenticator: DeviceOwnerAuthenticating {
-    static let shared = LocalDeviceOwnerAuthenticator()
+    nonisolated static let shared = LocalDeviceOwnerAuthenticator()
+
+    nonisolated init() {}
 
     var biometryName: String {
         let context = LAContext()

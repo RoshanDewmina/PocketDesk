@@ -105,14 +105,16 @@ final class MacShareBlockerTests: XCTestCase {
         XCTAssertFalse(phone.isRunning, "A missing grant is not retried by itself")
     }
 
-    func testAMacWaitingForApprovalTellsANewPhoneExactlyThatAndAnOlderOneTheNearestReason() throws {
+    func testAMacWaitingForApprovalTellsANewPhoneExactlyThat() throws {
         let (host, signaling, phone) = try pairedHost(blocker: .screenRecordingApproval)
         let replies = try handshake(signaling, phone: phone, features: MacShareBlocker.Handshake.phone.features)
         let refusal = try JSONDecoder().decode(MacShareBlocker.Refusal.self, from: try XCTUnwrap(replies.first?.body))
         XCTAssertEqual(refusal.reason, .screenRecordingApproval)
         XCTAssertTrue(host.hostRegistered, "The Mac stays registered while it waits")
         XCTAssertNil(host.media, "Nothing is streamed, and nothing pretends to be")
+    }
 
+    func testAPhoneThatOnlyKnowsBlockerOneHearsScreenRecordingOffWhileTheMacWaitsForApproval() throws {
         let (_, olderSignaling, olderPhone) = try pairedHost(blocker: .screenRecordingApproval)
         let older = try handshake(olderSignaling, phone: olderPhone, features: [MacShareBlocker.feature])
         let olderRefusal = try JSONDecoder().decode(MacShareBlocker.Refusal.self, from: try XCTUnwrap(older.first?.body))

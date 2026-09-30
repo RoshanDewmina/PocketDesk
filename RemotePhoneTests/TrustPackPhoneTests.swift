@@ -2,6 +2,7 @@ import UserNotifications
 import XCTest
 @testable import PocketDeskRemote
 
+@MainActor
 final class ScreenRecordingApprovalPhoneTests: XCTestCase {
     func testTheMacsApprovalRefusalBecomesItsOwnStateWithExactSteps() {
         let error = FriendlyError.from(status: "Mac unavailable: screenRecordingApproval", previous: nil, macName: "Studio Mac")

@@ -2,11 +2,13 @@ import SwiftUI
 
 /// Settings → Security: the optional owner check before Connect and Forget this Mac.
 struct SecuritySettingsSheet: View {
-    var gate: DeviceOwnerGate = .live
+    var owner: DeviceOwnerGate?
     @State private var required = PhoneSecurityPreferences().requireOwnerToConnect
     @State private var changing = false
     @State private var note: String?
     @Environment(\.dismiss) private var dismiss
+
+    private var gate: DeviceOwnerGate { owner ?? .live }
 
     var body: some View {
         let name = gate.authenticator.biometryName

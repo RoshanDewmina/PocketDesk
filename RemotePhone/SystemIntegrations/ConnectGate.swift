@@ -32,8 +32,9 @@ enum ConnectGate {
 
     @discardableResult
     static func connect(model: PhoneRemoteModel, onboarding: OnboardingFlow, restartsRunning: Bool,
-                        access: AnywhereAccess = .shared, owner: DeviceOwnerGate = .live,
+                        access: AnywhereAccess = .shared, owner: DeviceOwnerGate? = nil,
                         showServerData: @escaping () -> Void) -> Decision {
+        let owner = owner ?? .live
         let connection = model.connection
         let decision = decide(paired: connection.invitation != nil, connected: connection.connected,
                               running: connection.isRunning, restartsRunning: restartsRunning,
