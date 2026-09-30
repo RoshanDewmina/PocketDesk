@@ -72,8 +72,16 @@ final class MediaResourceBudget: @unchecked Sendable {
     func observeGuests(count: Int, kbps: Double?, at: TimeInterval) {
         lock.lock(); defer { lock.unlock() }
         guard !ended else { return }
+        let known = count == 0 || (count > 0 && count <= 2 && at.isFinite && kbps.map { $0.isFinite && $0 >= 0 } == true)
+        let previouslyKnown = replicatedGuests.count == 0 || (replicatedGuests.count > 0 && replicatedGuests.count <= 2 &&
+            replicatedGuests.at.isFinite && replicatedGuests.kbps.map { $0.isFinite && $0 >= 0 } == true)
+        let loadIncreased = count > 0 && kbps.map { $0 > (replicatedGuests.kbps ?? 0) } == true
+        if count != replicatedGuests.count || !known || !previouslyKnown || loadIncreased {
+            tokens = 0; lastCredit = at
+        }
+        // A periodic refresh is not new congestion: preserve bounded credit for unchanged zero
+        // guests and stable/decreasing known load, so a low-rate 16 KiB chunk can accumulate.
         replicatedGuests = (count, at, kbps)
-        tokens = 0; lastCredit = at
     }
 
     func end() {
