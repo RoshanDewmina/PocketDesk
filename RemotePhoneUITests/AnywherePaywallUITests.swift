@@ -19,7 +19,7 @@ final class AnywherePaywallUITests: XCTestCase {
         let row = app.buttons["home.anywhere"]
         XCTAssertTrue(row.waitForExistence(timeout: 10), "Home offers Farside Anywhere with no Mac paired")
         XCTAssertTrue(row.label.contains("Farside Anywhere"), row.label)
-        XCTAssertTrue(row.label.contains("Free on the same Wi-Fi"), row.label)
+        XCTAssertTrue(row.label.contains("Verified local access free"), row.label)
         row.tap()
 
         let yearly = app.buttons["anywhere.plan.yearly"]

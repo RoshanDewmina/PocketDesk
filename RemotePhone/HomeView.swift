@@ -39,6 +39,12 @@ struct PhoneRemoteView: View {
                 NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true)
             }
         }
+        .overlay(alignment: .topLeading) {
+            if presentedSession && !model.contentConcealed && !model.privacyShield {
+                UsefulSessionEntry(progress: model.usefulSession, replayCoach: onboarding.replayCoach)
+                    .padding(.leading, 12).padding(.top, 8)
+            }
+        }
         // Read once per change of Home's art, never on keyboard or rotation frames of the session.
         .onPreferenceChange(ReachMeetingPointKey.self) { point in
             guard let point, let screen = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.screen.bounds.size,
@@ -63,6 +69,9 @@ struct PhoneRemoteView: View {
             }
         }
         .farsideSystemRoutes(model: model, onboarding: onboarding)
+        .onReceive(model.usefulSession.$evidence) { evidence in
+            if evidence.ready(at: ProcessInfo.processInfo.systemUptime) { onboarding.offerCoach() }
+        }
         .onChange(of: connection.connected) { _, connected in
             if connected {
                 // Finger meets pointer (D38). A held session coming back gets its own "back" beat.
@@ -304,6 +313,8 @@ struct HomeView: View {
                     .padding(.top, Farside.Space.m)
             }
             Spacer(minLength: verticalSizeClass == .compact ? Farside.Space.l : Farside.Space.xl)
+            UsefulSessionEntry(progress: model.usefulSession, replayCoach: onboarding.replayCoach)
+                .padding(.bottom, Farside.Space.m)
             if macName != nil { homeList }
             AnywherePlanRow(store: anywhere) { showPaywall = true }
                 .padding(.top, Farside.Space.m)

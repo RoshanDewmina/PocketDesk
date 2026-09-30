@@ -1,0 +1,4 @@
+scenario,cost_usd_month,monthly_net_usd,annual_net_usd_month,lifetime_10y_usd,lifetime_20y_usd,lifetime_40y_usd,lifetime_perpetual_undiscounted,lifetime_perpetual_5pct_usd,lifetime_199cad_net_usd
+light,0.072,5.031,3.148,8.64,17.28,34.56,unbounded,17.28,125.3
+regular,1.8,5.031,3.148,216.0,432.0,864.0,unbounded,432.0,125.3
+heavy,28.8,5.031,3.148,3456.0,6912.0,13824.0,unbounded,6912.0,125.3
