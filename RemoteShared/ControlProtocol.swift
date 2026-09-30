@@ -44,6 +44,10 @@ struct RemoteAction: Codable {
     var ladder: LadderState? = nil
     /// The Mac's load state for the phone's pill, on `capture` status.
     var busy: BusyState? = nil
+    /// Couch mode: the phone's `mode` request, or the Mac's mode on `capture` status. Validated in CouchProtocol.swift.
+    var mode: String? = nil
+    /// One-shot reason the Mac did not switch, on `capture` status.
+    var modeReason: String? = nil
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
@@ -64,6 +68,7 @@ struct RemoteAction: Codable {
             throw RemoteError.invalidMessage
         }
         // Also before the early returns, so no other action can carry a display list.
+        if try validateSessionMode() { return }
         if try validateDisplaySelection() { return }
         if try validateSessionExtension() { return }
         if try validatePointerSync() { return }
