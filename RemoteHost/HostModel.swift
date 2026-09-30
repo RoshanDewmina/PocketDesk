@@ -2233,6 +2233,11 @@ final class RemoteHostModel: ObservableObject {
             postMs: max(0, endedMs - startedMs))
         countInput(outcome.accepted ? "posted" : (input.enabled ? "refused-by-driver" : "refused-control-disabled"))
         if outcome.accepted { activity.record(action: action.action) }
+        if let id = action.inputRequestID, InputAppliedReceipt.actions.contains(action.action),
+           connection.peerFeatures.contains(SessionFeature.extendedFeatureList) {
+            _ = connection.sendControl(RemoteAction(action: "inputApplied", epoch: inputEpoch.value,
+                inputAppliedReceipt: InputAppliedReceipt(requestID: id, kind: action.action, accepted: outcome.accepted)))
+        }
         if action.action == "move" || action.action == "moveTo", outcome.accepted {
             pointerTelemetry.moveInjected(globalPoint: point, at: now)
         }
