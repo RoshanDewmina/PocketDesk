@@ -277,7 +277,11 @@ struct StreamTuning: Equatable {
         lock.lock(); defer { lock.unlock() }
         guard !runtimePrepared else { return }
         runtimePrepared = true
-        let trials = tuning.fieldTrials
+        var trials = tuning.fieldTrials
+        if PacketRepairPreferences.activeThisLaunch {
+            trials[kRTCFieldTrialFlexFec03AdvertisedKey] = "Enabled"
+            trials[kRTCFieldTrialFlexFec03Key] = "Enabled"
+        }
         if !trials.isEmpty { RTCInitFieldTrialDictionary(trials) }
     }
 }

@@ -306,6 +306,7 @@ targets:
       - RemoteShared/ConnectMotionModel.swift
       - RemoteHost/HostSetupView.swift
       - RemoteHost/HostSettingsView.swift
+      - RemoteHost/TransportPreferenceRows.swift
       - RemoteShared/LegalNoticesView.swift
       - RemoteShared/ThirdPartyNotices.txt
     settings:

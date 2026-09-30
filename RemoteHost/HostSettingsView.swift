@@ -27,6 +27,7 @@ struct HostSettingsView: View {
                     VStack(alignment: .leading, spacing: 18) {
                         permissionsSection
                         generalSection
+                        TransportPreferenceRows()
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
