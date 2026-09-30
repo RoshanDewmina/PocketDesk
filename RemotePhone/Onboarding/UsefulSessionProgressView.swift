@@ -32,7 +32,14 @@ struct UsefulSessionProgressView: View {
                 Section(text("FIRST_TASK", "Try one useful task")) {
                     Text(text("TASK_GUIDANCE", "Read something you need, navigate to a window, make an edit, or save a change on your Mac. Confirm only what you actually finished."))
                         .fixedSize(horizontal: false, vertical: true)
-                    fact(text("USABLE_CONTENT", "Fresh picture or Couch session"), progress.evidence.admittedPicture || progress.evidence.admittedCouch)
+                    fact(text("CONTENT_RECORDED", "Picture or Couch content recorded during this session"), progress.evidence.admittedPicture || progress.evidence.admittedCouch)
+                    fact(text("CONTENT_READY_NOW", "Content is authorized and ready now"), progress.evidence.ready(at: now))
+                    if progress.pictureConfirmationAvailable {
+                        Text(text("PICTURE_CONFIRM_REASON", "Confirm only if you can currently see your Mac’s picture."))
+                            .font(.footnote).fixedSize(horizontal: false, vertical: true)
+                        Button(text("CONFIRM_VISIBLE_PICTURE", "I can see my Mac’s picture now")) { progress.confirmVisiblePicture() }
+                            .frame(minHeight: 44)
+                    }
                     fact(text("INPUT_APPLIED", "Mac confirmed applied input"), progress.evidence.appliedInput)
                     fact(text("OUTCOME_CONFIRMED", "You confirmed a task outcome"), progress.evidence.outcome != nil)
                     Text(text("TASK_FACTS_SEPARATE", "Pairing, connecting, restoring a purchase, and practicing gestures do not complete a task. A confirmed input does not prove an edit or save."))

@@ -113,3 +113,8 @@
 "TRIAL_END_STOP" = "Trial ends %@. It won’t renew.";
 "USABLE_CONTENT" = "Fresh picture or Couch session";
 "YEAR_SAVING" = "Save %ld%%";
+
+"CONTENT_RECORDED" = "Picture or Couch content recorded during this session";
+"CONTENT_READY_NOW" = "Content is authorized and ready now";
+"PICTURE_CONFIRM_REASON" = "Confirm only if you can currently see your Mac’s picture.";
+"CONFIRM_VISIBLE_PICTURE" = "I can see my Mac’s picture now";

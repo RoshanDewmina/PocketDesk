@@ -33,6 +33,31 @@ final class UsefulSessionEvidenceTests: XCTestCase {
         XCTAssertEqual(tracker.pending.count, 1)
         tracker.clear(); XCTAssertTrue(tracker.pending.isEmpty)
     }
+    func testDecodedOrRepeatedSourceAloneNeverSuppliesVisiblePicture() {
+        var picture = UsefulPictureEvidence()
+        XCTAssertFalse(picture.visible(context: context, now: 10), "Decoded/enqueued source supplies no presentation receipt")
+        let receipt = UUID()
+        picture.presented(receipt, context: context, deadline: 12, now: 10)
+        XCTAssertTrue(picture.visible(context: context, now: 11))
+        XCTAssertEqual(picture.visibleUntil(context: context, now: 11), 12)
+        picture.presented(receipt, context: context, deadline: 14, now: 11)
+        XCTAssertFalse(picture.visible(context: context, now: 12), "Redraw of one original source cannot renew freshness")
+        picture.presented(UUID(), context: context, deadline: 14, now: 12)
+        XCTAssertTrue(picture.visible(context: context, now: 13))
+        picture.invalidate(); XCTAssertFalse(picture.visible(context: context, now: 13))
+    }
+    func testUnknownPresentationRequiresExplicitUserConfirmationAndExactCurrentContext() {
+        var picture = UsefulPictureEvidence()
+        let other = UsefulSessionContext(hostRecordID: context.hostRecordID, sessionID: UUID(), contentEpoch: 2, geometryEpoch: 4)
+        picture.confirmVisible(context: context, deadline: 12, now: 10)
+        XCTAssertTrue(picture.userConfirmed); XCTAssertNil(picture.receiptID)
+        XCTAssertTrue(picture.visible(context: context, now: 11)); XCTAssertFalse(picture.visible(context: other, now: 11))
+        picture.confirmVisible(context: other, deadline: 14, now: 12)
+        XCTAssertFalse(picture.visible(context: context, now: 12)); XCTAssertTrue(picture.visible(context: other, now: 13))
+        picture.invalidate(); picture.confirmVisible(context: other, deadline: 14, now: 14)
+        XCTAssertFalse(picture.visible(context: other, now: 14))
+    }
+
     func testUsefulContentInputAndUserOutcomeRemainSeparate() {
         var facts = UsefulSessionEvidence()
         XCTAssertFalse(facts.confirm(.read, now: 10), "QR/connected/restore/practice supply no admission")
@@ -53,6 +78,8 @@ final class UsefulSessionEvidenceTests: XCTestCase {
         XCTAssertTrue(facts.admittedCouch); XCTAssertFalse(facts.admittedPicture); XCTAssertNil(facts.outcome)
         XCTAssertFalse(facts.applied(context: context, now: 12))
         facts.invalidate(); XCTAssertFalse(facts.confirm(.read, now: 13))
+        XCTAssertTrue(facts.admittedCouch, "Historical content remains separately recorded; readiness is false")
+        XCTAssertFalse(facts.ready(at: 13))
         facts.admit(.couch, context: changed, deadline: 13, now: 13); XCTAssertFalse(facts.ready(at: 13))
     }
 }

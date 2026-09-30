@@ -110,3 +110,8 @@
 "TRIAL_YEARS" = "%ld ans";
 "USABLE_CONTENT" = "Image récente ou session Couch";
 "YEAR_SAVING" = "Économisez %ld%%";
+
+"CONTENT_RECORDED" = "Image ou contenu Couch constaté pendant cette session";
+"CONTENT_READY_NOW" = "Le contenu est autorisé et disponible maintenant";
+"PICTURE_CONFIRM_REASON" = "Confirmez uniquement si vous voyez actuellement l’image de votre Mac.";
+"CONFIRM_VISIBLE_PICTURE" = "Je vois l’image de mon Mac maintenant";

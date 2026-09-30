@@ -558,6 +558,9 @@ struct NativeSessionView: View {
                                        fillsFrame: model.captureRegion != nil,
                                        smoothMotion: smoothMotion, smoothMotionUpscale: smoothMotionUpscale,
                                        admission: model.inlinePresentationAdmission,
+                                       onOriginalSourcePresented: { [weak model] identity, receipt in
+                                           Task { @MainActor in model?.originalSourcePresented(identity, receipt: receipt) }
+                                       },
                                        onFrame: model.frameReceived)
                         .frame(width: picture.width, height: picture.height)
                         .offset(x: picture.minX, y: picture.minY)

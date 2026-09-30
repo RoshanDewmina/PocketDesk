@@ -413,6 +413,7 @@ final class PhoneRemoteModel: ObservableObject {
         appliedReceiptTracker.clear()
         pendingText?.usefulContext = nil
         usefulSession.invalidate()
+        usefulPicture.invalidate()
         VideoPresentationSession.invalidateActive()
         inlinePresentationAdmission = nil
         if !keepingPiP {
@@ -452,6 +453,38 @@ final class PhoneRemoteModel: ObservableObject {
         livePiP.updateAdmission(nextPiP)
         if nextPiP != nil, let track = connection.remoteVideo { livePiP.attachSourceTrack(track) }
     }
+    private var usefulPicture = UsefulPictureEvidence()
+    private var lastUsefulPresentationUpdate: TimeInterval = 0
+    func originalSourcePresented(_ identity: VideoPresentationIdentity, receipt: UUID) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let admission = inlinePresentationAdmission, identity == admission.identity,
+              admission.permits(at: now), let context = usefulSessionContext,
+              identity.hostRecordID == context.hostRecordID, identity.sessionID == context.sessionID,
+              identity.contentEpoch == context.contentEpoch, identity.geometryEpoch == context.geometryEpoch,
+              identity.trackID == connection.presentationTrackID, sceneIsActive, !privacyShield, !contentConcealed,
+              let deadline = usefulPictureDeadline(at: now) else { return }
+        usefulPicture.presented(receipt, context: context, deadline: deadline, now: now)
+        if now - lastUsefulPresentationUpdate >= 0.25 || !usefulSession.evidence.ready(at: now) {
+            lastUsefulPresentationUpdate = now; refreshUsefulSession(at: now)
+        }
+    }
+    private func usefulPictureDeadline(at now: TimeInterval) -> TimeInterval? {
+        guard sessionMode == .picture, fresh, lastFrame > 0,
+              inlinePresentationAdmission?.permits(at: now) == true,
+              let route = connection.presentationDeadline(at: now), captureHealthy,
+              lastCaptureHealth > 0, sourceSize.width > 0, sourceSize.height > 0,
+              hostPresence != .locked, hostPresence != .switchedUser,
+              sceneIsActive, !privacyShield, !contentConcealed else { return nil }
+        let deadline = min(route, lastCaptureHealth + 2, lastFrame + 2)
+        return now < deadline ? deadline : nil
+    }
+    private func confirmVisibleUsefulPicture() {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard let context = usefulSessionContext, let deadline = usefulPictureDeadline(at: now) else { return }
+        usefulPicture.confirmVisible(context: context, deadline: deadline, now: now)
+        refreshUsefulSession(at: now)
+    }
+
     private var usefulSessionContext: UsefulSessionContext? {
         guard let host = presentationHost, host.invitation == connection.invitation, geometryEpoch > 0 else { return nil }
         return UsefulSessionContext(hostRecordID: host.id, sessionID: connection.presentationSessionID,
@@ -463,13 +496,17 @@ final class PhoneRemoteModel: ObservableObject {
               let context = usefulSessionContext, let route = connection.presentationDeadline(at: now),
               lastCaptureHealth > 0 else { usefulSession.invalidate(); return }
         let deadline = min(route, lastCaptureHealth + 2)
-        if sessionMode == .picture, fresh, lastFrame > 0,
-           inlinePresentationAdmission?.permits(at: now) == true {
-            usefulSession.admit(.picture, context: context, deadline: min(deadline, lastFrame + 2), now: now)
+        let pictureEligible = usefulPictureDeadline(at: now) != nil
+        if pictureEligible, let visibleUntil = usefulPicture.visibleUntil(context: context, now: now) {
+            usefulSession.setPictureConfirmationAvailable(false)
+            usefulSession.admit(.picture, context: context, deadline: min(deadline, lastFrame + 2, visibleUntil), now: now)
         } else if sessionMode == .couch, connection.provenLocalLinkActive,
                   hostFeatures.contains(SessionFeature.couch), canControl {
+            usefulSession.setPictureConfirmationAvailable(false)
             usefulSession.admit(.couch, context: context, deadline: deadline, now: now)
-        } else { usefulSession.invalidate() }
+        } else {
+            usefulSession.invalidate(pictureConfirmationAvailable: pictureEligible)
+        }
     }
     private func receiveAppliedInput(_ action: RemoteAction) {
         let now = ProcessInfo.processInfo.systemUptime
@@ -495,7 +532,7 @@ final class PhoneRemoteModel: ObservableObject {
         invalidatePresentation()
         if sceneIsActive {
             requestViewOnlyExit()
-        } else if pipBackground { disconnect() }
+        } else if pipBackground { disconnect(explicitEnd: false) }
     }
     private func requestViewOnlyExit() {
         awaitingViewOnlyExit = true
@@ -503,7 +540,7 @@ final class PhoneRemoteModel: ObservableObject {
         viewOnlyExitDeadline = min(viewOnlyExitDeadline ?? (now + 2), now + 2)
         let id = viewOnlyRequest.begin(epoch: geometryEpoch, at: ProcessInfo.processInfo.systemUptime)
         viewOnlyStartDeadline = nil
-        if !connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: false, liveViewOnlyRequestID: id, epoch: geometryEpoch)) { disconnect() }
+        if !connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: false, liveViewOnlyRequestID: id, epoch: geometryEpoch)) { disconnect(explicitEnd: false) }
     }
     private func releasePiPControl() {
         setMacAudioMuted(true); endSecureFocus(); cancelInput(); inputToken = nil
@@ -570,11 +607,12 @@ final class PhoneRemoteModel: ObservableObject {
             UserDefaults.standard.removeObject(forKey: "miniMap.phoneLandscape")
             UserDefaults.standard.removeObject(forKey: "miniMap.pad")
         }
+        usefulSession.onConfirmVisiblePicture = { [weak self] in self?.confirmVisibleUsefulPicture() }
         macAudioPlayback.onMustMute = { [weak self] in self?.setMacAudioMuted(true) }
         livePiP.didChangeState = { [weak self] state in
             guard let self else { return }
             self.pipState = state
-            if self.pipBackground && state != .active { self.disconnect() }
+            if self.pipBackground && state != .active { self.disconnect(explicitEnd: false) }
             else if state == .ineligible && !self.invalidatingPiP && self.sceneIsActive && self.viewOnlyConfirmed && !self.awaitingViewOnlyExit {
                 self.requestViewOnlyExit()
             }
@@ -1820,15 +1858,16 @@ let now = ProcessInfo.processInfo.systemUptime
         modifiers.removeAll()
     }
 
-    func disconnect() {
-        usefulSession.invalidate(explicitEnd: true)
+    func disconnect() { disconnect(explicitEnd: true) }
+    func disconnect(explicitEnd: Bool) {
+        usefulSession.invalidate(explicitEnd: explicitEnd)
         pipBackground = false
         invalidatePresentation()
         viewOnlyConfirmed = false
         awaitingViewOnlyExit = false
         viewOnlyExitDeadline = nil
-        sessionEndReason = .user
-        resumeTiming.cancel(.userEnded)
+        sessionEndReason = explicitEnd ? .user : (sessionEndReason ?? .error)
+        resumeTiming.cancel(explicitEnd ? .userEnded : .timedOut)
         discardResume()
         clearContinuity()
         release()
@@ -2432,7 +2471,7 @@ let now = ProcessInfo.processInfo.systemUptime
     private func tick(at suppliedNow: TimeInterval? = nil) {
         let now = suppliedNow ?? ProcessInfo.processInfo.systemUptime
         if awaitingViewOnlyExit, let deadline = viewOnlyExitDeadline, now >= deadline {
-            disconnect()
+            disconnect(explicitEnd: false)
             showSessionNotice("Your Mac didn’t confirm foreground control. Reconnect to continue.")
             return
         }
@@ -2703,6 +2742,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
     var admission: VideoPresentationAdmission?
     /// Raw decoded source callback; must be thread-safe (LivePiPController.offer is thread-safe).
     var onSourceFrame: ((VideoFrameEnvelope) -> Void)?
+    var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
     let onFrame: () -> Void
 
     static func contentMode(fillsFrame: Bool) -> UIView.ContentMode { fillsFrame ? .scaleToFill : .scaleAspectFit }
@@ -2731,6 +2771,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
             NSLayoutConstraint.activate([view.leadingAnchor.constraint(equalTo: container.leadingAnchor), view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
                 view.topAnchor.constraint(equalTo: container.topAnchor), view.bottomAnchor.constraint(equalTo: container.bottomAnchor)])
         }
+        context.coordinator.session?.onOriginalSourcePresented = onOriginalSourcePresented
         context.coordinator.session?.configure(admission: admission, counters: counters, statistics: statistics,
             sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth, fillsFrame: fillsFrame,
             mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame)
