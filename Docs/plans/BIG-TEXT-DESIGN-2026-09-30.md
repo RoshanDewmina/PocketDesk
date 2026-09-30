@@ -1,6 +1,6 @@
 # Big Text — design spec
 
-30 September 2026, revision 2. Status: **design, awaiting Roshan's review. Nothing is implemented.** PRODUCT.md D38 records the decision; this file holds the engineering design. Physical behaviour below is a requirement to verify, not an observed result.
+30 September 2026, revision 2 (amended by Task 0 of `BIG-TEXT-IMPLEMENTATION-PLAN-2026-09-30.md`). Status: **approved by Roshan 30 Sep; implementation in progress on `farside-big-text`.** PRODUCT.md D38 records the decision; this file holds the engineering design. Physical behaviour below is a requirement to verify, not an observed result.
 
 Revision 2 incorporates an independent adversarial review (Claude Opus, same day; see §11). Its critical findings were checked against the source before being accepted.
 
@@ -19,12 +19,12 @@ Why it matters: the launch promise is readable small text without lag. A larger 
 
 **Every later connection.** If this phone saved a level for this Mac and display, the phone asks for it once the host advertises support. The session starts at normal size and switches within about a second under the pill. A saved level at or above the Mac's current size does nothing, silently.
 
-**Session-only off.** No new row in the fixed D36 panel (it does not scroll and has no room on small iPhones). The existing **Display** key gains a Big Text state: long-press or its menu offers "Big Text: On / Off for this session". The same menu appears on the landscape and iPad one-row overlay. With no saved level, it opens the Picture page.
+**Session-only off.** There is no Display key (Display is a panel row shown only on multi-display Macs). The fixed D36 panel gains a **Big Text** toggle row, shown only when the Mac supports Big Text and this phone has a saved level; the panel height grows by one row when it is shown. Settings → Picture also has **Off for this session**, which is how landscape and iPad (one-row overlay → gear → Settings) reach it. *(Amended in Task 0 of the implementation plan: the Display key described in revision 2 does not exist in source.)*
 
 **On the Mac.** The physical screen shows the larger size while a phone is connected (the privacy curtain can still cover it). The menu-bar popover shows "Big Text on · looks like 1280 × 832" with a **Restore normal size** button, which ends Big Text for the session. Mac Settings gains **Allow a connected phone to change text size** (default on); off hides the feature from phones. Windows on other Spaces also shrink and may not be restored (§5); the setup copy says so once.
 
 **When it cannot apply.** The session continues at normal size with one short message:
-- "Can't change text size while an app is full screen on your Mac."
+- "Couldn't change text size. If an app is full screen on your Mac, exit full screen and try again." (CoreGraphics does not report *why* a configuration failed.)
 - "Big Text needs Accessibility permission on your Mac."
 - "This display doesn't offer larger sizes."
 - "Big Text is turned off on this Mac."
@@ -51,7 +51,7 @@ States: `idle` → `changing(target, generation)` → `applied(baseline, current
 2. Keep the privacy curtain windows up if they are up (§4.4).
 3. On first apply only: snapshot windows (§5) and record the baseline mode.
 
-**Performing the change.** `CGBeginDisplayConfiguration` → `CGConfigureDisplayWithDisplayMode` → `CGCompleteDisplayConfiguration(config, .forAppOnly)`. `.forAppOnly` scope: Apple documents that after the application terminates the settings revert to the current login session configuration. On failure: cancel the configuration, resume capture at the unchanged size, reply with the error (`fullScreen` when another app is full screen, else `failed`).
+**Performing the change.** `CGBeginDisplayConfiguration` → `CGConfigureDisplayWithDisplayMode` → `CGCompleteDisplayConfiguration(config, .forAppOnly)`. `.forAppOnly` scope: Apple documents that after the application terminates the settings revert to the current login session configuration. On failure: cancel the configuration, resume capture at the unchanged size, reply with `failed` (CoreGraphics does not say why; the phone's copy mentions full screen as the likely cause).
 
 **4.1 Recognising our own change.** Register `CGDisplayRegisterReconfigurationCallback` for the host's lifetime. Our change is recognised only when all hold: the state is `changing`/`restoring`; the after-change callback for the streamed display carries `setModeFlag` and no add/remove flags; the online display list is unchanged; and `CGDisplayCopyDisplayMode` equals the target. Multiple callbacks and `didChangeScreenParametersNotification`s for the same generation coalesce into one completion. Timeout 10 s (external monitors can be slow); on timeout, treat the state as foreign (§4.3).
 
@@ -65,12 +65,12 @@ States: `idle` → `changing(target, generation)` → `applied(baseline, current
 
 **4.4 Curtain during a change.** A capture restart currently drops the curtain's capture exclusions, which lifts the curtain and would show the physical screen for 1–3 s on every step. Instead, for our own changes: leave curtain windows up, resize them in place to each screen's new frame once §4.1 recognises the change, and start the new stream with the curtain windows already excluded. The curtain's screen-change observer defers to the Big Text state machine while it is `changing`/`restoring`.
 
-**4.5 Restoring.** Restore is wired to the points every session ends through, not to a list of user actions: `endCapture`, `stop`, `stopForTermination`, a display switch (phone or Mac side), `captureFailed`, pairing removal, and Screen Recording revocation. It restores the baseline mode (same `.forAppOnly` call and §4.1 recognition), then restores windows (§5). A background pause still inside its grace period keeps Big Text. On an unexpected disconnect, wait 20 s before restoring so a quick reconnect does not cycle the mode twice.
+**4.5 Restoring.** Restore is wired to the points every session ends through, not to a list of user actions: `endCapture`, `stop`, `stopForTermination`, a display switch (phone or Mac side), `captureFailed`, pairing removal, and Screen Recording revocation. It restores the baseline mode (same `.forAppOnly` call and §4.1 recognition), then restores windows (§5). A background pause still inside its grace period keeps Big Text. On any phone disconnect (the host cannot tell a phone's End from a lost network), wait 20 s before restoring so a quick reconnect does not cycle the mode twice.
 
 If a restore cannot run or fails (for example at sleep, lock or user switch), set a persistent **restore pending** flag in memory and retry on wake, unlock and session-active notifications. The popover shows "Restoring normal size…" while it is pending.
 
 **4.6 Crash, hang and quit.**
-- Normal quit: `stopForTermination` restores the mode synchronously; window restore is skipped if it cannot finish within 1 s (quit must stay prompt).
+- Normal quit: `stopForTermination` restores the mode synchronously; window restore is skipped on quit (quit must stay prompt).
 - Crash or watchdog kill: macOS reverts the mode on termination per the `.forAppOnly` documentation. Reverting after SIGKILL is inferred, not documented; it is a physical test gate (§9).
 - Hang: while Big Text is applied, the hang watchdog treats the host like "curtain up" (`HangWatchdogPolicy.threshold` returns the 4 s curtain threshold), so a hung host is killed and the mode reverts rather than staying large until someone force-quits.
 - Windows are not restored after a crash in this version (no on-disk snapshot). Accepted trade-off: crashes are rare, and a stale snapshot applied later is worse than shrunken windows.
@@ -81,11 +81,11 @@ If a restore cannot run or fails (for example at sleep, lock or user switch), se
 
 Shrinking the usable area makes macOS shrink windows that no longer fit, and it does not grow them back.
 
-**Snapshot, before the first change.** For every standard window on the streamed display, keep in memory: the `AXUIElement` reference, its owner PID, the `CGWindowID` matched through `CGWindowListCopyWindowInfo` (owner PID and bounds only; the window name key is never read), and its position and size. Titles and contents are never recorded. Minimised and full-screen windows are skipped. Nothing is written to disk.
+**Snapshot, before the first change.** For every standard window on the streamed display, keep in memory: the retained `AXUIElement` reference (its identity, compared with CF equality), its owner PID, and its position and size. A window that no longer answers position/size is gone. (Revision 2's `CGWindowID` pairing is dropped: it needs a private API.) Titles and contents are never recorded. Minimised and full-screen windows are skipped. Nothing is written to disk.
 
 **After the change settles**, record each window's post-change frame.
 
-**Restore** re-applies the pre-change frame only to windows that still exist (same `AXUIElement`/`CGWindowID`) and are still at their recorded post-change frame, so windows the person moved or resized during the session are left alone. Apply largest first; ignore refusals. Skip restore entirely when Stage Manager is on.
+**Restore** re-applies the pre-change frame only to windows that still exist (same retained `AXUIElement`) and are still at their recorded post-change frame, so windows the person moved or resized during the session are left alone. Apply largest first; ignore refusals. Skip restore entirely when Stage Manager is on.
 
 **Threading.** All Accessibility calls run off the main thread with a 0.1 s messaging timeout (as `HostCursorShape` does), so a slow app cannot stall the main thread into the hang watchdog. Restore starts only after §4.1 recognises the restoring mode change plus the 300 ms settle.
 
@@ -96,12 +96,12 @@ Big Text is offered only when the host has Accessibility permission, because wit
 - New capability `SessionFeature.displayScale = "display.scale.1"`, in `SessionFeature.host` only when the Mac setting (§2) allows it. The phone sends scale actions only to a host that advertises it.
 - `DisplayDescriptor` gains optional `scaleSteps: [ScaleStep]`, `scaleBaselineWidth`, `scaleCurrentWidth`. `DisplayDescriptor` and `RemoteAction` use synthesized `Codable`, which ignores unknown keys, so older phones decode these safely. `ScaleStep` is `{ width, height }` in points, validated like the descriptor: finite, 1…20 000, at most 4 entries, all smaller than the baseline.
 - New phone → host action `displayScale` with `display` and `looksLikeWidth` (points; `0` = Off for this session). Add `displayScale` to `RemoteAction.displayActions` and to the actions that may carry `display` in `validateDisplaySelection`, with the same stray-field rules.
-- The host always replies with `displays` (refreshed list, `scaleCurrentWidth`) and an optional `scaleError`: `fullScreen`, `noAccessibility`, `unsupported`, `disabled`, `busy`, `failed`. `busy` is sent only when a request is superseded before it runs, and is followed by the reply for the latest request.
+- The host always replies with `displays` (refreshed list, `scaleCurrentWidth`) and an optional `scaleError`: `noAccessibility`, `unsupported`, `disabled`, `busy`, `failed`. `busy` is sent only when a request is superseded before it runs, and is followed by the reply for the latest request.
 - Requests with a stale epoch get a `displays` reply carrying the current epoch rather than silence, so the phone's pill cannot wait forever (plus the 8 s phone timeout in §2).
 
 ## 7. Phone storage
 
-Follow `DisplayMemory` (`RemoteShared/DisplaySelection.swift`): a `BigTextMemory` in `UserDefaults`, keyed by a hash of the pairing room (`"farside-bigtext|" + room`), then by display using `DisplayMemory`'s id-plus-unique-name fallback, so an external monitor whose ID changes after a reboot still matches. The value is `looksLikeWidth`. It never leaves the phone and is deleted with the pairing. An iPad paired with the same Mac has its own storage, which gives the per-pair behaviour.
+Follow `DisplayMemory` (`RemoteShared/DisplaySelection.swift`): a `BigTextMemory` in `UserDefaults`, keyed by a hash of the pairing room (`"farside-bigtext|" + room`), then by display using `DisplayMemory`'s id-plus-unique-name fallback, so an external monitor whose ID changes after a reboot still matches. The value is `looksLikeWidth`. It never leaves the phone and is deleted with the pairing. An iPad paired with the same Mac has its own storage, which gives the per-pair behaviour. `BigTextMemory.forget(room:)` is called from the phone's Forget-this-Mac path; `DisplayMemory` has no such hook today.
 
 ## 8. Edge cases
 
