@@ -208,6 +208,7 @@ final class VideoPresentationProbe: NSObject, MTKViewDelegate {
 
     /// Touch, pan, zoom or pointer motion on the session (main thread).
     static func noteUserActivity(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        VideoPresentationSession.noteUserActivity(at: now)
         active?.signal(at: now, newFrame: false)
     }
 
