@@ -334,7 +334,7 @@ targets:
     type: bundle.ui-testing
     platform: iOS
     deploymentTarget: '26.0'
-    sources: [RemoteE2ETests]
+    sources: [RemoteE2ETests, RemoteShared/E2ELaneContract.swift]
     dependencies:
       - target: PocketDeskRemote
     settings:
