@@ -969,6 +969,13 @@ final class RemoteHostModel: ObservableObject {
         return HostLifecycleEvent.recovered.rawValue
     }
 
+    // MARK: Away mode
+
+    func setAwayMode(_ enabled: Bool) {}
+    func coverNow() {}
+    func dismissLockWarning() {}
+    func openLockScreenSettings() {}
+
     // MARK: Privacy curtain
 
     private func reconcileCurtain() {

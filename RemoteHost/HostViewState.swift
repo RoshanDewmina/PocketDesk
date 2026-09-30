@@ -54,6 +54,12 @@ struct HostViewState: Equatable {
     var privacyCurtain = false
     /// What the curtain is doing now, when that differs from the preference alone.
     var curtainStatus: String?
+    /// Away mode: the Mac's preference, whether its explanation sheet was seen, and what it is doing now.
+    var awayMode = false
+    var awayIntroShown = false
+    var away = HostAwayReadout()
+    /// The Mac locked while sharing without anyone choosing to lock it.
+    var lockWarning: HostLockWarning?
     /// Agent alerts (beta): a hook on this Mac tells the phone an agent needs a person.
     var agentAlerts = false
     /// One line about the last agent alert, or that the Mac is listening.
@@ -101,6 +107,10 @@ struct HostActions {
     var setAutomaticRecovery: (Bool) -> Void = { _ in }
     var openLoginItems: () -> Void = {}
     var setPrivacyCurtain: (Bool) -> Void = { _ in }
+    var setAwayMode: (Bool) -> Void = { _ in }
+    var coverNow: () -> Void = {}
+    var dismissLockWarning: () -> Void = {}
+    var openLockScreenSettings: () -> Void = {}
     var setAgentAlerts: (Bool) -> Void = { _ in }
     var copyAgentHookSetup: () -> Void = {}
     var resetAgentAlertLink: () -> Void = {}
