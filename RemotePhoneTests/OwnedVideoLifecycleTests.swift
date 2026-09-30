@@ -28,7 +28,7 @@ final class OwnedVideoLifecycleTests: XCTestCase {
     func testFenceOldTrackAndExpiredProofCannotPublishOrRenewClosedGeneration() {
         let a = identity(), b = identity()
         let admission = VideoPresentationAdmission(identity: a, validUntil: 20)
-        let fence = VideoPresentationFence(admission)
+        let fence = VideoPresentationFence(admission, clock: { 10 })
         var published: [String] = []
         _ = fence.withAdmission(a, at: 10) { published.append("A") }
         _ = fence.withAdmission(b, at: 10) { published.append("spoof") }
@@ -38,7 +38,7 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         XCTAssertFalse(fence.renew(admission)); XCTAssertEqual(published, ["A"])
     }
     func testInvalidationSerializesWithAlreadyAdmittedSubmission() {
-        let id = identity(), fence = VideoPresentationFence(VideoPresentationAdmission(identity: id, validUntil: 100))
+        let id = identity(), fence = VideoPresentationFence(VideoPresentationAdmission(identity: id, validUntil: 100), clock: { 1 })
         let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0), closed = DispatchSemaphore(value: 0)
         DispatchQueue.global().async { _ = fence.withAdmission(id, at: 1) { entered.signal(); _ = release.wait(timeout: .now() + 2) } }
         XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
@@ -48,7 +48,7 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         XCTAssertNil(fence.withAdmission(id, at: 2) { "late GPU callback" })
     }
     func testPresenterCallbackAndMotionEntryCannotInvertPresentationFence() {
-        let id = identity(), fence = VideoPresentationFence(VideoPresentationAdmission(identity: id, validUntil: 100))
+        let id = identity(), fence = VideoPresentationFence(VideoPresentationAdmission(identity: id, validUntil: 100), clock: { 1 })
         let motion = VideoMotionGate(), presenter = NSLock()
         let presenterHeld = DispatchSemaphore(value: 0), motionEntered = DispatchSemaphore(value: 0)
         let finishPresenter = DispatchSemaphore(value: 0), presenterDone = DispatchSemaphore(value: 0), drawDone = DispatchSemaphore(value: 0)
@@ -75,6 +75,24 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         fence.invalidate()
         motion.close { XCTAssertNil(fence.withAdmission(id, at: 2, { "late flush" })) }
         XCTAssertFalse(motion.perform { XCTFail("post-close receive may not restart the motion pipeline") })
+    }
+    func testQueuedAdmissionUsesClockAfterWaitingForFence() {
+        let id = identity()
+        let clock = FenceFixtureClock(1)
+        let fence = VideoPresentationFence(VideoPresentationAdmission(identity: id, validUntil: 2), clock: { clock.now })
+        let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0), waiterReady = DispatchSemaphore(value: 0), done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { _ = fence.withAdmission(id, at: 1) { entered.signal(); _ = release.wait(timeout: .now() + 2) } }
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        DispatchQueue.global().async {
+            waiterReady.signal()
+            XCTAssertNil(fence.withAdmission(id, at: 1) { "expired source frame" })
+            done.signal()
+        }
+        XCTAssertEqual(waiterReady.wait(timeout: .now() + 2), .success)
+        clock.set(3) // First admission owns the actual lock; waiting call still carries at:1.
+        release.signal()
+        XCTAssertEqual(done.wait(timeout: .now() + 2), .success)
+        XCTAssertFalse(fence.renew(VideoPresentationAdmission(identity: id, validUntil: 2)))
     }
     func testVideoRangeBlackWhiteAndFullRangeNeutralAreCorrect() {
         for matrix in [VideoColorMatrix.bt601, .bt709] {
@@ -144,4 +162,11 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         let current = try XCTUnwrap(epoch.ticket); XCTAssertTrue(epoch.accepts(current))
         epoch.setEnabled(true); XCTAssertTrue(epoch.accepts(current), "ordinary proof renewal does not invalidate current conversion")
     }
+}
+
+private final class FenceFixtureClock: @unchecked Sendable {
+    private let lock = NSLock(); private var value: TimeInterval
+    init(_ value: TimeInterval) { self.value = value }
+    var now: TimeInterval { lock.lock(); defer { lock.unlock() }; return value }
+    func set(_ value: TimeInterval) { lock.lock(); self.value = value; lock.unlock() }
 }

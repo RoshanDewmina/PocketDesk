@@ -25,10 +25,11 @@ final class VideoPresentationFence: @unchecked Sendable {
     private let lock = NSRecursiveLock()
     private var admission: VideoPresentationAdmission?
     private var closed = false
-    init(_ admission: VideoPresentationAdmission) { self.admission = admission }
+    private let clock: () -> TimeInterval
+    init(_ admission: VideoPresentationAdmission, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) { self.admission = admission; self.clock = clock }
     func renew(_ next: VideoPresentationAdmission) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard !closed, next.identity == admission?.identity else { return false }
+        guard !closed, next.identity == admission?.identity, next.permits(at: clock()) else { return false }
         admission = next
         return true
     }
@@ -36,7 +37,7 @@ final class VideoPresentationFence: @unchecked Sendable {
     func withAdmission<T>(_ identity: VideoPresentationIdentity, at now: TimeInterval,
                           _ action: () -> T) -> T? {
         lock.lock(); defer { lock.unlock() }
-        guard !closed, let admission, admission.identity == identity, admission.permits(at: now) else { return nil }
+        guard !closed, let admission, admission.identity == identity, admission.permits(at: max(now, clock())) else { return nil }
         return action()
     }
     func invalidate() {

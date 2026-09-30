@@ -30,7 +30,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         }
         if policy.update(next, at: ProcessInfo.processInfo.systemUptime) { stop(); return }
         guard let next, policy.admission != nil else { stop(); return }
-        if let fence { _ = fence.renew(next) }
+        if let fence { guard fence.renew(next) else { stop(); return } }
         else {
             let fence = VideoPresentationFence(next); self.fence = fence
             let sink = LivePiPSampleBufferSink(admission: next, fence: fence); self.sink = sink
