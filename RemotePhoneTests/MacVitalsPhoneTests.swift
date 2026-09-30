@@ -92,6 +92,26 @@ final class MacVitalsPhoneTests: XCTestCase {
                        "An attempt that never got a status knows nothing new about the battery")
     }
 
+    func testTheMacsSleepReportKeepsTheLastSeenBattery() throws {
+        let model = model()
+        try send(battery(4), to: model)
+        let sleeping = RemoteAction(action: "capture", x: 0, epoch: 1, features: SessionFeature.host, hostState: "sleeping")
+        model.connection.onControl?(try JSONEncoder().encode(sleeping))
+        model.connection.onEnded?()
+        XCTAssertEqual(model.vitalsMemory.lastSeen(now: Date())?.percent, 4,
+                       "The Mac's last status before sleeping carries no vitals and must not erase the reading")
+        XCTAssertEqual(model.lastDeparture, .sleeping)
+    }
+
+    func testAnOlderMacKeepsTheLastSeenBattery() throws {
+        let model = model()
+        model.vitalsMemory.record(battery(4), at: Date())
+        try send(nil, to: model, features: SessionFeature.host.filter { $0 != SessionFeature.macVitals })
+        model.connection.onEnded?()
+        XCTAssertEqual(model.vitalsMemory.lastSeen(now: Date())?.percent, 4,
+                       "A Mac that never reports vitals knows nothing new about the battery")
+    }
+
     func testAHealthySessionClearsTheLastSeen() throws {
         let model = model()
         model.vitalsMemory.record(battery(4), at: Date())

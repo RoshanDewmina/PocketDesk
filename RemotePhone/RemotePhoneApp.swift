@@ -138,6 +138,8 @@ final class PhoneRemoteModel: ObservableObject {
     /// The Mac's battery, temperature and load as last received; read through `currentMacVitals(now:)`.
     @Published private(set) var macVitals: MacVitals?
     private var macVitalsReceivedAt: TimeInterval = 0
+    /// The session's last real reading for Home: the Mac's own sleep or lock status carries no vitals.
+    private var sessionVitals: (vitals: MacVitals, receivedAt: Date)?
     private var vitalsNotices = MacVitalsNoticePolicy()
     var vitalsMemory = MacVitalsMemory()
     static let macVitalsMaxAge: TimeInterval = 3
@@ -1222,7 +1224,10 @@ final class PhoneRemoteModel: ObservableObject {
             let now = ProcessInfo.processInfo.systemUptime
             let vitals = hostFeatures.contains(SessionFeature.macVitals) ? action.macVitals : nil
             if vitals != macVitals { macVitals = vitals }
-            if vitals != nil { macVitalsReceivedAt = now }
+            if let vitals {
+                macVitalsReceivedAt = now
+                sessionVitals = (vitals, Date())
+            }
             if let notice = vitalsNotices.observe(vitals, pill: busy, now: now) { announce(notice) }
             ladder = action.ladder
             sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
@@ -1418,8 +1423,10 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func end() {
-        // Only a session that received a status knows the battery, so a failed reconnect keeps what Home shows.
-        if !hostFeatures.isEmpty { vitalsMemory.record(macVitals, at: Date()) }
+        // Only a session that received vitals knows the battery, so a failed reconnect or an older Mac keeps
+        // what Home shows; the reading's own time stops a long background hold from renewing an old one.
+        if let sessionVitals { vitalsMemory.record(sessionVitals.vitals, at: sessionVitals.receivedAt) }
+        sessionVitals = nil
         textFocusProbe.invalidate()
         pointerTimer?.invalidate()
         pointerTimer = nil
