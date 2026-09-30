@@ -109,6 +109,7 @@ struct HomeView: View {
     @State private var showPaywall = false
     @State private var showServerData = false
     @State private var showLegal = false
+    @State private var lastBattery: MacVitalsMemory.LastSeen?
     @ObservedObject private var anywhere = AnywhereStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
@@ -183,6 +184,8 @@ struct HomeView: View {
         .confirmationDialog("Forget this Mac locally?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget Mac", role: .destructive) {
                 connection.revoke()
+                MacVitalsMemory().forget()
+                refreshLastBattery()
                 lastReachedAt = 0
                 lastFailure = nil
                 checkedHealth = nil
@@ -198,7 +201,13 @@ struct HomeView: View {
             #if DEBUG
             applyDebugState()
             #endif
+            refreshLastBattery()
         }
+        .onChange(of: connection.connected) { _, _ in refreshLastBattery() }
+    }
+
+    private func refreshLastBattery() {
+        lastBattery = connection.connected ? nil : MacVitalsMemory().lastSeen(now: Date())
     }
 
     // MARK: Sections
@@ -239,7 +248,10 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 0) {
             if let macName {
                 MacCard(name: macName, status: status, health: health, checking: checking,
-                        notice: model.macNotice, lastReached: lastReached, act: act)
+                        notice: model.macNotice, lastReached: lastReached,
+                        vitalsNote: lastBattery.map(MacVitalsMemory.homeNote),
+                        vitalsCause: model.lastDeparture == .sleeping ? lastBattery.map(MacVitalsMemory.sleepNote) : nil,
+                        act: act)
                 connectControl
             } else {
                 emptyState
@@ -473,6 +485,12 @@ struct HomeView: View {
         } else if LaunchOptions.demoMacName != nil && connection.invitation == nil {
             connection.status = "Ready to connect"
         }
+        if let raw = LaunchOptions.value("--ui-last-battery="), let percent = Int(raw) {
+            MacVitalsMemory().record(MacVitals(power: "battery", batteryPercent: percent, charging: false), at: Date())
+        } else if LaunchOptions.demoMacName != nil {
+            // The preview is stored for 12 hours and would otherwise leak into later demo runs.
+            MacVitalsMemory().forget()
+        }
         if LaunchOptions.has("--ui-last-reached") {
             lastReachedAt = Calendar.current.date(bySettingHour: 23, minute: 48, second: 0, of: Date())?.timeIntervalSince1970 ?? 0
         }
@@ -570,6 +588,8 @@ struct MacCard: View {
     var checking = false
     var notice: String?
     var lastReached: Date?
+    var vitalsNote: String?
+    var vitalsCause: String?
     var act: (ConnectionHealth.Action) -> Void = { _ in }
     @Environment(\.dynamicTypeSize) private var typeSize
 
@@ -609,6 +629,23 @@ struct MacCard: View {
                                 .padding(.leading, 16)
                                 .accessibilityIdentifier("home.health.action")
                         }
+                    }
+                    if let vitalsNote {
+                        Text(vitalsNote)
+                            .font(.footnote)
+                            .foregroundStyle(Farside.Palette.ash)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 6)
+                            .padding(.leading, 16)
+                            .accessibilityIdentifier("home.vitals")
+                    }
+                    if let vitalsCause {
+                        Text(vitalsCause)
+                            .font(.footnote)
+                            .foregroundStyle(Farside.Palette.ash)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, 16)
+                            .accessibilityIdentifier("home.vitals.cause")
                     }
                 }
                 if !typeSize.isAccessibilitySize {
