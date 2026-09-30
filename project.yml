@@ -288,6 +288,7 @@ targets:
       - HostUITests
       - RemotePhone/Fonts
       - RemoteShared/Pairing.swift
+      - RemoteShared/HostIdentityStore.swift
       - RemoteShared/FarsideTheme.swift
       - RemoteShared/FarsideHalftone.swift
       - RemoteHost/HostReadiness.swift

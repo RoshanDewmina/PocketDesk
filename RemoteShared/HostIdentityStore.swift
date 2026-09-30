@@ -8,7 +8,7 @@ struct HostIdentityRecord: Codable, Equatable {
     func validate() throws {
         guard version == 1, SecureRandom.isToken(hostID),
               localServiceName.hasPrefix("farside-"), localServiceName.utf8.count == 40,
-              FileTransferID.isValid(String(localServiceName.dropFirst(8))) else {
+              SecureRandom.isToken(String(localServiceName.dropFirst(8)) + String(localServiceName.dropFirst(8))) else {
             throw RemoteError.invalidPairing
         }
     }
@@ -28,7 +28,7 @@ struct HostIdentityStore {
             return saved
         }
         let value = HostIdentityRecord(hostID: try SecureRandom.token(),
-                                       localServiceName: "farside-" + FileTransferID.make())
+                                       localServiceName: "farside-" + String(try SecureRandom.token().prefix(32)))
         try value.validate()
         try persistence.save(value)
         return value
