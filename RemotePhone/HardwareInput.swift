@@ -199,20 +199,27 @@ final class HardwarePeripherals: ObservableObject {
     private var lockedMove: (Double, Double) -> Void = { _, _ in }
     private var lockedButton: (String, Bool) -> Void = { _, _ in }
     private var lockedLost: () -> Void = {}
+    private var lockedKeyboardOwner: ObjectIdentifier?
+    private var lockedKeyboardDisconnect: () -> Void = {}
+    func keyboardFocusAllowed(for owner: AnyObject) -> Bool { lockedOwner == nil || lockedKeyboardOwner == ObjectIdentifier(owner) }
+    func deliverKeyboardDisconnect() { if lockedOwner != nil { lockedKeyboardDisconnect() } else { onKeyboardDisconnect() } }
     var pointerIsLocked: Bool { lockedOwner != nil && lockedGate() }
     @discardableResult
     func claimLockedMouse(owner: AnyObject, gate: @escaping () -> Bool,
                           move: @escaping (Double, Double) -> Void,
-                          button: @escaping (String, Bool) -> Void, lost: @escaping () -> Void) -> UInt64 {
+                          button: @escaping (String, Bool) -> Void, lost: @escaping () -> Void,
+                          keyboardOwner: AnyObject? = nil, keyboardDisconnect: @escaping () -> Void = {}) -> UInt64 {
         lockedLost()
         lockedGeneration &+= 1; lockedOwner = ObjectIdentifier(owner)
         lockedGate = gate; lockedMove = move; lockedButton = button; lockedLost = lost
+        lockedKeyboardOwner = keyboardOwner.map(ObjectIdentifier.init); lockedKeyboardDisconnect = keyboardDisconnect
         attachMice(); return lockedGeneration
     }
     func releaseLockedMouse(owner: AnyObject, generation: UInt64) {
         guard lockedOwner == ObjectIdentifier(owner), lockedGeneration == generation else { return }
         lockedGeneration &+= 1; lockedOwner = nil
         lockedGate = { false }; lockedMove = { _, _ in }; lockedButton = { _, _ in }; lockedLost = {}
+        lockedKeyboardOwner = nil; lockedKeyboardDisconnect = {}
         attachMice()
     }
     func deliverLockedMove(x: Double, y: Double, generation: UInt64) {
@@ -229,7 +236,7 @@ final class HardwarePeripherals: ObservableObject {
         observers.append(center.addObserver(forName: .GCKeyboardDidDisconnect, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.keyboardConnected = GCKeyboard.coalesced != nil
-                self?.onKeyboardDisconnect()
+                self?.deliverKeyboardDisconnect()
             }
         })
         for name in [Notification.Name.GCMouseDidConnect, .GCMouseDidBecomeCurrent] {
