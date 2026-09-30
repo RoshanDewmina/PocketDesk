@@ -42,6 +42,22 @@ final class GuestPolicyTests: XCTestCase {
         XCTAssertNil(GuestBudgetPolicy.ceilingKbps(for: a, observation: sample(pacer: nil), at: 1.2))
         XCTAssertNil(GuestBudgetPolicy.ceilingKbps(for: a, observation: sample(), at: 3))
     }
+    func testPeriodicZeroAndStableKnownGuestObservationsPreserveLowRateChunkCredit() {
+        for count in [0, 1] {
+            let budget = MediaResourceBudget()
+            budget.observe(MediaCapacityObservation(at: 0, route: "Direct", capacityKbps: 500, videoKbps: 300,
+                totalTransportKbps: 300, rttMs: 20, pacerDelayMs: 0))
+            var admitted = false
+            for tick in 1...160 {
+                let at = Double(tick) * 0.25
+                budget.observe(MediaCapacityObservation(at: at, route: "Direct", capacityKbps: 500, videoKbps: 300,
+                    totalTransportKbps: 300, rttMs: 20, pacerDelayMs: 0))
+                budget.observeGuests(count: count, kbps: count == 0 ? 0 : 20, at: at)
+                if budget.permits(bytes: 16_384, at: at, controlBuffered: 0, fileBuffered: 0) { admitted = true; break }
+            }
+            XCTAssertTrue(admitted, "250 ms refreshes must allow a low-rate complete chunk with \(count) guests")
+        }
+    }
     func testUnknownOrStaleReplicatedLoadStopsFilesAndRemovalRestoresMeasuredBudget() {
         let budget = MediaResourceBudget()
         func sample(_ at: Double) { budget.observe(MediaCapacityObservation(at: at, route: "Direct", capacityKbps: 5000, videoKbps: 1000, totalTransportKbps: 1000, rttMs: 20, pacerDelayMs: 0)) }
