@@ -956,6 +956,8 @@ final class PhoneRemoteModel: ObservableObject {
     let inputProbe: InputProbe? = LaunchOptions.layoutCheck && LaunchOptions.has("--ui-input-probe") ? InputProbe() : nil
     #endif
 
+    private lazy var displayTickInput = PhoneDisplayTickInputPump()
+
     /// Every control message leaves through here, so the offline probe sees the same actions.
     private func transmit(_ action: RemoteAction) -> Bool {
         VideoPresentationProbe.noteUserActivity()
@@ -963,6 +965,11 @@ final class PhoneRemoteModel: ObservableObject {
         if let inputProbe { return inputProbe.record(action) }
         #endif
         SmoothMotionController.noteOutgoing(action: action.action, dragging: dragging)
+        displayTickInput.send = { [weak self] actions in self?.connection.sendInputMoves(actions) ?? false }
+        displayTickInput.onFailure = { [weak self] in self?.connection.stop() }
+        if action.action == "release" { displayTickInput.cancel() }
+        else if ["move", "moveTo"].contains(action.action) { return displayTickInput.offer(action) }
+        else if !displayTickInput.flush() { return false }
         return connection.sendControl(action)
     }
 
@@ -1493,6 +1500,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func enterBackground() {
+        displayTickInput.cancel()
         resumeTiming.cancel(.leftAgain)
         resetQuality()
         let now = ProcessInfo.processInfo.systemUptime
@@ -1732,6 +1740,7 @@ final class PhoneRemoteModel: ObservableObject {
         case "capture":
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             hostFeatures = Set(action.features ?? [])
+            if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
             sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
             let previousCurtain = curtainState
@@ -1813,6 +1822,7 @@ final class PhoneRemoteModel: ObservableObject {
                 sourceSize = CGSize(width: action.x, height: action.y)
             }
             pointerOverlay.reset(sourceSize: sourceSize)
+            displayTickInput.cancel()
             geometryEpoch = action.epoch
             couchAck.reset()
             couchStalled = false
@@ -2021,6 +2031,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func end() {
+        displayTickInput.cancel()
         // Only a session that received vitals knows the battery, so a failed reconnect or an older Mac keeps
         // what Home shows; the reading's own time stops a long background hold from renewing an old one.
         if let sessionVitals { vitalsMemory.record(sessionVitals.vitals, at: sessionVitals.receivedAt) }

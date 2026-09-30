@@ -116,9 +116,16 @@ final class HostClipboardService {
 
     /// Records the pasteboard generation before a phone-sent ⌘C is posted, so a following
     /// `afterCopy` request can wait for the copy instead of returning the previous item.
-    func prepareForCopyShortcut() {
+    @discardableResult
+    func prepareForCopyShortcut() -> DispatchGroup {
         let pasteboard = self.pasteboard, baseline = self.baseline
-        queue.async { baseline.changeCount = pasteboard.changeCount }
+        let readiness = DispatchGroup()
+        readiness.enter()
+        queue.async {
+            baseline.changeCount = pasteboard.changeCount
+            readiness.leave()
+        }
+        return readiness
     }
 
     func reset() {

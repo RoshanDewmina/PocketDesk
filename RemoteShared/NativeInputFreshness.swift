@@ -19,6 +19,8 @@ struct NativeInputFreshness {
     private let lifetime: TimeInterval = 1
     private let limit = 8
 
+    mutating func noteCausalUpgrade() { upgraded = true }
+
     mutating func invalidate() {
         upgraded = false
         issued.removeAll()
@@ -66,6 +68,12 @@ struct NativeInputFreshness {
         issued.append(Issued(value: token, epoch: epoch, expires: now + lifetime))
         if issued.count > limit { issued.removeFirst(issued.count - limit) }
         return NativeInteraction(token: token, doubleClickInterval: doubleClickInterval)
+    }
+
+    /// Final posting checks this host-clock deadline again after its queue wait.
+    func postingDeadline(for action: RemoteAction, epoch: UInt64) -> TimeInterval {
+        guard let interaction = action.interaction else { return upgraded ? -.infinity : .infinity }
+        return issued.first { $0.value == interaction.token && $0.epoch == epoch }?.expires ?? -.infinity
     }
 
     mutating func admit(_ action: RemoteAction, epoch: UInt64, now: TimeInterval) -> Admission {

@@ -174,6 +174,36 @@ final class RemoteCoordinator: ObservableObject {
     private var proofReceived = false
     private var sentControl: UInt64 = 0
     private var receivedControl: UInt64 = 0
+    var allowsCausalInput = true
+    var onCausalInput: ((InputCausalEnvelope, RemoteAction?) -> Void)?
+    var onCausalContext: ((InputCausalEnvelope) -> Void)?
+    var onCausalRejected: ((RemoteAction) -> Void)?
+    private var hostInputEpoch: UInt64 = 0
+    private var hostInputAnchor = InputCausalEnvelope.identity()
+    private var causalContext: InputCausalEnvelope?
+    private var offeredInputNonce: String?
+    private var offeredInputEpoch: UInt64 = 0
+    private var inputNegotiationTimeout: Task<Void, Never>?
+    private var motionPrefix = InputMotionPrefix()
+    private var motionSequence: UInt64 = 0
+    private var motionReplay = InputMotionReplay()
+    private var deferredInput: [RemoteAction] = []
+    var causalInputNegotiated: Bool { causalContext != nil }
+    #if DEBUG
+    // Input-only fixture seam: no sockets, pairing store mutations or authorization bypass in release.
+    var inputPacketSenderForTesting: ((ControlPacket) -> Bool)?
+    func startInputFixtureForTesting(session: String) {
+        self.session = session; connected = true
+        peerFeatures = [SessionFeature.extendedFeatureList, SessionFeature.causalInput]
+    }
+    func receiveInputFixtureForTesting(_ packet: ControlPacket, motion: Bool = false) throws {
+        if motion {
+            guard packet.session == session, packet.version == 1 else { throw RemoteError.stale }
+            try packet.action.validate(); try receiveCausal(packet, motion: true)
+        } else { try deliverControlPacket(packet) }
+    }
+    #endif
+    private static let causalSemantics: Set<String> = ["click", "double", "right", "middle", "auxClick", "dragDown", "dragUp", "holdRenew", "scroll", "text", "key", "release"]
     private var moveCoalescer = PointerMoveCoalescer()
     private var moveFlush: Task<Void, Never>?
     /// Mach ms when the control message being delivered through `onControl` reached the data channel,
@@ -254,6 +284,174 @@ final class RemoteCoordinator: ObservableObject {
             } catch { self.sessionFailed("Local owner authentication failed.") }
         }
     }
+    func setHostInputEpoch(_ epoch: UInt64) {
+        guard isHost, hostInputEpoch != epoch else { return }
+        hostInputEpoch = epoch; hostInputAnchor = InputCausalEnvelope.identity()
+        if var context = causalContext {
+            context.kind = "anchor"; context.epoch = epoch; context.anchor = hostInputAnchor; context.applied = 0; context.segments = []
+            causalContext = context; motionReplay = InputMotionReplay()
+            onCausalContext?(context)
+            _ = transmit(RemoteAction(action: "heartbeat", epoch: epoch), input: context)
+        }
+    }
+
+    func rebaseCausalInput() {
+        guard isHost, var context = causalContext else { return }
+        context.kind = "anchor"; context.anchor = InputCausalEnvelope.identity(); context.applied = 0; context.segments = []
+        hostInputAnchor = context.anchor; causalContext = context; motionReplay = InputMotionReplay()
+        onCausalContext?(context)
+        _ = transmit(RemoteAction(action: "heartbeat", epoch: context.epoch), input: context)
+    }
+
+    func requestCausalInput(epoch: UInt64) {
+        guard !isHost, connected, epoch > 0,
+              causalContext?.epoch != epoch,
+              offeredInputNonce == nil || offeredInputEpoch != epoch else { return }
+        if let held = moveCoalescer.flush(backlogged: false, now: ProcessInfo.processInfo.systemUptime) {
+            guard transmit(held) else { return }
+        }
+        moveFlush?.cancel(); moveFlush = nil
+        media?.allowPointerChannel()
+        let nonce = InputCausalEnvelope.identity()
+        offeredInputNonce = nonce; offeredInputEpoch = epoch
+        let offer = InputCausalEnvelope(kind: "offer", nonce: nonce, anchor: String(repeating: "0", count: 32), epoch: epoch)
+        _ = transmit(RemoteAction(action: "heartbeat", epoch: epoch), input: offer)
+        inputNegotiationTimeout?.cancel()
+        inputNegotiationTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, let self, self.offeredInputNonce == nonce else { return }
+            self.sessionFailed("Input negotiation expired. Reconnect from the phone.")
+        }
+    }
+
+    func sendInputMoves(_ actions: [RemoteAction]) -> Bool {
+        guard !isHost, connected else { return false }
+        guard causalContext != nil else {
+            if offeredInputNonce != nil {
+                do {
+                    for action in actions {
+                        try action.validate()
+                        guard ["move", "moveTo"].contains(action.action), action.epoch == offeredInputEpoch, deferredInput.count < 64 else { throw RemoteError.stale }
+                        deferredInput.append(action)
+                    }
+                    return true
+                } catch { sessionFailed("Input negotiation queue was full or stale."); return false }
+            }
+            return actions.allSatisfy { sendControl($0) }
+        }
+        do {
+            for action in actions {
+                try action.validate()
+                guard let context = causalContext, action.epoch == context.epoch else { throw RemoteError.stale }
+                if !deferredInput.isEmpty || motionPrefix.segments.count == InputCausalEnvelope.maximumSegments {
+                    guard deferredInput.count < 64 else { throw RemoteError.stale }
+                    deferredInput.append(action)
+                } else { try motionPrefix.append(action) }
+            }
+            return sendMotionPrefix(reliable: !deferredInput.isEmpty)
+        } catch { sessionFailed("Pointer state expired. Reconnect from the phone."); return false }
+    }
+
+    private func envelope(kind: String) -> InputCausalEnvelope? {
+        guard var value = causalContext else { return nil }
+        value.kind = kind; value.applied = motionPrefix.next; value.segments = motionPrefix.segments
+        return value
+    }
+    private func sendMotionPrefix(reliable: Bool) -> Bool {
+        guard let envelope = envelope(kind: reliable ? "barrier" : "motion") else { return false }
+        if reliable { return transmit(RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope) }
+        motionSequence &+= 1
+        let packet = ControlPacket(session: session, sequence: motionSequence,
+                                   action: RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope)
+        guard let data = try? JSONEncoder().encode(packet), data.count <= 16384 else { return false }
+        if media?.sendPointer(data) == true { return true }
+        // Opening/congestion/channel loss falls back to the same checkpoint on reliable control.
+        return sendMotionPrefix(reliable: true)
+    }
+    func acknowledgeCausalInput(_ context: InputCausalEnvelope, applied: UInt64) {
+        guard isHost, let current = causalContext, context.nonce == current.nonce,
+              context.anchor == current.anchor, context.epoch == current.epoch else { return }
+        var ack = current; ack.kind = "ack"; ack.applied = applied; ack.segments = []
+        _ = transmit(RemoteAction(action: "heartbeat", epoch: ack.epoch), input: ack)
+    }
+    private func drainDeferredInput() throws {
+        while !deferredInput.isEmpty {
+            let action = deferredInput[0]
+            if ["move", "moveTo"].contains(action.action) {
+                guard motionPrefix.segments.count < InputCausalEnvelope.maximumSegments else { break }
+                try motionPrefix.append(action)
+            } else {
+                guard let barrier = envelope(kind: "barrier"), transmit(action, input: barrier) else { throw RemoteError.stale }
+            }
+            deferredInput.removeFirst()
+        }
+        if !motionPrefix.segments.isEmpty { _ = sendMotionPrefix(reliable: !deferredInput.isEmpty) }
+    }
+    private func receiveCausal(_ packet: ControlPacket, motion: Bool) throws {
+        guard let input = packet.input else { throw RemoteError.invalidMessage }
+        try input.validate()
+        guard packet.action.epoch == input.epoch else { throw RemoteError.invalidMessage }
+        if motion {
+            guard isHost, input.kind == "motion", packet.action.action == "heartbeat",
+                  let current = causalContext, input.nonce == current.nonce,
+                  input.anchor == current.anchor, input.epoch == current.epoch else { return }
+            guard motionReplay.accepts(packet.sequence) else { return }
+            onCausalInput?(input, nil)
+            return
+        }
+        switch input.kind {
+        case "offer":
+            guard isHost, allowsCausalInput, peerFeatures.contains(SessionFeature.causalInput), input.epoch == hostInputEpoch, packet.action.action == "heartbeat" else { throw RemoteError.stale }
+            if let current = causalContext {
+                guard current.nonce == input.nonce, current.epoch == input.epoch else { throw RemoteError.stale }
+                return
+            }
+            let context = InputCausalEnvelope(kind: "accept", nonce: input.nonce, anchor: hostInputAnchor, epoch: hostInputEpoch)
+            causalContext = context; motionReplay = InputMotionReplay(); onCausalContext?(context)
+            media?.openPointerChannel()
+            _ = transmit(RemoteAction(action: "heartbeat", epoch: context.epoch), input: context)
+        case "accept":
+            guard !isHost, packet.action.action == "heartbeat", input.nonce == offeredInputNonce,
+                  input.epoch == offeredInputEpoch else { throw RemoteError.stale }
+            inputNegotiationTimeout?.cancel(); inputNegotiationTimeout = nil
+            offeredInputNonce = nil; causalContext = input; motionPrefix = InputMotionPrefix()
+            try drainDeferredInput()
+        case "anchor":
+            guard !isHost, let current = causalContext, input.nonce == current.nonce,
+                  packet.action.action == "heartbeat" else { throw RemoteError.stale }
+            causalContext = input; motionPrefix = InputMotionPrefix(); deferredInput = []
+        case "ack":
+            guard !isHost, let current = causalContext, input.nonce == current.nonce,
+                  input.anchor == current.anchor, input.epoch == current.epoch,
+                  packet.action.action == "heartbeat" else { return }
+            try motionPrefix.acknowledge(input.applied); try drainDeferredInput()
+        case "barrier":
+            guard isHost, let current = causalContext, input.nonce == current.nonce,
+                  input.epoch == current.epoch,
+                  packet.action.action == "heartbeat" || Self.causalSemantics.contains(packet.action.action) else { throw RemoteError.stale }
+            if input.anchor != current.anchor {
+                onCausalRejected?(packet.action)
+                var anchor = current; anchor.kind = "anchor"; anchor.applied = 0; anchor.segments = []
+                _ = transmit(RemoteAction(action: "heartbeat", epoch: anchor.epoch), input: anchor)
+                return
+            }
+            onCausalInput?(input, packet.action.action == "heartbeat" ? nil : packet.action)
+        default: throw RemoteError.invalidMessage
+        }
+    }
+
+    private func deliverControlPacket(_ packet: ControlPacket) throws {
+        guard packet.version == 1, packet.session == session, packet.sequence > receivedControl else { throw RemoteError.stale }
+        try packet.action.validate()
+        receivedControl = packet.sequence
+        if packet.input != nil { try receiveCausal(packet, motion: false) }
+        else {
+            if isHost, causalContext != nil,
+               Self.causalSemantics.contains(packet.action.action) || ["move", "moveTo"].contains(packet.action.action) { throw RemoteError.stale }
+            onControl?(try JSONEncoder().encode(packet.action))
+        }
+    }
+
     func sendControl(_ action: RemoteAction) -> Bool {
         guard connected, !session.isEmpty else {
             moveCoalescer.discard()
@@ -264,6 +462,20 @@ final class RemoteCoordinator: ObservableObject {
             return false
         }
         do { try action.validate() } catch { connectionLost(); return false }
+        if !isHost, offeredInputNonce != nil, Self.causalSemantics.contains(action.action) {
+            if action.action == "release" { deferredInput.removeAll() }
+            guard action.epoch == offeredInputEpoch, deferredInput.count < 64 else { sessionFailed("Input negotiation queue was full or stale."); return false }
+            deferredInput.append(action); return true
+        }
+        if !isHost, causalContext != nil, Self.causalSemantics.contains(action.action) {
+            if action.action == "release" { deferredInput.removeAll() }
+            if !deferredInput.isEmpty {
+                guard deferredInput.count < 64 else { sessionFailed("Input queue was full."); return false }
+                deferredInput.append(action); return sendMotionPrefix(reliable: true)
+            }
+            guard let barrier = envelope(kind: "barrier") else { return false }
+            return transmit(action, input: barrier)
+        }
         guard StreamTuning.current.mergePointerMoves || moveCoalescer.pending != nil else { return transmit(action) }
         let outgoing = moveCoalescer.offer(action, backlogged: controlBacklogged,
                                            now: ProcessInfo.processInfo.systemUptime)
@@ -279,10 +491,15 @@ final class RemoteCoordinator: ObservableObject {
         (media?.controlBufferedAmount ?? 0) >= PointerMoveCoalescer.backlogBytes
     }
 
-    private func transmit(_ action: RemoteAction) -> Bool {
+    private func transmit(_ action: RemoteAction, input: InputCausalEnvelope? = nil) -> Bool {
         do {
             sentControl += 1
-            let data = try JSONEncoder().encode(ControlPacket(session: session, sequence: sentControl, action: action))
+            #if DEBUG
+            if let sender = inputPacketSenderForTesting {
+                return sender(ControlPacket(session: session, sequence: sentControl, action: action, input: input))
+            }
+            #endif
+            let data = try JSONEncoder().encode(ControlPacket(session: session, sequence: sentControl, action: action, input: input))
             guard media?.sendControl(data) == true else {
                 InputLog.log.error("\(self.isHost ? "host" : "phone", privacy: .public) control send failed (\(action.action, privacy: .public)); ending session")
                 peerDisconnected(); return false
@@ -488,6 +705,10 @@ final class RemoteCoordinator: ObservableObject {
         diagnostics = "Route not measured"
         sentControl = 0; receivedControl = 0
         moveCoalescer.discard(); moveFlush?.cancel(); moveFlush = nil
+        inputNegotiationTimeout?.cancel(); inputNegotiationTimeout = nil
+        causalContext = nil; offeredInputNonce = nil; offeredInputEpoch = 0; hostInputEpoch = 0
+        hostInputAnchor = InputCausalEnvelope.identity(); motionPrefix = InputMotionPrefix()
+        motionSequence = 0; motionReplay = InputMotionReplay(); deferredInput = []
         request = ""; session = ""; sequence = 0; guardState = nil; proofReceived = false
         peerFeatures = []
         peerRequestedMode = .picture
@@ -816,11 +1037,22 @@ final class RemoteCoordinator: ObservableObject {
             }
         }
         peer.onRemoteVideo = { [weak self, weak peer] track in Task { @MainActor in if let self, let peer, self.media === peer { self.remoteVideo = track } } }
+        peer.onPointerMessage = { [weak self, weak peer] data in
+            MainActor.assumeIsolated {
+                guard let self, let peer, self.media === peer else { return }
+                do {
+                    let packet = try JSONDecoder().decode(ControlPacket.self, from: data)
+                    guard packet.version == 1, packet.session == self.session else { return }
+                    try packet.action.validate()
+                    try self.receiveCausal(packet, motion: true)
+                } catch { self.sessionFailed("Invalid pointer checkpoint. Session ended safely.") }
+            }
+        }
         peer.onControl = { [weak self, weak peer] data in
             let arrivedMs = MachClock.nowMs()
             let arrivedFrames = peer?.lastControlArrivedFrames
             let arrivedAt = peer?.lastControlArrivedAt
-            Task { @MainActor in
+            MainActor.assumeIsolated {
                 guard let self, let peer, self.media === peer, data.count <= 16384 else { return }
                 do {
                     let packet = try JSONDecoder().decode(ControlPacket.self, from: data)
@@ -829,13 +1061,11 @@ final class RemoteCoordinator: ObservableObject {
                         InputLog.log.error("control rejected: stale version/session/sequence (seq \(packet.sequence, privacy: .public) after \(self.receivedControl, privacy: .public))")
                         throw RemoteError.stale
                     }
-                    try packet.action.validate()
-                    self.receivedControl = packet.sequence
                     self.currentControlArrivalMs = arrivedMs
                     self.controlArrivedFrames = arrivedFrames
                     self.controlArrivedAt = arrivedAt
                     defer { self.currentControlArrivalMs = nil; self.controlArrivedFrames = nil; self.controlArrivedAt = nil }
-                    self.onControl?(try JSONEncoder().encode(packet.action))
+                    try self.deliverControlPacket(packet)
                 } catch {
                     self.controlRejected["parse-or-validate", default: 0] += 1
                     InputLog.log.error("control rejected: \(String(describing: error), privacy: .public); ending session")

@@ -28,7 +28,7 @@ enum MacShareBlocker: String, Codable, Equatable {
         var features: [String]
         var mode: String? = nil
 
-        static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature])
+        static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature, SessionFeature.extendedFeatureList, SessionFeature.causalInput])
 
         static func requestedMode(in body: Data?) -> SessionMode {
             guard let body, body.count <= 1024,
