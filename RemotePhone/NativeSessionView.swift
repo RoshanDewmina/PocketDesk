@@ -2470,6 +2470,8 @@ struct NativeSessionView: View {
 
     private var diagnosticsSection: some View {
         Section {
+            DiagnosticReportRows(model: model)
+
             if !offlineLayoutCheck {
                 Text(codecDiagnostics)
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)

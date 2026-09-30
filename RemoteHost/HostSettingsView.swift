@@ -227,6 +227,14 @@ struct HostSettingsView: View {
                     .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
                     .accessibilityIdentifier("farside.settings.copyDiagnostics")
             }
+            ForEach(state.diagnosticReports) { report in
+                DisclosureGroup("Local report · \(report.outcome.rawValue)") {
+                    Text(report.preview).font(.footnote).textSelection(.enabled)
+                    ShareLink(item: report.preview) { Label("Export this preview", systemImage: "square.and.arrow.up") }
+                    Button("Delete report", role: .destructive) { actions.deleteDiagnosticReport(report.id) }
+                }.accessibilityIdentifier("farside.settings.localReport")
+            }
+            Text("Local reports expire after 7 days, up to 10 reports. Nothing is uploaded automatically.").font(.footnote)
             HostSettingsRow("Compatibility video encoder", subtitle: "Use the previous encoder if the new picture has trouble. Applies to your next connection") {
                 HostSwitch(label: "Compatibility video encoder", isOn: state.compatibilityVideoEncoder, set: actions.setCompatibilityVideoEncoder)
                     .accessibilityIdentifier("farside.settings.compatibilityVideoEncoder")

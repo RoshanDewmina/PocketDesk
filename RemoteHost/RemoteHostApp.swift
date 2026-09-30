@@ -161,6 +161,7 @@ extension HostActions {
             copyAgentHookSetup: model.copyAgentHookSetup,
             resetAgentAlertLink: model.resetAgentAlertLink,
             copyDiagnostics: model.copyDiagnostics,
+            deleteDiagnosticReport: model.deleteDiagnosticReport,
             setCompatibilityVideoEncoder: model.setCompatibilityVideoEncoder,
             setNewestFrameWins: model.setNewestFrameWins,
             selectDisplay: model.selectDisplay,

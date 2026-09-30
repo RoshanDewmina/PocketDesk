@@ -103,6 +103,7 @@ struct HostViewState: Equatable {
     var menuBarIconShown = true
     /// Permissions a macOS update turned off, still to be switched back on.
     var permissionsTurnedOffByUpdate: [HostSystemSettingsPane] = []
+    var diagnosticReports: [SessionDiagnosticReport] = []
 
     var controlNeedsAccessibility: Bool { allowControl && !accessibility.isGranted }
     var selectedDisplayName: String? { displays.first { $0.id == selectedDisplayID }?.name }
@@ -144,6 +145,7 @@ struct HostActions {
     var copyAgentHookSetup: () -> Void = {}
     var resetAgentAlertLink: () -> Void = {}
     var copyDiagnostics: () -> Void = {}
+    var deleteDiagnosticReport: (UUID) -> Void = { _ in }
     var setCompatibilityVideoEncoder: (Bool) -> Void = { _ in }
     var setNewestFrameWins: (Bool) -> Void = { _ in }
     var selectDisplay: (UInt32) -> Void = { _ in }
