@@ -22,6 +22,8 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     private var onSourceFrame: ((VideoFrameEnvelope) -> Void)?
     private var stopped = false
     private var expiryTimer: Timer?
+    private final class Registration { weak var value: VideoPresentationSession?; init(_ value: VideoPresentationSession) { self.value = value } }
+    private static var registrations: [Registration] = []
     static weak var active: VideoPresentationSession?
 
     init(track: RTCVideoTrack, admission: VideoPresentationAdmission, onFrame: @escaping () -> Void) {
@@ -36,6 +38,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
             self.motionGate.perform { self.smoothMotion.displayTick(view) }
         }
         smoothMotion.activate(); Self.active = self
+        Self.registrations.removeAll { $0.value == nil }; Self.registrations.append(Registration(self))
         track.add(self)
     }
     func configure(admission: VideoPresentationAdmission, counters: StreamCounters?, statistics: Bool,
@@ -107,6 +110,11 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         if Self.active === self { Self.active = nil }
     }
     /// Root uses this synchronously for End/selection/lock/privacy/proof/content changes, before SwiftUI removal.
-    static func invalidateActive() { active?.invalidate() }
+    static func invalidateActive() {
+        precondition(Thread.isMainThread)
+        let sessions = registrations.compactMap(\.value)
+        registrations.removeAll()
+        sessions.forEach { $0.invalidate() }
+    }
     static func noteUserActivity(at now: TimeInterval) { active?.view.noteActivity(at: now) }
 }

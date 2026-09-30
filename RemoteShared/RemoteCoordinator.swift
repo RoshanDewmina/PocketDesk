@@ -98,6 +98,19 @@ final class RemoteCoordinator: ObservableObject {
     // A local owner handshake is distinct from a cloud route lease. It still requires
     // continuous physical one-hop proof and never supplies an ActivityKit server epoch.
     private var ownerLocalEpoch: String?
+    /// Correlation only; route/grant authorization below remains the authority.
+    private(set) var presentationSessionID = UUID()
+    private(set) var presentationTrackID = UUID()
+    /// Current monotonic media lease; local media requires continuous physical proof.
+    func presentationDeadline(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> TimeInterval? {
+        guard !stopped, connected, media != nil, cipher != nil, proofReceived, routeAuthorized else { return nil }
+        if localOnly || routePolicy?.access == .local {
+            guard provenLocalLinkActive else { return nil }
+        }
+        let seconds = localOnly || allowLegacyPrivateRoute ? 2 : min(2, max(0, routePolicy?.expiresAt.timeIntervalSinceNow ?? 0))
+        guard seconds > 0 else { return nil }
+        return now + seconds
+    }
     private var routeAuthorized: Bool {
         if localOnly { return !stopped && ownerLocalEpoch != nil }
         return (routeArmed && (routePolicy?.expiresAt ?? .distantPast) > Date()) || allowLegacyPrivateRoute
@@ -508,6 +521,7 @@ final class RemoteCoordinator: ObservableObject {
         peerDisconnected()
     }
     private func resetSession() {
+        presentationSessionID = UUID(); presentationTrackID = UUID()
         timeout?.cancel(); timeout = nil
         localProofTimeout?.cancel(); localProofTimeout = nil
         localProofPreparation?.cancel(); localProofPreparation = nil; localProofPreparationID = nil
@@ -861,7 +875,10 @@ final class RemoteCoordinator: ObservableObject {
                 self.send(kind: "media", body: data)
             }
         }
-        peer.onRemoteVideo = { [weak self, weak peer] track in Task { @MainActor in if let self, let peer, self.media === peer { self.remoteVideo = track } } }
+        peer.onRemoteVideo = { [weak self, weak peer] track in Task { @MainActor in if let self, let peer, self.media === peer {
+            if self.remoteVideo !== track { self.presentationTrackID = UUID() }
+            self.remoteVideo = track
+        } } }
         peer.onControl = { [weak self, weak peer] data in
             let arrivedMs = MachClock.nowMs()
             let arrivedFrames = peer?.lastControlArrivedFrames
