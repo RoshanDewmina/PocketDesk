@@ -157,6 +157,7 @@
 		27271BEF3CD8B7A47E620033 /* BigTextProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67EED2B1DFE7DA4819F1461 /* BigTextProtocol.swift */; };
 		274119C8D79C44696F016432 /* AnywhereStoreKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E57A75F4FB698B857CC6F42 /* AnywhereStoreKitTests.swift */; };
 		274AB3019D901C3E379273DF /* NativeCodecCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7E6B1B2D48610494416341 /* NativeCodecCapability.swift */; };
+		274F7F40E5A0FC6EC38479BF /* HostGuestSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEAE6E4AD4B0C377DFE9C40B /* HostGuestSettingsView.swift */; };
 		27591B33CE73CC071150F456 /* RemotePhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FC077F3131B8830DBE715F /* RemotePhoneApp.swift */; };
 		27B9184CADFE50A02F9B8B22 /* PhoneClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D0946F7F5C7A6572E8C193F /* PhoneClipboard.swift */; };
 		27D57B10B0BF669C40D2A849 /* HostStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE3B05CE90F77B963214C3FC /* HostStream.swift */; };
@@ -1066,10 +1067,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1099,10 +1100,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -3121,6 +3122,7 @@
 				3042945957F1DCF81CD9F5D9 /* HostArt.swift in Sources */,
 				F9A33330FBB937E2059B98C4 /* HostArtTests.swift in Sources */,
 				025C7C5ACA218DE7AC3619BE /* HostFontTests.swift in Sources */,
+				274F7F40E5A0FC6EC38479BF /* HostGuestSettingsView.swift in Sources */,
 				C451862110535A7F0F73D284 /* HostIdentityStore.swift in Sources */,
 				3CE454E805022BB5DFA4902A /* HostLiveStrip.swift in Sources */,
 				0D577136EF48C4A712834CB8 /* HostMark.swift in Sources */,
