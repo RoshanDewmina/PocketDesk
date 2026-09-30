@@ -88,6 +88,27 @@ final class CouchHostPolicyTests: XCTestCase {
         XCTAssertEqual(RemoteInputLease().duration, RemoteInputLease.pictureDuration, "Picture keeps its 2 s lease")
     }
 
+    func testChangingTheLeaseDurationNeverExtendsAnArmedDeadline() {
+        var armed = RemoteInputLease(duration: RemoteInputLease.pictureDuration)
+        armed.record(action: "dragDown", accepted: true, at: 10)
+        armed.changeDuration(to: RemoteInputLease.couchDuration, at: 10.5)
+        XCTAssertEqual(armed.duration, RemoteInputLease.couchDuration)
+        XCTAssertEqual(armed.deadline, 11.5, "Couch shortens a pending Picture deadline")
+        armed.changeDuration(to: RemoteInputLease.pictureDuration, at: 11)
+        XCTAssertEqual(armed.deadline, 11.5, "Picture never extends a pending Couch deadline")
+        XCTAssertTrue(armed.isExpired(at: 11.5))
+
+        var restarted = RemoteInputLease(duration: RemoteInputLease.pictureDuration)
+        restarted.record(action: "dragDown", accepted: true, at: 10)
+        restarted.changeDuration(to: RemoteInputLease.pictureDuration, at: 11.9)
+        XCTAssertEqual(restarted.deadline, 12, "A Picture restart keeps today's deadline exactly")
+
+        var idle = RemoteInputLease(duration: RemoteInputLease.pictureDuration)
+        idle.changeDuration(to: RemoteInputLease.couchDuration, at: 5)
+        XCTAssertNil(idle.deadline)
+        XCTAssertFalse(idle.isExpired(at: 1000))
+    }
+
     func testCouchDisplaysDropMirrorsAndPutTheMainDisplayFirst() {
         let main = HostCouchDisplays.Display(id: 1, bounds: CGRect(x: 0, y: 0, width: 1470, height: 956), mirrorsAnother: false)
         let tv = HostCouchDisplays.Display(id: 2, bounds: CGRect(x: 1470, y: -300, width: 1920, height: 1080), mirrorsAnother: false)
