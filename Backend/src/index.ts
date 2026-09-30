@@ -4,7 +4,8 @@ import { loadConfig } from "./config";
 import { handleNotification } from "./entitlement/notifications";
 import { purgeRetention } from "./entitlement/store";
 import { handleForget, handleVerify } from "./entitlement/verify";
-import { handleSignalUpgrade } from "./gateway";
+import { handleGuestUpgrade, handleSignalUpgrade } from "./gateway";
+import { guestPage } from "./guest-page";
 import { log, logError } from "./log";
 import { handlePushEvent, handlePushPreferences, handlePushRegister, handlePushRemove, handlePushReport, purgePushRetention } from "./push";
 import { json } from "./util";
@@ -22,6 +23,8 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   const path = url.pathname;
   const config = loadConfig(env);
 
+  if ((path === "/guest" || path === "/guest.js") && ["GET", "HEAD"].includes(request.method) && !url.search) return guestPage(request);
+  if (path === "/guest-signal") return handleGuestUpgrade(request, env);
   if (path === "/signal") return handleSignalUpgrade(request, env);
   if (path === "/health" && request.method === "GET") return health();
 

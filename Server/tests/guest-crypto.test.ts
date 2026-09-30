@@ -1,0 +1,20 @@
+import { expect, test } from "bun:test";
+import fixture from "../../Backend/test/fixtures/guest-crypto.json";
+import { guestCanonical, guestVerify, grantFields } from "../../Backend/src/guest";
+import { base64Decode, base64Encode } from "../../Backend/src/util";
+test("actual CryptoKit exported fixture agrees with WebCrypto P256 signature HKDF and AES-GCM wire bytes",async()=>{
+ const grant = fixture.grant;
+ expect(base64Encode(guestCanonical(grantFields(grant)))).toBe(fixture.canonicalBase64);
+ expect(await guestVerify(grantFields(grant),fixture.signature,grant.recipientPublicKey)).toBe(true);
+ const raw = base64Decode(grant.hostAgreementKey), url64=(v:Uint8Array)=>base64Encode(v).replace(/\+/g,"-").replace(/\//g,"_").replace(/=/g,"");
+ const privateKey = await crypto.subtle.importKey("jwk",{kty:"EC",crv:"P-256",x:url64(raw.slice(1,33)),y:url64(raw.slice(33)),d:url64(base64Decode(fixture.fixtureOnlyPrivateScalar)),key_ops:["deriveBits"],ext:true},{name:"ECDH",namedCurve:"P-256"},false,["deriveBits"]);
+ const publicKey = await crypto.subtle.importKey("raw",base64Decode(grant.recipientAgreementKey),{name:"ECDH",namedCurve:"P-256"},false,[]);
+ const secret = await crypto.subtle.deriveBits({name:"ECDH",public:publicKey},privateKey,256), hkdf=await crypto.subtle.importKey("raw",secret,"HKDF",false,["deriveKey"]);
+ const key = await crypto.subtle.deriveKey({name:"HKDF",hash:"SHA-256",salt:await crypto.subtle.digest("SHA-256",guestCanonical(grantFields(grant))),info:new TextEncoder().encode("Farside/guest/1/signaling")},hkdf,{name:"AES-GCM",length:256},true,["encrypt","decrypt"]);
+ expect(base64Encode(new Uint8Array(await crypto.subtle.exportKey("raw",key)))).toBe(fixture.derivedKeyBase64);
+ const nonce=new Uint8Array(12), view=new DataView(nonce.buffer); view.setUint32(0,1); view.setBigUint64(4,1n);
+ const parameters={name:"AES-GCM",iv:nonce,additionalData:guestCanonical(["signal",grant.grantID,"a".repeat(64),"host","1"]),tagLength:128};
+ const plain=await crypto.subtle.decrypt(parameters,key,base64Decode(fixture.envelope.payload));
+ expect(new TextDecoder().decode(plain)).toBe("public-api-fixture-offer");
+ expect(base64Encode(new Uint8Array(await crypto.subtle.encrypt(parameters,key,plain)))).toBe(fixture.envelope.payload);
+});

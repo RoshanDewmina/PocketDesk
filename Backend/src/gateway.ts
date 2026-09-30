@@ -149,3 +149,28 @@ export async function handleSignalUpgrade(request: Request, env: Env): Promise<R
 
   return new Response(null, { status: 101, webSocket: client });
 }
+
+/** Guest route is separate from native roles and reveals no room before the first bounded frame. */
+export async function handleGuestUpgrade(request: Request, env: Env): Promise<Response> {
+  const url = new URL(request.url);
+  if (request.method !== "GET" || url.search || request.headers.get("origin") !== url.origin) return new Response("Not found", { status: 404 });
+  if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") return new Response("Upgrade required", { status: 426 });
+  const ip = request.headers.get("cf-connecting-ip") ?? "unknown";
+  if (!(await allow(env.RL_SIGNAL, addressKey(ip), "RL_SIGNAL"))) return new Response("Try later", { status: 429 });
+  const pair = new WebSocketPair(); const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
+  server.accept(); const relay = new ClientRelay(server);
+  void (async () => {
+    const raw = await relay.firstFrame(AUTH_TIMEOUT_MS), msg = raw === undefined ? undefined : parseJsonFrame(raw);
+    if (!msg || msg.type !== "guestRequest" || msg.version !== 1 || typeof msg.room !== "string" || !/^[a-f0-9]{64}$/.test(msg.room) || JSON.stringify(msg).length > 8192) { sendErrorAndClose(server, "guest_denied"); return; }
+    const rooms = env.ROOM as unknown as DurableObjectNamespace<RoomDO>;
+    const response = await rooms.get(rooms.idFromName(msg.room)).fetch("https://room.internal/guest-connect", {
+      headers: { upgrade: "websocket", "x-farside-ip": ip, "x-farside-origin": url.origin },
+    });
+    const upstream = response.webSocket;
+    if (!upstream) { safeClose(server, 1013, "busy"); return; }
+    upstream.accept();
+    if (server.readyState !== WebSocket.OPEN) { safeClose(upstream, 1001, "guest_gone"); return; }
+    relay.attach(upstream, raw as string);
+  })().catch(() => safeClose(server, 1013, "busy"));
+  return new Response(null, { status: 101, webSocket: client });
+}

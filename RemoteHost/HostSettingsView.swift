@@ -21,6 +21,7 @@ struct HostSettingsView: View {
                         phoneSection
                         captureScopeSection
                         sharingSection
+                        HostGuestSettingsView(state: state, actions: actions)
                         serverDataSection
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)

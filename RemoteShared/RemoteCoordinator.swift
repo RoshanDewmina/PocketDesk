@@ -144,6 +144,20 @@ final class RemoteCoordinator: ObservableObject {
     private var registeredInvitation: PairInvitation?
     private var request = ""
     private var session = ""
+    var onGuestAuthorityEnded: (() -> Void)?
+    var onGuest: ((GuestRelayFrame) -> Void)?
+    private var guestServiceAvailable = false
+    private var guestResetGate = GuestServiceResetGate()
+    var guestOwnerContext: (session: String, deadline: Date)? {
+        guard isHost, guestServiceAvailable, !localOnly, !stopped, connected, routeArmed, let routePolicy, routePolicy.access == .remote,
+              routePolicy.expiresAt > Date(), SecureRandom.isToken(session) else { return nil }
+        return (session, routePolicy.expiresAt)
+    }
+    @discardableResult
+    func sendGuest(_ guest: GuestRelayFrame) -> Bool {
+        guard guestOwnerContext != nil else { return false }
+        return (cloudRelay as? SignalingClient)?.sendGuest(RelayMessage(type: "guest", guest: guest, version: 1)) ?? false
+    }
     private var sequence: UInt64 = 0
     private var guardState: SessionReplayGuard?
     private var servers: [ICEServerConfiguration] = []
@@ -617,13 +631,14 @@ final class RemoteCoordinator: ObservableObject {
             status = "Connecting securely…"
             registeredInvitation = invitation
             routeExpiry?.cancel(); routeExpiry = nil
-            routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
+            onGuestAuthorityEnded?(); routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
             routeEpochsSeen.removeAll()
-            serviceAccess = nil
+            serviceAccess = nil; guestServiceAvailable = false; guestResetGate = GuestServiceResetGate()
             entitlementRequired = false
             macBlocker = nil
             var features = advertisesRenewal ? [SignalingFeature.renewal] : []
             features.append(SignalingFeature.route)
+            if isHost && !localOnly { features.append("guest-v1") }
             if !isHost && advertisesRemoteAccess && sessionModeRequest != .couch {
                 features.append(SignalingFeature.remoteAccess)
             }
@@ -722,7 +737,7 @@ final class RemoteCoordinator: ObservableObject {
         cancelEnrollment()
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
         reconnecting = false
-        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
+        routeExpiry?.cancel(); routeExpiry = nil; onGuestAuthorityEnded?(); routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
         routeEpochsSeen.removeAll()
         cancelRenewal()
         relay.close(); registeredInvitation = nil; resetSession(); status = "Disconnected"
@@ -752,6 +767,7 @@ final class RemoteCoordinator: ObservableObject {
         peerDisconnected()
     }
     private func resetSession() {
+        onGuestAuthorityEnded?()
         onPresentationInvalidated?()
         presentationSessionID = UUID(); presentationTrackID = UUID()
         timeout?.cancel(); timeout = nil
@@ -779,6 +795,12 @@ final class RemoteCoordinator: ObservableObject {
     private func receive(_ message: RelayMessage) {
         do {
             switch message.type {
+            case "guest":
+                guard isHost, message.version == 1, guestOwnerContext != nil, let guest = message.guest else { return }
+                if guest.operation == "serviceReset" {
+                    guard guestResetGate.accept(guest, currentEpoch: routePolicy?.epoch) else { return }
+                }
+                onGuest?(guest)
             case "route":
                 if routePolicy == nil, routeEpochsSeen.contains(message.epoch ?? "") {
                     throw RemoteError.stale
@@ -804,6 +826,7 @@ final class RemoteCoordinator: ObservableObject {
                 }
             case "registered":
                 if isHost {
+                    guestServiceAvailable = message.features?.contains("guest-v1") == true
                     hostRegistered = true; reconnecting = false; timeout?.cancel(); status = "Ready for your paired phone"
                     resetRetryBudgetAfterStableRegistration()
                 }
@@ -1193,7 +1216,7 @@ final class RemoteCoordinator: ObservableObject {
 
     private func peerDisconnected() {
         SessionLog.log.error("peerDisconnected (connected=\(self.connected, privacy: .public))")
-        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
+        routeExpiry?.cancel(); routeExpiry = nil; onGuestAuthorityEnded?(); routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
         if localOnly { connectionLost(); return }
         // The relay keeps the host's registered room open when its phone leaves.
         // Keep listening there; tearing down the host socket can exhaust its retry
@@ -1234,7 +1257,7 @@ final class RemoteCoordinator: ObservableObject {
         guard retry == nil else { return }
         if connected && sessionLossRetryLimit != nil { recoveringLiveSession = true }
         cancelRenewal()
-        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
+        routeExpiry?.cancel(); routeExpiry = nil; onGuestAuthorityEnded?(); routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
         routeEpochsSeen.removeAll()
         signalingLossReason = relay.lastCloseReason ?? "connection ended"
         relay.close(); registeredInvitation = nil; resetSession()
@@ -1276,7 +1299,7 @@ final class RemoteCoordinator: ObservableObject {
         stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false
         reconnecting = false
         cancelRenewal()
-        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
+        routeExpiry?.cancel(); routeExpiry = nil; onGuestAuthorityEnded?(); routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
         routeEpochsSeen.removeAll()
         relay.close(); registeredInvitation = nil; resetSession(); status = message
     }

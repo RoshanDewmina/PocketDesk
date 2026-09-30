@@ -21,6 +21,13 @@ enum GuestBudgetPolicy {
     static let maximumKbps: Double = 1_000
     static let freshness: TimeInterval = 2
 
+    static func boundedCeilingKbps(ownerCeiling: Double?, guest: GuestTransportObservation?, at now: TimeInterval) -> Double? {
+        guard let ownerCeiling, ownerCeiling.isFinite, ownerCeiling >= 128,
+              let guest, now.isFinite, guest.at.isFinite, now >= guest.at, now - guest.at < freshness,
+              let rate = guest.totalKbps, rate.isFinite, rate >= 0,
+              let capacity = guest.capacityKbps, capacity.isFinite, capacity >= 128 else { return nil }
+        return min(maximumKbps, ownerCeiling, capacity)
+    }
     static func ceilingKbps(for grantID: String, observation: GuestBudgetObservation, at now: TimeInterval) -> Double? {
         guard now.isFinite, observation.at.isFinite, now >= observation.at, now - observation.at < freshness,
               observation.controlBufferedBytes == 0,

@@ -1,5 +1,14 @@
 import Foundation
 
+struct HostGuestRow: Identifiable, Equatable {
+    let id: String
+    let fingerprint: String
+    let status: String
+    let pending: Bool
+    let linkReady: Bool
+}
+
+
 struct HostCaptureScopeOption: Identifiable, Equatable {
     let id: String
     let name: String
@@ -88,6 +97,9 @@ struct HostViewState: Equatable {
     var selectedCaptureScopeID = "display"
     var captureScopeViewOnly = false
     var captureScopeNeedsSelection = false
+    var guestViewingAvailable = false
+    var guestRows: [HostGuestRow] = []
+    var guestMessage: String?
     var detail: String?
     /// Setup's Pair step was skipped; pairing happens later from the menu bar.
     var pairingDeferred = false
@@ -150,6 +162,10 @@ struct HostActions {
     var setNewestFrameWins: (Bool) -> Void = { _ in }
     var selectDisplay: (UInt32) -> Void = { _ in }
     var refreshCaptureScopes: () -> Void = {}
+    var createGuestLink: () -> Void = {}
+    var copyGuestLink: (String) -> Void = { _ in }
+    var approveGuest: (String) -> Void = { _ in }
+    var revokeGuest: (String) -> Void = { _ in }
     var selectCaptureScope: (String) -> Void = { _ in }
     var setMenuBarIconShown: (Bool) -> Void = { _ in }
     var openSetup: () -> Void = {}
