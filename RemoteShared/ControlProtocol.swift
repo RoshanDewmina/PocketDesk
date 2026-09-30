@@ -112,3 +112,91 @@ struct ControlPacket: Codable {
     var sequence: UInt64
     var action: RemoteAction
 }
+
+/// Perf pack item 1a (Moonlight's move accumulator): while the control channel is backed up, pointer
+/// moves merge into one pending message instead of queueing behind the stall, where every later click
+/// waits and 64 KB of backlog ends the session. A healthy channel passes every message straight through.
+///
+/// Relative deltas sum and absolute placements keep the newest point; the merged message carries the
+/// newest `pointerSync` ordinal, which the host acknowledges cumulatively. Only moves whose other fields
+/// are identical merge, and any other message sends the pending move ahead of itself.
+struct PointerMoveCoalescer {
+    static let backlogBytes: UInt64 = 4 * 1024
+    static let flushInterval: TimeInterval = 1.0 / 30
+    private static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        return encoder
+    }()
+
+    private(set) var pending: RemoteAction?
+    private var pendingSince: TimeInterval = 0
+    private var pendingEnvelope: Data?
+    private var merged = 0
+
+    /// The messages to send now, in order; empty when the move is held.
+    mutating func offer(_ action: RemoteAction, backlogged: Bool, now: TimeInterval) -> [RemoteAction] {
+        guard Self.isMove(action) else {
+            defer { pending = nil; pendingEnvelope = nil }
+            return (pending.map { [$0] } ?? []) + [action]
+        }
+        var out: [RemoteAction] = []
+        if var held = pending {
+            if let combined = combine(held, action) {
+                held = combined
+                merged += 1
+                pending = held
+                guard !backlogged else { return [] }
+                pending = nil; pendingEnvelope = nil
+                return [held]
+            }
+            out.append(held)
+            pending = nil; pendingEnvelope = nil
+        }
+        guard backlogged else { return out + [action] }
+        pending = action
+        pendingSince = now
+        pendingEnvelope = Self.envelope(action)
+        return out
+    }
+
+    /// The held move once the backlog clears or it has waited `flushInterval`.
+    mutating func flush(backlogged: Bool, now: TimeInterval) -> RemoteAction? {
+        guard let held = pending, !backlogged || now - pendingSince >= Self.flushInterval else { return nil }
+        pending = nil; pendingEnvelope = nil
+        return held
+    }
+
+    mutating func discard() {
+        pending = nil; pendingEnvelope = nil
+    }
+
+    /// Moves merged into a pending one since the last call.
+    mutating func takeMerged() -> Int {
+        defer { merged = 0 }
+        return merged
+    }
+
+    private static func isMove(_ action: RemoteAction) -> Bool { action.action == "move" || action.action == "moveTo" }
+
+    private func combine(_ held: RemoteAction, _ next: RemoteAction) -> RemoteAction? {
+        guard held.action == next.action, (held.pointerSync == nil) == (next.pointerSync == nil),
+              let envelope = pendingEnvelope, envelope == Self.envelope(next) else { return nil }
+        var result = next
+        if next.action == "move" {
+            result.x = held.x + next.x
+            result.y = held.y + next.y
+            guard abs(result.x) <= 20_000, abs(result.y) <= 20_000 else { return nil }
+        }
+        return result
+    }
+
+    /// Everything but the position and the ordinal, which merging is allowed to change.
+    private static func envelope(_ action: RemoteAction) -> Data? {
+        var copy = action
+        copy.x = 0
+        copy.y = 0
+        copy.pointerSync = nil
+        return try? encoder.encode(copy)
+    }
+}

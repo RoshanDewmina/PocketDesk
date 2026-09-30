@@ -111,6 +111,12 @@ struct StreamCounterSnapshot {
     var encoderSessionAgeS: Double?
     var encoderDropped: Int?
     var encoderSilentDrops: Int?
+    // Host input (perf pack 1b): data-channel arrival → handled on the main queue, and CGEvent post time.
+    var inputMainDelayP50Ms: Double?
+    var inputMainDelayP95Ms: Double?
+    var inputMainDelayMaxMs: Double?
+    var inputPostP95Ms: Double?
+    var inputEvents: Int?
 }
 
 /// Compact sender-side stages the Mac forwards to the phone overlay once per statistics sample.
@@ -145,6 +151,12 @@ struct HostStreamSummary: Codable, Equatable {
     var encoderDropped: Int?
     /// Frames VideoToolbox dropped without a callback (retired by a later completion) in the last sample.
     var encoderSilentDrops: Int?
+    /// Input messages: data-channel arrival → handled on the Mac's main queue, and CGEvent post time.
+    var inputMainDelayP50Ms: Double?
+    var inputMainDelayP95Ms: Double?
+    var inputMainDelayMaxMs: Double?
+    var inputPostP95Ms: Double?
+    var inputEvents: Int?
     // Rate, load and region (G5/G4/G12; older phones ignore these).
     var targetFPS: Int?
     var displayRefreshHz: Double?
@@ -165,9 +177,10 @@ struct HostStreamSummary: Codable, Equatable {
     func validate() throws {
         let numbers = [captureFPS, captureLatencyMs, captureGapP90Ms, encodedFPS, encodeMs, pacerDelayMs,
                        sentFPS, sentKbps, targetKbps, maxKbps, qpAverage,
-                       encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs].compactMap { $0 }
+                       encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs,
+                       inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs, inputPostP95Ms].compactMap { $0 }
         let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates,
-                        encoderDropped, encoderSilentDrops].compactMap { $0 }
+                        encoderDropped, encoderSilentDrops, inputEvents].compactMap { $0 }
         let bytes = [encodeBytesP50, keyFrameBytesMax].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 10_000_000 }),
               integers.allSatisfy({ $0 >= 0 && $0 <= 100_000 }),
@@ -291,6 +304,11 @@ struct StreamStatsReport: Codable, Equatable {
     var encoderSessionAgeS: Double?
     var encoderDropped: Int?
     var encoderSilentDrops: Int?
+    var inputMainDelayP50Ms: Double?
+    var inputMainDelayP95Ms: Double?
+    var inputMainDelayMaxMs: Double?
+    var inputPostP95Ms: Double?
+    var inputEvents: Int?
     // Rate, load and region. This device's thermal state and Low Power Mode on both roles; the
     // rest is the host's (the phone sees the Mac's through `host`).
     var targetFPS: Int?
@@ -387,6 +405,11 @@ struct StreamStatsReport: Codable, Equatable {
                 encoderSessionAgeS = Self.round(counters.encoderSessionAgeS)
                 encoderDropped = counters.encoderDropped
                 encoderSilentDrops = counters.encoderSilentDrops
+                inputMainDelayP50Ms = Self.round(counters.inputMainDelayP50Ms)
+                inputMainDelayP95Ms = Self.round(counters.inputMainDelayP95Ms)
+                inputMainDelayMaxMs = Self.round(counters.inputMainDelayMaxMs)
+                inputPostP95Ms = Self.round(counters.inputPostP95Ms)
+                inputEvents = counters.inputEvents
             } else {
                 renderedFPS = Self.round(Double(counters.renderedFrames) / seconds)
                 renderGapMedianMs = Self.round(counters.renderGapMedianMs)
@@ -449,6 +472,11 @@ struct StreamStatsReport: Codable, Equatable {
                           encoderSessionAgeS: encoderSessionAgeS.map { min($0, 10_000_000) },
                           encoderDropped: encoderDropped.map { min($0, 100_000) },
                           encoderSilentDrops: encoderSilentDrops.map { min($0, 100_000) },
+                          inputMainDelayP50Ms: inputMainDelayP50Ms.map { min($0, 10_000_000) },
+                          inputMainDelayP95Ms: inputMainDelayP95Ms.map { min($0, 10_000_000) },
+                          inputMainDelayMaxMs: inputMainDelayMaxMs.map { min($0, 10_000_000) },
+                          inputPostP95Ms: inputPostP95Ms.map { min($0, 10_000_000) },
+                          inputEvents: inputEvents.map { min($0, 100_000) },
                           targetFPS: targetFPS.map { Self.clamp($0, HostStreamSummary.fpsRange) },
                           displayRefreshHz: displayRefreshHz.flatMap {
                               $0.isFinite ? Self.clamp($0, HostStreamSummary.refreshRange) : nil
@@ -504,6 +532,11 @@ struct StreamStatsReport: Codable, Equatable {
             return number >= 100 ? "\(Int(number.rounded()))\(unit)" : String(format: "%.1f%@", number, unit)
         }
         func hardware(_ flag: Bool?) -> String { flag == true ? "hw" : flag == false ? "sw?" : "hw?" }
+        func inputLine(_ prefix: String, _ events: Int?, _ p50: Double?, _ p95: Double?, _ maximum: Double?,
+                       _ post: Double?) -> String? {
+            guard let events, events > 0 else { return nil }
+            return "\(prefix)input main p50 \(value(p50, "ms")) p95 \(value(p95, "ms")) max \(value(maximum, "ms")) · post p95 \(value(post, "ms")) · n \(events)"
+        }
         func dropped(_ count: Int?, _ silent: Int? = nil) -> String {
             (count.map { " · dropped \($0)/s" } ?? "") + (silent.map { " · VT lost \($0)" } ?? "")
         }
@@ -560,6 +593,10 @@ struct StreamStatsReport: Codable, Equatable {
                              + dropped(encoderDropped, encoderSilentDrops))
             }
             if let load = loadLine("", ladder: ladder, busy: busy, region: captureRegion) { lines.append(load) }
+            if let input = inputLine("", inputEvents, inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs,
+                                     inputPostP95Ms) {
+                lines.append(input)
+            }
         } else {
             if let host {
                 if let rate = rateLine("Mac ", target: host.targetFPS, refresh: host.displayRefreshHz,
@@ -577,6 +614,10 @@ struct StreamStatsReport: Codable, Equatable {
                 }
                 if let load = loadLine("Mac ", ladder: host.ladder, busy: host.busy, region: host.captureRegion) {
                     lines.append(load)
+                }
+                if let input = inputLine("Mac ", host.inputEvents, host.inputMainDelayP50Ms, host.inputMainDelayP95Ms,
+                                         host.inputMainDelayMaxMs, host.inputPostP95Ms) {
+                    lines.append(input)
                 }
             }
             if let own = rateLine("phone ", target: nil, refresh: nil, display: nil, gapMedian: nil,
@@ -757,6 +798,8 @@ final class StreamCounters: @unchecked Sendable {
     private var rateUpdates = 0
     private var encoderDropped = 0
     private var encoderSilentDrops = 0
+    private var inputMainDelay = LatencyWindow()
+    private var inputPost = LatencyWindow()
     private var encoderSessionStartedMs: Double?
 
     /// The refresh rate the video view presents at, fixed once the view is on screen.
@@ -870,6 +913,13 @@ final class StreamCounters: @unchecked Sendable {
         lock.lock(); encoderDropped += 1; lock.unlock()
     }
 
+    /// Host: one input message handled; `mainDelayMs` from data-channel arrival, `postMs` in the driver.
+    func inputHandled(mainDelayMs: Double?, postMs: Double) {
+        lock.lock(); defer { lock.unlock() }
+        if let mainDelayMs { inputMainDelay.record(mainDelayMs) }
+        inputPost.record(postMs)
+    }
+
     /// VideoToolbox dropped frames without a callback; a later completion retired them.
     func encoderSilentlyDropped(_ count: Int) {
         lock.lock(); encoderSilentDrops += max(0, count); lock.unlock()
@@ -935,6 +985,13 @@ final class StreamCounters: @unchecked Sendable {
         result.encoderSessionAgeS = encoderSessionStartedMs.map { max(0, (MachClock.nowMs() - $0) / 1000) }
         result.encoderDropped = encode.count > 0 || encoderDropped > 0 ? encoderDropped : nil
         result.encoderSilentDrops = encode.count > 0 || encoderSilentDrops > 0 ? encoderSilentDrops : nil
+        let mainDelay = inputMainDelay.drainPercentiles()
+        let post = inputPost.drainPercentiles()
+        result.inputMainDelayP50Ms = mainDelay.p50
+        result.inputMainDelayP95Ms = mainDelay.p95
+        result.inputMainDelayMaxMs = mainDelay.max
+        result.inputPostP95Ms = post.p95
+        result.inputEvents = post.count > 0 ? post.count : nil
         encodeInFlightMax = 0
         keyFrameBytesMax = 0
         rateUpdates = 0

@@ -28,6 +28,9 @@ struct StreamTuning: Equatable {
     /// Perf pack item 3: `bandwidthHeadroom` for a LAN route only (`CeilingRouteTracker`), 1…2; probes
     /// are capped at 2x the encoder maximum, so more has no effect. Off (1) until a physical A/B.
     var lanBandwidthHeadroom: Int = 1
+    /// Perf pack item 1a (phone): merge pointer moves while the control channel is backed up
+    /// (`PointerMoveCoalescer`); a healthy channel is unchanged.
+    var mergePointerMoves = true
     var degradationPreference: RTCDegradationPreference?
     /// Restart the VideoToolbox session when the target rate has doubled, so text is not left at the
     /// quality of a 300 kb/s start (see `EncoderRestartPolicy`).
@@ -94,6 +97,7 @@ struct StreamTuning: Equatable {
         tuning.viewportCapture = false
         tuning.ladder = false
         tuning.idleVideoRefresh = false
+        tuning.mergePointerMoves = false
         return tuning
     }()
 
@@ -112,12 +116,14 @@ struct StreamTuning: Equatable {
     static let ladderKey = "PocketDeskLadder"
     static let encoderMaxInFlightKey = "PocketDeskEncoderMaxInFlight"
     static let lanHeadroomKey = "PocketDeskLANHeadroom"
+    static let mergePointerMovesKey = "PocketDeskMergePointerMoves"
     static let idleVideoRefreshKey = "PocketDeskIdleVideoRefresh"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
-                                 viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey]
+                                 viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
+                                 mergePointerMovesKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -175,6 +181,9 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: ladderKey) != nil {
             tuning.ladder = defaults.bool(forKey: ladderKey)
         }
+        if defaults.object(forKey: mergePointerMovesKey) != nil {
+            tuning.mergePointerMoves = defaults.bool(forKey: mergePointerMovesKey)
+        }
         if defaults.object(forKey: lanHeadroomKey) != nil {
             let headroom = defaults.integer(forKey: lanHeadroomKey)
             tuning.lanBandwidthHeadroom = (1...2).contains(headroom) ? headroom : 1
@@ -231,6 +240,7 @@ struct StreamTuning: Equatable {
         if !ladder { parts.append("no ladder") }
         if let encoderMaxInFlight { parts.append("max in-flight \(encoderMaxInFlight)") }
         if lanBandwidthHeadroom > 1 { parts.append("LAN headroom \(lanBandwidthHeadroom)") }
+        if !mergePointerMoves { parts.append("no move merge") }
         if presentAtDisplayMaximum && !idleVideoRefresh { parts.append("no idle refresh") }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
