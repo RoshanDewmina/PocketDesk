@@ -38,9 +38,9 @@ final class MacShareBlockerTests: XCTestCase {
     }
 
     /// Plays a phone through request, challenge and proof; returns what the Mac sent after the proof.
-    private func handshake(_ signaling: ScriptedSignaling, phone: Sealer, features: [String]?) throws -> [ProtectedMessage] {
+    private func handshake(_ signaling: ScriptedSignaling, phone: Sealer, features: [String]?, mode: String? = nil) throws -> [ProtectedMessage] {
         let request = try SecureRandom.token()
-        let body = try features.map { try JSONEncoder().encode(MacShareBlocker.Handshake(features: $0)) }
+        let body = try features.map { try JSONEncoder().encode(MacShareBlocker.Handshake(features: $0, mode: mode)) }
         signaling.deliver(RelayMessage(type: "peer", online: true))
         signaling.deliver(try phone.seal("request", request: request, body: body))
         let challenge = try phone.open(try XCTUnwrap(signaling.sent.last))
@@ -59,6 +59,25 @@ final class MacShareBlockerTests: XCTestCase {
         XCTAssertTrue(host.hostRegistered, "The Mac stays reachable so the next attempt hears the reason too")
         XCTAssertEqual(host.status, "Ready for your paired phone")
         XCTAssertNil(host.media, "Nothing is streamed")
+    }
+
+    func testSealedCouchIntentSkipsOnlyThePictureBlockerBeforeAdmission() throws {
+        for blocker in [MacShareBlocker.screenRecordingOff, .screenRecordingApproval] {
+            let (host, signaling, phone) = try pairedHost(blocker: blocker)
+            let replies = try handshake(signaling, phone: phone, features: MacShareBlocker.Handshake.phone.features,
+                                        mode: SessionMode.couch.rawValue)
+            XCTAssertEqual(replies.map(\.kind), ["accepted"])
+            XCTAssertEqual(host.peerRequestedMode, .couch)
+            XCTAssertNil(host.media, "Accepted intent has not completed local proof or media admission")
+            XCTAssertFalse(host.connected)
+            host.stop()
+        }
+        let (host, signaling, phone) = try pairedHost(blocker: .screenRecordingOff)
+        let replies = try handshake(signaling, phone: phone, features: MacShareBlocker.Handshake.phone.features,
+                                    mode: "unknown")
+        XCTAssertEqual(replies.map(\.kind), [MacShareBlocker.refusalKind])
+        XCTAssertNil(host.media)
+        host.stop()
     }
 
     func testAnOlderPhoneIsNeitherToldNorAccepted() throws {
