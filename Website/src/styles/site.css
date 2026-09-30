@@ -2294,6 +2294,13 @@ a.store {
     padding-left: 12px;
   }
 }
+@media (max-width: 639px) {
+  /* One row or two depending on the font: stack them so the web-font swap can't move the art below. */
+  .lost .acts {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
 @media (max-width: 520px) {
   .hero .eyebrow {
     letter-spacing: 0.06em;
