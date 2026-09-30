@@ -114,6 +114,15 @@ final class CouchPhoneModelTests: XCTestCase {
         XCTAssertEqual(model.sessionNotice, CouchCopy.needsScreenRecording)
     }
 
+    func testDisplayRefreshFailureKeepsLiveCouchAndShowsTheRetryNotice() throws {
+        let model = try liveCouch()
+        try deliver(status(true, mode: "couch", reason: "displayUnavailable", features: couchFeatures), to: model)
+        XCTAssertEqual(model.sessionMode, .couch)
+        XCTAssertTrue(model.canControl)
+        XCTAssertEqual(model.sessionNotice, CouchCopy.displayUnavailable)
+        XCTAssertNil(model.pendingModeSwitch)
+    }
+
     func testModeRequestsNeedACouchCapableConnectedMac() throws {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
         XCTAssertFalse(model.requestMode(.couch))

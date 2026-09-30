@@ -180,6 +180,9 @@ final class RemoteHostModel: ObservableObject {
     private var refusalTeardown: Task<Void, Never>?
     /// Set when displays change during Couch: `displays` could not be reloaded while sharing, so Picture must not use it.
     private var displaysStaleFromCouch = false
+    private var pendingPictureRefresh: CouchPictureRefreshTicket?
+    private weak var pendingPictureRefreshPeer: PeerMedia?
+    private var pictureRefreshTimeout: Task<Void, Never>?
     private var sessionHealthy: Bool {
         switch sessionState {
         case .picture: captureHealthy
@@ -1348,9 +1351,15 @@ final class RemoteHostModel: ObservableObject {
                 clearCaptureApproval()
                 loadDisplays()
             } else {
-                stop()
-                invalidateDisplays(status: .permissionDenied)
-                reconcileSharing()
+                if sessionState == .couch {
+                    cancelPictureRefresh()
+                    invalidateDisplays(status: .permissionDenied)
+                    sendCaptureHealth(sessionHealthy)
+                } else {
+                    stop()
+                    invalidateDisplays(status: .permissionDenied)
+                    reconcileSharing()
+                }
             }
         }
         if refreshInputAccess() || screenChanged { evaluateUpgradeRegrant() }
@@ -1366,7 +1375,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func loadDisplays() {
-        guard !active && !browserSession.controller.running else { return }
+        guard CouchCatalogRefresh.allowed(active: active, session: sessionState,
+                                           browserRunning: browserSession.controller.running) else { return }
         displayRefreshTask?.cancel()
         displayRefreshTask = nil
         let previousSelection = selected
@@ -1376,7 +1386,11 @@ final class RemoteHostModel: ObservableObject {
         guard CGPreflightScreenCaptureAccess() else {
             screenRecordingPermission = .denied
             invalidateDisplays(status: .permissionDenied)
-            reconcileSharing()
+            if sessionState == .couch {
+                finishPictureRefresh()
+            } else {
+                reconcileSharing()
+            }
             return
         }
 
@@ -1396,9 +1410,18 @@ final class RemoteHostModel: ObservableObject {
                 accessibilityGranted: self.controlPermission.isGranted,
                 displayEnumeration: enumeration
             )
+            guard CouchCatalogRefresh.allowed(active: self.active, session: self.sessionState,
+                                               browserRunning: self.browserSession.controller.running) else {
+                self.displayRefreshTask = nil
+                return
+            }
             self.applyPermissionRefresh(result, previousSelection: previousSelection)
             self.displayRefreshTask = nil
-            self.reconcileSharing()
+            if self.sessionState == .couch {
+                self.finishPictureRefresh()
+            } else {
+                self.reconcileSharing()
+            }
         }
     }
 
@@ -1605,6 +1628,7 @@ final class RemoteHostModel: ObservableObject {
 
     /// No screen capture, encoder, load monitor, viewport, cursor hiding or curtain: the person watches the Mac itself.
     private func beginCouch() {
+        cancelPictureRefresh()
         guard connection.connected, connection.media != nil else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
         active = true
@@ -1703,6 +1727,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func endCapture() {
+        cancelPictureRefresh()
         liftCurtain()
         curtainLocallyDismissed = false
         curtainRaiseFailed = false
@@ -2118,6 +2143,7 @@ final class RemoteHostModel: ObservableObject {
     private func receiveModeRequest(_ action: RemoteAction) {
         guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused,
               let requested = action.mode.flatMap(SessionMode.init(rawValue:)) else { return }
+        cancelPictureRefresh()
         switch (sessionState, requested) {
         case (.couch, .picture):
             guard CGPreflightScreenCaptureAccess() else {
@@ -2125,8 +2151,26 @@ final class RemoteHostModel: ObservableObject {
                 sendCaptureHealth(sessionHealthy)
                 return
             }
-            events.record(.session, "Phone switched to the picture")
-            beginCapture()
+            pendingPictureRefresh = CouchPictureRefreshTicket(epoch: inputEpoch.value,
+                                                              issuedAt: ProcessInfo.processInfo.systemUptime)
+            pendingPictureRefreshPeer = connection.media
+            if !displaysStaleFromCouch && displayRefreshStatus == .ready
+                && displays.contains(where: { $0.displayID == selected }) {
+                finishPictureRefresh()
+            } else {
+                guard let ticket = pendingPictureRefresh else { return }
+                pictureRefreshTimeout = Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .seconds(CouchPictureRefreshTicket.maximumWait))
+                    guard !Task.isCancelled, let self, self.pendingPictureRefresh?.id == ticket.id else { return }
+                    let peerMatches = self.pendingPictureRefreshPeer.map { self.connection.media === $0 } ?? false
+                    self.cancelPictureRefresh()
+                    guard peerMatches, self.connection.connected, self.active, self.sessionState == .couch,
+                          self.inputEpoch.value == ticket.epoch, !self.phonePause.isPaused else { return }
+                    self.pendingModeReason = CGPreflightScreenCaptureAccess() ? .displayUnavailable : .screenRecording
+                    self.sendCaptureHealth(self.sessionHealthy)
+                }
+                if displayRefreshTask == nil { loadDisplays() }
+            }
         case (.picture, .couch):
             if let refusal = CouchAdmission.decide(couchAdmissionInputs) {
                 pendingModeReason = refusal
@@ -2138,6 +2182,51 @@ final class RemoteHostModel: ObservableObject {
         default:
             sendCaptureHealth(sessionHealthy)
         }
+    }
+
+    private func cancelPictureRefresh() {
+        pendingPictureRefresh = nil
+        pendingPictureRefreshPeer = nil
+        pictureRefreshTimeout?.cancel()
+        pictureRefreshTimeout = nil
+    }
+
+    private func finishPictureRefresh() {
+        guard let ticket = pendingPictureRefresh else { return }
+        guard let peer = pendingPictureRefreshPeer else { cancelPictureRefresh(); return }
+        let sameSession = ticket.matchesSession(epoch: inputEpoch.value, samePeer: connection.media === peer,
+                                               session: sessionState, connected: connection.connected,
+                                               active: active, paused: phonePause.isPaused)
+        let current = ticket.isCurrent(epoch: inputEpoch.value, now: ProcessInfo.processInfo.systemUptime,
+                                       samePeer: connection.media === peer, session: sessionState,
+                                       connected: connection.connected, active: active, paused: phonePause.isPaused)
+        cancelPictureRefresh()
+        guard sameSession else { return }
+        guard current else {
+            pendingModeReason = CGPreflightScreenCaptureAccess() ? .displayUnavailable : .screenRecording
+            sendCaptureHealth(sessionHealthy)
+            return
+        }
+        guard !HostScreenLock.isLocked(), Self.consoleUserActive() else { return }
+        guard CGPreflightScreenCaptureAccess(), CaptureStopReason.systemAllowsCapture,
+              !captureApproval.isPending else {
+            pendingModeReason = .screenRecording
+            sendCaptureHealth(sessionHealthy)
+            return
+        }
+        if let refusal = CouchAdmission.decide(couchAdmissionInputs) {
+            pendingModeReason = refusal
+            sendCaptureHealth(sessionHealthy)
+            return
+        }
+        guard refreshCouchHealth() else { return }
+        guard displayRefreshStatus == .ready, displays.contains(where: { $0.displayID == selected }) else {
+            pendingModeReason = .displayUnavailable
+            sendCaptureHealth(sessionHealthy)
+            return
+        }
+        events.record(.session, "Phone switched to the picture")
+        beginCapture()
     }
 
     // MARK: Session extensions
@@ -2227,6 +2316,7 @@ final class RemoteHostModel: ObservableObject {
     /// The phone is backgrounding: stop capture and input now, but keep the peer and its
     /// session slot so a quick return resumes without renegotiation.
     private func pauseForPhoneBackground() {
+        cancelPictureRefresh()
         guard !phonePause.isPaused else { return }
         liftCurtain()
         phonePause.begin(at: ProcessInfo.processInfo.systemUptime)

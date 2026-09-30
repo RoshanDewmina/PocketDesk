@@ -67,4 +67,11 @@ final class CouchProtocolTests: XCTestCase {
         XCTAssertEqual(CouchCopy.refusal(.screenRecording), CouchCopy.needsScreenRecording)
         XCTAssertEqual(CouchCopy.notLocal, "Couch mode works on the same Wi-Fi or Ethernet network. Join your Mac’s network and try again.")
     }
+    func testDisplayDiscoveryFailureIsAnHonestBoundedModeReason() throws {
+        XCTAssertNoThrow(try RemoteAction(action: "capture", mode: "couch",
+                                         modeReason: SessionModeRefusal.displayUnavailable.rawValue).validate())
+        XCTAssertTrue(CouchCopy.refusal(.displayUnavailable).contains("Still in Couch mode"))
+        XCTAssertFalse(CouchCopy.refusal(.displayUnavailable).contains("Screen Recording"))
+    }
+
 }

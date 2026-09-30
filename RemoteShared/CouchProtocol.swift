@@ -5,7 +5,7 @@ enum SessionMode: String, Codable, Equatable, CaseIterable {
 }
 
 enum SessionModeRefusal: String, Equatable, CaseIterable {
-    case notLocal, controlOff, screenRecording
+    case notLocal, controlOff, screenRecording, displayUnavailable
 }
 
 enum SessionModeStatus {
@@ -43,6 +43,7 @@ enum CouchCopy {
     static let updateMac = "Update Farside on your Mac to use Couch mode. Showing the picture instead."
     static let notAnswering = "Your Mac isn’t answering. Input paused."
     static let needsScreenRecording = "Your Mac needs Screen Recording to show the picture."
+    static let displayUnavailable = "Couldn’t load your Mac’s display. Still in Couch mode. Try showing the picture again."
     static let showingPicture = "Showing your Mac’s screen…"
     static let restHeadline = "Look at your Mac. This is its trackpad."
     static let restDeadpan = "The picture is the one on your wall."
@@ -56,6 +57,7 @@ enum CouchCopy {
         case .notLocal: notLocal
         case .controlOff: controlOff
         case .screenRecording: needsScreenRecording
+        case .displayUnavailable: displayUnavailable
         }
     }
 }

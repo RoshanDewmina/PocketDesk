@@ -120,4 +120,32 @@ final class CouchHostPolicyTests: XCTestCase {
         XCTAssertEqual(HostCouchDisplays.rects([tv], main: 1), [tv.bounds], "a missing main display keeps the order it was given")
         XCTAssertEqual(HostCouchDisplays.rects([], main: 1), [])
     }
+    func testCatalogRefreshDuringCouchNeverEnablesRefreshDuringPictureOrBrowserSharing() {
+        XCTAssertTrue(CouchCatalogRefresh.allowed(active: true, session: .couch, browserRunning: false))
+        XCTAssertTrue(CouchCatalogRefresh.allowed(active: false, session: .picture, browserRunning: false))
+        XCTAssertFalse(CouchCatalogRefresh.allowed(active: true, session: .picture, browserRunning: false))
+        XCTAssertFalse(CouchCatalogRefresh.allowed(active: true, session: .refused(.notLocal), browserRunning: false))
+        XCTAssertFalse(CouchCatalogRefresh.allowed(active: true, session: .couch, browserRunning: true))
+    }
+
+    func testPictureRefreshRejectsLateOrReplacedSessionsAndBackgrounding() {
+        let ticket = CouchPictureRefreshTicket(epoch: 7, issuedAt: 10)
+        func current(epoch: UInt64 = 7, now: TimeInterval = 11, peer: Bool = true,
+                     session: HostSessionState = .couch, connected: Bool = true,
+                     active: Bool = true, paused: Bool = false) -> Bool {
+            ticket.isCurrent(epoch: epoch, now: now, samePeer: peer, session: session,
+                             connected: connected, active: active, paused: paused)
+        }
+        XCTAssertTrue(current())
+        XCTAssertFalse(current(epoch: 8))
+        XCTAssertFalse(current(now: 14))
+        XCTAssertFalse(current(now: 9))
+        XCTAssertFalse(current(peer: false))
+        XCTAssertFalse(current(session: .picture))
+        XCTAssertFalse(current(connected: false))
+        XCTAssertFalse(current(active: false))
+        XCTAssertFalse(current(paused: true))
+        XCTAssertNotEqual(ticket.id, CouchPictureRefreshTicket(epoch: 7, issuedAt: 10).id)
+    }
+
 }

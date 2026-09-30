@@ -116,3 +116,28 @@ enum HostCouchDisplays {
         return rects(Array(displays), main: CGMainDisplayID())
     }
 }
+
+enum CouchCatalogRefresh {
+    static func allowed(active: Bool, session: HostSessionState, browserRunning: Bool) -> Bool {
+        !browserRunning && (!active || session == .couch)
+    }
+}
+
+struct CouchPictureRefreshTicket: Equatable {
+    static let maximumWait: TimeInterval = 4
+    let id = UUID()
+    let epoch: UInt64
+    let issuedAt: TimeInterval
+
+    func isCurrent(epoch: UInt64, now: TimeInterval, samePeer: Bool, session: HostSessionState,
+                   connected: Bool, active: Bool, paused: Bool) -> Bool {
+        matchesSession(epoch: epoch, samePeer: samePeer, session: session,
+                       connected: connected, active: active, paused: paused)
+            && (0..<Self.maximumWait).contains(now - issuedAt)
+    }
+
+    func matchesSession(epoch: UInt64, samePeer: Bool, session: HostSessionState,
+                        connected: Bool, active: Bool, paused: Bool) -> Bool {
+        samePeer && self.epoch == epoch && session == .couch && connected && active && !paused
+    }
+}

@@ -211,7 +211,13 @@ struct FriendlyError: Identifiable, Equatable {
         case .controlOff:
             FriendlyError(kind: .couchControlOff, headline: "Control is off", accent: "off", message: CouchCopy.controlOff,
                           fix: "Or connect with the picture to watch.", action: .connectWithPicture, secondary: .retry)
-        case .notLocal, .screenRecording:
+        case .screenRecording:
+            FriendlyError(kind: .screenRecordingOff, headline: "Screen Recording is off", accent: "off",
+                          message: CouchCopy.needsScreenRecording, fix: FriendlyError.screenRecordingOff.fix)
+        case .displayUnavailable:
+            FriendlyError(kind: .screenSharingOff, headline: "Mac display unavailable",
+                          message: CouchCopy.displayUnavailable, fix: "Try showing the picture again.")
+        case .notLocal:
             FriendlyError(kind: .couchNotLocal, headline: "Not on the same network", accent: "same",
                           message: CouchCopy.notLocal, fix: "Or connect with the picture instead.",
                           action: .connectWithPicture, secondary: .retry)
