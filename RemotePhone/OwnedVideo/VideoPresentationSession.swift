@@ -22,6 +22,10 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     private var onSourceFrame: ((VideoFrameEnvelope) -> Void)?
     private var stopped = false
     var isTerminal: Bool { stopped }
+    var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)? {
+        get { view.onOriginalSourcePresented }
+        set { view.onOriginalSourcePresented = newValue }
+    }
     private var expiryTimer: Timer?
     private final class Registration { weak var value: VideoPresentationSession?; init(_ value: VideoPresentationSession) { self.value = value } }
     private static var registrations: [Registration] = []
