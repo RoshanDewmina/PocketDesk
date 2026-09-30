@@ -18,7 +18,7 @@ extension PhoneRemoteModel {
             refreshSendToMac(force: true)
             return connection.invitation == host.invitation
         } catch {
-            error = error.localizedDescription
+            self.error = error.localizedDescription
             return false
         }
     }
