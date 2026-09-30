@@ -143,6 +143,11 @@ final class RemoteCoordinator: ObservableObject {
     private var proofReceived = false
     private var sentControl: UInt64 = 0
     private var receivedControl: UInt64 = 0
+    private var moveCoalescer = PointerMoveCoalescer()
+    private var moveFlush: Task<Void, Never>?
+    /// Mach ms when the control message being delivered through `onControl` reached the data channel,
+    /// before its main-actor hop; nil outside that call.
+    private(set) var currentControlArrivalMs: Double?
     #if DEBUG
     /// E2E harness only (see script/e2e/README.md). Host: approves an unpaired phone whose
     /// encrypted proof carries the harness's one-time token; nil keeps human approval.
@@ -185,14 +190,31 @@ final class RemoteCoordinator: ObservableObject {
     }
     func sendControl(_ action: RemoteAction) -> Bool {
         guard connected, !session.isEmpty else {
+            moveCoalescer.discard()
             controlNotConnectedRefusals += 1
             if InputLog.sampled(controlNotConnectedRefusals) {
                 InputLog.log.error("\(self.isHost ? "host" : "phone", privacy: .public) send refused: not connected (\(action.action, privacy: .public)) count=\(self.controlNotConnectedRefusals, privacy: .public)")
             }
             return false
         }
+        do { try action.validate() } catch { connectionLost(); return false }
+        guard StreamTuning.current.mergePointerMoves || moveCoalescer.pending != nil else { return transmit(action) }
+        let outgoing = moveCoalescer.offer(action, backlogged: controlBacklogged,
+                                           now: ProcessInfo.processInfo.systemUptime)
+        for _ in 0..<moveCoalescer.takeMerged() { media?.counters.coalescedMove() }
+        if moveCoalescer.pending != nil { scheduleMoveFlush() }
+        for message in outgoing {
+            guard transmit(message) else { return false }
+        }
+        return true
+    }
+
+    private var controlBacklogged: Bool {
+        (media?.controlBufferedAmount ?? 0) >= PointerMoveCoalescer.backlogBytes
+    }
+
+    private func transmit(_ action: RemoteAction) -> Bool {
         do {
-            try action.validate()
             sentControl += 1
             let data = try JSONEncoder().encode(ControlPacket(session: session, sequence: sentControl, action: action))
             guard media?.sendControl(data) == true else {
@@ -201,6 +223,28 @@ final class RemoteCoordinator: ObservableObject {
             }
             return true
         } catch { connectionLost(); return false }
+    }
+
+    /// Sends a held move once the backlog clears, or after `PointerMoveCoalescer.flushInterval`.
+    private func scheduleMoveFlush() {
+        guard moveFlush == nil else { return }
+        moveFlush = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 8_000_000)
+                guard let self, !Task.isCancelled else { return }
+                guard self.connected, !self.session.isEmpty, self.moveCoalescer.pending != nil else {
+                    self.moveCoalescer.discard()
+                    break
+                }
+                if let held = self.moveCoalescer.flush(backlogged: self.controlBacklogged,
+                                                       now: ProcessInfo.processInfo.systemUptime) {
+                    _ = self.transmit(held)
+                    break
+                }
+            }
+            // A cancelled task's handle was already cleared by the reset that cancelled it.
+            if !Task.isCancelled { self?.moveFlush = nil }
+        }
     }
     func restore() {
         do {
@@ -372,6 +416,7 @@ final class RemoteCoordinator: ObservableObject {
         remoteVideo = nil; connected = false; awaitingApproval = false; hostRegistered = false
         diagnostics = "Route not measured"
         sentControl = 0; receivedControl = 0
+        moveCoalescer.discard(); moveFlush?.cancel(); moveFlush = nil
         request = ""; session = ""; sequence = 0; guardState = nil; proofReceived = false
         peerFeatures = []
         peerRequestedMode = .picture
@@ -693,6 +738,7 @@ final class RemoteCoordinator: ObservableObject {
         }
         peer.onRemoteVideo = { [weak self, weak peer] track in Task { @MainActor in if let self, let peer, self.media === peer { self.remoteVideo = track } } }
         peer.onControl = { [weak self, weak peer] data in
+            let arrivedMs = MachClock.nowMs()
             Task { @MainActor in
                 guard let self, let peer, self.media === peer, data.count <= 16384 else { return }
                 do {
@@ -704,7 +750,10 @@ final class RemoteCoordinator: ObservableObject {
                     }
                     try packet.action.validate()
                     self.receivedControl = packet.sequence
-                    self.onControl?(try JSONEncoder().encode(packet.action))
+                    let action = try JSONEncoder().encode(packet.action)
+                    self.currentControlArrivalMs = arrivedMs
+                    defer { self.currentControlArrivalMs = nil }
+                    self.onControl?(action)
                 } catch {
                     self.controlRejected["parse-or-validate", default: 0] += 1
                     InputLog.log.error("control rejected: \(String(describing: error), privacy: .public); ending session")

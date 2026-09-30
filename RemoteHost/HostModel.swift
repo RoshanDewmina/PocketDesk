@@ -1922,6 +1922,7 @@ final class RemoteHostModel: ObservableObject {
         if action.action == "key", action.key == "c", action.modifiers == ["command"], input.enabled, fenced != nil {
             clipboard.prepareForCopyShortcut()
         }
+        let handleStartedMs = MachClock.nowMs()
         let outcome = fenced.map { input.handle($0, upgraded: admission == .upgraded, now: now, pointerSnapshot: pointerSnapshot) }
             ?? RemoteInputOutcome(textRequestID: action.action == "text" ? action.key : nil)
         HostE2E.active?.recordInput(action, accepted: outcome.accepted, fence: fenceVerdict, clickPoint: outcome.clickPoint)
@@ -1929,8 +1930,12 @@ final class RemoteHostModel: ObservableObject {
         if action.action == "key", action.key == "c", action.modifiers == ["command"], input.enabled {
             clipboard.prepareForCopyShortcut()
         }
+        let handleStartedMs = MachClock.nowMs()
         let outcome = input.handle(action, upgraded: admission == .upgraded, now: now)
         #endif
+        connection.media?.counters.inputHandled(
+            mainDelayMs: connection.currentControlArrivalMs.map { max(0, handleStartedMs - $0) },
+            postMs: max(0, MachClock.nowMs() - handleStartedMs))
         countInput(outcome.accepted ? "posted" : (input.enabled ? "refused-by-driver" : "refused-control-disabled"))
         if outcome.accepted { activity.record(action: action.action) }
         if action.action == "move" || action.action == "moveTo", outcome.accepted {

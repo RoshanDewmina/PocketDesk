@@ -95,6 +95,140 @@ final class StreamInstrumentStatsTests: XCTestCase {
         XCTAssertThrowsError(try bad.validate())
     }
 
+    // Performance pack item 1a: pointer moves merge only while the control channel is backed up.
+    private func move(_ x: Double, _ y: Double, ordinal: UInt64? = 1, epoch: UInt64 = 3,
+                      modifiers: [String] = [], token: String? = "t1") -> RemoteAction {
+        RemoteAction(action: "move", x: x, y: y, modifiers: modifiers, epoch: epoch,
+                     interaction: token.map { NativeInteraction(token: $0) },
+                     pointerSync: ordinal.map { PointerSync(move: $0) })
+    }
+
+    private func summary(_ actions: [RemoteAction]) -> [String] {
+        actions.map { "\($0.action) \($0.x),\($0.y) #\($0.pointerSync?.move ?? 0)" }
+    }
+
+    func testMovesPassThroughWhileTheChannelIsHealthy() {
+        var coalescer = PointerMoveCoalescer()
+        XCTAssertEqual(summary(coalescer.offer(move(1, 2), backlogged: false, now: 0)), ["move 1.0,2.0 #1"])
+        XCTAssertEqual(summary(coalescer.offer(move(3, 4, ordinal: 2), backlogged: false, now: 0.001)), ["move 3.0,4.0 #2"])
+        XCTAssertNil(coalescer.pending)
+        XCTAssertEqual(coalescer.takeMerged(), 0)
+    }
+
+    func testBackloggedMovesSumIntoOneMessageWithTheNewestOrdinal() {
+        var coalescer = PointerMoveCoalescer()
+        XCTAssertTrue(coalescer.offer(move(1, 2, ordinal: 1), backlogged: true, now: 0).isEmpty)
+        XCTAssertTrue(coalescer.offer(move(3, -1, ordinal: 2), backlogged: true, now: 0.008).isEmpty)
+        XCTAssertTrue(coalescer.offer(move(0.5, 0.25, ordinal: 3), backlogged: true, now: 0.016).isEmpty)
+        XCTAssertEqual(coalescer.takeMerged(), 2)
+        XCTAssertNil(coalescer.flush(backlogged: true, now: 0.02), "held while backed up, inside the deadline")
+        XCTAssertEqual(summary([coalescer.flush(backlogged: false, now: 0.02)].compactMap { $0 }), ["move 4.5,1.25 #3"])
+        XCTAssertNil(coalescer.pending)
+    }
+
+    func testAHeldMoveIsSentAtTheDeadlineEvenWhileBackedUp() {
+        var coalescer = PointerMoveCoalescer()
+        _ = coalescer.offer(move(1, 1), backlogged: true, now: 1)
+        XCTAssertNil(coalescer.flush(backlogged: true, now: 1 + PointerMoveCoalescer.flushInterval - 0.001))
+        XCTAssertNotNil(coalescer.flush(backlogged: true, now: 1 + PointerMoveCoalescer.flushInterval))
+    }
+
+    func testAbsolutePlacementsKeepTheNewestPoint() {
+        var coalescer = PointerMoveCoalescer()
+        var first = move(100, 200, ordinal: 4); first.action = "moveTo"
+        var second = move(110, 190, ordinal: 5); second.action = "moveTo"
+        XCTAssertTrue(coalescer.offer(first, backlogged: true, now: 0).isEmpty)
+        XCTAssertTrue(coalescer.offer(second, backlogged: true, now: 0.01).isEmpty)
+        XCTAssertEqual(summary([coalescer.flush(backlogged: false, now: 0.02)].compactMap { $0 }), ["moveTo 110.0,190.0 #5"])
+    }
+
+    func testAnythingElseSendsThePendingMoveFirst() {
+        var coalescer = PointerMoveCoalescer()
+        _ = coalescer.offer(move(2, 2), backlogged: true, now: 0)
+        let click = RemoteAction(action: "click", epoch: 3, interaction: NativeInteraction(token: "t1", clickCount: 1))
+        XCTAssertEqual(coalescer.offer(click, backlogged: true, now: 0.001).map(\.action), ["move", "click"],
+                       "a click lands where the moves put the pointer")
+        _ = coalescer.offer(move(2, 2), backlogged: true, now: 0.002)
+        let heartbeat = RemoteAction(action: "heartbeat", epoch: 3)
+        XCTAssertEqual(coalescer.offer(heartbeat, backlogged: true, now: 0.003).map(\.action), ["move", "heartbeat"])
+        XCTAssertNil(coalescer.pending)
+    }
+
+    func testMovesWithADifferentEnvelopeNeverMerge() {
+        let variants: [(String, RemoteAction)] = [
+            ("epoch", move(1, 1, epoch: 4)), ("modifiers", move(1, 1, modifiers: ["shift"])),
+            ("token", move(1, 1, token: "t2")), ("kind", { var a = move(1, 1); a.action = "moveTo"; return a }()),
+            ("legacy host", move(1, 1, ordinal: nil))
+        ]
+        for (name, other) in variants {
+            var coalescer = PointerMoveCoalescer()
+            _ = coalescer.offer(move(5, 5), backlogged: true, now: 0)
+            let sent = coalescer.offer(other, backlogged: true, now: 0.001)
+            XCTAssertEqual(summary(sent), ["move 5.0,5.0 #1"], name)
+            XCTAssertNotNil(coalescer.pending, name)
+            XCTAssertEqual(coalescer.takeMerged(), 0, name)
+        }
+    }
+
+    func testAMergeThatWouldLeaveTheValidRangeSendsFirst() throws {
+        var coalescer = PointerMoveCoalescer()
+        _ = coalescer.offer(move(15_000, 0), backlogged: true, now: 0)
+        let sent = coalescer.offer(move(15_000, 0, ordinal: 2), backlogged: true, now: 0.001)
+        XCTAssertEqual(summary(sent), ["move 15000.0,0.0 #1"])
+        let held = try XCTUnwrap(coalescer.flush(backlogged: false, now: 0.002))
+        XCTAssertNoThrow(try held.validate())
+    }
+
+    func testDiscardDropsAHeldMove() {
+        var coalescer = PointerMoveCoalescer()
+        _ = coalescer.offer(move(1, 1), backlogged: true, now: 0)
+        coalescer.discard()
+        XCTAssertNil(coalescer.pending)
+        XCTAssertNil(coalescer.flush(backlogged: false, now: 1))
+    }
+
+    func testMergeSwitchDefaultsOnAndLegacyTurnsItOff() throws {
+        XCTAssertTrue(StreamTuning.tuned.mergePointerMoves)
+        XCTAssertFalse(StreamTuning.legacy.mergePointerMoves)
+        XCTAssertTrue(StreamTuning.experimentKeys.contains(StreamTuning.mergePointerMovesKey))
+        let suite = "PointerMoveCoalescer.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: StreamTuning.mergePointerMovesKey)
+        let off = StreamTuning.resolve(defaults: defaults)
+        XCTAssertFalse(off.mergePointerMoves)
+        XCTAssertTrue(off.summary.contains("no move merge"), off.summary)
+    }
+
+    // Performance pack item 1b: how long input waits for the Mac's main queue, and how long posting takes.
+    func testHostInputDelayReachesTheSummary() throws {
+        let counters = StreamCounters()
+        for index in 0..<20 { counters.inputHandled(mainDelayMs: Double(index), postMs: 0.2) }
+        counters.inputHandled(mainDelayMs: 120, postMs: 3)
+        let snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.inputEvents, 21)
+        XCTAssertEqual(snapshot.inputMainDelayP50Ms ?? -1, 10, accuracy: 0.001)
+        XCTAssertEqual(snapshot.inputMainDelayMaxMs, 120)
+        XCTAssertEqual(snapshot.inputPostP95Ms ?? -1, 0.2, accuracy: 0.001)
+        XCTAssertNil(counters.drain(inputBufferedBytes: nil).inputEvents, "reset after each sample")
+        var report = StreamStatsReport(role: "host", previous: StreamStatsSample(entries: []),
+                                       current: StreamStatsSample(entries: []), counters: snapshot)
+        report.inputMainDelayP50Ms = snapshot.inputMainDelayP50Ms
+        report.inputMainDelayP95Ms = snapshot.inputMainDelayP95Ms
+        report.inputMainDelayMaxMs = snapshot.inputMainDelayMaxMs
+        report.inputPostP95Ms = snapshot.inputPostP95Ms
+        report.inputEvents = snapshot.inputEvents
+        let summary = report.hostSummary
+        XCTAssertEqual(summary.inputEvents, 21)
+        XCTAssertNoThrow(try summary.validate())
+        var bad = summary
+        bad.inputMainDelayMaxMs = .infinity
+        XCTAssertThrowsError(try bad.validate())
+        var phone = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []), counters: nil)
+        phone.host = summary
+        XCTAssertTrue(phone.summaryLines.contains { $0.hasPrefix("Mac input main p50 10") }, "\(phone.summaryLines)")
+    }
+
     func testCountersReportGlassLatencyCadenceAndInputToPhoton() {
         let counters = StreamCounters()
         // Host clock runs 1_000_000 ms ahead of the phone.
