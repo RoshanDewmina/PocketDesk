@@ -90,8 +90,11 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { redraw = true }
     func draw(in view: MTKView) {
+        guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) == true else { invalidate(); return }
+        // Presenter holds its own lock while delivering to the presentation fence. Do not
+        // invert that order by pumping the presenter under this fence.
+        beforeDraw?(view)
         guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { () -> Void in
-            beforeDraw?(view)
             drawAdmitted(in: view)
         }) != nil else { invalidate(); return }
         if StreamTuning.current.idleVideoRefresh {
@@ -102,6 +105,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     private func drawAdmitted(in view: MTKView) {
         guard let submission = mailbox.take(redraw: redraw) else { return }
         let envelope = submission.frame
+        guard envelope.geometry != nil else { mailbox.completed(submission.id); invalidate(); return }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
               let command = commandQueue?.makeCommandBuffer(),
               let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else {

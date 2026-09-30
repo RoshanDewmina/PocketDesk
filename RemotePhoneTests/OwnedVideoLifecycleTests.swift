@@ -47,6 +47,35 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         release.signal(); XCTAssertEqual(closed.wait(timeout: .now() + 2), .success)
         XCTAssertNil(fence.withAdmission(id, at: 2) { "late GPU callback" })
     }
+    func testPresenterCallbackAndMotionEntryCannotInvertPresentationFence() {
+        let id = identity(), fence = VideoPresentationFence(VideoPresentationAdmission(identity: id, validUntil: 100))
+        let motion = VideoMotionGate(), presenter = NSLock()
+        let presenterHeld = DispatchSemaphore(value: 0), motionEntered = DispatchSemaphore(value: 0)
+        let finishPresenter = DispatchSemaphore(value: 0), presenterDone = DispatchSemaphore(value: 0), drawDone = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            presenter.lock(); presenterHeld.signal()
+            _ = finishPresenter.wait(timeout: .now() + 2)
+            XCTAssertEqual(fence.withAdmission(id, at: 1, { true }), true, "presenter callback may acquire fence")
+            presenter.unlock(); presenterDone.signal()
+        }
+        XCTAssertEqual(presenterHeld.wait(timeout: .now() + 2), .success)
+        DispatchQueue.global().async {
+            // Matches production draw/config/receive: short fence check, release, enter motion.
+            guard fence.withAdmission(id, at: 1, { true }) == true else { return }
+            motion.perform { motionEntered.signal(); presenter.lock(); presenter.unlock() }
+            drawDone.signal()
+        }
+        XCTAssertEqual(motionEntered.wait(timeout: .now() + 2), .success)
+        let fenceReachable = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { _ = fence.withAdmission(id, at: 1, { fenceReachable.signal() }) }
+        XCTAssertEqual(fenceReachable.wait(timeout: .now() + 2), .success, "draw waits on presenter without holding fence")
+        finishPresenter.signal()
+        XCTAssertEqual(presenterDone.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(drawDone.wait(timeout: .now() + 2), .success)
+        fence.invalidate()
+        motion.close { XCTAssertNil(fence.withAdmission(id, at: 2, { "late flush" })) }
+        XCTAssertFalse(motion.perform { XCTFail("post-close receive may not restart the motion pipeline") })
+    }
     func testVideoRangeBlackWhiteAndFullRangeNeutralAreCorrect() {
         for matrix in [VideoColorMatrix.bt601, .bt709] {
             let video = VideoColorConversion(matrix: matrix, fullRange: false)
@@ -105,5 +134,14 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         XCTAssertFalse(policy.mayEnqueue(b, at: 4)); XCTAssertFalse(policy.mayEnqueue(a, at: 4))
         policy.didStop(); _ = policy.update(VideoPresentationAdmission(identity: b, validUntil: 10), at: 5)
         XCTAssertFalse(policy.userStart(foreground: true, supported: true, possible: true, at: 10))
+    }
+    func testPiPPauseThenResumeRetiresBlockedConversionTicket() throws {
+        var epoch = LivePiPConversionEpoch()
+        let dequeued = try XCTUnwrap(epoch.ticket)
+        epoch.setEnabled(false); XCTAssertFalse(epoch.accepts(dequeued)); XCTAssertNil(epoch.ticket)
+        epoch.setEnabled(true)
+        XCTAssertFalse(epoch.accepts(dequeued), "old conversion must not become eligible after resume")
+        let current = try XCTUnwrap(epoch.ticket); XCTAssertTrue(epoch.accepts(current))
+        epoch.setEnabled(true); XCTAssertTrue(epoch.accepts(current), "ordinary proof renewal does not invalidate current conversion")
     }
 }

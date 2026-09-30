@@ -18,13 +18,23 @@ struct VideoFrameEnvelope {
         let transfer: VideoColorTransfer
     }
 
+    /// Geometry rejection is terminal, not an unsupported-color fallback decision.
+    var geometry: VideoPixelGeometry? {
+        guard frame.width > 0, frame.height > 0, frame.width <= 8192, frame.height <= 8192 else { return nil }
+        if let cv = frame.buffer as? RTCCVPixelBuffer {
+            return VideoPixelGeometry(bufferSize: CGSize(width: CVPixelBufferGetWidth(cv.pixelBuffer), height: CVPixelBufferGetHeight(cv.pixelBuffer)),
+                crop: CGRect(x: Int(cv.cropX), y: Int(cv.cropY), width: Int(cv.cropWidth), height: Int(cv.cropHeight)), rotation: Int(frame.rotation.rawValue))
+        }
+        let size = CGSize(width: Int(frame.buffer.width), height: Int(frame.buffer.height))
+        return VideoPixelGeometry(bufferSize: size, crop: CGRect(origin: .zero, size: size), rotation: Int(frame.rotation.rawValue))
+    }
+
     var pixels: Pixels? {
         guard let cv = frame.buffer as? RTCCVPixelBuffer else { return nil }
         let buffer = cv.pixelBuffer
         let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
-        let crop = CGRect(x: Int(cv.cropX), y: Int(cv.cropY), width: Int(cv.cropWidth), height: Int(cv.cropHeight))
-        guard VideoPixelGeometry(bufferSize: CGSize(width: width, height: height), crop: crop,
-                                 rotation: Int(frame.rotation.rawValue)) != nil else { return nil }
+        guard let geometry else { return nil }
+        let crop = geometry.crop
         func attachment(_ key: CFString) -> String? {
             CVBufferCopyAttachment(buffer, key, nil) as? String
         }
