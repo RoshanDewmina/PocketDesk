@@ -62,7 +62,8 @@ struct RemoteAction: Codable {
         try captureRegion?.validate()
         try ladder?.validate()
         try busy?.validate()
-        guard (captureRegion == nil && ladder == nil && busy == nil) || action == "capture" else {
+        try macVitals?.validate()
+        guard (captureRegion == nil && ladder == nil && busy == nil && macVitals == nil) || action == "capture" else {
             throw RemoteError.invalidMessage
         }
         // Also before the early returns, so no other action can carry a display list.

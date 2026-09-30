@@ -35,6 +35,27 @@ struct MacVitals: Codable, Equatable {
     var thermalLevel: Thermal? { thermal.flatMap(Thermal.init(rawValue:)) }
     var onBattery: Bool { powerSource == .battery }
 
-    func validate() throws {}
-    func clamped() -> MacVitals { self }
+    func validate() throws {
+        guard batteryPercent.map(Self.percentRange.contains) ?? true,
+              batteryWarning.map(Self.warningRange.contains) ?? true,
+              thermal.map(Self.thermalRange.contains) ?? true,
+              [power, load, loadCause].allSatisfy({ $0.map(Self.isWord) ?? true })
+        else { throw RemoteError.invalidMessage }
+    }
+
+    func clamped() -> MacVitals {
+        var copy = self
+        copy.batteryPercent = batteryPercent.map { min(max($0, Self.percentRange.lowerBound), Self.percentRange.upperBound) }
+        copy.batteryWarning = batteryWarning.map { min(max($0, Self.warningRange.lowerBound), Self.warningRange.upperBound) }
+        copy.thermal = thermal.map { min(max($0, Self.thermalRange.lowerBound), Self.thermalRange.upperBound) }
+        copy.power = power.flatMap { Self.isWord($0) ? $0 : nil }
+        copy.load = load.flatMap { Self.isWord($0) ? $0 : nil }
+        copy.loadCause = loadCause.flatMap { Self.isWord($0) ? $0 : nil }
+        return copy
+    }
+
+    private static func isWord(_ value: String) -> Bool {
+        (1...maxWordLength).contains(value.utf8.count)
+            && value.unicodeScalars.allSatisfy { $0.isASCII && CharacterSet.alphanumerics.contains($0) }
+    }
 }

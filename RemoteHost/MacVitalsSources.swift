@@ -1,4 +1,6 @@
+import Darwin
 import Foundation
+import IOKit.ps
 
 struct MacPowerReading: Equatable {
     var power: String? = nil
@@ -31,23 +33,108 @@ protocol MacVitalsSources: AnyObject {
 }
 
 enum MacPowerParser {
-    static func reading(descriptions: [[String: Any]], providingType: String?) -> MacPowerReading? { nil }
+    private static let providing = ["AC Power": "ac", "Battery Power": "battery", "UPS Power": "ups"]
+
+    static func reading(descriptions: [[String: Any]], providingType: String?) -> MacPowerReading? {
+        let present = descriptions.filter { ($0["Is Present"] as? Bool) ?? true }
+        let battery = present.first { $0["Type"] as? String == "InternalBattery" }
+        let ups = present.first { $0["Type"] as? String == "UPS" }
+        let source = battery ?? ups
+        let stated = (source?["Power Source State"] as? String).flatMap { $0 == "Off Line" ? nil : providing[$0] }
+        let power = providingType.flatMap { providing[$0] } ?? stated
+        let reading = MacPowerReading(power: power, batteryPercent: source.flatMap(percent),
+                                      charging: battery?["Is Charging"] as? Bool)
+        return reading == MacPowerReading() ? nil : reading
+    }
+
+    private static func percent(_ description: [String: Any]) -> Int? {
+        guard let current = (description["Current Capacity"] as? NSNumber)?.doubleValue,
+              let maximum = (description["Max Capacity"] as? NSNumber)?.doubleValue,
+              maximum > 0, current >= 0 else { return nil }
+        return min(100, Int((current / maximum * 100).rounded(.down)))
+    }
 }
 
 @MainActor
 final class LiveMacVitalsSources: MacVitalsSources {
     private(set) var powerGeneration = 0
     private(set) var memoryPressure: MacMemoryPressure = .normal
+    private var powerSource: CFRunLoopSource?
+    private var pressureSource: DispatchSourceMemoryPressure?
+    private var isStarted = false
+    // mach_host_self() adds a send-right reference on every call, so take it once.
+    private let host = mach_host_self()
 
     init() {}
 
-    func start() {}
-    func stop() {}
-    func readPower() -> MacPowerReading? { nil }
-    func batteryWarningLevel() -> Int { 1 }
-    func thermalState() -> Int { 0 }
-    func lowPowerMode() -> Bool { false }
-    func cpuTicks() -> CPUTicks? { nil }
-    func ownCPUSeconds() -> Double { 0 }
-    func processorCount() -> Int { 1 }
+    // The IOKit context is unretained: stop() must run before this object is released.
+    func start() {
+        guard !isStarted else { return }
+        isStarted = true
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        let callback: IOPowerSourceCallbackType = { context in
+            guard let context else { return }
+            let sources = Unmanaged<LiveMacVitalsSources>.fromOpaque(context).takeUnretainedValue()
+            MainActor.assumeIsolated { sources.powerGeneration += 1 }
+        }
+        if let source = IOPSNotificationCreateRunLoopSource(callback, context)?.takeRetainedValue() {
+            CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+            powerSource = source
+        }
+        let pressure = DispatchSource.makeMemoryPressureSource(eventMask: [.normal, .warning, .critical], queue: .main)
+        pressure.setEventHandler { [weak self, weak pressure] in
+            guard let event = pressure?.data else { return }
+            MainActor.assumeIsolated {
+                self?.memoryPressure = event.contains(.critical) ? .critical : event.contains(.warning) ? .warning : .normal
+            }
+        }
+        pressure.resume()
+        pressureSource = pressure
+    }
+
+    func stop() {
+        isStarted = false
+        if let powerSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), powerSource, .commonModes)
+            self.powerSource = nil
+        }
+        pressureSource?.cancel()
+        pressureSource = nil
+        memoryPressure = .normal
+    }
+
+    func readPower() -> MacPowerReading? {
+        guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else { return nil }
+        let list = IOPSCopyPowerSourcesList(blob)?.takeRetainedValue() as? [CFTypeRef] ?? []
+        let descriptions = list.compactMap {
+            IOPSGetPowerSourceDescription(blob, $0)?.takeUnretainedValue() as? [String: Any]
+        }
+        let providing = IOPSGetProvidingPowerSourceType(blob)?.takeUnretainedValue() as String?
+        return MacPowerParser.reading(descriptions: descriptions, providingType: providing)
+    }
+
+    func batteryWarningLevel() -> Int { Int(IOPSGetBatteryWarningLevel().rawValue) }
+    func thermalState() -> Int { ProcessInfo.processInfo.thermalState.rawValue }
+    func lowPowerMode() -> Bool { ProcessInfo.processInfo.isLowPowerModeEnabled }
+    func processorCount() -> Int { ProcessInfo.processInfo.activeProcessorCount }
+
+    func cpuTicks() -> CPUTicks? {
+        var info = host_cpu_load_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics(host, HOST_CPU_LOAD_INFO, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        let ticks = info.cpu_ticks
+        return CPUTicks(user: ticks.0, system: ticks.1, idle: ticks.2, nice: ticks.3)
+    }
+
+    func ownCPUSeconds() -> Double {
+        var usage = rusage()
+        getrusage(RUSAGE_SELF, &usage)
+        return Double(usage.ru_utime.tv_sec) + Double(usage.ru_utime.tv_usec) / 1_000_000
+            + Double(usage.ru_stime.tv_sec) + Double(usage.ru_stime.tv_usec) / 1_000_000
+    }
 }
