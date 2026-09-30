@@ -296,6 +296,7 @@ final class RemoteHostModel: ObservableObject {
             openAtLogin: openAtLogin,
             chimeOnConnect: chimeOnConnect,
             allowFileTransfer: allowFileTransfer,
+            localOnly: connection.localOnly,
             pausedUntil: timedPause.resumesAt,
             session: status.isSessionLive ? HostSessionReadout.parse(connection.diagnostics) : nil,
             sessionStartedAt: status.isSessionLive ? sessionStartedAt : nil,
@@ -735,6 +736,12 @@ final class RemoteHostModel: ObservableObject {
     }
 
     // MARK: Sharing
+
+    func setLocalOnly(_ enabled: Bool) {
+        guard connection.localOnly != enabled else { return }
+        stopSharing()
+        connection.setLocalOnly(enabled)
+    }
 
     func stopSharing() {
         cancelTimedPause()

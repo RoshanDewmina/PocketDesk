@@ -58,6 +58,10 @@ struct HostSettingsView: View {
     private var phoneSection: some View {
         HostSettingsSection("Phone", footer: state.localPairRemovalMessage) {
             phoneRow
+            HostSettingsRow("Local network only", subtitle: "Enable on both devices to connect without internet. Changing it stops sharing; share again when ready.") {
+                HostSwitch(label: "Local network only", isOn: state.localOnly, set: actions.setLocalOnly)
+                    .accessibilityIdentifier("farside.settings.localOnly")
+            }
         }
     }
 

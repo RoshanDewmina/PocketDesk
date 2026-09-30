@@ -6,7 +6,12 @@ import Network
 /// prove the attached one-hop route with LocalLinkProof before permitting any media/control.
 /// No cloud DNS/rendezvous, ICE/TURN service or purchase token is consulted by this transport.
 @MainActor
-final class LocalSignalingTransport: SignalingTransport {
+protocol OwnerLocalSignalingTransport: SignalingTransport {
+    var onAuthenticatedLocalSignaling: ((LocalOwnerChallenge) -> Void)? { get set }
+}
+
+@MainActor
+final class LocalSignalingTransport: OwnerLocalSignalingTransport {
     var onMessage: ((RelayMessage) -> Void)?
     var onClose: (() -> Void)?
     /// Host/owner/session binding authenticated; NOT a free-route grant. Root-owned coordinator

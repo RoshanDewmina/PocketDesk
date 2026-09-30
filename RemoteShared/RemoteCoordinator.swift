@@ -48,7 +48,16 @@ final class RemoteCoordinator: ObservableObject {
     var sessionModeRequest: SessionMode = .picture
     /// Host: the mode the phone asked for in this session's `acceptedAck`.
     private(set) var peerRequestedMode: SessionMode = .picture
+    @Published private(set) var localOnly = false
+    /// Changing transport retires the whole old session before a new route can be authorized.
+    func setLocalOnly(_ enabled: Bool) {
+        guard localOnly != enabled else { return }
+        stop()
+        localOnly = enabled
+        status = enabled ? "Ready to connect on this local network" : "Ready to connect"
+    }
     var routeIsLocal: Bool {
+        if localOnly { return ownerLocalEpoch != nil && !stopped }
         guard routeArmed, let routePolicy, routePolicy.expiresAt > Date() else { return false }
         return routePolicy.access == .local
     }
@@ -78,7 +87,23 @@ final class RemoteCoordinator: ObservableObject {
     private let isHost: Bool
     private let store: any PairPersistence
     private let hostIdentityStore: HostIdentityStore?
-    private let relay: any SignalingTransport
+    private let cloudRelay: any SignalingTransport
+    private let localRelay: any OwnerLocalSignalingTransport
+    private var relay: any SignalingTransport { localOnly ? localRelay : cloudRelay }
+    private var signalingRun = UUID()
+    // A local owner handshake is distinct from a cloud route lease. It still requires
+    // continuous physical one-hop proof and never supplies an ActivityKit server epoch.
+    private var ownerLocalEpoch: String?
+    private var routeAuthorized: Bool {
+        if localOnly { return !stopped && ownerLocalEpoch != nil }
+        return (routeArmed && (routePolicy?.expiresAt ?? .distantPast) > Date()) || allowLegacyPrivateRoute
+    }
+    private var localRouteEpoch: String? {
+        if localOnly { return routeAuthorized ? ownerLocalEpoch : nil }
+        guard routeArmed, routePolicy?.access == .local,
+              (routePolicy?.expiresAt ?? .distantPast) > Date() else { return nil }
+        return routePolicy?.epoch
+    }
     private let renewalScheduler: any RenewalScheduler
     private let advertisesRenewal: Bool
     private let handshakeTimeoutNanoseconds: UInt64
@@ -174,14 +199,16 @@ final class RemoteCoordinator: ObservableObject {
         advertisesRenewal: Bool = true,
         handshakeTimeoutNanoseconds: UInt64 = 20_000_000_000,
         localProofTimeoutNanoseconds: UInt64 = 8_000_000_000,
-        hostIdentityStore: HostIdentityStore? = nil
+        hostIdentityStore: HostIdentityStore? = nil,
+        localSignaling: (any OwnerLocalSignalingTransport)? = nil
     ) {
         self.localProofTimeoutNanoseconds = localProofTimeoutNanoseconds
         // Injected pair stores (including isolated tests) must not touch the owner's identity.
         self.hostIdentityStore = hostIdentityStore ?? (isHost && store == nil ? HostIdentityStore() : nil)
         self.isHost = isHost
-        self.store = store ?? PairStore(account: isHost ? "host" : "phone")
-        self.relay = signaling ?? SignalingClient()
+        self.store = store ?? (isHost ? PairStore(account: "host") as any PairPersistence : PhonePairPersistence())
+        self.cloudRelay = signaling ?? SignalingClient()
+        self.localRelay = localSignaling ?? LocalSignalingTransport()
         self.renewalScheduler = renewalScheduler
         self.advertisesRenewal = advertisesRenewal
         self.handshakeTimeoutNanoseconds = handshakeTimeoutNanoseconds
@@ -191,8 +218,36 @@ final class RemoteCoordinator: ObservableObject {
         self.maximumRetryDelayNanoseconds = maximumRetryDelayNanoseconds
         self.retriesIndefinitely = retriesIndefinitely
         self.registrationStableNanoseconds = registrationStableNanoseconds
-        relay.onMessage = { [weak self] message in self?.receive(message) }
-        relay.onClose = { [weak self] in self?.connectionLost() }
+        wireSignalingCallbacks()
+    }
+    private func wireSignalingCallbacks() {
+        signalingRun = UUID()
+        let run = signalingRun, local = localOnly
+        let transport = relay
+        transport.onMessage = { [weak self] message in
+            guard let self, !self.stopped, self.signalingRun == run, self.localOnly == local else { return }
+            // Owner-local transport only exposes its authenticated signal and own lifecycle;
+            // cloud policy/entitlement/renewal cannot be supplied by a local peer.
+            if local && !["registered", "ice", "peer", "signal"].contains(message.type) {
+                self.sessionFailed("Unexpected local signaling message."); return
+            }
+            self.receive(message)
+        }
+        transport.onClose = { [weak self] in
+            guard let self, self.signalingRun == run, self.localOnly == local else { return }
+            self.connectionLost()
+        }
+        localRelay.onAuthenticatedLocalSignaling = { [weak self] challenge in
+            guard let self, !self.stopped, local, self.localOnly, self.signalingRun == run,
+                  let invitation = self.invitation else { return }
+            do {
+                try challenge.validate(invitation: invitation)
+                guard self.ownerLocalEpoch == nil, !self.routeEpochsSeen.contains(challenge.epoch) else { throw RemoteError.stale }
+                self.ownerLocalEpoch = challenge.epoch
+                self.routeEpochsSeen.insert(challenge.epoch)
+                self.serviceAccess = "local"
+            } catch { self.sessionFailed("Local owner authentication failed.") }
+        }
     }
     func sendControl(_ action: RemoteAction) -> Bool {
         guard connected, !session.isEmpty else {
@@ -298,7 +353,7 @@ final class RemoteCoordinator: ObservableObject {
             status = "Connecting securely…"
             registeredInvitation = invitation
             routeExpiry?.cancel(); routeExpiry = nil
-            routePolicy = nil; routeArmed = false
+            routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
             routeEpochsSeen.removeAll()
             serviceAccess = nil
             entitlementRequired = false
@@ -308,8 +363,12 @@ final class RemoteCoordinator: ObservableObject {
             if !isHost && advertisesRemoteAccess && sessionModeRequest != .couch {
                 features.append(SignalingFeature.remoteAccess)
             }
+            wireSignalingCallbacks()
+            if localOnly && (invitation.durableHostID == nil || invitation.ownerPairID == nil || invitation.localServiceName == nil) {
+                throw RemoteError.invalidPairing
+            }
             try relay.connect(invitation: invitation, hostToken: hostPair?.hostToken, features: features,
-                              entitlement: isHost || sessionModeRequest == .couch ? nil : entitlementToken?())
+                              entitlement: isHost || localOnly || sessionModeRequest == .couch ? nil : entitlementToken?())
             setTimeout()
         } catch { fail(error.localizedDescription) }
     }
@@ -336,7 +395,7 @@ final class RemoteCoordinator: ObservableObject {
                 return false
             }
             hostPair = nil; invitation = nil; peerName = nil
-            status = "Pairing removed. Old credentials no longer work."
+            status = isHost ? "Pairing removed. Old credentials no longer work." : "Mac forgotten on this phone. Revoke the phone on the Mac to remove its grant."
             return true
         } catch {
             if let remoteError = error as? RemoteError, case let .keychain(code) = remoteError {
@@ -381,7 +440,7 @@ final class RemoteCoordinator: ObservableObject {
     func stop() {
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
         reconnecting = false
-        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
+        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
         routeEpochsSeen.removeAll()
         cancelRenewal()
         relay.close(); registeredInvitation = nil; resetSession(); status = "Disconnected"
@@ -474,7 +533,7 @@ final class RemoteCoordinator: ObservableObject {
                 hasRelay = NativeRelayPolicy.hasRelay(servers)
             case "peer":
                 if message.online == true {
-                    guard (routeArmed && (routePolicy?.expiresAt ?? .distantPast) > Date()) || allowLegacyPrivateRoute else {
+                    guard routeAuthorized else {
                         sessionFailed("The connection service did not authorize this route. Update Farside and retry.")
                         return
                     }
@@ -570,7 +629,7 @@ final class RemoteCoordinator: ObservableObject {
         try guardState?.accept(message)
         switch message.kind {
         case "localEndpoint":
-            guard routePolicy?.access == .local, let body = message.body else { throw RemoteError.invalidMessage }
+            guard localRouteEpoch != nil, let body = message.body else { throw RemoteError.invalidMessage }
             let endpoint = try JSONDecoder().decode(LocalProbeEndpoint.self, from: body)
             guard pendingLocalEndpoint == nil else { throw RemoteError.stale }
             pendingLocalEndpoint = endpoint
@@ -641,24 +700,24 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func prepareMedia() {
-        guard (routeArmed && (routePolicy?.expiresAt ?? .distantPast) > Date()) || allowLegacyPrivateRoute else {
+        guard routeAuthorized else {
             sessionFailed("The connection route is no longer authorized.")
             return
         }
-        if !isHost, sessionModeRequest == .couch, routePolicy?.access != .local {
+        if !isHost, sessionModeRequest == .couch, !routeIsLocal {
             fail(CouchCopy.phoneRefusedStatus)
             return
         }
-        if let routePolicy, routePolicy.access == .local {
-            beginLocalProof(routePolicy)
+        if let epoch = localRouteEpoch, let room = invitation?.room {
+            beginLocalProof(room: room, epoch: epoch)
             return
         }
         finishMedia(localLink: nil)
     }
 
-    private func beginLocalProof(_ policy: ServerRoutePolicy) {
+    private func beginLocalProof(room: String, epoch: String) {
         guard let key = invitation?.key, !session.isEmpty else { sessionFailed("Local link proof could not start."); return }
-        let room = policy.room, epoch = policy.epoch, session = self.session
+        let session = self.session
         let isHost = self.isHost
         Task { [weak self] in
             // TN3179: a backgrounded attempt is denied silently and never prompts. Wait for the foreground.
@@ -670,7 +729,7 @@ final class RemoteCoordinator: ObservableObject {
                 LocalLinkProof.make(room: room, epoch: epoch, session: session, pairingKey: key)
             }.value
             guard let self, !self.stopped, self.session == session,
-                  self.routePolicy?.epoch == policy.epoch, self.routePolicy?.access == .local else {
+                  self.localRouteEpoch == epoch else {
                 proof?.close(); return
             }
             guard let proof else {
@@ -691,8 +750,7 @@ final class RemoteCoordinator: ObservableObject {
             }
             proof.onProven = { [weak self, weak proof] link in
                 guard let self, let proof, self.localLinkProof === proof,
-                      self.routePolicy?.epoch == policy.epoch, self.routePolicy?.access == .local,
-                      (self.routePolicy?.expiresAt ?? .distantPast) > Date() else { return }
+                      self.localRouteEpoch == epoch else { return }
                 self.localProofTimeout?.cancel(); self.localProofTimeout = nil
                 self.localProofSummary = proof.stageSummary()
                 self.finishMedia(localLink: link)
@@ -812,7 +870,8 @@ final class RemoteCoordinator: ObservableObject {
 
     private func peerDisconnected() {
         SessionLog.log.error("peerDisconnected (connected=\(self.connected, privacy: .public))")
-        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
+        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
+        if localOnly { connectionLost(); return }
         // The relay keeps the host's registered room open when its phone leaves.
         // Keep listening there; tearing down the host socket can exhaust its retry
         // budget while the phone independently reconnects.
@@ -848,7 +907,7 @@ final class RemoteCoordinator: ObservableObject {
         guard retry == nil else { return }
         if connected && sessionLossRetryLimit != nil { recoveringLiveSession = true }
         cancelRenewal()
-        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
+        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
         routeEpochsSeen.removeAll()
         signalingLossReason = relay.lastCloseReason ?? "connection ended"
         relay.close(); registeredInvitation = nil; resetSession()
@@ -889,7 +948,7 @@ final class RemoteCoordinator: ObservableObject {
         stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false
         reconnecting = false
         cancelRenewal()
-        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
+        routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
         routeEpochsSeen.removeAll()
         relay.close(); registeredInvitation = nil; resetSession(); status = message
     }
