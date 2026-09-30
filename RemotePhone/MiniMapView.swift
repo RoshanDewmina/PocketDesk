@@ -122,47 +122,12 @@ struct MiniMapPointerSource<Content: View>: View {
     var body: some View { content(model.render?.point, viewport) }
 }
 
-/// The live picture at mini map size: a second renderer on the same track, present only while
-/// the mini map is on screen. Like the main picture, frames reach the Metal view only through
-/// `RestampingRenderer`: tuned streams stamp every frame 0, which RTCMTLVideoView would skip.
-struct MiniMapVideo: UIViewRepresentable {
+/// Same immutable admission as the main picture, with independent bounded renderer and no metrics/motion.
+struct MiniMapVideo: View {
     let track: RTCVideoTrack
-
-    final class Coordinator {
-        var track: RTCVideoTrack?
-        let renderer = RestampingRenderer()
-
-        /// Points the restamping renderer at the view; the track only ever sees the renderer.
-        func connect(_ view: RTCMTLVideoView, to track: RTCVideoTrack) {
-            renderer.target = view
-            guard self.track !== track else { return }
-            self.track?.remove(renderer)
-            track.add(renderer)
-            self.track = track
-        }
-
-        func disconnect() {
-            track?.remove(renderer)
-            track = nil
-            renderer.target = nil
-        }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeUIView(context: Context) -> RTCMTLVideoView {
-        let view = RTCMTLVideoView(frame: .zero)
-        view.videoContentMode = .scaleAspectFit
-        view.isUserInteractionEnabled = false
-        context.coordinator.connect(view, to: track)
-        return view
-    }
-
-    func updateUIView(_ view: RTCMTLVideoView, context: Context) {
-        context.coordinator.connect(view, to: track)
-    }
-
-    static func dismantleUIView(_ view: RTCMTLVideoView, coordinator: Coordinator) {
-        coordinator.disconnect()
+    let admission: VideoPresentationAdmission?
+    var body: some View {
+        RemoteVideoSurface(track: track, smoothMotion: .off, primary: false, admission: admission, onFrame: {})
+            .allowsHitTesting(false)
     }
 }
