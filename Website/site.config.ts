@@ -2,6 +2,7 @@
 // `bun run build` prints what is still a placeholder; `bun run build:strict` refuses to build until nothing is.
 
 const PLACEHOLDER_SITE_URL = "https://farside.example";
+const PRODUCTION_SITE_URL = "https://getfarside.com";
 
 export type Contact = {
   /** Shown on /support and in the footer. Apple requires a real contact on the Support URL. */
@@ -40,13 +41,13 @@ export const config = {
    * sitemap.xml, robots.txt and the _headers noindex rule all derive from it.
    * `SITE_URL=https://example.com bun run build` overrides it for one build.
    */
-  SITE_URL: (process.env.SITE_URL ?? PLACEHOLDER_SITE_URL).replace(/\/+$/, ""),
+  SITE_URL: (process.env.SITE_URL ?? PRODUCTION_SITE_URL).replace(/\/+$/, ""),
 
   contact: {
-    supportEmail: null,
-    privacyEmail: null,
-    securityEmail: null,
-    betaEmail: null,
+    supportEmail: "support@getfarside.com",
+    privacyEmail: "privacy@getfarside.com",
+    securityEmail: "security@getfarside.com",
+    betaEmail: "beta@getfarside.com",
     phone: null,
     postalAddress: null,
     legalName: null,

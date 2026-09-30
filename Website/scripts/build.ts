@@ -45,7 +45,7 @@ export function csp(styleHash: string) {
     "connect-src 'self'",
     "manifest-src 'self'",
     "base-uri 'none'",
-    "form-action 'none'",
+    "form-action 'self'",
     "frame-ancestors 'none'",
     "object-src 'none'",
     "upgrade-insecure-requests",

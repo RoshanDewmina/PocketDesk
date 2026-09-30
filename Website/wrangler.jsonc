@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "farside-site",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-09-29",
+  "d1_databases": [
+    {
+      "binding": "WAITLIST",
+      "database_name": "farside-waitlist",
+      "database_id": "8cfabb91-de95-475a-806f-032713deb180",
+      "migrations_dir": "migrations"
+    }
+  ]
+}
