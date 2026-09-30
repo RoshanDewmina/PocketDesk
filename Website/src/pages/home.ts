@@ -15,7 +15,8 @@ const amount = (price: string) => {
   return html`<span class="cur">CA$</span>${whole}${cents ? html`${pd}${cents}` : ""}`;
 };
 
-/** The two SVG symbols the demo draws with (the Farside mark and the Mac pointer), from the hero lab. */
+/** The two SVG symbols the demos draw with (the Farside mark and the Mac pointer), from the hero lab. In the hero, so
+ * they sit outside the content-visibility sections below. */
 const A2_SPRITE = raw(`<svg class="a2-sprite" width="0" height="0" aria-hidden="true" focusable="false">
   <symbol id="mk" viewBox="0 0 26 38"><g fill="#EDE8DF"><circle cx="3" cy="8" r="1.4"/><circle cx="7" cy="8" r="1.4"/><circle cx="3" cy="12" r="1.4"/><circle cx="7" cy="12" r="1.4"/><circle cx="11" cy="12" r="1.4"/><circle cx="3" cy="16" r="1.4"/><circle cx="7" cy="16" r="1.4"/><circle cx="11" cy="16" r="1.4"/><circle cx="15" cy="16" r="1.4"/><circle cx="3" cy="20" r="1.4"/><circle cx="7" cy="20" r="1.4"/><circle cx="11" cy="20" r="1.4"/><circle cx="15" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/><circle cx="3" cy="24" r="1.4"/><circle cx="7" cy="24" r="1.4"/><circle cx="11" cy="24" r="1.4"/><circle cx="15" cy="24" r="1.4"/><circle cx="19" cy="24" r="1.4"/><circle cx="23" cy="24" r="1.4"/><circle cx="3" cy="28" r="1.4"/><circle cx="7" cy="28" r="1.4"/><circle cx="11" cy="28" r="1.4"/><circle cx="3" cy="32" r="1.4"/><circle cx="11" cy="32" r="1.4"/><circle cx="15" cy="32" r="1.4"/><circle cx="15" cy="36" r="1.4"/></g><circle cx="3.2" cy="3.2" r="2.8" fill="#FF5B1F"/></symbol>
   <symbol id="ptr" viewBox="-1.5 -1.5 17 23"><path d="M0 0V16.6L4.1 12.8L6.8 19.1L9.7 17.9L7 11.7H12.7Z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></symbol>
@@ -24,6 +25,36 @@ const A2_SPRITE = raw(`<svg class="a2-sprite" width="0" height="0" aria-hidden="
 /** The approved phone + Mac demo ("A2"), rendered into the page so it holds its size from the first paint. */
 const a2Markup = a2File as unknown as string;
 const a2Demo = raw(a2Markup.replace(/^\s*<template[^>]*>/, "").replace(/<\/template>\s*$/, ""));
+
+/** A2's Mac scene (the desktop and its windows), which the hero's "From the pocket" demo steers. */
+const i0 = a2Markup.indexOf('<div class="a2-scene">');
+const i1 = a2Markup.indexOf('<div class="a2-view">');
+if (i0 < 0 || i1 < 0) throw new Error("src/hero-a2/a2.html changed shape: cannot find the Mac scene");
+const macScene = raw(a2Markup.slice(i0, i1).trim());
+
+/**
+ * The hero demo, variant 2 "From the pocket" from the hero lab (src/hero-pocket/): the phone rises on Farside's
+ * Home screen, connects, and the view pulls back to the Mac it steers. The box is sized by CSS alone; the
+ * script fits the stage into it and builds the phone. Decorative, so the drawing is hidden from screen readers.
+ */
+const pocketDemo = html`<figure class="hero-demo lx" role="img" aria-label="Demo: an iPhone opens Farside and connects to a Mac. The view pulls back to the Mac it now steers, with an orange outline around the part shown on the phone.">
+  <div class="lx-stage" aria-hidden="true">
+    <canvas class="lx-field"></canvas>
+    <div class="lx-world">
+      <div class="lx-mac">
+        <div class="lx-lid"><div class="lx-lidf"><div class="lx-scr">
+          ${macScene}
+          <div class="lx-view"><i></i><i></i><i></i><i></i><b></b><b></b><b></b><b></b></div>
+          <div class="lx-mptr"><svg viewBox="-1.5 -1.5 17 23"><use href="#ptr"/></svg></div>
+        </div></div></div>
+        <div class="lx-deck"><i></i></div>
+        <div class="lx-base"></div>
+      </div>
+    </div>
+    <canvas class="lx-fx"></canvas>
+    <p class="lx-status"><span><i></i>Your iPhone is steering studio-mac</span></p>
+  </div>
+</figure>`;
 
 /**
  * Beta sign-up, used in the hero and in #beta. A plain form post works without JavaScript (the waitlist
@@ -57,18 +88,15 @@ const motionButton = html`<button class="motion" type="button" hidden>
 </button>`;
 
 const hero = html`<section class="hero" id="top" aria-labelledby="hero-title">
-  <canvas class="hero-cv" aria-hidden="true"></canvas>
+  ${A2_SPRITE}
   <div class="hero-c w">
     <p class="eyebrow"><i></i>Remote control for your own Mac<i></i></p>
     <h1 class="h1" id="hero-title"><span class="ln dw"><span>Your Mac is far${pd}</span></span> <span class="ln dw"><span>Your reach <em>isn’t.</em></span></span></h1>
     <p class="sub">Farside puts your Mac on your iPhone or iPad and turns the whole screen into a trackpad. One finger points. A tap clicks. Free on your own Wi‑Fi.</p>
     ${joinForm("join-hero")}
   </div>
-  <div class="hero-space" aria-hidden="true"></div>
-  <p class="corner l" aria-hidden="true">Phone<b>side</b></p>
-  <p class="corner r" aria-hidden="true">Mac<b>side</b></p>
-  <p class="gapr" aria-hidden="true"><span class="long">Distance to your Mac · </span><b>8,421 km</b></p>
-  ${motionButton}
+  ${pocketDemo}
+  <div class="hero-foot w">${motionButton}</div>
 </section>`;
 
 /**
@@ -110,7 +138,6 @@ const gap = html`<section class="sec" id="gap" aria-labelledby="gap-title">
 </section>`;
 
 const see = html`<section class="sec" id="see" aria-labelledby="see-title">
-  ${A2_SPRITE}
   <div class="w see-grid">
     <div class="see-copy">
       ${sh("see-title", "See it", html`Watch it <em>steer.</em>`)}

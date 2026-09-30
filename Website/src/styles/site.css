@@ -6,6 +6,7 @@
 @import "./fallbacks.css";
 @import "../hero-a2/frame.css";
 @import "../hero-a2/a2.css";
+@import "../hero-pocket/pocket.css";
 
 :root {
   --void: #050505;
@@ -553,24 +554,6 @@ a.store {
   isolation: isolate;
   padding-top: 76px;
 }
-.hero-cv {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  z-index: 0;
-}
-.hero::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 22%;
-  background: linear-gradient(rgba(5, 5, 5, 0), var(--void) 85%);
-  z-index: 1;
-  pointer-events: none;
-}
 .hero-c {
   position: relative;
   z-index: 5;
@@ -637,70 +620,29 @@ a.store {
   margin-right: auto;
   text-align: center;
 }
-.hero-space {
+/* The demo takes the rest of the first screen: about 60% of its height, no taller than the wide stage
+   (1000 × 640) at this width. The script fits the stage inside (contain, top-aligned), so this box never waits
+   for the script and nothing moves when it starts. Phones get the lab's tall layout at its own aspect ratio. */
+.hero-demo {
   flex: 1 0 auto;
-  min-height: clamp(260px, 40svh, 480px);
+  width: auto;
+  min-height: min(clamp(380px, 58svh, 660px), calc((100vw - 2 * var(--gutter)) * 0.64));
+  margin: clamp(12px, 3vh, 32px) var(--gutter) 0;
 }
-.corner {
-  display: none;
-  position: absolute;
-  z-index: 5;
-  bottom: 84px;
-}
-.corner b {
-  display: block;
-  color: var(--bone);
-  font-weight: 500;
-}
-.corner.l {
-  left: 28px;
-}
-.corner.r {
-  right: 28px;
-  text-align: right;
-}
-.corner,
-.gapr {
-  font: 500 13px/1.3 var(--mono);
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ash);
-}
-.gapr {
-  position: absolute;
-  z-index: 5;
-  left: 0;
-  top: 0;
-  white-space: nowrap;
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.8s var(--ease);
-  padding: 7px 12px;
-  border-radius: 999px;
-  background: var(--void);
-  box-shadow: inset 0 0 0 1px var(--line);
-}
-.gapr.on {
-  opacity: 1;
-}
-.gapr b {
-  color: var(--bone);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-.gapr.hit b {
-  color: var(--ember);
-}
-@media (max-width: 479px) {
-  .gapr .long {
-    display: none;
+@media (max-width: 639px) {
+  .hero-demo {
+    flex: none;
+    min-height: 0;
+    aspect-ratio: 600 / 880;
   }
 }
+.hero-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
+  padding-bottom: 18px;
+}
 .motion {
-  position: absolute;
-  z-index: 6;
-  right: var(--gutter);
-  bottom: 18px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -2140,9 +2082,6 @@ a.store {
   }
   .stat:nth-child(n + 3) {
     border-top: 0;
-  }
-  .corner {
-    display: block;
   }
 }
 @media (min-width: 900px) {

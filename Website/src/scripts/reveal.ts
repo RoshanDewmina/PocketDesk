@@ -64,7 +64,7 @@ export function initStatusChip() {
     chip.classList.add("hit");
     if (label) label.textContent = "Awake · in reach";
   };
-  if (document.querySelector(".hero-cv") && motionAllowed()) {
+  if (document.querySelector(".hero-demo") && motionAllowed()) {
     document.addEventListener("farside:contact", on, { once: true });
     setTimeout(on, 4000);
   } else if (motionAllowed()) setTimeout(on, 700);

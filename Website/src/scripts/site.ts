@@ -8,15 +8,20 @@ initReveals();
 initStatusChip();
 
 // Web fonts load right after the first paint, so they never hold up the words. The local fallback
-// faces (src/styles/fallbacks.css) share their metrics, so the swap moves nothing.
-requestAnimationFrame(() =>
-  setTimeout(() => {
-    const sheet = document.createElement("link");
-    sheet.rel = "stylesheet";
-    sheet.href = FONTS_URL;
-    document.head.appendChild(sheet);
-  }, 0),
-);
+// faces (src/styles/fallbacks.css) share their metrics, so the swap should move nothing; where a fallback
+// face is missing it can, so `webFonts` resolves once the swap is done (or failed) for anything that waits.
+export const webFonts = new Promise<void>((done) => {
+  requestAnimationFrame(() =>
+    setTimeout(() => {
+      const sheet = document.createElement("link");
+      sheet.rel = "stylesheet";
+      sheet.href = FONTS_URL;
+      sheet.onload = () => requestAnimationFrame(() => (document.fonts ? document.fonts.ready.then(() => done()) : done()));
+      sheet.onerror = () => done();
+      document.head.appendChild(sheet);
+    }, 0),
+  );
+});
 
 // Mobile menu: a <details> disclosure that also closes on Escape, outside clicks and link taps.
 const menu = document.querySelector<HTMLDetailsElement>(".nav-mob");
