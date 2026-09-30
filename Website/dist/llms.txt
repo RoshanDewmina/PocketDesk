@@ -7,27 +7,27 @@ Key facts:
 - Free on the same local network as the Mac, with no account and no ads.
 - The Anywhere plan adds access over the internet through an encrypted relay: planned at CA$5.99 a month or CA$49.99 a year, with a 7-day free trial, sold only inside the iPhone and iPad app through Apple.
 - The Mac helper is a free download from this website, signed with an Apple Developer ID and notarized by Apple. The iPhone and iPad app will be on the App Store.
-- Planned requirements: macOS 26 or later; iOS 26 or later; iPadOS 26 or later.
+- Planned requirements: macOS 26 or later on a Mac with Apple silicon (M1 or later); iOS 26 or later; iPadOS 26 or later.
 - "Agent needs you" alerts for AI coding agents running on the Mac arrive as a beta; alerts carry no prompts, file names or screen content.
 - Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; no audio; the Mac must be awake and logged in; no pressure gestures.
 - The website sets no cookies and runs no analytics.
 
 ## Main
 
-- [Home](https://farside.example/): what Farside does, how it works, features, the agent-alerts beta, pricing, FAQ
+- [Home](https://getfarside.com/): what Farside does, how it works, features, the agent-alerts beta, pricing, FAQ
 
 ## Guides
 
-- [Control your Mac from your iPhone](https://farside.example/control-mac-from-iphone): requirements, six setup steps, gestures, typing and voice, away from home, FAQ
-- [Use your iPhone as a Mac trackpad](https://farside.example/iphone-as-mac-trackpad): every gesture, click haptics, the pointer, zoom, keyboard and voice, FAQ
-- [Remote desktop for Mac](https://farside.example/remote-desktop-for-mac): free on your own network, the Anywhere plan over the internet, how the encrypted connection works, limits, FAQ
-- [Farside compared](https://farside.example/compare): feature table against Astropad Workbench, Jump Desktop, Screens 5 and Remote Mac Desktop Control, as of 28 September 2026, with sources
+- [Control your Mac from your iPhone](https://getfarside.com/control-mac-from-iphone): requirements, six setup steps, gestures, typing and voice, away from home, FAQ
+- [Use your iPhone as a Mac trackpad](https://getfarside.com/iphone-as-mac-trackpad): every gesture, click haptics, the pointer, zoom, keyboard and voice, FAQ
+- [Remote desktop for Mac](https://getfarside.com/remote-desktop-for-mac): free on your own network, the Anywhere plan over the internet, how the encrypted connection works, limits, FAQ
+- [Farside compared](https://getfarside.com/compare): feature table against Astropad Workbench, Jump Desktop, Screens 5 and Remote Mac Desktop Control, as of 28 September 2026, with sources
 
 ## Help
 
-- [Support](https://farside.example/support): setup, gestures, a can't-connect checklist, what every app message means, billing, contact
+- [Support](https://getfarside.com/support): setup, gestures, a can't-connect checklist, what every app message means, billing, contact
 
 ## Legal
 
-- [Privacy policy](https://farside.example/privacy): no account, no ads, no tracking; what stays on your devices and what the servers see
-- [Terms of use (draft)](https://farside.example/terms): draft, not yet in effect
+- [Privacy policy](https://getfarside.com/privacy): no account, no ads, no tracking; what stays on your devices and what the servers see
+- [Terms of use (draft)](https://getfarside.com/terms): draft, not yet in effect
