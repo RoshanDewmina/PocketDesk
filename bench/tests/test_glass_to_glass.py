@@ -100,6 +100,14 @@ class PairingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             g2g.parse_region("150,0,100,10", 200, 100)
 
+    def test_retime_restores_real_time_for_a_stretched_slow_motion_export(self):
+        mac, phone = schedule(7, 6, [40])
+        stretched = lambda samples: [(t * 8, v) for t, v in samples]
+        result = g2g.analyze(g2g.retime(stretched(samples_for(mac, 6)), FPS),
+                             g2g.retime(stretched(samples_for(phone, 6)), FPS))
+        self.assertAlmostEqual(result["glassToGlassMs"]["p50"], 40, delta=2.5)
+        self.assertAlmostEqual(result["frameIntervalMs"], 1000 / FPS, delta=0.01)
+
     def test_metadata_parser_pairs_times_and_luma(self):
         text = ("frame:0    pts:0       pts_time:0\nlavfi.signalstats.YAVG=16.5\n"
                 "frame:1    pts:1       pts_time:0.00416667\nlavfi.signalstats.YAVG=200\n")

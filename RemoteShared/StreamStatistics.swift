@@ -168,6 +168,11 @@ struct HostStreamSummary: Codable, Equatable {
     var ladder: LadderState?
     var busy: BusyState?
     var captureRegion: CaptureRegion?
+    // Per-frame timing (perf pack 4a; older phones ignore these): display → encoded, and the newest records.
+    var frameHostP50Ms: Double?
+    var frameHostP95Ms: Double?
+    var frameHostMaxMs: Double?
+    var frameRecords: FrameTimingRecords?
 
     static let fpsRange = 1...240
     static let refreshRange = 0.0...1_000
@@ -195,6 +200,7 @@ struct HostStreamSummary: Codable, Equatable {
         try ladder?.validate()
         try busy?.validate()
         try captureRegion?.validate()
+        try validateFrameTiming()
     }
 }
 
@@ -320,6 +326,15 @@ struct StreamStatsReport: Codable, Equatable {
     var ladder: LadderState?
     var busy: BusyState?
     var captureRegion: CaptureRegion?
+    // Per-frame timing (perf pack 4a). Host: display → encoded; phone: Mac display → decoded here.
+    var frameHostP50Ms: Double?
+    var frameHostP95Ms: Double?
+    var frameHostMaxMs: Double?
+    var frameToPhoneP50Ms: Double?
+    var frameToPhoneP95Ms: Double?
+    var frameToPhoneMaxMs: Double?
+    var frameTimedCount: Int?
+    var frameJoinLocked: Bool?
 
     init(role: String, previous: StreamStatsSample?, current: StreamStatsSample,
          counters: StreamCounterSnapshot?) {
@@ -656,6 +671,7 @@ struct StreamStatsReport: Codable, Equatable {
                 lines.append(parts.joined(separator: " · "))
             }
         }
+        if let frameTimingLine { lines.append(frameTimingLine) }
         lines.append("input queue \(inputBufferedBytes ?? 0)B peak \(inputBufferedPeakBytes ?? 0)B · moves merged \(coalescedMoves ?? 0)")
         return lines
     }
@@ -853,6 +869,10 @@ final class StreamCounters: @unchecked Sendable {
 
     func clockUpdated(_ estimate: ClockSyncEstimate?) {
         lock.lock(); clock = estimate; lock.unlock()
+    }
+
+    var clockEstimate: ClockSyncEstimate? {
+        lock.lock(); defer { lock.unlock() }; return clock
     }
 
     /// The phone sent a click at `ms` (phone mach ms); the next flash-bit flip is timed against it.

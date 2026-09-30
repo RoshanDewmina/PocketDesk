@@ -166,6 +166,7 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     private static let countersBox = CountersBox()
     private let inner: RTCVideoEncoderH264
     private weak var counters: StreamCounters?
+    private weak var frameTiming: HostFrameTimingLog?
     private let lock = NSLock()
     private var policy = EncoderRestartPolicy()
     private var latency = EncoderLatencyTrace()
@@ -181,6 +182,7 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     init(codecInfo: RTCVideoCodecInfo) {
         inner = RTCVideoEncoderH264(codecInfo: codecInfo)
         counters = Self.sharedCounters
+        frameTiming = Self.sharedFrameTiming
         super.init()
     }
 
@@ -203,6 +205,8 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
                 if isKey { self.policy.lastKeyFrameBytes = image.buffer.count }
                 self.lock.unlock()
                 if silentDrops > 0 { self.counters?.encoderSilentlyDropped(silentDrops) }
+                self.frameTiming?.encoded(key: image.captureTimeMs, localRtp: image.timeStamp,
+                                          bytes: image.buffer.count, atMs: now)
                 if let sample {
                     self.counters?.encoded(latencyMs: sample.latencyMs, bytes: image.buffer.count,
                                            isKeyFrame: isKey, inFlight: sample.inFlight)
@@ -267,6 +271,8 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
         let key = frame.timeStampNs / 1_000_000
         latency.submitted(key: key, atMs: MachClock.nowMs())
         lock.unlock()
+        frameTiming?.submitted((frame.buffer as? RTCCVPixelBuffer).map { ObjectIdentifier($0.pixelBuffer) },
+                               key: key)
         let result = inner.encode(frame, codecSpecificInfo: info, frameTypes: frameTypes)
         if result != 0 {
             lock.lock(); latency.cancel(key: key); lock.unlock()

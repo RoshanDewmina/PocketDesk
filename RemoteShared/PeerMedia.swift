@@ -169,8 +169,15 @@ final class PeerMedia: NSObject {
     var captureMaximumDimension: Int?
     /// Phone: the latest sender stages forwarded by the Mac with its capture heartbeat.
     var remoteHostSummary: HostStreamSummary? {
-        didSet { remoteHostSummaryAt = ProcessInfo.processInfo.systemUptime }
+        didSet {
+            remoteHostSummaryAt = ProcessInfo.processInfo.systemUptime
+            frameTimingReceiver?.receive(remoteHostSummary?.frameRecords, clock: counters.clockEstimate)
+        }
     }
+    /// Perf pack 4a: host push → encoded records (nil when `StreamTuning.frameTiming` is off), and the
+    /// phone's decoder log and join.
+    let frameTimingLog: HostFrameTimingLog?
+    let frameTimingReceiver: FrameTimingReceiver?
     private var remoteHostSummaryAt: TimeInterval?
     let tuning: StreamTuning
     private(set) var streamQuality: StreamQuality = .balanced
@@ -301,8 +308,14 @@ final class PeerMedia: NSObject {
         self.localLink = localLink
         self.nativeDesktopCodecs = nativeDesktopCodecs
         tuning = nativeDesktopCodecs ? StreamTuning.current : .legacy
+        frameTimingLog = isHost && nativeDesktopCodecs && (FrameTimingSwitch.override ?? tuning.frameTiming)
+            ? HostFrameTimingLog() : nil
+        frameTimingReceiver = !isHost && nativeDesktopCodecs && tuning.frameTiming
+            ? FrameTimingReceiver(log: PhoneFrameTimingLog()) : nil
         super.init()
         if isHost, nativeDesktopCodecs { DesktopH264Encoder.sharedCounters = counters }
+        if isHost, nativeDesktopCodecs { DesktopH264Encoder.sharedFrameTiming = frameTimingLog }
+        if !isHost, nativeDesktopCodecs { TimedH264Decoder.sharedLog = frameTimingReceiver?.log }
         let configuration = RTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan
         configuration.iceTransportPolicy = forceRelay ? .relay : .all
@@ -630,7 +643,8 @@ final class PeerMedia: NSObject {
         guard !closed, let channel, channel.readyState == .open else { return nil }
         return channel.bufferedAmount
     }
-    func pushFrame(_ buffer: CVPixelBuffer, timeStampNs: Int64) {
+    /// `displayMs` is the frame's ScreenCaptureKit display time in mach ms, 0 for a re-send.
+    func pushFrame(_ buffer: CVPixelBuffer, timeStampNs: Int64, displayMs: Double = 0) {
         guard captureLock.try() else { counters.pushSkipped(); return }
         defer { captureLock.unlock() }
         guard !closed, localGateOpen(), let source, let capturer else { return }
@@ -646,6 +660,7 @@ final class PeerMedia: NSObject {
             adaptedFormat = format
         }
         guard localGateOpen() else { return }
+        frameTimingLog?.pushed(ObjectIdentifier(output), displayMs: displayMs, pushMs: MachClock.nowMs())
         source.capturer(capturer, didCapture: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: output), rotation: ._0, timeStampNs: timeStampNs))
         counters.pushed()
     }
@@ -738,9 +753,14 @@ final class PeerMedia: NSObject {
             stats.maxKbps = appliedSenderMaxKbps
             followCeilingRoute(detail: sample.routeDetail, rttMs: stats.rttMs)
             seedBandwidthEstimate(stats, route: sample.route, detail: sample.routeDetail)
+            let frameTiming = frameTimingLog?.drain()
+            if let frameTiming { stats.applyHostFrameTiming(frameTiming) }
             latestHostSummary = stats.hostSummary
+            if let frameTiming { latestHostSummary?.applyFrameTiming(frameTiming) }
         } else {
             stats.host = remoteHostSummary
+            stats.host?.frameRecords = nil
+            if let frameTiming = frameTimingReceiver?.drain() { stats.applyPhoneFrameTiming(frameTiming) }
             stats.hostSummaryAgeMs = remoteHostSummaryAt.map { ((ProcessInfo.processInfo.systemUptime - $0) * 10_000).rounded() / 10 }
         }
         previousSample = sample

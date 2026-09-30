@@ -3,7 +3,7 @@
 
 Usage:
   glass_to_glass.py CLIP --mac X,Y,W,H --phone X,Y,W,H [--start=S] [--dur=S] [--window-ms=400]
-                    [--touch-times=touches.csv] [--json=out.json] [--csv=transitions.csv]
+                    [--fps=240] [--touch-times=touches.csv] [--json=out.json] [--csv=transitions.csv]
   glass_to_glass.py CLIP --snapshot=frame.png [--start=S]
 
 Regions are the flash band on each screen, as fractions of the frame (all four values <= 1) or as
@@ -11,7 +11,9 @@ pixels. The Test Pad bench's auto-flash toggles the band black/white every 400-7
 transition is paired with the next phone transition of the same direction inside the window.
 
 Reports per-transition delays (ms) with p50/p95/p99/max. Frame times come from the file's own
-timestamps, so a 240 fps clip resolves about +/-2.1 ms before sub-frame interpolation. With
+timestamps, so a 240 fps clip resolves about +/-2.1 ms before sub-frame interpolation. A slow-motion
+export whose timestamps were stretched to playback speed needs --fps=240: frames are then timed by
+their index at that rate. With
 --touch-times (one time in seconds of the clip per line, the frame where the finger lands, marked by
 hand), it also reports touch -> Mac photon and touch -> phone photon for the next transitions.
 """
@@ -88,6 +90,14 @@ def region_luma(path, region, start=None, duration=None):
     if result.returncode:
         raise RuntimeError(result.stderr.strip() or "ffmpeg failed")
     return parse_metadata(result.stdout)
+
+
+def retime(samples, fps):
+    """Frame k at k/fps: for slow-motion exports whose timestamps run at playback speed."""
+    if not samples:
+        return samples
+    start = samples[0][0]
+    return [(start + index / fps, luma) for index, (_, luma) in enumerate(samples)]
 
 
 def percentile(values, fraction):
@@ -242,6 +252,7 @@ def main(argv=None):
     parser.add_argument("--start", type=float)
     parser.add_argument("--dur", type=float)
     parser.add_argument("--window-ms", type=float, default=400)
+    parser.add_argument("--fps", type=float)
     parser.add_argument("--touch-times")
     parser.add_argument("--json")
     parser.add_argument("--csv")
@@ -261,6 +272,8 @@ def main(argv=None):
     phone_region = parse_region(args.phone, width, height)
     mac_samples = region_luma(args.clip, mac_region, args.start, args.dur)
     phone_samples = region_luma(args.clip, phone_region, args.start, args.dur)
+    if args.fps:
+        mac_samples, phone_samples = retime(mac_samples, args.fps), retime(phone_samples, args.fps)
     touches = read_touches(args.touch_times) if args.touch_times else ()
     result = analyze(mac_samples, phone_samples, args.window_ms, touches)
 
@@ -268,7 +281,8 @@ def main(argv=None):
     print(f"frames {len(mac_samples)} · interval {interval:.2f} ms (±{interval / 2:.1f} ms before interpolation)"
           if interval else "frames: none")
     if interval and interval > 5:
-        print("warning: the clip is slower than 200 fps; export the original slow-motion file")
+        print("warning: frames are more than 5 ms apart; export the original slow-motion file, "
+              "or pass --fps=240 if its timestamps were stretched to playback speed")
     print(f"transitions: mac {result['macTransitions']} · phone {result['phoneTransitions']} · "
           f"unpaired {result['unpaired']}")
     print(describe("glass-to-glass", result["glassToGlassMs"]))
