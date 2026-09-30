@@ -2646,6 +2646,7 @@ final class RemoteHostModel: ObservableObject {
         case "viewOnly":
             guard current, sessionState == .picture, connection.peerFeatures.contains(SessionFeature.extendedFeatureList),
                   let next = action.liveViewOnly, !phonePause.isPaused else { return }
+            let wasViewOnly = liveViewOnly
             let released = input.withAuthority { () -> Bool in
                 // Close queued posting and release owned holds before publishing acknowledgment.
                 input.enabled = false
@@ -2663,6 +2664,9 @@ final class RemoteHostModel: ObservableObject {
             connection.media?.setSystemAudioEnabled(audio); capture.setSystemAudioEnabled(audio)
             applyControlState(notifyPhone: true)
             sendCaptureHealth(sessionHealthy, viewOnlyRequestID: action.liveViewOnlyRequestID)
+            // Suspension retired the old capture audio epoch; enabling consent cannot revive it.
+            // A real transition back starts a newly scoped stream/epoch, with owner consent intact.
+            if wasViewOnly && audio { beginCapture() }
         case "pause":
             if current { pauseForPhoneBackground() }
         case "resume":
