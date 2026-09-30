@@ -35,14 +35,19 @@ final class PocketDeskVideoEncoderFactory: NSObject, RTCVideoEncoderFactory {
     private let fallback = RTCDefaultVideoEncoderFactory()
     private let counters: StreamCounters?
     private let frameTiming: HostFrameTimingLog?
-    init(counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil) {
-        self.counters = counters; self.frameTiming = frameTiming
+    private let hevc: Bool
+    private let onHEVCFailure: (() -> Void)?
+    init(hevc: Bool = false, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil, onHEVCFailure: (() -> Void)? = nil) {
+        self.onHEVCFailure = onHEVCFailure; self.hevc = hevc; self.counters = counters; self.frameTiming = frameTiming
         super.init()
     }
     func supportedCodecs() -> [RTCVideoCodecInfo] {
-        NativeCodecCapability.supportsLevel52 ? H264LevelPolicy.codecs(fallback.supportedCodecs()) : fallback.supportedCodecs()
+        (hevc ? [OwnedHEVCConfiguration.codecInfo] : []) + (NativeCodecCapability.supportsLevel52 ? H264LevelPolicy.codecs(fallback.supportedCodecs()) : fallback.supportedCodecs())
     }
     func createEncoder(_ info: RTCVideoCodecInfo) -> (any RTCVideoEncoder)? {
+        if hevc, info.name == "H265", let configuration = OwnedHEVCConfiguration(parameters: info.parameters) {
+            return ResilientVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, onFailure: onHEVCFailure)
+        }
         if info.name == kRTCVideoCodecH264Name {
             #if os(macOS)
             if !VideoEncoderCompatibility.isOn, let configuration = OwnedVTConfiguration(parameters: info.parameters) {
@@ -58,11 +63,14 @@ final class PocketDeskVideoEncoderFactory: NSObject, RTCVideoEncoderFactory {
 final class PocketDeskVideoDecoderFactory: NSObject, RTCVideoDecoderFactory {
     private let fallback = RTCDefaultVideoDecoderFactory()
     private let frameTiming: PhoneFrameTimingLog?
-    init(frameTiming: PhoneFrameTimingLog? = nil) { self.frameTiming = frameTiming; super.init() }
+    private let hevc: Bool
+    private let onHEVCFailure: (() -> Void)?
+    init(hevc: Bool = false, frameTiming: PhoneFrameTimingLog? = nil, onHEVCFailure: (() -> Void)? = nil) { self.onHEVCFailure = onHEVCFailure; self.hevc = hevc; self.frameTiming = frameTiming; super.init() }
     func supportedCodecs() -> [RTCVideoCodecInfo] {
-        NativeCodecCapability.supportsLevel52 ? H264LevelPolicy.codecs(fallback.supportedCodecs()) : fallback.supportedCodecs()
+        (hevc ? [OwnedHEVCConfiguration.codecInfo] : []) + (NativeCodecCapability.supportsLevel52 ? H264LevelPolicy.codecs(fallback.supportedCodecs()) : fallback.supportedCodecs())
     }
     func createDecoder(_ info: RTCVideoCodecInfo) -> (any RTCVideoDecoder)? {
+        if hevc, info.name == "H265", let configuration = OwnedHEVCConfiguration(parameters: info.parameters) { return OwnedHEVCDecoder(configuration: configuration, timing: frameTiming, onFailure: onHEVCFailure) }
         if info.name == kRTCVideoCodecH264Name {
             return frameTiming.map { TimedH264Decoder(log: $0) } ?? RTCVideoDecoderH264()
         }
@@ -73,6 +81,7 @@ final class PocketDeskVideoDecoderFactory: NSObject, RTCVideoDecoderFactory {
 struct H264FrameBudget: Equatable {
     let frameMacroblocks: Int
     let macroblocksPerSecond: Int
+    var maximumEdge: Int = 4096
 
     static func level(_ level: UInt8) -> H264FrameBudget {
         let values: [UInt8: (Int, Int)] = [
@@ -94,6 +103,19 @@ struct H264FrameBudget: Equatable {
         let fields = lines[start].split(separator: " ")
         guard fields.count > 3 else { return nil }
         let payload = String(fields[3])
+        if section.contains(where: { $0.lowercased().hasPrefix("a=rtpmap:\(payload) h265/") }) {
+            let raw = section.first(where: { $0.hasPrefix("a=fmtp:\(payload) ") }) ?? ""
+            let parameterText = raw.split(separator: " ", maxSplits: 1).dropFirst().first ?? ""
+            var parameters: [String: String] = [:]
+            for entry in parameterText.split(separator: ";") {
+                let pair = entry.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                if pair.count == 2 { parameters[pair[0]] = pair[1] }
+            }
+            guard let configuration = OwnedHEVCConfiguration(parameters: parameters) else { return nil }
+            let samples = configuration.level < 150 ? 2_228_224 : 8_912_896
+            let sampleRate = [UInt8(120): 66_846_720, 123: 133_693_440, 150: 267_386_880, 153: 534_773_760][configuration.level]!
+            return H264FrameBudget(frameMacroblocks: samples / 256, macroblocksPerSecond: sampleRate / 256)
+        }
         guard section.contains(where: { $0.lowercased().hasPrefix("a=rtpmap:\(payload) h264/") }) else { return nil }
         let parameters = section.first(where: { $0.hasPrefix("a=fmtp:\(payload) ") }) ?? ""
         let profile = parameters.split(separator: ";").compactMap { part -> String? in
@@ -109,7 +131,7 @@ struct H264FrameBudget: Equatable {
         guard width >= 2, height >= 2, width <= 16384, height <= 16384, fps > 0 else { return (2, 2) }
         let budget = min(frameMacroblocks, macroblocksPerSecond / fps)
         let inputMB = ((width + 15) / 16) * ((height + 15) / 16)
-        let ratio = min(1, sqrt(Double(budget) / Double(inputMB)))
+        let ratio = min(1, Double(maximumEdge) / Double(max(width, height)), sqrt(Double(budget) / Double(inputMB)))
         var w = max(2, Int(Double(width) * ratio) & ~1)
         var h = max(2, Int(Double(height) * ratio) & ~1)
         while ((w + 15) / 16) * ((h + 15) / 16) > budget, w > 2, h > 2 {

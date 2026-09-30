@@ -474,6 +474,7 @@ final class RemoteHostModel: ObservableObject {
         refreshBackgroundStates()
         background.onChange = { [weak self] in self?.refreshBackgroundStates() }
         NativeCodecCapability.warmUp()
+        NativeHEVCCapability.warmUp()
         startWatchdog()
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.captureScopeViewOnly && !self.active && !self.connection.connected }
         connection.restore()
