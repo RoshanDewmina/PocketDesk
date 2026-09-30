@@ -32,9 +32,10 @@ enum HangWatchdogPolicy {
     /// A hung host must not leave the Mac's screen covered for long.
     static let curtainThreshold: TimeInterval = 4
 
-    /// Nil means a stall is tolerated: nothing would relaunch the host and no curtain is up.
-    static func threshold(curtainUp: Bool, recoveryEnabled: Bool) -> TimeInterval? {
-        if curtainUp { return curtainThreshold }
+    /// Nil means a stall is tolerated: nothing would relaunch the host, no curtain is up and the
+    /// display is not on a Big Text mode that only this process's exit reverts.
+    static func threshold(curtainUp: Bool, recoveryEnabled: Bool, bigTextEngaged: Bool = false) -> TimeInterval? {
+        if curtainUp || bigTextEngaged { return curtainThreshold }
         return recoveryEnabled ? recoveryThreshold : nil
     }
 }
