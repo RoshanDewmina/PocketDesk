@@ -340,10 +340,10 @@ final class RemoteHostModel: ObservableObject {
             serverRemovalPending: serverRemovalPending,
             serverRemovalMessage: serverRemovalMessage,
             localPairRemovalMessage: localPairRemovalMessage,
-            menuBarIconShown: menuBarIconShown,
-            permissionsTurnedOffByUpdate: permissionsTurnedOffByUpdate,
             allowBigText: preferences.allowBigText,
-            bigTextStatus: bigTextStatus
+            bigTextStatus: bigTextStatus,
+            menuBarIconShown: menuBarIconShown,
+            permissionsTurnedOffByUpdate: permissionsTurnedOffByUpdate
         )
     }
 
@@ -2189,7 +2189,7 @@ final class RemoteHostModel: ObservableObject {
             ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
         } + [SessionFeature.couch]
         return HostFeatureList.features(base: base, allowBigText: preferences.allowBigText,
-                                        accessibility: accessibilityPermission.isGranted)
+                                        accessibility: inputAccess.accessibility.isGranted)
     }
 
     private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil) {
@@ -2386,7 +2386,7 @@ final class RemoteHostModel: ObservableObject {
                 return sendDisplayList(scaleError: .unsupported, scaleRequestID: action.scaleRequestID)
             }
             bigText.request(display: requested, looksLikeWidth: width, allowed: preferences.allowBigText,
-                            accessibilityGranted: accessibilityPermission.isGranted, requestID: action.scaleRequestID)
+                            accessibilityGranted: inputAccess.accessibility.isGranted, requestID: action.scaleRequestID)
         default:
             break
         }
@@ -2413,7 +2413,7 @@ final class RemoteHostModel: ObservableObject {
                 main: display.displayID == CGMainDisplayID())
         }
         var descriptors = HostDisplayCatalog.descriptors(entries)
-        if preferences.allowBigText && accessibilityPermission.isGranted {
+        if preferences.allowBigText && inputAccess.accessibility.isGranted {
             descriptors = descriptors.map { descriptor in
                 guard descriptor.id == selected else { return descriptor }
                 let described = BigTextController.describe(descriptor, offer: bigText.offer(for: descriptor.id))
