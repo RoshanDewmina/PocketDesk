@@ -2413,7 +2413,7 @@ final class RemoteHostModel: ObservableObject {
             peerFeatures: connection.peerFeatures, requestedMode: connection.peerRequestedMode), kind: captureScopeKind)
     }
 
-    private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil) {
+    private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil, viewOnlyRequestID: String? = nil) {
         guard connection.connected else { return }
         // A caller's Couch flag can be up to one tick old; a token must reflect health at this moment.
         let healthy = sessionState == .couch ? requestedHealthy && refreshCouchHealth() : requestedHealthy
@@ -2432,7 +2432,7 @@ final class RemoteHostModel: ObservableObject {
         let event = recoveryEventForPhone
         let alert = captureScopeViewOnly ? nil : agentAlertOutbox.first
         let sent = connection.sendControl(RemoteAction(
-          action: "capture", liveViewOnly: connection.peerFeatures.contains(SessionFeature.extendedFeatureList) ? liveViewOnly : nil, x: healthy ? 1 : 0, epoch: inputEpoch.value,
+          action: "capture", liveViewOnly: connection.peerFeatures.contains(SessionFeature.extendedFeatureList) ? liveViewOnly : nil, liveViewOnlyRequestID: viewOnlyRequestID, x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: !captureScopeViewOnly,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
             features: advertisedFeatures, hostState: state,
@@ -2564,7 +2564,7 @@ final class RemoteHostModel: ObservableObject {
             invalidateTextFocus(); clipboard.reset(); fileTransfer.reset()
             connection.media?.setSystemAudioEnabled(false); capture.setSystemAudioEnabled(false)
             applyControlState(notifyPhone: true)
-            sendCaptureHealth(sessionHealthy)
+            sendCaptureHealth(sessionHealthy, viewOnlyRequestID: action.liveViewOnlyRequestID)
         case "pause":
             if current { pauseForPhoneBackground() }
         case "resume":

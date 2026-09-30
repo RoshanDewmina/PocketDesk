@@ -42,7 +42,7 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         XCTAssertFalse(policy.mayEnqueue(old.identity, at: 11))
     }
     func testHostAppliedViewOnlyFieldRejectsWrongActionAndMissingRequestFlag() throws {
-        XCTAssertNoThrow(try RemoteAction(action: "viewOnly", liveViewOnly: true, epoch: 7).validate())
+        XCTAssertNoThrow(try RemoteAction(action: "viewOnly", liveViewOnly: true, liveViewOnlyRequestID: String(repeating: "a", count: 32), epoch: 7).validate())
         XCTAssertThrowsError(try RemoteAction(action: "viewOnly", epoch: 7).validate())
         XCTAssertThrowsError(try RemoteAction(action: "key", liveViewOnly: true, key: "a", epoch: 7).validate())
     }

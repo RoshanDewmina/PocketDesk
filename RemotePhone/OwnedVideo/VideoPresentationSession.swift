@@ -21,6 +21,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     private let onFrame: () -> Void
     private var onSourceFrame: ((VideoFrameEnvelope) -> Void)?
     private var stopped = false
+    var isTerminal: Bool { stopped }
     private var expiryTimer: Timer?
     private final class Registration { weak var value: VideoPresentationSession?; init(_ value: VideoPresentationSession) { self.value = value } }
     private static var registrations: [Registration] = []
@@ -44,7 +45,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     func configure(admission: VideoPresentationAdmission, counters: StreamCounters?, statistics: Bool,
                    sourceSize: CGSize, displayedPixelWidth: CGFloat, fillsFrame: Bool,
                    mode: SmoothMotionMode, upscale: Bool, onSourceFrame: ((VideoFrameEnvelope) -> Void)?) {
-        _ = fence.renew(admission)
+        guard !stopped, fence.renew(admission) else { invalidate(); return }
         expiryTimer?.invalidate()
         let timer = Timer(timeInterval: max(0.001, admission.validUntil - ProcessInfo.processInfo.systemUptime), repeats: false) { [weak self] _ in self?.invalidate() }
         expiryTimer = timer; RunLoop.main.add(timer, forMode: .common)

@@ -337,6 +337,7 @@ final class PhoneRemoteModel: ObservableObject {
     private var viewOnlyConfirmed = false
     private var pendingViewOnlyStart = false
     private var viewOnlyStartDeadline: TimeInterval?
+    private var viewOnlyRequest = LiveViewOnlyRequest()
     private var awaitingViewOnlyExit = false
 
     private var mayKeepLivePiP: Bool {
@@ -361,6 +362,7 @@ final class PhoneRemoteModel: ObservableObject {
             pipAdmission = nil
             pendingViewOnlyStart = false
             viewOnlyStartDeadline = nil
+            viewOnlyRequest.reset()
             invalidatingPiP = true
             livePiP.stop()
             invalidatingPiP = false
@@ -391,16 +393,22 @@ final class PhoneRemoteModel: ObservableObject {
         guard sceneIsActive, !privacyShield, !contentConcealed, !awaitingViewOnlyExit, pipState == .ready,
               hostFeatures.contains(SessionFeature.liveViewOnly), pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return }
         releasePiPControl()
-        pendingViewOnlyStart = connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: true, epoch: geometryEpoch))
+        let id = viewOnlyRequest.begin(epoch: geometryEpoch, at: ProcessInfo.processInfo.systemUptime)
+        pendingViewOnlyStart = connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: true, liveViewOnlyRequestID: id, epoch: geometryEpoch))
         viewOnlyStartDeadline = pendingViewOnlyStart ? ProcessInfo.processInfo.systemUptime + 2 : nil
         if !pendingViewOnlyStart { invalidatePresentation() }
     }
     func stopPictureInPicture() {
         invalidatePresentation()
         if sceneIsActive {
-            awaitingViewOnlyExit = true
-            _ = connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: false, epoch: geometryEpoch))
+            requestViewOnlyExit()
         } else if pipBackground { disconnect() }
+    }
+    private func requestViewOnlyExit() {
+        awaitingViewOnlyExit = true
+        let id = viewOnlyRequest.begin(epoch: geometryEpoch, at: ProcessInfo.processInfo.systemUptime)
+        viewOnlyStartDeadline = nil
+        if !connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: false, liveViewOnlyRequestID: id, epoch: geometryEpoch)) { disconnect() }
     }
     private func releasePiPControl() {
         setMacAudioMuted(true); endSecureFocus(); cancelInput(); inputToken = nil
@@ -472,8 +480,7 @@ final class PhoneRemoteModel: ObservableObject {
             self.pipState = state
             if self.pipBackground && state != .active { self.disconnect() }
             else if state == .ineligible && !self.invalidatingPiP && self.sceneIsActive && self.viewOnlyConfirmed {
-                self.awaitingViewOnlyExit = true
-                _ = self.connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: false, epoch: self.geometryEpoch))
+                self.requestViewOnlyExit()
             }
         }
         livePiP.restoreForeground = { [weak self] completion in
@@ -1787,8 +1794,7 @@ final class PhoneRemoteModel: ObservableObject {
         if pipBackground {
             pipBackground = false
             invalidatePresentation()
-            awaitingViewOnlyExit = true
-            _ = connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: false, epoch: geometryEpoch))
+            requestViewOnlyExit()
             contentConcealed = false; resumeState = .none
             suspendInputReadiness() // Fresh foreground status and token are required.
         }
@@ -1983,7 +1989,8 @@ final class PhoneRemoteModel: ObservableObject {
                 }
             }
             // Only the host's reliable, current-scope applied status can confirm view-only.
-            if action.epoch == geometryEpoch, action.features?.contains(SessionFeature.liveViewOnly) == true, let confirmed = action.liveViewOnly {
+            if action.epoch == geometryEpoch, action.features?.contains(SessionFeature.liveViewOnly) == true, let value = action.liveViewOnly,
+               let confirmed = viewOnlyRequest.receive(value, id: action.liveViewOnlyRequestID, epoch: action.epoch, at: ProcessInfo.processInfo.systemUptime) {
                 viewOnlyConfirmed = confirmed
                 if !confirmed { awaitingViewOnlyExit = false }
                 if !confirmed && (pipState == .active || pipState == .starting || pipState == .paused) {
@@ -2235,6 +2242,11 @@ final class PhoneRemoteModel: ObservableObject {
 
     private func tick() {
         let now = ProcessInfo.processInfo.systemUptime
+        if awaitingViewOnlyExit, let deadline = viewOnlyRequest.deadline, now >= deadline {
+            disconnect()
+            showSessionNotice("Your Mac didn’t confirm foreground control. Reconnect to continue.")
+            return
+        }
         if let deadline = viewOnlyStartDeadline, now >= deadline {
             stopPictureInPicture()
             showSessionNotice("Your Mac didn’t confirm live view only. Picture in Picture stopped.")
@@ -2507,6 +2519,12 @@ struct RemoteVideoSurface: UIViewRepresentable {
     final class Coordinator {
         var session: VideoPresentationSession?
         func invalidate() { session?.invalidate(); session = nil }
+        func ensureSession(track: RTCVideoTrack, admission: VideoPresentationAdmission, onFrame: @escaping () -> Void, primary: Bool) -> Bool {
+            guard session?.isTerminal != false || session?.track !== track || session?.admissionIdentity != admission.identity else { return false }
+            invalidate()
+            session = VideoPresentationSession(track: track, admission: admission, onFrame: onFrame, primary: primary)
+            return true
+        }
     }
     func makeCoordinator() -> Coordinator { Coordinator() }
     func makeUIView(context: Context) -> UIView {
@@ -2517,10 +2535,8 @@ struct RemoteVideoSurface: UIViewRepresentable {
         guard let admission, admission.permits(at: ProcessInfo.processInfo.systemUptime) else {
             context.coordinator.invalidate(); container.subviews.forEach { $0.removeFromSuperview() }; return
         }
-        if context.coordinator.session?.track !== track || context.coordinator.session?.admissionIdentity != admission.identity {
-            context.coordinator.invalidate(); container.subviews.forEach { $0.removeFromSuperview() }
-            let session = VideoPresentationSession(track: track, admission: admission, onFrame: onFrame, primary: primary)
-            context.coordinator.session = session
+        if context.coordinator.ensureSession(track: track, admission: admission, onFrame: onFrame, primary: primary), let session = context.coordinator.session {
+            container.subviews.forEach { $0.removeFromSuperview() }
             let view = session.view; view.translatesAutoresizingMaskIntoConstraints = false; container.addSubview(view)
             NSLayoutConstraint.activate([view.leadingAnchor.constraint(equalTo: container.leadingAnchor), view.trailingAnchor.constraint(equalTo: container.trailingAnchor),
                 view.topAnchor.constraint(equalTo: container.topAnchor), view.bottomAnchor.constraint(equalTo: container.bottomAnchor)])

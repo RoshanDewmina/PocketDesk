@@ -4,7 +4,7 @@ import Foundation
 /// extension action after seeing the matching feature, so older hosts never receive an
 /// action name their validator would reject.
 enum SessionFeature {
-  static let liveViewOnly = "viewOnlyLive.1"
+  static let liveViewOnly = "viewOnlyLive.2"
     static let extendedFeatureList = "features.32"
     static let causalInput = "input.causal.1"
     static let inputReceipt = "input.receipt.1"
