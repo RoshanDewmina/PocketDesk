@@ -15,6 +15,14 @@ struct WakeTargetRegistrationView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Wake another Mac on this LAN").font(.title2).accessibilityAddTraits(.isHeader)
+            Text("This Mac’s ID").font(.headline)
+            Text(helperHostID).font(.caption.monospaced()).textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Copy this Mac’s ID") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(helperHostID, forType: .string)
+            }
+            Text("This nonsecret identity is for local owner verification. It does not grant access and contains no pairing key or owner grant.").font(.callout)
             Text("This Mac must stay powered and awake. The other Mac needs supported network wake with Wake for network access enabled. Sending a packet never unlocks the Mac or proves it woke.")
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(targets.filter { $0.helperHostID == helperHostID && $0.ownerPairID == ownerPairID }) { target in
