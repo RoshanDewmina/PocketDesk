@@ -25,7 +25,7 @@
 ## Review Focus
 
 1. **Clicks immediately after a size change** must land where the pointer is, not at the old coordinates (stale `SCDisplay.frame`). Test: Task 7b `BigTextRefreshTests.testRejectsAFrameThatDisagreesWithCoreGraphics`, plus the physical gate in Task 11.
-2. **The person changes resolution in System Settings mid-session**: their choice is kept, never overwritten on session end. Tests: Task 4 `testAddedDisplayIsForeign`/`testTimeoutIsForeign`, Task 5 `testForeignChangeForgetsBaselineAndStopsTheSession`.
+2. **The person changes resolution in System Settings mid-session**: their choice is kept, never overwritten on session end. Tests: Task 4 `testAddedDisplayIsForeign`/`testTimeoutIsForeign`, Task 5 `testForeignChangeIsNeverOverwrittenWhenTheSessionEnds`, `testResolutionChosenWhileAppliedIsKeptAtSessionEnd`; and the converse, `testForeignEventDuringOurChangeStopsTheSessionAndStillRestores` (an unrelated event such as a monitor plugged in stops the session but, when the display still holds our mode, the baseline is restored — corrected in review; the original test forgot it and left the Mac on Big Text until the host quit).
 3. **The Mac is locked or asleep when the session ends**: the normal size comes back after unlock/wake. Test: Task 5 `testFailedRestoreStaysPendingUntilRetried`.
 4. **Several quick step taps**: one debounced request on the phone, latest-wins on the host, one visible change. Tests: Task 5 `testLatestRequestWins`, Task 9 `testRapidChoicesSendOnlyTheLast`.
 5. **A saved level for one monitor is never applied to another** (IDs change after reboot; two monitors share a name). Test: Task 3 `testAmbiguousNamesNeverGuess`.
