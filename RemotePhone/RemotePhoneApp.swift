@@ -1074,7 +1074,7 @@ final class PhoneRemoteModel: ObservableObject {
         guard !supported || connection.sendControl(RemoteAction(action: "resume", epoch: geometryEpoch)) else {
             // A failed send already started the coordinator's bounded reconnect.
             resumeState = .reconnecting
-            if !connection.isRunning { connection.start() }
+            if !connection.isRunning { restartConnection() }
             return
         }
         resumeState = .none
@@ -1092,7 +1092,14 @@ final class PhoneRemoteModel: ObservableObject {
     private func beginAutomaticReconnect(restart: Bool = false) {
         resumeState = .reconnecting
         if restart { connection.stop() }
-        if !connection.isRunning { connection.start() }
+        if !connection.isRunning { restartConnection() }
+    }
+
+    /// The model's own reconnects come back in the mode Home asked for; `end()` has already
+    /// reset the coordinator to the picture for every other start.
+    private func restartConnection() {
+        connection.sessionModeRequest = requestedMode
+        connection.start()
     }
 
     private func suspendInputReadiness() {
@@ -1466,6 +1473,9 @@ final class PhoneRemoteModel: ObservableObject {
         clipboard.cancel()
         resumeWatchdog?.cancel(); resumeWatchdog = nil
         // couchRefusal and requestedMode outlive the session: Home explains and retries from them.
+        // A retry the coordinator already has under way asks for Home's mode, never a mid-session
+        // switch; once it has stopped, a start that did not choose a mode gets the picture.
+        connection.sessionModeRequest = connection.isRunning ? requestedMode : .picture
         sessionMode = .picture
         clearPendingModeSwitch()
         couchStalled = false

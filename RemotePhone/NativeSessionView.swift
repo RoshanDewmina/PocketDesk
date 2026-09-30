@@ -32,6 +32,7 @@ struct NativeSessionView: View {
     @State private var panMode = false
     @State private var clickAcknowledged = false
     @State private var couchTouched = false
+    @State private var couchClickBaseline: UInt64 = 0
     @State private var zoomBadge: String?
     @State private var zoomBadgeToken = 0
     @State private var revision: UInt64 = 0
@@ -184,6 +185,7 @@ struct NativeSessionView: View {
         .onChange(of: couch, initial: true) { wasCouch, isCouch in
             if isCouch {
                 couchTouched = false
+                couchClickBaseline = model.acceptedClicks
                 setInteractionMode(false)
                 controlsCollapsed = false
             } else if wasCouch {
@@ -408,7 +410,8 @@ struct NativeSessionView: View {
                 .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: couchTouched)
             }
             .overlay {
-                if couchTouched && model.acceptedClicks > 0 {
+                // The click count lives as long as the app, so only clicks since Couch began ripple here.
+                if couchTouched && model.acceptedClicks > couchClickBaseline {
                     ContactRipple(serial: Int(truncatingIfNeeded: model.acceptedClicks),
                                   kind: ContactRipple.Kind(action: model.lastAcceptedClick))
                 }

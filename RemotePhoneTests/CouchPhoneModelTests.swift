@@ -121,6 +121,15 @@ final class CouchPhoneModelTests: XCTestCase {
         XCTAssertFalse(model.couchSwitchAvailable)
     }
 
+    func testEndingACouchSessionLeavesTheNextStartOnThePicture() throws {
+        let model = try liveCouch()
+        XCTAssertEqual(model.connection.sessionModeRequest, .couch)
+        model.disconnect()
+        XCTAssertEqual(model.connection.sessionModeRequest, .picture, "a Shortcut or URL connect must not start Couch")
+        XCTAssertEqual(model.requestedMode, .couch, "Home still retries the mode it asked for")
+        XCTAssertEqual(model.sessionMode, .picture)
+    }
+
     func testCouchFailuresOfferThePictureInstead() {
         let proof = FriendlyError.forCouch(status: "The devices could not verify a directly attached local link.", requestedCouch: true)
         XCTAssertEqual(proof?.kind, .couchNotLocal)
