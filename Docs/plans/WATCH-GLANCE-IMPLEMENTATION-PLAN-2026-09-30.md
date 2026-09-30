@@ -59,6 +59,7 @@
   Parallel tasks share this simulator, so the shutdown runs **inside** the lock; shutting it down outside would kill another task's run. Several `-only-testing:` flags may be combined in one run.
 - **Widget build check** (Tasks 3, 4): `lockf -k /tmp/farside-xcodebuild.lock xcodebuild -project PocketDesktop.xcodeproj -scheme PocketDeskRemote -destination "id=$SIM" -derivedDataPath "$DD" build` (the app scheme embeds and builds `FarsideWidgets`).
 - **Report** exact pass/fail/skip counts. A failing unrelated pre-existing test is reported, not "fixed".
+- **Lock throttling (added 30 Sep after a lock queue ~35 deep and a priority hold).** At most one build job of this plan queued or running at a time. Task agents write code and tests and commit without building when the orchestrator says so; the orchestrator merges the wave into a scratch branch `watch/wave-<n>` and runs **one** `build-for-testing` plus one `test-without-building` for all of the wave's classes, then reviews and merges each task. Never queue a build while a coordinator hold is in force.
 
 ---
 
@@ -289,4 +290,19 @@ Each test file: `import XCTest` / `@testable import PocketDeskRemote` / `final c
 - Whole-branch review against this plan and the spec (fresh reviewer).
 - `Docs/IMPLEMENTATION-PLAN.md`: a dated top entry with task SHAs, test counts and evidence levels (compiled / unit-tested / physically verified: none).
 - `PRODUCT.md`: a decision row with the next free D number (checked across all branches) recording the approved Watch glance scope and its status.
-- Unverified until a Watch is available: forwarding of the new body; Double Tap snoozing; the `.small` layout on a real Smart Stack (margins the system may add, the 42/46 mm sizes, Always-On dimming); "Open on iPhone" routing; CarPlay rendering; Focus/Time Sensitive mirroring.
+- Physical acceptance is a separate evidence level from compiled and unit-tested; nothing here is physically verified until the checklist below is run.
+
+### On-wrist acceptance (physical, when Roshan is home)
+
+Update, 30 Sep: Roshan does own an Apple Watch (model and watchOS unknown), so the wrist checks become a physical acceptance step, run like the phone checks, on an integrated build installed through the normal main-checkout route only. Record the Watch model and watchOS version first; Double Tap needs Series 9 / Ultra 2 or later.
+
+1. **Forwarding.** Watch worn and unlocked, iPhone locked: Settings → Agent alerts → "Send test alert in 10 s", lock the phone. The alert arrives on the Watch, not the phone. Short look shows the title only; long look shows the new body ending "Open Farside on your iPhone to look." With the iPhone unlocked, the same alert goes to the phone only.
+2. **Action order.** The long look lists **Snooze 15 min** first, then **Not now**, then the system Dismiss. Double Tap (if supported) snoozes: one quiet reminder about 15 min later, and nothing is sent to the Mac. Not now reaches the service as declined (check the Mac/service log), and approves nothing.
+3. **Hidden previews.** With Show Previews off, the Watch shows the generic "An agent needs you." placeholder.
+4. **Smart Stack `.small`.** Start a session, background Farside, lock the phone, raise the wrist: the session appears at the top of the Smart Stack in the custom layout (bone mark, `Live · Your Mac`, a ticking elapsed time, `End it on your iPhone.`), not the default compact-island combination. Pause/let it go stale/end it and check each state's words against Task 2's table; a stale session never shows `Live` or a running clock. Check Always-On dimming and that no text is clipped (note the case size).
+5. **No buttons.** Nothing in the Watch layout is tappable except the whole glance; there is no End button on the wrist.
+6. **Hand-off.** Tapping the glance opens the system full-screen view with **Open on iPhone**; that opens Farside on the session route. Connecting stays a separate choice on the phone.
+7. **Mac line honesty.** Not testable yet: no existing activity carries Mac presence (LA2 and host presence are unbuilt). When LA2 lands, check that a silent host shows `Not seen since HH:MM`, never a fresh seen time, and that a desktop Mac shows no battery.
+8. **Time Sensitive / Focus** (spec §6 spike): with a Work Focus on, a Time Sensitive alert still breaks through on the Watch only if it does on the iPhone.
+
+Still unverified after this checklist: CarPlay rendering; the 42/46 mm Smart Stack sizes if Roshan's Watch is another size; whether the system adds its own margins around `.small` content (compare the Watch against the snapshot PNGs).
