@@ -48,15 +48,40 @@ final class SharedCaptureScopeTests: XCTestCase {
     }
 
     func testLostInventoryStopsFreshAndCachedFramesAndCannotReviveAfterRevoke() {
-        let lease = CaptureScopeLease(validUntil: 10)
+        let clock = ScopeFixtureClock(9)
+        let lease = CaptureScopeLease(validUntil: 10, clock: { clock.now })
         var frames = 0
-        XCTAssertTrue(lease.performIfValid(at: 9) { frames += 1 })
-        XCTAssertFalse(lease.performIfValid(at: 11) { frames += 1 }, "A fresh native frame cannot bypass stale target evidence")
-        XCTAssertFalse(lease.performIfValid(at: 11) { frames += 1 }, "An idle resend cannot bypass stale target evidence")
+        XCTAssertTrue(lease.performIfValid { frames += 1 })
+        clock.set(11)
+        XCTAssertFalse(lease.performIfValid { frames += 1 }, "A fresh native frame cannot bypass stale target evidence")
+        XCTAssertFalse(lease.performIfValid { frames += 1 }, "An idle resend cannot bypass stale target evidence")
         lease.invalidate()
         lease.renew(until: 100)
-        XCTAssertFalse(lease.performIfValid(at: 12) { frames += 1 }, "Late inventory completion cannot revive a revoked stream")
+        XCTAssertFalse(lease.performIfValid { frames += 1 }, "Late inventory completion cannot revive a revoked stream")
         XCTAssertEqual(frames, 1)
+    }
+
+    func testDeliverySamplesFreshDeadlineAfterWaitingForLeaseLock() {
+        let clock = ScopeFixtureClock(9)
+        let lease = CaptureScopeLease(validUntil: 10, clock: { clock.now })
+        let holding = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        let waiting = DispatchSemaphore(value: 0), done = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            lease.performIfValid { holding.signal(); _ = release.wait(timeout: .now() + 3) }
+        }
+        XCTAssertEqual(holding.wait(timeout: .now() + 3), .success)
+        let sampledBeforeQueueWait = clock.now
+        XCTAssertLessThan(sampledBeforeQueueWait, 10)
+        DispatchQueue.global().async {
+            waiting.signal()
+            XCTAssertFalse(lease.performIfValid { XCTFail("Delayed frame was delivered using stale inventory time") })
+            done.signal()
+        }
+        XCTAssertEqual(waiting.wait(timeout: .now() + 3), .success)
+        XCTAssertEqual(done.wait(timeout: .now() + 0.01), .timedOut, "The second delivery waits on the actual lease lock")
+        clock.set(11)
+        release.signal()
+        XCTAssertEqual(done.wait(timeout: .now() + 3), .success)
     }
 
     func testScopeTransitionWaitsForDeliveryAndDropsAlreadyQueuedOldFrame() {
@@ -70,7 +95,7 @@ final class SharedCaptureScopeTests: XCTestCase {
         let queuedMayRun = DispatchSemaphore(value: 0)
         let captureQueue = DispatchQueue(label: "test.scope.capture")
         captureQueue.async {
-            old.performIfValid(at: 1) { delivering.signal(); _ = finishDelivery.wait(timeout: .now() + 3) }
+            old.performIfValid { delivering.signal(); _ = finishDelivery.wait(timeout: .now() + 3) }
         }
         XCTAssertEqual(delivering.wait(timeout: .now() + 3), .success)
         DispatchQueue.global().async { revokeStarted.signal(); old.invalidate(); revoked.signal() }
@@ -78,7 +103,7 @@ final class SharedCaptureScopeTests: XCTestCase {
         XCTAssertEqual(revoked.wait(timeout: .now() + 0.05), .timedOut, "Revoke must wait for in-progress peer delivery")
         captureQueue.async {
             _ = queuedMayRun.wait(timeout: .now() + 3)
-            XCTAssertFalse(old.performIfValid(at: 2) { XCTFail("Queued frame escaped its closed stream") })
+            XCTAssertFalse(old.performIfValid { XCTFail("Queued frame escaped its closed stream") })
             queuedOld.signal()
         }
         finishDelivery.signal()
@@ -86,7 +111,7 @@ final class SharedCaptureScopeTests: XCTestCase {
         queuedMayRun.signal()
         XCTAssertEqual(queuedOld.wait(timeout: .now() + 3), .success)
         old.invalidate()
-        XCTAssertTrue(replacement.performIfValid(at: 2) {}, "An old stop cannot invalidate a replacement stream")
+        XCTAssertTrue(replacement.performIfValid {}, "An old stop cannot invalidate a replacement stream")
     }
 
     func testRelaunchRequiresFreshOwnerSelectionEvenWithSavedSharingConsent() throws {
@@ -102,4 +127,12 @@ final class SharedCaptureScopeTests: XCTestCase {
         relaunched.captureScopeRequiresSelection = false // explicit owner Entire display selection
         XCTAssertTrue(relaunched.sharingMayResumeWithoutScopeSelection)
     }
+}
+
+private final class ScopeFixtureClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: TimeInterval
+    init(_ value: TimeInterval) { self.value = value }
+    var now: TimeInterval { lock.lock(); defer { lock.unlock() }; return value }
+    func set(_ next: TimeInterval) { lock.lock(); value = next; lock.unlock() }
 }

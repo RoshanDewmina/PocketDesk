@@ -935,7 +935,7 @@ struct NativeSessionView: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .combine)
-            .accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : "\(linkAccessibility). \(status)")
+            .accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : [linkAccessibility, model.captureScopeDescription, status].compactMap { $0 }.joined(separator: ". "))
             Spacer(minLength: 4)
             if !couch {
                 Button { openControls() } label: {
