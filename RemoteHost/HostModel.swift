@@ -77,6 +77,7 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var displayAsleep = false
     @Published private(set) var openAtLogin = false
     @Published private(set) var chimeOnConnect: Bool
+    @Published private(set) var allowFileTransfer: Bool
     @Published private(set) var timedPause = HostTimedPause()
     @Published private(set) var unavailableReason: HostAvailabilityNote?
     @Published private(set) var loginItemState: HostBackgroundItemState = .off
@@ -143,6 +144,7 @@ final class RemoteHostModel: ObservableObject {
     private var unavailabilityTeardown: Task<Void, Never>?
     private var timedPauseTask: Task<Void, Never>?
     private let clipboard = HostClipboardService()
+    private let fileTransfer = HostFileTransferService()
     private var phonePause = HostPhonePause()
     private var lifecycleTimer: Timer?
     private var permissionTimer: Timer?
@@ -250,6 +252,7 @@ final class RemoteHostModel: ObservableObject {
             keepAwake: keepAwakeEnabled,
             openAtLogin: openAtLogin,
             chimeOnConnect: chimeOnConnect,
+            allowFileTransfer: allowFileTransfer,
             pausedUntil: timedPause.resumesAt,
             session: status.isSessionLive ? HostSessionReadout.parse(connection.diagnostics) : nil,
             availability: availabilityNote,
@@ -289,6 +292,7 @@ final class RemoteHostModel: ObservableObject {
         controlConsent = HostControlConsentState(isAllowed: preferences.allowControl)
         keepAwakeEnabled = preferences.keepAwake
         chimeOnConnect = preferences.chimeOnConnect
+        allowFileTransfer = preferences.allowFileTransfer
         wantsSharing = preferences.sharingEnabled
         accessibilitySkipped = preferences.accessibilitySkipped
         pairingDeferred = preferences.pairingDeferred
@@ -313,6 +317,7 @@ final class RemoteHostModel: ObservableObject {
             return self.connection.sendControl(RemoteAction(action: "clipboard", epoch: self.inputEpoch.value, clipboard: frame))
         }
         clipboard.bufferedAmount = { [weak self] in self?.connection.media?.controlBufferedAmount }
+        wireFileTransfer()
         connectionObserver = connection.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
             Task { @MainActor [weak self] in self?.connectionDidChange() }
@@ -699,6 +704,32 @@ final class RemoteHostModel: ObservableObject {
         timedPauseTask?.cancel()
         timedPauseTask = nil
         timedPause.cancel()
+    }
+
+    func setAllowFileTransfer(_ enabled: Bool) {
+        allowFileTransfer = enabled
+        preferences.allowFileTransfer = enabled
+        if !enabled { fileTransfer.revoke() }
+    }
+
+    /// File transfer needs this Mac's setting and a current, unpaused session. It does not need control:
+    /// the setting is the owner's permission, and files only land in Downloads › Farside, never opened.
+    private var fileTransferRefusal: FileTransferStatus? {
+        guard allowFileTransfer else { return .disabled }
+        guard connection.connected, active, !phonePause.isPaused else { return .notAllowed }
+        return nil
+    }
+
+    private func wireFileTransfer() {
+        let engine = fileTransfer.engine
+        engine.sendControl = { [weak self] frame in
+            guard let self, self.connection.connected else { return false }
+            return self.connection.sendControl(RemoteAction(action: "file", epoch: self.inputEpoch.value, file: frame))
+        }
+        engine.link = { [weak self] in self?.connection.media }
+        engine.isRelayed = { [weak self] in self?.connection.media?.isRelayRoute ?? false }
+        fileTransfer.refusal = { [weak self] in self?.fileTransferRefusal ?? .notAllowed }
+        connection.fileTransfer = engine
     }
 
     func setChimeOnConnect(_ enabled: Bool) {
@@ -1397,6 +1428,7 @@ final class RemoteHostModel: ObservableObject {
         invalidateTextFocus()
         phonePause.clear()
         clipboard.reset()
+        fileTransfer.reset()
         releaseRemoteInput(notifyPhone: false)
         inputFreshness.invalidate()
         input.resetNativeSequence()
@@ -1753,6 +1785,8 @@ final class RemoteHostModel: ObservableObject {
         case "clipboard":
             guard let frame = action.clipboard else { return }
             clipboard.receive(frame, allowed: current && !phonePause.isPaused && controlEffective)
+        case "file":
+            if let frame = action.file { fileTransfer.receive(frame) }
         case "curtain":
             // Covering the Mac's own screen needs the same authority as controlling it.
             guard current, controlEffective, !phonePause.isPaused,
@@ -1822,6 +1856,7 @@ final class RemoteHostModel: ObservableObject {
         liftCurtain()
         phonePause.begin(at: ProcessInfo.processInfo.systemUptime)
         clipboard.reset()
+        fileTransfer.reset()
         invalidateTextFocus()
         releaseRemoteInput(notifyPhone: false)
         inputFreshness.expireTokens()

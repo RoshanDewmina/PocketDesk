@@ -46,6 +46,7 @@ struct HostViewState: Equatable {
     var keepAwake = true
     var openAtLogin = false
     var chimeOnConnect = true
+    var allowFileTransfer = true
     var pausedUntil: Date?
     var session: HostSessionReadout?
     var availability: HostAvailabilityNote?
@@ -99,6 +100,7 @@ struct HostActions {
     var setAllowControl: (Bool) -> Void = { _ in }
     var setKeepAwake: (Bool) -> Void = { _ in }
     var setChimeOnConnect: (Bool) -> Void = { _ in }
+    var setAllowFileTransfer: (Bool) -> Void = { _ in }
     var setOpenAtLogin: (Bool) -> Void = { _ in }
     var setAutomaticRecovery: (Bool) -> Void = { _ in }
     var openLoginItems: () -> Void = {}

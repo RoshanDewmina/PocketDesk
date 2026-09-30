@@ -58,7 +58,7 @@ final class PhoneClipboard: ObservableObject {
     var isBusy: Bool { pending != nil }
 
     /// Paste to Mac: replaces the Mac clipboard with this text, then optionally presses ⌘V.
-    func send(_ text: String) {
+    func send(_ text: String, pasteAfter: Bool? = nil) {
         guard pending == nil else { post("Wait for the current clipboard transfer to finish.", .caution); return }
         let transfer = ClipboardTransferID.make()
         let frames: [ClipboardFrame]
@@ -69,7 +69,7 @@ final class PhoneClipboard: ObservableObject {
         } catch {
             post("Your iPhone clipboard has no text to send.", .caution); return
         }
-        pending = Pending(transfer: transfer, direction: .toMac, pasteAfter: pasteAfterSending,
+        pending = Pending(transfer: transfer, direction: .toMac, pasteAfter: pasteAfter ?? pasteAfterSending,
                           characters: text.count, lastActivity: clock())
         activity = .sending
         outbox.load(frames)

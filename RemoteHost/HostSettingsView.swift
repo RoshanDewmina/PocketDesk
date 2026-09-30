@@ -70,6 +70,10 @@ struct HostSettingsView: View {
                            set: actions.setChimeOnConnect)
                     .accessibilityIdentifier("farside.settings.chime")
             }
+            HostSettingsRow("Allow file transfer", subtitle: "Files from your iPhone go to Downloads › Farside") {
+                HostSwitch(label: "Allow file transfer", isOn: state.allowFileTransfer, set: actions.setAllowFileTransfer)
+                    .accessibilityIdentifier("farside.settings.allowFileTransfer")
+            }
             HostSettingsRow("Hide this Mac’s screen", subtitle: HostCurtainCopy.subtitle(for: state)) {
                 HostSwitch(label: "Hide this Mac’s screen", isOn: state.privacyCurtain,
                            set: actions.setPrivacyCurtain)

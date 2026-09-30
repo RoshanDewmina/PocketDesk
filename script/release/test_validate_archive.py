@@ -51,14 +51,16 @@ class ArchiveFixture(unittest.TestCase):
                     'aps-environment': 'production',
                     'com.apple.developer.associated-domains': ['applinks:getfarside.com'],
                 })
-                widget = app / 'PlugIns/FarsideWidgets.appex'
-                widget.mkdir(parents=True)
-                (widget / 'Info.plist').write_bytes(plistlib.dumps({
-                    'CFBundleIdentifier': 'com.roshan.PocketDesk.Remote.Widgets',
-                    'CFBundleShortVersionString': info['CFBundleShortVersionString'],
-                    'CFBundleVersion': info['CFBundleVersion'],
-                }))
-                (widget / 'PrivacyInfo.xcprivacy').write_bytes(plistlib.dumps({'NSPrivacyTracking': False}))
+                for bundle, identifier in (('FarsideWidgets.appex', 'com.roshan.PocketDesk.Remote.Widgets'),
+                                           ('FarsideShare.appex', 'com.roshan.PocketDesk.Remote.Share')):
+                    extension = app / 'PlugIns' / bundle
+                    extension.mkdir(parents=True)
+                    (extension / 'Info.plist').write_bytes(plistlib.dumps({
+                        'CFBundleIdentifier': identifier,
+                        'CFBundleShortVersionString': info['CFBundleShortVersionString'],
+                        'CFBundleVersion': info['CFBundleVersion'],
+                    }))
+                    (extension / 'PrivacyInfo.xcprivacy').write_bytes(plistlib.dumps({'NSPrivacyTracking': False}))
             info_path = app / 'Contents/Info.plist' if mac else app / 'Info.plist'
             info_path.write_bytes(plistlib.dumps(info))
             if mutate:
@@ -190,6 +192,22 @@ class ArchiveMetadataTests(ArchiveFixture):
             ('Invalid Farside widget Info.plist', lambda app, _info: (app / 'PlugIns/FarsideWidgets.appex/Info.plist').write_bytes(b'not a plist')),
             ('Missing Farside widget privacy manifest', lambda app, _info: (app / 'PlugIns/FarsideWidgets.appex/PrivacyInfo.xcprivacy').unlink()),
             ('Invalid Farside widget privacy manifest', lambda app, _info: (app / 'PlugIns/FarsideWidgets.appex/PrivacyInfo.xcprivacy').write_bytes(b'not a plist')),
+        )
+        for reason, mutate in cases:
+            with self.subTest(reason=reason):
+                self.assert_invalid('ios', reason, mutate=mutate)
+
+    def test_share_extension_identity_version_and_manifest(self):
+        share = 'PlugIns/FarsideShare.appex'
+        cases = (
+            ('Missing Send to My Mac extension', lambda app, _info: shutil.rmtree(app / share)),
+            ('Unexpected Send to My Mac extension bundle identity',
+             lambda app, _info: (app / share / 'Info.plist').write_bytes(plistlib.dumps({
+                 **plistlib.loads((app / share / 'Info.plist').read_bytes()), 'CFBundleIdentifier': 'other.share'}))),
+            ('Send to My Mac extension CFBundleVersion differs from phone',
+             lambda app, _info: (app / share / 'Info.plist').write_bytes(plistlib.dumps({
+                 **plistlib.loads((app / share / 'Info.plist').read_bytes()), 'CFBundleVersion': '1'}))),
+            ('Missing Send to My Mac extension privacy manifest', lambda app, _info: (app / share / 'PrivacyInfo.xcprivacy').unlink()),
         )
         for reason, mutate in cases:
             with self.subTest(reason=reason):

@@ -56,24 +56,27 @@ else:
     accepted = (False, 'NO') if args.service_ready == 'no' else (True, 'YES')
     if not any(type(readiness) is type(value) and readiness == value for value in accepted):
         errors.append('Phone service readiness does not match expected value')
-    widget = app / 'PlugIns/FarsideWidgets.appex'
-    widget_plist = widget / 'Info.plist'
-    if not widget_plist.exists():
-        errors.append('Missing Farside widget extension')
-    else:
-        try:
-            widget_info = plistlib.loads(widget_plist.read_bytes())
-            if not isinstance(widget_info, dict):
-                raise ValueError('widget Info.plist must be a dictionary')
-        except (OSError, ValueError, plistlib.InvalidFileException):
-            errors.append('Invalid Farside widget Info.plist')
+    extensions = (('FarsideWidgets.appex', 'com.roshan.PocketDesk.Remote.Widgets', 'Farside widget'),
+                  ('FarsideShare.appex', 'com.roshan.PocketDesk.Remote.Share', 'Send to My Mac extension'))
+    for bundle, expected_extension_identifier, label in extensions:
+        extension = app / 'PlugIns' / bundle
+        extension_plist = extension / 'Info.plist'
+        if not extension_plist.exists():
+            errors.append('Missing ' + label + ('' if label.endswith('extension') else ' extension'))
         else:
-            if widget_info.get('CFBundleIdentifier') != 'com.roshan.PocketDesk.Remote.Widgets':
-                errors.append('Unexpected Farside widget bundle identity')
-            for key in ('CFBundleShortVersionString', 'CFBundleVersion'):
-                if widget_info.get(key) != info.get(key) or not info.get(key):
-                    errors.append('Farside widget ' + key + ' differs from phone')
-    validate_privacy_manifest(widget / 'PrivacyInfo.xcprivacy', 'Farside widget privacy manifest', errors)
+            try:
+                extension_info = plistlib.loads(extension_plist.read_bytes())
+                if not isinstance(extension_info, dict):
+                    raise ValueError('extension Info.plist must be a dictionary')
+            except (OSError, ValueError, plistlib.InvalidFileException):
+                errors.append('Invalid ' + label + ' Info.plist')
+            else:
+                if extension_info.get('CFBundleIdentifier') != expected_extension_identifier:
+                    errors.append('Unexpected ' + label + ' bundle identity')
+                for key in ('CFBundleShortVersionString', 'CFBundleVersion'):
+                    if extension_info.get(key) != info.get(key) or not info.get(key):
+                        errors.append(label + ' ' + key + ' differs from phone')
+        validate_privacy_manifest(extension / 'PrivacyInfo.xcprivacy', label + ' privacy manifest', errors)
 result = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(app)], capture_output=True)
 if result.returncode: errors.append('Could not read signed entitlements')
 verified = subprocess.run(['codesign', '--verify', '--deep', '--strict', str(app)], capture_output=True)

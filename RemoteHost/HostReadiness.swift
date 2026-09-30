@@ -218,6 +218,7 @@ struct HostPreferences {
         static let chimeOnConnect = "chimeOnConnect"
         static let privacyCurtain = "privacyCurtainWhileSharing"
         static let agentAlerts = "agentAlertsEnabled"
+        static let allowFileTransfer = "allowFileTransfer"
     }
 
     let defaults: UserDefaults
@@ -225,13 +226,20 @@ struct HostPreferences {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         defaults.register(defaults: [Key.allowControl: true, Key.keepAwake: true, Key.sharingEnabled: true,
-                                     Key.chimeOnConnect: true])
+                                     Key.chimeOnConnect: true, Key.allowFileTransfer: true])
     }
 
     /// A short sound when a phone connects, so someone at the Mac always knows.
     var chimeOnConnect: Bool {
         get { defaults.bool(forKey: Key.chimeOnConnect) }
         nonmutating set { defaults.set(newValue, forKey: Key.chimeOnConnect) }
+    }
+
+    /// Files from the paired phone may land in Downloads › Farside, and the phone may ask for a file
+    /// someone picks on this Mac. On by default (owner decision, 30 Sep 2026).
+    var allowFileTransfer: Bool {
+        get { defaults.bool(forKey: Key.allowFileTransfer) }
+        nonmutating set { defaults.set(newValue, forKey: Key.allowFileTransfer) }
     }
 
     var allowControl: Bool {

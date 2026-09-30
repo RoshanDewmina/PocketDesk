@@ -27,9 +27,11 @@ enum SessionFeature {
     static let auxiliaryButtons = "pointer.aux.1"
     /// `textFocusSecure` on a focus reply: the focused field takes a password.
     static let secureFocus = "focus.secure.1"
+    /// `file` actions and the `file` data channel: one file each way, and links from the share sheet.
+    static let fileTransfer = "file.1"
     static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
-                       momentumScroll, auxiliaryButtons, secureFocus]
+                       momentumScroll, auxiliaryButtons, secureFocus, fileTransfer]
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as
@@ -86,7 +88,7 @@ enum PhoneSessionNotice {
 }
 
 extension RemoteAction {
-    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake", "curtain"]
+    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake", "curtain", "file"]
 
     /// Validates the appended clipboard/pause/presence/curtain fields. Returns true when the action
     /// is a session-extension action that is now fully validated.
@@ -112,7 +114,7 @@ extension RemoteAction {
             try agentAlert.validate()
         }
         guard Self.sessionExtensionActions.contains(action) else {
-            guard clipboard == nil else { throw RemoteError.invalidMessage }
+            guard clipboard == nil, file == nil else { throw RemoteError.invalidMessage }
             return false
         }
         guard interaction == nil, pointerLocatorSupported == nil, pointerProbe == nil, pointerLocation == nil,
@@ -123,6 +125,12 @@ extension RemoteAction {
             guard let clipboard else { throw RemoteError.invalidMessage }
             try clipboard.validate()
         } else if clipboard != nil {
+            throw RemoteError.invalidMessage
+        }
+        if action == "file" {
+            guard let file else { throw RemoteError.invalidMessage }
+            try file.validate()
+        } else if file != nil {
             throw RemoteError.invalidMessage
         }
         if action == "curtain" {

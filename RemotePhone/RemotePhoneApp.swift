@@ -101,6 +101,10 @@ final class PhoneRemoteModel: ObservableObject {
     let clipboard = PhoneClipboard()
     let linkHints = PhoneLinkHintMonitor()
     @Published private(set) var linkHint: NetworkLinkHint?
+    let files = PhoneFileTransfer()
+    let sendToMac = SendToMacInbox()
+    private var sendToMacBeaconAt: TimeInterval = 0
+    private var fileTransferWasAvailable = false
     @Published private(set) var hostFeatures: Set<String> = []
     @Published private(set) var resumeState: ResumeState = .none
     /// While a live session is held in the background: when Farside lets go of the Mac.
@@ -298,6 +302,7 @@ final class PhoneRemoteModel: ObservableObject {
         clipboard.bufferedAmount = { [weak self] in self?.connection.media?.controlBufferedAmount }
         clipboard.pressPaste = { [weak self] in self?.commandShortcut("v") ?? false }
         clipboardObserver = clipboard.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        wireFileTransfer()
         #if DEBUG
         PhoneE2E.active?.attach(self)
         #endif
@@ -608,6 +613,96 @@ final class PhoneRemoteModel: ObservableObject {
     func fetchMacClipboard() {
         guard clipboardAvailable else { clipboard.postUnavailable(clipboardUnavailableMessage); return }
         clipboard.requestFromMac()
+    }
+
+    // MARK: File transfer
+
+    var fileTransferSupported: Bool { hostFeatures.contains(SessionFeature.fileTransfer) }
+
+    /// Files need a live foreground session and the Mac's `file` channel. Control is not required:
+    /// the Mac's own "Allow file transfer" setting decides, and it answers with a clear refusal.
+    var fileTransferAvailable: Bool {
+        fileTransferSupported && connection.connected && connection.media?.fileChannelOpen == true
+            && !privacyShield && !contentConcealed
+    }
+
+    var fileTransferUnavailableMessage: String {
+        if !connection.connected { return "Connect to your Mac to send files." }
+        if !fileTransferSupported { return "Files need the updated Farside on your Mac." }
+        return "File transfer is unavailable right now."
+    }
+
+    func sendFileToMac(_ url: URL, securityScoped: Bool, release: @escaping () -> Void = {}) {
+        guard fileTransferAvailable else {
+            release()
+            files.postUnavailable(fileTransferUnavailableMessage)
+            return
+        }
+        let scoped = securityScoped && url.startAccessingSecurityScopedResource()
+        _ = files.send(fileAt: url) {
+            if scoped { url.stopAccessingSecurityScopedResource() }
+            release()
+        }
+    }
+
+    func requestFileFromMac() {
+        guard fileTransferAvailable else { files.postUnavailable(fileTransferUnavailableMessage); return }
+        files.requestFromMac()
+    }
+
+    private func wireFileTransfer() {
+        let engine = files.engine
+        engine.sendControl = { [weak self] frame in
+            guard let self, self.connection.connected else { return false }
+            return self.connection.sendControl(RemoteAction(action: "file", epoch: self.geometryEpoch, file: frame))
+        }
+        engine.link = { [weak self] in self?.connection.media }
+        engine.isRelayed = { [weak self] in self?.connection.media?.isRelayRoute ?? false }
+        connection.fileTransfer = engine
+        files.receipts = { [weak self] transfer, snapshot, finish in self?.sendToMac.transferChanged(transfer, snapshot, finish) }
+        files.onLinkResult = { [weak self] status in self?.sendToMac.linkFinished(status) }
+        sendToMac.canSend = { [weak self] in
+            guard let self else { return false }
+            return self.fileTransferAvailable && !self.files.isBusy
+        }
+        sendToMac.canSendText = { [weak self] in
+            guard let self else { return false }
+            return self.clipboardAvailable && !self.clipboard.isBusy
+        }
+        sendToMac.sendFile = { [weak self] url, name, release in
+            guard let self else { release(); return .connectionLost }
+            return self.files.send(fileAt: url, name: name, release: release)
+        }
+        sendToMac.pendingTransfer = { [weak self] in self?.files.engine.outgoing?.transfer }
+        sendToMac.sendText = { [weak self] text in
+            guard let self, self.clipboardAvailable else { return false }
+            self.clipboard.send(text, pasteAfter: false)
+            return true
+        }
+        sendToMac.sendLink = { [weak self] url in self?.files.sendLink(url) ?? false }
+        sendToMac.start()
+        refreshSendToMac(force: true)
+    }
+
+    /// Keeps the share extension's view of the paired Mac current (name and whether a session is live),
+    /// and offers anything it staged once a session can send.
+    func refreshSendToMac(force: Bool = false) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let available = fileTransferAvailable
+        if available && !fileTransferWasAvailable { sendToMac.check() }
+        let changed = available != fileTransferWasAvailable
+        fileTransferWasAvailable = available
+        guard force || changed || now - sendToMacBeaconAt >= 5 else { return }
+        sendToMacBeaconAt = now
+        guard let name = connection.invitation?.name else { SendToMacOutbox.storeBeacon(nil); return }
+        var beacon = SendToMacOutbox.loadBeacon() ?? SendToMacBeacon(macName: name, filesSupported: false)
+        beacon.macName = name
+        beacon.liveUntil = available ? Date().addingTimeInterval(15) : nil
+        if connection.connected {
+            beacon.lastConnected = Date()
+            beacon.filesSupported = fileTransferSupported
+        }
+        SendToMacOutbox.storeBeacon(beacon)
     }
 
     private var clipboardUnavailableMessage: String {
@@ -967,6 +1062,7 @@ final class PhoneRemoteModel: ObservableObject {
         suspendInputReadiness()
         clipboard.cancel()
         clipboard.clearNotice()
+        files.stopForBackground()
         resumeWatchdog?.cancel(); resumeWatchdog = nil
         var canHold = connection.connected && hostFeatures.contains(SessionFeature.backgroundPause)
         if canHold {
@@ -1225,6 +1321,8 @@ final class PhoneRemoteModel: ObservableObject {
             receiveDisplays(action)
         case "clipboard":
             if let frame = action.clipboard { clipboard.receive(frame) }
+        case "file":
+            if let frame = action.file { files.engine.receive(frame) }
         case "release":
             if nativeInteractionSupported {
                 guard let activeHold, action.epoch == geometryEpoch,
@@ -1364,6 +1462,7 @@ final class PhoneRemoteModel: ObservableObject {
             _ = connection.sendControl(heartbeatAction(clock: probe, at: now))
         }
         pointerOverlay.refresh()
+        refreshSendToMac()
         if !rememberedDisplayApplied && !displays.isEmpty && canControl { applyRememberedDisplay() }
         if connection.connected && !resumeResolved { resolveResume(at: now) }
         if fresh && now - lastFrame > 2 {
@@ -1455,6 +1554,8 @@ final class PhoneRemoteModel: ObservableObject {
         }
         departureReason = nil
         clipboard.cancel()
+        files.reset()
+        refreshSendToMac(force: true)
         resumeWatchdog?.cancel(); resumeWatchdog = nil
     }
 }
