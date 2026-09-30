@@ -583,12 +583,14 @@ private enum PortraitPrivateDisplay {
     }
     static func configure(_ display: NSObject, _ options: PortraitPrototypeOptions) throws {
         let (modeInit, modeSelector) = try function(classes[2], "initWithWidth:height:refreshRate:", returns: "@", args: ["@", ":", "I", "I", "d"], as: ModeInit.self)
-        let mode = try retained(modeInit(try allocated(classes[2]), modeSelector, 430, 932, 60))
+        let advertisedModes = try PortraitPrivateModeAdvertisement.construct(options) { request in
+            try retained(modeInit(try allocated(classes[2]), modeSelector, request.width, request.height, request.refreshHz))
+        }
         let settings = try initialized(classes[1])
         let (hidpi, hidpiSelector) = try function(classes[1], "setHiDPI:", returns: "v", args: ["@", ":", "I"], as: UIntSetter.self)
         hidpi(settings, hidpiSelector, options.mode == .two ? 1 : 0)
         let (modes, modesSelector) = try function(classes[1], "setModes:", returns: "v", args: ["@", ":", "@"], as: ObjectSetter.self)
-        modes(settings, modesSelector, [mode] as NSArray)
+        modes(settings, modesSelector, advertisedModes as NSArray)
         let (apply, applySelector) = try function(classes[3], "applySettings:", returns: "B", args: ["@", ":", "@"], as: Apply.self)
         guard apply(display, applySelector, settings) else { throw PortraitPrototypeFailure.rejected("private applySettings rejected requested mode") }
     }

@@ -43,6 +43,30 @@ enum PortraitModeVerificationAdmission {
     }
 }
 
+struct PortraitPrivateModeRequest: Equatable {
+    let width: UInt32
+    let height: UInt32
+    let refreshHz: Double
+    func fits(maxWidth: UInt32, maxHeight: UInt32) -> Bool {
+        width > 0 && height > 0 && width <= maxWidth && height <= maxHeight && refreshHz == 60
+    }
+}
+
+enum PortraitPrivateModeAdvertisement {
+    /// A bounded constructor experiment: raster anchor first, logical entry second for 2x.
+    /// This advertises requests, not verified CGDisplayMode point/pixel geometry.
+    static func construct<Mode>(_ options: PortraitPrototypeOptions, make: (PortraitPrivateModeRequest) throws -> Mode) throws -> [Mode] {
+        let logical = PortraitPrivateModeRequest(width: 430, height: 932, refreshHz: 60)
+        let requests = options.mode == .two
+            ? [PortraitPrivateModeRequest(width: UInt32(options.pixelWidth), height: UInt32(options.pixelHeight), refreshHz: 60), logical]
+            : [logical]
+        guard requests.allSatisfy({ $0.fits(maxWidth: UInt32(options.pixelWidth), maxHeight: UInt32(options.pixelHeight)) }) else {
+            throw PortraitPrototypeFailure.rejected("private mode request exceeds descriptor cap or is not 60 Hz")
+        }
+        return try requests.map(make)
+    }
+}
+
 struct PortraitDisplayModeCandidate {
     let logicalWidth: Int
     let logicalHeight: Int

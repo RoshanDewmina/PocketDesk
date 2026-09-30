@@ -18,6 +18,35 @@ final class VirtualDisplayPrototypePolicyTests: XCTestCase {
         XCTAssertFalse(two.accepts(logicalWidth: 430, logicalHeight: 932, pixelsWide: 860, pixelsHigh: 1864, backingScale: 2, refresh: .nan))
         XCTAssertEqual(try options().pixelWidth, 430)
     }
+    func testPrivateConstructorKeepsOneXAndAdvertisesTwoXRasterAnchorFirstWithinCaps() throws {
+        let logical = PortraitPrivateModeRequest(width: 430, height: 932, refreshHz: 60)
+        let raster = PortraitPrivateModeRequest(width: 860, height: 1864, refreshHz: 60)
+        for (configuration, expected) in [(try options(), [logical]), (try options(["--portrait-mode", "2x"]), [raster, logical])] {
+            var received: [PortraitPrivateModeRequest] = []
+            let constructed = try PortraitPrivateModeAdvertisement.construct(configuration) { request in
+                received.append(request)
+                return received.count
+            }
+            // This is the production constructor seam: all calls and resulting settings order are observed.
+            XCTAssertEqual(received, expected)
+            XCTAssertEqual(constructed, Array(1...expected.count))
+            XCTAssertEqual(received.first?.width, UInt32(configuration.pixelWidth))
+            XCTAssertEqual(received.first?.height, UInt32(configuration.pixelHeight))
+            XCTAssertTrue(received.allSatisfy { $0.fits(maxWidth: UInt32(configuration.pixelWidth), maxHeight: UInt32(configuration.pixelHeight)) })
+        }
+    }
+    func testPrivateModeRequestRejectsZeroOversizedAndNonSixtyHzRaster() {
+        for request in [PortraitPrivateModeRequest(width: 0, height: 932, refreshHz: 60),
+                        PortraitPrivateModeRequest(width: 430, height: 0, refreshHz: 60),
+                        PortraitPrivateModeRequest(width: 861, height: 1864, refreshHz: 60),
+                        PortraitPrivateModeRequest(width: 860, height: 1865, refreshHz: 60),
+                        PortraitPrivateModeRequest(width: 860, height: 1864, refreshHz: 59.94),
+                        PortraitPrivateModeRequest(width: 860, height: 1864, refreshHz: .nan),
+                        PortraitPrivateModeRequest(width: 860, height: 1864, refreshHz: .infinity)] {
+            XCTAssertFalse(request.fits(maxWidth: 860, maxHeight: 1864))
+        }
+        XCTAssertFalse(PortraitPrivateModeRequest(width: 860, height: 1864, refreshHz: 60).fits(maxWidth: 430, maxHeight: 932))
+    }
     func testExplicitScreenWindowInitializerUsesRelativeOriginOnEveryDesktopArrangement() {
         for origin in [CGPoint.zero, CGPoint(x: 1920, y: 0), CGPoint(x: -430, y: 0),
                        CGPoint(x: 0, y: 1243), CGPoint(x: 0, y: -932)] {
