@@ -7,6 +7,7 @@ struct PairedMac: Equatable {
     let id: String
     let name: String
     let invitation: PairInvitation?
+    var legacyAliases: [String] = []
 }
 
 enum PairedMacs {
@@ -17,10 +18,7 @@ enum PairedMacs {
     static func all() -> [PairedMac] { loader() }
 
     static func mac(withID id: String) -> PairedMac? {
-        if let direct = all().first(where: { $0.id == id }) { return direct }
-        guard let snapshot = try? PhoneTrustStore.shared.snapshot(),
-              let host = snapshot.hosts.first(where: { $0.legacyAliases.contains(id) }) else { return nil }
-        return all().first { $0.id == "m_" + host.id }
+        all().first { $0.id == id || $0.legacyAliases.contains(id) }
     }
 
     static func id(for invitation: PairInvitation) -> String? {
@@ -40,7 +38,7 @@ enum PairedMacs {
         }
         #endif
         guard let snapshot = try? PhoneTrustStore.shared.snapshot() else { return [] }
-        return snapshot.hosts.map { PairedMac(id: "m_" + $0.id, name: $0.invitation.name, invitation: $0.invitation) }
+        return snapshot.hosts.map { PairedMac(id: "m_" + $0.id, name: $0.invitation.name, invitation: $0.invitation, legacyAliases: $0.legacyAliases) }
     }
 }
 
