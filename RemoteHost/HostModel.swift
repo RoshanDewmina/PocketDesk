@@ -140,6 +140,23 @@ final class RemoteHostModel: ObservableObject {
     private var serverRemovalReadFailed = false
     private let input = HostInputExecutor()
     private let capture = RemoteCapture()
+    private let guests = HostGuestController()
+    private var guestContext: HostGuestContext? {
+        guard active, captureHealthy, sessionState == .picture, !screenLocked, !terminating,
+              !phonePause.isPaused, !liveViewOnly, !captureScopeNeedsSelection, screenRecordingPermission.isGranted,
+              let owner = connection.guestOwnerContext, let invitation = connection.invitation,
+              let hostID = invitation.durableHostID, var url = URLComponents(string: invitation.server) else { return nil }
+        url.scheme = url.scheme == "wss" ? "https" : "http"; url.path = ""; url.query = nil; url.fragment = nil
+        guard let origin = url.string, GuestValidation.origin(origin) else { return nil }
+        return HostGuestContext(room: invitation.room, hostID: hostID, origin: origin, ownerSessionID: owner.session,
+            scopeEpoch: String(captureScopeEpoch), geometryEpoch: String(inputEpoch.value), scopeKind: captureScopeKind.rawValue,
+            deadline: owner.deadline)
+    }
+    func createGuestLink() { guests.create() }
+    func copyGuestLink(_ id: String) { guests.copyLink(id) }
+    func approveGuest(_ id: String) { guests.approve(id) }
+    func revokeGuest(_ id: String) { guests.end(id) }
+
     private lazy var bigText = BigTextController(
         switcher: LiveDisplayModeSwitcher(), windows: BigTextWindowKeeper(access: LiveWindowAccess()),
         now: { ProcessInfo.processInfo.systemUptime },
@@ -270,6 +287,7 @@ final class RemoteHostModel: ObservableObject {
         allowSystemAudio = false
         connection.media?.setSystemAudioEnabled(false)
         capture.setSystemAudioEnabled(false)
+        guests.endAll()
         _ = capture.stop() // synchronous frame fence, before any await or peer teardown
         clipboard.reset()
         fileTransfer.reset()
@@ -423,6 +441,7 @@ final class RemoteHostModel: ObservableObject {
             selectedCaptureScopeID: captureScopeTarget?.id ?? (captureScopeNeedsSelection ? "unavailable" : HostCaptureScope.displayID),
             captureScopeViewOnly: captureScopeViewOnly,
             captureScopeNeedsSelection: captureScopeNeedsSelection,
+            guestViewingAvailable: guestContext != nil, guestRows: guests.rows, guestMessage: guests.message,
             detail: detail,
             pairingDeferred: pairingDeferred,
             serverRemovalBusy: serverRemovalBusy,
@@ -515,6 +534,17 @@ final class RemoteHostModel: ObservableObject {
         wireAgentAlerts()
         networkPath.onChange = { [weak self] in self?.connection.networkPathChanged() }
         networkPath.start()
+        guests.context = { [weak self] in self?.guestContext }
+        guests.ownerPeer = { [weak self] in self?.connection.media }
+        guests.send = { [weak self] frame in self?.connection.sendGuest(frame) ?? false }
+        guests.changed = { [weak self] in self?.objectWillChange.send() }
+        guests.start()
+        connection.onGuest = { [weak self] frame in self?.guests.receive(frame) }
+        connection.onGuestAuthorityEnded = { [weak self] in self?.guests.endAll() }
+        let guestFanout = guests.fanout
+        capture.onGuestFrame = { buffer, at in guestFanout.deliver(buffer, at: at) }
+        capture.onGuestSourceFence = { guestFanout.fence() }
+        capture.onGuestSourceChanged = { [weak self] in self?.guests.endAll() }
         capture.onFailure = { [weak self] error in self?.captureFailed(error) }
         capture.onHealth = { [weak self] healthy in self?.captureHealthChanged(healthy) }
         capture.onExclusionLost = { [weak self] in
@@ -1422,6 +1452,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func stop() {
+        guests.endAll()
         bigText.sessionEnded(.sessionEnded)
         liftCurtain()
         invalidateTextFocus()
@@ -1436,6 +1467,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func stopForTermination() {
+        guests.endAll()
         bigText.restoreForTermination()
         reconfigurationMonitor.stop()
         liftCurtain()
@@ -1856,6 +1888,7 @@ final class RemoteHostModel: ObservableObject {
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
+        guests.endAll()
         _ = capture.stop()
         phonePause.clear()
         capturedDisplayID = nil
@@ -1973,6 +2006,7 @@ final class RemoteHostModel: ObservableObject {
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
+        guests.endAll()
         _ = capture.stop()
         couchHUD.hide()
         sessionState = .picture
@@ -1985,6 +2019,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func captureFailed(_ error: Error) {
+        guests.endAll()
         if error is HostCaptureScopeError, captureScopeViewOnly { captureScopeLost(); return }
         #if DEBUG
         HostE2E.active?.event("capture.failed", ["screenRecording": CGPreflightScreenCaptureAccess()])
@@ -2297,6 +2332,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func captureHealthChanged(_ healthy: Bool) {
+        if !healthy { guests.endAll() }
         guard sessionState == .picture else { return }
         // The capture reports every 0.4 s; the 4 Hz lifecycle timer already re-checks Accessibility,
         // reconciles the curtain and sends capture status, so only a change needs handling here.
@@ -2677,6 +2713,7 @@ final class RemoteHostModel: ObservableObject {
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
+        guests.endAll()
         _ = capture.stop()
         couchHealthy = false
         updatePowerAssertions()
@@ -2705,6 +2742,7 @@ final class RemoteHostModel: ObservableObject {
         case .tearDown(let presence):
             if presence == .locked {
                 guard !screenLocked else { return }
+                guests.endAll()
                 screenLocked = true
             }
             autoStart.suspend()
@@ -2726,7 +2764,7 @@ final class RemoteHostModel: ObservableObject {
                 screenLocked = false
             }
             connection.checkSignalingLiveness()
-            if HostScreenLock.isLocked() { screenLocked = true; return }
+            if HostScreenLock.isLocked() { guests.endAll(); screenLocked = true; return }
             bigText.retryPendingRestore()
             autoStart.clear()
             detail = nil
@@ -2763,6 +2801,7 @@ final class RemoteHostModel: ObservableObject {
         captureAttempt &+= 1
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
+        guests.endAll()
         _ = capture.stop()
         sendCaptureHealth(false, presence: presence)
         unavailabilityTeardown?.cancel()
@@ -2872,6 +2911,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func advanceEpoch() {
+        guests.endAll()
         // Retire both posted and admitted holds before publishing the new scope.
         releaseRemoteInput(notifyPhone: true)
         invalidateTextFocus()
@@ -2939,6 +2979,7 @@ extension RemoteHostModel: BigTextHost {
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
         // The curtain windows stay excluded, so the next stream starts without ever showing them.
+        guests.endAll()
         _ = capture.stop(keepingExclusions: true)
         curtain.followsScreenChanges = false
         reconcileCurtain()

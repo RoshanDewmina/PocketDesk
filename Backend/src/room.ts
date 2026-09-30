@@ -1,3 +1,4 @@
+import { GuestService, GUEST_FEATURE, type GuestOwner } from "./guest";
 import { DurableObject } from "cloudflare:workers";
 import { endRoomActivities } from "./activity";
 import { isPublicEnvironment, loadConfig, type Config } from "./config";
@@ -15,6 +16,9 @@ import { randomHex, secureEqual, sha256Hex } from "./util";
 
 type Attachment = {
   role?: PeerRole;
+  guest?: boolean;
+  guestAware?: boolean;
+  guestOrigin?: string;
   authenticated: boolean;
   pending: boolean;
   connectedAt: number;
@@ -109,6 +113,8 @@ export class RoomDO extends DurableObject<Env> {
   }
   private readonly config: Config;
   private readonly provider: TurnProvider | undefined;
+  private guestService: GuestService | undefined;
+  private readonly guestBudgets = new WeakMap<WebSocket, WindowCounter>();
   private readonly messageCounters = new WeakMap<WebSocket, WindowCounter>();
   private readonly byteCounters = new WeakMap<WebSocket, WindowCounter>();
   private readonly issueCounter = new WindowCounter(ROOM_ISSUES_PER_MINUTE, 60_000);
@@ -119,7 +125,19 @@ export class RoomDO extends DurableObject<Env> {
     super(ctx, env);
     this.config = loadConfig(env);
     this.provider = turnProviderFromEnv(env);
-    ctx.blockConcurrencyWhile(async () => this.ensureSchema());
+    // Guest grants are transient: a cold/hibernated instance cannot recover recipient authority.
+    for (const guest of ctx.getWebSockets("guest")) this.close(guest, 1008, "fresh_guest_approval_required");
+    ctx.blockConcurrencyWhile(async () => {
+      this.ensureSchema();
+      const host = this.peer("host"), epoch = this.state().route_epoch;
+      if (host && epoch && this.attachment(host).guestAware) {
+        // Browser cooperation cannot retire direct RTC. Notify only the current authenticated owner.
+        try { host.send(JSON.stringify({ type: "guest", version: 1, guest: { operation: "serviceReset", code: epoch, nonce: randomHex() } })); } catch {}
+      }
+      const retired = this.ctx.storage.sql.exec<{ username: string }>("SELECT username FROM credentials WHERE role LIKE 'guest:%' AND revoke_pending = 0").toArray();
+      this.revokeUsernames(retired.map(row => row.username));
+      if (retired.length) await this.scheduleAlarm();
+    });
   }
 
   // ---- storage --------------------------------------------------------------------------------
@@ -218,7 +236,7 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   private openSockets(): WebSocket[] {
-    return this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN);
+    return this.ctx.getWebSockets().filter(ws => ws.readyState === WebSocket.OPEN && !this.attachment(ws).guest);
   }
 
   private peer(role: PeerRole): WebSocket | undefined {
@@ -308,6 +326,11 @@ export class RoomDO extends DurableObject<Env> {
       if (attachment.authenticated) authenticatedOpen = true;
       else if (!attachment.pending) next = Math.min(next ?? Infinity, attachment.connectedAt + AUTH_TIMEOUT_MS);
     }
+    const guestDeadline = this.guestService?.nearestDeadline;
+    if (guestDeadline !== undefined) next = Math.min(next ?? Infinity, guestDeadline);
+    for (const ws of this.ctx.getWebSockets("guest")) {
+      if (ws.readyState === WebSocket.OPEN && !this.guestService?.owns(ws)) next = Math.min(next ?? Infinity, this.attachment(ws).connectedAt + AUTH_TIMEOUT_MS);
+    }
     const state = this.state();
     if (state.lease_ends_at && this.peer("host")) next = Math.min(next ?? Infinity, state.lease_ends_at);
     if (state.route_expires_at && this.peer("client")) next = Math.min(next ?? Infinity, state.route_expires_at);
@@ -329,6 +352,10 @@ export class RoomDO extends DurableObject<Env> {
 
   override async alarm(): Promise<void> {
     const now = Date.now();
+    await this.guestService?.audit();
+    for (const ws of this.ctx.getWebSockets("guest")) {
+      if (!this.guestService?.owns(ws) && this.attachment(ws).connectedAt + AUTH_TIMEOUT_MS <= now) this.close(ws, 1008, "authentication_timeout");
+    }
     for (const ws of this.openSockets()) {
       const attachment = this.attachment(ws);
       if (!attachment.authenticated && !attachment.pending && attachment.connectedAt + AUTH_TIMEOUT_MS <= now) {
@@ -402,7 +429,7 @@ export class RoomDO extends DurableObject<Env> {
 
   // ---- credentials ----------------------------------------------------------------------------
 
-  private rememberIssued(role: PeerRole, servers: IceServer[], now: number): void {
+  private rememberIssued(role: PeerRole | `guest:${string}`, servers: IceServer[], now: number): void {
     for (const server of servers) {
       if (!server.username) continue;
       this.ctx.storage.sql.exec(
@@ -508,7 +535,7 @@ export class RoomDO extends DurableObject<Env> {
     this.revokeUsernames(usernames);
   }
 
-  private async issueServers(role: PeerRole, entitlementId: string | undefined): Promise<IceServer[]> {
+  private async issueServers(role: PeerRole | `guest:${string}`, entitlementId: string | undefined): Promise<IceServer[]> {
     const servers: IceServer[] = this.config.stunUrls.length ? [{ urls: [...this.config.stunUrls] }] : [];
     if (!this.provider) return servers;
     const now = Date.now();
@@ -587,8 +614,56 @@ export class RoomDO extends DurableObject<Env> {
 
   // ---- WebSocket lifecycle ----------------------------------------------------------------------
 
+  private async paidGuestOwner(): Promise<GuestOwner | undefined> {
+    const host = this.peer("host"), client = this.peer("client"), state = this.state(), now = Date.now();
+    if (!host || !client || !this.attachment(host).guestAware || !this.attachment(client).entitled ||
+        state.blocked || !state.entitlement_id || !state.entitled_device || !state.route_epoch ||
+        !state.route_expires_at || state.route_expires_at <= now || !state.lease_ends_at || state.lease_ends_at <= now) return;
+    // No devRelayRooms, legacy private route, owner self-report or local-only purchase exemption.
+    let row;
+    try { row = await withTimeout(entitlementForDevice(this.env.DB, state.entitlement_id, state.entitled_device), STORAGE_TIMEOUT_MS, "guest paid admission"); }
+    catch { return; } // Unknown paid authority closes guests; it never grants a fallback.
+    const current = this.state(), at = Date.now();
+    if (this.peer("host") !== host || this.peer("client") !== client || !row || !hasAccess(row, at) || row.device_room !== state.room ||
+        current.blocked || current.route_epoch !== state.route_epoch || current.route_revision !== state.route_revision ||
+        current.entitlement_id !== state.entitlement_id || current.entitled_device !== state.entitled_device ||
+        !current.route_expires_at || current.route_expires_at <= at || !current.lease_ends_at || current.lease_ends_at <= at ||
+        !this.attachment(client).entitled || (this.attachment(client).entitlementUntil ?? 0) <= at) return;
+    return { socket: host, client, epoch: current.route_epoch, expiresAt: Math.min(current.route_expires_at, current.lease_ends_at, this.attachment(client).entitlementUntil!) };
+  }
+  private guests(): GuestService {
+    if (!this.guestService) this.guestService = new GuestService({
+      now: () => Date.now(), owner: () => this.paidGuestOwner(),
+      sendOwner: (owner, guest) => { try { (owner.socket as WebSocket).send(JSON.stringify({ type: "guest", version: 1, guest })); } catch {} },
+      sendGuest: (socket, value) => { try { (socket as WebSocket).send(JSON.stringify(value)); } catch {} },
+      closeGuest: (socket, code) => this.close(socket as WebSocket, 1008, code),
+      issue: async (owner, grantID) => {
+        const current = await this.paidGuestOwner();
+        if (!current || current.socket !== owner.socket || current.client !== owner.client || current.epoch !== owner.epoch) throw new Error("guest authority expired");
+        return this.issueServers(`guest:${grantID}`, this.state().entitlement_id ?? undefined);
+      },
+      revoke: servers => { this.revokeUsernames(servers.flatMap(s => s.username ? [s.username] : [])); this.ctx.waitUntil(this.scheduleAlarm()); },
+    });
+    return this.guestService;
+  }
+  private async guestMessage(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {
+    let budget = this.guestBudgets.get(ws);
+    if (!budget) { budget = new WindowCounter(256 * 1024, 1000); this.guestBudgets.set(ws, budget); }
+    if (!budget.hit(Date.now(), JSON.stringify(msg).length)) { this.guests().close(ws); this.close(ws, 1008, "guest_busy"); return; }
+    if (msg.type === "guestRequest" && msg.version === 1 && msg.origin === this.attachment(ws).guestOrigin && msg.room === this.state().room) await this.guests().request(ws, msg);
+    else if (msg.type === "guest" && msg.version === 1 && typeof msg.guest === "object") await this.guests().guestMessage(ws, msg.guest);
+    else { this.guests().close(ws); this.close(ws, 1008, "guest_denied"); }
+    await this.scheduleAlarm();
+  }
+
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/guest-connect" && request.headers.get("upgrade") === "websocket") {
+      const pair = new WebSocketPair(); const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
+      this.ctx.acceptWebSocket(server, ["guest"]);
+      this.save(server, { guest: true, guestOrigin: request.headers.get("x-farside-origin") ?? "", authenticated: false, pending: false, connectedAt: Date.now(), renewable: false, remoteAware: false, entitled: false });
+      await this.scheduleAlarm(); return new Response(null, { status: 101, webSocket: client });
+    }
     if (url.pathname !== "/connect" || request.headers.get("upgrade") !== "websocket") return new Response("Not found", { status: 404 });
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
@@ -610,6 +685,11 @@ export class RoomDO extends DurableObject<Env> {
     const msg = parseJsonFrame(raw);
     if (!msg) { this.error(ws, "invalid_message"); return; }
     const attachment = this.attachment(ws);
+    if (attachment.guest) { await this.guestMessage(ws, msg); return; }
+    if (msg.type === "guest") {
+      if (attachment.authenticated && attachment.role === "host" && attachment.guestAware && msg.version === 1) await this.guests().ownerMessage(ws, msg.guest);
+      await this.scheduleAlarm(); return; // Guests never occupy/evict a native owner slot.
+    }
     if (!attachment.authenticated) {
       if (attachment.pending) { this.error(ws, "registration_pending"); return; }
       const register = parseRegister(msg);
@@ -631,12 +711,14 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   override async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
+    if (this.attachment(ws).guest) { this.guestService?.close(ws); await this.scheduleAlarm(); return; }
     this.close(ws, code === 1005 || code === 1006 ? 1000 : code, reason);
     this.dropPeer(ws);
     await this.scheduleAlarm();
   }
 
   override async webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+    if (this.attachment(ws).guest) { this.guestService?.close(ws); this.close(ws, 1011, "guest_error"); await this.scheduleAlarm(); return; }
     logError("socket_error", error);
     this.close(ws, 1011, "error");
     this.dropPeer(ws);
@@ -654,6 +736,7 @@ export class RoomDO extends DurableObject<Env> {
   private dropPeer(ws: WebSocket): void {
     const attachment = this.detach(ws);
     if (!attachment.authenticated || !attachment.role) return;
+    this.guestService?.endAll("owner_session_ended");
     this.queueActivityEnd(attachment.role === "host" ? "macStopped" : "user");
     this.revokeRole(attachment.role);
     if (attachment.role === "host") {
@@ -682,6 +765,7 @@ export class RoomDO extends DurableObject<Env> {
 
   /** The lease ended: the host goes with `room_lifetime_reached` and its client with `host_disconnected`, as before. */
   private expireRoom(host: WebSocket): void {
+    this.guestService?.endAll("owner_session_expired");
     this.queueActivityEnd("timeout");
     const client = this.peer("client");
     this.revokeAll();
@@ -782,11 +866,12 @@ export class RoomDO extends DurableObject<Env> {
       const leaseEndsAt = now + this.config.leaseMs;
       this.update({ room, client_token_hash: msg.clientTokenHash, lease_ends_at: leaseEndsAt, entitlement_id: null, entitled_device: null, recheck_at: null, last_activity: now,
         route_epoch: randomHex(16), route_revision: 0, route_expires_at: null });
-      const next: Attachment = { ...attachment, role: "host", authenticated: true, pending: false, renewable, remoteAware, routeAware, entitled: false, servedRelay: false };
+      const next: Attachment = { ...attachment, role: "host", authenticated: true, pending: false, renewable, remoteAware, routeAware, guestAware: msg.features.has(GUEST_FEATURE), entitled: false, servedRelay: false };
       this.save(ws, next);
       this.send(ws, {
         type: "registered",
         role: "host",
+        ...(msg.features.has(GUEST_FEATURE) ? { features: [GUEST_FEATURE] } : {}),
         ...(renewable ? { renew: this.renewalOffer(next, leaseEndsAt, now) } : {}),
         ...(remoteAware ? { access: "local" } : {}),
       });
@@ -1050,6 +1135,7 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   private terminate(reason: string): void {
+    this.guestService?.endAll(reason);
     this.queueActivityEnd(reason === "route_expired" ? "timeout" : "error");
     this.revokeAll();
     for (const ws of this.ctx.getWebSockets()) {

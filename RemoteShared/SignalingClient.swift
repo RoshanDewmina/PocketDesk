@@ -2,6 +2,7 @@ import Foundation
 
 struct RelayMessage: Codable {
     var type: String
+    var guest: GuestRelayFrame?
     var version: Int?
     var role: String?
     var room: String?
@@ -110,6 +111,12 @@ final class SignalingClient: SignalingTransport {
                 self.lost("closed by the service or network")
             }
         }
+    }
+    /// Guest traffic never consumes the native owner queue reserve or closes its signaling socket.
+    @discardableResult
+    func sendGuest(_ message: RelayMessage) -> Bool {
+        guard message.type == "guest", socket != nil, pending.count < 32, let bytes = try? JSONEncoder().encode(message), bytes.count < 256 * 1024 else { return false }
+        send(message); return socket != nil
     }
     func send(_ message: RelayMessage) {
         guard socket != nil, pending.count < 64,

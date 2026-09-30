@@ -29,6 +29,17 @@ final class GuestPolicyTests: XCTestCase {
         XCTAssertNil(sampler.sample(identity: nil, timestamp: 9, bytesSent: 3000, rttMs: 20).kbps)
         XCTAssertNil(sampler.sample(identity: "peer1/pair2", timestamp: 10, bytesSent: 4000, rttMs: 20).kbps)
     }
+    func testDirectOwnerCapacityCannotBypassUnknownOrLowerGuestPathEstimate() {
+        func sample(_ capacity: Double?, at: Double = 1) -> GuestTransportObservation {
+            GuestTransportObservation(at: at, totalKbps: 0, capacityKbps: capacity, rttMs: nil, baselineRTTMs: nil,
+                pacerDelayMs: nil, controlBufferedBytes: nil)
+        }
+        XCTAssertEqual(GuestBudgetPolicy.boundedCeilingKbps(ownerCeiling: 1000, guest: sample(200), at: 1.2), 200)
+        XCTAssertEqual(GuestBudgetPolicy.boundedCeilingKbps(ownerCeiling: 128, guest: sample(1000), at: 1.2), 128)
+        XCTAssertNil(GuestBudgetPolicy.boundedCeilingKbps(ownerCeiling: 1000, guest: sample(nil), at: 1.2))
+        XCTAssertNil(GuestBudgetPolicy.boundedCeilingKbps(ownerCeiling: 1000, guest: sample(200), at: 3))
+        XCTAssertNil(GuestBudgetPolicy.boundedCeilingKbps(ownerCeiling: nil, guest: sample(200), at: 1.2))
+    }
     func testGuestCeilingsDoNotAddGCCAndUnknownEvidencePauses() {
         func sample(capacity: Double? = 3000, backlog: UInt64? = 0, pacer: Double? = 0, at: Double = 1) -> GuestBudgetObservation {
             GuestBudgetObservation(at: at, capacityKbps: capacity, ownerMediaKbps: 1000, fileKbps: 200, fecKbps: 100,

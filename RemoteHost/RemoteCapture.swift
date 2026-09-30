@@ -163,6 +163,9 @@ final class RemoteCapture {
 
     /// G4: what the stream covers, once at every start (the whole display) and whenever
     /// ScreenCaptureKit has applied a different region; echoed to the phone on `capture` status.
+    var onGuestFrame: ((CVPixelBuffer, TimeInterval) -> Void)?
+    var onGuestSourceFence: (() -> Void)?
+    var onGuestSourceChanged: (() -> Void)?
     var onCaptureRegion: ((CaptureRegion) -> Void)?
     private(set) var appliedCaptureRegion: CaptureRegion?
 
@@ -278,8 +281,21 @@ final class RemoteCapture {
         let lease = CaptureScopeLease(validUntil: target == nil ? .infinity : CACurrentMediaTime() + 1, clock: { CACurrentMediaTime() })
         let initialQuality = requestedQuality
         let initialClientLongEdge = requestedClientLongEdge
+        let guestFence = onGuestSourceFence
+        let scopedGuestFence: () -> Void = { [weak self] in
+            // An old session cannot retire a replacement session's guests. Source lease → guest lease.
+            lease.performIfValid {
+                guestFence?()
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self, self.ownership.owns(owner) else { return }
+                        self.onGuestSourceChanged?()
+                    }
+                }
+            }
+        }
         let next = try RemoteCaptureSession(resolved: resolved, lease: lease, peer: peer, quality: initialQuality,
-                                            clientLongEdge: initialClientLongEdge)
+            clientLongEdge: initialClientLongEdge, guestFrame: onGuestFrame, guestSourceFence: scopedGuestFence)
         next.onHealth = { [weak self, weak next] healthy in
             Task { @MainActor in
                 guard let self, let next, self.ownership.owns(owner), self.session === next else { return }
@@ -662,6 +678,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
     var onFailure: ((Error) -> Void)?
     var onHealth: ((Bool) -> Void)?
+    private let onGuestFrame: ((CVPixelBuffer, TimeInterval) -> Void)?
+    private let onGuestSourceFence: (() -> Void)?
     var onCaptureRegion: ((CaptureRegion) -> Void)?
     /// Consecutive health ticks on which macOS 27 said the stream is not capturing; confined to `queue`.
     private var notCapturingTicks = 0
@@ -675,7 +693,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     let geometry: DisplayGeometry
     let initialRegion: CaptureRegion
 
-    init(resolved: HostResolvedCaptureScope, lease: CaptureScopeLease, peer: PeerMedia, quality: StreamQuality, clientLongEdge: Int?) throws {
+    init(resolved: HostResolvedCaptureScope, lease: CaptureScopeLease, peer: PeerMedia, quality: StreamQuality, clientLongEdge: Int?,
+         guestFrame: ((CVPixelBuffer, TimeInterval) -> Void)? = nil, guestSourceFence: (() -> Void)? = nil) throws {
+        onGuestFrame = guestFrame; onGuestSourceFence = guestSourceFence
         let display = resolved.display
         let filter = resolved.filter
         scopeLease = lease
@@ -810,6 +830,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             completeConfigurationUpdate(succeeded: true)
             return
         }
+        onGuestSourceFence?()
         let configuration = RemoteCaptureConfiguration.streamConfiguration(
             output: output, region: region, showsCursor: inputs.showsCursor,
             fps: min(targetFPS, inputs.ladderFPS ?? targetFPS),
@@ -858,6 +879,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     /// Same display, minus the given windows. Sizing is unchanged, so the configuration stays.
     func updateExcludedWindows(_ windows: [SCWindow]) async -> Bool {
         guard scopeTarget == nil, !queue.sync(execute: { stopping }) else { return false }
+        onGuestSourceFence?()
         do {
             try await stream.updateContentFilter(SCContentFilter(display: display, excludingWindows: windows))
             return !queue.sync { stopping }
@@ -1004,6 +1026,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         guard scopeTarget?.processIsAlive != false else { return }
         scopeLease.performIfValid {
             peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs)
+            onGuestFrame?(buffer, time)
         }
     }
 }
