@@ -1259,7 +1259,7 @@ final class RemoteHostModel: ObservableObject {
         guard inputAccessCache.refresh() else { return false }
         inputAccess = inputAccessCache.current
         applyControlState(notifyPhone: true)
-        sendCaptureHealth(captureHealthy)
+        sendCaptureHealth(sessionHealthy)
         return true
     }
 
@@ -1607,6 +1607,8 @@ final class RemoteHostModel: ObservableObject {
     private func beginCouch() {
         guard connection.connected, connection.media != nil else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
+        active = true
+        listeningWithoutSharing = false
         if sessionStartedAt == nil {
             sessionStartedAt = Date()
             sessionsThisLaunch += 1
