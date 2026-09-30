@@ -1,0 +1,74 @@
+<template id="tpl-a2">
+  <div class="devs a2" role="group" aria-label="Demo: your Mac on top, zoomed in on your iPhone below. Drag on the iPhone screen to move the pointer; the picture follows it. Tap to click.">
+    <canvas class="a2-field" aria-hidden="true"></canvas>
+    <div class="mac" aria-hidden="true">
+      <div class="mac-lid"><div class="mac-scr">
+        <div class="a2-scene">
+          <div class="s-wall"></div>
+          <div class="s-menu"><b class="app">Chat</b><span>File</span><span>Edit</span><span>View</span><span>Window</span><span class="r"><svg viewBox="0 0 26 38"><use href="#mk"/></svg><span>Tue 9:41</span></span></div>
+          <div class="s-win x-fnd" data-w="fnd">
+            <div class="s-tb"><i></i><i></i><i></i><span>Downloads</span></div>
+            <div class="fi f-rep"><i class="i-doc"></i><span>report.pdf</span></div>
+            <div class="fi f-pho"><i class="i-dir"></i><span>photos</span></div>
+            <div class="fi f-snd"><i class="i-dir"></i><span>To send</span></div>
+            <div class="fi f-zip"><i class="i-zip"></i><span>notes.zip</span></div>
+          </div>
+          <div class="s-win x-chat" data-w="chat">
+            <div class="s-tb"><i></i><i></i><i></i><span>Chat</span></div>
+            <div class="ch-body"><p class="bb in">Can you look at the build before the call?</p><p class="bb out">on it, 5 min</p></div>
+            <div class="ch-in"><span class="ph">Message</span><span class="tx"></span><span class="s-cr"></span></div>
+          </div>
+          <div class="s-win x-term" data-w="term">
+            <div class="s-tb"><i></i><i></i><i></i><span>~/app — zsh</span></div>
+            <pre class="s-tt"></pre>
+          </div>
+          <div class="s-win x-mus" data-w="mus">
+            <div class="mu-art"></div>
+            <div class="mu-meta"><div class="mu-t"><b class="t1">Slow Orbit</b><b class="t2">Far Lights</b></div>Focus mix</div>
+            <div class="mu-ctl">
+              <i class="pv"><svg viewBox="0 0 16 16"><path d="M3 3h2v10H3zM14 3v10L6 8z"/></svg></i>
+              <i class="pl"><svg class="s-pause" viewBox="0 0 16 16"><path d="M4 3h3v10H4zM9 3h3v10H9z"/></svg><svg class="s-play" viewBox="0 0 16 16"><path d="M4 2.5v11L13.5 8z"/></svg></i>
+              <i class="nx"><svg viewBox="0 0 16 16"><path d="M11 3h2v10h-2zM2 3v10l8-5z"/></svg></i>
+            </div>
+            <div class="mu-bar"><i></i></div>
+          </div>
+          <div class="s-win x-dlg">
+            <div class="dl-ic"></div>
+            <b>Allow “notes.zip” to download?</b>
+            <p>It will be saved to Downloads.</p>
+            <div class="dl-bt"><span class="c">Cancel</span><span class="a">Allow</span></div>
+          </div>
+          <div class="s-dock">
+            <i><svg viewBox="0 0 24 24"><path d="M3.5 7h6l2 2h9v10h-17z"/></svg></i>
+            <i><svg viewBox="0 0 24 24"><path d="M4 6.5h16v10H10l-4 3v-3H4z"/></svg></i>
+            <i><svg viewBox="0 0 24 24"><path d="M10 17.5V6l9-2v11.5"/><circle cx="7.5" cy="17.5" r="2.5"/><circle cx="16.5" cy="15.5" r="2.5"/></svg></i>
+            <i>&gt;_</i>
+            <i class="x"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M15 9l-2 4.6L8.8 15.4l2-4.6z"/></svg></i>
+            <i class="x"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7.5" stroke-dasharray="2.4 2.2"/></svg></i>
+          </div>
+        </div>
+        <div class="a2-view"></div>
+        <div class="a2-ring"></div>
+        <div class="ptr"><svg viewBox="-1.5 -1.5 17 23"><use href="#ptr"/></svg></div>
+      </div></div>
+      <div class="mac-base"></div>
+    </div>
+    <div class="phone">
+      <div class="ph-scr" tabindex="0" aria-label="iPhone screen. Drag to move the pointer, tap to click. Arrow keys and Enter also work.">
+        <div class="a2-cam" aria-hidden="true"><div class="a2-zoom"></div></div>
+        <div class="kb" aria-hidden="true">
+          <div class="kb-bar"><b>⌘</b><b>⌥</b><b>⌃</b><b>⇧</b><b>esc</b><b>tab</b><b>←</b><b>→</b></div>
+          <div class="kb-row"></div><div class="kb-row"></div><div class="kb-row"></div><div class="kb-row"></div>
+        </div>
+        <div class="ph-isl"></div>
+        <div class="ph-handle"><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="a2-ring"></div>
+        <div class="contact"></div>
+        <div class="ptr"><svg viewBox="-1.5 -1.5 17 23"><use href="#ptr"/></svg></div>
+        <div class="ghost"><i></i></div>
+        <div class="a2-hint">Drag here to steer</div>
+      </div>
+    </div>
+    <p class="a2-status"><span><i></i>Your iPhone is steering studio-mac</span></p>
+  </div>
+</template>

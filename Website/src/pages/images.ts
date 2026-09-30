@@ -75,3 +75,25 @@ export const ARTS: ArtSpec[] = [
   { key: "art-lost", w: 640, h: 400, ext: "webp" },
 ];
 
+
+/**
+ * Real screenshots of the Farside app (iOS Simulator captures from 29 Sep 2026, ~/Downloads/farside-phone-*.png),
+ * encoded to WebP at each width in `widths` as static/img/<key>-<width>.webp. w/h give the aspect ratio.
+ */
+export type Photo = { key: string; widths: number[]; w: number; h: number; alt: string };
+
+export const PHOTOS: Photo[] = [
+  {
+    key: "photo-home",
+    widths: [320, 640, 900],
+    w: 603,
+    h: 1311,
+    alt: "The Farside Home screen on an iPhone: a paired MacBook Air and a large Connect button.",
+  },
+];
+
+export const photo = (key: string) => {
+  const p = PHOTOS.find((x) => x.key === key);
+  if (!p) throw new Error(`unknown photo ${key}`);
+  return p;
+};

@@ -118,7 +118,7 @@ export function termsPage(assets: Assets) {
 ${pageHero({
   crumbs,
   cap: "Terms of use · draft",
-  title: html`The <em>fine</em> print`,
+  title: html`The fine print`,
   lead: html`The rules for using Farside, in plain language. This page is a <b>draft</b> that hasn’t been through legal review yet.`,
   extra: html`<div class="draft" role="note"><p class="cap">Draft · not in effect</p><p>These terms are a working draft for review. They will take effect when Farside launches, and the final version may differ. Until then, nothing on this page is an agreement.</p></div>`,
 })}

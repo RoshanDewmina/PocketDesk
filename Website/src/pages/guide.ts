@@ -4,7 +4,7 @@ import { config } from "../../site.config";
 import { html, raw, type Html } from "../lib/html";
 import { markSvg } from "../lib/mark";
 import { shot } from "./images";
-import { betaHref, breadcrumbNav, email, icon, storeButtons, type Assets } from "./layout";
+import { breadcrumbNav, icon, type Assets } from "./layout";
 import type { QA } from "./schema";
 
 /** A design-preview image from concept 21, lazy-loaded, with 1x/2x sources. */
@@ -43,19 +43,14 @@ export function faqList(qas: QA[]): Html {
   )}</div>`;
 }
 
-/** Closing call to action shared by the guides: coming soon, join the beta. */
+/** Closing call to action shared by the guides: the beta sign-up on the home page. */
 export function ctaBand(): Html {
-  const href = betaHref();
-  const ask = href
-    ? html`<a class="cta" href="${href}">Email to join the beta <span class="arr">${icon.arrow}</span></a>`
-    : html`<a class="cta" href="/#beta">Join the beta <span class="arr">${icon.arrow}</span></a>`;
   return html`<section class="sec band band-sm" aria-labelledby="cta-title">
   <div class="w">
     <div class="band-mark" aria-hidden="true">${raw(markSvg(40))}</div>
-    <h2 class="h2" id="cta-title">Coming <em>soon.</em></h2>
-    <p class="lead">Farside is in beta testing, with no launch date yet. Free on your own network; no account.</p>
-    <div class="row">${ask}${storeButtons()}</div>
-    ${href ? "" : html`<p class="how">Beta sign-ups: ${email("beta")}.</p>`}
+    <h2 class="h2" id="cta-title">Try Farside first</h2>
+    <p class="lead">Farside is in beta. It’s free when your iPhone and Mac are on the same Wi‑Fi, and there’s no account.</p>
+    <div class="row"><a class="cta" href="/#beta">${config.copy.cta}<span class="arr">${icon.arrow}</span></a></div>
   </div>
 </section>`;
 }

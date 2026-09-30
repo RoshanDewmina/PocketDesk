@@ -43,7 +43,7 @@ export function trackpadGuidePage(assets: Assets) {
   const body = html`${guideHero({
     crumbs,
     cap: "Guide · iPhone as a Mac trackpad",
-    title: html`Use your iPhone as a Mac <em>trackpad.</em>`,
+    title: html`Use your iPhone as a Mac trackpad.`,
     lead: html`Farside turns the whole iPhone screen into a trackpad for your Mac. Slide to move the pointer, tap to click, two fingers to scroll. You feel every click, and the pointer is big enough to find.`,
     meta: "About 3 minutes to read",
   })}
@@ -79,7 +79,7 @@ export function trackpadGuidePage(assets: Assets) {
     </ul>
 
     <h2 id="start">Get started</h2>
-    <p>You need a Mac on ${R.mac} with the free Farside helper, and an iPhone on ${R.iphone} (or an iPad on ${R.ipad}). The <a href="/control-mac-from-iphone">setup guide</a> walks through it: install the helper, allow two permissions, scan a code, tap Connect.</p>
+    <p>You need ${R.mac}, with the free Farside helper, and an iPhone on ${R.iphone} (or an iPad on ${R.ipad}). The <a href="/control-mac-from-iphone">setup guide</a> walks through it: install the helper, allow two permissions, scan a code, tap Connect.</p>
 
     <h2 id="faq">Questions</h2>
     ${faqList(QAS)}

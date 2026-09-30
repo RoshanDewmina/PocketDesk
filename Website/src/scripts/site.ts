@@ -37,6 +37,18 @@ if (menu) {
   sync();
 }
 
+// "Join the beta" links lead to the sign-up form on the home page; remember which page the tap came from
+// so the form can send it as its source (a page name such as "support" or "guide").
+document.addEventListener("click", (e) => {
+  const link = (e.target as Element | null)?.closest?.('a[href="/#beta"], a[href="#beta"]');
+  if (!link) return;
+  try {
+    sessionStorage.setItem("farside:src", document.body.dataset.src ?? "site");
+  } catch {
+    /* storage blocked: the form falls back to "home" */
+  }
+});
+
 // Long documents: the table of contents is a disclosure on phones and stays open beside the text on wide screens.
 const wide = window.matchMedia("(min-width: 900px)");
 const tocs = [...document.querySelectorAll<HTMLDetailsElement>("details[data-wide-open]")];

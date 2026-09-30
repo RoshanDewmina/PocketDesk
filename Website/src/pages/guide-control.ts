@@ -81,7 +81,7 @@ export function controlGuidePage(assets: Assets) {
   const body = html`${guideHero({
     crumbs,
     cap: "Guide · Control your Mac from your iPhone",
-    title: html`Control your Mac from your <em>iPhone.</em>`,
+    title: html`Control your Mac from your iPhone.`,
     lead: html`Farside shows your Mac’s real screen on your iPhone and turns the glass into a trackpad. Setup is a few steps and no account. Here’s the whole thing, start to finish.`,
     meta: "About 4 minutes to read",
   })}
@@ -89,7 +89,7 @@ export function controlGuidePage(assets: Assets) {
   <div class="prose">
     <h2 id="need">What you need</h2>
     <ul>
-      <li>A Mac running ${R.mac}, with the free Farside helper.</li>
+      <li>${R.mac}, with the free Farside helper.</li>
       <li>An iPhone on ${R.iphone}, or an iPad on ${R.ipad}, with the Farside app.</li>
       <li>Both on the same network for free use. To reach your Mac over the internet, the Anywhere plan.</li>
     </ul>

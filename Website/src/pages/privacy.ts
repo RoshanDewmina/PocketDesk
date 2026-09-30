@@ -31,6 +31,7 @@ const OPEN_ITEMS = [
   "[TO FILL] Minimum age for 'not directed to children' (13 or 16, per counsel; rendered: 13, to be confirmed).",
   "[TO FILL] Contact block: name, postal address, email.",
   "NEW, not in the draft: the website loads Google Fonts, which sends visitors' IP addresses to Google. Disclosed below; self-host the fonts to remove it.",
+  "[CONFIRM] Beta waitlist section matches the shipped function (functions/api/waitlist.ts on website/infra-2026-09-29): fields, 12-month retention, 1-hour hashed IP, Cloudflare D1. Name the provider that sends waitlist emails.",
   "NAME: the plan is 'Anywhere' on the website but 'Farside Remote' in SUBSCRIPTION-SETUP.md and STORE-LISTING.md. Pick one before launch.",
 ];
 
@@ -39,7 +40,7 @@ const S: Section[] = [
     id: "short",
     title: "The short version",
     body: html`<ul class="short">
-  <li>Farside lets you see and control your own Mac from your iPhone or iPad. There is no Farside account. We do not ask for your name, email address or phone number.</li>
+  <li>Farside lets you see and control your own Mac from your iPhone or iPad. There is no Farside account, and the apps never ask for your name, email address or phone number. If you join the beta waitlist on this website, we keep the email address you give us (see <a href="#waitlist">Beta waitlist</a>).</li>
   <li>What is on your Mac’s screen, what you type and what you say travel between your own devices, encrypted. We do not record, store or look at your screen, keystrokes, clipboard or voice.</li>
   <li>Our servers introduce your devices to each other and, if you subscribe to the Anywhere plan, pass encrypted traffic along when your devices cannot connect directly. To do that they see technical details such as IP addresses, timing and data volume, and a random identifier for each paired Mac.</li>
   <li>We check your subscription with Apple. Apple handles your payment; we never see your card or Apple Account details.</li>
@@ -85,6 +86,13 @@ const S: Section[] = [
     body: html`<p>If you email us we receive your email address and whatever you choose to send, and we use it to reply. We keep support emails for ${tbc("24 months")}. Please do not send passwords or screenshots of private content.</p>`,
   },
   {
+    id: "waitlist",
+    title: "Beta waitlist",
+    body: html`<p>If you join the beta waitlist on this website, we store your email address, the page you signed up from, the version of the sign-up wording you agreed to and the time you signed up. We use them only to send you the beta invite and news about the launch.</p>
+<p>We keep them until 12 months after Farside launches, or until you unsubscribe, whichever comes first. Every email we send has an unsubscribe link.</p>
+<p>To stop abuse of the sign-up form, we also keep a salted one-way hash of your IP address for at most one hour. We cannot turn the hash back into your IP address. The waitlist is stored with Cloudflare (Cloudflare D1).</p>`,
+  },
+  {
     id: "website",
     title: "This website and downloads",
     body: html`<p>This website is hosted by ${tbc("Cloudflare (Cloudflare Pages)")}, which receives your IP address and the pages or files you request. The site uses no cookies, no analytics and no advertising. Its fonts load from Google Fonts, so your browser also sends your IP address to Google when it fetches them.</p>
@@ -103,16 +111,16 @@ const S: Section[] = [
   {
     id: "use",
     title: "How we use information",
-    body: html`<p>To connect your devices; to verify your subscription and give you relay access; to deliver agent alerts you turned on; to keep the service secure and limit abuse; to answer your questions; and to meet legal obligations. We do not use it for advertising, profiling or sale.</p>`,
+    body: html`<p>To connect your devices; to verify your subscription and give you relay access; to deliver agent alerts you turned on; to send the beta invite and launch news to people on the waitlist; to keep the service secure and limit abuse; to answer your questions; and to meet legal obligations. We do not use it for advertising, profiling or sale.</p>`,
   },
   {
     id: "recipients",
     title: "Who receives information",
     body: html`<ul>
-  <li><b>Cloudflare</b>: the relay, network services and hosting for this website.</li>
+  <li><b>Cloudflare</b>: the relay, network services, hosting for this website, and storage for the beta waitlist (Cloudflare D1).</li>
   <li><b>Apple</b>: the App Store, purchases, push notifications and App Store server notifications. Apple’s own privacy policy applies to its services.</li>
   <li><b>Google</b>: fonts for this website only.</li>
-  <li><b>Our email provider</b>, to receive and answer support email ${raw('<span class="placeholder">(provider to be confirmed)</span>')}.</li>
+  <li><b>Our email provider</b>, to receive and answer support email and to send waitlist emails ${raw('<span class="placeholder">(provider to be confirmed)</span>')}.</li>
   <li>Professional advisers or authorities, when legally required.</li>
 </ul>
 <p>Each provider is bound to protect information at least as strongly as this policy states. We do not sell your information or share it for advertising.</p>`,
@@ -129,6 +137,8 @@ const S: Section[] = [
     <tr><td>Subscription record</td><td>The active term plus ${tbc("90 days")}</td></tr>
     <tr><td>Server request logs, if any</td><td>${tbc("7 days")}</td></tr>
     <tr><td>Support emails</td><td>${tbc("24 months")}</td></tr>
+    <tr><td>Beta waitlist email address and sign-up details</td><td>Until 12 months after launch, or until you unsubscribe</td></tr>
+    <tr><td>Hashed IP address used to limit sign-up abuse</td><td>At most one hour</td></tr>
     <tr><td>Data on your devices</td><td>Until you remove the pairing or delete the app</td></tr>
   </tbody>
 </table>`,
@@ -179,7 +189,7 @@ export function privacyPage(assets: Assets) {
 ${pageHero({
   crumbs,
   cap: "Privacy policy",
-  title: html`Your screen is <em>yours.</em>`,
+  title: html`Your screen is yours.`,
   lead: html`How Farside handles information across the iPhone and iPad app, the Mac helper, our connection service and this website. The short version: <b>no account, no ads, no tracking</b>, and we never see your screen.`,
   extra: html`<p class="meta-row"><span class="cap">Last updated · <b>${config.legalUpdated}</b></span><span class="cap">Effective · <b>to be confirmed</b></span></p>`,
 })}
