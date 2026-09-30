@@ -494,15 +494,18 @@ class Children:
         handle.close()
         item = {'role': role, 'pid': child.pid, 'identity': None, 'command': command, 'startedAt': time.time(), 'members': {}}
         self.items.append((child, item))
+        startup_admitted = False
         try:
             item.update(settle_child(child, command))
+            startup_admitted = True
             self.observe()
         except BaseException:
             # An unreaped live Popen child cannot have its PID reused. Track it first, then
             # stop this direct child through its Popen handle if initial identity capture fails.
-            if child.poll() is None:
+            if not startup_admitted and child.poll() is None:
                 child.terminate()
                 child.wait(timeout=10)
+            self.persist()
             raise
         self.persist()
         return child

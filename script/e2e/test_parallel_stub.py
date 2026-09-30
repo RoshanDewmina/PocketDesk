@@ -275,6 +275,15 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(runner.Refused, 'start changed'):
                 runner.settle_child(child, ['/owned/final', 'arg'])
 
+    def testSettledChildDriftNeverUsesBootstrapDirectSignalFallback(self):
+        child = unittest.mock.Mock(); child.pid = 123; child.poll.return_value = None
+        children = runner.Children(self.root / 'settled-ownership.json')
+        with patch.object(runner.subprocess, 'Popen', return_value=child), patch.object(runner, 'settle_child', return_value={'identity': 'settled', 'members': {}}), patch.object(children, 'observe', side_effect=runner.Refused('post-admission drift')):
+            with self.assertRaisesRegex(runner.Refused, 'post-admission drift'):
+                children.start('owned', ['/owned/final'], {}, self.root / 'settled.log')
+        child.terminate.assert_not_called()
+        self.assertEqual(runner.read_json(self.root / 'settled-ownership.json')[0]['identity'], 'settled')
+
 
 if __name__ == '__main__':
     unittest.main()
