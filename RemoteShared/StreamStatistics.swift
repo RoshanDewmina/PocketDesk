@@ -111,6 +111,7 @@ struct StreamCounterSnapshot {
     var encoderSessionAgeS: Double?
     var encoderDropped: Int?
     var encoderSilentDrops: Int?
+    var encoderEvidence: VideoEncoderEvidence?
     // Host input (perf pack 1b): data-channel arrival → handled on the main queue, and CGEvent post time.
     var inputMainDelayP50Ms: Double?
     var inputMainDelayP95Ms: Double?
@@ -151,6 +152,7 @@ struct HostStreamSummary: Codable, Equatable {
     var encoderDropped: Int?
     /// Frames VideoToolbox dropped without a callback (retired by a later completion) in the last sample.
     var encoderSilentDrops: Int?
+    var encoderEvidence: VideoEncoderEvidence?
     /// Input messages: data-channel arrival → handled on the Mac's main queue, and CGEvent post time.
     var inputMainDelayP50Ms: Double?
     var inputMainDelayP95Ms: Double?
@@ -205,6 +207,7 @@ struct HostStreamSummary: Codable, Equatable {
         try ladder?.validate()
         try busy?.validate()
         try captureRegion?.validate()
+        try encoderEvidence?.validate()
         try validateFrameTiming()
     }
 }
@@ -324,6 +327,7 @@ struct StreamStatsReport: Codable, Equatable {
     var encoderSessionAgeS: Double?
     var encoderDropped: Int?
     var encoderSilentDrops: Int?
+    var encoderEvidence: VideoEncoderEvidence?
     var inputMainDelayP50Ms: Double?
     var inputMainDelayP95Ms: Double?
     var inputMainDelayMaxMs: Double?
@@ -438,6 +442,8 @@ struct StreamStatsReport: Codable, Equatable {
                 encoderSessionAgeS = Self.round(counters.encoderSessionAgeS)
                 encoderDropped = counters.encoderDropped
                 encoderSilentDrops = counters.encoderSilentDrops
+                encoderEvidence = counters.encoderEvidence
+                if let evidence = encoderEvidence { powerEfficientEncoder = evidence.hardwareReported }
                 inputMainDelayP50Ms = Self.round(counters.inputMainDelayP50Ms)
                 inputMainDelayP95Ms = Self.round(counters.inputMainDelayP95Ms)
                 inputMainDelayMaxMs = Self.round(counters.inputMainDelayMaxMs)
@@ -505,6 +511,7 @@ struct StreamStatsReport: Codable, Equatable {
                           encoderSessionAgeS: encoderSessionAgeS.map { min($0, 10_000_000) },
                           encoderDropped: encoderDropped.map { min($0, 100_000) },
                           encoderSilentDrops: encoderSilentDrops.map { min($0, 100_000) },
+                          encoderEvidence: encoderEvidence,
                           inputMainDelayP50Ms: inputMainDelayP50Ms.map { min($0, 10_000_000) },
                           inputMainDelayP95Ms: inputMainDelayP95Ms.map { min($0, 10_000_000) },
                           inputMainDelayMaxMs: inputMainDelayMaxMs.map { min($0, 10_000_000) },
@@ -624,6 +631,7 @@ struct StreamStatsReport: Codable, Equatable {
             lines.append("encode \(value(encodedFPS))fps \(value(encodeMs, "ms")) · pacer \(value(pacerDelayMs, "ms")) · sent \(value(sentFPS))fps \(sentWidth ?? 0)×\(sentHeight ?? 0)")
             lines.append("\(value(sentKbps, "kbps")) · target \(value(targetKbps, "kbps")) · max \(value(maxKbps, "kbps")) · BWE \(value(availableOutgoingKbps, "kbps"))")
             lines.append("\(encoderImplementation ?? "encoder?") \(hardware(powerEfficientEncoder)) · limit \(qualityLimitation ?? "?") · QP \(value(qpAverage)) · rtx \(retransmittedPackets ?? 0)")
+            if let encoderEvidence { lines.append(encoderEvidence.summary) }
             if encodeLatencyMs != nil || encoderDropped != nil {
                 lines.append("VT lat p50 \(value(encodeLatencyMs, "ms")) p90 \(value(encodeLatencyP90Ms, "ms")) max \(value(encodeLatencyMaxMs, "ms")) · in-flight ≤\(encodeInFlightMax ?? 0) · bytes p50 \(encodeBytesP50 ?? 0) · key ≤\((keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(rateUpdates ?? 0) · session \(value(encoderSessionAgeS, "s"))"
                              + dropped(encoderDropped, encoderSilentDrops))
@@ -644,6 +652,7 @@ struct StreamStatsReport: Codable, Equatable {
                 // No QP here: skip-only screen frames report QP 51 whatever the visible quality.
                 lines.append("Mac encode \(value(host.encodedFPS))fps \(value(host.encodeMs, "ms")) · pacer \(value(host.pacerDelayMs, "ms")) · kbps sent \(value(host.sentKbps)) target \(value(host.targetKbps)) max \(value(host.maxKbps))")
                 lines.append("Mac \(host.encoder ?? "encoder?") \(hardware(host.hardwareEncoder)) \(host.sentWidth ?? 0)×\(host.sentHeight ?? 0) · limit \(host.qualityLimitation ?? "?") · age \(value(hostSummaryAgeMs, "ms"))")
+                if let evidence = host.encoderEvidence { lines.append("Mac " + evidence.summary) }
                 if host.encodeLatencyMs != nil || host.encoderDropped != nil {
                     lines.append("Mac VT lat p50 \(value(host.encodeLatencyMs, "ms")) p90 \(value(host.encodeLatencyP90Ms, "ms")) · in-flight ≤\(host.encodeInFlightMax ?? 0) · bytes p50 \(host.encodeBytesP50 ?? 0) · key ≤\((host.keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(host.rateUpdates ?? 0) · session \(value(host.encoderSessionAgeS, "s"))"
                                  + dropped(host.encoderDropped, host.encoderSilentDrops))
@@ -837,6 +846,7 @@ final class StreamCounters: @unchecked Sendable {
     private var encoderSilentDrops = 0
     private var inputMainDelay = LatencyWindow()
     private var inputPost = LatencyWindow()
+    private var encoderEvidence: VideoEncoderEvidence?
     private var encoderSessionStartedMs: Double?
     private var encodedFramesTotal = 0
     private var arrivedFramesTotal = 0
@@ -987,6 +997,10 @@ final class StreamCounters: @unchecked Sendable {
         lock.lock(); encoderSilentDrops += max(0, count); lock.unlock()
     }
 
+    func recordEncoderEvidence(_ evidence: VideoEncoderEvidence?) {
+        lock.lock(); encoderEvidence = evidence; lock.unlock()
+    }
+
     func encoderSessionStarted(atMs ms: Double = MachClock.nowMs()) {
         lock.lock(); encoderSessionStartedMs = ms; lock.unlock()
     }
@@ -994,6 +1008,7 @@ final class StreamCounters: @unchecked Sendable {
     func drain(inputBufferedBytes: UInt64?, at time: TimeInterval = ProcessInfo.processInfo.systemUptime) -> StreamCounterSnapshot {
         lock.lock(); defer { lock.unlock() }
         var result = snapshot
+        result.encoderEvidence = encoderEvidence
         result.interval = time - startedAt
         result.inputBufferedBytes = inputBufferedBytes
         if let inputBufferedBytes {

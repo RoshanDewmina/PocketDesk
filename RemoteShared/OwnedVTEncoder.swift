@@ -166,6 +166,9 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         }
         storedLowLatencyApplied = configuration.lowLatency
         storedLastStatus = noErr
+        counters?.recordEncoderEvidence(VideoEncoderEvidence(path: .ownedVideoToolbox,
+            maximumQPBound: maximumQPApplied ? maximumQP : nil, lowLatencyRequested: lowLatencyApplied,
+            hardwareRequired: true, hardwareReported: hardwareReported))
         counters?.encoderSessionStarted()
         return noErr
     }
@@ -283,6 +286,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     }
     private func invalidate() {
         epoch = UUID(); pending.removeAll()
+        counters?.recordEncoderEvidence(nil)
         if let session { VTCompressionSessionInvalidate(session) }
         session = nil; storedMaximumQPApplied = false; storedLowLatencyApplied = false; storedHardwareReported = nil
     }
