@@ -256,6 +256,25 @@ class RunnerTests(unittest.TestCase):
                 self.assertTrue(all(not (root / 'secrets/pairing-token').exists() for root in roots.values()))
                 self.assertEqual(runner.read_json(artifact / 'receipt.json')['status'], 'failed')
 
+    def testStartupSettlesFinalImageAndExactArgvBeforeFreezing(self):
+        child = unittest.mock.Mock(); child.pid = 123; child.poll.return_value = None
+        before = 'Wed Sep 30 17:00:00 2026 /owned/launcher arg'
+        final = 'Wed Sep 30 17:00:00 2026 /owned/final arg'
+        def census(identity): return {'123': {'identity': identity, 'ppid': os.getpid(), 'group': 123}}
+        with patch.object(runner, 'process_identity', side_effect=[before, final, final]), patch.object(runner, 'main_image', side_effect=['/owned/launcher', '/owned/final', '/owned/final']), patch.object(runner, 'group_members', side_effect=[census(before), census(final), census(final)]), patch.object(runner.time, 'sleep'):
+            result = runner.settle_child(child, ['/owned/final', 'arg'])
+        self.assertEqual(result['identity'], final)
+        self.assertEqual(result['members']['123']['identity'], final)
+
+    def testStartupRefusesChangedStartAndUnintendedArgv(self):
+        child = unittest.mock.Mock(); child.pid = 123; child.poll.return_value = None
+        before = 'Wed Sep 30 17:00:00 2026 /owned/final foreign'
+        after = 'Wed Sep 30 17:00:01 2026 /owned/final arg'
+        census = {'123': {'identity': before, 'ppid': os.getpid(), 'group': 123}}
+        with patch.object(runner, 'process_identity', side_effect=[before, after]), patch.object(runner, 'main_image', return_value='/owned/final'), patch.object(runner, 'group_members', return_value=census), patch.object(runner.time, 'sleep'):
+            with self.assertRaisesRegex(runner.Refused, 'start changed'):
+                runner.settle_child(child, ['/owned/final', 'arg'])
+
 
 if __name__ == '__main__':
     unittest.main()

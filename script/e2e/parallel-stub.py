@@ -163,6 +163,41 @@ def process_identity(pid):
     return ' '.join(completed.stdout.split())
 
 
+def main_image(pid):
+    output = subprocess.check_output(['/usr/sbin/lsof', '-a', '-p', str(pid), '-d', 'txt', '-Fn'], text=True)
+    images = [line[1:] for line in output.splitlines() if line.startswith('n')]
+    require(images, 'process main image unavailable')
+    return str(Path(images[0]).resolve())
+
+
+def settle_child(child, command, seconds=3):
+    """Freeze only the intended final image/exact argv of this unreaped Popen child.
+
+    After admission the existing identity/group drift policy remains strict.
+    """
+    expected = str(Path(command[0]).resolve())
+    commands = {' '.join(' '.join([executable, *command[1:]]).split()) for executable in (command[0], expected)}
+    deadline, previous, start_stamp = time.monotonic() + seconds, None, None
+    while time.monotonic() < deadline:
+        require(child.poll() is None, 'owned child exited before identity admission')
+        identity = process_identity(child.pid)
+        parts = identity.split(maxsplit=5)
+        require(len(parts) == 6, 'unparseable child identity')
+        stamp = ' '.join(parts[:5]); start_stamp = start_stamp or stamp
+        require(stamp == start_stamp, 'bootstrap process start changed')
+        members = group_members(child.pid); leader = members.get(str(child.pid))
+        if main_image(child.pid) == expected and parts[5] in commands and leader and leader['identity'] == identity:
+            value = {'pid': child.pid, 'identity': identity, 'members': {}}
+            validate_members(value, members, discover=True)
+            if previous == identity:
+                return {'identity': identity, 'members': value['members']}
+            previous = identity
+        else:
+            previous = None
+        time.sleep(0.02)
+    raise Refused('owned child final executable/argv did not settle')
+
+
 def validate_daemon(manifest):
     home = private_chain(Path(manifest['simurghHome']))
     require(process_identity(manifest['daemonPID']) == manifest['daemonIdentity'], 'daemon identity changed')
@@ -418,7 +453,7 @@ def prepare(args):
 
 def test_command(manifest, lane, result):
     env = lane['lease']['env']['env']
-    return ['/usr/bin/xcodebuild', 'test-without-building', '-xctestrun', lane['xctestrun'],
+    return [str(Path(manifest.get('developerDir', '/Applications/Xcode.app/Contents/Developer')) / 'usr/bin/xcodebuild'), 'test-without-building', '-xctestrun', lane['xctestrun'],
             '-destination', 'id=' + lane['lease']['device']['udid'],
             '-derivedDataPath', env['SIMURGH_DERIVED_DATA'], '-clonedSourcePackagesDirPath', env['SIMURGH_SWIFTPM_DIR'],
             '-resultBundlePath', str(result), '-parallel-testing-enabled', 'NO', '-maximum-concurrent-test-simulator-destinations', '1',
@@ -460,7 +495,7 @@ class Children:
         item = {'role': role, 'pid': child.pid, 'identity': None, 'command': command, 'startedAt': time.time(), 'members': {}}
         self.items.append((child, item))
         try:
-            item['identity'] = process_identity(child.pid)
+            item.update(settle_child(child, command))
             self.observe()
         except BaseException:
             # An unreaped live Popen child cannot have its PID reused. Track it first, then
@@ -731,7 +766,8 @@ def cleanup(path):
     records = read_json(record_path)
     failures = []
     for item in reversed(records):
-        require(item['command'][0] in (manifest['stubExecutable'], '/usr/bin/xcodebuild')
+        require(item['command'][0] in (manifest['stubExecutable'], '/usr/bin/xcodebuild',
+                                      str(Path(manifest.get('developerDir', '/Applications/Xcode.app/Contents/Developer')) / 'usr/bin/xcodebuild'))
                 or (item['role'].endswith('.service') and len(item['command']) > 4
                     and item['command'][1] == str(REPO / 'Server/src/index.ts')
                     and item['command'][2:4] == ['--farside-lane', manifest['runID']]), 'foreign command in cleanup authority')
