@@ -30,7 +30,7 @@ Big Text, Away, perf-pack, keyboard and connection-quality are owned elsewhere a
 - Sealed acceptedAck combines optional phone name and mode. Both bounded decoders can consume the same body; display name never grants authority.
 - Capture-blocker admission happened before Couch intent existed. An optional mode in the existing sealed handshake request now supplies intent before proof admission. Couch only bypasses the picture grant blocker; local proof, route, owner consent, cached post-event grant, unlocked/active console and fresh heartbeat still gate input. Picture capture retains explicit grant and system-approval checks.
 - Couch uses the cached post-event grant for control, preserving Trust's no-per-input-AX contract. AX remains required for focused-field lookup and curtain.
-- Restored the removed blocker.1 downgrade handshake regression with a retained host lifetime. Its discarded host binding was a concrete fixture lifetime defect; mapping-only coverage is insufficient. Fresh full check pending.
+- Restored the removed blocker.1 downgrade handshake regression with a retained host lifetime. Its discarded host binding was a concrete fixture lifetime defect; mapping-only coverage is insufficient. It passes in the fresh full core suite, together with sealed request/challenge/proof Couch-intent regressions.
 - Session feature cap increases from 16 to 32, with positive integrated-feature and negative 33-feature checks. Older installed peers may reject the combined capability list: update both apps together and retain physical compatibility acceptance.
 - Watch adds wrist handoff body and delayed local test while keeping Commerce's fixed generic alert title and no agent-name toggle.
 - Couch disables Precision Tap/loupe and absolute pointer targeting while there is no picture. Its one-second held-input lease and heartbeat policy remain.
@@ -41,7 +41,7 @@ Claude integrator history: exact agent a8b7326e7f7cf8034. Initial script produce
 
 Current verification is pinned to `/Applications/Xcode.app/Contents/Developer`, observed Xcode 27.0 (27A266a), under `/usr/bin/lockf -k /tmp/farside-xcodebuild.lock`. Dedicated DerivedData: `/Volumes/Studio/Development/Caches/Xcode/DerivedData/codex-continue-integration`. Receipts: `/Users/roshansilva/Documents/Codex/2026-09-30/ca/work/farside-integration/`. Only the dedicated simulator created by this run is shut down. No provisioning update or signed device build is needed for these source/simulator checks.
 
-Backend initially lacked local vitest/tsc dependencies; installed exact frozen Bun lockfile before checks. Native core/host/simulator builds and phone units/targeted layout-Couch-vitals UI checks are in progress. StoreKit class is explicitly excluded from the broad phone unit run because historical fixtures hang; this is a skipped acceptance gate, not purchase verification. Host UI snapshots and meaningful Watch render/layout checks remain in the integrated suites. Physical use, StoreKit sandbox, Watch/CarPlay, capture re-approval, successful remove, signing/distribution and live provider acceptance remain open.
+Backend initially lacked local vitest/tsc dependencies; installed exact frozen Bun lockfile before checks. Backend checks pass 135/135 plus TypeScript. Fresh native receipts and the scoped recovery follow-up are recorded below. StoreKit class is explicitly excluded from the broad phone unit run because historical fixtures hang; this is a skipped acceptance gate, not purchase verification. Host UI snapshots pass 16/16; Watch policy/render fixtures are included in the native suites, without establishing wrist acceptance. Physical use, StoreKit sandbox, Watch/CarPlay, capture re-approval, successful remove, signing/distribution and live provider acceptance remain open.
 
 ## Fresh verification receipts
 
@@ -50,3 +50,39 @@ First combined run began from 198881b and completed on Xcode 27.0. Core built, t
 Further source audit: a Couch session admitted through the no-Screen-Recording listener now marks the host active and exits listener-only state, so its authenticated mode-switch/session-extension gates can work. No capture starts from this transition. Combined identity JSON drops an oversized display name while preserving requested mode, with a unicode regression. xcodegen's repeated output changed only copy-phase IDs/order; reverted that generator-only churn. Backend fresh checks pass 135/135 plus TypeScript.
 
 First-wave author bases above are merge bases against a567310; imported heads are exact second parents of their prior integration merge, not potentially moving branch labels. Author-only generation/review scripts in vanished `/private/tmp/claude-*` scratch directories cannot be reconstructed as passing receipts. Original Claude worktrees and dirty motion PNGs were not edited.
+
+
+## Frozen pre-fix verification — ca99d6e
+
+`ca99d6e` changes only the ledger; its compiled source is `d050263`. Xcode 27.0 (27A266a), shared lock, dedicated DerivedData. Receipts are preserved in `work/farside-integration/rerun/` beneath the Codex task directory cited above.
+
+| Check | Result |
+| --- | --- |
+| Core build + direct xctest | 990 executed, 7 optional skips, 0 failures (68 s) |
+| Mac host Debug unsigned source build | Passed |
+| Generic iOS Simulator app and extensions build | Passed |
+| Phone unit suite, excluding AnywhereStoreKitTests | 464 executed, 1 optional screenshot skip, 0 failures |
+| Targeted Phone UI | 9 executed; 8 pass (Couch and Vitals), 1 failure in Motion landscape Controls at SessionLayoutTests.swift:206 |
+| Host UI snapshots | 16 executed, 0 failures |
+| Backend | 135 tests, 0 failures; TypeScript passed |
+
+The Motion assertion was retained: Double-click must exist and be disabled offline; Hold click and Mission Control must remain present/reachable. Its failure snapshot showed Settings and Done but a zero-sized lazy key grid after rotating the keyboard and dismissing it. The existing UI regression is the acceptance check for the rendering repair. Core optional skips are four HEVC probes, one opt-in stream-loopback benchmark and two VideoToolbox probes. No physical performance run was attempted.
+
+## Fresh review finding and recovery
+
+A fresh independent source review of `ca99d6e` found P2: granting Screen Recording during live Couch called `loadDisplays`, whose old `!active` guard suppressed the catalog refresh. A subsequent Picture request encountered an empty catalog and ended the session. No other actionable security finding was reported in that reviewed snapshot. Review evidence was source-only.
+
+- `1bc850c`: allow catalog-only refresh during Couch, with no normal sharing reconciliation/capture start. An explicit Picture request has a unique four-second ticket, current weak peer and input epoch; another mode request, end, backgrounding or permission denial cancels it. Completion rechecks peer/session, lock/console, local proven route, owner control/cached post-event grant, fresh heartbeat, Screen Recording/system capture approval and a valid selected display. Failure stays in Couch and sends a bounded `displayUnavailable` retry notice. Added policy, wire/copy and phone-model regressions.
+- `fd8df65`: render the eight fixed non-scrolling Controls keys with eager SwiftUI Grid rows. Preserve each action, disabled state and accessibility label/hint. Apple Grid documentation was checked on 30 September; the Grid API immediately renders its cells, unlike lazy grids. No platform/deployment requirement changed. Source: https://developer.apple.com/documentation/swiftui/grid
+- `7b646fb`: if Screen Recording is revoked while a Picture ticket is pending, clear the ticket and send its Screen Recording refusal while leaving Couch active. Update the catalog-staleness comment to reflect the new refresh path.
+
+Scoped recovery validation at `fd8df65`, receipts `work/farside-integration/focused/`: core builds and executes **993 tests / 7 optional skips / 0 failures**, Mac host builds, and **15 Couch phone-model tests / 0 failures**. The first UI attempt executed zero tests: XCTest runner aborted in accessibility bootstrapping (`XCTWaiter(StallHandling) handleStalledWait`, main thread in UIKit AX bundle/dyld loading). Preserve that xcresult and `ui-runner-stall.ips`; it is an infrastructure failure and no UI success is inferred from it.
+
+At source `7b646fb8383b9d35722caf3570b21619f8ebaa2a`, host rebuild passes. A single UI retry uses the same owned iPhone 17/iOS 27.0 simulator after boot completion and the unchanged test bundle built at `fd8df65` (the intervening source change is host-only). Receipt directory: `work/farside-integration/focused-retry/`. UI retry executes **9 tests / 7 passes / 2 failures**: Couch surface and all six Vitals checks pass; Couch Home caption static-text assertion fails at CouchModeUITests.swift:29 despite the Couch button existing; Motion fails at SessionLayoutTests.swift:163 because the initial dock swipe did not reveal Hide controls. The latter occurs before the original landscape key assertion at line206, so the eager-grid repair is not yet accepted by a completed landscape regression. No assertion was changed. Preserve logs, xcresult, screen recordings and exported attachments. The owned simulator was shut down by the script trap; the heavy slot is released.
+
+Parent owns scoped re-review and final integration. Direct delivery to the earlier reviewer failed with the runtime's "agent thread limit reached"; parent was notified. Real Screen Recording grant/re-approval during a Couch session, physical input/network behavior, Watch/CarPlay, purchase, removal, signing/distribution and provider acceptance remain open. Both apps should be updated together because older installed peers retain the 16-feature cap. This branch has not been landed to main.
+
+
+## Discussion-first hold — latest user steering
+
+After the already-running unchanged UI retry finished, the parent relayed the user’s request to discuss competition parity/performance before further action. No more implementation, integration or build retry is authorized until that discussion. Final compiled source is `7b646fb8383b9d35722caf3570b21619f8ebaa2a`; the following commit changes this status ledger only. Couch recovery is committed and policy/model checked, but awaits independent scoped re-review and physical grant/switch acceptance. Motion’s fixed eager grid compiles and passes Couch/Vitals key-panel checks, but its complete portrait→keyboard→landscape regression remains open. Do not treat this branch as a fully green combined UI checkpoint or land it automatically.
