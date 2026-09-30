@@ -90,7 +90,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { redraw = true }
     func draw(in view: MTKView) {
-        guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {
+        guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { () -> Void in
             beforeDraw?(view)
             drawAdmitted(in: view)
         }) != nil else { invalidate(); return }
