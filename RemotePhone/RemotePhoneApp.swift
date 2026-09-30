@@ -100,6 +100,7 @@ final class PhoneRemoteModel: ObservableObject {
     let pointerOverlay = PointerOverlayModel()
     let clipboard = PhoneClipboard()
     let linkHints = PhoneLinkHintMonitor()
+    @Published private(set) var linkHint: NetworkLinkHint?
     @Published private(set) var hostFeatures: Set<String> = []
     @Published private(set) var resumeState: ResumeState = .none
     /// While a live session is held in the background: when Farside lets go of the Mac.
@@ -248,6 +249,7 @@ final class PhoneRemoteModel: ObservableObject {
         }
         connection.restore()
         linkHints.start()
+        linkHints.$hint.removeDuplicates().assign(to: &$linkHint)
         connection.onAuthenticated = { [weak self] in
             guard let self else { return }
             self.contentConcealed = false

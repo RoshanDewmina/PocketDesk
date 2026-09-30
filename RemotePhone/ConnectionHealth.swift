@@ -10,7 +10,8 @@ struct ConnectionHealth: Equatable {
         case macAsleep, macLocked, otherUser, displayAsleep, sharingStopped, pictureStalled, reconnecting,
              needsAnywhere, anywhereUnconfirmed, relayUnavailable, relaySlow, networkSlow, sessionClosing,
              macBusy, notApproved, stoppedToStaySafe, pairingProblem, serviceUnreachable, macAnswering,
-             unreachable, screenRecordingOff, accessibilityOff, localNetworkOff
+             unreachable, screenRecordingOff, accessibilityOff, localNetworkOff, wifiHiccups, weakWiFi,
+             constrainedLink
     }
 
     enum Action: Equatable {
@@ -142,6 +143,9 @@ struct ConnectionHealth: Equatable {
         var roundTripMs: Int?
         /// A grant the Mac reported missing during the session.
         var blocker: MacShareBlocker?
+        var wifiStall: WiFiStallTip?
+        /// This iPhone's own link; a hint only, never a cause.
+        var linkHint: NetworkLinkHint?
     }
 
     /// Nil while nothing is wrong. Order matters: a dropped connection explains a stalled picture,
@@ -184,11 +188,28 @@ struct ConnectionHealth: Equatable {
                                     detail: "\(route)\(rtt) ms round trip.",
                                     nextStep: "A stronger Wi-Fi or cellular signal usually helps.")
         }
+        if let tip = evidence.wifiStall {
+            return ConnectionHealth(state: .wifiHiccups, title: tip.title,
+                                    detail: "The picture arrives in bursts about once a second, with no loss.",
+                                    nextStep: tip.detail)
+        }
+        if let hint = evidence.linkHint {
+            switch hint.kind {
+            case .weakWiFi:
+                return ConnectionHealth(state: .weakWiFi, title: hint.title, detail: hint.detail, nextStep: hint.nextStep)
+            case .veryConstrained:
+                return ConnectionHealth(state: .constrainedLink, title: hint.title, detail: hint.detail, nextStep: hint.nextStep)
+            case .cellularOrExpensive:
+                break
+            }
+        }
         return nil
     }
 
     /// The session works, only slowly: control state stays the more useful line until a click is acknowledged.
-    var isSlowOnly: Bool { state == .relaySlow || state == .networkSlow }
+    var isSlowOnly: Bool {
+        [.relaySlow, .networkSlow, .wifiHiccups, .weakWiFi, .constrainedLink].contains(state)
+    }
 
     /// The dock's one-line summary.
     var sessionLine: String {

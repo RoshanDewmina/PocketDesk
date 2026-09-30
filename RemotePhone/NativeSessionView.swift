@@ -778,7 +778,8 @@ struct NativeSessionView: View {
         return ConnectionHealth.session(.init(connected: connection.connected, fresh: model.fresh,
                                               captureHealthy: model.captureHealthy, hostPresence: model.hostPresence,
                                               canWakeDisplay: model.canWakeDisplay, route: model.link?.route,
-                                              roundTripMs: model.link?.roundTripMs, blocker: model.sessionBlocker))
+                                              roundTripMs: model.link?.roundTripMs, blocker: model.sessionBlocker,
+                                              wifiStall: model.wifiStallTip, linkHint: model.linkHint))
     }
 
     private var status: String {

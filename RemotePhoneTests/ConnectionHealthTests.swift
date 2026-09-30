@@ -137,6 +137,25 @@ final class ConnectionHealthTests: XCTestCase {
         XCTAssertNil(session(), "A view-only session without the Mac's report is not blamed on Accessibility")
     }
 
+    func testLinkTipsAreGentleAndRankBelowMeasuredProblems() {
+        let weak = NetworkLinkHint.from(NetworkLinkReading(quality: .minimal, wifi: true))
+        let stall = ConnectionHealth.session(.init(connected: true, fresh: true, captureHealthy: true,
+                                                   route: "Direct", roundTripMs: 12,
+                                                   wifiStall: WiFiStallTip(), linkHint: weak))
+        XCTAssertEqual(stall?.state, .wifiHiccups)
+        XCTAssertEqual(stall?.isSlowOnly, true)
+        let weakOnly = ConnectionHealth.session(.init(connected: true, fresh: true, captureHealthy: true,
+                                                      route: "Direct", roundTripMs: 12, linkHint: weak))
+        XCTAssertEqual(weakOnly?.state, .weakWiFi)
+        XCTAssertEqual(weakOnly?.isSlowOnly, true)
+        let slow = ConnectionHealth.session(.init(connected: true, fresh: true, captureHealthy: true,
+                                                  route: "Relay", roundTripMs: 400, wifiStall: WiFiStallTip()))
+        XCTAssertEqual(slow?.state, .relaySlow)
+        let cellular = NetworkLinkHint.from(NetworkLinkReading(cellular: true))
+        XCTAssertNil(ConnectionHealth.session(.init(connected: true, fresh: true, captureHealthy: true,
+                                                    route: "Direct", roundTripMs: 12, linkHint: cellular)))
+    }
+
     func testLocalNetworkOffAndASilentMacMapToHealth() {
         let local = ConnectionHealth.after(.localNetworkOff)
         XCTAssertEqual(local.state, .localNetworkOff)
