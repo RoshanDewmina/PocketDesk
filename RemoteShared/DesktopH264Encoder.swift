@@ -156,14 +156,6 @@ enum NewestFrameWinsSwitch {
 final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     /// Benchmark-only trace of rate updates, restarts and key frames; nil in the apps.
     nonisolated(unsafe) static var trace: ((String) -> Void)?
-    /// The native host's stream counters for the next encoder. A new PeerMedia updates this
-    /// binding, while each encoder retains the counters for its own session. The lock protects
-    /// construction during an earlier encoder's VideoToolbox callback.
-    static var sharedCounters: StreamCounters? {
-        get { countersBox.value }
-        set { countersBox.value = newValue }
-    }
-    private static let countersBox = CountersBox()
     private let inner: RTCVideoEncoderH264
     private weak var counters: StreamCounters?
     private weak var frameTiming: HostFrameTimingLog?
@@ -179,10 +171,10 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     /// contended VideoToolbox p90 (28.6 ms, efficiency audit), so a slow frame is not double-counted.
     static let inFlightWindowMs = 100.0
 
-    init(codecInfo: RTCVideoCodecInfo) {
+    init(codecInfo: RTCVideoCodecInfo, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil) {
         inner = RTCVideoEncoderH264(codecInfo: codecInfo)
-        counters = Self.sharedCounters
-        frameTiming = Self.sharedFrameTiming
+        self.counters = counters
+        self.frameTiming = frameTiming
         super.init()
     }
 
@@ -303,11 +295,3 @@ final class DesktopH264Encoder: NSObject, RTCVideoEncoder {
     var supportsNativeHandle: Bool { inner.supportsNativeHandle }
 }
 
-private final class CountersBox: @unchecked Sendable {
-    private let lock = NSLock()
-    private weak var stored: StreamCounters?
-    var value: StreamCounters? {
-        get { lock.lock(); defer { lock.unlock() }; return stored }
-        set { lock.lock(); stored = newValue; lock.unlock() }
-    }
-}

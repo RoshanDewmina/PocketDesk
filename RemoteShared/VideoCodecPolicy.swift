@@ -33,12 +33,18 @@ enum H264LevelPolicy {
 
 final class PocketDeskVideoEncoderFactory: NSObject, RTCVideoEncoderFactory {
     private let fallback = RTCDefaultVideoEncoderFactory()
+    private let counters: StreamCounters?
+    private let frameTiming: HostFrameTimingLog?
+    init(counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil) {
+        self.counters = counters; self.frameTiming = frameTiming
+        super.init()
+    }
     func supportedCodecs() -> [RTCVideoCodecInfo] {
         NativeCodecCapability.supportsLevel52 ? H264LevelPolicy.codecs(fallback.supportedCodecs()) : fallback.supportedCodecs()
     }
     func createEncoder(_ info: RTCVideoCodecInfo) -> (any RTCVideoEncoder)? {
         if info.name == kRTCVideoCodecH264Name {
-            return StreamTuning.current.encoderRestart ? DesktopH264Encoder(codecInfo: info) : RTCVideoEncoderH264(codecInfo: info)
+            return StreamTuning.current.encoderRestart ? DesktopH264Encoder(codecInfo: info, counters: counters, frameTiming: frameTiming) : RTCVideoEncoderH264(codecInfo: info)
         }
         return fallback.createEncoder(info)
     }
@@ -46,12 +52,14 @@ final class PocketDeskVideoEncoderFactory: NSObject, RTCVideoEncoderFactory {
 
 final class PocketDeskVideoDecoderFactory: NSObject, RTCVideoDecoderFactory {
     private let fallback = RTCDefaultVideoDecoderFactory()
+    private let frameTiming: PhoneFrameTimingLog?
+    init(frameTiming: PhoneFrameTimingLog? = nil) { self.frameTiming = frameTiming; super.init() }
     func supportedCodecs() -> [RTCVideoCodecInfo] {
         NativeCodecCapability.supportsLevel52 ? H264LevelPolicy.codecs(fallback.supportedCodecs()) : fallback.supportedCodecs()
     }
     func createDecoder(_ info: RTCVideoCodecInfo) -> (any RTCVideoDecoder)? {
         if info.name == kRTCVideoCodecH264Name {
-            return TimedH264Decoder.sharedLog.map { TimedH264Decoder(log: $0) } ?? RTCVideoDecoderH264()
+            return frameTiming.map { TimedH264Decoder(log: $0) } ?? RTCVideoDecoderH264()
         }
         return fallback.createDecoder(info)
     }

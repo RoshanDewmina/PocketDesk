@@ -295,13 +295,6 @@ enum FrameTimingSwitch {
 
 /// Pass-through H.264 decoder that logs each frame's wire timestamp, size, arrival and decode time.
 final class TimedH264Decoder: NSObject, RTCVideoDecoder {
-    /// The phone's log for the next decoder; set by the phone's PeerMedia before negotiation.
-    static var sharedLog: PhoneFrameTimingLog? {
-        get { logBox.value }
-        set { logBox.value = newValue }
-    }
-    private static let logBox = WeakFrameTimingBox<PhoneFrameTimingLog>()
-
     private let inner = RTCVideoDecoderH264()
     private weak var log: PhoneFrameTimingLog?
 
@@ -330,15 +323,6 @@ final class TimedH264Decoder: NSObject, RTCVideoDecoder {
     }
 
     func implementationName() -> String { inner.implementationName() }
-}
-
-extension DesktopH264Encoder {
-    /// The native host's frame-timing log for the next encoder, bound like `sharedCounters`; nil when off.
-    static var sharedFrameTiming: HostFrameTimingLog? {
-        get { frameTimingBox.value }
-        set { frameTimingBox.value = newValue }
-    }
-    private static let frameTimingBox = WeakFrameTimingBox<HostFrameTimingLog>()
 }
 
 final class WeakFrameTimingBox<Value: AnyObject>: @unchecked Sendable {
