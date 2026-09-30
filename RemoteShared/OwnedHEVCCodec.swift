@@ -95,6 +95,10 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
     private var sets: [Int: Data] = [:]
     private var generation = UUID()
     private var opened = false
+    private var failureReported = false
+    #if DEBUG
+    var submissionStatusForTesting: OSStatus?
+    #endif
     private var pending: Set<UUID> = []
     private var callback: RTCVideoDecoderCallback?
     private let deliveryMailbox = NSLock()
@@ -111,6 +115,12 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
     func release() -> Int {
         lock.lock(); defer { lock.unlock() }
         return serialized { retire(); opened = false; sets.removeAll(); format = nil; deliveryMailbox.lock(); deliveryPending = nil; deliveryMailbox.unlock(); return 0 }
+    }
+    private func fail(_ status: OSStatus) {
+        guard status != noErr, status != kVTVideoDecoderBadDataErr, status != kVTVideoDecoderReferenceMissingErr else { return }
+        retire(); opened = false
+        guard !failureReported else { return }; failureReported = true
+        DispatchQueue.global(qos: .utility).async { [onFailure] in onFailure?() }
     }
     private func retire() { generation = UUID(); pending.removeAll(); if let session { VTDecompressionSessionInvalidate(session) }; session = nil }
     func decode(_ image: RTCEncodedImage, missingFrames: Bool, codecSpecificInfo: (any RTCCodecSpecificInfo)?, renderTimeMs: Int64) -> Int {
@@ -146,7 +156,7 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                     decoderSpecification: [kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: true] as CFDictionary,
                     imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
                         kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, outputCallback: nil, decompressionSessionOut: &session)
-                guard result == noErr else { retire(); DispatchQueue.global(qos: .utility).async { [onFailure] in onFailure?() }; return -1 }
+                guard result == noErr else { fail(result); return -1 }
             }
             guard let session, let format, !payload.isEmpty, pending.count < 2 else { return -1 }
             var block: CMBlockBuffer?
@@ -159,12 +169,17 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                 sampleTimingEntryCount: 1, sampleTimingArray: &timingInfo, sampleSizeEntryCount: 1, sampleSizeArray: &size, sampleBufferOut: &sample) == noErr, let sample else { return -1 }
             let ticket = UUID(), epoch = generation, rtp = image.timeStamp, rotation = image.rotation, capture = image.captureTimeMs
             pending.insert(ticket)
+            #if DEBUG
+            if let injected = submissionStatusForTesting {
+                pending.remove(ticket); fail(injected); return injected == noErr ? 0 : -1
+            }
+            #endif
             let result = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [._EnableAsynchronousDecompression], infoFlagsOut: nil) { [weak self] status, flags, pixels, _, _ in
                 guard let self else { return }
                 self.queue.async { [weak self] in
                     guard let self, self.generation == epoch, self.pending.remove(ticket) != nil else { return }
                     guard status == noErr, !flags.contains(.frameDropped), let pixels else {
-                        if status != noErr { self.retire(); DispatchQueue.global(qos: .utility).async { [onFailure = self.onFailure] in onFailure?() } }
+                        if status != noErr { self.fail(status) }
                         return
                     }
                     let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: pixels), rotation: rotation, timeStampNs: capture * 1_000_000)
@@ -174,7 +189,7 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
 
                 }
             }
-            if result != noErr { pending.remove(ticket) }
+            if result != noErr { pending.remove(ticket); fail(result) }
             return result == noErr ? 0 : -1
         }
     }
