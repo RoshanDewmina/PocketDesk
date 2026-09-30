@@ -1218,26 +1218,29 @@ final class PhoneRemoteModel: ObservableObject {
             captureHealthy = action.x == 1
             lastCaptureHealth = captureHealthy ? ProcessInfo.processInfo.systemUptime : 0
             if !captureHealthy { pointerLocator.clear(); release() }
-            switch PhoneModeResolver.resolve(requested: requestedMode, features: hostFeatures,
-                                             statusMode: action.mode, reason: action.modeReason) {
-            case .couch: setSessionMode(.couch)
-            case .picture: setSessionMode(.picture)
-            case .couchUnsupported:
-                if requestedMode == .couch { requestedMode = .picture; showSessionNotice(CouchCopy.updateMac) }
-                setSessionMode(.picture)
-            case .refused(let reason):
-                couchRefusal = reason
-                sessionEndReason = .error
-                release()
-                connection.stop()
-                return
+            // A status without a feature list (the host's capture-start preflight) says nothing about the mode.
+            if action.features != nil {
+                switch PhoneModeResolver.resolve(requested: requestedMode, features: hostFeatures,
+                                                 statusMode: action.mode, reason: action.modeReason) {
+                case .couch: setSessionMode(.couch)
+                case .picture: setSessionMode(.picture)
+                case .couchUnsupported:
+                    if requestedMode == .couch { requestedMode = .picture; showSessionNotice(CouchCopy.updateMac) }
+                    setSessionMode(.picture)
+                case .refused(let reason):
+                    couchRefusal = reason
+                    sessionEndReason = .error
+                    release()
+                    connection.stop()
+                    return
+                }
+                if let reason = action.modeReason.flatMap(SessionModeRefusal.init(rawValue:)),
+                   action.mode != SessionModeStatus.refused {
+                    clearPendingModeSwitch()
+                    if action.modeReason != lastModeReason { showSessionNotice(CouchCopy.refusal(reason)) }
+                }
+                lastModeReason = action.modeReason
             }
-            if let reason = action.modeReason.flatMap(SessionModeRefusal.init(rawValue:)),
-               action.mode != SessionModeStatus.refused {
-                clearPendingModeSwitch()
-                if action.modeReason != lastModeReason { showSessionNotice(CouchCopy.refusal(reason)) }
-            }
-            lastModeReason = action.modeReason
             if let display = action.display, display != currentDisplayID { currentDisplayID = display }
             if displaySelectionSupported && !displaysRequested { requestDisplays() }
             let region = Self.croppedRegion(action.captureRegion, statusEpoch: action.epoch,

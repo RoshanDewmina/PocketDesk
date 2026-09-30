@@ -95,6 +95,18 @@ final class CouchPhoneModelTests: XCTestCase {
         XCTAssertEqual(model.connection.sessionModeRequest, .picture)
     }
 
+    func testThePictureStartPreflightDoesNotLookLikeAnOlderMac() throws {
+        let model = try liveCouch()
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 3), to: model)
+        try deliver(RemoteAction(action: "capture", x: 0, epoch: 3), to: model)
+        XCTAssertNotEqual(model.sessionNotice, CouchCopy.updateMac)
+        XCTAssertEqual(model.requestedMode, .couch)
+        XCTAssertFalse(model.canControl)
+        try deliver(status(true, epoch: 3, mode: "picture", features: couchFeatures), to: model)
+        XCTAssertEqual(model.sessionMode, .picture)
+        XCTAssertNotEqual(model.sessionNotice, CouchCopy.updateMac)
+    }
+
     func testAModeReasonIsShownOnceAsANotice() throws {
         let model = try liveCouch()
         try deliver(status(true, mode: "couch", reason: "screenRecording", features: couchFeatures), to: model)
