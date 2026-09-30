@@ -146,16 +146,20 @@ private final class PortraitController: NSObject, NSWindowDelegate {
                   CGDisplaySerialNumber(owned.displayID) == (options.mode == .one ? 0x4361 : 0x4362) else {
                 throw PortraitPrototypeFailure.rejected("display/screen discovery timed out or was cancelled")
             }
-            guard admission.accepts(token), let screen = Self.screen(owned.displayID), let mode = CGDisplayCopyDisplayMode(owned.displayID),
-                  options.accepts(logicalWidth: screen.frame.width, logicalHeight: screen.frame.height,
+            guard admission.accepts(token), let screen = Self.screen(owned.displayID), let mode = CGDisplayCopyDisplayMode(owned.displayID) else {
+                throw PortraitPrototypeFailure.rejected("owned display disappeared before mode inspection")
+            }
+            // Preserve rejected observations too: removal inventory cannot explain a wrong selected mode.
+            report["actual"] = ["logicalWidth": mode.width, "logicalHeight": mode.height, "pixelWidth": mode.pixelWidth,
+                                "pixelHeight": mode.pixelHeight, "screenWidth": screen.frame.width, "screenHeight": screen.frame.height,
+                                "backingScale": screen.backingScaleFactor, "refreshHz": mode.refreshRate]
+            guard options.accepts(logicalWidth: screen.frame.width, logicalHeight: screen.frame.height,
                                   pixelsWide: mode.pixelWidth, pixelsHigh: mode.pixelHeight,
                                   backingScale: screen.backingScaleFactor, refresh: mode.refreshRate),
                   mode.width == 430, mode.height == 932, CGDisplayIsMain(owned.displayID) == 0,
                   CGDisplayIsInMirrorSet(owned.displayID) == 0 else {
                 throw PortraitPrototypeFailure.rejected("unsupported actual portrait geometry/mode; physical displays untouched")
             }
-            report["actual"] = ["logicalWidth": mode.width, "logicalHeight": mode.height, "pixelWidth": mode.pixelWidth,
-                                "pixelHeight": mode.pixelHeight, "backingScale": screen.backingScaleFactor, "refreshHz": mode.refreshRate]
             let view = PortraitSyntheticView(frame: NSRect(origin: .zero, size: screen.frame.size), scale: options.mode.scale)
             let window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false, screen: screen)
             window.isReleasedWhenClosed = false; window.title = "Farside synthetic portrait fixture"
