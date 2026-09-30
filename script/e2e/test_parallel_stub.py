@@ -8,6 +8,7 @@ import socket
 import tempfile
 import threading
 import time
+import types
 import unittest
 from unittest.mock import patch
 
@@ -210,6 +211,50 @@ class RunnerTests(unittest.TestCase):
             runner.write_json(record, [dict(item, pid=999)])
             with self.assertRaisesRegex(runner.Refused, 'hash differs'): runner.cleanup(str(path))
             self.assertEqual(stop.call_count, 1)
+
+    def testPrepareProductRefusalCreatesNoPairingSecret(self):
+        base = self.root / 'e2e'
+        stub = self.root / 'Stub.app'
+        (stub / 'Contents/MacOS').mkdir(parents=True)
+        (stub / 'Contents/Info.plist').write_bytes(plistlib.dumps({'CFBundleIdentifier': 'com.roshan.PocketDesk.E2EStubHost', 'CFBundleExecutable': 'Stub'}))
+        (stub / 'Contents/MacOS/Stub').write_bytes(b'FARSIDE_E2E_LANE_MANIFEST')
+        lease = {'id': 'owned', 'device': {'udid': '00000000-0000-0000-0000-000000000001'},
+                 'owner': {'sessionId': 'owned-session'}, 'env': {'env': {'SIMURGH_DERIVED_DATA': '/owned/DerivedData'}}}
+        args = types.SimpleNamespace(run_id='refused', artifact_dir=str(self.root / 'artifacts'), stub_app=str(stub),
+            simurgh='/owned/simurgh', simurgh_sha256='hash', simurgh_home='/owned/home', daemon_pid=123, daemon_identity='owned',
+            runtime_library_root=[], lane_a_lease_json='/owned/a.json', lane_b_lease_json='/owned/b.json',
+            lane_a_xctestrun='/owned/a.xctestrun', lane_b_xctestrun='/owned/b.xctestrun')
+        authority = types.SimpleNamespace(lstat=lambda: types.SimpleNamespace(st_dev=1, st_ino=2, st_uid=os.getuid()))
+        read = runner.read_json
+        def input_json(path): return {'lease': lease} if str(path).startswith('/owned/') else read(path)
+        with patch.object(runner, 'BASE', base), patch.object(runner, 'pinned_binary'), patch.object(runner, 'validate_daemon', return_value=authority), patch.object(runner, 'read_json', side_effect=input_json), patch.object(runner, 'validate_lease'), patch.object(runner, 'rpc', return_value=lease), patch.object(runner, 'expiry', return_value=time.time() + 900), patch.object(runner.socket, 'socket'), patch.object(runner.subprocess, 'check_output', return_value='/owned/developer'), patch.object(runner, 'validate_products', side_effect=runner.Refused('unsigned product')):
+            with self.assertRaisesRegex(runner.Refused, 'unsigned product'): runner.prepare(args)
+        self.assertTrue((base / 'parallel/refused/phone/lane.json').is_file())
+        self.assertEqual(list(base.rglob('pairing-token')), [])
+
+    def testEitherTokenAllocationFailureCleansSecretsBeforeChildLaunch(self):
+        for fail_at in (1, 2):
+            with self.subTest(fail_at=fail_at):
+                batch = self.root / ('allocation-' + str(fail_at)); batch.mkdir(mode=0o700)
+                artifact = batch / 'artifacts'; artifact.mkdir(mode=0o700)
+                roots = {name: batch / name for name in ('phone', 'tablet')}
+                for root in roots.values():
+                    root.mkdir(mode=0o700); (root / 'secrets').mkdir(mode=0o700)
+                manifest = {'runID': 'run', 'sourceRevision': 'source', 'artifactDir': str(artifact),
+                            'lanes': [{'manifest': str(root / 'lane.json')} for root in roots.values()]}
+                child = unittest.mock.Mock(); child.stop.return_value = []
+                actual_create = runner.create_pairing_token
+                count = 0
+                def allocate(root):
+                    nonlocal count
+                    count += 1
+                    if count == fail_at: raise OSError('token allocation failed')
+                    actual_create(root)
+                with patch.object(runner, 'validate_run', return_value=manifest), patch.object(runner, 'read_json', side_effect=lambda path: {'laneID': path.parent.name}), patch.object(runner, 'Children', return_value=child), patch.object(runner.shutil, 'which', return_value='/owned/bun'), patch.object(runner.subprocess, 'check_output', return_value=''), patch.object(runner, 'create_pairing_token', side_effect=allocate):
+                    with self.assertRaisesRegex(OSError, 'token allocation failed'): runner.run_batch('manifest')
+                child.start.assert_not_called(); child.stop.assert_called_once()
+                self.assertTrue(all(not (root / 'secrets/pairing-token').exists() for root in roots.values()))
+                self.assertEqual(runner.read_json(artifact / 'receipt.json')['status'], 'failed')
 
 
 if __name__ == '__main__':

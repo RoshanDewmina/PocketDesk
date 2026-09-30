@@ -398,10 +398,6 @@ def prepare(args):
         write_json(root / 'testpad-state.json', {'synthetic': True, 'run': args.run_id, 'lane': lane_id,
                    'contentFrame': {'x': 0, 'y': 0, 'width': 1280, 'height': 720},
                    'elements': {'A': {'x': 600, 'y': 320, 'width': 80, 'height': 80}}})
-        token = root / 'secrets/pairing-token'
-        fd = os.open(token, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, 'w') as handle:
-            handle.write(secrets.token_hex(32) + '\n')
         products = validate_products(xctestrun, lease['env']['env']['SIMURGH_DERIVED_DATA'], developer, manifest['runtimeRoots'])
         manifest['lanes'].append({'manifest': str(root / 'lane.json'), 'lease': lease,
                                   'xctestrun': str(absolute(xctestrun)), 'products': products})
@@ -592,6 +588,13 @@ def service_owns_port(pid, port):
     return result.returncode == 0 and '127.0.0.1:' + str(port) in result.stdout
 
 
+def create_pairing_token(root):
+    private_chain(root / 'secrets')
+    fd = os.open(root / 'secrets/pairing-token', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, 'w') as handle:
+        handle.write(secrets.token_hex(32) + '\n')
+
+
 def run_batch(path):
     manifest = validate_run(path, live=True)
     roots = {read_json(Path(lane['manifest']))['laneID']: Path(lane['manifest']).parent for lane in manifest['lanes']}
@@ -607,6 +610,10 @@ def run_batch(path):
     require(not source_dirty.strip(), 'commit source before a runtime receipt')
     receipt = {'runID': manifest['runID'], 'sourceRevision': manifest['sourceRevision'], 'startedAt': time.time(), 'status': 'failed'}
     try:
+        # No pairing secrets exist during preparation. Allocation is guarded by this run's
+        # finally, including a failure while allocating the second lane before any launch.
+        for root in roots.values():
+            create_pairing_token(root)
         for lane in manifest['lanes']:
             value = read_json(Path(lane['manifest'])); lane_id = value['laneID']; root = roots[lane_id]
             lock = open(root / 'run/execution.lock', 'x'); os.chmod(lock.name, 0o600)

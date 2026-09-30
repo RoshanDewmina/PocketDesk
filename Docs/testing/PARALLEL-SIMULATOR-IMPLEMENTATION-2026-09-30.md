@@ -38,6 +38,9 @@ python3 script/e2e/parallel-stub.py cleanup --manifest RUN_MANIFEST
 closures; validates ownership, path separation, UDIDs, lease identity, product references,
 binary hashes and current TTL; creates fresh private roots/config/tokens/manifests only.
 No existing root is chmodded, pruned or reused. `validate` is side-effect free.
+Pairing nonces are allocated only inside the guarded runtime phase after all live/product
+admission passes; preparation failures leave no pairing nonce. Allocation failure in either
+lane stops before any child launch and removes the exact owned nonce leaves.
 `run` starts two owned loopback signaling services and stub executables, then concurrently
 launches only the exact allowed `xcodebuild test-without-building` selector directly with
 explicit validated lease destination/DerivedData/SwiftPM/cache/result paths. It holds
