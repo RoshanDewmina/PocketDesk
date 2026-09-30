@@ -22,8 +22,8 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         XCTAssertNotNil(exit.action.liveViewOnlyRequestID)
         // Host drops old-geometry exit; a new geometry retires the correlation request.
         try deliver(RemoteAction(action: "geometry", x: 210, y: 200, epoch: 8))
-        try deliver(RemoteAction(action: "capture", x: 1, epoch: 8, features: SessionFeature.host, mode: "picture", liveViewOnly: true))
-        try deliver(RemoteAction(action: "capture", x: 1, epoch: 8, features: SessionFeature.host, mode: "picture", liveViewOnly: false))
+        try deliver(RemoteAction(action: "capture", liveViewOnly: true, x: 1, epoch: 8, features: SessionFeature.host, mode: "picture"))
+        try deliver(RemoteAction(action: "capture", liveViewOnly: false, x: 1, epoch: 8, features: SessionFeature.host, mode: "picture"))
         XCTAssertTrue(model.connection.connected, "Routine state is not an applied exit acknowledgment")
         model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 3)
         XCTAssertFalse(model.connection.connected, "Retirement must never erase the bounded foreground exit timeout")

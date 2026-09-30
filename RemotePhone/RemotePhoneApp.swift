@@ -361,6 +361,12 @@ final class PhoneRemoteModel: ObservableObject {
         VideoPresentationSession.invalidateActive()
         inlinePresentationAdmission = nil
         if !keepingPiP {
+            // A queued enter may already have suspended the host. Retiring its content
+            // correlation cannot retire the independent cleanup obligation.
+            if connection.connected && (pendingViewOnlyStart || viewOnlyConfirmed) && !awaitingViewOnlyExit {
+                awaitingViewOnlyExit = true
+                viewOnlyExitDeadline = ProcessInfo.processInfo.systemUptime + 2
+            }
             pipAdmission = nil
             pendingViewOnlyStart = false
             viewOnlyStartDeadline = nil
