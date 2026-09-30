@@ -41,6 +41,16 @@ final class RemoteCoordinator: ObservableObject {
     var advertisesRemoteAccess = false
     /// Set only for an explicitly allowlisted private legacy service. Public services must send route.1.
     var allowLegacyPrivateRoute = false
+    /// Phone: the mode this connection asks for. Couch lists no `remote.1` and sends no entitlement,
+    /// so the service publishes a local route and both peers run the one-hop proof.
+    var sessionModeRequest: SessionMode = .picture
+    /// Host: the mode the phone asked for in this session's `acceptedAck`.
+    private(set) var peerRequestedMode: SessionMode = .picture
+    var routeIsLocal: Bool {
+        guard routeArmed, let routePolicy, routePolicy.expiresAt > Date() else { return false }
+        return routePolicy.access == .local
+    }
+    var provenLocalLinkActive: Bool { media?.provenLocalLinkActive == true }
     /// Phone: what the service allowed this registration, "remote" or "local"; nil when it did not say.
     @Published private(set) var serviceAccess: String?
     /// Phone: the service asked for Farside Anywhere during this attempt. The session continues on
@@ -227,9 +237,11 @@ final class RemoteCoordinator: ObservableObject {
             entitlementRequired = false
             var features = advertisesRenewal ? [SignalingFeature.renewal] : []
             features.append(SignalingFeature.route)
-            if !isHost && advertisesRemoteAccess { features.append(SignalingFeature.remoteAccess) }
+            if !isHost && advertisesRemoteAccess && sessionModeRequest != .couch {
+                features.append(SignalingFeature.remoteAccess)
+            }
             try relay.connect(invitation: invitation, hostToken: hostPair?.hostToken, features: features,
-                              entitlement: isHost ? nil : entitlementToken?())
+                              entitlement: isHost || sessionModeRequest == .couch ? nil : entitlementToken?())
             setTimeout()
         } catch { fail(error.localizedDescription) }
     }
@@ -343,6 +355,7 @@ final class RemoteCoordinator: ObservableObject {
         diagnostics = "Route not measured"
         sentControl = 0; receivedControl = 0
         request = ""; session = ""; sequence = 0; guardState = nil; proofReceived = false
+        peerRequestedMode = .picture
         onEnded?()
     }
     private func receive(_ message: RelayMessage) {
@@ -498,9 +511,11 @@ final class RemoteCoordinator: ObservableObject {
                 #endif
             }
             prepareMedia()
-            send(kind: "acceptedAck")
+            guard !stopped else { return }
+            send(kind: "acceptedAck", body: SessionModeRequest.body(for: sessionModeRequest))
         case "acceptedAck" where isHost:
             guard proofReceived, media == nil, !awaitingApproval else { throw RemoteError.stale }
+            peerRequestedMode = SessionModeRequest.mode(fromAcceptedAckBody: message.body)
             prepareMedia()
         case "media":
             guard let body = message.body else { throw RemoteError.invalidMessage }
@@ -529,6 +544,10 @@ final class RemoteCoordinator: ObservableObject {
     private func prepareMedia() {
         guard (routeArmed && (routePolicy?.expiresAt ?? .distantPast) > Date()) || allowLegacyPrivateRoute else {
             fail("The connection route is no longer authorized.")
+            return
+        }
+        if !isHost, sessionModeRequest == .couch, routePolicy?.access != .local {
+            fail(CouchCopy.phoneRefusedStatus)
             return
         }
         if let routePolicy, routePolicy.access == .local {
