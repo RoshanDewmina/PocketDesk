@@ -206,11 +206,20 @@ final class PrivacyCurtainController {
         generation &+= 1
         let current = generation
         phase = .raising
-        // Transparent until the stream is known to exclude them.
+        // Sharing waits for exclusion; Away protects the local screen before any async work.
         windows = makeWindows?() ?? NSScreen.screens.map { Self.makeWindow(for: $0, style: style) }
         guard !windows.isEmpty else { phase = .down; return .noScreens }
+        if style != .sharing { windows.forEach { $0.alphaValue = 1 } }
         windows.forEach { $0.orderFrontRegardless() }
         observeScreenChanges()
+        if style != .sharing {
+            phase = .up
+            installKeyMonitors()
+            onPhaseChange?(.up)
+            let ids = windowIDs
+            Task { @MainActor in _ = await hooks.exclude(ids) }
+            return .raised
+        }
         let excluded = await hooks.exclude(windowIDs)
         guard isCurrent(current, .raising) else { return .cancelled }
         guard excluded else { tearDown(); return .exclusionFailed }
@@ -248,10 +257,36 @@ final class PrivacyCurtainController {
         for window in windows {
             (window.contentView as? NSHostingView<PrivacyCurtainView>)?.rootView = PrivacyCurtainView(style: style)
         }
+        if style != .sharing && phase == .raising {
+            windows.forEach { $0.alphaValue = 1 }
+            phase = .up
+            installKeyMonitors()
+            onPhaseChange?(.up)
+        }
     }
 
     func handleScreenParametersChanged() {
-        if liftsOnScreenChange { lift() } else { onScreensChanged?() }
+        guard phase != .down else { return }
+        if liftsOnScreenChange {
+            lift()
+        } else {
+            refitAwayCover()
+            onScreensChanged?()
+        }
+    }
+
+    /// Keep old windows opaque until replacements cover the new display geometry.
+    func refitAwayCover() {
+        guard phase != .down, style != .sharing else { return }
+        let replacements = makeWindows?() ?? NSScreen.screens.map { Self.makeWindow(for: $0, style: style) }
+        guard !replacements.isEmpty else { return }
+        replacements.forEach { $0.alphaValue = 1; $0.orderFrontRegardless() }
+        let previous = windows
+        windows = replacements
+        generation &+= 1
+        phase = .up
+        for window in previous { window.orderOut(nil); window.close() }
+        onPhaseChange?(.up)
     }
 
     /// Feeds a key-down seen by the local or global monitor. Exposed for tests.
@@ -359,7 +394,7 @@ struct PrivacyCurtainView: View {
         switch style {
         case .sharing: "Press Esc three times to lift"
         case .away: "Touching the keyboard, mouse or trackpad locks this Mac"
-        case .awayLockFailed: "Farside couldn’t lock this Mac. It locks when the display sleeps"
+        case .awayLockFailed: "This Mac stays covered. Unlock it at the Mac to continue"
         }
     }
 

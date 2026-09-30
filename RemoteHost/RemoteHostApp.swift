@@ -13,7 +13,7 @@ struct RemoteHostApp: App {
         HostFonts.registerBundledFonts()
         let model = RemoteHostModel()
         _model = StateObject(wrappedValue: model)
-        appDelegate.configure { model.stopForTermination() }
+        appDelegate.configure(cleanup: { model.stopForTermination() }, prepare: model.prepareForTermination)
         appDelegate.onLaunch = {
             HostAppActivation.shared.start()
             if model.presentsSetupAtLaunch && !Self.e2eActive { HostAppActivation.shared.bringForward() }
@@ -158,7 +158,6 @@ extension HostActions {
             openSetup: openSetup,
             openSettings: openSettings,
             quit: {
-                model.stop()
                 NSApplication.shared.terminate(nil)
             }
         )

@@ -59,7 +59,7 @@ final class AwayModeControllerTests: XCTestCase {
         failed.controller.refresh()
         failed.controller.end(.phoneRequest)
         failed.clock = 3; failed.controller.tick()
-        XCTAssertEqual(failed.controller.machine.phase, .lockFailed(.phoneRequest))
+        XCTAssertEqual(failed.controller.machine.phase, .off)
         failed.controller.turnOffAtMac()
         XCTAssertTrue(failed.controller.lockRequestedByFarside)
         failed.controller.refresh()
@@ -130,11 +130,9 @@ final class AwayModeControllerTests: XCTestCase {
         XCTAssertNil(disabled.controller.readout(available: true).unavailable, "No reason shown while it is off by choice")
     }
 
-    func testTurningOffAtTheMacReleasesWithoutLocking() {
+    func testTurningOffAtTheMacReleasesWithoutLockingWhilePresent() {
         let rig = AwayRig()
         rig.controller.refresh()
-        rig.clock = 121; rig.controller.tick()
-        XCTAssertTrue(rig.controller.wantsCover)
         rig.controller.turnOffAtMac()
         XCTAssertEqual(rig.locker.requests, 0)
         XCTAssertFalse(rig.controller.wantsCover)
@@ -142,27 +140,95 @@ final class AwayModeControllerTests: XCTestCase {
         XCTAssertFalse(rig.monitor.isRunning)
     }
 
-    func testQuitLocksOnlyWhenArmed() {
+    func testQuitLocksOnlyWhenArmedAndWaitsForConfirmation() {
         let off = AwayRig()
         off.host.conditions.sharingActive = false
         off.controller.refresh()
-        off.controller.lockForQuit()
+        XCTAssertFalse(off.controller.prepareForQuit { _ in XCTFail("No Away quit to wait for") })
         XCTAssertEqual(off.locker.requests, 0)
 
         let armed = AwayRig()
         armed.controller.refresh()
         XCTAssertTrue(armed.monitor.isRunning)
         XCTAssertTrue(armed.ticker.isRunning)
-        armed.controller.lockForQuit()
+        var reply: Bool?
+        XCTAssertTrue(armed.controller.prepareForQuit { reply = $0 })
         XCTAssertEqual(armed.locker.requests, 1)
         XCTAssertTrue(armed.host.messages.contains("Locking this Mac: quit"))
         XCTAssertFalse(armed.monitor.isRunning)
-        XCTAssertFalse(armed.ticker.isRunning)
+        XCTAssertTrue(armed.ticker.isRunning)
+        XCTAssertNil(reply)
 
         armed.controller.refresh()
         XCTAssertFalse(armed.monitor.isRunning, "Teardown refreshes must not restart watching")
-        XCTAssertFalse(armed.ticker.isRunning)
+        XCTAssertTrue(armed.ticker.isRunning)
         XCTAssertEqual(armed.locker.requests, 1)
+        armed.locker.locked = true
+        armed.clock = 0.5; armed.ticker.fire()
+        XCTAssertEqual(reply, true)
+        XCTAssertFalse(armed.ticker.isRunning)
+    }
+
+    func testCoveredQuitTimeoutCancelsAndNextQuitCanRetry() {
+        let rig = AwayRig()
+        rig.controller.refresh(); rig.controller.coverNow()
+        rig.locker.postSucceeds = false
+        var replies: [Bool] = []
+        XCTAssertTrue(rig.controller.prepareForQuit { replies.append($0) })
+        XCTAssertTrue(rig.controller.wantsCover)
+        rig.clock = 2; rig.ticker.fire()
+        XCTAssertEqual(replies, [false])
+        XCTAssertTrue(rig.controller.wantsCover)
+        XCTAssertTrue(rig.monitor.isRunning)
+        XCTAssertEqual(rig.controller.machine.phase, .lockFailed(.quit))
+        XCTAssertTrue(rig.controller.prepareForQuit { replies.append($0) })
+        XCTAssertEqual(rig.locker.requests, 2)
+        rig.locker.locked = true
+        rig.clock = 2.5; rig.ticker.fire()
+        XCTAssertEqual(replies, [false, true])
+        XCTAssertFalse(rig.controller.wantsCover)
+    }
+
+    func testUnverifiedHostLockNotificationCannotUncover() {
+        let rig = AwayRig()
+        rig.controller.refresh(); rig.controller.coverNow()
+        rig.host.conditions.screenLocked = true
+        rig.controller.refresh()
+        XCTAssertTrue(rig.controller.wantsCover)
+        rig.locker.locked = true
+        rig.controller.refresh()
+        XCTAssertFalse(rig.controller.wantsCover)
+    }
+
+    func testRecoveryAndBothMonitorsAreRequiredToArm() {
+        let noRecovery = AwayRig()
+        noRecovery.host.conditions.recoveryRunning = false
+        noRecovery.controller.refresh()
+        XCTAssertEqual(noRecovery.controller.machine.phase, .off)
+        XCTAssertEqual(noRecovery.controller.readout(available: true).unavailable, .needsRecovery)
+        XCTAssertFalse(noRecovery.monitor.isRunning)
+        let noMonitor = AwayRig()
+        noMonitor.monitor.canStart = false
+        noMonitor.controller.refresh()
+        XCTAssertEqual(noMonitor.controller.machine.phase, .off)
+        XCTAssertEqual(noMonitor.controller.readout(available: true).unavailable, .needsInputMonitoring)
+        XCTAssertTrue(noMonitor.host.messages.contains("Couldn’t install both local-input monitors; Away mode unavailable"))
+    }
+
+    func testCoveredDisableOrRecoveryLossKeepsCoverUntilLocked() {
+        for disabling in [true, false] {
+            let rig = AwayRig()
+            rig.controller.refresh(); rig.controller.coverNow()
+            if disabling { rig.host.conditions.enabled = false; rig.controller.turnOffAtMac() }
+            else { rig.host.conditions.recoveryRunning = false }
+            rig.controller.refresh()
+            XCTAssertEqual(rig.locker.requests, 1)
+            XCTAssertTrue(rig.controller.wantsCover)
+            rig.clock = 2; rig.ticker.fire()
+            XCTAssertTrue(rig.controller.wantsCover)
+            rig.controller.turnOffAtMac()
+            XCTAssertTrue(rig.controller.wantsCover)
+        }
     }
 
     func testRelaunchLocksFirst() {
@@ -244,7 +310,8 @@ final class AwayPreferencesTests: XCTestCase {
 }
 
 private extension AwayConditions {
-    static let ready = AwayConditions(enabled: true, sharingWanted: true, sharingActive: true, accessibility: true)
+    static let ready = AwayConditions(enabled: true, sharingWanted: true, sharingActive: true, accessibility: true,
+                                      recoveryRunning: true, inputMonitoring: true)
 }
 
 @MainActor
@@ -293,11 +360,12 @@ private final class FakeAwayPower: HostPowerSourceReading {
 
 @MainActor
 private final class FakeAwayMonitor: AwayInputMonitoring {
+    var canStart = true
     private(set) var isRunning = false
     private var onLocalInput: (@MainActor () -> Void)?
 
     func start(onLocalInput: @escaping @MainActor () -> Void) {
-        isRunning = true
+        isRunning = canStart
         self.onLocalInput = onLocalInput
     }
 
@@ -318,17 +386,22 @@ private final class FakeAwayTicker: AwayTicking {
     private(set) var starts = 0
     private(set) var stops = 0
     private(set) var interval: TimeInterval?
+    private var callback: (@MainActor () -> Void)?
 
     func start(interval: TimeInterval, _ fire: @escaping @MainActor () -> Void) {
         isRunning = true
         starts += 1
         self.interval = interval
+        callback = fire
     }
 
     func stop() {
         isRunning = false
         stops += 1
+        callback = nil
     }
+
+    func fire() { callback?() }
 }
 
 @MainActor

@@ -925,6 +925,7 @@ final class RemoteHostModel: ObservableObject {
         recoveryState = background.recoveryState
         openAtLogin = loginItemState.isRegistered
         hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: recoveryHelperRunning)
+        away.refresh()
     }
 
     /// Launch at login and automatic recovery turn on once setup is complete; later choices stick.
@@ -1009,7 +1010,10 @@ final class RemoteHostModel: ObservableObject {
     /// after a crash under the cover locks while covered. Fails closed even if the gate is now off.
     private func startAwayMode() {
         away.host = self
-        curtain.onScreensChanged = { [weak self] in self?.away.end(.screensChanged) }
+        curtain.onScreensChanged = { [weak self] in
+            self?.away.end(.screensChanged)
+            self?.excludeCoverFromCapture()
+        }
         if watchdog?.assessment.lockFirst == true {
             events.record(.recovery, "Locking after an unexpected exit while Away mode covered the screen")
             away.lockFirstAfterRelaunch()
@@ -1017,10 +1021,10 @@ final class RemoteHostModel: ObservableObject {
         let center = DistributedNotificationCenter.default()
         observers.append(center.addObserver(forName: Notification.Name("com.apple.screensaver.didstart"), object: nil, queue: .main) { [weak self] _ in
             let uptime = ProcessInfo.processInfo.systemUptime
-            Task { @MainActor in self?.lockWarnings.screenSaverStarted(uptime: uptime) }
+            MainActor.assumeIsolated { self?.lockWarnings.screenSaverStarted(uptime: uptime) }
         })
         observers.append(center.addObserver(forName: Notification.Name("com.apple.screensaver.didstop"), object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.lockWarnings.screenSaverStopped() }
+            MainActor.assumeIsolated { self?.lockWarnings.screenSaverStopped() }
         })
         away.refresh()
     }
@@ -1057,7 +1061,8 @@ final class RemoteHostModel: ObservableObject {
                        accessibility: accessibilityPermission.isGranted,
                        screenLocked: screenLocked,
                        phoneConnected: connection.connected && !phonePause.isPaused,
-                       safeMode: crashLoopStopped)
+                       safeMode: crashLoopStopped,
+                       recoveryRunning: recoveryHelperRunning && watchdog != nil)
     }
 
     func awayStateChanged() {
@@ -1170,7 +1175,7 @@ final class RemoteHostModel: ObservableObject {
             unhealthyFor: captureUnhealthySince.map { now - $0 } ?? 0,
             displayAsleep: displayAsleep,
             phonePaused: phonePause.isPaused,
-            screenLocked: screenLocked,
+            screenLocked: HostScreenLock.isLocked(),
             accessibilityGranted: accessibilityPermission.isGranted,
             locallyDismissed: curtainLocallyDismissed,
             raiseFailed: curtainRaiseFailed,
@@ -1267,8 +1272,11 @@ final class RemoteHostModel: ObservableObject {
         away.refresh()
     }
 
+    func prepareForTermination(reply: @escaping (Bool) -> Void) -> Bool {
+        away.prepareForQuit(reply: reply)
+    }
+
     func stopForTermination() {
-        away.lockForQuit()
         liftCurtain()
         #if DEBUG
         HostE2E.active?.terminating()

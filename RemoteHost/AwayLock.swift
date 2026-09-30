@@ -26,10 +26,23 @@ enum HostLockShortcut {
     /// A test process must never lock the Mac.
     static var postingRefused: Bool {
         let env = ProcessInfo.processInfo.environment
-        return env["XCTestConfigurationFilePath"] != nil
+        let testProcess = env["XCTestConfigurationFilePath"] != nil
             || env["XCTestBundlePath"] != nil
-            || env["FARSIDE_AWAY_LOCK_DISABLED"] == "1"
             || NSClassFromString("XCTestCase") != nil
+        #if DEBUG
+        return testProcess || env["FARSIDE_AWAY_LOCK_DISABLED"] == "1"
+        #else
+        return testProcess
+        #endif
+    }
+
+    /// Also used by the watchdog thread when the main actor cannot answer.
+    static func post() -> Bool {
+        guard !postingRefused, CGPreflightPostEventAccess() else { return false }
+        let events = events(source: CGEventSource(stateID: .hidSystemState))
+        guard events.count == 2 else { return false }
+        for event in events { event.post(tap: .cghidEventTap) }
+        return true
     }
 }
 
@@ -38,11 +51,7 @@ final class SystemScreenLocker: HostScreenLocking {
     // The public ⌃⌘Q shortcut instead of the private SACLockScreenImmediate: private
     // login-framework symbols can vanish in any macOS update and would fail silently.
     func requestLock() -> Bool {
-        guard !HostLockShortcut.postingRefused else { return false }
-        let events = HostLockShortcut.events(source: CGEventSource(stateID: .hidSystemState))
-        guard events.count == 2 else { return false }
-        for event in events { event.post(tap: .cghidEventTap) }
-        return true
+        HostLockShortcut.post()
     }
 
     func isScreenLocked() -> Bool { HostScreenLock.isLocked() }
@@ -86,33 +95,51 @@ protocol AwayInputMonitoring: AnyObject {
 
 @MainActor
 final class SystemAwayInputMonitor: AwayInputMonitoring {
+    struct Backend {
+        var global: (NSEvent.EventTypeMask, @escaping (NSEvent) -> Void) -> Any?
+        var local: (NSEvent.EventTypeMask, @escaping (NSEvent) -> NSEvent?) -> Any?
+        var remove: (Any) -> Void
+
+        static let system = Backend(
+            global: { NSEvent.addGlobalMonitorForEvents(matching: $0, handler: $1) },
+            local: { NSEvent.addLocalMonitorForEvents(matching: $0, handler: $1) },
+            remove: { NSEvent.removeMonitor($0) })
+    }
+
     private(set) var isRunning = false
+    private let backend: Backend
     private var monitors: [Any] = []
     private var generation: UInt64 = 0
 
+    init(backend: Backend = .system) { self.backend = backend }
+
     func start(onLocalInput: @escaping @MainActor () -> Void) {
         guard !isRunning else { return }
-        isRunning = true
         generation &+= 1
         let token = generation
         let report: (NSEvent) -> Void = { [weak self] event in
             guard Self.isLocal(event) else { return }
-            Task { @MainActor in
-                // A hop queued just before stop() must not reach a disarmed caller.
+            MainActor.assumeIsolated {
+                // Both AppKit monitors run on main; lock before the target's control action.
                 guard let self, self.isRunning, self.generation == token else { return }
                 onLocalInput()
             }
         }
         // Input aimed at other apps; keys need Accessibility, which Away mode requires anyway.
-        if let global = NSEvent.addGlobalMonitorForEvents(matching: AwayInputClassifier.eventMask, handler: report) {
+        if let global = backend.global(AwayInputClassifier.eventMask, report) {
             monitors.append(global)
         }
         // Input aimed at Farside's own windows, which the global monitor never sees.
-        if let local = NSEvent.addLocalMonitorForEvents(matching: AwayInputClassifier.eventMask, handler: { event in
+        if let local = backend.local(AwayInputClassifier.eventMask, { event in
             report(event)
             return event
         }) {
             monitors.append(local)
+        }
+        isRunning = monitors.count == 2
+        if !isRunning {
+            for monitor in monitors { backend.remove(monitor) }
+            monitors.removeAll()
         }
     }
 
@@ -120,7 +147,7 @@ final class SystemAwayInputMonitor: AwayInputMonitoring {
         guard isRunning else { return }
         isRunning = false
         generation &+= 1
-        for monitor in monitors { NSEvent.removeMonitor(monitor) }
+        for monitor in monitors { backend.remove(monitor) }
         monitors.removeAll()
     }
 

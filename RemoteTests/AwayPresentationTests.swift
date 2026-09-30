@@ -69,7 +69,14 @@ final class AwayPresentationTests: XCTestCase {
 
     func testLockFailedStatus() {
         XCTAssertEqual(HostAwayCopy.statusLine(readout(.lockFailed), now: now),
-                       "Away · couldn’t lock this Mac. It locks when the display sleeps.")
+                       "Away · covered. Unlock at the Mac to continue.")
+    }
+
+    func testRecoveryAndMonitoringEligibilityExplainWhyAwayIsUnavailable() {
+        XCTAssertEqual(HostAwayCopy.warningLine(readout { $0.unavailable = .needsRecovery }, now: now),
+                       "Turn on automatic recovery to use Away mode")
+        XCTAssertEqual(HostAwayCopy.warningLine(readout { $0.unavailable = .needsInputMonitoring }, now: now),
+                       "Couldn’t watch local input — Away mode unavailable")
     }
 
     func testNoStatusWhenOffOrUnavailable() {

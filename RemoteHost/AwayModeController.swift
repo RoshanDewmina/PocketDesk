@@ -72,6 +72,8 @@ final class AwayModeController {
     private var wasArmed = false
     private var ticking = false
     private var quitting = false
+    private var quitReply: ((Bool) -> Void)?
+    private var quitRequestedAt: TimeInterval?
     private var lastSignature: Signature?
 
     init(dependencies: Dependencies) {
@@ -102,7 +104,14 @@ final class AwayModeController {
         conditions.onACPower = power.onACPower
         conditions.batteryPercent = power.batteryPercent
         conditions.managed = dependencies.isManaged()
-        conditions.screenLocked = conditions.screenLocked || dependencies.locker.isScreenLocked()
+        // Distributed notifications are hints; only the session check may uncover the Mac.
+        conditions.screenLocked = dependencies.locker.isScreenLocked()
+        conditions.inputMonitoring = true
+        if conditions.enabled && !quitting && AwayModeMachine.unavailableReason(conditions) == nil
+            && !dependencies.inputMonitor.isRunning {
+            dependencies.inputMonitor.start { [weak self] in self?.localInput() }
+        }
+        conditions.inputMonitoring = dependencies.inputMonitor.isRunning
         lastConditions = conditions
         lastPower = power
         apply(machine.update(conditions, now: dependencies.now()))
@@ -116,6 +125,7 @@ final class AwayModeController {
         refresh()
         apply(machine.tick(now: dependencies.now()))
         settle()
+        finishQuitIfReady()
     }
 
     func localInput() {
@@ -129,7 +139,7 @@ final class AwayModeController {
     }
 
     func turnOffAtMac() {
-        machine.turnOffAtMac()
+        apply(machine.turnOffAtMac(now: dependencies.now()))
         settle()
     }
 
@@ -138,14 +148,30 @@ final class AwayModeController {
         settle()
     }
 
-    func lockForQuit() {
-        guard machine.phase != .off else { return }
-        apply(machine.end(.quit, now: dependencies.now()))
-        // Teardown after this still refreshes; nothing may restart watching a Mac that is quitting.
+    /// Returns true when AppKit must wait for the lock result before terminating.
+    func prepareForQuit(reply: @escaping (Bool) -> Void) -> Bool {
+        guard machine.phase != .off else { return false }
+        guard quitReply == nil else { return true }
         quitting = true
-        dependencies.inputMonitor.stop()
-        dependencies.ticker.stop()
-        ticking = false
+        quitReply = reply
+        quitRequestedAt = dependencies.now()
+        apply(machine.end(.quit, now: dependencies.now()))
+        settle()
+        return true
+    }
+
+    private func finishQuitIfReady() {
+        guard let reply = quitReply, let requested = quitRequestedAt else { return }
+        let locked = dependencies.locker.isScreenLocked()
+        guard locked || dependencies.now() - requested >= AwayModeLimits.lockConfirmTimeout else { return }
+        let mayQuit = locked || !machine.wantsCover
+        quitReply = nil
+        quitRequestedAt = nil
+        // A failed covered quit is cancelled; watching resumes so the next touch retries.
+        quitting = mayQuit
+        if !mayQuit { host?.awayRecord("Quit cancelled while the lock is unconfirmed; cover kept") }
+        settle()
+        reply(mayQuit)
     }
 
     func lockFirstAfterRelaunch() {
@@ -194,7 +220,7 @@ final class AwayModeController {
             monitor.stop()
         }
 
-        let wantsTicks = !quitting && (machine.phase != .off || lastConditions.enabled)
+        let wantsTicks = quitReply != nil || (!quitting && (machine.phase != .off || lastConditions.enabled))
         if wantsTicks != ticking {
             ticking = wantsTicks
             if wantsTicks {
@@ -206,6 +232,9 @@ final class AwayModeController {
 
         let signature = currentSignature()
         guard signature != lastSignature else { return }
+        if signature.unavailable == .needsInputMonitoring && lastSignature?.unavailable != .needsInputMonitoring {
+            host?.awayRecord("Couldn’t install both local-input monitors; Away mode unavailable")
+        }
         lastSignature = signature
         host?.awayStateChanged()
     }

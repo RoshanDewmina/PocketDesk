@@ -159,7 +159,7 @@ struct WatchdogPolicy {
 
         if observation.recordProcessAlive {
             guard !record.cleanExit, !observation.recordProcessTraced, !observation.hangKillIssued else { return .idle }
-            let timeout = record.curtainUp ? curtainHangTimeout : hangTimeout
+            let timeout = record.curtainUp || record.awayCoverUp == true ? curtainHangTimeout : hangTimeout
             let silence = observation.uptime - record.heartbeatUptime
             return silence > timeout ? .terminateHung(pid: record.pid) : .idle
         }
@@ -202,10 +202,12 @@ struct HostLaunchAssessment: Equatable {
                        bootSession: String, previousProcessAlive: Bool,
                        safeModeArgument: Bool) -> HostLaunchAssessment {
         var result = HostLaunchAssessment()
+        if let previous, previous.bootSession == bootSession, !previousProcessAlive {
+            result.lockFirst = previous.awayCoverUp == true
+        }
         if let previous, previous.bootSession == bootSession, !previous.cleanExit, !previousProcessAlive {
             result.recoveredFromUnexpectedExit = true
             result.previousExit = hangNote?.launchID == previous.launchID ? .hang : .crash
-            result.lockFirst = previous.awayCoverUp == true
         }
         let stopped = ledger?.isStopped(inBoot: bootSession) == true
         let resetAfterStop: Bool = {

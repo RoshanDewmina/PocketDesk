@@ -79,7 +79,7 @@ final class AwayCurtainTests: XCTestCase {
         XCTAssertTrue(HostLaunchAssessment.assess(previous: previous, ledger: nil, hangNote: nil, bootSession: "boot",
                                                   previousProcessAlive: false, safeModeArgument: false).lockFirst)
         var clean = previous; clean.cleanExit = true
-        XCTAssertFalse(HostLaunchAssessment.assess(previous: clean, ledger: nil, hangNote: nil, bootSession: "boot",
+        XCTAssertTrue(HostLaunchAssessment.assess(previous: clean, ledger: nil, hangNote: nil, bootSession: "boot",
                                                    previousProcessAlive: false, safeModeArgument: false).lockFirst)
         XCTAssertFalse(HostLaunchAssessment.assess(previous: previous, ledger: nil, hangNote: nil, bootSession: "other",
                                                    previousProcessAlive: false, safeModeArgument: false).lockFirst,
@@ -91,7 +91,7 @@ final class AwayCurtainTests: XCTestCase {
                                                    previousProcessAlive: false, safeModeArgument: false).lockFirst)
     }
 
-    func testReporterPersistsTheAwayCoverAndClearsItOnCleanExit() throws {
+    func testReporterRetainsUnconfirmedCoverOnCleanExitAndNextLaunchLocksFirst() throws {
         let files = WatchdogFiles(directory: directory)
         let executable = "/Applications/A.app/Contents/MacOS/A"
         let reporter = HostWatchdogReporter(files: files, executablePath: executable,
@@ -115,11 +115,105 @@ final class AwayCurtainTests: XCTestCase {
 
         reporter.markCleanExit()
         let written = try XCTUnwrap(WatchdogStore.read(HostRunRecord.self, from: files.hostRecord))
-        XCTAssertEqual(written.awayCoverUp, false)
+        XCTAssertEqual(written.awayCoverUp, true)
         XCTAssertTrue(written.cleanExit)
         let afterQuit = HostWatchdogReporter(files: files, executablePath: executable,
                                              bootSession: "boot-A", pid: 999_982, arguments: [], uptime: { 70 })
-        XCTAssertFalse(afterQuit.assessment.lockFirst, "A clean quit never locks on relaunch")
+        XCTAssertTrue(afterQuit.assessment.lockFirst, "An unconfirmed cover survives even a clean quit")
+        reporter.setAwayCoverUp(false)
+        reporter.markCleanExit()
+        let afterConfirmed = HostWatchdogReporter(files: files, executablePath: executable,
+            bootSession: "boot-A", pid: 999_983, arguments: [], uptime: { 80 })
+        XCTAssertFalse(afterConfirmed.assessment.lockFirst)
+    }
+
+    func testAwayCoverIsOpaqueBeforeStalledOrFailedExclusionCompletes() async {
+        let window = Self.testWindow()
+        let curtain = PrivacyCurtainController(makeWindows: { [window] })
+        curtain.setStyle(.away)
+        let entered = expectation(description: "exclusion entered")
+        var resume: CheckedContinuation<Bool, Never>?
+        let result = await curtain.raise(hooks: .init(exclude: { _ in
+            entered.fulfill()
+            return await withCheckedContinuation { resume = $0 }
+        }, signature: { XCTFail("Away must not await capture verification"); return nil }))
+        XCTAssertEqual(result, .raised)
+        XCTAssertEqual(curtain.phase, .up)
+        XCTAssertEqual(window.alphaValue, 1)
+        await fulfillment(of: [entered], timeout: 2)
+        XCTAssertEqual(window.alphaValue, 1)
+        resume?.resume(returning: false)
+        await Task.yield()
+        XCTAssertEqual(curtain.phase, .up, "Failed exclusion must not uncover Away mode")
+        curtain.lift()
+    }
+
+    func testAwayTakesOverAStalledSharingRaiseWithoutWaiting() async {
+        let window = Self.testWindow()
+        let curtain = PrivacyCurtainController(makeWindows: { [window] })
+        let entered = expectation(description: "sharing exclusion entered")
+        var resume: CheckedContinuation<Bool, Never>?
+        let raise = Task { @MainActor in
+            await curtain.raise(hooks: .init(exclude: { _ in
+                entered.fulfill()
+                return await withCheckedContinuation { resume = $0 }
+            }, signature: { nil }))
+        }
+        await fulfillment(of: [entered], timeout: 2)
+        XCTAssertEqual(window.alphaValue, 0)
+        curtain.setStyle(.away)
+        XCTAssertEqual(window.alphaValue, 1)
+        XCTAssertEqual(curtain.phase, .up)
+        resume?.resume(returning: false)
+        let sharingResult = await raise.value
+        XCTAssertEqual(sharingResult, .cancelled)
+        XCTAssertEqual(curtain.phase, .up)
+        curtain.lift()
+    }
+
+    func testScreenChangeRefitsEveryAwayWindowBeforeTheLockCallback() async {
+        var current = [Self.testWindow()]
+        let curtain = PrivacyCurtainController(makeWindows: { current })
+        curtain.setStyle(.away)
+        curtain.liftsOnScreenChange = false
+        _ = await curtain.raise(hooks: .init(exclude: { _ in true }, signature: { nil }))
+        let old = current
+        current = [Self.testWindow(), Self.testWindow()]
+        var notified = 0
+        curtain.onScreensChanged = {
+            notified += 1
+            XCTAssertEqual(curtain.windowIDs.count, 2)
+            XCTAssertTrue(current.allSatisfy { $0.alphaValue == 1 })
+            XCTAssertEqual(curtain.phase, .up)
+        }
+        curtain.handleScreenParametersChanged()
+        XCTAssertEqual(notified, 1)
+        XCTAssertTrue(old.allSatisfy { !$0.isVisible })
+        curtain.lift()
+    }
+
+    func testHangLocksCoveredMatchingRunBeforeExitingUsingOnlyInjectedActions() throws {
+        let files = WatchdogFiles(directory: directory)
+        let reporter = HostWatchdogReporter(files: files, executablePath: "/x", bootSession: "boot", pid: 999_980,
+                                            arguments: [], uptime: { 0 })
+        reporter.start(); reporter.setAwayCoverUp(true)
+        let calls = HangCalls()
+        let handler = HostWatchdogReporter.hangHandler(files: files, launchID: reporter.record.launchID,
+                                                      requestLock: { calls.add("lock"); return true },
+                                                      terminate: { calls.add("exit") })
+        handler(4)
+        XCTAssertEqual(calls.values, ["lock", "exit"])
+        XCTAssertEqual(WatchdogStore.read(HostHangNote.self, from: files.hangNote)?.stalledSeconds, 4)
+        let stale = HangCalls()
+        HostWatchdogReporter.hangHandler(files: files, launchID: "old",
+            requestLock: { stale.add("lock"); return true }, terminate: { stale.add("exit") })(4)
+        XCTAssertEqual(stale.values, ["exit"])
+        reporter.setAwayCoverUp(false)
+        let uncovered = HangCalls()
+        HostWatchdogReporter.hangHandler(files: files, launchID: reporter.record.launchID,
+            requestLock: { uncovered.add("lock"); return true }, terminate: { uncovered.add("exit") })(4)
+        XCTAssertEqual(uncovered.values, ["exit"])
+        reporter.markCleanExit()
     }
 
     /// Tiny and far off-screen, like PrivacyCurtainControllerTests: the real curtain is never shown.
@@ -131,4 +225,11 @@ final class AwayCurtainTests: XCTestCase {
         window.isReleasedWhenClosed = false
         return window
     }
+}
+
+private final class HangCalls: @unchecked Sendable {
+    private let lock = NSLock()
+    private var calls: [String] = []
+    var values: [String] { lock.lock(); defer { lock.unlock() }; return calls }
+    func add(_ call: String) { lock.lock(); defer { lock.unlock() }; calls.append(call) }
 }

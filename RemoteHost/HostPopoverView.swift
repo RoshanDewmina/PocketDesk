@@ -92,9 +92,9 @@ struct HostPopoverView: View {
                 if state.away.phase == .armed {
                     Button(HostAwayCopy.coverNowTitle, action: actions.coverNow)
                         .accessibilityIdentifier("farside.popover.awayCoverNow")
+                    Button(HostAwayCopy.turnOffTitle) { actions.setAwayMode(false) }
+                        .accessibilityIdentifier("farside.popover.awayTurnOff")
                 }
-                Button(HostAwayCopy.turnOffTitle) { actions.setAwayMode(false) }
-                    .accessibilityIdentifier("farside.popover.awayTurnOff")
             }
             .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
             TimelineView(.periodic(from: .now, by: 1)) { context in

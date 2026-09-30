@@ -32,7 +32,7 @@ enum HostAwayCopy {
         case .locking:
             return "Away · locking this Mac…"
         case .lockFailed:
-            return "Away · couldn’t lock this Mac. It locks when the display sleeps."
+            return "Away · covered. Unlock at the Mac to continue."
         }
     }
 
@@ -47,6 +47,8 @@ enum HostAwayCopy {
         case .onBattery: return "Connect power to use Away mode"
         case .sharingOff: return "Starts when sharing is on"
         case .safeMode: return "Paused after repeated crashes"
+        case .needsRecovery: return "Turn on automatic recovery to use Away mode"
+        case .needsInputMonitoring: return "Couldn’t watch local input — Away mode unavailable"
         // Nobody at a locked Mac can read a warning, and the Mac is already in the safe state.
         case .macLocked: return nil
         case nil: break

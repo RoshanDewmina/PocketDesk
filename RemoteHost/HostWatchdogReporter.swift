@@ -65,7 +65,11 @@ final class HostWatchdogReporter {
     func setAwayCoverUp(_ up: Bool) {
         guard (record.awayCoverUp ?? false) != up else { return }
         record.awayCoverUp = up
-        beat()
+        record.heartbeatUptime = uptime()
+        record.heartbeatAt = Date()
+        // Persist before raising the cover; a crash immediately after must still lock on relaunch.
+        let snapshot = record, url = files.hostRecord
+        writer.sync { _ = WatchdogStore.write(snapshot, to: url) }
         scheduleHeartbeat()
     }
 
@@ -86,7 +90,7 @@ final class HostWatchdogReporter {
         timer = nil
         record.cleanExit = true
         record.curtainUp = false
-        record.awayCoverUp = false
+        record.awayCoverUp = record.awayCoverUp == true
         let snapshot = record, url = files.hostRecord
         writer.sync { _ = WatchdogStore.write(snapshot, to: url) }
     }
@@ -94,11 +98,17 @@ final class HostWatchdogReporter {
     var ledger: WatchdogLedger? { WatchdogStore.read(WatchdogLedger.self, from: files.ledger) }
 
     /// Runs on the hang watchdog's thread while the main thread is stuck: record why, then end.
-    nonisolated static func hangHandler(files: WatchdogFiles, launchID: String) -> @Sendable (TimeInterval) -> Void {
+    nonisolated static func hangHandler(files: WatchdogFiles, launchID: String,
+                                       requestLock: @escaping @Sendable () -> Bool = { HostLockShortcut.post() },
+                                       terminate: @escaping @Sendable () -> Void = { _exit(3) }) -> @Sendable (TimeInterval) -> Void {
         { stall in
+            if let record = WatchdogStore.read(HostRunRecord.self, from: files.hostRecord),
+               record.launchID == launchID, record.awayCoverUp == true {
+                _ = requestLock()
+            }
             _ = WatchdogStore.write(HostHangNote(launchID: launchID, at: Date(), stalledSeconds: stall),
                                     to: files.hangNote)
-            _exit(3)
+            terminate()
         }
     }
 

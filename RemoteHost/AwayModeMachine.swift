@@ -10,7 +10,7 @@ enum AwayModeLimits {
 
 /// Why Away mode cannot arm right now, in the order the Mac explains them.
 enum AwayUnavailableReason: String, Equatable, CaseIterable {
-    case sharingOff, macLocked, needsAccessibility, managed, onBattery, safeMode
+    case sharingOff, macLocked, needsAccessibility, managed, onBattery, safeMode, needsRecovery, needsInputMonitoring
 }
 
 enum AwayEndReason: String, Equatable, CaseIterable {
@@ -30,6 +30,8 @@ struct AwayConditions: Equatable {
     var screenLocked = false
     var phoneConnected = false
     var safeMode = false
+    var recoveryRunning = false
+    var inputMonitoring = false
 }
 
 enum AwayPhase: Equatable {
@@ -63,6 +65,8 @@ struct AwayModeMachine: Equatable {
         if conditions.managed { return .managed }
         if !conditions.onACPower { return .onBattery }
         if conditions.safeMode { return .safeMode }
+        if !conditions.recoveryRunning { return .needsRecovery }
+        if !conditions.inputMonitoring { return .needsInputMonitoring }
         return nil
     }
 
@@ -117,12 +121,14 @@ struct AwayModeMachine: Equatable {
             }
             return nil
         case .armedPresent, .armedCovered:
-            if conditions.screenLocked || !conditions.enabled {
+            if conditions.screenLocked {
                 release()
                 return nil
             }
+            if !conditions.enabled { return turnOffAtMac(now: now) }
             if !conditions.sharingWanted { return end(.stopSharing, now: now) }
-            if !conditions.accessibility || conditions.managed || conditions.safeMode {
+            if !conditions.accessibility || conditions.managed || conditions.safeMode
+                || !conditions.recoveryRunning || !conditions.inputMonitoring {
                 return end(.lostRequirement, now: now)
             }
             if batteryRuleFires(now: now) { return end(.battery, now: now) }
@@ -137,7 +143,7 @@ struct AwayModeMachine: Equatable {
         switch phase {
         case .locking(let reason):
             if let lockRequestedAt, elapsed(since: lockRequestedAt, now: now) >= AwayModeLimits.lockConfirmTimeout {
-                phase = .lockFailed(reason)
+                if lockCovers { phase = .lockFailed(reason) } else { release() }
             }
             return nil
         case .armedPresent, .armedCovered:
@@ -191,8 +197,12 @@ struct AwayModeMachine: Equatable {
         }
     }
 
-    mutating func turnOffAtMac() {
-        release()
+    @discardableResult mutating func turnOffAtMac(now: TimeInterval) -> AwayEffect? {
+        switch phase {
+        case .armedPresent: release(); return nil
+        case .armedCovered: return end(.touched, now: now)
+        case .off, .locking, .lockFailed: return nil
+        }
     }
 
     mutating func lockConfirmed() {

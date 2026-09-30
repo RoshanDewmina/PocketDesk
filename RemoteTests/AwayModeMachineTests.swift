@@ -1,7 +1,8 @@
 import XCTest
 
 final class AwayModeMachineTests: XCTestCase {
-    private let ready = AwayConditions(enabled: true, sharingWanted: true, sharingActive: true, accessibility: true)
+    private let ready = AwayConditions(enabled: true, sharingWanted: true, sharingActive: true, accessibility: true,
+                                       recoveryRunning: true, inputMonitoring: true)
 
     func testArmsOnlyWhenEveryRequirementHolds() {
         for (name, change, reason) in [
@@ -11,7 +12,9 @@ final class AwayModeMachineTests: XCTestCase {
             ("no Accessibility", { $0.accessibility = false }, .needsAccessibility),
             ("managed", { $0.managed = true }, .managed),
             ("battery", { $0.onACPower = false }, .onBattery),
-            ("safe mode", { $0.safeMode = true }, .safeMode)
+            ("safe mode", { $0.safeMode = true }, .safeMode),
+            ("recovery off", { $0.recoveryRunning = false }, .needsRecovery),
+            ("monitor missing", { $0.inputMonitoring = false }, .needsInputMonitoring)
         ] as [(String, (inout AwayConditions) -> Void, AwayUnavailableReason)] {
             var c = ready; change(&c)
             var m = AwayModeMachine()
@@ -72,8 +75,33 @@ final class AwayModeMachineTests: XCTestCase {
             var m = AwayModeMachine(); m.update(ready, now: 0)
             XCTAssertEqual(m.end(reason, now: 1), .lock(reason), reason.rawValue)
         }
-        var m = AwayModeMachine(); m.update(ready, now: 0); m.coverNow(now: 1)
-        m.turnOffAtMac(); XCTAssertEqual(m.phase, .off); XCTAssertFalse(m.wantsCover)
+        var m = AwayModeMachine(); m.update(ready, now: 0)
+        XCTAssertNil(m.turnOffAtMac(now: 1)); XCTAssertEqual(m.phase, .off); XCTAssertFalse(m.wantsCover)
+    }
+
+    func testDisableCoveredLocksAndCannotUncoverPendingOrFailedLock() {
+        for disableViaConditions in [false, true] {
+            var m = AwayModeMachine(); m.update(ready, now: 0); m.coverNow(now: 1)
+            var disabled = ready; disabled.enabled = false
+            let effect = disableViaConditions ? m.update(disabled, now: 2) : m.turnOffAtMac(now: 2)
+            XCTAssertEqual(effect, .lock(.touched))
+            XCTAssertEqual(m.phase, .locking(.touched)); XCTAssertTrue(m.wantsCover)
+            XCTAssertNil(m.turnOffAtMac(now: 2.5)); XCTAssertTrue(m.wantsCover)
+            m.tick(now: 4)
+            XCTAssertEqual(m.phase, .lockFailed(.touched))
+            XCTAssertNil(m.turnOffAtMac(now: 5)); XCTAssertTrue(m.wantsCover)
+            m.update(disabled, now: 6); XCTAssertTrue(m.wantsCover)
+            disabled.screenLocked = true
+            m.update(disabled, now: 7); XCTAssertEqual(m.phase, .off)
+        }
+    }
+
+    func testFailedUncoveredLockEndsAfterTheConfirmationWindow() {
+        var m = AwayModeMachine()
+        m.end(.phoneRequest, now: 0)
+        m.tick(now: 1.9); XCTAssertEqual(m.phase, .locking(.phoneRequest))
+        m.tick(now: 2); XCTAssertEqual(m.phase, .off)
+        XCTAssertFalse(m.wantsCover); XCTAssertFalse(m.holdsDisplayAwake)
     }
 
     func testStopSharingIsSeenThroughConditions() {
@@ -89,7 +117,8 @@ final class AwayModeMachineTests: XCTestCase {
     }
 
     func testLosingARequirementLocks() {
-        for change in [{ (c: inout AwayConditions) in c.accessibility = false }, { $0.managed = true }, { $0.safeMode = true }] {
+        for change in [{ (c: inout AwayConditions) in c.accessibility = false }, { $0.managed = true }, { $0.safeMode = true },
+                       { $0.recoveryRunning = false }, { $0.inputMonitoring = false }] {
             var m = AwayModeMachine(); m.update(ready, now: 0)
             var c = ready; change(&c)
             XCTAssertEqual(m.update(c, now: 1), .lock(.lostRequirement))
