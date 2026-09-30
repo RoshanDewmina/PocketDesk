@@ -234,6 +234,17 @@ final class PhoneRemoteModel: ObservableObject {
         NativeCodecCapability.warmUp()
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
+        if LaunchOptions.demoMacName != nil || LaunchOptions.value("--ui-last-battery=") != nil {
+            // UI tests get their own last-seen battery so they never read or overwrite the real one.
+            let suite = "farside.ui-tests.vitals"
+            if let defaults = UserDefaults(suiteName: suite) {
+                defaults.removePersistentDomain(forName: suite)
+                vitalsMemory = MacVitalsMemory(defaults: defaults)
+            }
+            if let raw = LaunchOptions.value("--ui-last-battery="), let percent = Int(raw) {
+                vitalsMemory.record(MacVitals(power: "battery", batteryPercent: percent, charging: false), at: Date())
+            }
+        }
         if contentConcealed { resumeState = .needsChoice }
         if let inputProbe {
             // Behave like an upgraded Mac so drags, holds and new actions take their real paths.

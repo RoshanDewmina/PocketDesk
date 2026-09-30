@@ -60,6 +60,13 @@ final class MacVitalsUITests: XCTestCase {
     }
 
     @MainActor
+    func testOlderMacShowsNoCaptionInControls() {
+        let app = launch(["--ui-controls-check", "--ui-vitals=old"])
+        XCTAssertTrue(app.buttons["Hold click"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["remote.controls.vitals"].exists)
+    }
+
+    @MainActor
     func testDiagnosticsListsTheMac() {
         let app = launch(["--ui-controls-settings", "--ui-controls-page=diagnostics", "--ui-vitals=battery12"])
         XCTAssertTrue(app.descendants(matching: .any)["remote.vitals"].firstMatch.waitForExistence(timeout: 5))

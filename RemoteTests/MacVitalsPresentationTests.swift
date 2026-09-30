@@ -33,6 +33,25 @@ final class MacVitalsPresentationTests: XCTestCase {
         XCTAssertEqual(caption(MacVitals(lowPowerMode: true)), "Mac · Low Power Mode")
     }
 
+    func testCaptionsDropTheLeastImportantWordsFirst() {
+        XCTAssertEqual(MacVitalsPresentation(heavy).captions, [
+            "Mac · on battery 12% · warm · Low Power Mode · busy",
+            "Mac · on battery 12% · warm · busy",
+            "Mac · on battery 12% · busy",
+            "on battery 12% · busy",
+        ])
+        XCTAssertEqual(MacVitalsPresentation(MacVitals(power: "ac", thermal: 0, lowPowerMode: false, load: "ok")).captions,
+                       ["Mac · running normally"])
+        XCTAssertEqual(MacVitalsPresentation(MacVitals(power: "ac", batteryPercent: 90, charging: true, thermal: 3)).captions,
+                       ["Mac · charging 90% · hot", "charging 90% · hot"], "Hot is never dropped")
+        XCTAssertEqual(MacVitalsPresentation(MacVitals(lowPowerMode: true)).captions,
+                       ["Mac · Low Power Mode", "running normally"])
+        for vitals in [heavy, MacVitals(), MacVitals(power: "battery", batteryPercent: 64, charging: false)] {
+            let words = MacVitalsPresentation(vitals)
+            XCTAssertEqual(words.captions.first, words.caption)
+        }
+    }
+
     func testSpokenSentence() {
         XCTAssertEqual(spoken(MacVitals(power: "battery", batteryPercent: 12, thermal: 0, lowPowerMode: true, load: "busy")),
                        "Your Mac: on battery, 12 percent, Low Power Mode, busy.")

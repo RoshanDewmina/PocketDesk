@@ -1306,14 +1306,19 @@ struct NativeSessionView: View {
                         .accessibilityAddTraits(.isHeader)
                     if let vitals = model.currentMacVitals() {
                         let words = MacVitalsPresentation(vitals)
-                        Text(words.caption)
-                            .font(Farside.Typeface.caption(.caption2))
-                            .foregroundStyle(words.isWarning ? Farside.Palette.bone : Farside.Palette.ash)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                            .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
-                            .accessibilityLabel(words.spoken)
-                            .accessibilityIdentifier("remote.controls.vitals")
+                        ViewThatFits(in: .horizontal) {
+                            ForEach(words.captions, id: \.self) { caption in
+                                Text(caption)
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(caption == words.captions.last ? 0.75 : 1)
+                            }
+                        }
+                        .font(Farside.Typeface.caption(.caption2))
+                        .foregroundStyle(words.isWarning ? Farside.Palette.bone : Farside.Palette.ash)
+                        .accessibilityElement(children: .combine)
+                        .accessibilityAddTraits(.isStaticText)
+                        .accessibilityLabel(words.spoken)
+                        .accessibilityIdentifier("remote.controls.vitals")
                     }
                 }
                 Spacer(minLength: 8)
@@ -1322,8 +1327,10 @@ struct NativeSessionView: View {
                         .font(.body.weight(.medium))
                         .foregroundStyle(Farside.Palette.bone)
                 }
+                .accessibilityShowsLargeContentViewer()
                 .accessibilityIdentifier("remote.controls.settings")
                 controlsDoneButton
+                    .accessibilityShowsLargeContentViewer()
             }
             .frame(minHeight: 44)
             // Past xxxLarge the header wraps and pushes the keys below the fixed panel height.
@@ -2005,6 +2012,7 @@ struct NativeSessionView: View {
                         ForEach(MacVitalsPresentation(vitals).rows, id: \.title) { row in
                             LabeledContent(row.title, value: row.value)
                                 .foregroundStyle(Farside.Palette.bone)
+                                .accessibilityElement(children: .combine)
                         }
                     } else {
                         Text(MacVitalsPresentation.waiting)

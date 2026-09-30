@@ -112,6 +112,7 @@ struct HomeView: View {
     @State private var lastBattery: MacVitalsMemory.LastSeen?
     @ObservedObject private var anywhere = AnywhereStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
@@ -184,7 +185,7 @@ struct HomeView: View {
         .confirmationDialog("Forget this Mac locally?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget Mac", role: .destructive) {
                 connection.revoke()
-                MacVitalsMemory().forget()
+                model.vitalsMemory.forget()
                 refreshLastBattery()
                 lastReachedAt = 0
                 lastFailure = nil
@@ -204,10 +205,11 @@ struct HomeView: View {
             refreshLastBattery()
         }
         .onChange(of: connection.connected) { _, _ in refreshLastBattery() }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { refreshLastBattery() } }
     }
 
     private func refreshLastBattery() {
-        lastBattery = connection.connected ? nil : MacVitalsMemory().lastSeen(now: Date())
+        lastBattery = connection.connected ? nil : model.vitalsMemory.lastSeen(now: Date())
     }
 
     // MARK: Sections
@@ -484,12 +486,6 @@ struct HomeView: View {
             connection.status = raw.replacingOccurrences(of: "_", with: " ")
         } else if LaunchOptions.demoMacName != nil && connection.invitation == nil {
             connection.status = "Ready to connect"
-        }
-        if let raw = LaunchOptions.value("--ui-last-battery="), let percent = Int(raw) {
-            MacVitalsMemory().record(MacVitals(power: "battery", batteryPercent: percent, charging: false), at: Date())
-        } else if LaunchOptions.demoMacName != nil {
-            // The preview is stored for 12 hours and would otherwise leak into later demo runs.
-            MacVitalsMemory().forget()
         }
         if LaunchOptions.has("--ui-last-reached") {
             lastReachedAt = Calendar.current.date(bySettingHour: 23, minute: 48, second: 0, of: Date())?.timeIntervalSince1970 ?? 0

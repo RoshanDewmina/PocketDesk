@@ -11,6 +11,8 @@ struct MacVitalsPresentation: Equatable {
     private static let notReported = "Not reported"
 
     let caption: String
+    /// Most complete first; the Controls header shows the first that fits on one line.
+    let captions: [String]
     let spoken: String
     let isWarning: Bool
     let rows: [Row]
@@ -43,6 +45,18 @@ struct MacVitalsPresentation: Equatable {
 
         let normal = base.caption == nil && suffixes.isEmpty ? ["running normally"] : []
         caption = "Mac · " + ([base.caption].compactMap { $0 } + normal + suffixes).joined(separator: " · ")
+        var captions = [caption]
+        if normal.isEmpty {
+            let withoutLowPower = suffixes.filter { $0 != "Low Power Mode" }
+            let withoutWarm = withoutLowPower.filter { $0 != "warm" }
+            for kept in [withoutLowPower, withoutWarm] {
+                let words = [base.caption].compactMap { $0 } + kept
+                if !words.isEmpty { captions.append("Mac · " + words.joined(separator: " · ")) }
+            }
+            let shortest = ([base.caption].compactMap { $0 } + withoutWarm).joined(separator: " · ")
+            captions.append(shortest.isEmpty ? "running normally" : shortest)
+        }
+        self.captions = captions.reduce(into: []) { if !$0.contains($1) { $0.append($1) } }
         spoken = "Your Mac: " + (base.spoken + normal + suffixes).joined(separator: ", ") + "."
 
         let lowOnBattery = vitals.onBattery && ((percent ?? 100) <= 20 || (vitals.batteryWarning ?? 1) >= 2)
