@@ -160,7 +160,15 @@ final class RemoteHostModel: ObservableObject {
     private var pendingModeReason: SessionModeRefusal?
     private let couchHUD = CouchHUD()
     private var refusalTeardown: Task<Void, Never>?
-    private var sessionHealthy: Bool { sessionState == .couch ? couchHealthy : captureHealthy }
+    /// Set when displays change during Couch: `displays` could not be reloaded while sharing, so Picture must not use it.
+    private var displaysStaleFromCouch = false
+    private var sessionHealthy: Bool {
+        switch sessionState {
+        case .picture: captureHealthy
+        case .couch: couchHealthy
+        case .refused: false
+        }
+    }
     private var sessionRefused: Bool {
         if case .refused = sessionState { return true }
         return false
@@ -374,6 +382,7 @@ final class RemoteHostModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if self.sessionState == .couch && self.connection.connected {
+                    self.displaysStaleFromCouch = true
                     self.releaseRemoteInput(notifyPhone: true)
                     let rects = HostCouchDisplays.current()
                     guard !rects.isEmpty else { self.stop(); return }
@@ -1194,6 +1203,7 @@ final class RemoteHostModel: ObservableObject {
             applyControlState(notifyPhone: true)
         }
         displays = result.displays
+        displaysStaleFromCouch = false
         displayRefreshStatus = result.displayStatus
         selected = HostDisplayChoice.preferred(
             available: displays.map(\.displayID),
@@ -1215,6 +1225,7 @@ final class RemoteHostModel: ObservableObject {
         displayRefreshTask = nil
         displayRefreshGeneration.invalidate()
         displays = []
+        displaysStaleFromCouch = false
         selected = 0
         displayRefreshStatus = status
     }
@@ -1267,7 +1278,9 @@ final class RemoteHostModel: ObservableObject {
             invalidateDisplays(status: .permissionDenied)
             return
         }
+        if displaysStaleFromCouch { restartForDisplaysChangedInCouch(); return }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
+        guard display.frame == CGDisplayBounds(display.displayID) else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
         if sessionStartedAt == nil {
             sessionStartedAt = Date()
@@ -1297,7 +1310,7 @@ final class RemoteHostModel: ObservableObject {
         releaseRemoteInput(notifyPhone: true)
         sessionState = .picture
         couchHealthy = false
-        inputLease = RemoteInputLease(duration: RemoteInputLease.pictureDuration)
+        inputLease.changeDuration(to: RemoteInputLease.pictureDuration, at: ProcessInfo.processInfo.systemUptime)
         couchHUD.hide()
         input.configure(SCContentFilter(display: display, excludingWindows: []))
         captureHealthy = false
@@ -1339,6 +1352,14 @@ final class RemoteHostModel: ObservableObject {
                 self.events.record(.error, "Capture could not start")
             }
         }
+    }
+
+    /// What a display change does to a Picture session today, deferred until the picture is wanted.
+    private func restartForDisplaysChangedInCouch() {
+        events.record(.sharing, "Displays changed during Couch mode; restarting sharing before showing the picture")
+        stop()
+        invalidateDisplays(status: .notChecked)
+        loadDisplays()
     }
 
     private func startLifecycleTimer() {
@@ -1395,7 +1416,7 @@ final class RemoteHostModel: ObservableObject {
         let rects = HostCouchDisplays.current()
         guard let main = rects.first else { stop(); return }
         input.configure(displays: rects)
-        inputLease = RemoteInputLease(duration: RemoteInputLease.couchDuration)
+        inputLease.changeDuration(to: RemoteInputLease.couchDuration, at: ProcessInfo.processInfo.systemUptime)
         captureHealthy = false
         couchHealthy = false
         input.enabled = false
@@ -1825,8 +1846,10 @@ final class RemoteHostModel: ObservableObject {
         } + [SessionFeature.couch]
     }
 
-    private func sendCaptureHealth(_ healthy: Bool, presence: HostPresence? = nil) {
+    private func sendCaptureHealth(_ requestedHealthy: Bool, presence: HostPresence? = nil) {
         guard connection.connected else { return }
+        // A caller's Couch flag can be up to one tick old; a token must reflect health at this moment.
+        let healthy = sessionState == .couch ? requestedHealthy && refreshCouchHealth() : requestedHealthy
         let state = presence ?? (displayAsleep ? .displayAsleep : nil)
         let capability = sessionState.issuesTokens(healthy: healthy) ? inputFreshness.capability(
             epoch: inputEpoch.value,
@@ -1914,7 +1937,7 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Display selection
 
     private func receiveDisplaySelection(_ action: RemoteAction) {
-        guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused else { return }
+        guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused, !sessionRefused else { return }
         switch action.action {
         case "displays":
             sendDisplayList()

@@ -17,11 +17,17 @@ struct RemoteInputOutcome: Equatable {
 }
 
 struct RemoteInputLease {
-    let duration: TimeInterval
+    private(set) var duration: TimeInterval
     private(set) var deadline: TimeInterval?
 
     init(duration: TimeInterval = 2) {
         self.duration = duration
+    }
+
+    /// An armed deadline means a failed release is still being retried, so a new duration may only shorten it.
+    mutating func changeDuration(to duration: TimeInterval, at time: TimeInterval) {
+        self.duration = duration
+        if let deadline { self.deadline = min(deadline, time + duration) }
     }
 
     mutating func begin(at time: TimeInterval) {
