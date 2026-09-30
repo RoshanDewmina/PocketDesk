@@ -36,9 +36,9 @@ struct AnywherePaywallView: View {
                     .frame(height: verticalSizeClass == .compact ? 120 : 190)
                     .padding(.horizontal, -Farside.Space.l)
                     .accessibilityHidden(true)
-                FarsideHeading("Reach your Mac from anywhere.", accent: "anywhere", size: 32)
+                FarsideHeading(CommerceLocalization.text("PAYWALL_HEADING", "Reach your Mac from anywhere."), size: 32)
                     .padding(.top, Farside.Space.xs)
-                Text("Farside is free when your iPhone and Mac share a Wi-Fi network. \(AnywhereCopy.name) connects them from any other network too.")
+                Text(CommerceLocalization.text("PAYWALL_ROUTE", "Farside is free on a verified local network. Farside Anywhere reaches your Mac from other networks. Restoring a purchase does not pair a Mac or grant control."))
                     .font(.body)
                     .foregroundStyle(Farside.Palette.ash)
                     .fixedSize(horizontal: false, vertical: true)
@@ -63,6 +63,7 @@ struct AnywherePaywallView: View {
             Button { dismiss() } label: { Image(systemName: "xmark") }
                 .buttonStyle(FarsideRoundButtonStyle())
                 .accessibilityLabel("Close")
+                .frame(minHeight: 44)
                 .accessibilityIdentifier("anywhere.close")
                 .padding(.trailing, Farside.Space.s)
                 .padding(.top, Farside.Space.xs)
@@ -92,9 +93,9 @@ struct AnywherePaywallView: View {
 
     private var benefits: some View {
         VStack(alignment: .leading, spacing: Farside.Space.s) {
-            benefit("antenna.radiowaves.left.and.right", "On cellular or any Wi-Fi, away from home")
-            benefit("lock", "Encrypted between your iPhone and your Mac, even through our relay")
-            benefit("slider.horizontal.3", "No VPN, no port forwarding, nothing to set up")
+            benefit("antenna.radiowaves.left.and.right", CommerceLocalization.text("BENEFIT_ROUTE", "On cellular or any Wi-Fi, away from home"))
+            benefit("lock", CommerceLocalization.text("BENEFIT_ENCRYPTION", "Encrypted between your iPhone and your Mac, even through our relay"))
+            benefit("slider.horizontal.3", CommerceLocalization.text("BENEFIT_SETUP", "No VPN, no port forwarding, nothing to set up"))
         }
     }
 
@@ -114,14 +115,14 @@ struct AnywherePaywallView: View {
         if offers.isEmpty {
             VStack(alignment: .leading, spacing: Farside.Space.s) {
                 if store.load == .failed {
-                    Text("Couldn’t reach the App Store. Check your connection, then try again.")
+                    Text(CommerceLocalization.text("APP_STORE_OFFLINE", "Couldn’t reach the App Store. Check your connection, then try again."))
                         .font(.subheadline).foregroundStyle(Farside.Palette.bone)
                     Button("Try again") { Task { await store.loadProducts() } }
                         .buttonStyle(FarsideLinkButtonStyle())
                 } else {
                     HStack(spacing: Farside.Space.s) {
                         ProgressView().tint(Farside.Palette.bone)
-                        Text("Asking the App Store for prices…").font(.subheadline).foregroundStyle(Farside.Palette.ash)
+                        Text(CommerceLocalization.text("PRICES_LOADING", "Asking the App Store for prices…")).font(.subheadline).foregroundStyle(Farside.Palette.ash)
                     }
                 }
             }
@@ -153,15 +154,15 @@ struct AnywherePaywallView: View {
                     HStack(spacing: Farside.Space.xs) {
                         Text(offer.title).font(.headline).foregroundStyle(Farside.Palette.bone)
                         if let saving {
-                            Text("Save \(saving)%")
+                            Text(CommerceLocalization.text("YEAR_SAVING", "Save %ld%%", saving))
                                 .farsideCaption(Farside.Palette.ink)
                                 .padding(.horizontal, 7).padding(.vertical, 3)
                                 .background(Farside.Palette.bone, in: .capsule)
                         }
                     }
-                    Text("\(offer.displayPrice) a \(offer.periodNoun)")
+                    Text(offer.pricePhrase)
                         .font(.subheadline).foregroundStyle(Farside.Palette.bone)
-                    if let detail = [offer.trialPhrase.map { "\($0) free trial" }, offer.monthlyEquivalent]
+                    if let detail = [offer.freeTrialPhrase, offer.monthlyEquivalent]
                         .compactMap({ $0 }).joined(separator: " · ").nonEmpty {
                         Text(detail).farsideCaption()
                     }
@@ -207,7 +208,7 @@ struct AnywherePaywallView: View {
     @ViewBuilder private var notices: some View {
         VStack(alignment: .leading, spacing: Farside.Space.s) {
             if !subscribed && !canSell {
-                FarsideNotice(message: "Farside Anywhere is temporarily unavailable. We can’t confirm a new purchase right now. Same Wi-Fi stays free, and Restore Purchases remains available.", tone: .caution)
+                FarsideNotice(message: CommerceLocalization.text("PURCHASE_UNAVAILABLE", "Farside Anywhere is temporarily unavailable. We can’t confirm a new purchase right now. Verified local access stays free, and Restore Purchases remains available."), tone: .caution)
                     .accessibilityIdentifier("anywhere.purchaseUnavailable")
             }
             switch store.purchaseState {
@@ -224,7 +225,7 @@ struct AnywherePaywallView: View {
             if store.entitlement.hasAccess {
                 switch access.verification {
                 case .unreachable:
-                    FarsideNotice(message: "Farside’s service couldn’t be reached to confirm your plan. Same Wi-Fi still works; we’ll try again.", tone: .caution)
+                    FarsideNotice(message: CommerceLocalization.text("SERVICE_OFFLINE", "Farside’s service couldn’t confirm your plan. Verified local access still works; we’ll try again."), tone: .caution)
                 case .refused(let reason):
                     FarsideNotice(message: AnywhereCopy.refusal(reason), tone: .caution)
                 default:
@@ -240,7 +241,7 @@ struct AnywherePaywallView: View {
     private var links: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Farside.Space.l) {
-                Button(restoring ? "Restoring…" : "Restore Purchases") {
+                Button(restoring ? CommerceLocalization.text("RESTORING", "Restoring…") : CommerceLocalization.text("RESTORE", "Restore Purchases")) {
                     restoring = true
                     Task {
                         await store.restore()
@@ -249,21 +250,26 @@ struct AnywherePaywallView: View {
                     }
                 }
                 .disabled(restoring)
+                .frame(minHeight: 44)
                 .accessibilityIdentifier("anywhere.restore")
                 if subscribed {
-                    Button("Manage Subscription") { showManage = true }
-                        .accessibilityIdentifier("anywhere.manage")
+                    Button(CommerceLocalization.text("MANAGE", "Manage Subscription")) { showManage = true }
+                        .frame(minHeight: 44)
+                .accessibilityIdentifier("anywhere.manage")
                 } else {
-                    Button("Redeem Code") { showRedeem = true }
+                    Button(CommerceLocalization.text("REDEEM", "Redeem Code")) { showRedeem = true }
                         .disabled(!canSell)
-                        .accessibilityIdentifier("anywhere.redeem")
+                        .frame(minHeight: 44)
+                .accessibilityIdentifier("anywhere.redeem")
                 }
             }
             HStack(spacing: Farside.Space.l) {
-                Button("Terms of Use") { openURL(AnywherePlan.termsURL) }
-                    .accessibilityIdentifier("anywhere.terms")
-                Button("Privacy Policy") { openURL(AnywherePlan.privacyURL) }
-                    .accessibilityIdentifier("anywhere.privacy")
+                Button(CommerceLocalization.text("TERMS", "Terms of Use")) { openURL(AnywherePlan.termsURL) }
+                    .frame(minHeight: 44)
+                .accessibilityIdentifier("anywhere.terms")
+                Button(CommerceLocalization.text("PRIVACY", "Privacy Policy")) { openURL(AnywherePlan.privacyURL) }
+                    .frame(minHeight: 44)
+                .accessibilityIdentifier("anywhere.privacy")
             }
         }
         .buttonStyle(FarsideLinkButtonStyle())
@@ -272,7 +278,7 @@ struct AnywherePaywallView: View {
     private var actionBar: some View {
         VStack(spacing: Farside.Space.xs) {
             if subscribed {
-                Button("Done") { dismiss() }
+                Button(CommerceLocalization.text("DONE", "Done")) { dismiss() }
                     .buttonStyle(FarsidePrimaryButtonStyle(height: 56))
                     .accessibilityIdentifier("anywhere.done")
             } else {

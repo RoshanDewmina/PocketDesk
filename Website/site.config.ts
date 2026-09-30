@@ -77,14 +77,14 @@ export const config = {
   pricing: {
     /** false = draft: offers carry a "planned price" note in JSON-LD and the page says "planned". */
     final: false,
-    monthly: "CA$5.99",
-    yearly: "CA$49.99",
-    yearlyPerMonth: "CA$4.17",
-    yearlySaving: "30%",
+    monthly: "CA$7.99",
+    yearly: "CA$59.99",
+    yearlyPerMonth: "CA$5.00",
+    yearlySaving: "37%",
     trialDays: 7,
     currency: "CAD",
-    monthlyAmount: "5.99",
-    yearlyAmount: "49.99",
+    monthlyAmount: "7.99",
+    yearlyAmount: "59.99",
   },
 
   /** Planned minimum OS versions (STORE-LISTING.md). */

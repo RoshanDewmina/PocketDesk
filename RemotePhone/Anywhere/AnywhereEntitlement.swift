@@ -122,33 +122,33 @@ struct PlanOffer: Identifiable, Equatable {
     /// "7-day" or "1-month", only when this person is eligible for a configured free trial.
     var trialPhrase: String?
 
-    var title: String { period == .year ? "Yearly" : "Monthly" }
-    var periodNoun: String { period == .year ? "year" : "month" }
+    var title: String { period == .year ? CommerceLocalization.text("PLAN_YEARLY", "Yearly") : CommerceLocalization.text("PLAN_MONTHLY", "Monthly") }
+    var periodNoun: String { period == .year ? CommerceLocalization.text("PERIOD_YEAR", "year") : CommerceLocalization.text("PERIOD_MONTH", "month") }
     var hasTrial: Bool { trialPhrase != nil }
-
-    /// "CA$5.00 a month" for the yearly plan.
-    var monthlyEquivalent: String? {
-        guard period == .year else { return nil }
-        let perMonth = price / 12
-        return perMonth.formatted(.currency(code: currencyCode)) + " a month"
+    var validPrice: Bool { price > 0 && NSDecimalNumber(decimal: price).doubleValue.isFinite && currencyCode.utf8.count == 3 && currencyCode.utf8.allSatisfy { (65...90).contains($0) } }
+    var pricePhrase: String {
+        period == .year ? CommerceLocalization.text("PRICE_YEAR", "%@ a year", displayPrice)
+            : CommerceLocalization.text("PRICE_MONTH", "%@ a month", displayPrice)
     }
-
-    /// Whole-percent saving of yearly over twelve monthly payments, if it is real.
+    var freeTrialPhrase: String? { trialPhrase.map { CommerceLocalization.text("FREE_TRIAL", "%@ free trial", $0) } }
+    var monthlyEquivalent: String? {
+        guard period == .year, validPrice else { return nil }
+        return CommerceLocalization.text("PRICE_MONTH", "%@ a month", (price / 12).formatted(.currency(code: currencyCode)))
+    }
     static func yearlySaving(yearly: PlanOffer?, monthly: PlanOffer?) -> Int? {
-        guard let yearly, let monthly, monthly.price > 0 else { return nil }
+        guard let yearly, let monthly, yearly.period == .year, monthly.period == .month,
+              yearly.validPrice, monthly.validPrice, yearly.currencyCode == monthly.currencyCode else { return nil }
         let full = monthly.price * 12
         let saving = NSDecimalNumber(decimal: (full - yearly.price) / full * 100).doubleValue
-        return saving >= 1 ? Int(saving.rounded(.down)) : nil
+        return saving.isFinite && saving >= 1 && saving < 100 ? Int(saving.rounded(.down)) : nil
     }
-
-    /// A free trial described the way people say it: 7 days reads as "7-day", 1 month as "1-month".
     static func trialPhrase(unit: Calendar.Component, value: Int) -> String? {
-        guard value > 0 else { return nil }
+        guard value > 0, value <= 36500 else { return nil }
         switch unit {
-        case .day: return "\(value)-day"
-        case .weekOfYear: return "\(value * 7)-day"
-        case .month: return "\(value)-month"
-        case .year: return "\(value)-year"
+        case .day: return CommerceLocalization.text(value == 1 ? "TRIAL_DAY" : "TRIAL_DAYS", "%ld-day", value)
+        case .weekOfYear: return CommerceLocalization.text("TRIAL_DAYS", "%ld-day", value * 7)
+        case .month: return CommerceLocalization.text(value == 1 ? "TRIAL_MONTH" : "TRIAL_MONTHS", "%ld-month", value)
+        case .year: return CommerceLocalization.text(value == 1 ? "TRIAL_YEAR" : "TRIAL_YEARS", "%ld-year", value)
         default: return nil
         }
     }
@@ -160,94 +160,80 @@ enum AnywhereCopy {
     static let name = "Farside Anywhere"
 
     static func primaryTitle(_ offer: PlanOffer?) -> String {
-        guard let offer else { return "Subscribe" }
-        if let trial = offer.trialPhrase { return "Start \(trial) free trial" }
-        return "Subscribe for \(offer.displayPrice) a \(offer.periodNoun)"
+        guard let offer, offer.validPrice else { return CommerceLocalization.text("SUBSCRIBE", "Subscribe") }
+        if let trial = offer.trialPhrase { return CommerceLocalization.text("START_TRIAL", "Start %@ free trial", trial) }
+        return offer.period == .year ? CommerceLocalization.text("SUBSCRIBE_YEAR", "Subscribe for %@ a year", offer.displayPrice)
+            : CommerceLocalization.text("SUBSCRIBE_MONTH", "Subscribe for %@ a month", offer.displayPrice)
     }
-
-    /// The line kept next to the button: what you pay and when.
     static func summary(_ offer: PlanOffer) -> String {
+        guard offer.validPrice else { return CommerceLocalization.text("PRICE_UNAVAILABLE", "The App Store price is unavailable. Try again before subscribing.") }
         if let trial = offer.trialPhrase {
-            return "\(trial.capitalizedFirst) free trial, then \(offer.displayPrice) a \(offer.periodNoun). Renews automatically; cancel anytime."
+            return offer.period == .year ? CommerceLocalization.text("SUMMARY_TRIAL_YEAR", "%@ free trial, then %@ a year. Renews automatically; cancel anytime.", trial.capitalizedFirst, offer.displayPrice)
+                : CommerceLocalization.text("SUMMARY_TRIAL_MONTH", "%@ free trial, then %@ a month. Renews automatically; cancel anytime.", trial.capitalizedFirst, offer.displayPrice)
         }
-        return "\(offer.displayPrice) a \(offer.periodNoun). Renews automatically; cancel anytime."
+        return offer.period == .year ? CommerceLocalization.text("SUMMARY_YEAR", "%@ a year. Renews automatically; cancel anytime.", offer.displayPrice)
+            : CommerceLocalization.text("SUMMARY_MONTH", "%@ a month. Renews automatically; cancel anytime.", offer.displayPrice)
     }
-
     static func disclosure(_ offer: PlanOffer) -> String {
-        let start = offer.trialPhrase.map { "After the \($0) free trial, \(name) costs " } ?? "\(name) costs "
-        let charged = offer.hasTrial
-            ? "Your Apple Account is charged when the trial ends"
-            : "Your Apple Account is charged when you confirm the purchase"
-        let window = offer.hasTrial ? "the trial" : "each period"
-        return start + "\(offer.displayPrice) a \(offer.periodNoun) and renews automatically until you cancel. "
-            + "\(charged), and again at the start of each renewal. "
-            + "Cancel at least 24 hours before the end of \(window) in Settings › Apple Account › Subscriptions. "
-            + "One subscription covers up to \(deviceLimitWord) of your iPhones and iPads. "
-            + "Farside on the same Wi-Fi stays free, with or without a plan."
+        guard offer.validPrice else { return summary(offer) }
+        let period = offer.period == .year ? "YEAR" : "MONTH"
+        let noun = offer.period == .year ? "year" : "month"
+        if let trial = offer.trialPhrase {
+            return CommerceLocalization.text("DISCLOSURE_TRIAL_" + period,
+                "After the %@ free trial, Farside Anywhere costs %@ a " + noun + " and renews automatically until you cancel. Your Apple Account is charged when the trial ends, and again at the start of each renewal. Cancel at least 24 hours before the end of the trial in Settings › Apple Account › Subscriptions. One subscription covers up to three of your iPhones and iPads. Farside on a verified local network stays free, with or without a plan.", trial, offer.displayPrice)
+        }
+        return CommerceLocalization.text("DISCLOSURE_" + period,
+            "Farside Anywhere costs %@ a " + noun + " and renews automatically until you cancel. Your Apple Account is charged when you confirm the purchase, and again at the start of each renewal. Cancel at least 24 hours before the end of each period in Settings › Apple Account › Subscriptions. One subscription covers up to three of your iPhones and iPads. Farside on a verified local network stays free, with or without a plan.", offer.displayPrice)
     }
 
     /// The service's per-subscription device cap (Backend/ENTITLEMENT-CONTRACT.md §2, check 8).
     static let deviceLimitWord = "three"
 
-    /// Why the service would not confirm a plan this phone believes in.
+    /// Restoration recovers billing only; pairing and current route authority remain separate.
     static func refusal(_ reason: String?) -> String {
         switch reason {
-        case "device_limit":
-            return "This subscription is already in use on \(deviceLimitWord) devices, the most one plan covers. Same Wi-Fi still works here."
-        case "expired", "revoked":
-            return "Farside’s service says this plan is no longer active. If you just renewed, try Restore Purchases."
-        case "not_purchased":
-            return "\(name) needs a plan bought with your own Apple Account. Plans assigned by an organization or group aren’t supported. Same Wi-Fi still works."
-        case "consent_revoked":
-            return "Permission to use Farside was withdrawn for this Apple Account, so \(name) is off."
-        default:
-            return "Farside’s service couldn’t confirm this plan. Try Restore Purchases; same Wi-Fi still works."
+        case "device_limit": return CommerceLocalization.text("REFUSAL_DEVICES", "This subscription is already in use on three devices, the most one plan covers. Verified local access still works here.")
+        case "expired", "revoked": return CommerceLocalization.text("REFUSAL_ENDED", "Farside’s service says this plan is no longer active. If you just renewed, try Restore Purchases.")
+        case "not_purchased": return CommerceLocalization.text("REFUSAL_OWNER", "Farside Anywhere needs a plan bought with your own Apple Account. Plans assigned by an organization or group aren’t supported. Verified local access still works.")
+        case "consent_revoked": return CommerceLocalization.text("REFUSAL_CONSENT", "Permission to use Farside was withdrawn for this Apple Account, so Farside Anywhere is off.")
+        default: return CommerceLocalization.text("REFUSAL_DEFAULT", "Farside’s service couldn’t confirm this plan. Try Restore Purchases; verified local access still works.")
         }
     }
-
     static func statusTitle(_ value: AnywhereEntitlement) -> String {
         switch value.phase {
-        case .trial: "Your free trial is on"
-        case .active: "\(name) is on"
-        case .gracePeriod, .billingRetry: "There’s a payment problem"
-        case .expired: "\(name) has ended"
-        case .revoked: "\(name) was refunded"
+        case .trial: CommerceLocalization.text("STATUS_TRIAL", "Your free trial is on")
+        case .active: CommerceLocalization.text("STATUS_ON", "Farside Anywhere is on")
+        case .gracePeriod, .billingRetry: CommerceLocalization.text("STATUS_PAYMENT", "There’s a payment problem")
+        case .expired: CommerceLocalization.text("STATUS_ENDED", "Farside Anywhere has ended")
+        case .revoked: CommerceLocalization.text("STATUS_REVOKED", "Farside Anywhere was refunded")
         case .unknown, .notSubscribed: name
         }
     }
-
     static func statusDetail(_ value: AnywhereEntitlement) -> String {
         let date = value.periodEnd.map(short)
         switch value.phase {
         case .trial:
-            guard let date else { return "You can reach your Mac from anywhere." }
-            return value.willRenew ? "Trial ends \(date). Then your plan starts unless you cancel." : "Trial ends \(date). It won’t renew."
+            guard let date else { return CommerceLocalization.text("STATUS_REACH", "You can reach your Mac from anywhere.") }
+            return value.willRenew ? CommerceLocalization.text("TRIAL_END_RENEW", "Trial ends %@. Then your plan starts unless you cancel.", date) : CommerceLocalization.text("TRIAL_END_STOP", "Trial ends %@. It won’t renew.", date)
         case .active:
-            guard let date else { return "You can reach your Mac from anywhere." }
-            return value.willRenew ? "Renews \(date)." : "Ends \(date). It won’t renew."
+            guard let date else { return CommerceLocalization.text("STATUS_REACH", "You can reach your Mac from anywhere.") }
+            return value.willRenew ? CommerceLocalization.text("PLAN_RENEWS", "Renews %@.", date) : CommerceLocalization.text("PLAN_ENDS", "Ends %@. It won’t renew.", date)
         case .gracePeriod:
-            let until = date.map { " until \($0)" } ?? ""
-            return "Apple couldn’t renew your plan. It keeps working\(until); update your payment method in Settings › Apple Account."
-        case .billingRetry:
-            return "Apple couldn’t renew your plan, so Anywhere is paused. Update your payment method in Settings › Apple Account."
-        case .expired:
-            return date.map { "It ended \($0). Farside on the same Wi-Fi is still free." } ?? "Farside on the same Wi-Fi is still free."
-        case .revoked:
-            return "Apple refunded or revoked this purchase, so Anywhere is off. Farside on the same Wi-Fi is still free."
-        case .unknown, .notSubscribed:
-            return "Free on the same Wi-Fi. Anywhere reaches your Mac from any network."
+            return date.map { CommerceLocalization.text("GRACE_UNTIL", "Apple couldn’t renew your plan. It keeps working until %@; update your payment method in Settings › Apple Account.", $0) } ?? CommerceLocalization.text("GRACE", "Apple couldn’t renew your plan. It keeps working during the grace period; update your payment method in Settings › Apple Account.")
+        case .billingRetry: return CommerceLocalization.text("BILLING_RETRY", "Apple couldn’t renew your plan, so Anywhere is paused. Update your payment method in Settings › Apple Account.")
+        case .expired: return date.map { CommerceLocalization.text("EXPIRED_DATE", "It ended %@. Verified local access is still free.", $0) } ?? CommerceLocalization.text("LOCAL_FREE", "Verified local access is still free.")
+        case .revoked: return CommerceLocalization.text("REVOKED_DETAIL", "Apple refunded or revoked this purchase, so Anywhere is off. Verified local access is still free.")
+        case .unknown, .notSubscribed: return CommerceLocalization.text("LOCAL_AND_REMOTE", "Verified local access is free. Anywhere reaches your Mac from other networks.")
         }
     }
-
-    /// The caption under "Farside Anywhere" on Home.
     static func homeCaption(_ value: AnywhereEntitlement) -> String {
         let date = value.periodEnd.map(short)
         switch value.phase {
-        case .trial: return date.map { "Trial · ends \($0)" } ?? "Trial · on"
-        case .active: return date.map { value.willRenew ? "On · renews \($0)" : "On · ends \($0)" } ?? "On"
-        case .gracePeriod: return "Payment problem · still on"
-        case .billingRetry: return "Payment problem · paused"
-        case .unknown, .notSubscribed, .expired, .revoked: return "Free on the same Wi-Fi · Anywhere off"
+        case .trial: return date.map { CommerceLocalization.text("CAPTION_TRIAL_END", "Trial · ends %@", $0) } ?? CommerceLocalization.text("CAPTION_TRIAL", "Trial · on")
+        case .active: return date.map { value.willRenew ? CommerceLocalization.text("CAPTION_RENEW", "On · renews %@", $0) : CommerceLocalization.text("CAPTION_END", "On · ends %@", $0) } ?? CommerceLocalization.text("CAPTION_ON", "On")
+        case .gracePeriod: return CommerceLocalization.text("CAPTION_GRACE", "Payment problem · still on")
+        case .billingRetry: return CommerceLocalization.text("CAPTION_RETRY", "Payment problem · paused")
+        case .unknown, .notSubscribed, .expired, .revoked: return CommerceLocalization.text("CAPTION_LOCAL", "Verified local access free · Anywhere off")
         }
     }
 

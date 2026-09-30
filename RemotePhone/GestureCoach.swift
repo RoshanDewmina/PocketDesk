@@ -39,13 +39,11 @@ final class OnboardingFlow: ObservableObject {
         step = .priming(.localNetwork)
     }
 
-    /// After a new pairing the Mac still has to approve; use that wait for priming and the coach.
+    /// Pairing is still waiting for authority and useful content; it is not task success.
     func afterPairing() {
         if PermissionPrimer.needsPriming(.localNetwork, in: defaults) {
-            afterPriming = { [weak self] in self?.offerCoach() }
+            afterPriming = nil
             step = .priming(.localNetwork)
-        } else {
-            offerCoach()
         }
     }
 

@@ -212,7 +212,7 @@ final class AnywhereStoreKitTests: XCTestCase {
         await store.restore()
         XCTAssertEqual(syncCalls, 1, "Restore asks the App Store to sync")
         await eventually("restored access") { store.entitlement.hasAccess }
-        XCTAssertEqual(store.restoreMessage, "Farside Anywhere is back on.")
+        XCTAssertEqual(store.restoreMessage, "Purchase restored. Farside’s service will confirm your plan next. Restoring does not pair a Mac or grant control.")
     }
 
     func testRestoreWithNothingToRestoreSaysSo() async {
