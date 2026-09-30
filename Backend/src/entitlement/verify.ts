@@ -4,7 +4,10 @@ import { fingerprint, log, logError } from "../log";
 import { addressKey, allow } from "../ratelimit";
 import type { RoomDO } from "../room";
 import { BodyTooLarge, HEX64, isoFromMs, isRecord, json, readJsonBody } from "../util";
-import { audit, entitlementForDevice, entitlementIdFor, getEntitlement, hasAccess, linkDevice, unlinkDeviceIfInRoom, upsertEntitlement, type EntitlementStatus } from "./store";
+import {
+  appTransactionHashFor, audit, consentStopped, entitlementForDevice, entitlementIdFor, getEntitlement, hasAccess, linkDevice, unlinkDeviceIfInRoom,
+  upsertEntitlement, type EntitlementStatus,
+} from "./store";
 import { environmentLetter, MAX_TOKEN_TTL_MS, mintEntitlementToken, verifyEntitlementToken } from "./token";
 
 const MAX_BODY_BYTES = 32 * 1024;
@@ -21,9 +24,20 @@ export type TransactionInfo = {
   revocationDate?: number;
   signedDate?: number;
   purchaseDate?: number;
+  /** PURCHASED, FAMILY_SHARED or ASSIGNED (a multiseat seat an organization or group handed out). */
+  inAppOwnershipType?: string;
+  /** REFUND_FULL, REFUND_PRORATED, FAMILY_REVOKE or ASSIGNMENT_REVOKE. */
+  revocationType?: string;
+  appTransactionId?: string;
 };
 
 const optionalNumber = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : undefined);
+const optionalString = (value: unknown, max: number) => (typeof value === "string" && value.length > 0 && value.length <= max ? value : undefined);
+
+const OWNERSHIP_LOG_VALUES = new Set(["PURCHASED", "FAMILY_SHARED", "ASSIGNED"]);
+/** A fixed vocabulary for logs, so a payload can never write free text into them. */
+export const ownershipForLog = (tx: Pick<TransactionInfo, "inAppOwnershipType">) =>
+  tx.inAppOwnershipType === undefined ? "missing" : OWNERSHIP_LOG_VALUES.has(tx.inAppOwnershipType) ? tx.inAppOwnershipType : "other";
 
 export function parseTransactionPayload(payload: Record<string, unknown>): TransactionInfo | undefined {
   const { originalTransactionId, transactionId, productId, bundleId, environment, type } = payload;
@@ -38,10 +52,13 @@ export function parseTransactionPayload(payload: Record<string, unknown>): Trans
     revocationDate: optionalNumber(payload.revocationDate),
     signedDate: optionalNumber(payload.signedDate),
     purchaseDate: optionalNumber(payload.purchaseDate),
+    inAppOwnershipType: optionalString(payload.inAppOwnershipType, 32),
+    revocationType: optionalString(payload.revocationType, 32),
+    appTransactionId: optionalString(payload.appTransactionId, 64),
   };
 }
 
-export type PolicyFailure = "wrong_app" | "wrong_product" | "environment_not_accepted" | "not_subscription";
+export type PolicyFailure = "wrong_app" | "wrong_product" | "environment_not_accepted" | "not_subscription" | "not_purchased";
 
 export function checkTransactionPolicy(tx: TransactionInfo, config: Config): PolicyFailure | undefined {
   // JWSTransactionDecodedPayload identifies the app by bundleId; appAppleId belongs
@@ -51,13 +68,21 @@ export function checkTransactionPolicy(tx: TransactionInfo, config: Config): Pol
   if ((tx.environment === "Xcode" || tx.environment === "LocalTesting") && !config.allowXcode) return "environment_not_accepted";
   if (!config.allowedProductIds.has(tx.productId)) return "wrong_product";
   if (tx.type !== "Auto-Renewable Subscription") return "not_subscription";
+  // Anywhere is a personal plan: Family Sharing and multiseat are off in App Store Connect, and a seat
+  // assigned by an organization or group is refused even if that setting is ever changed.
+  if (tx.inAppOwnershipType !== "PURCHASED") return "not_purchased";
   return undefined;
 }
 
 export type SignatureFailure = "signature" | PolicyFailure;
 
 /** Verifies a StoreKit / App Store JWS and applies the product policy. Xcode transactions are decoded unverified only when allowed. */
-export async function verifyTransactionJws(compact: string, config: Config, now: number): Promise<{ ok: true; tx: TransactionInfo } | { ok: false; reason: SignatureFailure }> {
+export type VerifiedTransaction = { ok: true; tx: TransactionInfo } | { ok: false; reason: SignatureFailure; ownership?: string };
+
+const policyResult = (tx: TransactionInfo, policy: PolicyFailure | undefined): VerifiedTransaction =>
+  policy === undefined ? { ok: true, tx } : policy === "not_purchased" ? { ok: false, reason: policy, ownership: ownershipForLog(tx) } : { ok: false, reason: policy };
+
+export async function verifyTransactionJws(compact: string, config: Config, now: number): Promise<VerifiedTransaction> {
   if (typeof compact !== "string" || compact.length === 0 || compact.length > MAX_JWS_CHARS) return { ok: false, reason: "signature" };
   let payload: Record<string, unknown>;
   if (config.allowXcode && !config.isProduction) {
@@ -67,8 +92,7 @@ export async function verifyTransactionJws(compact: string, config: Config, now:
       if (environment === "Xcode" || environment === "LocalTesting") {
         const tx = parseTransactionPayload(decoded.payload);
         if (!tx) return { ok: false, reason: "signature" };
-        const policy = checkTransactionPolicy(tx, config);
-        return policy ? { ok: false, reason: policy } : { ok: true, tx };
+        return policyResult(tx, checkTransactionPolicy(tx, config));
       }
     } catch {
       return { ok: false, reason: "signature" };
@@ -82,8 +106,7 @@ export async function verifyTransactionJws(compact: string, config: Config, now:
   }
   const tx = parseTransactionPayload(payload);
   if (!tx) return { ok: false, reason: "signature" };
-  const policy = checkTransactionPolicy(tx, config);
-  return policy ? { ok: false, reason: policy } : { ok: true, tx };
+  return policyResult(tx, checkTransactionPolicy(tx, config));
 }
 
 export const statusFromTransaction = (tx: TransactionInfo, now: number): EntitlementStatus =>
@@ -114,7 +137,10 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
 
   const verified = await verifyTransactionJws(body.signedTransaction, config, now);
   if (!verified.ok) {
-    log("verify_rejected", { reason: verified.reason, device: fingerprint(deviceId) });
+    // A seat that is not the caller's own purchase is logged by kind only: no device, no transaction.
+    log("verify_rejected", verified.reason === "not_purchased"
+      ? { reason: verified.reason, ownership: verified.ownership }
+      : { reason: verified.reason, device: fingerprint(deviceId) });
     return json({ error: "invalid_transaction", reason: verified.reason }, 401);
   }
   const tx = verified.tx;
@@ -125,6 +151,11 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
   const environment = tx.environment === "LocalTesting" ? "Xcode" : tx.environment;
 
   try {
+    const appTransactionHash = tx.appTransactionId ? await appTransactionHashFor(env.ENTITLEMENT_HASH_KEY, tx.appTransactionId) : undefined;
+    if (appTransactionHash && (await consentStopped(env.DB, appTransactionHash))) {
+      ctx.waitUntil(audit(env.DB, "verify_consent_stopped", { entitlementId: id }, now));
+      return json({ entitled: false, reason: "consent_revoked", environment });
+    }
     const existing = await getEntitlement(env.DB, id);
     // A notification may already know about a later renewal or a grace period; never move access backwards from a stale JWS.
     const expiresAt = Math.max(tx.expiresDate ?? 0, existing?.expires_at ?? 0);
@@ -136,7 +167,7 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     if (status === "expired" && existing && existing.status === "grace" && (existing.grace_until ?? 0) > now) status = "grace";
     await upsertEntitlement(env.DB, {
       id, productId: tx.productId, environment, status, expiresAt,
-      graceUntil: existing?.grace_until ?? null, revokedAt, purchaseAt: tx.purchaseDate, source: "verify",
+      graceUntil: existing?.grace_until ?? null, revokedAt, purchaseAt: tx.purchaseDate, appTransactionHash, source: "verify",
     }, now);
     // A refund may have committed after the read above. Use the row that actually survived the
     // conditional upsert before linking a device or issuing a token.
@@ -144,7 +175,8 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     if (!row) throw new Error("entitlement missing after upsert");
     if (!hasAccess(row, now)) {
       ctx.waitUntil(audit(env.DB, "verify_no_access", { entitlementId: id, detail: row.status }, now));
-      return json({ entitled: false, reason: row.status === "revoked" ? "revoked" : "expired", expiresAt: isoFromMs(row.expires_at), environment: row.environment });
+      const reason = row.consent_stopped_at ? "consent_revoked" : row.status === "revoked" ? "revoked" : "expired";
+      return json({ entitled: false, reason, expiresAt: isoFromMs(row.expires_at), environment: row.environment });
     }
     // Sandbox purchases are free (D5): one device each keeps App Review and TestFlight working without opening a relay pool.
     const link = await linkDevice(env.DB, id, deviceId, now, row.environment === "Sandbox" ? 1 : config.maxDevices);

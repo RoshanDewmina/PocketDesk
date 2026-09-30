@@ -15,6 +15,8 @@ export type EntitlementRow = {
   updated_at: number;
   last_verified_at: number | null;
   last_notification_at: number | null;
+  app_transaction_hash: string | null;
+  consent_stopped_at: number | null;
 };
 
 export type DeviceRow = { device_id: string; last_room: string | null };
@@ -23,11 +25,15 @@ export type EntitlementDeviceRow = EntitlementRow & { device_room: string | null
 export const accessEndMs = (row: Pick<EntitlementRow, "expires_at" | "grace_until">) =>
   Math.max(row.expires_at, row.grace_until ?? 0);
 
-export const hasAccess = (row: Pick<EntitlementRow, "status" | "expires_at" | "grace_until">, now: number) =>
-  (row.status === "active" || row.status === "grace") && accessEndMs(row) > now;
+export const hasAccess = (row: Pick<EntitlementRow, "status" | "expires_at" | "grace_until"> & { consent_stopped_at?: number | null }, now: number) =>
+  (row.status === "active" || row.status === "grace") && accessEndMs(row) > now && !row.consent_stopped_at;
 
 export async function entitlementIdFor(hashKey: string, originalTransactionId: string): Promise<string> {
   return bytesToHex(await hmacSha256(hashKey, `otid:${originalTransactionId}`));
+}
+
+export async function appTransactionHashFor(hashKey: string, appTransactionId: string): Promise<string> {
+  return bytesToHex(await hmacSha256(hashKey, `atid:${appTransactionId}`));
 }
 
 export type UpsertEntitlement = {
@@ -42,6 +48,8 @@ export type UpsertEntitlement = {
   purchaseAt?: number;
   /** Apple's explicit refund reversal may clear a refund without a new purchase. */
   refundReversed?: boolean;
+  /** HMAC of the transaction's appTransactionId, the key a parental consent withdrawal names. */
+  appTransactionHash?: string;
   source: "verify" | "notification" | "recheck";
 };
 
@@ -50,8 +58,10 @@ export async function upsertEntitlement(db: D1Database, fields: UpsertEntitlemen
   const verified = fields.source === "verify" ? now : null;
   const notified = fields.source === "notification" ? now : null;
   const result = await db.prepare(`
-    INSERT INTO entitlements (id, product_id, environment, status, expires_at, grace_until, revoked_at, created_at, updated_at, last_verified_at, last_notification_at, purchase_at)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11)
+    INSERT INTO entitlements (id, product_id, environment, status, expires_at, grace_until, revoked_at, created_at, updated_at, last_verified_at, last_notification_at, purchase_at,
+      app_transaction_hash, consent_stopped_at)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11,
+      ?13, (SELECT stopped_at FROM consent_stops WHERE app_transaction_hash = ?13))
     ON CONFLICT(id) DO UPDATE SET
       product_id = excluded.product_id,
       environment = excluded.environment,
@@ -62,13 +72,15 @@ export async function upsertEntitlement(db: D1Database, fields: UpsertEntitlemen
       purchase_at = excluded.purchase_at,
       updated_at = excluded.updated_at,
       last_verified_at = COALESCE(excluded.last_verified_at, entitlements.last_verified_at),
-      last_notification_at = COALESCE(excluded.last_notification_at, entitlements.last_notification_at)
+      last_notification_at = COALESCE(excluded.last_notification_at, entitlements.last_notification_at),
+      app_transaction_hash = COALESCE(excluded.app_transaction_hash, entitlements.app_transaction_hash),
+      consent_stopped_at = COALESCE(entitlements.consent_stopped_at, excluded.consent_stopped_at)
     WHERE excluded.purchase_at >= entitlements.purchase_at
       AND (entitlements.revoked_at IS NULL OR excluded.revoked_at IS NOT NULL
         OR excluded.purchase_at > entitlements.revoked_at OR ?12 = 1)
   `).bind(fields.id, fields.productId, fields.environment, fields.status, fields.expiresAt,
     fields.graceUntil ?? null, fields.revokedAt ?? null, now, verified, notified,
-    fields.purchaseAt ?? 0, fields.refundReversed ? 1 : 0).run();
+    fields.purchaseAt ?? 0, fields.refundReversed ? 1 : 0, fields.appTransactionHash ?? null).run();
   return result.meta.changes > 0;
 }
 
@@ -160,6 +172,21 @@ export async function markStatus(db: D1Database, id: string, status: Entitlement
   return result.meta.changes > 0;
 }
 
+export async function consentStopped(db: D1Database, appTransactionHash: string): Promise<boolean> {
+  return (await db.prepare("SELECT 1 AS present FROM consent_stops WHERE app_transaction_hash = ?1").bind(appTransactionHash).first()) !== null;
+}
+
+/** Records a consent withdrawal and stops every subscription bought under that app transaction. Returns the newly stopped ids. */
+export async function stopForConsent(db: D1Database, appTransactionHash: string, environment: string, now: number): Promise<string[]> {
+  const [, stopped] = await db.batch<{ id: string }>([
+    db.prepare("INSERT OR IGNORE INTO consent_stops (app_transaction_hash, environment, stopped_at) VALUES (?1, ?2, ?3)")
+      .bind(appTransactionHash, environment, now),
+    db.prepare("UPDATE entitlements SET consent_stopped_at = ?2, updated_at = ?2, last_notification_at = ?2 WHERE app_transaction_hash = ?1 AND consent_stopped_at IS NULL RETURNING id")
+      .bind(appTransactionHash, now),
+  ]);
+  return (stopped?.results ?? []).map(row => row.id);
+}
+
 export async function notificationSeen(db: D1Database, uuid: string): Promise<boolean> {
   return (await db.prepare("SELECT 1 AS present FROM notifications WHERE uuid = ?1").bind(uuid).first()) !== null;
 }
@@ -214,14 +241,18 @@ export async function purgeRetention(db: D1Database, now: number): Promise<Recor
     db.prepare("DELETE FROM entitlement_devices WHERE entitlement_id IN (SELECT id FROM entitlements WHERE MAX(expires_at, COALESCE(grace_until, 0)) < ?1)").bind(now - 90 * DAY),
     db.prepare("DELETE FROM entitlements WHERE MAX(expires_at, COALESCE(grace_until, 0)) < ?1").bind(now - 90 * DAY),
     db.prepare("DELETE FROM rooms WHERE last_seen < ?1 AND status = 'active'").bind(now - 365 * DAY),
+    // A stop outlives its subscriptions by a year so a lapsed plan cannot be verified back into use right away.
+    db.prepare(`DELETE FROM consent_stops WHERE stopped_at < ?1 AND NOT EXISTS
+      (SELECT 1 FROM entitlements WHERE entitlements.app_transaction_hash = consent_stops.app_transaction_hash)`).bind(now - 365 * DAY),
   ]);
-  const [notifications, auditRows, devices, entitlements, rooms] = results.map(result => result.meta.changes);
-  return { notifications: notifications ?? 0, audit: auditRows ?? 0, devices: devices ?? 0, entitlements: entitlements ?? 0, rooms: rooms ?? 0 };
+  const [notifications, auditRows, devices, entitlements, rooms, consentStops] = results.map(result => result.meta.changes);
+  return { notifications: notifications ?? 0, audit: auditRows ?? 0, devices: devices ?? 0, entitlements: entitlements ?? 0, rooms: rooms ?? 0,
+    consentStops: consentStops ?? 0 };
 }
 
 export async function readinessCounts(db: D1Database, now: number): Promise<Record<string, number>> {
   const [entitlements, sandbox, rooms, blocked, notifications] = await db.batch([
-    db.prepare("SELECT COUNT(*) AS n FROM entitlements WHERE status IN ('active','grace') AND MAX(expires_at, COALESCE(grace_until, 0)) > ?1").bind(now),
+    db.prepare("SELECT COUNT(*) AS n FROM entitlements WHERE status IN ('active','grace') AND consent_stopped_at IS NULL AND MAX(expires_at, COALESCE(grace_until, 0)) > ?1").bind(now),
     db.prepare("SELECT COUNT(*) AS n FROM entitlements WHERE environment = 'Sandbox' AND MAX(expires_at, COALESCE(grace_until, 0)) > ?1").bind(now),
     db.prepare("SELECT COUNT(*) AS n FROM rooms WHERE last_seen > ?1").bind(now - 30 * DAY),
     db.prepare("SELECT COUNT(*) AS n FROM rooms WHERE status = 'blocked'"),

@@ -1,5 +1,5 @@
 import { SELF } from "cloudflare:test";
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { mintEntitlementToken } from "../src/entitlement/token";
 import { entitlementIdFor, getEntitlement, upsertEntitlement } from "../src/entitlement/store";
 import { randomHex } from "../src/util";
@@ -106,6 +106,29 @@ describe("POST /v1/entitlements/verify", () => {
     const xcode = await verify({ environment: "Xcode" });
     expect(xcode.status).toBe(401);
     expect(xcode.body).toEqual({ error: "invalid_transaction", reason: "environment_not_accepted" });
+  });
+
+  it("accepts only the caller's own purchase: assigned multiseat, family-shared and unmarked seats are refused and logged by kind only", async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      for (const [ownership, logged] of [["ASSIGNED", "ASSIGNED"], ["FAMILY_SHARED", "FAMILY_SHARED"], [undefined, "missing"], ["SOMETHING NEW", "other"]] as const) {
+        const otid = `own-${randomHex(6)}`;
+        const deviceId = randomHex();
+        const { status, body } = await verify({ originalTransactionId: otid, inAppOwnershipType: ownership }, deviceId);
+        expect(status).toBe(401);
+        expect(body).toEqual({ error: "invalid_transaction", reason: "not_purchased" });
+        expect(await getEntitlement(testEnv.DB, await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY, otid))).toBeNull();
+        const line = lines.find(entry => entry.includes("verify_rejected") && entry.includes("not_purchased") && entry.includes(`"${logged}"`));
+        expect(line).toBeDefined();
+        expect(JSON.parse(line!)).toEqual({ event: "verify_rejected", reason: "not_purchased", ownership: logged });
+        expect(line).not.toContain(deviceId.slice(0, 8));
+        expect(line).not.toContain(otid);
+      }
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await verify({ originalTransactionId: `own-${randomHex(6)}`, inAppOwnershipType: "PURCHASED" })).body.entitled).toBe(true);
   });
 
   it("rejects a tampered or foreign JWS with 401 signature", async () => {
