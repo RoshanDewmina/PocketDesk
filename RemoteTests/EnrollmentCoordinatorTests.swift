@@ -18,7 +18,7 @@ final class EnrollmentCoordinatorTests: XCTestCase {
         let (phone, signaling, trust, old) = try fixture()
         defer { phone.stop() }
         phone.start()
-        var scanned = old; scanned.key = try SecureRandom.key(); scanned.token = try SecureRandom.token()
+        var scanned = old; scanned.key = try SecureRandom.bytes(); scanned.token = try SecureRandom.token()
         XCTAssertThrowsError(try phone.enroll(scanned.code()))
         XCTAssertEqual(phone.invitation, old)
         XCTAssertEqual(signaling.connects.count, 1)
@@ -34,7 +34,7 @@ final class EnrollmentCoordinatorTests: XCTestCase {
     func testInterruptedEnrollmentDoesNotRetryAsUnscannedRotation() throws {
         let (phone, signaling, trust, old) = try fixture()
         defer { phone.stop() }
-        var scanned = old; scanned.key = try SecureRandom.key()
+        var scanned = old; scanned.key = try SecureRandom.bytes()
         let request = try XCTUnwrap(trust.replacementRequest(for: scanned))
         try phone.enroll(scanned.code(), replacementApproval: PhoneTrustReplacementApproval(request: request, enrollment: scanned))
         signaling.onClose?()
