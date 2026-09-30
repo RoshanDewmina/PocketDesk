@@ -71,15 +71,27 @@ struct InputAppliedLedger {
 struct InputMotionPrefix {
     private(set) var next: UInt64 = 0
     private(set) var segments: [InputMotionSegment] = []
+    /// Leave room for the reliable semantic payload (including JSON escapes) and envelope.
+    static let maximumEncodedSegmentsBytes = 8 * 1024
+    private var segmentSizes: [Int] = []
+    private var encodedSegmentsBytes: Int { 2 + segmentSizes.reduce(0, +) + max(0, segments.count - 1) }
+    func canAppend(_ action: RemoteAction) -> Bool {
+        guard segments.count < InputCausalEnvelope.maximumSegments, next < UInt64.max,
+              let size = try? JSONEncoder().encode(InputMotionSegment(ordinal: next + 1, action: action)).count else { return false }
+        return encodedSegmentsBytes + size + (segments.isEmpty ? 0 : 1) <= Self.maximumEncodedSegmentsBytes
+    }
     mutating func append(_ action: RemoteAction) throws {
-        guard segments.count < InputCausalEnvelope.maximumSegments, next < UInt64.max else { throw RemoteError.stale }
+        guard canAppend(action) else { throw RemoteError.stale }
         let segment = InputMotionSegment(ordinal: next + 1, action: action)
         try segment.validate(epoch: action.epoch)
+        let size = try JSONEncoder().encode(segment).count
         next += 1
         segments.append(segment)
+        segmentSizes.append(size)
     }
     mutating func acknowledge(_ ordinal: UInt64) throws {
         guard ordinal <= next else { throw RemoteError.stale }
-        segments.removeAll { $0.ordinal <= ordinal }
+        let removed = segments.prefix { $0.ordinal <= ordinal }.count
+        segments.removeFirst(removed); segmentSizes.removeFirst(removed)
     }
 }

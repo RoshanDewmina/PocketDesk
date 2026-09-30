@@ -369,7 +369,7 @@ final class RemoteCoordinator: ObservableObject {
         do {
             for action in actions {
                 try action.validate()
-                if !deferredInput.isEmpty || motionPrefix.segments.count == InputCausalEnvelope.maximumSegments {
+                if !deferredInput.isEmpty || !motionPrefix.canAppend(action) {
                     guard deferredInput.count < 64 else { throw RemoteError.stale }
                     deferredInput.append(action)
                 } else { try motionPrefix.append(action) }
@@ -404,7 +404,7 @@ final class RemoteCoordinator: ObservableObject {
         while !deferredInput.isEmpty {
             let action = deferredInput[0]
             if ["move", "moveTo"].contains(action.action) {
-                guard motionPrefix.segments.count < InputCausalEnvelope.maximumSegments else { break }
+                guard motionPrefix.canAppend(action) else { break }
                 try motionPrefix.append(action)
             } else {
                 guard let barrier = envelope(kind: "barrier"), transmit(action, input: barrier) else { throw RemoteError.stale }

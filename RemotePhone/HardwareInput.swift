@@ -193,6 +193,32 @@ final class HardwarePeripherals: ObservableObject {
     var onKeyboardDisconnect: () -> Void = {}
     var onMiddleButton: (_ pressed: Bool) -> Void = { _ in }
     var onAuxiliaryButton: (_ button: AuxiliaryMouseButton, _ pressed: Bool) -> Void = { _, _ in }
+    private var lockedOwner: ObjectIdentifier?
+    private var lockedGeneration: UInt64 = 0
+    private var lockedGate: () -> Bool = { false }
+    private var lockedMove: (Double, Double) -> Void = { _, _ in }
+    private var lockedButton: (String, Bool) -> Void = { _, _ in }
+    private var lockedLost: () -> Void = {}
+    var pointerIsLocked: Bool { lockedOwner != nil && lockedGate() }
+    @discardableResult
+    func claimLockedMouse(owner: AnyObject, gate: @escaping () -> Bool,
+                          move: @escaping (Double, Double) -> Void,
+                          button: @escaping (String, Bool) -> Void, lost: @escaping () -> Void) -> UInt64 {
+        lockedLost()
+        lockedGeneration &+= 1; lockedOwner = ObjectIdentifier(owner)
+        lockedGate = gate; lockedMove = move; lockedButton = button; lockedLost = lost
+        attachMice(); return lockedGeneration
+    }
+    func releaseLockedMouse(owner: AnyObject, generation: UInt64) {
+        guard lockedOwner == ObjectIdentifier(owner), lockedGeneration == generation else { return }
+        lockedGeneration &+= 1; lockedOwner = nil
+        lockedGate = { false }; lockedMove = { _, _ in }; lockedButton = { _, _ in }; lockedLost = {}
+        attachMice()
+    }
+    func deliverLockedMove(x: Double, y: Double, generation: UInt64) {
+        guard lockedGeneration == generation, pointerIsLocked else { return }
+        lockedMove(x, y)
+    }
     private var observers: [NSObjectProtocol] = []
 
     private init() {
@@ -212,7 +238,7 @@ final class HardwarePeripherals: ObservableObject {
             })
         }
         observers.append(center.addObserver(forName: .GCMouseDidDisconnect, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.mouseConnected = !GCMouse.mice().isEmpty }
+            MainActor.assumeIsolated { self?.mouseConnected = !GCMouse.mice().isEmpty; self?.lockedLost() }
         })
         attachMice()
     }
@@ -221,13 +247,39 @@ final class HardwarePeripherals: ObservableObject {
         mouseConnected = !GCMouse.mice().isEmpty
         for mouse in GCMouse.mice() {
             mouse.handlerQueue = .main
+            let generation = lockedGeneration
+            mouse.mouseInput?.mouseMovedHandler = { [weak self] _, x, y in
+                MainActor.assumeIsolated {
+                    self?.deliverLockedMove(x: Double(x), y: Double(y), generation: generation)
+                }
+            }
+            mouse.mouseInput?.leftButton.pressedChangedHandler = { [weak self] _, _, down in
+                MainActor.assumeIsolated {
+                    guard let self, self.lockedGeneration == generation, self.pointerIsLocked else { return }
+                    self.lockedButton("primary", down)
+                }
+            }
+            mouse.mouseInput?.rightButton?.pressedChangedHandler = { [weak self] _, _, down in
+                MainActor.assumeIsolated {
+                    guard let self, self.lockedGeneration == generation, self.pointerIsLocked else { return }
+                    self.lockedButton("secondary", down)
+                }
+            }
             mouse.mouseInput?.middleButton?.pressedChangedHandler = { [weak self] _, _, pressed in
-                MainActor.assumeIsolated { self?.onMiddleButton(pressed) }
+                MainActor.assumeIsolated {
+                    guard let self, self.lockedGeneration == generation else { return }
+                    if self.pointerIsLocked { self.lockedButton("middle", pressed) }
+                    else { self.onMiddleButton(pressed) }
+                }
             }
             for (index, input) in (mouse.mouseInput?.auxiliaryButtons ?? []).enumerated() {
                 guard let button = AuxiliaryMouseButton(auxiliaryIndex: index) else { continue }
                 input.pressedChangedHandler = { [weak self] _, _, pressed in
-                    MainActor.assumeIsolated { self?.onAuxiliaryButton(button, pressed) }
+                    MainActor.assumeIsolated {
+                        guard let self, self.lockedGeneration == generation else { return }
+                        if self.pointerIsLocked { self.lockedButton(button.rawValue, pressed) }
+                        else { self.onAuxiliaryButton(button, pressed) }
+                    }
                 }
             }
         }
