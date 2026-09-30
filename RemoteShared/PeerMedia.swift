@@ -77,6 +77,15 @@ enum LocalMediaRoute {
             localType == "host" && remoteType == "host" &&
             localAddress == link.localAddress && remoteAddress == link.peerAddress
     }
+
+    /// The proof covers one IPv4 address pair, but WebRTC also gathers IPv6 and other interfaces and
+    /// may nominate a same-LAN IPv6 pair that `matches` then rejects. Trickling only the proven
+    /// addresses keeps the only possible pair the proven one.
+    static func allows(candidate sdp: String, address: String) -> Bool {
+        let fields = sdp.split(separator: " ")
+        guard fields.count > 7, fields[6] == "typ", fields[7] == "host" else { return false }
+        return fields[4] == address
+    }
 }
 
 /// The video sender's rate settings (G5). `maxFramerate` follows the session rate, lowered by the
@@ -338,6 +347,7 @@ final class PeerMedia: NSObject {
             #if DEBUG
             guard E2EMedia.allows(candidate: candidate) else { return }
             #endif
+            if let link = localLink, !LocalMediaRoute.allows(candidate: candidate, address: link.peerAddress) { return }
             let value = RTCIceCandidate(sdp: candidate, sdpMLineIndex: line, sdpMid: signal.mid)
             if remoteDescriptionReady {
                 connection.add(value) { [weak self] error in
@@ -727,6 +737,7 @@ extension PeerMedia: RTCPeerConnectionDelegate {
         #if DEBUG
         guard E2EMedia.allows(candidate: candidate.sdp) else { return }
         #endif
+        if let link = localLink, !LocalMediaRoute.allows(candidate: candidate.sdp, address: link.localAddress) { return }
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.closed else { return }
             self.onSignal?(MediaSignal(kind: "candidate", candidate: candidate.sdp, mid: candidate.sdpMid, line: candidate.sdpMLineIndex))

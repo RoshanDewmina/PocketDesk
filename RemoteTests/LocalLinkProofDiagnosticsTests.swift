@@ -178,6 +178,19 @@ final class LocalLinkProofDiagnosticsTests: XCTestCase {
         XCTAssertFalse(matches("10.0.0.115"))
     }
 
+    /// Observed 30 Sep: after the IPv4 proof, WebRTC nominated a same-LAN IPv6 host pair and the host
+    /// ended every session. Only the proven host address may be trickled in either direction.
+    func testLocalModeTricklesOnlyTheProvenHostAddress() {
+        func allows(_ sdp: String) -> Bool { LocalMediaRoute.allows(candidate: sdp, address: "10.0.0.114") }
+        XCTAssertTrue(allows("candidate:842163049 1 udp 2122260223 10.0.0.114 56143 typ host generation 0"))
+        XCTAssertFalse(allows("candidate:1 1 udp 2122262783 2607:fea8:fe00:853d:b109:b0d1:4b55:227a 50000 typ host"))
+        XCTAssertFalse(allows("candidate:2 1 udp 2122197247 100.107.213.92 50001 typ host"))
+        XCTAssertFalse(allows("candidate:3 1 udp 1686052607 10.0.0.114 50002 typ srflx raddr 10.0.0.114 rport 50002"))
+        XCTAssertFalse(allows("candidate:4 1 udp 41885439 10.0.0.114 3478 typ relay"))
+        XCTAssertFalse(allows("candidate:5 1 tcp 1518280447 10.0.0.1140 9 typ host tcptype active"))
+        XCTAssertFalse(allows("garbage"))
+    }
+
     func testStageSummaryCarriesNoAddresses() {
         var stage = LocalProofStage()
         stage.monitorReady = true; stage.peerSet = true; stage.challengesSent = 32; stage.packetsReceived = 32
