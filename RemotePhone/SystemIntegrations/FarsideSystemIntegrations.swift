@@ -215,6 +215,7 @@ struct FarsideSystemRoutes: ViewModifier {
         let connection = model.connection
         guard connection.invitation != nil, !connection.connected, !connection.isRunning else { return }
         model.error = ""
+        model.prepareConnection(mode: .picture)
         onboarding.beforeConnect { connection.start() }
     }
 }
