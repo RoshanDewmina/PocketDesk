@@ -42,5 +42,21 @@
   "art-lost": {
     "w": 640,
     "h": 400
+  },
+  "art-feat-pad": {
+    "w": 360,
+    "h": 200
+  },
+  "art-feat-zoom": {
+    "w": 360,
+    "h": 200
+  },
+  "art-feat-voice": {
+    "w": 360,
+    "h": 200
+  },
+  "art-feat-trust": {
+    "w": 360,
+    "h": 200
   }
 }

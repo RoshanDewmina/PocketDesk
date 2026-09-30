@@ -38,8 +38,8 @@ function og(cv: HTMLCanvasElement, quiet: { x: number; y: number; w: number; h: 
 /** Build-time art: the "How it works" dither cards and the 404 scene. Returns a PNG data URL. */
 function art(key: string) {
   const cv = document.createElement("canvas");
-  if (key.startsWith("art-step")) {
-    dither(cv, ART[key.replace("art-", "")]!, 360, 170);
+  if (key.startsWith("art-step") || key.startsWith("art-feat")) {
+    dither(cv, ART[key.replace("art-", "")]!, 360, key.startsWith("art-feat") ? 200 : 170);
     return cv.toDataURL("image/png");
   }
   // 404: the hand reaches, the pointer isn't there.

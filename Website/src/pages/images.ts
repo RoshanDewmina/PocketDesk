@@ -72,6 +72,10 @@ export const ARTS: ArtSpec[] = [
   { key: "art-step1", w: 360, h: 170, ext: "png" },
   { key: "art-step2", w: 360, h: 170, ext: "png" },
   { key: "art-step3", w: 360, h: 170, ext: "png" },
+  { key: "art-feat-pad", w: 360, h: 200, ext: "png" },
+  { key: "art-feat-zoom", w: 360, h: 200, ext: "png" },
+  { key: "art-feat-voice", w: 360, h: 200, ext: "png" },
+  { key: "art-feat-trust", w: 360, h: 200, ext: "png" },
   { key: "art-lost", w: 640, h: 400, ext: "webp" },
 ];
 

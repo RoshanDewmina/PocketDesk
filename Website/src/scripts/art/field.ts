@@ -21,7 +21,11 @@ export type FieldOptions = {
   rippleWidth?: number;
   rippleLife?: number;
   seed?: number;
+  /** Free-floating stars per 10,000 px² that drift slowly left and shift with `parallax` (hero starfield). */
+  stars?: number;
 };
+
+type Star = { x: number; y: number; z: number; ph: number };
 
 const BONE = "rgb(237,232,223)";
 const MID = "#F7A57F";
@@ -44,6 +48,9 @@ export class Field {
   rows = 1;
   dpr = 1;
   mouse = { x: -999, y: -999, a: 0 };
+  /** -1…1 on each axis; near stars move up to ~16 px with it. */
+  parallax = { x: 0, y: 0 };
+  private stars: Star[] = [];
   private dust = new Float32Array(0);
   private damp: Float32Array | null = null;
   private quietRects: Rect[] = [];
@@ -77,6 +84,8 @@ export class Field {
     const share = this.o.dust ?? 0.06;
     this.dust = new Float32Array(this.cols * this.rows);
     for (let i = 0; i < this.dust.length; i++) this.dust[i] = rand() < share ? 0.4 + rand() * 0.6 : 0;
+    const count = Math.round(((this.W * this.H) / 10000) * (this.o.stars ?? 0));
+    this.stars = Array.from({ length: count }, () => ({ x: rand() * this.W, y: rand() * this.H, z: 0.25 + rand() * 0.75, ph: rand() * 6.28 }));
     this.buildDamp();
   }
 
@@ -202,5 +211,36 @@ export class Field {
     ctx.fill(pM);
     ctx.fillStyle = EMBER;
     ctx.fill(pE);
+    if (this.stars.length) this.drawStars(t, d);
+  }
+
+  /** The starfield: small bone dots between the grid, kept out of the art and out from behind text. */
+  private drawStars(t: number, d: Uint8ClampedArray) {
+    const { ctx, cols, rows, cell, damp, W, H } = this;
+    const near = new Path2D();
+    const far = new Path2D();
+    const TAU = Math.PI * 2;
+    for (const s of this.stars) {
+      let x = (s.x - t * (3 + 9 * s.z) + this.parallax.x * 16 * s.z) % W;
+      if (x < 0) x += W;
+      const y = s.y + this.parallax.y * 10 * s.z;
+      const gx = Math.floor(x / cell);
+      const gy = Math.floor(y / cell);
+      if (gx < 0 || gy < 0 || gx >= cols || gy >= rows) continue;
+      const i = gy * cols + gx;
+      if (damp && damp[i]! < 0.9) continue;
+      if (d[i * 4]! > 12 || d[i * 4 + 2]! > 12) continue;
+      const tw = 0.6 + 0.4 * Math.sin(t * (0.8 + s.z) + s.ph);
+      const r = (0.45 + 0.75 * s.z) * tw;
+      const P = s.z > 0.65 ? near : far;
+      P.moveTo(x + r, y);
+      P.arc(x, y, r, 0, TAU);
+    }
+    ctx.fillStyle = BONE;
+    ctx.globalAlpha = 0.85;
+    ctx.fill(near);
+    ctx.globalAlpha = 0.45;
+    ctx.fill(far);
+    ctx.globalAlpha = 1;
   }
 }
