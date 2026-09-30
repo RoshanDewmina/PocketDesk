@@ -169,10 +169,10 @@ const pricing = html`<section class="sec" id="pricing" aria-labelledby="pricing-
         <a class="cta" href="#beta">${C.cta}<span class="arr" aria-hidden="true">${icon.arrow}</span></a>
       </article>
       <article class="plan any" aria-labelledby="plan-any">
-        <p class="cap">Anywhere <span class="badge">Planned</span></p>
+        <p class="cap">Anywhere <span class="badge">${P.final ? "Coming soon" : "Planned"}</span></p>
         <h3 id="plan-any">Past your <em>front door</em></h3>
         <p class="amt">${amount(P.monthly)}<small>a month</small></p>
-        <p class="per">or ${P.yearly} a year, about ${P.yearlyPerMonth} a month</p>
+        <p class="per">or ${P.yearly} a year, about ${P.yearlyPerMonth} a month · save ${P.yearlySaving}</p>
         <ul role="list">
           <li>Everything in Free at home</li>
           <li>Use your Mac away from home, on mobile data or any Wi‑Fi</li>
@@ -188,7 +188,7 @@ const pricing = html`<section class="sec" id="pricing" aria-labelledby="pricing-
 const QAS: QA[] = [
   {
     q: "Is it really free?",
-    a: html`<p>Yes, when your iPhone or iPad and your Mac are on the same Wi‑Fi network. There’s no account and no ads. To use your Mac away from home you’ll need the Anywhere plan: ${P.monthly} a month or ${P.yearly} a year (planned), after a ${P.trialDays}-day free trial.</p>`,
+    a: html`<p>Yes, when your iPhone or iPad and your Mac are on the same Wi‑Fi network. There’s no account and no ads. To use your Mac away from home you’ll need the Anywhere plan: ${P.monthly} a month or ${P.yearly} a year${P.final ? "" : " (planned)"}, after a ${P.trialDays}-day free trial.</p>`,
   },
   {
     q: "What do I need?",

@@ -22,6 +22,7 @@ const COLS = ["Farside", "Astropad Workbench", "Jump Desktop", "Screens 5", "Rem
 type Row = { label: string; cells: [Html | string, Html | string, Html | string, Html | string, Html | string] };
 
 const planned = (s: string) => html`${s} <span class="tag">Planned</span>`;
+const priced = (s: string) => (P.final ? s : planned(s));
 const beta = (s: string) => html`${s} <span class="tag">Beta</span>`;
 const vendor = (s: string) => html`${s} <span class="tag">Vendor claim</span>`;
 const NL = html`<span class="nl">Not listed</span>`;
@@ -97,7 +98,7 @@ const ROWS: Row[] = [
   {
     label: "Paid plans",
     cells: [
-      planned(`Anywhere: ${P.monthly} a month or ${P.yearly} a year, ${P.trialDays}-day free trial`),
+      priced(`Anywhere: ${P.monthly} a month or ${P.yearly} a year, ${P.trialDays}-day free trial`),
       "Monthly or yearly subscription",
       "One-time app purchase, plus a per-computer Connect subscription for relay access",
       "Subscription or lifetime purchase",
@@ -131,7 +132,7 @@ const QAS: QA[] = [
   },
   {
     q: "Is Farside free?",
-    a: html`<p>Yes, without a time limit, when your iPhone or iPad and your Mac are on the same network. The Anywhere plan (planned at ${P.monthly} a month or ${P.yearly} a year, ${P.trialDays}-day free trial) adds access over the internet.</p>`,
+    a: html`<p>Yes, without a time limit, when your iPhone or iPad and your Mac are on the same network. The Anywhere plan (${P.final ? "" : "planned at "}${P.monthly} a month or ${P.yearly} a year, ${P.trialDays}-day free trial) adds access over the internet.</p>`,
   },
   {
     q: "Does Farside support Apple Pencil or direct touch?",

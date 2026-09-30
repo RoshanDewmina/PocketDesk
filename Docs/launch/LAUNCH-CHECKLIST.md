@@ -147,6 +147,7 @@ Checkboxes are for you to tick. "Done when" is an observable check.
 | 8.2 | **Tue 17 Nov: release** in App Store Connect (it can take up to 24 hours to appear on the App Store [V]); switch the website and download link live; publish Mac 1.0 and appcast | O | App visible in the storefronts you selected |
 | 8.3 | Watch 72 hours: crashes (Xcode Organizer), server health, Cloudflare relay bytes per credential, purchase and refund notifications, support inbox | B | Daily log |
 | 8.4 | Hotfix window Wed 18 to Fri 20 Nov; expedited review is only for critical bug fixes [V] | E | |
+| 8.5 | Put a dated calendar task for **Wed 17 Nov 2027** (launch + 12 months; move it if launch moves): delete every row in the `farside-waitlist` D1 `waitlist` table (`DELETE FROM waitlist;`). The privacy policy promises this and nothing in code does it | O | Table empty; date recorded here |
 
 ## 4. Apple Developer Program and App Store Connect: steps only the owner can do
 

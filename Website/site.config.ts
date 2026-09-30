@@ -50,9 +50,9 @@ export const config = {
     betaEmail: "beta@getfarside.com",
     phone: null,
     postalAddress: null,
-    legalName: null,
-    governingLaw: null,
-    responseTime: null,
+    legalName: "Roshan Silva Pulle",
+    governingLaw: "the Province of Ontario and the federal laws of Canada applicable there",
+    responseTime: "within two business days",
   } satisfies Contact as Contact,
 
   launch: {
@@ -74,18 +74,18 @@ export const config = {
     tiktok: null as string | null,
   },
 
-  /** Proposed pricing (PRODUCT D28, SUBSCRIPTION-SETUP.md). Shown as planned, in Canadian dollars. */
+  /** Farside Anywhere pricing in Canadian dollars, locked by the owner on 30 Sep 2026. */
   pricing: {
-    /** false = draft: offers carry a "planned price" note in JSON-LD and the page says "planned". */
-    final: false,
-    monthly: "CA$5.99",
-    yearly: "CA$49.99",
-    yearlyPerMonth: "CA$4.17",
-    yearlySaving: "30%",
+    /** false = draft: offers carry a "planned price" note in JSON-LD and the pages say "planned". */
+    final: true,
+    monthly: "CA$7.99",
+    yearly: "CA$59.99",
+    yearlyPerMonth: "CA$5.00",
+    yearlySaving: "37%",
     trialDays: 7,
     currency: "CAD",
-    monthlyAmount: "5.99",
-    yearlyAmount: "49.99",
+    monthlyAmount: "7.99",
+    yearlyAmount: "59.99",
   },
 
   /**
@@ -121,8 +121,8 @@ export const config = {
   },
 
   /** Last content review of the legal pages. */
-  legalUpdated: "29 September 2026",
-  lastmod: "2026-09-29",
+  legalUpdated: "30 September 2026",
+  lastmod: "2026-09-30",
 };
 
 export const isPlaceholderSiteUrl = () => config.SITE_URL === PLACEHOLDER_SITE_URL;

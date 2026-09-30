@@ -160,7 +160,7 @@ function llmsFile() {
 Key facts:
 
 - Free on the same local network as the Mac, with no account and no ads.
-- The Anywhere plan adds access over the internet through an encrypted relay: planned at ${P.monthly} a month or ${P.yearly} a year, with a ${P.trialDays}-day free trial, sold only inside the iPhone and iPad app through Apple.
+- The Anywhere plan adds access over the internet through an encrypted relay: ${P.final ? "" : "planned at "}${P.monthly} a month or ${P.yearly} a year, with a ${P.trialDays}-day free trial, sold only inside the iPhone and iPad app through Apple.
 - The Mac helper is a free download from this website, signed with an Apple Developer ID and notarized by Apple. The iPhone and iPad app will be on the App Store.
 - Planned requirements: ${R.mac}; ${R.iphone}; ${R.ipad}.
 - "Agent needs you" alerts for AI coding agents running on the Mac arrive as a beta; alerts carry no prompts, file names or screen content.
