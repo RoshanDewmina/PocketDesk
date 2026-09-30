@@ -28,12 +28,12 @@ enum SharedCaptureScopePolicy {
     }
 
     static func permits(_ action: String, kind: CaptureScopeFrame.Kind) -> Bool {
-        kind == .display || ["release", "heartbeat", "pause", "resume"].contains(action)
+        kind == .display || ["release", "heartbeat", "pause", "resume", "viewOnly"].contains(action)
     }
 
     static func features(_ features: [String], kind: CaptureScopeFrame.Kind) -> [String] {
         guard kind != .display else { return features }
-        let allowed = Set([SessionFeature.captureScope, SessionFeature.backgroundPause,
+        let allowed = Set([SessionFeature.captureScope, SessionFeature.backgroundPause, SessionFeature.liveViewOnly,
                            SessionFeature.ladder, SessionFeature.macVitals])
         return features.filter { allowed.contains($0) }
     }
