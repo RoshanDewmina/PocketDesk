@@ -100,6 +100,14 @@ final class PhoneRemoteModel: ObservableObject {
     let pointerOverlay = PointerOverlayModel()
     let clipboard = PhoneClipboard()
     @Published private(set) var hostFeatures: Set<String> = []
+    @Published private(set) var sessionMode: SessionMode = .picture
+    @Published private(set) var requestedMode: SessionMode = .picture
+    @Published private(set) var pendingModeSwitch: SessionMode?
+    @Published private(set) var couchRefusal: SessionModeRefusal?
+    @Published private(set) var couchStalled = false
+    private var couchAck = CouchAckWatchdog()
+    private var lastModeReason: String?
+    private var modeSwitchTimeout: Task<Void, Never>?
     @Published private(set) var resumeState: ResumeState = .none
     /// While a live session is held in the background: when Farside lets go of the Mac.
     @Published private(set) var backgroundHoldEndsAt: Date?
@@ -282,8 +290,64 @@ final class PhoneRemoteModel: ObservableObject {
         #if DEBUG
         if inputProbe != nil { return !privacyShield && !contentConcealed }
         #endif
-        return !privacyShield && !contentConcealed && connection.connected && controlAllowed && fresh && captureHealthy && geometryEpoch > 0
-            && (!nativeInteractionSupported || (inputToken != nil && ProcessInfo.processInfo.systemUptime - tokenReceivedAt < 1))
+        let now = ProcessInfo.processInfo.systemUptime
+        return PhoneControlGate.canControl(.init(
+            mode: sessionMode, privacyShield: privacyShield, contentConcealed: contentConcealed,
+            connected: connection.connected, controlAllowed: controlAllowed, fresh: fresh, captureHealthy: captureHealthy,
+            hostModeIsCouch: sessionMode == .couch, statusAge: lastCaptureHealth > 0 ? now - lastCaptureHealth : .infinity,
+            geometryEpoch: geometryEpoch, nativeInteractionSupported: nativeInteractionSupported,
+            hasToken: inputToken != nil, tokenAge: now - tokenReceivedAt))
+    }
+
+    // MARK: Couch mode
+
+    var couchSwitchAvailable: Bool {
+        connection.connected && hostFeatures.contains(SessionFeature.couch) && connection.provenLocalLinkActive
+            && sessionMode == .picture
+    }
+
+    func prepareConnection(mode: SessionMode) {
+        requestedMode = mode
+        connection.sessionModeRequest = mode
+        couchRefusal = nil
+    }
+
+    func clearCouchRefusal() { couchRefusal = nil }
+
+    /// Asks the Mac to switch this session's mode; the Mac's next `capture` status confirms it.
+    @discardableResult
+    func requestMode(_ mode: SessionMode) -> Bool {
+        guard connection.connected, hostFeatures.contains(SessionFeature.couch), mode != sessionMode,
+              pendingModeSwitch == nil, mode != .couch || couchSwitchAvailable else { return false }
+        cancelInput()
+        guard connection.sendControl(RemoteAction(action: RemoteAction.modeAction, epoch: geometryEpoch,
+                                                  mode: mode.rawValue)) else { return false }
+        pendingModeSwitch = mode
+        if mode == .picture { showSessionNotice(CouchCopy.showingPicture) }
+        modeSwitchTimeout?.cancel()
+        modeSwitchTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, let self, self.pendingModeSwitch == mode else { return }
+            self.pendingModeSwitch = nil
+        }
+        return true
+    }
+
+    private func setSessionMode(_ mode: SessionMode) {
+        if mode != sessionMode {
+            couchAck.reset()
+            couchStalled = false
+            cancelInput()
+            sessionMode = mode
+        }
+        connection.sessionModeRequest = mode
+        if pendingModeSwitch == mode { clearPendingModeSwitch() }
+    }
+
+    private func clearPendingModeSwitch() {
+        pendingModeSwitch = nil
+        modeSwitchTimeout?.cancel()
+        modeSwitchTimeout = nil
     }
 
     /// The Mac accepts `moveTo`, triple-click counts and hardware modifier flags on pointer actions.
@@ -296,6 +360,7 @@ final class PhoneRemoteModel: ObservableObject {
     private var extendedKeyNoticeShown = false
 
     private static let pointerActions: Set<String> = ["move", "moveTo", "click", "right", "double", "middle", "dragDown"]
+    private static let couchPressActions: Set<String> = ["click", "double", "right", "middle", "dragDown"]
 
     // MARK: Display selection
 
@@ -538,6 +603,12 @@ final class PhoneRemoteModel: ObservableObject {
         dragging = true
         explicitHoldDeadline = explicit ? ProcessInfo.processInfo.systemUptime + Self.explicitHoldLimit : nil
     }
+
+    /// The token stays valid so a test isolates the Mac status age.
+    func ageCouchStatusForTesting(by seconds: TimeInterval) {
+        lastCaptureHealth -= seconds
+        tokenReceivedAt -= min(seconds, 0.5)
+    }
     #endif
 
     var clipboardSupported: Bool { hostFeatures.contains(SessionFeature.clipboardText) }
@@ -670,6 +741,9 @@ final class PhoneRemoteModel: ObservableObject {
                            probeTextFocus: Bool = false, pointerSync: PointerSync? = nil) -> Bool {
         textFocusProbe.invalidate()
         guard canControl else { return false }
+        // Moves still go while the Mac is behind, so it can catch up; presses wait.
+        if sessionMode == .couch, Self.couchPressActions.contains(name),
+           couchAck.stalled(at: ProcessInfo.processInfo.systemUptime) { return false }
         let focusProbe = probeTextFocus && nativeInteractionSupported && !dragging && activeHold == nil
             ? textFocusProbe.begin(epoch: geometryEpoch, at: ProcessInfo.processInfo.systemUptime) : nil
         let envelope = nativeInteractionSupported
@@ -741,6 +815,9 @@ final class PhoneRemoteModel: ObservableObject {
             let accepted = sendInput("move", x: delta.width, y: delta.height,
                                      pointerSync: ordinal.map { PointerSync(move: $0) })
             if accepted {
+                if sessionMode == .couch, let ordinal {
+                    couchAck.sent(ordinal: ordinal, at: ProcessInfo.processInfo.systemUptime)
+                }
                 pointerOverlay.localMove(ordinal: ordinal, delta: delta, follow: true)
                 if !dragging && !pointerOverlay.hostSupported {
                     pointerLocator.moved(at: ProcessInfo.processInfo.systemUptime)
@@ -1105,7 +1182,10 @@ final class PhoneRemoteModel: ObservableObject {
                 pointerLocator.receive(action, at: ProcessInfo.processInfo.systemUptime, sourceSize: sourceSize)
             }
         case "pointer":
-            if action.epoch == geometryEpoch, let sync = action.pointerSync { pointerOverlay.receive(sync) }
+            if action.epoch == geometryEpoch, let sync = action.pointerSync {
+                pointerOverlay.receive(sync)
+                if let applied = sync.applied { couchAck.acknowledged(through: applied) }
+            }
         case "capture":
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             hostFeatures = Set(action.features ?? [])
@@ -1138,6 +1218,29 @@ final class PhoneRemoteModel: ObservableObject {
             captureHealthy = action.x == 1
             lastCaptureHealth = captureHealthy ? ProcessInfo.processInfo.systemUptime : 0
             if !captureHealthy { pointerLocator.clear(); release() }
+            // A status without a feature list (the host's capture-start preflight) says nothing about the mode.
+            if action.features != nil {
+                switch PhoneModeResolver.resolve(requested: requestedMode, features: hostFeatures,
+                                                 statusMode: action.mode, reason: action.modeReason) {
+                case .couch: setSessionMode(.couch)
+                case .picture: setSessionMode(.picture)
+                case .couchUnsupported:
+                    if requestedMode == .couch { requestedMode = .picture; showSessionNotice(CouchCopy.updateMac) }
+                    setSessionMode(.picture)
+                case .refused(let reason):
+                    couchRefusal = reason
+                    sessionEndReason = .error
+                    release()
+                    connection.stop()
+                    return
+                }
+                if let reason = action.modeReason.flatMap(SessionModeRefusal.init(rawValue:)),
+                   action.mode != SessionModeStatus.refused {
+                    clearPendingModeSwitch()
+                    if action.modeReason != lastModeReason { showSessionNotice(CouchCopy.refusal(reason)) }
+                }
+                lastModeReason = action.modeReason
+            }
             if let display = action.display, display != currentDisplayID { currentDisplayID = display }
             if displaySelectionSupported && !displaysRequested { requestDisplays() }
             let region = Self.croppedRegion(action.captureRegion, statusEpoch: action.epoch,
@@ -1156,6 +1259,8 @@ final class PhoneRemoteModel: ObservableObject {
             }
             pointerOverlay.reset(sourceSize: sourceSize)
             geometryEpoch = action.epoch
+            couchAck.reset()
+            couchStalled = false
             captureRegion = nil
             busy = nil
             ladder = nil
@@ -1272,6 +1377,19 @@ final class PhoneRemoteModel: ObservableObject {
             pointerLocator.clear()
             release()
         }
+        if sessionMode == .couch {
+            if captureHealthy && now - lastCaptureHealth > PhoneControlGate.couchStatusLimit {
+                captureHealthy = false
+                pointerLocator.clear()
+                release()
+            }
+            let stalled = couchAck.stalled(at: now)
+            if stalled && !couchStalled {
+                cancelInput()
+                showSessionNotice(CouchCopy.notAnswering)
+            }
+            if couchStalled != stalled { couchStalled = stalled }
+        }
         if activeHold != nil {
             if !canControl || explicitHoldDeadline.map({ now >= $0 }) == true {
                 cancelInput()
@@ -1347,6 +1465,12 @@ final class PhoneRemoteModel: ObservableObject {
         departureReason = nil
         clipboard.cancel()
         resumeWatchdog?.cancel(); resumeWatchdog = nil
+        // couchRefusal and requestedMode outlive the session: Home explains and retries from them.
+        sessionMode = .picture
+        clearPendingModeSwitch()
+        couchStalled = false
+        couchAck.reset()
+        lastModeReason = nil
     }
 }
 
