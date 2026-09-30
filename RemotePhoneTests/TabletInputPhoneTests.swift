@@ -65,4 +65,25 @@ final class TabletInputPhoneTests: XCTestCase {
         try model.connection.receiveInputFixtureForTesting(ControlPacket(session: "pencil", sequence: 2, action: RemoteAction(action: "heartbeat", epoch: 8), input: context))
         XCTAssertFalse(model.dragging); XCTAssertFalse(model.canControl); XCTAssertTrue(model.connection.connected)
     }
+    func testUnderlyingCanvasUpdateCannotStealLockedKeyboardDisconnectOrFocus() async {
+        let hardware = HardwarePeripherals.shared
+        let locked = NativeTrackpadInputView(), underlying = NativeTrackpadInputView(), owner = NSObject()
+        var keys = 0, cleared = 0
+        locked.keyboard.send = { _, _ in keys += 1; return true }
+        locked.keyboard.modifiersChanged = { modifiers in if modifiers.isEmpty { cleared += 1 } }
+        let generation = hardware.claimLockedMouse(owner: owner, gate: { true }, move: { _, _ in }, button: { _, _ in }, lost: {},
+            keyboardOwner: locked, keyboardDisconnect: { locked.keyboard.releaseAll() })
+        defer { hardware.releaseLockedMouse(owner: owner, generation: generation) }
+        XCTAssertTrue(locked.canBecomeFirstResponder); XCTAssertFalse(underlying.canBecomeFirstResponder)
+        XCTAssertTrue(locked.keyboard.pressBegan(usage: 4, flags: [.shift], at: ProcessInfo.processInfo.systemUptime))
+        underlying.bindPeripheralHandlers(); underlying.setKeyboardFocus(true)
+        hardware.deliverKeyboardDisconnect()
+        XCTAssertTrue(locked.keyboard.heldModifiers.isEmpty); XCTAssertEqual(cleared, 1)
+        let sent = keys
+        try? await Task.sleep(for: .milliseconds(650))
+        XCTAssertEqual(keys, sent, "Disconnect cancels the actual locked router's repeat timer")
+        hardware.releaseLockedMouse(owner: owner, generation: generation)
+        XCTAssertTrue(underlying.canBecomeFirstResponder)
+    }
+
 }

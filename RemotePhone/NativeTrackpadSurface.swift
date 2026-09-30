@@ -155,6 +155,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     }
 
     func bindPeripheralHandlers() {
+        guard HardwarePeripherals.shared.keyboardFocusAllowed(for: self) else { return }
             HardwarePeripherals.shared.onMiddleButton = { [weak self] pressed in
                 guard let self, !pressed else { return }
                 self.pointer.middleClick()
@@ -168,7 +169,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
 
     // MARK: - Hardware keyboard
 
-    override var canBecomeFirstResponder: Bool { true }
+    override var canBecomeFirstResponder: Bool { HardwarePeripherals.shared.keyboardFocusAllowed(for: self) }
 
     /// iOS reads this from the first responder. Its three-finger undo/redo swipes, copy/paste
     /// pinches and editing-bar tap would otherwise compete with the Mac's three-finger gestures.
@@ -186,7 +187,8 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     /// Asynchronously, so SwiftUI finishes the update (a closing text field) before focus moves.
     private func claimKeyboardFocus() {
         DispatchQueue.main.async { [weak self] in
-            guard let self, self.wantsKeyboardFocus, self.window != nil, !self.isFirstResponder else { return }
+            guard let self, self.wantsKeyboardFocus, self.window != nil, !self.isFirstResponder,
+                  HardwarePeripherals.shared.keyboardFocusAllowed(for: self) else { return }
             _ = self.becomeFirstResponder()
         }
     }

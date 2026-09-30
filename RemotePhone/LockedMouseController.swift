@@ -151,7 +151,8 @@ final class LockedMouseController: UIViewController {
         generation = HardwarePeripherals.shared.claimLockedMouse(owner: self, gate: { [weak self] in self?.actualLock == true },
             move: { [weak self] x, y in guard let self else { return }; self.router.move(x: x, y: y, gain: self.gain) },
             button: { [weak self] name, down in self?.button(name, down: down) },
-            lost: { [weak self] in self?.finish("Mouse disconnected or another session took control.") })
+            lost: { [weak self] in self?.finish("Mouse disconnected or another session took control.") },
+            keyboardOwner: input, keyboardDisconnect: { [weak self] in self?.input.keyboard.releaseAll() })
         input.setKeyboardFocus(true); setNeedsUpdateOfPrefersPointerLocked(); refreshLock()
         refusal = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(700))
