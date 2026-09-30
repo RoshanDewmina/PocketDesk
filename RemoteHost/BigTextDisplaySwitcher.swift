@@ -116,7 +116,7 @@ final class DisplayReconfigurationMonitor {
     private static let callback: CGDisplayReconfigurationCallBack = { display, flags, context in
         guard let context else { return }
         let event = DisplayReconfigurationEvent(display: display, flags: flags)
-        nonisolated(unsafe) let monitor = Unmanaged<DisplayReconfigurationMonitor>.fromOpaque(context).takeUnretainedValue()
+        let monitor = Unmanaged<DisplayReconfigurationMonitor>.fromOpaque(context).takeUnretainedValue()
         DispatchQueue.main.async { MainActor.assumeIsolated { monitor.deliver(event) } }
     }
 }
