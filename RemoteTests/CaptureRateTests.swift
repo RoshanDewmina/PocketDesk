@@ -193,8 +193,8 @@ final class CaptureRateTuningTests: XCTestCase {
             XCTAssertEqual(StreamTuning.resolve(defaults: defaults).targetFPSOverride, expected, "\(value)")
         }
 
-        XCTAssertEqual(StreamTuning.experimentKeys.count, 14)
-        XCTAssertEqual(Set(StreamTuning.experimentKeys).count, 14, "every experiment key is listed once")
+        XCTAssertEqual(StreamTuning.experimentKeys.count, 15)
+        XCTAssertEqual(Set(StreamTuning.experimentKeys).count, 15, "every experiment key is listed once")
         let newKeys = [StreamTuning.highRefreshCaptureKey, StreamTuning.targetFPSKey,
                        StreamTuning.highRefreshNoAdaptationKey, StreamTuning.capToClientPixelsKey,
                        StreamTuning.viewportCaptureKey, StreamTuning.ladderKey]

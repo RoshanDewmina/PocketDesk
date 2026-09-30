@@ -355,6 +355,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     // MARK: - Touches
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        VideoPresentationProbe.noteUserActivity()
         if let event { keyboard.updateModifiers(event.modifierFlags) }
         for touch in touches where touch.type == .indirectPointer {
             let button = pointerButton(event)
@@ -378,6 +379,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        VideoPresentationProbe.noteUserActivity()
         for touch in touches where touch.type == .indirectPointer {
             pointer.moved(to: touch.location(in: self), time: touch.timestamp)
         }

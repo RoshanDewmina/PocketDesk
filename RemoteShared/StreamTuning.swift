@@ -54,7 +54,8 @@ struct StreamTuning: Equatable {
     /// state), so it would cut the rate on every queueing spike; the app's own ladder decides instead.
     var highRefreshNoAdaptation = true
     /// Newest frame wins: drop a frame at submit while this many are already inside VideoToolbox
-    /// (Chrome Remote Desktop keeps one pending). Nil lets frames queue as today.
+    /// (Chrome Remote Desktop keeps one pending). Nil lets frames queue. Tuned default 1 (efficiency
+    /// audit P1); `NewestFrameWinsSwitch` turns it off at runtime from Settings → Diagnostics.
     var encoderMaxInFlight: Int?
     /// Cap the capture long edge to the client's advertised screen pixels (reduction only).
     var capToClientPixels = true
@@ -62,14 +63,21 @@ struct StreamTuning: Equatable {
     var viewportCapture = true
     /// G12: let the ladder step the rate and size down under load and report the busy state.
     var ladder = true
+    /// Phone (efficiency audit P2): with `presentAtDisplayMaximum`, the video view drops to 30 Hz while
+    /// no frame or touch has arrived for a moment and returns to its maximum on the next one.
+    var idleVideoRefresh = true
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
     }
 
-    static let tuned = StreamTuning(playoutDelayMinMs: 0, playoutDelayMaxMs: 0, videoPacing: nil,
-                                    qualityBitrates: true, bandwidthHeadroom: 1, degradationPreference: .maintainResolution,
-                                    encoderRestart: true, presentAtDisplayMaximum: true)
+    static let tuned: StreamTuning = {
+        var tuning = StreamTuning(playoutDelayMinMs: 0, playoutDelayMaxMs: 0, videoPacing: nil,
+                                  qualityBitrates: true, bandwidthHeadroom: 1, degradationPreference: .maintainResolution,
+                                  encoderRestart: true, presentAtDisplayMaximum: true)
+        tuning.encoderMaxInFlight = 1
+        return tuning
+    }()
     static let legacy: StreamTuning = {
         var tuning = StreamTuning(playoutDelayMinMs: nil, playoutDelayMaxMs: nil, videoPacing: nil,
                                   qualityBitrates: false, bandwidthHeadroom: 1, degradationPreference: nil,
@@ -81,6 +89,7 @@ struct StreamTuning: Equatable {
         tuning.capToClientPixels = false
         tuning.viewportCapture = false
         tuning.ladder = false
+        tuning.idleVideoRefresh = false
         return tuning
     }()
 
@@ -98,11 +107,12 @@ struct StreamTuning: Equatable {
     static let viewportCaptureKey = "PocketDeskViewportCapture"
     static let ladderKey = "PocketDeskLadder"
     static let encoderMaxInFlightKey = "PocketDeskEncoderMaxInFlight"
+    static let idleVideoRefreshKey = "PocketDeskIdleVideoRefresh"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
-                                 viewportCaptureKey, ladderKey, encoderMaxInFlightKey]
+                                 viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -161,8 +171,12 @@ struct StreamTuning: Equatable {
             tuning.ladder = defaults.bool(forKey: ladderKey)
         }
         if defaults.object(forKey: encoderMaxInFlightKey) != nil {
+            // 0 (or anything outside 1…8) lets frames queue, as before the default changed.
             let limit = defaults.integer(forKey: encoderMaxInFlightKey)
             tuning.encoderMaxInFlight = (1...8).contains(limit) ? limit : nil
+        }
+        if defaults.object(forKey: idleVideoRefreshKey) != nil {
+            tuning.idleVideoRefresh = defaults.bool(forKey: idleVideoRefreshKey)
         }
         return tuning
     }
@@ -207,7 +221,14 @@ struct StreamTuning: Equatable {
         if !viewportCapture { parts.append("whole-display capture") }
         if !ladder { parts.append("no ladder") }
         if let encoderMaxInFlight { parts.append("max in-flight \(encoderMaxInFlight)") }
+        if presentAtDisplayMaximum && !idleVideoRefresh { parts.append("no idle refresh") }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
+    }
+
+    /// `summary` plus the runtime switches, as recorded in statistics samples and diagnostics.
+    var liveSummary: String {
+        guard encoderMaxInFlight != nil, !NewestFrameWinsSwitch.isOn else { return summary }
+        return summary + " · newest-frame-wins off"
     }
 
     private static func name(_ preference: RTCDegradationPreference) -> String {

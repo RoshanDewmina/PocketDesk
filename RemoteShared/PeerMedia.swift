@@ -589,7 +589,7 @@ final class PeerMedia: NSObject {
         var stats = StreamStatsReport(role: isHost ? "host" : "phone", previous: previousSample,
                                       current: sample, counters: previousSample == nil ? nil : counts)
         stats.captureMaximumDimension = captureMaximumDimension
-        stats.tuning = tuning.summary
+        stats.tuning = tuning.liveSummary
         stats.thermalState = ProcessInfo.processInfo.thermalState.rawValue
         stats.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
         if isHost {

@@ -245,6 +245,7 @@ final class RemoteHostModel: ObservableObject {
             curtainStatus: Self.curtainStatus(curtainState, displays: NSScreen.screens.count),
             agentAlerts: agentAlerts.isOn,
             agentAlertsStatus: agentAlerts.statusLine(),
+            newestFrameWins: NewestFrameWinsSwitch.isOn,
             crashLoopStopped: crashLoopStopped,
             displays: displays.map { HostDisplayOption(id: $0.displayID, name: Self.displayName(for: $0.displayID)) },
             selectedDisplayID: selected,
@@ -794,6 +795,14 @@ final class RemoteHostModel: ObservableObject {
         Task { @MainActor [weak self] in await self?.agentAlerts.setEnabled(enabled) }
     }
 
+    /// Takes effect at the next encoded frame; no reconnect needed.
+    func setNewestFrameWins(_ enabled: Bool) {
+        guard NewestFrameWinsSwitch.isOn != enabled else { return }
+        NewestFrameWinsSwitch.isOn = enabled
+        events.record(.settings, "Newest frame wins \(enabled ? "on" : "off")")
+        objectWillChange.send()
+    }
+
     func resetAgentAlertLink() {
         agentAlerts.resetLink()
     }
@@ -864,7 +873,7 @@ final class RemoteHostModel: ObservableObject {
         snapshot.route = connection.connected ? connection.diagnostics : nil
         snapshot.streamQuality = capture.appliedQuality?.title
         snapshot.stream = latestSenderStatistics.map(Self.streamDescription)
-        snapshot.tuning = StreamTuning.current.summary
+        snapshot.tuning = StreamTuning.current.liveSummary
         snapshot.events = events.entries
         return HostDiagnosticsReport.render(snapshot)
     }

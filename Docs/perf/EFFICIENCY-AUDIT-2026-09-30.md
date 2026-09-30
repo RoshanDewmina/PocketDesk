@@ -117,7 +117,9 @@ Each mitigation is chosen so that it costs nothing when the resource is free.
 | **Wi-Fi / AWDL** (AirDrop, Handoff, iPhone Mirroring, Universal Control) | A ≥ 98 ms arrival gap in every second at the phone, with loss 0 % [M]. Turning AirDrop and Handoff off reduced it to 52 % of seconds [M]. This is the largest p95 term | phone arrival-gap histogram | Apps can't turn AWDL off. **P16:** detect the once-a-second gap signature from the statistics already collected and show a one-line hint ("AirDrop, Handoff or iPhone Mirroring on your Mac adds stutter") with a settings link. Prefer Ethernet, or 5/6 GHz |
 | **Disk** (Spotlight, sync clients, Time Machine) | Hardly anything: nothing touches disk in the streaming path. The statistics log is opt-in, and watchdog heartbeats are written every 10 s | – | None needed |
 
-## 4. Changes made in this branch (unbuilt; build and tests pending once the Mac is free)
+## 4. Changes made in this branch
+
+**Verified 30 Sep, after the quiet window** (Debug, DerivedData `…/DerivedData/efficiency`, under the build lock): host build succeeded; `RemoteCoreTests` 709 tests, 0 failures (7 skipped); `HostUISnapshotTests` 15/15; `RemotePhoneTests` 301, 0 failures (1 skipped) on an iOS 27 iPhone 17 simulator, with `AnywhereStoreKitTests` excluded (it hung on a StoreKit purchase in the plain scheme; it has its own runner, `script/verify-storekit.sh`, and nothing here touches it). Still pending: phone UI suite, real-host E2E, and the physical checks in §6a.
 
 The changes don't alter behaviour. They remove duplicate or unobserved work, or give timers slack. Every one needs `RemoteCoreTests`, the host tests, the phone unit and UI suites, and one real-host E2E pass before merge.
 
@@ -214,6 +216,37 @@ Ranked by expected impact on a loaded base M1.
 | **P14** | `lipo -thin arm64` the WebRTC framework at archive time | smaller download, no runtime change | Release-pipeline owner |
 | **P15** | Research: SCK scale ratio. 2880→2560 is a non-integer resample in WindowServer (GPU) and softens text; compare with 1:1 crops and 2:1 | GPU time and legibility | Measurement only |
 | **P16** | AWDL hint: detect ≥ 80 ms once-a-second arrival gaps with 0 % loss for 10 s and show a one-line hint | The single biggest p95 improvement available to users [M] | UX copy; no auto-changes |
+
+## 6a. Decisions implemented (30 Sep, after Roshan approved P1, P2 and P16)
+
+**P1 — newest frame wins is the default.**
+
+- `StreamTuning.tuned.encoderMaxInFlight = 1`. `PocketDeskEncoderMaxInFlight` still overrides it: `0` lets frames queue, `2` allows two in flight.
+- Runtime switch: host Settings → General → **Newest frame wins** (`NewestFrameWinsSwitch`, defaults key `PocketDeskNewestFrameWins`). `DesktopH264Encoder.encode` reads it on every frame, so an A/B needs no reconnect.
+- Statistics samples and diagnostics carry `StreamTuning.liveSummary`. The canonical tuned string now ends `· max in-flight 1`, plus `· newest-frame-wins off` while the switch is off.
+- **Release gate:** before release it must pass the physical no-visible-drop check. That is run E7 in `SESSION-PROTOCOL.md`, switch on vs off, quiet and under `realistic-load.sh start heavy`, with distinct/s, presented fps and dropped-at-submit per second read beside the phone. The ladder still steps down if drops exceed 5 % of fps.
+
+**P2 — the phone drops to 30 Hz while the Mac picture is static.**
+
+- `VideoRefreshPolicy` in `VideoPresentationProbe`. After `idleAfter` = 0.25 s with no new decoded frame and no user activity, the WebRTC Metal view's `preferredFramesPerSecond` (MTKView's display-link rate) goes to 30.
+- It returns to the chosen maximum (120 on ProMotion) at once on any of these:
+  - **new frame:** `FrameObserver` → `frameForwarded()`, from the decode thread. The main hop raises the rate and calls `metalView.draw()` immediately, so the first changed frame never waits for an idle tick.
+  - **touch:** `NativeTrackpadSurface.touchesBegan/Moved`.
+  - **pan/zoom:** `viewport.offset` / `viewport.zoom` changes.
+  - **pointer motion and any other input:** `PhoneRemoteModel.transmit`.
+- A frame still waiting at a draw counts as activity.
+- Phone experiment key `PocketDeskIdleVideoRefresh` (default on; "Previous stream tuning" turns it off). When off, the summary says `no idle refresh`.
+- With the Mac's static re-push every ~0.8 s, the view is at 120 Hz for about 0.25 s of each 0.8 s on a still desktop. P7 would stretch that further.
+- To verify on device: glass p50/p95 on the first frame after ≥ 1 s idle (the camera or the marker), `presentedAt120Share` during motion unchanged, and Instruments Energy Log on a static desktop, before and after.
+
+**P16 — Wi-Fi stall tip (AWDL).**
+
+- `WiFiStallDetector` / `WiFiStallTip` (`RemoteShared/WiFiStallDetector.swift`) reads the phone's existing per-second `StreamStatsReport`.
+- A second counts only with motion (received ≥ 20 fps), loss ≤ 1 %, a non-relay route, and the Mac capturing and pacing on time (host capture gap p90 ≤ 40 ms, pacer ≤ 30 ms). It is a stall when its largest frame-arrival gap is ≥ 80 ms.
+- The tip shows when ≥ 7 of the last 10 counted seconds stall, and clears at ≤ 2.
+- Tip text: "Wi-Fi hiccups every second — turning off AirDrop/Handoff on your Mac can smooth this".
+- **Integration point for `farside-connection-health`:** `PhoneRemoteModel.wifiStallTip` (`@Published`, nil when not seen; reset at session start and end). Connection Health should render it as a non-blocking tip beside its live-session state (for example under `networkSlow`), with `title` and `detail` from `WiFiStallTip`. Nothing on this branch displays it, so the two branches don't conflict.
+- Thresholds come from the 29 Sep baseline (a ≥ 98 ms gap in every one of 115 windows with AirDrop on; 52 % of seconds with it off). Confirm them on the next phone session: the tip should appear within about 10 s of motion with AirDrop on and never with the Mac on Ethernet.
 
 ## 7. Apple documentation (verified 30 Sep via the developer.apple.com JSON endpoints and the macOS 27 SDK headers)
 

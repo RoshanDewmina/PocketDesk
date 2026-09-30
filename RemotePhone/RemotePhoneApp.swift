@@ -127,6 +127,9 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var streamSummaryLines: [String] = []
     /// Route and network round trip from the latest stream statistics, for the dock caption.
     @Published private(set) var link: LinkSummary?
+    /// Connection Health integration point: the AWDL once-a-second stall tip, nil when not seen.
+    @Published private(set) var wifiStallTip: WiFiStallTip?
+    private var wifiStall = WiFiStallDetector()
     /// G4: the part of the display the frames cover, as the Mac last reported it; nil for the whole display.
     @Published private(set) var captureRegion: CaptureRegion?
     /// G12: the Mac's own account of its load, for the pill; nil from a Mac without the ladder.
@@ -234,6 +237,8 @@ final class PhoneRemoteModel: ObservableObject {
             self.backgroundHoldEndsAt = nil
             self.phoneLoad = nil
             self.phoneLoadReportedAt = nil
+            self.wifiStall.reset()
+            self.wifiStallTip = nil
             if let peer = self.connection.media {
                 peer.onStreamStatistics = { [weak self, weak peer] report in
                     Task { @MainActor in
@@ -242,6 +247,7 @@ final class PhoneRemoteModel: ObservableObject {
                         if self.streamSummaryLines != lines { self.streamSummaryLines = lines }
                         let link = LinkSummary(report)
                         if self.link != link { self.link = link }
+                        if self.wifiStall.observe(report) { self.wifiStallTip = self.wifiStall.tip }
                         self.acceptPhoneStats(report)
                         self.noticeReducedPicture()
                         #if DEBUG
@@ -514,6 +520,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     /// Every control message leaves through here, so the offline probe sees the same actions.
     private func transmit(_ action: RemoteAction) -> Bool {
+        VideoPresentationProbe.noteUserActivity()
         #if DEBUG
         if let inputProbe { return inputProbe.record(action) }
         #endif
@@ -1299,6 +1306,8 @@ final class PhoneRemoteModel: ObservableObject {
         appliedStreamQuality = nil
         streamSummaryLines = []
         link = nil
+        wifiStall.reset()
+        wifiStallTip = nil
         captureRegion = nil
         busy = nil
         ladder = nil
@@ -1515,7 +1524,7 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
     }
     var presentation: VideoPresentationProbe? {
         didSet {
-            lock.lock(); tracker = presentation?.tracker; lock.unlock()
+            lock.lock(); tracker = presentation?.tracker; refreshProbe = presentation; lock.unlock()
             connectMarkers()
         }
     }
@@ -1539,6 +1548,7 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
     private let lock = NSLock()
     private var last = 0.0
     private var tracker: PresentationTracker?
+    private weak var refreshProbe: VideoPresentationProbe?
     private var markerReading = false
 
     init(onFrame: @escaping () -> Void) {
@@ -1554,6 +1564,7 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
         lock.lock()
         let reading = markerReading
         let tracker = tracker
+        let refreshProbe = refreshProbe
         lock.unlock()
         let register: (RestampingRenderer.ForwardedFrame) -> Void = { forwarded in
             tracker?.frameWillForward(stampNs: forwarded.stampNs, atMs: forwarded.arrivalMs)
@@ -1566,6 +1577,7 @@ final class FrameObserver: NSObject, RTCVideoRenderer {
         } else {
             forward.renderFrame(frame, beforeForward: register)
         }
+        refreshProbe?.frameForwarded()
         lock.lock()
         let now = ProcessInfo.processInfo.systemUptime
         let notify = now - last > 0.25
