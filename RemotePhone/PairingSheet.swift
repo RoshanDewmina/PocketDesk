@@ -12,6 +12,7 @@ struct PairingSheet: View {
     @State private var problem: PairingCodeProblem?
     @State private var problemSerial = 0
     @State private var burst = false
+    @State private var showsReplacementConfirmation = false
     @FocusState private var codeFocused: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -59,7 +60,7 @@ struct PairingSheet: View {
                     steps
 
                     if let replacing {
-                        Text("Pairing a new Mac replaces \(replacing) on this iPhone.")
+                        Text("Add another Mac. \(replacing) stays paired with this iPhone.")
                             .font(.footnote)
                             .foregroundStyle(Farside.Palette.ash)
                             .fixedSize(horizontal: false, vertical: true)
@@ -96,6 +97,18 @@ struct PairingSheet: View {
         .tint(Farside.Palette.bone)
         .farsideSheet()
         .interactiveDismissDisabled(burst)
+        .confirmationDialog("Replace this Mac pairing?", isPresented: $showsReplacementConfirmation,
+                            titleVisibility: .visible, presenting: model.pendingPairReplacement) { pending in
+            Button("Replace pairing") { if model.confirmPairReplacement(pending) { celebrate() } }
+            Button("Cancel", role: .cancel) { model.cancelPairReplacement(); entry = .paste }
+        } message: { pending in
+            Text("Replace the saved pairing for \(pending.oldName) with this QR for \(pending.approval.enrollment.name)? The current session ends first. Your Mac must still approve this iPhone.")
+        }
+        .onChange(of: model.pendingPairReplacement?.id) { _, id in showsReplacementConfirmation = id != nil }
+        .onChange(of: showsReplacementConfirmation) { _, shown in
+            if !shown, model.pendingPairReplacement != nil { model.cancelPairReplacement(); entry = .paste }
+        }
+        .onDisappear { model.cancelPairReplacement() }
         .animation(Farside.Motion.easeOut(), value: problemSerial)
         .animation(Farside.Motion.easeOut(Farside.Motion.micro), value: burst)
         .sensoryFeedback(.warning, trigger: problemSerial)
@@ -166,6 +179,7 @@ struct PairingSheet: View {
         case .scanning:
             ZStack {
                 ScannerView(onCode: { code in
+                    if burst { return true }
                     let paired = model.enroll(code)
                     if paired { celebrate() }
                     return paired
@@ -277,7 +291,7 @@ struct PairingSheet: View {
         let code = model.pairingCode
         if model.enroll(code) {
             celebrate()
-        } else {
+        } else if model.pendingPairReplacement == nil {
             problem = PairingCodeProblem(code: code)
             problemSerial &+= 1
         }

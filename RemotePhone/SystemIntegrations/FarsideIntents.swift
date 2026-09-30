@@ -31,7 +31,7 @@ struct MacEntity: AppEntity {
 
 struct MacEntityQuery: EntityQuery {
     func entities(for identifiers: [String]) async throws -> [MacEntity] {
-        PairedMacs.all().filter { identifiers.contains($0.id) }.map(MacEntity.init)
+        PairedMacs.matching(ids: identifiers).map(MacEntity.init)
     }
 
     func suggestedEntities() async throws -> [MacEntity] {
@@ -57,12 +57,12 @@ func resolvePairedMac(_ chosen: MacEntity?, disambiguate: ([MacEntity]) async th
     let macs = PairedMacs.all()
     guard !macs.isEmpty else { throw FarsideIntentError.noPairedMac }
     if let chosen {
-        guard let mac = macs.first(where: { $0.id == chosen.id }) else { throw FarsideIntentError.unknownMac }
+        guard let mac = macs.first(where: { $0.id == chosen.id || $0.legacyAliases.contains(chosen.id) }) else { throw FarsideIntentError.unknownMac }
         return mac
     }
     if macs.count == 1 { return macs[0] }
     let picked = try await disambiguate(macs.map(MacEntity.init))
-    guard let mac = macs.first(where: { $0.id == picked.id }) else { throw FarsideIntentError.unknownMac }
+    guard let mac = macs.first(where: { $0.id == picked.id || $0.legacyAliases.contains(picked.id) }) else { throw FarsideIntentError.unknownMac }
     return mac
 }
 

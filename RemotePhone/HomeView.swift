@@ -144,6 +144,7 @@ struct HomeView: View {
     @State private var showServerData = false
     @State private var showLegal = false
     @State private var showSecurity = false
+    @State private var showPairedMacs = false
     @State private var lastBattery: MacVitalsMemory.LastSeen?
     @ObservedObject private var anywhere = AnywhereStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -155,7 +156,7 @@ struct HomeView: View {
 
     private var macName: String? { connection.invitation?.name ?? LaunchOptions.demoMacName }
     private var status: MacStatus { MacStatus(connection.status, couch: model.attemptMode == .couch) }
-    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall || showServerData || showLegal || showSecurity }
+    private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall || showServerData || showLegal || showSecurity || showPairedMacs }
 
     var body: some View {
         GeometryReader { proxy in
@@ -215,6 +216,7 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showLegal) { LegalNoticesView() }
         .sheet(isPresented: $showSecurity) { SecuritySettingsSheet() }
+        .sheet(isPresented: $showPairedMacs) { PairedMacSelectionSheet(model: model).farsideSheet() }
         .sheet(isPresented: $showServerData) {
             ServerDataRemovalView(connection: connection, access: AnywhereAccess.shared).farsideSheet()
         }
@@ -234,6 +236,13 @@ struct HomeView: View {
             applyDebugState()
             #endif
             refreshLastBattery()
+        }
+        .onChange(of: connection.invitation) { _, _ in
+            lastReachedAt = 0
+            checkedHealth = nil
+            lastFailure = nil
+            lastBattery = nil
+            model.refreshSendToMac(force: true)
         }
         .onChange(of: connection.connected) { _, _ in refreshLastBattery() }
         .onChange(of: scenePhase) { _, phase in if phase == .active { refreshLastBattery() } }
@@ -430,6 +439,25 @@ struct HomeView: View {
 
     private var homeList: some View {
         VStack(spacing: 0) {
+            Button { showPairedMacs = true } label: {
+                HomeRow(title: "Your Macs", trailing: "laptopcomputer")
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("home.pairedMacs")
+            Rectangle().fill(Farside.Palette.line).frame(height: 1)
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Local network only", isOn: Binding(get: { connection.localOnly }, set: { value in
+                    model.disconnect()
+                    connection.setLocalOnly(value)
+                    model.refreshSendToMac(force: true)
+                }))
+                .accessibilityIdentifier("home.localOnly")
+                Text("Enable this on your Mac too. Connection requires a verified local route. Older pairings need a new owner-approved QR code.")
+                    .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(16)
+            Rectangle().fill(Farside.Palette.line).frame(height: 1)
             Button { model.pairingEntry = .scan } label: {
                 HomeRow(title: "Pair another Mac", trailing: "plus")
             }
@@ -478,13 +506,18 @@ struct HomeView: View {
     /// Asks the service whether the Mac's Farside is answering. It opens no session and sends nothing to
     /// the Mac, so Connect waits until it finishes (the service allows one phone per room).
     private func checkReachability() {
+        guard !connection.localOnly else {
+            model.error = "Connect using Local network only to check your Mac on this network."
+            return
+        }
         guard let invitation = connection.invitation, !checking, !connection.isRunning, !connection.connected else { return }
         checking = true
         Task { @MainActor in
             let outcome = await MacReachabilityProbe().check(invitation)
             checking = false
             MacWidgetSync.shared.update(macName: invitation.name, observed: MacWidgetSync.presence(for: outcome))
-            guard !connection.isRunning, !connection.connected else { return }
+            guard connection.invitation == invitation, !connection.localOnly,
+                  !connection.isRunning, !connection.connected else { return }
             checkedHealth = .checked(outcome, lastReached: lastReached.map { LastReached.spoken($0) })
         }
     }
@@ -513,8 +546,10 @@ struct HomeView: View {
                 return
             }
             let room = connection.invitation?.room
+            model.disconnect()
             guard connection.revoke() else { return }
             if let room { model.bigTextMemory.forget(room: room) }
+            model.refreshSendToMac(force: true)
             model.vitalsMemory.forget()
             refreshLastBattery()
             lastReachedAt = 0

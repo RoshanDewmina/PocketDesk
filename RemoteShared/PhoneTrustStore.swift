@@ -43,6 +43,25 @@ struct PhoneTrustSnapshot: Codable, Equatable {
     var selected: PhoneHostTrust? { hosts.first { $0.id == selectedHostID } }
 }
 
+/// Reviewable replacement identity, retained in memory only after the person approves the scanned QR.
+/// Fingerprints bind the complete old invitation and complete scanned invitation without exposing keys.
+struct PhoneTrustReplacementRequest: Equatable {
+    let existingHostRecordID: String
+    let existingOwnerPairID: String?
+    let existingInvitationFingerprint: String
+    let scannedInvitationFingerprint: String
+}
+
+struct PhoneTrustReplacementApproval {
+    let request: PhoneTrustReplacementRequest
+    let enrollment: PairInvitation
+}
+
+enum PhoneTrustMutationError: LocalizedError {
+    case replacementRequiresApproval
+    var errorDescription: String? { "This QR replaces an existing Mac pairing. Confirm that replacement first." }
+}
+
 /// Every mutation replaces ONE Keychain item. There is no partially-written host/index/selection
 /// transaction. The old single-pair item remains a rollback backup until that pair is forgotten.
 /// All in-process readers/writers share this lock, including Siri/system-surface loaders.
@@ -72,7 +91,16 @@ final class PhoneTrustStore {
 
     /// Only call after the existing owner-approval handshake accepted and rotated the invitation.
     /// Enrollment must not implicitly overwrite the selected host when a different Mac approves.
-    func saveApproved(_ invitation: PairInvitation) throws {
+    func replacementRequest(for enrollment: PairInvitation) throws -> PhoneTrustReplacementRequest? {
+        try locked {
+            try enrollment.validate(enrollment: true)
+            let snapshot = try load()
+            guard let index = Self.existingIndex(for: enrollment, in: snapshot) else { return nil }
+            return try Self.replacementRequest(host: snapshot.hosts[index], incoming: enrollment)
+        }
+    }
+
+    func saveApproved(_ invitation: PairInvitation, replacementApproval: PhoneTrustReplacementApproval? = nil) throws {
         try locked {
             try invitation.validate(enrollment: false)
             var next = try load()
@@ -81,12 +109,20 @@ final class PhoneTrustStore {
                let known = collision.durableHostID, known != invitation.durableHostID {
                 throw RemoteError.invalidPairing
             }
-            let index: Int?
-            if let durableID = invitation.durableHostID {
-                index = next.hosts.firstIndex { $0.durableHostID == durableID }
-                    ?? next.hosts.firstIndex { $0.durableHostID == nil && $0.invitation.room == invitation.room }
-            } else {
-                index = next.hosts.firstIndex { $0.durableHostID == nil && $0.invitation.room == invitation.room }
+            let index = Self.existingIndex(for: invitation, in: next)
+            if let index, let required = try Self.replacementRequest(host: next.hosts[index], incoming: invitation) {
+                guard let approval = replacementApproval else { throw PhoneTrustMutationError.replacementRequiresApproval }
+                try approval.enrollment.validate(enrollment: true)
+                guard Self.sameEnrollmentIdentity(invitation, approval.enrollment),
+                      let scanned = try Self.replacementRequest(host: next.hosts[index], incoming: approval.enrollment),
+                      scanned == approval.request,
+                      required.existingHostRecordID == scanned.existingHostRecordID,
+                      required.existingInvitationFingerprint == scanned.existingInvitationFingerprint else {
+                    throw RemoteError.invalidPairing
+                }
+            } else if replacementApproval != nil {
+                // An approval cannot be replayed after the old record changed or was removed.
+                throw RemoteError.invalidPairing
             }
             if let index {
                 // A legacy packet can never downgrade an identified host.
@@ -143,6 +179,30 @@ final class PhoneTrustStore {
         try snapshot.validate()
         try records.save(snapshot)
         guard try records.read(PhoneTrustSnapshot.self) == snapshot else { throw RemoteError.invalidPairing }
+    }
+
+    private static func existingIndex(for invitation: PairInvitation, in snapshot: PhoneTrustSnapshot) -> Int? {
+        if let durableID = invitation.durableHostID {
+            return snapshot.hosts.firstIndex { $0.durableHostID == durableID }
+                ?? snapshot.hosts.firstIndex { $0.durableHostID == nil && $0.invitation.room == invitation.room }
+        }
+        return snapshot.hosts.firstIndex { $0.durableHostID == nil && $0.invitation.room == invitation.room }
+    }
+
+    private static func sameEnrollmentIdentity(_ lhs: PairInvitation, _ rhs: PairInvitation) -> Bool {
+        lhs.server == rhs.server && lhs.room == rhs.room && lhs.durableHostID == rhs.durableHostID
+            && lhs.ownerPairID == rhs.ownerPairID && lhs.localServiceName == rhs.localServiceName
+    }
+
+    private static func replacementRequest(host: PhoneHostTrust, incoming: PairInvitation) throws -> PhoneTrustReplacementRequest? {
+        guard !sameEnrollmentIdentity(host.invitation, incoming) else { return nil }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        func fingerprint(_ invitation: PairInvitation) throws -> String {
+            SecureRandom.digest(try encoder.encode(invitation).base64EncodedString())
+        }
+        return try PhoneTrustReplacementRequest(existingHostRecordID: host.id, existingOwnerPairID: host.ownerPairID,
+            existingInvitationFingerprint: fingerprint(host.invitation), scannedInvitationFingerprint: fingerprint(incoming))
     }
 
     private static func record(_ invitation: PairInvitation) throws -> PhoneHostTrust {

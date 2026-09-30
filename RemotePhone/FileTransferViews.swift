@@ -107,10 +107,17 @@ struct FileTransferCapsule: View {
             } else if let offer = inbox.offer {
                 plate {
                     Image(systemName: "square.and.arrow.up").accessibilityHidden(true)
-                    Text(Self.offerTitle(offer)).font(.subheadline.weight(.medium)).lineLimit(2)
-                    Button("Send", action: inbox.confirm)
-                        .buttonStyle(FarsidePrimaryButtonStyle(height: 34)).fixedSize()
-                        .accessibilityIdentifier("remote.files.shareSend")
+                    Text(offer.isBound(to: inbox.selectedDestination) ? Self.offerTitle(offer)
+                         : "Shared for \(offer.destinationName ?? "an unselected Mac"). Choose a destination before sending.").font(.subheadline.weight(.medium)).lineLimit(2)
+                    if offer.isBound(to: inbox.selectedDestination) {
+                        Button("Send", action: inbox.confirm)
+                            .buttonStyle(FarsidePrimaryButtonStyle(height: 34)).fixedSize()
+                            .accessibilityIdentifier("remote.files.shareSend")
+                    } else if let destination = inbox.selectedDestination {
+                        Button("Send to \(inbox.selectedName) instead") { inbox.retargetAndConfirm(to: destination) }
+                            .buttonStyle(FarsidePrimaryButtonStyle(height: 34))
+                            .accessibilityIdentifier("remote.files.shareRetarget")
+                    }
                     Button("Discard", action: inbox.discard)
                         .buttonStyle(FarsideLinkButtonStyle())
                         .accessibilityIdentifier("remote.files.shareDiscard")

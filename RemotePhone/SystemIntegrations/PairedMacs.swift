@@ -24,7 +24,16 @@ enum PairedMacs {
     static func id(for invitation: PairInvitation) -> String? {
         // Exact owner credentials bind alerts/activity/share destinations to one saved pair.
         all().first { $0.invitation?.room == invitation.room && $0.invitation?.token == invitation.token
-            && $0.invitation?.durableHostID == invitation.durableHostID }?.id
+            && $0.invitation?.durableHostID == invitation.durableHostID
+            && $0.invitation?.ownerPairID == invitation.ownerPairID }?.id
+    }
+
+    static func mac(notificationIdentity: String) -> PairedMac? {
+        all().first { $0.invitation?.notificationIdentity == notificationIdentity }
+    }
+
+    static func matching(ids: [String]) -> [PairedMac] {
+        all().filter { mac in ids.contains { mac.id == $0 || mac.legacyAliases.contains($0) } }
     }
 
     static func opaqueID(room: String) -> String {
