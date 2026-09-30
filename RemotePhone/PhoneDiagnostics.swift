@@ -9,21 +9,28 @@ final class PhoneDiagnostics: ObservableObject {
     @Published private(set) var storageFailure = false
     private let store: SessionDiagnosticStore
     private var recorder = DiagnosticSessionRecorder()
+    private var testRecorder: DiagnosticSessionRecorder?
+    private let uptime: () -> Double
     private var probe: DiagnosticProbeRun?
     private var task: Task<Void, Never>?
     private var testStarted = 0.0
     private var full = false
-    init(store: SessionDiagnosticStore = SessionDiagnosticStore()) { self.store = store; reports = store.load() }
-    func observe(_ report: StreamStatsReport) { recorder.observe(report, at: ProcessInfo.processInfo.systemUptime) }
+    init(store: SessionDiagnosticStore = SessionDiagnosticStore(), uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) { self.store = store; self.uptime = uptime; reports = store.load() }
+    func observe(_ report: StreamStatsReport) {
+        let now = uptime()
+        recorder.observe(report, at: now)
+        if running { testRecorder?.observe(report, at: now) }
+    }
     func start(full: Bool, session: UUID, epoch: UInt64, authorized: @escaping () -> Bool,
                send: @escaping (ClockProbe) -> Bool, facts: @escaping () -> [DiagnosticFact]) {
         guard !running, authorized() else { return }
-        testStarted = ProcessInfo.processInfo.systemUptime; self.full = full
+        testStarted = uptime(); self.full = full
+        testRecorder = DiagnosticSessionRecorder()
         probe = DiagnosticProbeRun(session: session, epoch: epoch, full: full, at: testStarted)
         running = true; status = "Checking authenticated app echoes and current session health…"
         task = Task { @MainActor [weak self] in
             while let self, !Task.isCancelled, var run = self.probe {
-                let now = ProcessInfo.processInfo.systemUptime
+                let now = self.uptime()
                 let next = run.next(session: session, epoch: epoch, authorized: authorized(), at: now, stampMs: MachClock.nowMs())
                 self.probe = run
                 if let next, !send(next) { self.cancel(); return }
@@ -34,7 +41,7 @@ final class PhoneDiagnostics: ObservableObject {
     }
     func receive(_ echo: ClockProbe, session: UUID, epoch: UInt64, authorized: Bool) {
         probe?.receive(echo, session: session, epoch: epoch, authorized: authorized,
-            at: ProcessInfo.processInfo.systemUptime, stampMs: MachClock.nowMs())
+            at: uptime(), stampMs: MachClock.nowMs())
     }
     func cancel() {
         guard running else { return }
@@ -44,17 +51,17 @@ final class PhoneDiagnostics: ObservableObject {
         task?.cancel(); task = nil
         guard let probe else { return }
         let outcome: SessionDiagnosticReport.Outcome = probe.state == .completed ? .completed : probe.state == .timedOut ? .timedOut : .cancelled
-        let now = ProcessInfo.processInfo.systemUptime
-        let snapshot = recorder.finish(kind: full ? .fullPreflight : .lightPreflight, outcome: outcome, at: now, additional: facts + probe.facts)
+        let now = uptime()
+        let snapshot = (testRecorder ?? DiagnosticSessionRecorder()).finish(kind: full ? .fullPreflight : .lightPreflight, outcome: outcome, at: now, additional: facts + probe.facts)
         save(SessionDiagnosticReport(kind: snapshot.kind, outcome: outcome, seconds: now - testStarted, samples: snapshot.samples, facts: snapshot.facts))
-        running = false; self.probe = nil
+        running = false; self.probe = nil; testRecorder = nil
         if !storageFailure {
             status = outcome == .completed ? "Authenticated check complete. See measured facts and unknowns below." : outcome == .timedOut ? "Replies were incomplete. See unanswered probes; this is not a bandwidth result." : "Check cancelled when its authority or scene changed."
         }
     }
     func ended() {
         cancel()
-        if recorder.samples > 0 { save(recorder.finish(at: ProcessInfo.processInfo.systemUptime)) }
+        if recorder.samples > 0 { save(recorder.finish(at: uptime())) }
         recorder = DiagnosticSessionRecorder()
     }
     private func save(_ report: SessionDiagnosticReport) {
