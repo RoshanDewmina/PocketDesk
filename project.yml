@@ -310,6 +310,7 @@ targets:
       - RemoteHost/Availability/HostLANWake.swift
       - RemoteHost/Availability/LANMagicPacketSender.swift
       - RemoteHost/Availability/WakeTargetRegistrationView.swift
+      - RemoteShared/SessionDiagnosticReport.swift
       - RemoteShared/LegalNoticesView.swift
       - RemoteShared/ThirdPartyNotices.txt
     settings:
