@@ -1,8 +1,25 @@
 import XCTest
 import WebRTC
 import CoreVideo
+import VideoToolbox
 
 final class OwnedHEVCCodecTests: XCTestCase {
+    func testActualDecoderSubmissionRecoverableBadDataAndTerminalFailureLifecycle() {
+        let failed = expectation(description: "Terminal synchronous decode requests rollback exactly once")
+        failed.assertForOverFulfill = true
+        let decoder = OwnedHEVCDecoder(onFailure: { failed.fulfill() })
+        defer { _ = decoder.release() }
+        decoder.setCallback { _ in XCTFail("Injected submission may not publish pixels") }
+        XCTAssertEqual(decoder.startDecode(withNumberOfCores: 1), 0)
+        let image = RTCEncodedImage(); image.buffer = NativeHEVCCapability.fixture; image.captureTimeMs = 1000; image.timeStamp = 90000
+        decoder.submissionStatusForTesting = kVTVideoDecoderBadDataErr
+        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -1)
+        decoder.submissionStatusForTesting = kVTInvalidSessionErr
+        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -1)
+        decoder.submissionStatusForTesting = nil
+        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), -1, "Terminal decoder may not silently reopen")
+        wait(for: [failed], timeout: 2)
+    }
     func testFatalStartRequestsRenegotiationOnceAndNeverReturnsH264UnderHEVC() throws {
         let failed = expectation(description: "Owner notified for next-session H264 rollback")
         failed.assertForOverFulfill = true
