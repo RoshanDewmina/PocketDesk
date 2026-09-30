@@ -924,6 +924,10 @@ struct NativeSessionView: View {
                             .minimumScaleFactor(0.8)
                     }
                 }
+                if let scope = model.captureScopeDescription {
+                    Text(scope).font(.footnote).foregroundStyle(Farside.Palette.bone)
+                        .accessibilityIdentifier("remote.captureScope")
+                }
                 Text(status)
                     .font(.footnote)
                     .foregroundStyle(Farside.Palette.ash)
@@ -2269,7 +2273,8 @@ struct NativeSessionView: View {
             Toggle("Listen to Mac audio", isOn: Binding(get: { !model.macAudioMuted },
                                                        set: { model.setMacAudioMuted(!$0) }))
                 .accessibilityIdentifier("remote.macAudio")
-            Text("Requires Share Mac audio on your Mac. Sound may come from every app. Stops when you leave Farside or dictate.")
+                .disabled(model.captureScopeViewOnly)
+            Text(model.captureScopeViewOnly ? "Audio is off while sharing an app or window." : "Requires Share Mac audio on your Mac. Sound may come from every app. Stops when you leave Farside or dictate.")
                 .font(.footnote).foregroundStyle(Farside.Palette.ash)
         } header: { sectionHeader("Mac audio") }
         Section {

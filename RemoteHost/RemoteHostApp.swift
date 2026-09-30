@@ -163,6 +163,8 @@ extension HostActions {
             copyDiagnostics: model.copyDiagnostics,
             setNewestFrameWins: model.setNewestFrameWins,
             selectDisplay: model.selectDisplay,
+            refreshCaptureScopes: model.refreshCaptureScopes,
+            selectCaptureScope: model.selectCaptureScope,
             setMenuBarIconShown: model.setMenuBarIconShown,
             openSetup: openSetup,
             openSettings: openSettings,

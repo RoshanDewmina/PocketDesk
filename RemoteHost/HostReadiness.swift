@@ -218,6 +218,7 @@ struct HostPreferences {
         static let allowControl = "allowControl"
         static let keepAwake = "keepAwakeWhileSharing"
         static let sharingEnabled = "sharingEnabled"
+        static let captureScopeRequiresSelection = "captureScopeRequiresSelection"
         static let accessibilitySkipped = "setupAccessibilitySkipped"
         static let pairingDeferred = "setupPairingDeferred"
         static let serviceAddress = "PocketDeskServiceURL"
@@ -260,6 +261,14 @@ struct HostPreferences {
         get { defaults.bool(forKey: Key.keepAwake) }
         nonmutating set { defaults.set(newValue, forKey: Key.keepAwake) }
     }
+
+    /// A narrow target is intentionally not restored by PID or window ID on relaunch.
+    var captureScopeRequiresSelection: Bool {
+        get { defaults.bool(forKey: Key.captureScopeRequiresSelection) }
+        nonmutating set { defaults.set(newValue, forKey: Key.captureScopeRequiresSelection) }
+    }
+
+    var sharingMayResumeWithoutScopeSelection: Bool { sharingEnabled && !captureScopeRequiresSelection }
 
     var sharingEnabled: Bool {
         get { defaults.bool(forKey: Key.sharingEnabled) }

@@ -4,6 +4,7 @@ import Foundation
 /// extension action after seeing the matching feature, so older hosts never receive an
 /// action name their validator would reject.
 enum SessionFeature {
+    static let captureScope = "capture-scope-v1"
     static let clipboardText = "clipboard.text.1"
     static let backgroundPause = "pause.1"
     static let displayWake = "display.wake.1"
@@ -34,7 +35,7 @@ enum SessionFeature {
     /// Couch mode: trackpad and keys with no picture, on a proven local link. Advertised by the host itself, not in `host`.
     static let couch = "couch.1"
     static let displayScale = "display.scale.2"
-    static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
+    static let host = [captureScope, clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
                        momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]
 }

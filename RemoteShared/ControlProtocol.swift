@@ -57,6 +57,8 @@ struct RemoteAction: Codable {
     var mode: String? = nil
     /// One-shot reason the Mac did not switch, on `capture` status.
     var modeReason: String? = nil
+    /// Owner-selected scope status; never carries a target handle. Older peers ignore it.
+    var captureScope: CaptureScopeFrame? = nil
     var looksLikeWidth: Double? = nil
     var scaleError: String? = nil
     /// Correlates Big Text requests and replies; absent for older peers.
@@ -64,6 +66,8 @@ struct RemoteAction: Codable {
 
     func validate() throws {
         // Before the extension early returns, so no other action can carry an unchecked summary.
+        try captureScope?.validate()
+        guard captureScope == nil || action == "capture" else { throw RemoteError.invalidMessage }
         try hostStream?.validate()
         guard hostStream == nil || action == "capture" else { throw RemoteError.invalidMessage }
         try clock?.validate()
