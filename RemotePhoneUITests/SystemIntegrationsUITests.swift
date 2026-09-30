@@ -5,7 +5,7 @@ import XCTest
 /// choice behind for the next.
 final class SystemIntegrationsUITests: XCTestCase {
     private let cleanDefaults = ["-agentAlerts.enabled", "NO", "-agentAlerts.breakThroughFocus", "NO",
-                                 "-agentAlerts.showAgentName", "YES", "-agentAlerts.declinedIDs", "()",
+                                 "-agentAlerts.declinedIDs", "()",
                                  "-agentAlerts.snoozedIDs", "()", "-lockScreen.showMacName", "NO",
                                  "-lockScreen.sessionActivity", "YES"]
 
@@ -42,7 +42,7 @@ final class SystemIntegrationsUITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 5), "Home lists Alerts & Lock Screen")
         row.tap()
         XCTAssertTrue(element(app, "agent.settings").waitForExistence(timeout: 5))
-        for identifier in ["agent.settings.alerts", "agent.settings.focus", "agent.settings.name", "agent.settings.test",
+        for identifier in ["agent.settings.alerts", "agent.settings.focus", "agent.settings.test",
                            "agent.settings.activity", "agent.settings.macname", "agent.settings.preview"] {
             XCTAssertTrue(element(app, identifier).exists, "The sheet is missing \(identifier)")
         }
@@ -119,7 +119,8 @@ final class SystemIntegrationsUITests: XCTestCase {
     func testTheAlertSheetOffersOneWayInAndNotNowDeclines() {
         let app = launch(["--ui-seed-pairing=Studio Mac", "--ui-agent-alert=claude_code"])
         XCTAssertTrue(element(app, "agent.alert.sheet").waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Claude Code needs you."].exists)
+        XCTAssertTrue(app.staticTexts["A task on your Mac needs you."].exists, "Fixed copy: no agent or product name")
+        XCTAssertFalse(app.staticTexts["Claude Code needs you."].exists)
         XCTAssertTrue(app.buttons["agent.alert.open"].exists)
         XCTAssertEqual(app.buttons["agent.alert.open"].label, "Open your Mac")
         attach("Alert sheet")
@@ -141,7 +142,7 @@ final class SystemIntegrationsUITests: XCTestCase {
     func testAnOldRequestIsStillOpenableAndSaysItMayHaveEnded() {
         let app = launch(["--ui-agent-alert=codex:old"])
         XCTAssertTrue(element(app, "agent.alert.sheet").waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Codex needs you."].exists)
+        XCTAssertTrue(app.staticTexts["A task on your Mac needs you."].exists)
         XCTAssertTrue(app.staticTexts["This was asked a while ago. It may have ended, but you can still take a look."].exists)
         attach("Old alert sheet")
     }
@@ -163,7 +164,7 @@ final class SystemIntegrationsUITests: XCTestCase {
         let app = launch(["--ui-layout-check", "--ui-viewport-fill", "--ui-session-live", "--ui-agent-banner=codex"])
         let banner = element(app, "agent.alert.banner")
         XCTAssertTrue(banner.waitForExistence(timeout: 6))
-        XCTAssertTrue(app.staticTexts["Codex needs you"].exists)
+        XCTAssertTrue(app.staticTexts["A task on your Mac needs you"].exists)
         XCTAssertFalse(element(app, "agent.alert.sheet").exists, "The picture already shows the Mac")
         attach("Alert banner over a session")
         banner.buttons["Dismiss"].tap()

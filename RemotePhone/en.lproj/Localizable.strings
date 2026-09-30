@@ -1,7 +1,8 @@
-/* Agent alert copy. A push carries these keys plus an allow-listed agent name, never prose, so a
-   compromised agent cannot put its own words on a lock screen. Literal on purpose: Apple's notification
-   summaries and Focus filtering read this text, and quirky wording does not survive them. */
-"AGENT_NEEDS_YOU_TITLE" = "%@ needs you";
+/* Agent alert copy. A push carries only these keys, never prose and never an agent or product name, so
+   a compromised agent cannot put its own words on a lock screen (Guideline 4.5.4). The title is fixed:
+   Shortcuts automations and Focus filters match on it, so keep it stable. Literal on purpose: Apple's
+   notification summaries and Focus filtering read this text, and quirky wording does not survive them. */
+"AGENT_NEEDS_YOU_TITLE" = "A task on your Mac needs you";
 "AGENT_NEEDS_YOU_BODY" = "Stuck on something only a human can click. Tap to look at your Mac.";
 "AGENT_TEST_BODY" = "This is a test. Nothing on your Mac is stuck.";
 "AGENT_REMINDER_BODY" = "Still waiting on you.";

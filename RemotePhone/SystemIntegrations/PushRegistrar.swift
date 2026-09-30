@@ -9,7 +9,8 @@ struct PushRegistration: Codable, Equatable {
     var environment: String
     var alertsEnabled: Bool
     var timeSensitive: Bool
-    var showAgentName: Bool
+    /// Always false: alerts never name an agent (Guideline 4.5.4). Kept on the wire for the service's schema.
+    var showAgentName = false
     var locale: String
     var appBuild: String
     var osMajor: Int
@@ -203,7 +204,6 @@ final class PushRegistrar: ObservableObject {
             environment: environment,
             alertsEnabled: preferences.alertsEnabled,
             timeSensitive: preferences.breakThroughFocus,
-            showAgentName: preferences.showAgentName,
             locale: Locale.current.identifier,
             appBuild: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0",
             osMajor: ProcessInfo.processInfo.operatingSystemVersion.majorVersion,
@@ -307,7 +307,7 @@ final class AgentPushIntegration {
     private weak var model: PhoneRemoteModel?
     private var observers: Set<AnyCancellable> = []
     private var currentTarget: PushPairingTarget?
-    private var previousPreferences: (enabled: Bool, timeSensitive: Bool, showName: Bool)?
+    private var previousPreferences: (enabled: Bool, timeSensitive: Bool)?
 
     func attach(_ model: PhoneRemoteModel) {
         guard self.model !== model else { return }
@@ -351,11 +351,9 @@ final class AgentPushIntegration {
             AgentAlertReports.shared.configure(target: next)
         }
         let preferences = AgentAlertPreferences()
-        let current = (enabled: preferences.alertsEnabled,
-                       timeSensitive: preferences.breakThroughFocus,
-                       showName: preferences.showAgentName)
+        let current = (enabled: preferences.alertsEnabled, timeSensitive: preferences.breakThroughFocus)
         let changed = previousPreferences.map {
-            $0.enabled != current.enabled || $0.timeSensitive != current.timeSensitive || $0.showName != current.showName
+            $0.enabled != current.enabled || $0.timeSensitive != current.timeSensitive
         } ?? true
         let firstPreferenceRead = previousPreferences == nil
         let wasEnabled = previousPreferences?.enabled ?? false

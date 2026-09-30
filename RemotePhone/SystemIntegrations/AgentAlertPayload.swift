@@ -2,16 +2,15 @@ import Foundation
 
 /// A "needs you" notification as the phone reads it: from a remote push, or from the local twin the
 /// Settings "Send test alert" button and a Snooze reminder schedule. The payload schema is the one in
-/// SYSTEM-INTEGRATIONS.md section 4.2:
+/// SYSTEM-INTEGRATIONS.md section 4.2, minus the agent name it once carried (Guideline 4.5.4):
 ///
-///     {"aps": {"alert": {"title-loc-key": "AGENT_NEEDS_YOU_TITLE", "title-loc-args": ["Claude Code"],
-///                        "loc-key": "AGENT_NEEDS_YOU_BODY"},
+///     {"aps": {"alert": {"title-loc-key": "AGENT_NEEDS_YOU_TITLE", "loc-key": "AGENT_NEEDS_YOU_BODY"},
 ///              "category": "AGENT_HELP", "thread-id": "mac-7f3a",
 ///              "interruption-level": "time-sensitive", "relevance-score": 1.0, "sound": "default"},
 ///      "hid": "h_20af", "pairing": "<opaque pairing identity>"}
 ///
 /// Parsing is strict about what routes and lenient about what is merely extra. It never returns
-/// text from the payload except a name from the fixed agent list.
+/// text from the payload, and ignores `title-loc-args` an older service may still send.
 struct AgentAlertPayload: Equatable {
     static let categoryIdentifier = "AGENT_HELP"
     static let reminderCategoryIdentifier = "AGENT_HELP_REMINDER"
@@ -54,27 +53,22 @@ struct AgentAlertPayload: Equatable {
         isReminder = category == Self.reminderCategoryIdentifier
         isTest = userInfo["test"] as? Bool == true
 
-        let alert = aps["alert"] as? [String: Any]
-        let names = alert?["title-loc-args"] as? [Any]
-        if let name = names?.first as? String {
-            kind = AgentKind(displayName: name)
-        } else {
-            kind = AgentKind(wire: userInfo["kind"] as? String)
-        }
+        kind = AgentKind(wire: userInfo["kind"] as? String)
         threadID = (aps["thread-id"] as? String).flatMap { FarsideRoute.isValidID($0) ? $0 : nil }
         interruption = (aps["interruption-level"] as? String).flatMap(Interruption.init(rawValue:))
     }
 
-    /// The payload's `userInfo` for a local twin: exactly the fields the parser reads back.
+    /// The payload's `userInfo` for a local twin: exactly the fields the parser reads back. The kind
+    /// travels as its wire spelling outside `alert`, so the system never displays it.
     var userInfo: [AnyHashable: Any] {
         var aps: [String: Any] = [
             "category": isReminder ? Self.reminderCategoryIdentifier : Self.categoryIdentifier,
-            "alert": ["title-loc-key": "AGENT_NEEDS_YOU_TITLE", "title-loc-args": [kind.displayName],
-                      "loc-key": "AGENT_NEEDS_YOU_BODY"] as [String: Any]
+            "alert": ["title-loc-key": "AGENT_NEEDS_YOU_TITLE", "loc-key": "AGENT_NEEDS_YOU_BODY"] as [String: Any]
         ]
         if let threadID { aps["thread-id"] = threadID }
         if let interruption { aps["interruption-level"] = interruption.rawValue }
         var result: [AnyHashable: Any] = ["aps": aps, "hid": helpRequestID]
+        if kind != .other { result["kind"] = kind.rawValue }
         if let pairingIdentity { result["pairing"] = pairingIdentity }
         if isTest { result["test"] = true }
         return result

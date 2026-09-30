@@ -6,7 +6,8 @@
 # agent bridge, which tells your iPhone.
 #
 # What it sends: the agent's kind, a hash of the session id and the event name. Nothing else: never the
-# hook's message, a tool's input, a prompt or a file name.
+# hook's message, a tool's input, a prompt or a file name. The kind feeds the Mac's own activity log; no
+# iPhone alert ever names the agent: it always says "A task on your Mac needs you".
 #
 # It prints nothing on stdout, because a permission hook's output can be read as a decision, and it exits
 # 0 whatever happens, so it can never block or steer an agent. --strict changes only the exit status.
