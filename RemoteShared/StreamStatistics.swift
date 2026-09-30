@@ -238,6 +238,7 @@ struct StreamStatsReport: Codable, Equatable {
     var sentHeight: Int?
     var sentKbps: Double?
     var targetKbps: Double?
+    var transportUsage: TransportUsage?
     var availableOutgoingKbps: Double?
     var keyFrames: Int?
     var nackReceived: Int?
