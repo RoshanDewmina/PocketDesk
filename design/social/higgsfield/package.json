@@ -1,0 +1,11 @@
+{
+  "name": "farside-higgsfield",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "example": "./run.sh index.ts"
+  },
+  "dependencies": {
+    "@higgsfield/client": "^0.2.6"
+  }
+}
