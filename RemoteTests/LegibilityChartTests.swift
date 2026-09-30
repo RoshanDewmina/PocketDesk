@@ -30,7 +30,8 @@ final class LegibilityChartTests: XCTestCase {
         let layout = LegibilityChart.layout(displayPointSize: CGSize(width: 1440, height: 932))
         XCTAssertEqual(layout.cellRects.count, 32)
         XCTAssertEqual(layout.frame.minX, 1440 * 0.03, accuracy: 0.001)
-        XCTAssertEqual(layout.frame.minY, max(932 * 0.14, 932 * 0.05 + 4 * 1440 / 72 + 8), accuracy: 0.001)
+        let expectedMinimumY: CGFloat = max(932.0 * 0.14, 932.0 * 0.05 + 4.0 * 1440.0 / 72.0 + 8.0)
+        XCTAssertEqual(layout.frame.minY, expectedMinimumY, accuracy: 0.001)
         XCTAssertEqual(layout.frame.width, 1440 * 0.62, accuracy: 0.001)
         for size in [CGSize(width: 1920, height: 1080), CGSize(width: 2560, height: 1440), CGSize(width: 1440, height: 900),
                      CGSize(width: 1728, height: 1117), CGSize(width: 1024, height: 768)] {
