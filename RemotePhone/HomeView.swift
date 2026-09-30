@@ -114,7 +114,7 @@ struct HomeView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var macName: String? { connection.invitation?.name ?? LaunchOptions.demoMacName }
-    private var status: MacStatus { MacStatus(connection.status, couch: model.requestedMode == .couch) }
+    private var status: MacStatus { MacStatus(connection.status, couch: model.attemptMode == .couch) }
     private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall || showServerData || showLegal }
 
     var body: some View {
@@ -162,7 +162,7 @@ struct HomeView: View {
             ConnectionDetailsSheet(connection: connection)
         }
         .sheet(isPresented: $showTroubleshoot) {
-            TroubleshootSheet(macName: macName ?? "Your Mac", retry: { connect(mode: model.requestedMode) })
+            TroubleshootSheet(macName: macName ?? "Your Mac", retry: { connect(mode: model.attemptMode) })
         }
         .fullScreenCover(item: $friendlyError) { error in
             FriendlyErrorView(error: error, primaryTitle: primaryTitle(for: error), primary: { resolve(error, action: error.action) },
@@ -413,7 +413,7 @@ struct HomeView: View {
     private func statusChanged(from old: String, to new: String) {
         if MacStatus(new).tone == .busy { lastFailure = nil }
         guard !connection.isRunning else { return }
-        if let couch = FriendlyError.forCouch(status: new, requestedCouch: model.requestedMode == .couch) {
+        if let couch = FriendlyError.forCouch(status: new, requestedCouch: model.attemptMode == .couch) {
             lastFailure = couch
             if !covered || friendlyError != nil { friendlyError = couch }
             return
@@ -448,7 +448,7 @@ struct HomeView: View {
         friendlyError = nil
         switch action {
         case .retry:
-            let mode = model.requestedMode
+            let mode = model.attemptMode
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { connect(mode: mode) }
         case .connectWithPicture:
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { connect(mode: .picture) }

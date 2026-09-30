@@ -102,6 +102,9 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var hostFeatures: Set<String> = []
     @Published private(set) var sessionMode: SessionMode = .picture
     @Published private(set) var requestedMode: SessionMode = .picture
+    /// What the Mac last confirmed on screen, or the switch it was asked for; survives `end()` so a
+    /// reconnect comes back as the person last saw it. Home's next Connect clears it.
+    @Published private(set) var lastOnScreenMode: SessionMode?
     @Published private(set) var pendingModeSwitch: SessionMode?
     @Published private(set) var couchRefusal: SessionModeRefusal?
     @Published private(set) var couchStalled = false
@@ -306,8 +309,18 @@ final class PhoneRemoteModel: ObservableObject {
             && sessionMode == .picture
     }
 
+    /// The mode the current or most recent attempt is in: what was on screen, else what Home asked for.
+    var attemptMode: SessionMode { lastOnScreenMode ?? requestedMode }
+
+    /// A retry the coordinator already has under way continues what was on screen; once it has
+    /// stopped, a start that did not choose a mode (a Shortcut, a URL) gets the picture.
+    static func modeRequestAfterSessionEnd(coordinatorRunning: Bool, attemptMode: SessionMode) -> SessionMode {
+        coordinatorRunning ? attemptMode : .picture
+    }
+
     func prepareConnection(mode: SessionMode) {
         requestedMode = mode
+        lastOnScreenMode = nil
         connection.sessionModeRequest = mode
         couchRefusal = nil
     }
@@ -340,6 +353,7 @@ final class PhoneRemoteModel: ObservableObject {
             cancelInput()
             sessionMode = mode
         }
+        lastOnScreenMode = mode
         connection.sessionModeRequest = mode
         if pendingModeSwitch == mode { clearPendingModeSwitch() }
     }
@@ -1095,10 +1109,10 @@ final class PhoneRemoteModel: ObservableObject {
         if !connection.isRunning { restartConnection() }
     }
 
-    /// The model's own reconnects come back in the mode Home asked for; `end()` has already
+    /// The model's own reconnects come back as the session was on screen; `end()` has already
     /// reset the coordinator to the picture for every other start.
     private func restartConnection() {
-        connection.sessionModeRequest = requestedMode
+        connection.sessionModeRequest = attemptMode
         connection.start()
     }
 
@@ -1472,10 +1486,11 @@ final class PhoneRemoteModel: ObservableObject {
         departureReason = nil
         clipboard.cancel()
         resumeWatchdog?.cancel(); resumeWatchdog = nil
-        // couchRefusal and requestedMode outlive the session: Home explains and retries from them.
-        // A retry the coordinator already has under way asks for Home's mode, never a mid-session
-        // switch; once it has stopped, a start that did not choose a mode gets the picture.
-        connection.sessionModeRequest = connection.isRunning ? requestedMode : .picture
+        // couchRefusal, requestedMode and lastOnScreenMode outlive the session: Home explains and
+        // retries from them. A switch still in flight (a host restart mid-switch) counts as on screen.
+        if let pendingModeSwitch { lastOnScreenMode = pendingModeSwitch }
+        connection.sessionModeRequest = Self.modeRequestAfterSessionEnd(coordinatorRunning: connection.isRunning,
+                                                                       attemptMode: attemptMode)
         sessionMode = .picture
         clearPendingModeSwitch()
         couchStalled = false
