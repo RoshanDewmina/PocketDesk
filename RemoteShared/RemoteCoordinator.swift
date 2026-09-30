@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import os
 import WebRTC
 
 @MainActor
@@ -11,6 +12,8 @@ final class RemoteCoordinator: ObservableObject {
     @Published var remoteVideo: RTCVideoTrack?
     @Published var hasRelay = false
     @Published var diagnostics = "Route not measured"
+    /// Stage counters from the most recent local-link proof; no keys, nonces or addresses.
+    @Published private(set) var localProofSummary: String?
     var forceRelay = false
     var onAuthenticated: (() -> Void)?
     var onControl: ((Data) -> Void)?
@@ -277,6 +280,7 @@ final class RemoteCoordinator: ObservableObject {
     private func resetSession() {
         timeout?.cancel(); timeout = nil
         localProofTimeout?.cancel(); localProofTimeout = nil
+        if let proof = localLinkProof { localProofSummary = proof.stageSummary() }
         localLinkProof?.close(); localLinkProof = nil
         pendingLocalEndpoint = nil
         registrationStability?.cancel(); registrationStability = nil
@@ -424,6 +428,7 @@ final class RemoteCoordinator: ObservableObject {
             let endpoint = try JSONDecoder().decode(LocalProbeEndpoint.self, from: body)
             guard pendingLocalEndpoint == nil else { throw RemoteError.stale }
             pendingLocalEndpoint = endpoint
+            LocalLinkProof.log.info("peer endpoint received; proof exists=\(self.localLinkProof != nil, privacy: .public)")
             localLinkProof?.setPeer(endpoint)
         case "accepted" where !isHost:
             guard media == nil else { throw RemoteError.stale }
@@ -484,8 +489,12 @@ final class RemoteCoordinator: ObservableObject {
                   self.routePolicy?.epoch == policy.epoch, self.routePolicy?.access == .local else {
                 proof?.close(); return
             }
-            guard let proof else { self.fail("No directly attached Wi-Fi or Ethernet link is available."); return }
+            guard let proof else {
+                self.localProofSummary = "not started: no single directly attached Wi-Fi or Ethernet path"
+                self.fail("No directly attached Wi-Fi or Ethernet link is available."); return
+            }
             self.localLinkProof = proof
+            self.localProofSummary = nil
             proof.onInvalidated = { [weak self, weak proof] in
                 guard let self, let proof, self.localLinkProof === proof else { return }
                 self.fail("The local network changed. Reconnect to verify the route again.")
@@ -495,14 +504,21 @@ final class RemoteCoordinator: ObservableObject {
                       self.routePolicy?.epoch == policy.epoch, self.routePolicy?.access == .local,
                       (self.routePolicy?.expiresAt ?? .distantPast) > Date() else { return }
                 self.localProofTimeout?.cancel(); self.localProofTimeout = nil
+                self.localProofSummary = proof.stageSummary()
                 self.finishMedia(localLink: link)
             }
             self.localProofTimeout = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: 8_000_000_000)
-                guard !Task.isCancelled else { return }
-                self?.fail("The devices could not verify a directly attached local link.")
+                guard !Task.isCancelled, let self else { return }
+                if let proof = self.localLinkProof {
+                    LocalLinkProof.log.error("timed out after 8 s: \(proof.stageSummary(), privacy: .public)")
+                }
+                self.fail("The devices could not verify a directly attached local link.")
             }
-            if let pending = self.pendingLocalEndpoint { proof.setPeer(pending) }
+            if let pending = self.pendingLocalEndpoint {
+                LocalLinkProof.log.info("applying peer endpoint received before the proof existed")
+                proof.setPeer(pending)
+            }
             guard let data = try? JSONEncoder().encode(proof.endpoint) else { self.fail("Local link proof could not start."); return }
             self.send(kind: "localEndpoint", body: data)
         }

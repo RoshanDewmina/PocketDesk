@@ -671,6 +671,18 @@ private struct ConnectionDetailsSheet: View {
                 } header: {
                     Text("Route").farsideCaption()
                 }
+                if let proof = connection.localProofSummary {
+                    Section {
+                        Text(proof)
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(Farside.Palette.bone)
+                            .textSelection(.enabled)
+                            .listRowBackground(Farside.Palette.panel)
+                            .accessibilityIdentifier("remote.localProofSummary")
+                    } header: {
+                        Text("Local link proof").farsideCaption()
+                    }
+                }
                 Section {
                     Toggle("Relay-only test", isOn: Binding(get: { connection.forceRelay },
                                                               set: { connection.forceRelay = $0 }))

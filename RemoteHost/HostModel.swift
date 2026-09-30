@@ -854,6 +854,7 @@ final class RemoteHostModel: ObservableObject {
         snapshot.sessionsThisLaunch = sessionsThisLaunch
         snapshot.lastSessionDuration = sessionStartedAt.map { Date().timeIntervalSince($0) } ?? lastSessionDuration
         snapshot.route = connection.connected ? connection.diagnostics : nil
+        snapshot.localProof = connection.localProofSummary
         snapshot.streamQuality = capture.appliedQuality?.title
         snapshot.stream = latestSenderStatistics.map(Self.streamDescription)
         snapshot.tuning = StreamTuning.current.summary

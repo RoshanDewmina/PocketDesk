@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import Darwin
 import Network
+import os
 
 /// A one-hop, physical-interface UDP proof. IPv4 is the supported path; IPv6-only links fail closed.
 /// The peer's endpoint is exchanged inside the already authenticated pairing cipher.
@@ -24,26 +25,202 @@ struct ProbePacket: Codable {
     let mac: String
 }
 
+enum LocalProbeRejection: String, CaseIterable {
+    case size, ttl, interface, sourceAddress = "source-address", sourcePort = "source-port"
+    case decode, binding, nonce, kind, hmac
+}
+
 enum LocalProbeVerifier {
     static func verify(_ data: Data, ttl: Int32?, interfaceIndex: UInt32?, sourceAddress: String?,
                        sourcePort: UInt16?, peer: LocalProbeEndpoint, expectedInterface: UInt32,
                        room: String, epoch: String, session: String, pairingKey: SymmetricKey) -> ProbePacket? {
-        guard data.count <= 512, ttl == 1, interfaceIndex == expectedInterface,
-              sourceAddress == peer.address, sourcePort == peer.port,
-              let packet = try? JSONDecoder().decode(ProbePacket.self, from: data),
-              packet.room == room, packet.epoch == epoch, packet.session == session,
-              SecureRandom.isToken(packet.nonce),
-              packet.kind == "challenge" || packet.kind == "response",
-              let receivedMAC = Data(base64Encoded: packet.mac) else { return nil }
+        try? check(data, ttl: ttl, interfaceIndex: interfaceIndex, sourceAddress: sourceAddress,
+                   sourcePort: sourcePort, peer: peer, expectedInterface: expectedInterface,
+                   room: room, epoch: epoch, session: session, pairingKey: pairingKey).get()
+    }
+
+    static func check(_ data: Data, ttl: Int32?, interfaceIndex: UInt32?, sourceAddress: String?,
+                      sourcePort: UInt16?, peer: LocalProbeEndpoint, expectedInterface: UInt32,
+                      room: String, epoch: String, session: String,
+                      pairingKey: SymmetricKey) -> Result<ProbePacket, LocalProbeRejectionError> {
+        func reject(_ reason: LocalProbeRejection) -> Result<ProbePacket, LocalProbeRejectionError> {
+            .failure(LocalProbeRejectionError(reason: reason))
+        }
+        guard data.count <= 512 else { return reject(.size) }
+        guard ttl == 1 else { return reject(.ttl) }
+        guard interfaceIndex == expectedInterface else { return reject(.interface) }
+        guard sourceAddress == peer.address else { return reject(.sourceAddress) }
+        guard sourcePort == peer.port else { return reject(.sourcePort) }
+        guard let packet = try? JSONDecoder().decode(ProbePacket.self, from: data) else { return reject(.decode) }
+        guard packet.room == room, packet.epoch == epoch, packet.session == session else { return reject(.binding) }
+        guard SecureRandom.isToken(packet.nonce) else { return reject(.nonce) }
+        guard packet.kind == "challenge" || packet.kind == "response" else { return reject(.kind) }
+        guard let receivedMAC = Data(base64Encoded: packet.mac) else { return reject(.hmac) }
         let body = "1|\(packet.kind)|\(room)|\(epoch)|\(session)|\(packet.nonce)"
         guard HMAC<SHA256>.isValidAuthenticationCode(receivedMAC, authenticating: Data(body.utf8), using: pairingKey) else {
-            return nil
+            return reject(.hmac)
         }
-        return packet
+        return .success(packet)
+    }
+}
+
+struct LocalProbeRejectionError: Error, Equatable {
+    let reason: LocalProbeRejection
+}
+
+/// Darwin ancillary data for IP_RECVTTL / IP_RECVIF. Darwin aligns control messages to 4 bytes
+/// (`__DARWIN_ALIGN32`) and delivers IP_RECVTTL as a single `u_char`, so a CMSG_LEN(1) payload is normal.
+enum LocalProbeControl {
+    private static func align(_ value: Int) -> Int { (value + 3) & ~3 }
+
+    static func parse(_ control: UnsafeRawBufferPointer, length: Int) -> (ttl: Int32?, index: UInt32?) {
+        var ttl: Int32?
+        var index: UInt32?
+        let length = min(length, control.count)
+        let headerSize = MemoryLayout<cmsghdr>.size
+        let dataStart = align(headerSize)
+        var offset = 0
+        while offset + headerSize <= length {
+            let header = control.loadUnaligned(fromByteOffset: offset, as: cmsghdr.self)
+            let size = Int(header.cmsg_len)
+            guard size >= dataStart, offset + size <= length else { break }
+            let dataOffset = offset + dataStart
+            let dataLength = size - dataStart
+            if header.cmsg_level == IPPROTO_IP && header.cmsg_type == IP_RECVTTL {
+                if dataLength >= MemoryLayout<Int32>.size {
+                    ttl = control.loadUnaligned(fromByteOffset: dataOffset, as: Int32.self)
+                } else if dataLength >= 1 {
+                    ttl = Int32(control.load(fromByteOffset: dataOffset, as: UInt8.self))
+                }
+            }
+            if header.cmsg_level == IPPROTO_IP && header.cmsg_type == IP_RECVIF, dataLength >= 4 {
+                let family = control.load(fromByteOffset: dataOffset + 1, as: UInt8.self)
+                let rawIndex = control.loadUnaligned(fromByteOffset: dataOffset + 2, as: UInt16.self)
+                if family == UInt8(AF_LINK) { index = UInt32(rawIndex) }
+            }
+            offset += align(size)
+        }
+        return (ttl, index)
+    }
+}
+
+struct LocalPathInterface: Equatable {
+    let name: String
+    let index: Int
+    let type: NWInterface.InterfaceType
+}
+
+enum LocalPathVerdict: Equatable {
+    case safe
+    case unsatisfied, usesOther, usesCellular, noPhysical, multiplePhysical
+    case interfaceMismatch, notUsingPhysical, addressChanged
+
+    var reason: String {
+        switch self {
+        case .safe: return "safe"
+        case .unsatisfied: return "unsatisfied"
+        case .usesOther: return "uses-other(vpn/utun)"
+        case .usesCellular: return "uses-cellular"
+        case .noPhysical: return "no-physical"
+        case .multiplePhysical: return "multiple-physical"
+        case .interfaceMismatch: return "interface-mismatch"
+        case .notUsingPhysical: return "not-using-physical"
+        case .addressChanged: return "ipv4-changed"
+        }
+    }
+}
+
+/// Pure classification of a Network.framework path. A VPN interface that is merely present in
+/// `availableInterfaces` does not fail the path; a path that actually routes over it does.
+enum LocalPathClassifier {
+    static func physical(_ available: [LocalPathInterface]) -> [LocalPathInterface] {
+        var result: [LocalPathInterface] = []
+        for iface in available where iface.type == .wifi || iface.type == .wiredEthernet {
+            if !result.contains(where: { $0.name == iface.name && $0.index == iface.index }) { result.append(iface) }
+        }
+        return result
+    }
+
+    static func classify(satisfied: Bool, available: [LocalPathInterface],
+                         uses: (NWInterface.InterfaceType) -> Bool,
+                         expected: (name: String, index: UInt32)?,
+                         currentIPv4: String?, expectedIPv4: String?) -> LocalPathVerdict {
+        guard satisfied else { return .unsatisfied }
+        guard !uses(.other) else { return .usesOther }
+        guard !uses(.cellular) else { return .usesCellular }
+        let physical = physical(available)
+        guard let first = physical.first else { return .noPhysical }
+        guard physical.count == 1 else { return .multiplePhysical }
+        if let expected, first.name != expected.name || first.index != Int(expected.index) { return .interfaceMismatch }
+        guard uses(first.type) else { return .notUsingPhysical }
+        if let expectedIPv4, currentIPv4 != expectedIPv4 { return .addressChanged }
+        return .safe
+    }
+
+    static func describe(_ available: [LocalPathInterface]) -> String {
+        available.map { "\($0.name)#\($0.index):\(typeName($0.type))" }.joined(separator: ",")
+    }
+
+    static func typeName(_ type: NWInterface.InterfaceType) -> String {
+        switch type {
+        case .wifi: return "wifi"
+        case .wiredEthernet: return "wired"
+        case .cellular: return "cellular"
+        case .loopback: return "loopback"
+        case .other: return "other"
+        @unknown default: return "unknown"
+        }
+    }
+}
+
+extension NWPath {
+    var localInterfaces: [LocalPathInterface] {
+        availableInterfaces.map { LocalPathInterface(name: $0.name, index: $0.index, type: $0.type) }
+    }
+}
+
+/// Stage counters for diagnostics exports. Contains no keys, nonces or addresses.
+struct LocalProofStage {
+    var monitorReady = false
+    var monitorVerdict = "pending"
+    var peerSet = false
+    var routeState = "not started"
+    var routeReady = false
+    var routePathSeen = false
+    var routeVerdict = "pending"
+    var challengesSent = 0
+    var sendErrors = 0
+    var lastSendErrno: Int32 = 0
+    var packetsReceived = 0
+    var packetsBeforeGates = 0
+    var rejections: [LocalProbeRejection: Int] = [:]
+    var lastTTL: Int32?
+    var responsesSent = 0
+    var proven = false
+    var invalidatedBy: String?
+
+    var summary: String {
+        let rejected = LocalProbeRejection.allCases.compactMap { reason in
+            rejections[reason].map { "\(reason.rawValue)=\($0)" }
+        }.joined(separator: " ")
+        var parts = [
+            "monitor=\(monitorReady ? "ready" : "no")(\(monitorVerdict))",
+            "peer=\(peerSet ? "set" : "no")",
+            "route=\(routeState) ready=\(routeReady ? "yes" : "no") path=\(routePathSeen ? "yes" : "no")(\(routeVerdict))",
+            "challenges=\(challengesSent) sendErrors=\(sendErrors)" + (sendErrors > 0 ? "(errno \(lastSendErrno))" : ""),
+            "received=\(packetsReceived) early=\(packetsBeforeGates) rejected=[\(rejected)]"
+                + (lastTTL.map { " lastTTL=\($0)" } ?? " lastTTL=none"),
+            "responses=\(responsesSent) proven=\(proven ? "yes" : "no")",
+        ]
+        if let invalidatedBy { parts.append("invalidated=\(invalidatedBy)") }
+        return parts.joined(separator: "; ")
     }
 }
 
 final class LocalLinkProof {
+    static let log = Logger(subsystem: "com.roshan.PocketDesk", category: "localproof")
+    private var log: Logger { Self.log }
+    private var stage = LocalProofStage()
     private let fd: Int32
     private let queue = DispatchQueue(label: "farside.local-link-proof")
     private var reader: DispatchSourceRead?
@@ -72,8 +249,20 @@ final class LocalLinkProof {
     /// Must run away from the main actor: obtaining the first Network.framework path is bounded at 2 s.
     static func make(room: String, epoch: String, session: String, pairingKey: Data) -> LocalLinkProof? {
         guard let physical = firstPhysicalIPv4() else { return nil }
-        return try? LocalLinkProof(room: room, epoch: epoch, session: session,
-                                   pairingKey: pairingKey, physical: physical)
+        do {
+            let proof = try LocalLinkProof(room: room, epoch: epoch, session: session,
+                                           pairingKey: pairingKey, physical: physical)
+            log.info("created on \(physical.name, privacy: .public)#\(physical.index, privacy: .public) local=\(physical.address, privacy: .public):\(proof.endpoint.port, privacy: .public)")
+            return proof
+        } catch {
+            log.error("socket setup failed on \(physical.name, privacy: .public) errno=\(errno, privacy: .public)")
+            return nil
+        }
+    }
+
+    /// Stage counters for diagnostics; safe to call from the main actor.
+    func stageSummary() -> String {
+        queue.sync { stage.summary }
     }
 
     private init(room: String, epoch: String, session: String, pairingKey: Data,
@@ -126,13 +315,18 @@ final class LocalLinkProof {
         pathMonitor.pathUpdateHandler = { [weak self] path in
             guard let self else { return }
             guard !self.closed else { return }
+            let verdict = self.classify(path)
+            self.log.info("monitor path \(String(describing: path.status), privacy: .public) verdict=\(verdict.reason, privacy: .public) interfaces=\(LocalPathClassifier.describe(path.localInterfaces), privacy: .public)")
             if !self.monitorReady && path.status != .satisfied { return }
             // Even an apparently equivalent path update may have changed routing behind the
             // selected ICE pair. Require a new session and physical proof.
-            if self.monitorReady || !self.pathSafe(path) {
-                self.invalidate()
+            if self.monitorReady || verdict != .safe {
+                self.stage.monitorVerdict = verdict.reason
+                self.invalidate(self.monitorReady ? "monitor-path-changed" : "monitor-\(verdict.reason)")
             } else {
                 self.monitorReady = true
+                self.stage.monitorReady = true; self.stage.monitorVerdict = verdict.reason
+                self.log.info("gate monitorReady")
                 self.maybeChallenge()
             }
         }
@@ -142,32 +336,50 @@ final class LocalLinkProof {
 
     func setPeer(_ endpoint: LocalProbeEndpoint) {
         queue.async { [weak self] in
-            guard let self, !self.closed, self.peer == nil, endpoint.port > 0,
-                  endpoint.address != self.localAddress, Self.validIPv4(endpoint.address) else { return }
+            guard let self, !self.closed else { return }
+            guard self.peer == nil, endpoint.port > 0,
+                  endpoint.address != self.localAddress, Self.validIPv4(endpoint.address) else {
+                self.log.error("peer endpoint ignored: duplicate=\(self.peer != nil, privacy: .public) port=\(endpoint.port, privacy: .public) self=\(endpoint.address == self.localAddress, privacy: .public) ipv4=\(Self.validIPv4(endpoint.address), privacy: .public)")
+                return
+            }
             self.peer = endpoint
-            guard let port = NWEndpoint.Port(rawValue: endpoint.port) else { self.invalidate(); return }
+            self.stage.peerSet = true
+            self.log.info("gate peer set \(endpoint.address, privacy: .public):\(endpoint.port, privacy: .public)")
+            guard let port = NWEndpoint.Port(rawValue: endpoint.port) else { self.invalidate("peer-port"); return }
             let connection = NWConnection(host: NWEndpoint.Host(endpoint.address), port: port, using: .udp)
             connection.stateUpdateHandler = { [weak self, weak connection] state in
                 guard let self, !self.closed, let connection else { return }
+                self.stage.routeState = Self.stateName(state)
+                self.log.info("route probe state \(String(describing: state), privacy: .public)")
                 switch state {
                 case .ready:
-                    guard !self.routeReady, let path = connection.currentPath, self.pathSafe(path) else {
-                        self.invalidate(); return
+                    guard !self.routeReady, let path = connection.currentPath else {
+                        self.invalidate("route-ready-repeat-or-no-path"); return
                     }
+                    let verdict = self.classify(path)
+                    self.log.info("route probe ready verdict=\(verdict.reason, privacy: .public) interfaces=\(LocalPathClassifier.describe(path.localInterfaces), privacy: .public)")
+                    guard verdict == .safe else { self.invalidate("route-ready-\(verdict.reason)"); return }
                     self.routeReady = true
+                    self.stage.routeReady = true
+                    self.log.info("gate routeReady")
                     self.maybeChallenge()
                 case .failed, .cancelled:
-                    self.invalidate()
+                    self.invalidate("route-\(Self.stateName(state))")
                 default: break
                 }
             }
             connection.pathUpdateHandler = { [weak self] path in
                 guard let self, !self.closed else { return }
+                let verdict = self.classify(path)
+                self.log.info("route probe path \(String(describing: path.status), privacy: .public) verdict=\(verdict.reason, privacy: .public) interfaces=\(LocalPathClassifier.describe(path.localInterfaces), privacy: .public)")
                 if !self.routePathSeen && path.status != .satisfied { return }
-                if self.routePathSeen || !self.pathSafe(path) {
-                    self.invalidate()
+                if self.routePathSeen || verdict != .safe {
+                    self.stage.routeVerdict = verdict.reason
+                    self.invalidate(self.routePathSeen ? "route-path-changed" : "route-path-\(verdict.reason)")
                 } else {
                     self.routePathSeen = true
+                    self.stage.routePathSeen = true; self.stage.routeVerdict = verdict.reason
+                    self.log.info("gate routePathSeen")
                     self.maybeChallenge()
                 }
             }
@@ -201,29 +413,40 @@ final class LocalLinkProof {
     private func maybeChallenge() {
         guard !closed, monitorReady, routeReady, routePathSeen, !challengeStarted, let peer else { return }
         challengeStarted = true
+        log.info("all gates open; challenging every 250 ms")
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.setEventHandler { [weak self] in
             guard let self, !self.closed, !self.completed else { return }
-            self.send(kind: "challenge", nonce: self.nonce, to: peer)
+            if self.send(kind: "challenge", nonce: self.nonce, to: peer) { self.stage.challengesSent += 1 }
         }
         timer.schedule(deadline: .now(), repeating: .milliseconds(250))
         challengeTimer = timer
         timer.resume()
     }
 
-    private func pathSafe(_ path: NWPath) -> Bool {
-        let physicalInterfaces = Self.physicalInterfaces(path)
-        guard path.status == .satisfied, !path.usesInterfaceType(.other),
-              !path.usesInterfaceType(.cellular),
-              physicalInterfaces.count == 1,
-              let physical = physicalInterfaces.first,
-              physical.name == interfaceName && physical.index == Int(interfaceIndex),
-              path.usesInterfaceType(physical.type),
-              Self.ipv4Address(on: interfaceName) == localAddress else { return false }
-        return true
+    private func classify(_ path: NWPath) -> LocalPathVerdict {
+        LocalPathClassifier.classify(satisfied: path.status == .satisfied, available: path.localInterfaces,
+                                     uses: { path.usesInterfaceType($0) },
+                                     expected: (interfaceName, interfaceIndex),
+                                     currentIPv4: Self.ipv4Address(on: interfaceName), expectedIPv4: localAddress)
     }
 
-    private func invalidate() {
+    private static func stateName(_ state: NWConnection.State) -> String {
+        switch state {
+        case .setup: return "setup"
+        case .preparing: return "preparing"
+        case .ready: return "ready"
+        case .waiting: return "waiting"
+        case .failed: return "failed"
+        case .cancelled: return "cancelled"
+        @unknown default: return "unknown"
+        }
+    }
+
+    private func invalidate(_ reason: String) {
+        guard !closed else { return }
+        stage.invalidatedBy = reason
+        log.error("invalidated: \(reason, privacy: .public) stage: \(self.stage.summary, privacy: .public)")
         finish()
         DispatchQueue.main.async { [weak self] in self?.onInvalidated?() }
     }
@@ -235,21 +458,34 @@ final class LocalLinkProof {
                            nonce: nonce, mac: Data(mac).base64EncodedString())
     }
 
-    private func send(kind: String, nonce: String, to endpoint: LocalProbeEndpoint) {
-        guard !closed, let data = try? JSONEncoder().encode(signed(kind, nonce)), data.count <= 512 else { return }
+    @discardableResult
+    private func send(kind: String, nonce: String, to endpoint: LocalProbeEndpoint) -> Bool {
+        guard !closed, let data = try? JSONEncoder().encode(signed(kind, nonce)), data.count <= 512 else { return false }
         var address = sockaddr_in()
         address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
         address.sin_family = sa_family_t(AF_INET)
         address.sin_port = endpoint.port.bigEndian
-        guard inet_pton(AF_INET, endpoint.address, &address.sin_addr) == 1 else { return }
-        data.withUnsafeBytes { bytes in
+        guard inet_pton(AF_INET, endpoint.address, &address.sin_addr) == 1 else { return false }
+        let sent = data.withUnsafeBytes { bytes in
             withUnsafePointer(to: &address) { pointer in
                 pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    _ = Darwin.sendto(fd, bytes.baseAddress, bytes.count, 0, $0,
-                                      socklen_t(MemoryLayout<sockaddr_in>.size))
+                    Darwin.sendto(fd, bytes.baseAddress, bytes.count, 0, $0,
+                                  socklen_t(MemoryLayout<sockaddr_in>.size))
                 }
             }
         }
+        if sent < 0 {
+            let code = errno
+            stage.sendErrors += 1; stage.lastSendErrno = code
+            if stage.sendErrors <= 3 || stage.sendErrors % 20 == 0 {
+                log.error("send \(kind, privacy: .public) failed errno=\(code, privacy: .public) count=\(self.stage.sendErrors, privacy: .public)")
+            }
+            return false
+        }
+        if kind == "response" || stage.challengesSent < 3 || stage.challengesSent % 20 == 0 {
+            log.debug("sent \(kind, privacy: .public) (challenges so far \(self.stage.challengesSent, privacy: .public), responses so far \(self.stage.responsesSent, privacy: .public))")
+        }
+        return true
     }
 
     private func receive() {
@@ -270,7 +506,7 @@ final class LocalLinkProof {
                         let count = Darwin.recvmsg(fd, &header, 0)
                         guard count > 0, count <= 512, header.msg_flags & MSG_CTRUNC == 0,
                               sourcePointer.pointee.sin_family == sa_family_t(AF_INET) else { return (count, nil, nil, nil, nil) }
-                        let metadata = Self.metadata(control: control, length: Int(header.msg_controllen))
+                        let metadata = LocalProbeControl.parse(UnsafeRawBufferPointer(control), length: Int(header.msg_controllen))
                         var ip = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
                         var address = sourcePointer.pointee.sin_addr
                         guard inet_ntop(AF_INET, &address, &ip, socklen_t(ip.count)) != nil else {
@@ -281,42 +517,44 @@ final class LocalLinkProof {
                 }
             }
         }
-        guard result.0 > 0, monitorReady, routeReady, routePathSeen, let peer,
-              let packet = LocalProbeVerifier.verify(Data(payload.prefix(result.0)), ttl: result.1,
-                   interfaceIndex: result.2, sourceAddress: result.3, sourcePort: result.4,
-                   peer: peer, expectedInterface: interfaceIndex, room: room, epoch: epoch,
-                   session: session, pairingKey: key) else { return }
+        guard result.0 > 0 else {
+            log.error("recvmsg returned \(result.0, privacy: .public)")
+            return
+        }
+        stage.packetsReceived += 1
+        stage.lastTTL = result.1
+        guard monitorReady, routeReady, routePathSeen, let peer else {
+            stage.packetsBeforeGates += 1
+            log.info("packet before gates open: monitor=\(self.monitorReady, privacy: .public) route=\(self.routeReady, privacy: .public) path=\(self.routePathSeen, privacy: .public) peer=\(self.peer != nil, privacy: .public)")
+            return
+        }
+        let packet: ProbePacket
+        switch LocalProbeVerifier.check(Data(payload.prefix(result.0)), ttl: result.1,
+                                        interfaceIndex: result.2, sourceAddress: result.3, sourcePort: result.4,
+                                        peer: peer, expectedInterface: interfaceIndex, room: room, epoch: epoch,
+                                        session: session, pairingKey: key) {
+        case .success(let accepted):
+            packet = accepted
+        case .failure(let rejection):
+            stage.rejections[rejection.reason, default: 0] += 1
+            let count = stage.rejections[rejection.reason] ?? 0
+            if count <= 3 || count % 20 == 0 {
+                let ttl = result.1.map(String.init) ?? "nil", index = result.2.map(String.init) ?? "nil"
+                let port = result.4.map(String.init) ?? "nil", source = result.3 ?? "nil"
+                log.error("packet rejected: \(rejection.reason.rawValue, privacy: .public) count=\(count, privacy: .public) ttl=\(ttl, privacy: .public) if=\(index, privacy: .public)/\(self.interfaceIndex, privacy: .public) src=\(source, privacy: .public):\(port, privacy: .public) peer=\(peer.address, privacy: .public):\(peer.port, privacy: .public)")
+            }
+            return
+        }
+        log.info("packet accepted: \(packet.kind, privacy: .public)")
         if packet.kind == "challenge" {
-            send(kind: "response", nonce: packet.nonce, to: peer)
+            if send(kind: "response", nonce: packet.nonce, to: peer) { stage.responsesSent += 1 }
         } else if packet.nonce == nonce, !completed {
             completed = true
+            stage.proven = true
+            log.info("proven: one-hop link verified")
             let proof = ProvenLocalLink(localAddress: localAddress, peerAddress: peer.address)
             DispatchQueue.main.async { [weak self] in self?.onProven?(proof) }
         }
-    }
-
-    private static func metadata(control: UnsafeMutableRawBufferPointer, length: Int) -> (ttl: Int32?, index: UInt32?) {
-        var ttl: Int32?
-        var index: UInt32?
-        var offset = 0
-        let alignment = MemoryLayout<Int>.size
-        while offset + MemoryLayout<cmsghdr>.size <= length {
-            let header = control.loadUnaligned(fromByteOffset: offset, as: cmsghdr.self)
-            let size = Int(header.cmsg_len)
-            let dataOffset = offset + (MemoryLayout<cmsghdr>.size + alignment - 1) & ~(alignment - 1)
-            guard size >= dataOffset - offset, offset + size <= length else { break }
-            if header.cmsg_level == IPPROTO_IP && header.cmsg_type == IP_RECVTTL,
-               dataOffset + MemoryLayout<Int32>.size <= offset + size {
-                ttl = control.loadUnaligned(fromByteOffset: dataOffset, as: Int32.self)
-            }
-            if header.cmsg_level == IPPROTO_IP && header.cmsg_type == IP_RECVIF,
-               dataOffset + MemoryLayout<sockaddr_dl>.size <= offset + size {
-                let link = control.loadUnaligned(fromByteOffset: dataOffset, as: sockaddr_dl.self)
-                index = UInt32(link.sdl_index)
-            }
-            offset += (size + alignment - 1) & ~(alignment - 1)
-        }
-        return (ttl, index)
     }
 
     private static func validIPv4(_ text: String) -> Bool {
@@ -348,34 +586,24 @@ final class LocalLinkProof {
         var result: (name: String, index: UInt32, address: String)?
         monitor.pathUpdateHandler = { path in
             if path.status != .satisfied { return }
-            let physical = physicalInterfaces(path)
-            guard path.status == .satisfied, !path.usesInterfaceType(.other),
-                  !path.usesInterfaceType(.cellular),
-                  physical.count == 1 else {
+            let available = path.localInterfaces
+            let verdict = LocalPathClassifier.classify(satisfied: true, available: available,
+                                                       uses: { path.usesInterfaceType($0) },
+                                                       expected: nil, currentIPv4: nil, expectedIPv4: nil)
+            log.info("initial path verdict=\(verdict.reason, privacy: .public) interfaces=\(LocalPathClassifier.describe(available), privacy: .public)")
+            guard verdict == .safe, let iface = LocalPathClassifier.physical(available).first else {
                 semaphore.signal(); return
             }
-            for iface in physical {
-                if path.usesInterfaceType(iface.type), let address = ipv4Address(on: iface.name) {
-                    result = (iface.name, UInt32(iface.index), address)
-                    break
-                }
+            if let address = ipv4Address(on: iface.name) {
+                result = (iface.name, UInt32(iface.index), address)
+            } else {
+                log.error("no IPv4 address on \(iface.name, privacy: .public)")
             }
             semaphore.signal()
         }
         monitor.start(queue: queue)
-        _ = semaphore.wait(timeout: .now() + 2)
+        if semaphore.wait(timeout: .now() + 2) == .timedOut { log.error("initial path timed out") }
         monitor.cancel()
         return result
     }
-
-    private static func physicalInterfaces(_ path: NWPath) -> [NWInterface] {
-        var result: [NWInterface] = []
-        for iface in path.availableInterfaces where iface.type == .wifi || iface.type == .wiredEthernet {
-            if !result.contains(where: { $0.name == iface.name && $0.index == iface.index }) {
-                result.append(iface)
-            }
-        }
-        return result
-    }
-
 }
