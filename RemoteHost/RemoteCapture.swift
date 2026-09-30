@@ -195,12 +195,15 @@ final class RemoteCapture {
         scheduleQualityUpdate()
     }
 
-    func start(display: SCDisplay, peer: PeerMedia) async throws -> UInt64 {
+    /// `keepingExclusions` starts the new stream already excluding the windows the previous one
+    /// excluded, so the privacy curtain never appears in it; if any of them can no longer be found,
+    /// the exclusion is dropped as usual.
+    func start(display: SCDisplay, peer: PeerMedia, keepingExclusions: Bool = false) async throws -> UInt64 {
         let owner = ownership.begin()
         if viewportDisplayID != display.displayID { requestedViewport = nil }
         viewportDisplayID = display.displayID
         appliedCaptureRegion = nil
-        dropExclusions()
+        if keepingExclusions { cancelPendingExclusions() } else { dropExclusions() }
         qualityUpdateTask?.cancel()
         qualityUpdateTask = nil
         captureStarted = false
@@ -212,11 +215,18 @@ final class RemoteCapture {
         await previous?.stop()
         try Task.checkCancellation()
         guard ownership.owns(owner) else { throw CancellationError() }
+        var excluding: [SCWindow] = []
+        if keepingExclusions {
+            excluding = await keptExclusionWindows()
+            try Task.checkCancellation()
+            guard ownership.owns(owner) else { throw CancellationError() }
+            if excluding.isEmpty { dropExclusions() }
+        }
 
         let initialQuality = requestedQuality
         let initialClientLongEdge = requestedClientLongEdge
         let next = try RemoteCaptureSession(display: display, peer: peer, quality: initialQuality,
-                                            clientLongEdge: initialClientLongEdge)
+                                            clientLongEdge: initialClientLongEdge, excluding: excluding)
         next.onHealth = { [weak self, weak next] healthy in
             Task { @MainActor in
                 guard let self, let next, self.ownership.owns(owner), self.session === next else { return }
@@ -275,8 +285,13 @@ final class RemoteCapture {
 
     @discardableResult
     func stop() -> Task<Void, Never>? {
+        stop(keepingExclusions: false)
+    }
+
+    @discardableResult
+    func stop(keepingExclusions: Bool) -> Task<Void, Never>? {
         ownership.invalidate()
-        dropExclusions()
+        if keepingExclusions { cancelPendingExclusions() } else { dropExclusions() }
         qualityUpdateTask?.cancel()
         qualityUpdateTask = nil
         requestedQuality = .balanced
@@ -333,9 +348,22 @@ final class RemoteCapture {
         return true
     }
 
-    private func dropExclusions() {
+    private func keptExclusionWindows() async -> [SCWindow] {
+        let ids = excludedWindowIDs
+        guard !ids.isEmpty,
+              let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false),
+              ids == excludedWindowIDs
+        else { return [] }
+        return CaptureWindowExclusion.windows(for: ids, in: content.windows, id: { $0.windowID }) ?? []
+    }
+
+    private func cancelPendingExclusions() {
         exclusionGeneration &+= 1
         exclusionTask = nil
+    }
+
+    private func dropExclusions() {
+        cancelPendingExclusions()
         guard !excludedWindowIDs.isEmpty else { return }
         excludedWindowIDs = []
         onExclusionLost?()
@@ -546,8 +574,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     let geometry: DisplayGeometry
     let initialRegion: CaptureRegion
 
-    init(display: SCDisplay, peer: PeerMedia, quality: StreamQuality, clientLongEdge: Int?) throws {
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+    init(display: SCDisplay, peer: PeerMedia, quality: StreamQuality, clientLongEdge: Int?,
+         excluding: [SCWindow] = []) throws {
+        let filter = SCContentFilter(display: display, excludingWindows: excluding)
         let tuning = StreamTuning.current
         let refresh = DisplayRefresh.rateHz(for: display.displayID)
         let fps = CaptureRatePolicy.targetFPS(displayRefreshHz: refresh, tuning: tuning)

@@ -39,6 +39,8 @@ struct PrivacyCurtainInputs: Equatable {
     var locallyDismissed = false
     var raiseFailed = false
     var safeMode = false
+    /// Big Text is changing the display mode; capture blips during it must not uncover the Mac.
+    var displayReconfiguring = false
 }
 
 enum PrivacyCurtainPolicy {
@@ -51,6 +53,7 @@ enum PrivacyCurtainPolicy {
         guard inputs.preference, inputs.sessionLive, !inputs.phonePaused, !inputs.screenLocked,
               !inputs.safeMode, !inputs.locallyDismissed, !inputs.raiseFailed,
               inputs.accessibilityGranted else { return .down }
+        if currentlyUp && inputs.displayReconfiguring { return .up }
         if currentlyUp {
             let lostPicture = !inputs.captureHealthy && !inputs.displayAsleep && inputs.unhealthyFor > unhealthyGrace
             return lostPicture ? .down : .up
@@ -175,6 +178,8 @@ final class PrivacyCurtainController {
     /// Called before the curtain lifts after three local Escape presses.
     var onLocalLift: (() -> Void)?
     var onPhaseChange: ((Phase) -> Void)?
+    /// False while the host itself changes a display mode; it then calls `refitToScreens()`.
+    var followsScreenChanges = true
     /// One window per display. Tests substitute tiny off-screen windows so nothing is ever shown.
     private let makeWindows: () -> [NSWindow]
 
@@ -225,6 +230,13 @@ final class PrivacyCurtainController {
             return .verificationFailed
         }
         return .raised
+    }
+
+    /// Windows are made in `NSScreen.screens` order, so they pair with screens by position.
+    func refitToScreens() {
+        let screens = NSScreen.screens
+        guard windows.count == screens.count else { return lift() }
+        for (window, screen) in zip(windows, screens) { window.setFrame(screen.frame, display: true) }
     }
 
     func lift() {
@@ -297,7 +309,10 @@ final class PrivacyCurtainController {
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.lift() }
+            MainActor.assumeIsolated {
+                guard self?.followsScreenChanges ?? false else { return }
+                self?.lift()
+            }
         }
     }
 

@@ -48,6 +48,19 @@ final class PrivacyCurtainPolicyTests: XCTestCase {
                        "A sleeping display stays covered so waking it never exposes the desktop")
     }
 
+    func testReconfiguringKeepsARaisedCurtainUpThroughLostPicture() {
+        var inputs = PrivacyCurtainInputs(preference: true, sessionLive: true, captureHealthy: false, unhealthyFor: 9,
+                                          accessibilityGranted: true)
+        inputs.displayReconfiguring = true
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(inputs, currentlyUp: true), .up, "Big Text changes never uncover the Mac")
+    }
+
+    func testReconfiguringNeverRaisesACurtainThatIsDown() {
+        var inputs = PrivacyCurtainInputs(preference: true, sessionLive: true, captureHealthy: false, accessibilityGranted: true)
+        inputs.displayReconfiguring = true
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(inputs, currentlyUp: false), .down)
+    }
+
     func testProtocolStateTellsThePhoneWhy() {
         XCTAssertEqual(PrivacyCurtainPolicy.protocolState(live, up: true), .up)
         XCTAssertEqual(PrivacyCurtainPolicy.protocolState(live, up: false), .pending)
@@ -234,6 +247,27 @@ final class PrivacyCurtainControllerTests: XCTestCase {
         NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
         for _ in 0..<20 where curtain.phase != .down { try? await Task.sleep(for: .milliseconds(10)) }
         XCTAssertEqual(curtain.phase, .down)
+    }
+
+    func testPlannedDisplayChangeKeepsTheCurtain() async {
+        let curtain = PrivacyCurtainController(makeWindows: offscreenWindows())
+        _ = await curtain.raise(hooks: hooks(), settle: .zero, verifyAfter: .zero)
+        curtain.followsScreenChanges = false
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        try? await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(curtain.phase, .up)
+        curtain.followsScreenChanges = true
+        NotificationCenter.default.post(name: NSApplication.didChangeScreenParametersNotification, object: nil)
+        for _ in 0..<20 where curtain.phase != .down { try? await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(curtain.phase, .down, "Changes nobody planned still lift it")
+    }
+
+    func testRefitLiftsWhenTheScreenCountNoLongerMatches() async {
+        let curtain = PrivacyCurtainController(makeWindows: offscreenWindows(NSScreen.screens.count + 1))
+        _ = await curtain.raise(hooks: hooks(), settle: .zero, verifyAfter: .zero)
+        XCTAssertEqual(curtain.phase, .up)
+        curtain.refitToScreens()
+        XCTAssertEqual(curtain.phase, .down, "A display added or removed would be left uncovered")
     }
 }
 
