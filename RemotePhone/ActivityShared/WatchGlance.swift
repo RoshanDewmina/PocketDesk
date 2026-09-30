@@ -21,7 +21,42 @@ struct WatchGlance: Equatable {
 enum SessionGlance {
     static func glance(attributes: FarsideSessionAttributes, state: FarsideSessionAttributes.ContentState,
                        isStale: Bool, now: Date = .now) -> WatchGlance {
-        WatchGlance(mark: .plain, title: "", detail: .text(""), note: nil, accessibilityLabel: "")
+        var glance = body(attributes: attributes, state: state, isStale: isStale, now: now)
+        glance.accessibilityLabel = SessionActivityCopy.accessibilitySummary(for: state, stale: isStale)
+        if attributes.isPreview {
+            glance.note = "Sample · preview"
+            glance.accessibilityLabel = "Sample. " + glance.accessibilityLabel
+        }
+        return glance
+    }
+
+    private static func body(attributes: FarsideSessionAttributes, state: FarsideSessionAttributes.ContentState,
+                             isStale: Bool, now: Date) -> WatchGlance {
+        func make(_ title: String, _ detail: WatchGlance.Detail, note: String? = nil) -> WatchGlance {
+            WatchGlance(mark: .plain, title: title, detail: detail, note: note, accessibilityLabel: "")
+        }
+        if isStale { return make("Session ended?", .text("Check your iPhone.")) }
+        switch state.phase {
+        case .live:
+            let started = attributes.startedAt
+            return make("Live · \(attributes.macLabel)",
+                          .clock(prefix: nil, interval: started...started.addingTimeInterval(8 * 60 * 60), countsDown: false),
+                          note: "End it on your iPhone.")
+        case .paused:
+            if let grace = state.graceEndsAt, grace > now {
+                return make("Paused", .clock(prefix: "Lets go in", interval: now...grace, countsDown: true))
+            }
+            return make("Paused", .text("Lets go soon."))
+        case .reconnecting:
+            return make("Reconnecting", .text("Hold on."))
+        case .ended:
+            switch state.endedReason ?? .user {
+            case .user: return make("Session ended", .text("Mac handed back."))
+            case .timeout: return make("Farside let go", .text("You were away."))
+            case .macStopped: return make("Sharing stopped", .text("Stopped at the Mac."))
+            case .error: return make("Session ended", .text("Nothing left open."))
+            }
+        }
     }
 }
 
@@ -36,11 +71,27 @@ struct MacPresence: Codable, Hashable {
     var batteryPercent: Int?
     var power: String?
 
-    var state: State { .notSeen }
-    var seenAt: Date? { nil }
+    var state: State { State(rawValue: macState ?? "") ?? .notSeen }
+    var seenAt: Date? { macSeenUnix.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
 }
 
 enum MacGlanceLine {
     static func text(for presence: MacPresence?, isStale: Bool,
-                     timeZone: TimeZone = .current, locale: Locale = .current) -> String? { nil }
+                     timeZone: TimeZone = .current, locale: Locale = .current) -> String? {
+        guard let presence else { return nil }
+        let seen = presence.seenAt.map { $0.formatted(Date.FormatStyle(locale: locale, timeZone: timeZone).hour().minute()) }
+        switch (isStale ? MacPresence.State.notSeen : presence.state, seen) {
+        case (.awake, let seen?):
+            let battery = presence.batteryPercent.flatMap { (1...100).contains($0) ? " · \($0)%" : nil } ?? ""
+            return "Mac · seen \(seen)\(battery)"
+        case (.asleep, let seen?):
+            return "Mac · asleep since \(seen)"
+        case (.asleep, nil):
+            return "Mac · asleep"
+        case (_, let seen?):
+            return "Not seen since \(seen)"
+        case (_, nil):
+            return "Mac not seen lately"
+        }
+    }
 }
