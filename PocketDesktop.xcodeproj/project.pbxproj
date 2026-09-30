@@ -809,6 +809,7 @@
 		D196840B7B21F1FA736F484C /* CouchProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88CC3C2F95FAF7F1192B8273 /* CouchProtocol.swift */; };
 		D1ED32A1C58B585ACAD6817C /* HostRestartIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BFE866C37F98027AD3619846 /* HostRestartIntegrationTests.swift */; };
 		D213449F56DCEA0F0096FF71 /* InputCausality.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBBE9F39209782B3E5DA7DA2 /* InputCausality.swift */; };
+		D26D8A112E355ED81FBC26CB /* InputAppliedReceiptTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE05626824F09900BE1D7984 /* InputAppliedReceiptTests.swift */; };
 		D2776444C146C335F9941758 /* HostE2EInputFence.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0D3322BAED26602BE46F4B4 /* HostE2EInputFence.swift */; };
 		D3640B5DE16D290046311EBE /* E2EHarness.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA95F7DC2A3B867C7001558D /* E2EHarness.swift */; };
 		D3B38113CB3BE5728CFBD80B /* StreamLadder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07376E3C40243FD1FB65D2BC /* StreamLadder.swift */; };
@@ -1041,10 +1042,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1074,10 +1075,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1490,6 +1491,7 @@
 		CDB43E9A47D0C0BFAB1B5988 /* StreamWire.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StreamWire.swift; sourceTree = "<group>"; };
 		CDCB2DCE29C9A401C6C942C5 /* PhoneClipboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneClipboardTests.swift; sourceTree = "<group>"; };
 		CDD57C8DD57D3F96F61B2A25 /* HostDisplayCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostDisplayCatalog.swift; sourceTree = "<group>"; };
+		CE05626824F09900BE1D7984 /* InputAppliedReceiptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InputAppliedReceiptTests.swift; sourceTree = "<group>"; };
 		CE1B4E4C6A4BC777773EE887 /* FileTransfer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileTransfer.swift; sourceTree = "<group>"; };
 		CE2406BCA00220ED02C01518 /* NativeInputSafetyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeInputSafetyTests.swift; sourceTree = "<group>"; };
 		CE53D733B6B7851A965A0965 /* MiniMapView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MiniMapView.swift; sourceTree = "<group>"; };
@@ -2005,6 +2007,7 @@
 				59112F0D2AF679128638C289 /* HostSignalingRecoveryTests.swift */,
 				EC94BB45B8A9E3D97A3B64EC /* HostTerminationTests.swift */,
 				B0170A2D76EFEED481C56663 /* HostTextFocusTests.swift */,
+				CE05626824F09900BE1D7984 /* InputAppliedReceiptTests.swift */,
 				2044754D0E2628BC338380B0 /* InputCausalityTests.swift */,
 				974AF3B4503C231C4C9DEC57 /* LadderPolicyTests.swift */,
 				D5591B56762CE04D5AC9EEF5 /* LegibilityChartTests.swift */,
@@ -3585,6 +3588,7 @@
 				35A5776CE6228B27C9FAFCBF /* HostWatchdogReporter.swift in Sources */,
 				948C0665A363D8B22B2DF821 /* HostWatchdogState.swift in Sources */,
 				B546418A10B3221D85BD25D4 /* InputAppliedReceipt.swift in Sources */,
+				D26D8A112E355ED81FBC26CB /* InputAppliedReceiptTests.swift in Sources */,
 				62C0E3D3CBD3BFCD877B9859 /* InputCausality.swift in Sources */,
 				2166F1EEFBF4E768F24A144A /* InputCausalityTests.swift in Sources */,
 				32328683D12B280CE3F0EE7D /* LadderPolicy.swift in Sources */,
