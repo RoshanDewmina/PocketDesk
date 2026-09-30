@@ -163,4 +163,56 @@ final class BenchStateTests: XCTestCase {
             }
         }
     }
+
+    // Camera kit (Docs/plans/PERF-PACK-2026-09-30.md, item 4b).
+    func testAutoFlashTogglesAtJitteredIntervalsAndRedrawsOnlyOnAToggle() {
+        var state = BenchState(seed: 9)
+        _ = state.markerTime(now: 0)
+        XCTAssertFalse(state.wantsFrames)
+        XCTAssertTrue(state.setAutoFlash(true, now: 1_000, seed: 42))
+        XCTAssertFalse(state.setAutoFlash(true, now: 1_000, seed: 42), "the current value is not an event")
+        XCTAssertTrue(state.wantsFrames, "the display link keeps ticking to time the next toggle")
+        var toggles: [Double] = []
+        var redraws = 0
+        var flash = state.flash
+        for frame in 0..<(60 * 20) {
+            let now = 1_000 + Double(frame) * 1000 / 60
+            if state.markerTime(now: now) != nil { redraws += 1 }
+            if state.flash != flash { toggles.append(now); flash = state.flash }
+        }
+        XCTAssertGreaterThanOrEqual(toggles.count, 25)
+        XCTAssertEqual(redraws, toggles.count + 1, "one redraw for switching on, then one per toggle")
+        let gaps = zip(toggles, toggles.dropFirst()).map { $1 - $0 }
+        XCTAssertTrue(gaps.allSatisfy { $0 >= BenchState.autoFlashMinimumMs && $0 <= BenchState.autoFlashMaximumMs + 1000 / 60 },
+                      "\(gaps)")
+        XCTAssertGreaterThan(Set(gaps.map { Int($0) }).count, 5, "irregular, so camera pairing is unambiguous")
+        XCTAssertEqual(state.shownMarker?.flash, state.flash)
+    }
+
+    func testAutoFlashIsDeterministicPerSeedAndStops() {
+        func toggles(seed: UInt64) -> [Double] {
+            var state = BenchState(seed: 3)
+            state.setAutoFlash(true, now: 0, seed: seed)
+            var times: [Double] = []
+            var flash = state.flash
+            for frame in 0..<600 {
+                let now = Double(frame) * 10
+                _ = state.markerTime(now: now)
+                if state.flash != flash { times.append(now); flash = state.flash }
+            }
+            return times
+        }
+        XCTAssertEqual(toggles(seed: 7), toggles(seed: 7))
+        XCTAssertNotEqual(toggles(seed: 7), toggles(seed: 8))
+
+        var state = BenchState(seed: 3)
+        state.setAutoFlash(true, now: 0, seed: 1)
+        _ = state.markerTime(now: 0)
+        XCTAssertTrue(state.setAutoFlash(false, now: 5))
+        _ = state.markerTime(now: 6)
+        let flash = state.flash
+        for frame in 1...200 { XCTAssertNil(state.markerTime(now: 6 + Double(frame) * 10)) }
+        XCTAssertEqual(state.flash, flash)
+        XCTAssertFalse(state.wantsFrames)
+    }
 }

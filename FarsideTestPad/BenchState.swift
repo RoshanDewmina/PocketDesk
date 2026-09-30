@@ -12,11 +12,18 @@ struct BenchState: Equatable {
     static let scrollPointsPerSecond = 1000.0
     /// A stalled main thread advances motion and scroll by at most this much per tick.
     static let maximumStepMs = 250.0
+    /// Camera kit: auto-flash toggles the flash target at a seeded, uniformly jittered interval in
+    /// this range, far longer than any latency it measures, so camera pairing is unambiguous.
+    static let autoFlashMinimumMs = 400.0
+    static let autoFlashMaximumMs = 700.0
 
     private(set) var seed: UInt16
     private(set) var motion = false
     private(set) var scroll = false
     private(set) var flash = false
+    private(set) var autoFlash = false
+    private var nextAutoFlashMs: Double?
+    private var autoFlashRandom = SplitMix64(seed: 0)
     private(set) var motionSeconds = 0.0
     private(set) var scrollOffset = 0.0
     /// The strip as last drawn, and the mach time it carries; nil before the first frame.
@@ -30,7 +37,7 @@ struct BenchState: Equatable {
     }
 
     var isMoving: Bool { motion || scroll }
-    var wantsFrames: Bool { isMoving || pendingEvent }
+    var wantsFrames: Bool { isMoving || pendingEvent || autoFlash }
     var boxFraction: Double { Self.boxFraction(motionSeconds: motionSeconds) }
 
     /// 0 at the left end of the lane and 1 at the right; one sweep is one traversal.
@@ -69,6 +76,25 @@ struct BenchState: Equatable {
         pendingEvent = true
     }
 
+    @discardableResult
+    mutating func setAutoFlash(_ on: Bool, now: Double, seed: UInt64 = UInt64.random(in: 1...UInt64.max)) -> Bool {
+        guard on != autoFlash else { return false }
+        autoFlash = on
+        if on {
+            autoFlashRandom = SplitMix64(seed: seed)
+            nextAutoFlashMs = now + nextAutoFlashInterval()
+        } else {
+            nextAutoFlashMs = nil
+        }
+        pendingEvent = true
+        return true
+    }
+
+    private mutating func nextAutoFlashInterval() -> Double {
+        let unit = Double(autoFlashRandom.next() >> 11) / Double(1 << 53)
+        return Self.autoFlashMinimumMs + (Self.autoFlashMaximumMs - Self.autoFlashMinimumMs) * unit
+    }
+
     mutating func jump(by points: Double) {
         scrollOffset += max(0, points)
         pendingEvent = true
@@ -78,7 +104,11 @@ struct BenchState: Equatable {
     /// strip's new time while something moves or after an event, nil when the strip must keep its
     /// last value and nothing may redraw.
     mutating func markerTime(now: Double) -> Double? {
-        guard wantsFrames else {
+        if autoFlash, let due = nextAutoFlashMs, now >= due {
+            toggleFlash()
+            nextAutoFlashMs = now + nextAutoFlashInterval()
+        }
+        guard isMoving || pendingEvent else {
             lastTickMs = nil
             return nil
         }
@@ -107,6 +137,21 @@ struct BenchState: Equatable {
         var seed = LegibilityChart.randomSeed()
         while seed == current { seed = LegibilityChart.randomSeed() }
         return seed
+    }
+}
+
+/// Seeded generator for the auto-flash schedule (Steele, Lea and Flood's SplitMix64).
+struct SplitMix64: Equatable {
+    private var state: UInt64
+
+    init(seed: UInt64) { state = seed }
+
+    mutating func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
     }
 }
 
