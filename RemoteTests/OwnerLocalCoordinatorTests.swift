@@ -85,4 +85,29 @@ final class OwnerLocalCoordinatorTests: XCTestCase {
         local.onMessage?(RelayMessage(type: "route", version: 1))
         XCTAssertFalse(phone.isRunning); XCTAssertFalse(phone.routeIsLocal); XCTAssertNil(phone.routePolicyEpoch)
     }
+    func testAcceptedRotationCannotMutateScannedHostGrantOrDiscoveryIdentity() throws {
+        for field in 0..<3 {
+            let (phone, cloud, _, invitation) = try fixture()
+            defer { phone.stop() }
+            phone.allowLegacyPrivateRoute = true
+            phone.start()
+            cloud.deliver(RelayMessage(type: "peer", online: true))
+            let cipher = try SignalCipher(key: invitation.key, room: invitation.room)
+            let request = try cipher.open(try XCTUnwrap(cloud.sent.last?.payload), sender: "client")
+            let session = String(repeating: "d", count: 64)
+            func incoming(_ kind: String, body: Data? = nil, sequence: UInt64) throws -> RelayMessage {
+                RelayMessage(type: "signal", payload: try cipher.seal(ProtectedMessage(kind: kind,
+                    request: request.request, session: session, sequence: sequence, body: body), sender: "host"))
+            }
+            cloud.deliver(try incoming("challenge", sequence: 0))
+            var hostile = invitation
+            if field == 0 { hostile.durableHostID = String(repeating: "f", count: 64) }
+            if field == 1 { hostile.ownerPairID = String(repeating: "e", count: 64) }
+            if field == 2 { hostile.localServiceName = "other-mac" }
+            cloud.deliver(try incoming("accepted", body: JSONEncoder().encode(hostile), sequence: 1))
+            XCTAssertEqual(phone.invitation, invitation, "Rejected identity mutation must not persist trust")
+            XCTAssertFalse(phone.isRunning); XCTAssertNil(phone.media)
+        }
+    }
+
 }

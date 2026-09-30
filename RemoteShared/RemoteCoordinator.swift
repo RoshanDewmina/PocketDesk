@@ -640,7 +640,10 @@ final class RemoteCoordinator: ObservableObject {
             if let body = message.body {
                 let next = try JSONDecoder().decode(PairInvitation.self, from: body)
                 try next.validate(enrollment: false)
-                guard next.room == invitation?.room, next.server == invitation?.server else { throw RemoteError.invalidMessage }
+                guard next.room == invitation?.room, next.server == invitation?.server,
+                      next.durableHostID == invitation?.durableHostID,
+                      next.ownerPairID == invitation?.ownerPairID,
+                      next.localServiceName == invitation?.localServiceName else { throw RemoteError.invalidMessage }
                 try store.save(next); invitation = next
                 #if DEBUG
                 e2eEnrolling = false
