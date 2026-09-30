@@ -6,6 +6,28 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         VideoPresentationIdentity(hostRecordID: "record", ownerPairID: grant, sessionID: UUID(),
             trackID: track, contentEpoch: content, geometryEpoch: geometry)
     }
+    @MainActor
+    func testRealModelExitTimeoutSurvivesGeometryRetirementAndRoutineStatus() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "pip-exit")
+        defer { model.connection.stop() }
+        var packets: [ControlPacket] = []
+        model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+        func deliver(_ action: RemoteAction) throws { model.connection.onControl?(try JSONEncoder().encode(action)) }
+        try deliver(RemoteAction(action: "geometry", x: 200, y: 200, epoch: 7))
+        model.stopPictureInPicture()
+        let exit = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" })
+        XCTAssertFalse(exit.action.liveViewOnly ?? true)
+        XCTAssertNotNil(exit.action.liveViewOnlyRequestID)
+        // Host drops old-geometry exit; a new geometry retires the correlation request.
+        try deliver(RemoteAction(action: "geometry", x: 210, y: 200, epoch: 8))
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 8, features: SessionFeature.host, mode: "picture", liveViewOnly: true))
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 8, features: SessionFeature.host, mode: "picture", liveViewOnly: false))
+        XCTAssertTrue(model.connection.connected, "Routine state is not an applied exit acknowledgment")
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 3)
+        XCTAssertFalse(model.connection.connected, "Retirement must never erase the bounded foreground exit timeout")
+    }
     func testCaptureDeadlineCannotBeRenewedByLiveRouteAlone() {
         let id = identity()
         let proof = PresentationLeasePolicy.admission(identity: id, routeDeadline: 20, captureHealthAt: 10,

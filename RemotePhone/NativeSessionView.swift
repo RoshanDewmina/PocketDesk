@@ -944,7 +944,7 @@ struct NativeSessionView: View {
                             .minimumScaleFactor(0.8)
                     }
                 }
-if let scope = model.captureScopeDescription {
+                if let scope = model.captureScopeDescription {
                     Text(scope).font(.footnote).foregroundStyle(Farside.Palette.bone)
                         .accessibilityIdentifier("remote.captureScope")
                 }
@@ -959,7 +959,7 @@ if let scope = model.captureScopeDescription {
                     .fixedSize(horizontal: false, vertical: true)
             }
             .accessibilityElement(children: .combine)
-.accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : [linkAccessibility, model.captureScopeDescription, status, lockedMouseNotice.isEmpty ? nil : lockedMouseNotice].compactMap { $0 }.joined(separator: ". "))
+            .accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : [linkAccessibility, model.captureScopeDescription, status, lockedMouseNotice.isEmpty ? nil : lockedMouseNotice].compactMap { $0 }.joined(separator: ". "))
             Spacer(minLength: 4)
             if !couch {
                 Button { openControls() } label: {

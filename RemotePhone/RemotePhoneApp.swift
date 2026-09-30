@@ -339,6 +339,8 @@ final class PhoneRemoteModel: ObservableObject {
     private var viewOnlyStartDeadline: TimeInterval?
     private var viewOnlyRequest = LiveViewOnlyRequest()
     private var awaitingViewOnlyExit = false
+    // Independent of content retirement: a changed geometry cannot erase the safety timeout.
+    private var viewOnlyExitDeadline: TimeInterval?
 
     private var mayKeepLivePiP: Bool {
         PresentationLeasePolicy.mayContinueBackground(state: pipState, admission: pipAdmission,
@@ -406,6 +408,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private func requestViewOnlyExit() {
         awaitingViewOnlyExit = true
+        viewOnlyExitDeadline = ProcessInfo.processInfo.systemUptime + 2
         let id = viewOnlyRequest.begin(epoch: geometryEpoch, at: ProcessInfo.processInfo.systemUptime)
         viewOnlyStartDeadline = nil
         if !connection.sendControl(RemoteAction(action: "viewOnly", liveViewOnly: false, liveViewOnlyRequestID: id, epoch: geometryEpoch)) { disconnect() }
@@ -1698,6 +1701,7 @@ final class PhoneRemoteModel: ObservableObject {
         invalidatePresentation()
         viewOnlyConfirmed = false
         awaitingViewOnlyExit = false
+        viewOnlyExitDeadline = nil
         sessionEndReason = .user
         resumeTiming.cancel(.userEnded)
         discardResume()
@@ -1918,6 +1922,7 @@ final class PhoneRemoteModel: ObservableObject {
         presentationHost = nil
         viewOnlyConfirmed = false
         awaitingViewOnlyExit = false
+        viewOnlyExitDeadline = nil
         setMacAudioMuted(true)
         end()
         if sessionEndReason != .user { persistResume() }
@@ -2026,7 +2031,9 @@ final class PhoneRemoteModel: ObservableObject {
             if action.epoch == geometryEpoch, action.features?.contains(SessionFeature.liveViewOnly) == true, let value = action.liveViewOnly,
                let confirmed = viewOnlyRequest.receive(value, id: action.liveViewOnlyRequestID, epoch: action.epoch, at: ProcessInfo.processInfo.systemUptime) {
                 viewOnlyConfirmed = confirmed
-                if !confirmed { awaitingViewOnlyExit = false }
+                if !confirmed, action.liveViewOnlyRequestID != nil {
+                    awaitingViewOnlyExit = false; viewOnlyExitDeadline = nil
+                }
                 if !confirmed && (pipState == .active || pipState == .starting || pipState == .paused) {
                     invalidatePresentation()
                 }
@@ -2274,9 +2281,12 @@ final class PhoneRemoteModel: ObservableObject {
         RunLoop.main.add(heartbeatTimer, forMode: .common)
     }
 
-    private func tick() {
-        let now = ProcessInfo.processInfo.systemUptime
-        if awaitingViewOnlyExit, let deadline = viewOnlyRequest.deadline, now >= deadline {
+    #if DEBUG
+    func expireViewOnlyExitForTesting(at now: TimeInterval) { tick(at: now) }
+    #endif
+    private func tick(at suppliedNow: TimeInterval? = nil) {
+        let now = suppliedNow ?? ProcessInfo.processInfo.systemUptime
+        if awaitingViewOnlyExit, let deadline = viewOnlyExitDeadline, now >= deadline {
             disconnect()
             showSessionNotice("Your Mac didn’t confirm foreground control. Reconnect to continue.")
             return

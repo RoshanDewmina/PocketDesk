@@ -2078,7 +2078,7 @@ final class RemoteHostModel: ObservableObject {
             countInput("rejected-parse"); stop(); return
         }
         countInput("received")
-guard SharedCaptureScopePolicy.permits(action.action, kind: captureScopeKind) else {
+        guard SharedCaptureScopePolicy.permits(action.action, kind: captureScopeKind) else {
             countInput("rejected-capture-scope"); return
         }
         guard action.pencil == nil || (sessionState == .picture && connection.peerFeatures.contains(SessionFeature.pencilInput)) else { return }
