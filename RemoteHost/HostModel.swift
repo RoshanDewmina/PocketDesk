@@ -1280,7 +1280,6 @@ final class RemoteHostModel: ObservableObject {
         }
         if displaysStaleFromCouch { restartForDisplaysChangedInCouch(); return }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
-        guard display.frame == CGDisplayBounds(display.displayID) else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
         if sessionStartedAt == nil {
             sessionStartedAt = Date()
