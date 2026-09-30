@@ -216,6 +216,7 @@ final class FileTransferEngine {
     private var outgoingSource: FileByteSource?
     private var outgoingActivity: TimeInterval = 0
     private var incomingActivity: TimeInterval = 0
+    private var incomingAdmissionID: UUID?
     private var requestSince: TimeInterval = 0
     private var progressThrottle = FileProgressThrottle()
     private var watchdog: Timer?
@@ -382,14 +383,22 @@ final class FileTransferEngine {
             progressThrottle = FileProgressThrottle()
             startWatchdog()
             onChange?()
-            admit(offer) { [weak self] result in self?.admitted(offer, result) }
+            let admission = UUID()
+            incomingAdmissionID = admission
+            admit(offer) { [weak self] result in
+                guard let self else {
+                    if case .success(let sink) = result { sink.discard() }
+                    return
+                }
+                self.admitted(offer, result, admission: admission)
+            }
         } else {
             refuse(offer, .unsupported, solicited: solicited)
         }
     }
 
-    private func admitted(_ offer: FileTransferOffer, _ result: Result<FileByteSink, FileTransferStatus>) {
-        guard var current = incoming, current.transfer == offer.transfer, current.phase == .waiting else {
+    private func admitted(_ offer: FileTransferOffer, _ result: Result<FileByteSink, FileTransferStatus>, admission: UUID) {
+        guard incomingAdmissionID == admission, var current = incoming, current.transfer == offer.transfer, current.phase == .waiting else {
             if case .success(let sink) = result { sink.discard() }
             return
         }
@@ -471,6 +480,7 @@ final class FileTransferEngine {
     private func finishIncoming(_ transfer: String, _ status: FileTransferStatus, url: URL?, notify: Notice) {
         guard let current = incoming, current.transfer == transfer else { return }
         incoming = nil
+        incomingAdmissionID = nil
         if status != .stored { io.stopReceiving(transfer: transfer) }
         switch notify {
         case .none: break

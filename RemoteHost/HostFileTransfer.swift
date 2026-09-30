@@ -19,6 +19,7 @@ final class HostFileTransferService {
     private let notifier = HostTransferNotifier()
     private var panel: NSOpenPanel?
     private var panelTransfer: String?
+    private var authorityGeneration = UUID()
 
     init(destination: @escaping () -> URL? = HostFileTransferService.defaultDestination,
          pasteboard: HostPasteboardAccess = SystemHostPasteboard()) {
@@ -49,12 +50,14 @@ final class HostFileTransferService {
 
     /// Authority changed mid-transfer (the setting was turned off): stop and tell the phone.
     func revoke() {
+        authorityGeneration = UUID()
         closePicker(matching: nil)
         engine.cancelAll(status: .notAllowed)
     }
 
     /// The session ended or paused: stop without messages, since the phone is gone or backgrounded.
     func reset() {
+        authorityGeneration = UUID()
         closePicker(matching: nil)
         engine.reset()
     }
@@ -67,9 +70,20 @@ final class HostFileTransferService {
         guard let folder = destination() else { answer(.failure(.denied)); return }
         // Off the main thread: the first write into Downloads can wait on a macOS consent prompt,
         // and input from the phone must keep flowing so someone can answer it remotely.
-        queue.async {
+        let generation = authorityGeneration
+        queue.async { [weak self] in
             let result = Self.prepareSink(for: offer, in: folder)
-            DispatchQueue.main.async { MainActor.assumeIsolated { answer(result) } }
+            DispatchQueue.main.async { MainActor.assumeIsolated {
+                guard let self, self.authorityGeneration == generation else {
+                    if case .success(let sink) = result { sink.discard() }
+                    answer(.failure(.notAllowed)); return
+                }
+                if let refusal = self.refusal() {
+                    if case .success(let sink) = result { sink.discard() }
+                    answer(.failure(refusal)); return
+                }
+                answer(result)
+            } }
         }
     }
 
