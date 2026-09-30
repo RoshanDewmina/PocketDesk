@@ -68,6 +68,9 @@ struct HostViewState: Equatable {
     var serverRemovalPending = false
     var serverRemovalMessage: String?
     var localPairRemovalMessage: String?
+    var allowBigText = true
+    /// "Big Text on · looks like 1280 × 832" or "Restoring normal size…"; nil when Big Text is off.
+    var bigTextStatus: String?
     var macOSMajor = HostSystemSettingsPane.currentMacOSMajor
 
     var controlNeedsAccessibility: Bool { allowControl && !accessibility.isGranted }

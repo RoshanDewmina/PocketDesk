@@ -7,6 +7,13 @@ struct BigTextOffer: Equatable {
     let current: DisplayModeInfo
 }
 
+enum BigTextRefresh {
+    static func matches(frame: CGRect, coreGraphicsBounds: CGRect) -> Bool {
+        abs(frame.width - coreGraphicsBounds.width) < 1 && abs(frame.height - coreGraphicsBounds.height) < 1 &&
+            abs(frame.minX - coreGraphicsBounds.minX) < 1 && abs(frame.minY - coreGraphicsBounds.minY) < 1
+    }
+}
+
 @MainActor
 protocol BigTextHost: AnyObject {
     func bigTextQuiesce()
