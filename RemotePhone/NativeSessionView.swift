@@ -614,6 +614,11 @@ struct NativeSessionView: View {
                 MacBusyPill(state: busy, device: UIDevice.current.model)
                     .transition(.opacity)
             }
+            if !model.privacyShield && !model.contentConcealed {
+                ConnectionQualityBanner(content: QualityBannerContent.make(connected: connection.connected,
+                    verdict: model.qualityVerdict, stall: model.wifiStallTip,
+                    dismissed: model.dismissedQualityBanners, device: UIDevice.current.model), dismiss: model.dismissQualityBanner)
+            }
             if streamStatsEnabled && !model.streamSummaryLines.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     let lines = model.streamSummaryLines + [model.cropSummary?.caption, SmoothMotionController.overlayLine].compactMap { $0 }
@@ -989,8 +994,9 @@ struct NativeSessionView: View {
         return ConnectionHealth.session(.init(connected: connection.connected, fresh: model.fresh,
                                               captureHealthy: model.captureHealthy, hostPresence: model.hostPresence,
                                               canWakeDisplay: model.canWakeDisplay, route: model.link?.route,
-                                              roundTripMs: model.link?.roundTripMs, blocker: model.sessionBlocker,
-                                              wifiStall: model.wifiStallTip, linkHint: model.linkHint, vitals: model.currentMacVitals()))
+                                              slowRoundTripMs: model.slowRoundTripMs, blocker: model.sessionBlocker,
+                                              wifiStall: model.wifiStallTip, linkHint: model.linkHint, vitals: model.currentMacVitals(),
+                                              quality: model.qualityVerdict, device: UIDevice.current.model))
     }
 
     private var status: String {
@@ -2276,6 +2282,26 @@ struct NativeSessionView: View {
                 Text(codecDiagnostics)
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .accessibilityIdentifier("remote.codecDiagnostics")
+                    .listRowBackground(Farside.Palette.panel)
+            }
+            if let lastResume = model.lastResume {
+                Text("Last return · \(lastResume.summary)")
+                    .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                    .accessibilityIdentifier("remote.lastResume")
+                    .listRowBackground(Farside.Palette.panel)
+            }
+            if let percent = model.frameHealthPercent {
+                Text("Picture · \(Int(percent.rounded()))% of frames did not reach the picture in the last measured window.")
+                    .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                    .listRowBackground(Farside.Palette.panel)
+            }
+            if let spread = model.roundTripSpreadMs {
+                Text("Round-trip variation · \(Int(spread.rounded())) ms")
+                    .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                    .listRowBackground(Farside.Palette.panel)
+            }
+            if let tip = model.wifiStallTip, let extra = tip.secondary(device: UIDevice.current.model) {
+                Text(extra).font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .listRowBackground(Farside.Palette.panel)
             }
             SmoothMotionDiagnosticsRows(upscale: $smoothMotionUpscale, showsTestingControls: streamStatsEnabled)

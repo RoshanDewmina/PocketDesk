@@ -26,6 +26,8 @@ final class RemoteCoordinator: ObservableObject {
     @Published private(set) var localProofSummary: String?
     var forceRelay = false
     var onAuthenticated: (() -> Void)?
+    private(set) var controlArrivedFrames: Int?
+    private(set) var controlArrivedAt: TimeInterval?
     var onControl: ((Data) -> Void)?
     var onEnded: (() -> Void)?
     /// Phone only: the current Farside Anywhere token, read at each registration. Nil (no plan, or
@@ -693,6 +695,8 @@ final class RemoteCoordinator: ObservableObject {
         }
         peer.onRemoteVideo = { [weak self, weak peer] track in Task { @MainActor in if let self, let peer, self.media === peer { self.remoteVideo = track } } }
         peer.onControl = { [weak self, weak peer] data in
+            let arrivedFrames = peer?.lastControlArrivedFrames
+            let arrivedAt = peer?.lastControlArrivedAt
             Task { @MainActor in
                 guard let self, let peer, self.media === peer, data.count <= 16384 else { return }
                 do {
@@ -704,6 +708,9 @@ final class RemoteCoordinator: ObservableObject {
                     }
                     try packet.action.validate()
                     self.receivedControl = packet.sequence
+                    self.controlArrivedFrames = arrivedFrames
+                    self.controlArrivedAt = arrivedAt
+                    defer { self.controlArrivedFrames = nil; self.controlArrivedAt = nil }
                     self.onControl?(try JSONEncoder().encode(packet.action))
                 } catch {
                     self.controlRejected["parse-or-validate", default: 0] += 1

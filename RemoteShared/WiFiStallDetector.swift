@@ -1,14 +1,40 @@
 import Foundation
 
-/// A gentle Connection Health tip for the once-a-second Wi-Fi stall that AWDL (AirDrop, Handoff,
-/// iPhone Mirroring) causes: the radio leaves the channel about every second, so frames that left
-/// the Mac on time reach the phone in a bunch after a ~100 ms gap, with no packet loss
-/// (Docs/perf/BASELINE-2026-09-29.md finding 3; efficiency audit P16).
+/// An observed burst pattern; it does not identify which device or radio feature caused it.
 struct WiFiStallTip: Equatable {
-    static let message = "Wi-Fi hiccups every second — turning off AirDrop/Handoff on your Mac can smooth this"
-    let title = "Wi-Fi hiccups every second"
-    let detail = "Turning off AirDrop/Handoff on your Mac can smooth this."
-    var message: String { Self.message }
+    enum Guidance: Equatable { case settings, causeOnly }
+    static let defaultGuidance: Guidance = .settings
+    var macWired = false
+    var macWiFi = false
+    var guidance: Guidance = Self.defaultGuidance
+    let title = "Picture pauses about once a second"
+    let observation = "Frames arrive in bursts with little measured packet loss. This pattern does not identify a cause."
+
+    var detail: String { fix(device: "iPhone") }
+    var message: String { "\(title) — \(detail)" }
+    static var message: String { WiFiStallTip().message }
+    var fix: String { fix(device: "iPhone") }
+
+    func fix(device: String) -> String {
+        if guidance == .causeOnly {
+            return macWiFi ? "An Ethernet cable on your Mac can help steady the picture."
+                : "Moving closer to the router can help steady the picture."
+        }
+        let target = macWiFi ? "your Mac" : "this \(device)"
+        return "Setting AirDrop to Receiving Off on \(target) can help smooth this."
+    }
+
+    func secondary(device: String) -> String? {
+        guard guidance == .settings else { return nil }
+        let target = macWiFi ? "your Mac" : "this \(device)"
+        return "AirDrop and Handoff can share the Wi-Fi radio. Turning off Handoff on \(target) can also help."
+    }
+
+    static func observed(_ report: StreamStatsReport) -> Self {
+        let local = report.routeDetail == "lan"
+        return Self(macWired: local && report.host?.macLink == "wired",
+                    macWiFi: local && report.host?.macLink == "wifi")
+    }
 }
 
 /// Reads the phone's per-second statistics reports and decides whether to show `WiFiStallTip`.

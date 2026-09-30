@@ -153,7 +153,10 @@ struct HostStreamSummary: Codable, Equatable {
     var ladder: LadderState?
     var busy: BusyState?
     var captureRegion: CaptureRegion?
+    var framesEncodedTotal: Int?
+    var macLink: String?
 
+    static let maximumFrameTotal = 1_000_000_000_000
     static let fpsRange = 1...240
     static let refreshRange = 0.0...1_000
     static let thermalRange = 0...3
@@ -173,7 +176,9 @@ struct HostStreamSummary: Codable, Equatable {
               targetFPS.map({ Self.fpsRange.contains($0) }) ?? true,
               displayRefreshHz.map({ Self.refreshRange.contains($0) }) ?? true,
               thermalState.map({ Self.thermalRange.contains($0) }) ?? true,
-              (captureDisplay?.utf8.count ?? 0) <= Self.displayDescriptionBytes else {
+              (captureDisplay?.utf8.count ?? 0) <= Self.displayDescriptionBytes,
+              framesEncodedTotal.map({ (0...Self.maximumFrameTotal).contains($0) }) ?? true,
+              macLink.map({ $0.utf8.count <= MacNetworkLink.maximumBytes && MacNetworkLink(rawValue: $0) != nil }) ?? true else {
             throw RemoteError.invalidMessage
         }
         try ladder?.validate()
@@ -232,6 +237,15 @@ struct StreamStatsReport: Codable, Equatable {
     var renderGapMaxMs: Double?
 
     var rttMs: Double?
+    var rttSampleMs: Double?
+    var hostFramesEncodedTotal: Int?
+    var framesArrivedAtMark: Int?
+    var frameMarkAt: TimeInterval?
+    var frameHealthPercent: Double?
+    var connectionQuality: String?
+    var qualityMeasuredWindows: Int?
+    var qualityPoorEntries: Int?
+    var rttStdDevMs: Double?
     var inputBufferedBytes: UInt64?
     var inputBufferedPeakBytes: UInt64?
     var coalescedMoves: Int?
@@ -331,6 +345,10 @@ struct StreamStatsReport: Codable, Equatable {
             let out = Delta(previous.outbound, current.outbound)
             let source = Delta(previous.mediaSource, current.mediaSource)
             let inbound = Delta(previous.inbound, current.inbound)
+            if previous.pair?.id == current.pair?.id {
+                let pair = Delta(previous.pair, current.pair)
+                rttSampleMs = Self.perItem(pair["totalRoundTripTime"], pair["responsesReceived"], scale: 1000)
+            }
             sourceFPS = Self.rate(source["frames"], seconds)
             encodedFPS = Self.rate(out["framesEncoded"], seconds)
             sentFPS = Self.rate(out["framesSent"], seconds)
@@ -537,6 +555,9 @@ struct StreamStatsReport: Codable, Equatable {
         }
         let refresh = displayMaxFPS.map { " · \($0)Hz" } ?? ""
         var lines = ["\(route ?? "Route pending") · \(codec ?? "codec?") \(h264ProfileLevel ?? "") · RTT \(value(rttMs, "ms"))\(refresh)"]
+        if let connectionQuality {
+            lines.append("picture \(connectionQuality) · missed \(value(frameHealthPercent, "%")) · RTT spread \(value(rttStdDevMs, "ms"))")
+        }
         if role == "host" {
             if let rate = rateLine("", target: targetFPS, refresh: displayRefreshHz, display: captureDisplay,
                                    gapMedian: captureGapMedianMs, thermal: thermalState, lowPower: lowPowerMode) {
@@ -749,6 +770,21 @@ final class StreamCounters: @unchecked Sendable {
     private var rateUpdates = 0
     private var encoderDropped = 0
     private var encoderSessionStartedMs: Double?
+    private var encodedFramesTotal = 0
+    private var arrivedFramesTotal = 0
+    private var resumeCaptureBeganAt: TimeInterval?
+
+    func beginResumeCapture(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        lock.lock(); resumeCaptureBeganAt = time; lock.unlock()
+    }
+
+    var encodedTotal: Int { lock.lock(); defer { lock.unlock() }; return encodedFramesTotal }
+    var arrivedTotal: Int { lock.lock(); defer { lock.unlock() }; return arrivedFramesTotal }
+
+    func encodedFrameAccepted() {
+        lock.lock(); defer { lock.unlock() }
+        encodedFramesTotal = min(HostStreamSummary.maximumFrameTotal, encodedFramesTotal + 1)
+    }
 
     /// The refresh rate the video view presents at, fixed once the view is on screen.
     func setDisplayMaxFPS(_ fps: Int) { lock.lock(); displayMaxFPS = fps; lock.unlock() }
@@ -761,6 +797,11 @@ final class StreamCounters: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         if idle { snapshot.captureIdleFrames += 1; return }
         snapshot.captureFrames += 1
+        if let began = resumeCaptureBeganAt, time >= began {
+            resumeCaptureBeganAt = nil
+            let elapsed = Int(((time - began) * 1000).rounded())
+            SessionLog.log.info("host resume to first capture callback \(elapsed, privacy: .public) ms")
+        }
         captureCadence.record(at: time)
         if let displayLatencyMs { captureLatency.record(displayLatencyMs) }
         if let displayTimeMs, displayTimeMs.isFinite, displayTimeMs > 0 {
@@ -775,6 +816,7 @@ final class StreamCounters: @unchecked Sendable {
     func rendered(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         lock.lock(); defer { lock.unlock() }
         snapshot.renderedFrames += 1
+        arrivedFramesTotal = min(HostStreamSummary.maximumFrameTotal, arrivedFramesTotal + 1)
         cadence.record(at: time)
     }
 

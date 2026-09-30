@@ -155,6 +155,59 @@ final class PhoneRemoteModel: ObservableObject {
     /// Connection Health integration point: the AWDL once-a-second stall tip, nil when not seen.
     @Published private(set) var wifiStallTip: WiFiStallTip?
     private var wifiStall = WiFiStallDetector()
+    private var qualityMonitor = ConnectionQualityMonitor()
+    @Published private(set) var qualityVerdict: ConnectionQualityVerdict?
+    @Published private(set) var slowRoundTripMs: Int?
+    @Published private(set) var roundTripSpreadMs: Double?
+    @Published private(set) var frameHealthPercent: Double?
+    @Published private(set) var dismissedQualityBanners: Set<QualityBannerContent.Key> = []
+    private var qualityRouteDetail: String?
+    private var resumeTiming = ResumeTiming()
+    @Published private(set) var lastResume: ResumeTiming.Measurement?
+    private var resumeCount = 0
+    private var sceneWasBackground = false
+
+    func dismissQualityBanner(_ key: QualityBannerContent.Key) { dismissedQualityBanners.insert(key) }
+
+    private func resetQuality() {
+        qualityMonitor.reset()
+        qualityVerdict = nil
+        slowRoundTripMs = nil
+        roundTripSpreadMs = nil
+        frameHealthPercent = nil
+        wifiStall.reset()
+        wifiStallTip = nil
+    }
+
+    private func observeQuality(_ report: StreamStatsReport) {
+        guard sceneIsActive, sessionMode == .picture else { return }
+        if qualityRouteDetail != report.routeDetail {
+            resetQuality()
+            qualityRouteDetail = report.routeDetail
+        }
+        let changed = qualityMonitor.observe(ConnectionQualitySample(report, at: ProcessInfo.processInfo.systemUptime))
+        slowRoundTripMs = qualityMonitor.slowRoundTripMs
+        roundTripSpreadMs = qualityMonitor.roundTripSpreadMs
+        frameHealthPercent = qualityMonitor.lastLossPercent
+        if qualityMonitor.isPoor {
+            let cause = qualityVerdict?.cause ?? ConnectionQualityCause.pick(routeDetail: report.routeDetail,
+                phoneLink: linkHint, macLink: report.host?.macLink)
+            qualityVerdict = ConnectionQualityVerdict(cause: cause, lossPercent: Int((frameHealthPercent ?? 0).rounded()))
+        } else { qualityVerdict = nil }
+        if changed {
+            SessionLog.log.info("picture quality \(self.qualityMonitor.level.rawValue, privacy: .public) · slow RTT \(self.slowRoundTripMs ?? 0, privacy: .public) ms")
+        }
+        _ = wifiStall.observe(report)
+        wifiStallTip = wifiStall.showing ? WiFiStallTip.observed(report) : nil
+    }
+
+    private func acceptResumeMeasurement(_ measurement: ResumeTiming.Measurement?) {
+        guard let measurement else { return }
+        lastResume = measurement
+        resumeCount += 1
+        SessionLog.log.info("resume \(measurement.kind.rawValue, privacy: .public) \(measurement.totalMs, privacy: .public) ms · after active \(measurement.afterActiveMs, privacy: .public) ms · settled \(measurement.settledMs ?? -1, privacy: .public) ms · fallback \(measurement.fellBack, privacy: .public) · count \(self.resumeCount, privacy: .public)")
+    }
+
     /// G4: the part of the display the frames cover, as the Mac last reported it; nil for the whole display.
     @Published private(set) var captureRegion: CaptureRegion?
     /// G12: the Mac's own account of its load, for the pill; nil from a Mac without the ladder.
@@ -312,17 +365,27 @@ final class PhoneRemoteModel: ObservableObject {
             self.viewportResume = nil
             self.resumeResolved = self.resumeCapsule == nil
             self.resumeStartedAt = ProcessInfo.processInfo.systemUptime
-            self.wifiStall.reset()
-            self.wifiStallTip = nil
+            self.qualityMonitor = ConnectionQualityMonitor()
+            self.resetQuality()
+            self.qualityRouteDetail = nil
+            self.dismissedQualityBanners = []
+            self.resumeCount = 0
             if let peer = self.connection.media {
                 peer.onStreamStatistics = { [weak self, weak peer] report in
                     Task { @MainActor in
                         guard let self, let peer, self.connection.media === peer else { return }
+                        self.observeQuality(report)
+                        var report = report
+                        report.frameHealthPercent = self.frameHealthPercent
+                        report.connectionQuality = self.frameHealthPercent == nil ? "unmeasured" : self.qualityMonitor.level.rawValue
+                        report.qualityMeasuredWindows = self.qualityMonitor.measuredWindows
+                        report.qualityPoorEntries = self.qualityMonitor.poorEntries
+                        report.rttStdDevMs = self.roundTripSpreadMs
+                        if StreamDebug.enabled { StreamDebug.record(report) }
                         let lines = report.summaryLines
                         if self.streamSummaryLines != lines { self.streamSummaryLines = lines }
                         let link = LinkSummary(report)
                         if self.link != link { self.link = link }
-                        if self.wifiStall.observe(report) { self.wifiStallTip = self.wifiStall.tip }
                         self.acceptPhoneStats(report)
                         self.noticeReducedPicture()
                         #if DEBUG
@@ -525,6 +588,7 @@ final class PhoneRemoteModel: ObservableObject {
            let kept = displays.first(where: { $0.id == currentDisplayID }) {
             showSessionNotice("Your Mac kept showing \(kept.name).")
         }
+        if pendingDisplayID != nil { resetQuality() }
         pendingDisplayID = nil
         applyRememberedDisplay()
     }
@@ -944,6 +1008,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     func frameReceived() {
         lastFrame = ProcessInfo.processInfo.systemUptime
+        acceptResumeMeasurement(resumeTiming.frame(at: lastFrame))
         // A @Published set notifies even when unchanged, and this runs at 4 Hz while streaming.
         if !fresh { fresh = true }
         #if DEBUG
@@ -1185,6 +1250,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     func disconnect() {
         sessionEndReason = .user
+        resumeTiming.cancel(.userEnded)
         discardResume()
         clearContinuity()
         release()
@@ -1202,17 +1268,23 @@ final class PhoneRemoteModel: ObservableObject {
             sceneIsActive = true
             hasBeenActive = true
             privacyShield = false
+            acceptResumeMeasurement(resumeTiming.sceneActive(at: ProcessInfo.processInfo.systemUptime))
+            sceneWasBackground = false
             returnToForeground()
         case .inactive:
             sceneIsActive = false
             if hasBeenActive {
                 cancelInput()
                 privacyShield = true
-                if connection.connected {
+                if sceneWasBackground {
+                    sceneWasBackground = false
+                    returnToForeground()
+                } else if connection.connected {
                     background.begin { [weak self] in self?.endBackgroundHold(immediately: true) }
                 }
             }
         case .background:
+            sceneWasBackground = true
             sceneIsActive = false
             privacyShield = false
             if hasBeenActive { enterBackground() }
@@ -1222,6 +1294,8 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func enterBackground() {
+        resumeTiming.cancel(.leftAgain)
+        resetQuality()
         let now = ProcessInfo.processInfo.systemUptime
         // A held connection can resume before the age limit. Require a new statistics sample
         // after pause so a pre-background report cannot become new ladder evidence.
@@ -1298,11 +1372,15 @@ final class PhoneRemoteModel: ObservableObject {
                 contentConcealed = false
             }
         case .resumeHeldSession:
+            resetQuality()
+            resumeTiming.begin(.held, at: now, sceneActive: sceneIsActive)
             resumeHeldSession(at: now)
         case .reconnect:
             if LaunchOptions.layoutCheck || connection.invitation == nil {
                 resumeState = .needsChoice
             } else {
+                resetQuality()
+                resumeTiming.begin(.reconnect, at: now, sceneActive: sceneIsActive)
                 beginAutomaticReconnect()
             }
         case .offerReconnect:
@@ -1313,6 +1391,7 @@ final class PhoneRemoteModel: ObservableObject {
     private func resumeHeldSession(at now: TimeInterval) {
         let supported = hostFeatures.contains(SessionFeature.backgroundPause)
         guard !supported || connection.sendControl(RemoteAction(action: "resume", epoch: geometryEpoch)) else {
+            resumeTiming.fellBack(at: now)
             // A failed send already started the coordinator's bounded reconnect.
             resumeState = .reconnecting
             if !connection.isRunning { restartConnection() }
@@ -1326,6 +1405,7 @@ final class PhoneRemoteModel: ObservableObject {
             guard !Task.isCancelled, let self, self.connection.connected,
                   self.lastHostStatusAt < now else { return }
             self.contentConcealed = true
+            self.resumeTiming.fellBack(at: ProcessInfo.processInfo.systemUptime)
             self.beginAutomaticReconnect(restart: true)
         }
     }
@@ -1375,6 +1455,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     func dismissConcealment() {
         guard !connection.connected else { return }
+        resumeTiming.cancel(.userEnded)
         if resumeState == .reconnecting { connection.stop() }
         clearContinuity()
         contentConcealed = false
@@ -1383,6 +1464,8 @@ final class PhoneRemoteModel: ObservableObject {
     func reconnect() {
         guard connection.invitation != nil else { dismissConcealment(); return }
         contentConcealed = true
+        resetQuality()
+        resumeTiming.begin(.manual, at: ProcessInfo.processInfo.systemUptime, sceneActive: sceneIsActive)
         beginAutomaticReconnect(restart: connection.isRunning && !connection.connected)
     }
 
@@ -1464,7 +1547,10 @@ final class PhoneRemoteModel: ObservableObject {
             }
             if let alert = action.agentAlert { AgentAlertCenter.shared.receive(fromMac: alert) }
             if let hostPresence, hostPresence != .displayAsleep { departureReason = hostPresence }
-            if let hostStream = action.hostStream { connection.media?.remoteHostSummary = hostStream }
+            if let hostStream = action.hostStream {
+                connection.media?.acceptHostSummary(hostStream, arrivedFrames: connection.controlArrivedFrames,
+                                                    arrivedAt: connection.controlArrivedAt)
+            }
             appliedStreamQuality = action.streamQuality
             if action.streamQuality != nil, action.streamQuality != streamQuality, qualityRequestedAt == nil {
                 qualityRequestedAt = ProcessInfo.processInfo.systemUptime
@@ -1599,6 +1685,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func viewportResumeApplied() {
+        acceptResumeMeasurement(resumeTiming.settled(at: ProcessInfo.processInfo.systemUptime))
         viewportResume = nil
     }
 
@@ -1689,6 +1776,10 @@ final class PhoneRemoteModel: ObservableObject {
         refreshSendToMac()
         if !rememberedDisplayApplied && !displays.isEmpty && canControl { applyRememberedDisplay() }
         if connection.connected && !resumeResolved { resolveResume(at: now) }
+        if resumeResolved && viewportResume == nil && pendingDisplayID == nil && rememberedDisplayApplied && fresh {
+            acceptResumeMeasurement(resumeTiming.settled(at: now))
+        }
+        _ = resumeTiming.expire(at: now)
         if fresh && now - lastFrame > 2 {
             fresh = false
             pointerLocator.clear()
@@ -1740,9 +1831,8 @@ final class PhoneRemoteModel: ObservableObject {
         pointerLocatorSupported = false
         appliedStreamQuality = nil
         streamSummaryLines = []
+        resetQuality()
         link = nil
-        wifiStall.reset()
-        wifiStallTip = nil
         captureRegion = nil
         busy = nil
         macVitals = nil

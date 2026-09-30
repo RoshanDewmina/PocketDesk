@@ -2,6 +2,7 @@ import Foundation
 import CoreVideo
 import os
 import WebRTC
+import Network
 
 enum SessionLog {
     static let log = Logger(subsystem: "com.roshan.PocketDesk", category: "session")
@@ -168,8 +169,22 @@ final class PeerMedia: NSObject {
     let counters = StreamCounters()
     var captureMaximumDimension: Int?
     /// Phone: the latest sender stages forwarded by the Mac with its capture heartbeat.
-    var remoteHostSummary: HostStreamSummary? {
-        didSet { remoteHostSummaryAt = ProcessInfo.processInfo.systemUptime }
+    private(set) var remoteHostSummary: HostStreamSummary?
+    private(set) var lastControlArrivedFrames: Int?
+    private(set) var lastControlArrivedAt: TimeInterval?
+    private var remoteFrameMark: FrameMark?
+    private var linkMonitor: NWPathMonitor?
+    private var linkInterfaces: [LocalPathInterface] = []
+    private var selectedLocalAddress: String?
+    private var selectedLocalCandidateType: String?
+
+    func acceptHostSummary(_ summary: HostStreamSummary, arrivedFrames: Int?, arrivedAt: TimeInterval?) {
+        let now = arrivedAt ?? ProcessInfo.processInfo.systemUptime
+        remoteHostSummary = summary
+        remoteHostSummaryAt = now
+        remoteFrameMark = summary.framesEncodedTotal.flatMap { total in
+            arrivedFrames.map { FrameMark(hostEncoded: total, phoneArrived: $0, at: now) }
+        }
     }
     private var remoteHostSummaryAt: TimeInterval?
     let tuning: StreamTuning
@@ -251,7 +266,7 @@ final class PeerMedia: NSObject {
     /// Control messages that arrive before this side's first local-path authorization. The peer's
     /// gate can open first and it sends one-time state (geometry, viewing) immediately; dropping it
     /// left the phone without a geometry epoch, so input never enabled. Released only on authorization.
-    private var preGateControl: [Data] = []
+    private var preGateControl: [(data: Data, arrivedFrames: Int, arrivedAt: TimeInterval)] = []
     private var preGateBytes = 0
     private var lastPairLog: String?
     private var role: String { isHost ? "host" : "phone" }
@@ -301,6 +316,17 @@ final class PeerMedia: NSObject {
         tuning = nativeDesktopCodecs ? StreamTuning.current : .legacy
         super.init()
         if isHost, nativeDesktopCodecs { DesktopH264Encoder.sharedCounters = counters }
+        if isHost {
+            let monitor = NWPathMonitor()
+            linkMonitor = monitor
+            monitor.pathUpdateHandler = { [weak self] path in
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, !self.closed else { return }
+                    self.linkInterfaces = path.localInterfaces
+                }
+            }
+            monitor.start(queue: DispatchQueue(label: "farside.quality.link"))
+        }
         let configuration = RTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan
         configuration.iceTransportPolicy = forceRelay ? .relay : .all
@@ -566,7 +592,14 @@ final class PeerMedia: NSObject {
     /// Host: the newest sender summary, returned once so the capture heartbeat forwards each sample once.
     func takeHostSummary() -> HostStreamSummary? {
         defer { latestHostSummary = nil }
-        return latestHostSummary
+        guard var summary = latestHostSummary else { return nil }
+        if nativeDesktopCodecs && tuning.encoderRestart {
+            summary.framesEncodedTotal = min(counters.encodedTotal, HostStreamSummary.maximumFrameTotal)
+        }
+        summary.macLink = MacNetworkLink.resolve(localAddress: selectedLocalAddress,
+            candidateType: selectedLocalCandidateType, addresses: MacNetworkLink.interfaceAddresses(),
+            interfaces: linkInterfaces)?.rawValue
+        return summary
     }
 
     func sendControl(_ data: Data) -> Bool {
@@ -649,6 +682,8 @@ final class PeerMedia: NSObject {
                 let remoteType = remote?.values["candidateType"] as? String
                 let localAddress = (local?.values["address"] as? String) ?? (local?.values["ip"] as? String)
                 let remoteAddress = (remote?.values["address"] as? String) ?? (remote?.values["ip"] as? String)
+                self.selectedLocalAddress = localAddress
+                self.selectedLocalCandidateType = localType
                 let adapterType = local?.values["networkAdapterType"] as? String
                 let networkType = local?.values["networkType"] as? String
                 let vpn = (local?.values["vpn"] as? NSNumber)?.boolValue
@@ -718,10 +753,13 @@ final class PeerMedia: NSObject {
             latestHostSummary = stats.hostSummary
         } else {
             stats.host = remoteHostSummary
+            stats.hostFramesEncodedTotal = remoteFrameMark?.hostEncoded
+            stats.framesArrivedAtMark = remoteFrameMark?.phoneArrived
+            stats.frameMarkAt = remoteFrameMark?.at
             stats.hostSummaryAgeMs = remoteHostSummaryAt.map { ((ProcessInfo.processInfo.systemUptime - $0) * 10_000).rounded() / 10 }
         }
         previousSample = sample
-        StreamDebug.record(stats)
+        if isHost || onStreamStatistics == nil { StreamDebug.record(stats) }
         onStreamStatistics?(stats)
         if isHost { onSenderStatistics?(stats) }
     }
@@ -748,9 +786,11 @@ final class PeerMedia: NSObject {
         preGateControl.removeAll(); preGateBytes = 0
         controlCounters.releasedAfterGate += held.count
         InputLog.log.info("\(self.role, privacy: .public) released \(held.count, privacy: .public) control messages held until the local path was authorized")
-        for data in held {
+        for message in held {
             guard !closed, localGateOpen() else { return }
-            onControl?(data)
+            lastControlArrivedFrames = message.arrivedFrames
+            lastControlArrivedAt = message.arrivedAt
+            onControl?(message.data)
         }
     }
 
@@ -760,6 +800,7 @@ final class PeerMedia: NSObject {
     }
 
     func close() {
+        linkMonitor?.cancel(); linkMonitor = nil
         preGateControl.removeAll(); preGateBytes = 0
         statisticsTimer?.invalidate(); statisticsTimer = nil
         if let cadenceRenderer { observedTrack?.remove(cadenceRenderer) }
@@ -903,6 +944,8 @@ extension PeerMedia: RTCDataChannelDelegate {
             onFileMessage?(buffer.data)
             return
         }
+        let arrivedFrames = counters.arrivedTotal
+        let arrivedAt = ProcessInfo.processInfo.systemUptime
         arrivalLock.lock(); lastControlArrivalMs = MachClock.nowMs(); arrivalLock.unlock()
         guard buffer.isBinary, buffer.data.count <= 16384 else {
             DispatchQueue.main.async { [weak self] in
@@ -917,7 +960,7 @@ extension PeerMedia: RTCDataChannelDelegate {
             guard self.localGateOpen() else {
                 if self.localLink != nil, self.localPathNeverAuthorized, self.preGateControl.count < 64,
                    self.preGateBytes + buffer.data.count <= 256 * 1024 {
-                    self.preGateControl.append(buffer.data); self.preGateBytes += buffer.data.count
+                    self.preGateControl.append((buffer.data, arrivedFrames, arrivedAt)); self.preGateBytes += buffer.data.count
                     self.controlCounters.heldBeforeGate += 1
                     InputLog.log.info("\(self.role, privacy: .public) control held until local path authorization (\(self.preGateControl.count, privacy: .public) held)")
                 } else {
@@ -931,6 +974,8 @@ extension PeerMedia: RTCDataChannelDelegate {
             if InputLog.sampled(self.controlCounters.received) {
                 InputLog.log.info("\(self.role, privacy: .public) received control #\(self.controlCounters.received, privacy: .public)")
             }
+            self.lastControlArrivedFrames = arrivedFrames
+            self.lastControlArrivedAt = arrivedAt
             self.onControl?(buffer.data)
         }
     }
