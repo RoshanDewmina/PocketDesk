@@ -248,6 +248,7 @@ final class RemoteHostModel: ObservableObject {
             automaticRecovery: recoveryState,
             privacyCurtain: curtainPreference,
             curtainStatus: Self.curtainStatus(curtainState, displays: NSScreen.screens.count),
+            awayMode: awayModeEnabled, awayIntroShown: awayIntroShown, away: away.readout(available: awayAvailable), lockWarning: lockWarning,
             agentAlerts: agentAlerts.isOn,
             agentAlertsStatus: agentAlerts.statusLine(),
             crashLoopStopped: crashLoopStopped,
@@ -283,11 +284,14 @@ final class RemoteHostModel: ObservableObject {
         accessibilitySkipped = preferences.accessibilitySkipped
         pairingDeferred = preferences.pairingDeferred
         curtainPreference = preferences.privacyCurtain
+        awayModeEnabled = preferences.awayMode
+        awayIntroShown = preferences.awayIntroShown
         loadPendingServerRemoval()
         refreshBackgroundStates()
         background.onChange = { [weak self] in self?.refreshBackgroundStates() }
         NativeCodecCapability.warmUp()
         startWatchdog()
+        startAwayMode()
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.active && !self.connection.connected }
         connection.restore()
         connection.startAllowed = { [weak self] in self?.serverRemovalPending == false }
@@ -312,7 +316,7 @@ final class RemoteHostModel: ObservableObject {
         capture.onFailure = { [weak self] in self?.captureFailed() }
         capture.onHealth = { [weak self] healthy in self?.captureHealthChanged(healthy) }
         capture.onExclusionLost = { [weak self] in
-            guard let self, self.curtain.phase != .down else { return }
+            guard let self, self.curtain.phase != .down, !self.away.wantsCover else { return }
             self.curtain.lift()
             self.reconcileCurtain()
         }
@@ -358,6 +362,7 @@ final class RemoteHostModel: ObservableObject {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                self.awayScreensChanged()
                 self.stop()
                 self.invalidateDisplays(status: .notChecked)
                 self.loadDisplays()
@@ -651,6 +656,7 @@ final class RemoteHostModel: ObservableObject {
         wantsSharing = false
         preferences.sharingEnabled = false
         events.record(.sharing, "Stop Sharing")
+        away.end(.stopSharing)
         stop()
         if !hasPairedPhone { clearPairingCode() }
     }
@@ -669,6 +675,7 @@ final class RemoteHostModel: ObservableObject {
         detail = nil
         unavailableReason = nil
         if displayRefreshStatus != .ready { loadDisplays() } else { reconcileSharing() }
+        away.refresh()
     }
 
     /// Stop Sharing now and Resume Sharing by itself later, unless the user resumes or stops
@@ -696,6 +703,7 @@ final class RemoteHostModel: ObservableObject {
 
     private func phoneConnected() {
         beginCapture()
+        away.refresh()
         guard chimeOnConnect, connection.connected, !terminating else { return }
         NSSound(named: NSSound.Name("Glass"))?.play()
     }
@@ -971,14 +979,189 @@ final class RemoteHostModel: ObservableObject {
 
     // MARK: Away mode
 
-    func setAwayMode(_ enabled: Bool) {}
-    func coverNow() {}
-    func dismissLockWarning() {}
-    func openLockScreenSettings() {}
+    @Published private(set) var awayModeEnabled: Bool
+    @Published private(set) var awayIntroShown: Bool
+    @Published private(set) var lockWarning: HostLockWarning?
+    private var lockWarnings = HostLockWarningTracker()
+    private let awayAvailable = AwayModeGate.isEnabled()
+    private lazy var away: AwayModeController = AwayModeController(dependencies: .init(
+        locker: RemoteHostModel.makeAwayLocker(),
+        power: SystemPowerSource(),
+        isManaged: { ManagedLockPolicy.isManaged() },
+        inputMonitor: SystemAwayInputMonitor(),
+        ticker: TimerAwayTicker(),
+        now: { ProcessInfo.processInfo.systemUptime },
+        wallClock: { Date() }
+    ))
+    private var lastAwayPhase: AwayPhase = .off
+    /// An Away cover that found no screen waits for the next Away change or display change,
+    /// instead of retrying on every curtain reconcile.
+    private var awayCoverRaiseFailed = false
+
+    private static func makeAwayLocker() -> HostScreenLocking {
+        #if DEBUG
+        if HostE2E.active != nil { return RecordingAwayLocker() }
+        #endif
+        return SystemScreenLocker()
+    }
+
+    /// Runs straight after the watchdog, before anything can refresh Away mode, so a relaunch
+    /// after a crash under the cover locks while covered. Fails closed even if the gate is now off.
+    private func startAwayMode() {
+        away.host = self
+        curtain.onScreensChanged = { [weak self] in self?.away.end(.screensChanged) }
+        if watchdog?.assessment.lockFirst == true {
+            events.record(.recovery, "Locking after an unexpected exit while Away mode covered the screen")
+            away.lockFirstAfterRelaunch()
+        }
+        let center = DistributedNotificationCenter.default()
+        observers.append(center.addObserver(forName: Notification.Name("com.apple.screensaver.didstart"), object: nil, queue: .main) { [weak self] _ in
+            let uptime = ProcessInfo.processInfo.systemUptime
+            Task { @MainActor in self?.lockWarnings.screenSaverStarted(uptime: uptime) }
+        })
+        observers.append(center.addObserver(forName: Notification.Name("com.apple.screensaver.didstop"), object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.lockWarnings.screenSaverStopped() }
+        })
+        away.refresh()
+    }
+
+    func setAwayMode(_ enabled: Bool) {
+        awayModeEnabled = enabled
+        preferences.awayMode = enabled
+        if enabled {
+            awayIntroShown = true
+            preferences.awayIntroShown = true
+        } else {
+            away.turnOffAtMac()
+        }
+        events.record(.settings, "Away mode \(enabled ? "on" : "off")")
+        away.refresh()
+    }
+
+    func coverNow() {
+        away.coverNow()
+    }
+
+    func dismissLockWarning() {
+        lockWarning = nil
+    }
+
+    func openLockScreenSettings() {
+        NSWorkspace.shared.open(HostAwayCopy.lockScreenSettingsURL)
+    }
+
+    func awayConditions() -> AwayConditions {
+        AwayConditions(enabled: awayAvailable && awayModeEnabled,
+                       sharingWanted: wantsSharing,
+                       sharingActive: active,
+                       accessibility: accessibilityPermission.isGranted,
+                       screenLocked: screenLocked,
+                       phoneConnected: connection.connected && !phonePause.isPaused,
+                       safeMode: crashLoopStopped)
+    }
+
+    func awayStateChanged() {
+        // Recorded first so a crash from here on still relaunches locked.
+        watchdog?.setAwayCoverUp(away.wantsCover)
+        awayCoverRaiseFailed = false
+        if away.machine.phase != lastAwayPhase {
+            lastAwayPhase = away.machine.phase
+            awayRecord(Self.awayPhaseDescription(lastAwayPhase))
+        }
+        reconcileCurtain()
+        updatePowerAssertions()
+        sendCaptureHealth(captureHealthy)
+        objectWillChange.send()
+    }
+
+    func awayRecord(_ message: String) {
+        events.record(.curtain, "Away mode: " + message)
+    }
+
+    private static func awayPhaseDescription(_ phase: AwayPhase) -> String {
+        switch phase {
+        case .off: "off"
+        case .armedPresent: "armed"
+        case .armedCovered: "covered"
+        case .locking(let reason): "locking (\(reason.rawValue))"
+        case .lockFailed(let reason): "lock not confirmed (\(reason.rawValue)); cover kept"
+        }
+    }
+
+    private var awayLockFailed: Bool {
+        if case .lockFailed = away.machine.phase { return true }
+        return false
+    }
+
+    private var awayCoverRetryHeld: Bool { away.wantsCover && awayCoverRaiseFailed }
+
+    /// The curtain's controller keeps these between raises, so every reconcile sets them again.
+    private func applyAwayCurtainSettings() {
+        let covering = away.wantsCover
+        curtain.escapeLiftEnabled = !covering
+        curtain.liftsOnScreenChange = !covering
+        let style: PrivacyCurtainStyle = covering ? (awayLockFailed ? .awayLockFailed : .away) : .sharing
+        if curtain.style != style { curtain.setStyle(style) }
+    }
+
+    /// The Away cover never waits on the stream and a lost stream never undoes it; while a phone
+    /// is watching, the cover is still kept out of its picture where capture allows.
+    private var awayCoverHooks: PrivacyCurtainController.CaptureHooks {
+        PrivacyCurtainController.CaptureHooks(
+            exclude: { [weak self] ids in await self?.excludeAwayCover(ids) ?? true },
+            signature: { nil }
+        )
+    }
+
+    private func excludeAwayCover(_ ids: Set<CGWindowID>) async -> Bool {
+        if active && connection.connected && !terminating { _ = await capture.excludeWindows(ids) }
+        return true
+    }
+
+    /// A phone that connects while the Mac is covered sees the desktop, not the cover.
+    private func excludeCoverFromCapture() {
+        guard curtain.phase != .down else { return }
+        let ids = curtain.windowIDs
+        Task { @MainActor [weak self] in _ = await self?.capture.excludeWindows(ids) }
+    }
+
+    private func awayScreensChanged() {
+        guard awayCoverRaiseFailed else { return }
+        awayCoverRaiseFailed = false
+        reconcileCurtain()
+    }
+
+    private func receiveLockMac(current: Bool, controlEffective: Bool) {
+        // Locking the Mac needs the same authority as covering or controlling it.
+        guard awayAvailable, current, controlEffective, !phonePause.isPaused else {
+            sendCaptureHealth(captureHealthy)
+            return
+        }
+        events.record(.curtain, "Phone asked to lock this Mac")
+        away.end(.phoneRequest)
+    }
+
+    /// Classified before Away mode refreshes, which forgets that Farside asked for the lock.
+    private func noteUnexpectedLock() {
+        guard let warning = lockWarnings.screenLocked(
+            at: Date(), uptime: ProcessInfo.processInfo.systemUptime,
+            sharingWanted: wantsSharing, awayArmed: away.machine.isArmed,
+            lockRequestedByFarside: away.lockRequestedByFarside,
+            idleSeconds: HostIdle.systemIdleSeconds()
+        ) else { return }
+        lockWarning = warning
+        switch warning {
+        case .lockedWhileSharing:
+            events.record(.availability, "This Mac locked while sharing without anyone choosing to lock it")
+        case .screenSaverLocked(_, let awayArmed):
+            events.record(.availability, "The screen saver locked this Mac while sharing\(awayArmed ? " with Away mode on" : "")")
+        }
+    }
 
     // MARK: Privacy curtain
 
     private func reconcileCurtain() {
+        applyAwayCurtainSettings()
         let now = ProcessInfo.processInfo.systemUptime
         let inputs = PrivacyCurtainInputs(
             preference: curtainPreference,
@@ -991,10 +1174,11 @@ final class RemoteHostModel: ObservableObject {
             accessibilityGranted: accessibilityPermission.isGranted,
             locallyDismissed: curtainLocallyDismissed,
             raiseFailed: curtainRaiseFailed,
-            safeMode: crashLoopStopped
+            safeMode: crashLoopStopped,
+            awayCovered: away.wantsCover
         )
         switch PrivacyCurtainPolicy.desired(inputs, currentlyUp: curtain.phase != .down) {
-        case .up where curtain.phase == .down && !curtainRaising:
+        case .up where curtain.phase == .down && !curtainRaising && !awayCoverRetryHeld:
             raiseCurtain()
         case .down where curtain.phase != .down:
             curtain.lift()
@@ -1013,7 +1197,8 @@ final class RemoteHostModel: ObservableObject {
 
     private func raiseCurtain() {
         curtainRaising = true
-        let hooks = PrivacyCurtainController.CaptureHooks(
+        let awayCover = away.wantsCover
+        let hooks = awayCover ? awayCoverHooks : PrivacyCurtainController.CaptureHooks(
             exclude: { [weak self] ids in await self?.capture.excludeWindows(ids) ?? false },
             signature: { [weak self] in await self?.capture.lumaSignature() }
         )
@@ -1025,7 +1210,7 @@ final class RemoteHostModel: ObservableObject {
             case .raised:
                 self.events.record(.curtain, "Curtain up on \(NSScreen.screens.count) display(s)")
             case .exclusionFailed, .verificationFailed, .noScreens:
-                self.curtainRaiseFailed = true
+                if awayCover { self.awayCoverRaiseFailed = true } else { self.curtainRaiseFailed = true }
                 self.events.record(.error, "Privacy curtain stayed down: \(result)")
             case .cancelled:
                 break
@@ -1041,9 +1226,9 @@ final class RemoteHostModel: ObservableObject {
 
     /// Lifts synchronously; used where sharing ends, before anything else is torn down.
     private func liftCurtain() {
-        if curtain.phase != .down { curtain.lift() }
-        watchdog?.setCurtainUp(false)
-        hangWatchdog?.update(curtainUp: false, recoveryEnabled: recoveryHelperRunning)
+        if curtain.phase != .down && !away.wantsCover { curtain.lift() }
+        watchdog?.setCurtainUp(curtain.phase != .down)
+        hangWatchdog?.update(curtainUp: curtain.phase != .down, recoveryEnabled: recoveryHelperRunning)
     }
 
     private static func curtainStatus(_ state: PrivacyCurtainState, displays: Int) -> String? {
@@ -1066,6 +1251,7 @@ final class RemoteHostModel: ObservableObject {
         updatePowerAssertions()
         connection.start()
         reconcileStartResult()
+        away.refresh()
     }
 
     func stop() {
@@ -1078,9 +1264,11 @@ final class RemoteHostModel: ObservableObject {
         active = false
         releaseKeepAwake()
         connection.stop()
+        away.refresh()
     }
 
     func stopForTermination() {
+        away.lockForQuit()
         liftCurtain()
         #if DEBUG
         HostE2E.active?.terminating()
@@ -1234,6 +1422,7 @@ final class RemoteHostModel: ObservableObject {
             _ = connection.sendControl(RemoteAction(action: "viewing", x: effective ? 1 : 0, epoch: inputEpoch.value))
         }
         reconcileCurtain()
+        away.refresh()
     }
 
     // MARK: Capture session
@@ -1327,6 +1516,7 @@ final class RemoteHostModel: ObservableObject {
                     _ = self.capture.stop(ifOwnedBy: owner)
                     return
                 }
+                self.excludeCoverFromCapture()
                 self.beginLoadMonitor(peer: peer)
             } catch is CancellationError {
                 return
@@ -1375,6 +1565,7 @@ final class RemoteHostModel: ObservableObject {
         _ = capture.stop()
         updatePowerAssertions()
         reconcileCurtain()
+        away.refresh()
     }
 
     private func captureFailed() {
@@ -1663,11 +1854,11 @@ final class RemoteHostModel: ObservableObject {
     }
 
     /// A switched-off experiment is not advertised, so the phone never sends what the host would ignore.
-    private static var advertisedFeatures: [String] {
+    private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
         return SessionFeature.host.filter {
             ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
-        }
+        } + (awayAvailable ? [SessionFeature.away] : [])
     }
 
     private func sendCaptureHealth(_ healthy: Bool, presence: HostPresence? = nil) {
@@ -1684,11 +1875,12 @@ final class RemoteHostModel: ObservableObject {
             action: "capture", x: healthy ? 1 : 0, epoch: inputEpoch.value,
             interaction: capability, pointerLocatorSupported: true,
             pointerSync: PointerSync(videoCursor: capture.cursorInVideo), streamQuality: capture.appliedQuality,
-            features: Self.advertisedFeatures, hostState: state?.rawValue,
+            features: advertisedFeatures, hostState: state?.rawValue,
             hostStream: connection.media?.takeHostSummary(),
             curtain: curtainState.rawValue, hostEvent: event,
             display: capturedDisplayID, agentAlert: alert,
-            captureRegion: capture.appliedCaptureRegion, ladder: ladderState, busy: busyState
+            captureRegion: capture.appliedCaptureRegion, ladder: ladderState, busy: busyState,
+            away: awayAvailable ? away.protocolState.rawValue : nil
         ))
         if sent && event != nil { recoveryNoticeDelivered = true }
         if sent && alert != nil { agentAlertOutbox.removeFirst() }
@@ -1718,6 +1910,8 @@ final class RemoteHostModel: ObservableObject {
             }
             events.record(.curtain, "Phone asked to \(request == .up ? "hide" : "show") the screen")
             setPrivacyCurtain(request == .up)
+        case "lockMac":
+            receiveLockMac(current: current, controlEffective: controlEffective)
         default:
             break
         }
@@ -1809,11 +2003,13 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Sleep, lock and display availability
 
     private func handleAvailability(_ event: HostSleepPolicy.Event) {
+        if event == .screenUnlocked { lockWarnings.screenSaverStopped() }
         switch HostSleepPolicy.response(to: event) {
         case .tearDown(let presence):
             if presence == .locked {
                 guard !screenLocked else { return }
                 screenLocked = true
+                noteUnexpectedLock()
             }
             autoStart.suspend()
             switch presence {
@@ -1849,6 +2045,7 @@ final class RemoteHostModel: ObservableObject {
             if connection.connected { sendCaptureHealth(captureHealthy) }
         }
         reconcileCurtain()
+        away.refresh()
     }
 
     /// Input stops at once; the phone gets the reason on the ordered channel just before the
@@ -1885,8 +2082,9 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func updatePowerAssertions() {
-        let wanted = HostPowerPolicy.assertions(keepAwake: keepAwakeEnabled, sharing: active,
-                                                phoneConnected: connection.connected && !phonePause.isPaused)
+        let wanted = HostPowerPolicy.assertions(keepAwake: keepAwakeEnabled && !awayLockFailed, sharing: active,
+                                                phoneConnected: connection.connected && !phonePause.isPaused,
+                                                awayArmed: away.holdsDisplayAwake)
         if wanted.system {
             if !remoteAccessAwake.start() { detail = "Farside couldn’t keep this Mac awake. Normal sleep settings still apply." }
         } else {
@@ -2015,7 +2213,22 @@ final class RemoteHostModel: ObservableObject {
     ]
 }
 
+extension RemoteHostModel: AwayModeHost {}
+
 #if DEBUG
+/// E2E runs must never lock a real Mac: the request is only counted.
+@MainActor
+private final class RecordingAwayLocker: HostScreenLocking {
+    private(set) var requests = 0
+
+    func requestLock() -> Bool {
+        requests += 1
+        return true
+    }
+
+    func isScreenLocked() -> Bool { HostScreenLock.isLocked() }
+}
+
 extension RemoteHostModel {
     /// Observable host state for the E2E harness (HostE2E writes it to host/state.json).
     func e2eSnapshot() -> [String: Any] {

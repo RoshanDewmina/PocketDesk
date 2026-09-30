@@ -224,6 +224,25 @@ final class AwayModeControllerTests: XCTestCase {
     }
 }
 
+final class AwayPreferencesTests: XCTestCase {
+    func testAwayPreferencesDefaultOffAndPersist() throws {
+        let suite = "farside.away-preferences.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = HostPreferences(defaults: defaults)
+        XCTAssertFalse(preferences.awayMode)
+        XCTAssertFalse(preferences.awayIntroShown)
+
+        preferences.awayMode = true
+        preferences.awayIntroShown = true
+        let reread = HostPreferences(defaults: defaults)
+        XCTAssertTrue(reread.awayMode)
+        XCTAssertTrue(reread.awayIntroShown)
+        XCTAssertTrue(defaults.bool(forKey: "awayModeWhileSharing"))
+        XCTAssertTrue(defaults.bool(forKey: "awayModeIntroShown"))
+    }
+}
+
 private extension AwayConditions {
     static let ready = AwayConditions(enabled: true, sharingWanted: true, sharingActive: true, accessibility: true)
 }
