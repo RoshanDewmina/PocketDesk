@@ -562,6 +562,7 @@
 		86B0BCE4B16D1F6E7548DB6A /* SmoothMotionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 357598ED739579289BD2AD0D /* SmoothMotionPolicy.swift */; };
 		86B5E52ADD6AF035D7B53F6A /* NetworkLinkHint.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9C5456BB0D9A926EA202AFF /* NetworkLinkHint.swift */; };
 		86DC84A8063BAED8239C76B6 /* E2EMedia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E609125CE2A4A1E42653D11 /* E2EMedia.swift */; };
+		873138D90037F30FD9863A69 /* VideoFeedbackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 028FD35F407A8DBAE590AC15 /* VideoFeedbackTests.swift */; };
 		8799BF7F83518A353C6EA9EE /* BigTextStepsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A5FB0C9811E3CF1FE0A612D /* BigTextStepsTests.swift */; };
 		879D9B4A1C733528F72127A6 /* NativeGestureEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EBEF9617A31797FAF4B8D81 /* NativeGestureEngine.swift */; };
 		87C9008A665BED099C5FEE86 /* TouchInputMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8FA26A1189200ABA8338712 /* TouchInputMode.swift */; };
@@ -1098,10 +1099,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1131,16 +1132,17 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		028FD35F407A8DBAE590AC15 /* VideoFeedbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoFeedbackTests.swift; sourceTree = "<group>"; };
 		02A9DCB25E30CE1D20492DFC /* BigTextControllerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BigTextControllerTests.swift; sourceTree = "<group>"; };
 		037581E28AF8C9D253064408 /* AgentAlertCenter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertCenter.swift; sourceTree = "<group>"; };
 		03B88956D18BC4F22E09C83F /* E2ESupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2ESupport.swift; sourceTree = "<group>"; };
@@ -2144,6 +2146,7 @@
 				61685D397567FB54BA7A7F79 /* TabletInputTests.swift */,
 				0CD0BE648B34E063A1D05D52 /* TrustPackTests.swift */,
 				C812181590DE874E58758A35 /* VideoCodecPolicyTests.swift */,
+				028FD35F407A8DBAE590AC15 /* VideoFeedbackTests.swift */,
 				F67E71CA38D99224EB9E0605 /* VideoFrameTimestampTests.swift */,
 				FFE4ADC42F9E53923E64E0B6 /* VideoToolboxProbeTests.swift */,
 				0E9E76F70F47C18AF8B49BD2 /* ViewportCaptureTests.swift */,
@@ -3832,6 +3835,7 @@
 				149509DDA6192FD5FAE05D6A /* VideoCodecPolicyTests.swift in Sources */,
 				38891120CB8769393279D30C /* VideoEncoderEvidence.swift in Sources */,
 				9EF611D369E330D8DA0FD6E2 /* VideoFeedback.swift in Sources */,
+				873138D90037F30FD9863A69 /* VideoFeedbackTests.swift in Sources */,
 				1643A8AEC2B7CE036CA9C069 /* VideoFrameTimestampTests.swift in Sources */,
 				44AFDEC625CCA12E0B403CAF /* VideoToolboxProbeTests.swift in Sources */,
 				0F960CB2D947452338BA7932 /* ViewportCapture.swift in Sources */,
