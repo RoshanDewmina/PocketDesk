@@ -98,3 +98,8 @@ About **7–10 engineer-days** (state machine/power 1; sessionless cover + exclu
 2. **Local touch policy while covered.** (A) Listen and lock on the first event (the first event lands) — *recommended for 1.0*; (B) active event tap swallows local input, then locks (+2–3 days, secure-input hole remains); (C) today's cover with Esc ×3 reveal (rejected: an unlocked Mac one keypress away).
 3. **Power rule.** (A) Arm on AC only; on battery end after 5 min with no phone, or at 20 % with one — *recommended*; (B) allow battery down to 30 %; (C) no battery rule.
 4. **If S1 shows the screen saver still locks the Mac:** (A) detect it and explain at the Mac, with a deep link to Lock Screen settings, the user's choice — *recommended*; (B) declare user activity periodically to hold it off (pretends someone is active; disabled on managed Macs); (C) mark Away mode unavailable on those Macs.
+
+## Decisions — 30 September 2026
+
+Roshan approved this design and every recommended answer to the open questions above ("Sounds good … go ahead"). Implementation is authorized on a feature branch; no install, merge into `pocketdesk-remote-chat`, deployment or submission without his separate go-ahead.
+The S1 (screen saver) and S2 (posted lock shortcut) feasibility tests lock or idle the Mac and must be run by Roshan, not by agents; the go/no-go for 1.0 still depends on them by about 10 October.

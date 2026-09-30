@@ -146,3 +146,7 @@ VERIFIED by `git diff 86d643a...farside-connection-health`: the branch adds `Con
 - A) At 20% and at 10%, once each per session, plus a notice on unplug **(recommended)**
 - B) Only at macOS's own warning levels (about 20 and 10 minutes remaining)
 - C) At 20% only, with no unplug notice
+
+## Decisions — 30 September 2026
+
+Roshan approved this design and every recommended answer to the open questions above ("Sounds good … go ahead"). Implementation is authorized on a feature branch; no install, merge into `pocketdesk-remote-chat`, deployment or submission without his separate go-ahead.

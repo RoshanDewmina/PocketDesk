@@ -138,3 +138,7 @@ About 5–7 engineer-days, in this order: handshake, `couch.1`, `beginCouch`, `c
 4. **Screen Recording permission?**
    - A) Keep Mac setup unchanged for 1.0 (both permissions); Couch simply never captures. *(Recommended: today registration requires Screen Recording, `HostModel.swift:701-712` and `1122-1133`, VERIFIED.)*
    - B) Add an Accessibility-only "Couch-only" Mac setup. Changes the registration, display and readiness gates, about 2 more days.
+
+## Decisions — 30 September 2026
+
+Roshan approved this design and every recommended answer to the open questions above ("Sounds good … go ahead"). Implementation is authorized on a feature branch; no install, merge into `pocketdesk-remote-chat`, deployment or submission without his separate go-ahead.

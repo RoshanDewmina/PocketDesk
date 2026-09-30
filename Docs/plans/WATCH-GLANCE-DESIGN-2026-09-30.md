@@ -105,3 +105,8 @@ Leading glyph: `FarsideMarkGlyph` (`FarsideWidgets/SessionLiveActivity.swift:32`
 2. **Mac status on the wrist when no session or agent run is active?** (a) No: status only inside Live Activities (A+B). (b) Yes: add a minimal Watch app with one complication and Smart Stack widget (D, +6–9 d, after W1). (c) Alerts only, no Mac line. *Recommendation: (a).*
 3. **An End session button in the Watch session layout?** (a) No buttons on the wrist. (b) End only, as a kill switch. *Recommendation: (a). It keeps the "never controls" rule, and CarPlay shares the layout.*
 4. **Timing?** (a) Phase 1 with the D29 beta in 1.0, Phase 2 in 1.1. (b) Everything in 1.1. (c) Everything before launch. *Recommendation: (a).*
+
+## Decisions — 30 September 2026
+
+Roshan approved this design and every recommended answer to the open questions above ("Sounds good … go ahead"). Implementation is authorized on a feature branch; no install, merge into `pocketdesk-remote-chat`, deployment or submission without his separate go-ahead.
+Watch ownership (question 1) was not answered: treat as "no Watch available", build the no-Watch-app options, and mark all on-wrist behaviour unverified.
