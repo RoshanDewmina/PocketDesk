@@ -7,8 +7,13 @@ Engineering continuation is authorized. Worktree: `.codex/worktrees/continue-int
 | Package | Exact author base | Exact author head | Integration/check status |
 | --- | --- | --- | --- |
 | Wave 1: connection health, efficiency, Smooth motion, polish, transfer | a567310ea6eef152a5202501a1f2a5f41a56e0e2 | b1417a08329423a707f1c402758d5a447915ec9c (integration-2026-09-30) | Starting integration revision; no recovered final passing run |
+| Connection Health | 6d83703b80cd70a1cbbda0a1aace8cf5d244659c | 84d871ed3a5b40a0f8b9be9bd0b53f619a64869c | Prior merge 09cff85; included in fresh combined checks |
+| Efficiency | 6d83703b80cd70a1cbbda0a1aace8cf5d244659c | 620f2851df19a17e0063139a09a9be0d6c2c81cc | Prior merge 546e293; included in fresh combined checks |
+| Smooth motion | a65e864b424cee3a8df80b768a184a46d329a8ab | bca21f2fcd1693c792343c2ab84b5e4aef51fb7a | Prior merge b71cc3d; simulator fallback only; hardware interpolation unverified |
+| Polish | a567310ea6eef152a5202501a1f2a5f41a56e0e2 | 431edbd8485def6788853777e14535033621c319 | Prior merge 3bf949d; new gesture/error cases retained |
+| Transfer | a567310ea6eef152a5202501a1f2a5f41a56e0e2 | af731ce5711bac25a2acadd0f20316212b8b8e09 | Prior merge 3dbb188; App Group/share extension retained |
 | Trust | a567310ea6eef152a5202501a1f2a5f41a56e0e2 | 9fb69beb0651f489ec21150d9299c6b205633dbe | Merge 3b83aba; cached post-event grant remains control truth |
-| Commerce/review | a567310ea6eef152a5202501a1f2a5f41a56e0e2 | 5ec4136976b2d398a63fbcc5886d3f035f3dd5e0 | Merged; fixed generic title preserved in Watch merge |
+| Commerce/review | a567310ea6eef152a5202501a1f2a5f41a56e0e2 | 5ec4136976b2d398a63fbcc5886d3f035f3dd5e0 | Merge f67deda; fixed generic title preserved in Watch merge |
 | Focus & Precision | a567310ea6eef152a5202501a1f2a5f41a56e0e2 | f82a77b1bd4f9690472fef4e5e9739d2f572e2d9 | Merge 76382d1; secure-focus flag, geometry and momentum combined |
 | Motion lab | a567310ea6eef152a5202501a1f2a5f41a56e0e2 | 6eba120f2b0bb5e66c29ea868699fcfc41196428 | Merge 9791286; adopted PRODUCT D38 A and D39 live strip retained |
 | Watch glance | a65e864b424cee3a8df80b768a184a46d329a8ab | 889d5b7e01048d3f4bdfc7ea1d85af9be6f9e314 (watch/wave-1) | Merge 3f1fc31; actual implementation, not scaffold branch |
@@ -43,3 +48,5 @@ Backend initially lacked local vitest/tsc dependencies; installed exact frozen B
 First combined run began from 198881b and completed on Xcode 27.0. Core built, then executed 988 tests with 7 skips and 1 failure: the old invalid case used 17 features after the cap became 32. Corrected to 33, added boundary-positive 32 and actual combined host capabilities. Restored blocker.1 sealed-handshake regression passed in that run. Mac host build passed after the conflict-assembly syntax correction. Phone generic-simulator compile failed on missing Couch error cases in Connection Health; corrected before the rerun. These failures remain in the receipt logs; no passing combined-suite claim is made yet. Heavy build slot released to Big Text after that chain; no second lock waiter was queued.
 
 Further source audit: a Couch session admitted through the no-Screen-Recording listener now marks the host active and exits listener-only state, so its authenticated mode-switch/session-extension gates can work. No capture starts from this transition. Combined identity JSON drops an oversized display name while preserving requested mode, with a unicode regression. xcodegen's repeated output changed only copy-phase IDs/order; reverted that generator-only churn. Backend fresh checks pass 135/135 plus TypeScript.
+
+First-wave author bases above are merge bases against a567310; imported heads are exact second parents of their prior integration merge, not potentially moving branch labels. Author-only generation/review scripts in vanished `/private/tmp/claude-*` scratch directories cannot be reconstructed as passing receipts. Original Claude worktrees and dirty motion PNGs were not edited.
