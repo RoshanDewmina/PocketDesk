@@ -27,6 +27,18 @@ final class MacGlanceLineTests: XCTestCase {
         XCTAssertEqual(line(presence("awake", seen: seen0905, battery: 1)), "Mac · seen 09:05 · 1%")
     }
 
+    func testTwelveHourLocalesUseANarrowMarker() {
+        let unitedStates = Locale(identifier: "en_US")
+        let seen1259 = 1_790_773_170
+        func line(_ presence: MacPresence) -> String? {
+            MacGlanceLine.text(for: presence, isStale: false, timeZone: utc, locale: unitedStates)
+        }
+        XCTAssertEqual(line(presence("awake", seen: seen1141, battery: 64)), "Mac · seen 11:41\u{202F}a · 64%")
+        XCTAssertEqual(line(presence("awake", seen: seen1259, battery: 100)), "Mac · seen 12:59\u{202F}p · 100%")
+        XCTAssertEqual(line(presence("asleep", seen: seen1259)), "Mac · asleep since 12:59\u{202F}p")
+        XCTAssertEqual(line(presence("notSeen", seen: seen0905)), "Not seen since 9:05\u{202F}a")
+    }
+
     func testAnAwakeMacWithoutASeenTimeIsNotSeen() {
         XCTAssertEqual(line(presence("awake", battery: 64)), "Mac not seen lately")
     }
@@ -113,6 +125,11 @@ final class MacGlanceLineTests: XCTestCase {
                        ["macState": "awake", "macSeenUnix": seen1141, "batteryPercent": 64, "power": "battery"] as NSDictionary)
         XCTAssertTrue(object["macState"] is String)
         XCTAssertTrue(object["power"] is String)
+        let text = try XCTUnwrap(String(data: data, encoding: .utf8))
+        XCTAssertNotNil(text.range(of: #""macSeenUnix":1790768490[,}]"#, options: .regularExpression),
+                        "Seen time is integer Unix seconds on the wire: \(text)")
+        XCTAssertNotNil(text.range(of: #""batteryPercent":64[,}]"#, options: .regularExpression),
+                        "Battery is an integer on the wire: \(text)")
         XCTAssertEqual(try JSONSerialization.jsonObject(with: JSONEncoder().encode(MacPresence())) as? NSDictionary, [:] as NSDictionary,
                        "Absent fields are omitted, not sent as null")
     }

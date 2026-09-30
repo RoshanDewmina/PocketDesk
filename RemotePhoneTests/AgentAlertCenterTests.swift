@@ -126,6 +126,9 @@ final class AgentAlertCenterTests: XCTestCase {
                        "Long enough to lock the iPhone so the alert goes to the Watch")
         XCTAssertEqual(request.content.title, ordinary.content.title)
         XCTAssertEqual(request.content.body, ordinary.content.body)
+        XCTAssertEqual(request.content.categoryIdentifier, "AGENT_HELP", "Snooze stays the Watch's first action")
+        let routed = try XCTUnwrap(AgentAlertPayload(userInfo: request.content.userInfo))
+        XCTAssertTrue(routed.isTest)
     }
 
     func testTheTestAlertBreaksThroughFocusOnlyWhenAskedTo() async throws {

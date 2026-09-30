@@ -30,11 +30,15 @@ final class WatchGlanceLayoutTests: XCTestCase {
         line == .title ? M.titleWidth(in: size) : M.lineWidth(in: size)
     }
 
-    private func fits(_ string: String, as line: Line, in size: CGSize, scale: CGFloat) -> Bool {
-        let measured = width(string, as: line)
-        let room = available(for: line, in: size)
-        print("watch-glance fit: \"\(string)\" \(line) \(measured) pt × \(scale) = \(measured * scale) of \(room) pt")
-        return measured * scale <= room
+    private func margin(_ string: String, as line: Line, in size: CGSize, scale: CGFloat) -> CGFloat {
+        available(for: line, in: size) - width(string, as: line) * scale
+    }
+
+    private func assertFits(_ string: String, as line: Line, in size: CGSize, scale: CGFloat, _ message: String = "",
+                            file: StaticString = #filePath, line sourceLine: UInt = #line) {
+        let margin = self.margin(string, as: line, in: size, scale: scale)
+        XCTAssertGreaterThanOrEqual(margin, 0, "\"\(string)\" \(line) at \(scale)× is \(-margin) pt too wide. \(message)",
+                                    file: file, line: sourceLine)
     }
 
     // MARK: Surfaces
@@ -61,36 +65,54 @@ final class WatchGlanceLayoutTests: XCTestCase {
         let titles = ["Live · Your Mac", "Paused", "Reconnecting", "Session ended", "Farside let go", "Sharing stopped",
                       "Session ended?"]
         for title in titles {
-            XCTAssertTrue(fits(title, as: .title, in: smallestWatch, scale: M.titleMinimumScale), title)
-            XCTAssertTrue(fits(title, as: .title, in: smallestWatch, scale: 0.9), "\(title) should need little shrinking")
+            assertFits(title, as: .title, in: smallestWatch, scale: M.titleMinimumScale)
+            assertFits(title, as: .title, in: smallestWatch, scale: 0.9, "It should need little shrinking")
         }
         for clock in ["Lets go in 88:88", "88:88", "888:88"] {
-            XCTAssertTrue(fits(clock, as: .clock, in: smallestWatch, scale: M.lineMinimumScale), clock)
+            assertFits(clock, as: .clock, in: smallestWatch, scale: M.lineMinimumScale)
         }
         let details = ["Lets go soon.", "Hold on.", "Mac handed back.", "You were away.", "Stopped at the Mac.",
                        "Nothing left open.", "Check your iPhone."]
         for detail in details {
-            XCTAssertTrue(fits(detail, as: .detail, in: smallestWatch, scale: M.lineMinimumScale), detail)
+            assertFits(detail, as: .detail, in: smallestWatch, scale: M.lineMinimumScale)
         }
         for note in ["End it on your iPhone.", "Sample · preview"] {
-            XCTAssertTrue(fits(note, as: .note, in: smallestWatch, scale: M.lineMinimumScale), note)
+            assertFits(note, as: .note, in: smallestWatch, scale: M.lineMinimumScale)
         }
     }
 
-    func testTheMacLineFitsTheSmallestWatch() {
+    func testTheMacLineFitsTheSmallestWatch() throws {
         for line in ["Mac · seen 88:88 · 100%", "Not seen since 88:88", "Mac · asleep since 88:88", "Mac not seen lately"] {
-            XCTAssertTrue(fits(line, as: .note, in: smallestWatch, scale: M.lineMinimumScale), line)
+            assertFits(line, as: .note, in: smallestWatch, scale: M.lineMinimumScale)
+        }
+        let utc = try XCTUnwrap(TimeZone(identifier: "UTC"))
+        let seen1259pm = 1_790_773_170
+        let cases: [(MacPresence, Locale)] = [
+            (MacPresence(macState: "awake", macSeenUnix: seen1259pm, batteryPercent: 100), Locale(identifier: "en_US")),
+            (MacPresence(macState: "asleep", macSeenUnix: seen1259pm), Locale(identifier: "en_US")),
+            (MacPresence(macState: "notSeen", macSeenUnix: seen1259pm), Locale(identifier: "en_US")),
+            (MacPresence(macState: "awake", macSeenUnix: seen1259pm, batteryPercent: 100), Locale(identifier: "en_GB")),
+            (MacPresence(macState: "asleep", macSeenUnix: seen1259pm), Locale(identifier: "en_GB")),
+        ]
+        for (presence, locale) in cases {
+            let line = try XCTUnwrap(MacGlanceLine.text(for: presence, isStale: false, timeZone: utc, locale: locale))
+            assertFits(line, as: .note, in: smallestWatch, scale: M.lineMinimumScale, locale.identifier)
         }
     }
 
     func testLA2CopyFindingsStayRecorded() {
-        XCTAssertTrue(fits("An agent needs you", as: .title, in: smallestWatch, scale: M.titleMinimumScale))
-        XCTAssertFalse(fits("Claude Code needs you", as: .title, in: smallestWatch, scale: M.titleMinimumScale),
-                       "Amendment 6 says this title does not fit 40 mm; update the spec if fonts changed")
-        XCTAssertFalse(fits("12 min · nothing needs you", as: .detail, in: smallestWatch, scale: M.lineMinimumScale),
-                       "Amendment 6 says this line does not fit 40 mm; update the spec if fonts changed")
-        XCTAssertFalse(fits("Nothing was sent to your Mac.", as: .detail, in: smallestWatch, scale: M.lineMinimumScale),
-                       "Amendment 6 says this line does not fit 40 mm; update the spec if fonts changed")
+        assertFits("An agent needs you", as: .title, in: smallestWatch, scale: M.titleMinimumScale)
+        let tooWide: [(String, Line, CGFloat)] = [
+            ("Claude Code needs you", .title, M.titleMinimumScale),
+            ("12 min · nothing needs you", .detail, M.lineMinimumScale),
+        ]
+        for (string, line, scale) in tooWide {
+            let margin = self.margin(string, as: line, in: smallestWatch, scale: scale)
+            XCTAssertLessThan(margin, -2, "\"\(string)\" at \(scale)× has a margin of \(margin) pt; Amendment 6 records it "
+                              + "as over by more than 2 pt. A flip means re-check spec Amendment 6, not a regression.")
+        }
+        XCTAssertLessThan(margin("Nothing was sent to your Mac.", as: .detail, in: smallestWatch, scale: M.lineMinimumScale), 0,
+                          "Amendment 6 says this line does not fit 40 mm; update the spec if fonts changed")
     }
 
     func testThreeLinesFitTheShortestSurface() {
@@ -98,9 +120,8 @@ final class WatchGlanceLayoutTests: XCTestCase {
         let firstRow = max(Line.title.font.lineHeight, M.glyphHeight + 6)
         let total = firstRow + Line.clock.font.lineHeight + Line.note.font.lineHeight
             + 2 * M.lineSpacing + 2 * M.verticalPadding
-        print("watch-glance fit: three lines need \(total) pt of \(shortest) pt")
         XCTAssertEqual(shortest, 69.5)
-        XCTAssertLessThanOrEqual(total, shortest)
+        XCTAssertLessThanOrEqual(total, shortest, "Three lines need \(total) pt of \(shortest) pt")
     }
 
     // MARK: Render
@@ -153,8 +174,12 @@ final class WatchGlanceLayoutTests: XCTestCase {
             return seen.count
         }
 
-        var brightPixels: Int {
-            stride(from: 0, to: bytes.count, by: 4).filter { bytes[$0] > 180 && bytes[$0 + 1] > 180 }.count
+        var brightPixels: Int { brightPixels(rightOf: -1) }
+
+        func brightPixels(rightOf column: Int) -> Int {
+            stride(from: 0, to: bytes.count, by: 4).filter {
+                ($0 / 4) % width > column && bytes[$0] > 180 && bytes[$0 + 1] > 180
+            }.count
         }
 
         /// Ember is #FF5B1F: red far above green. Bone and ash stay near-neutral even when antialiased.
@@ -182,6 +207,9 @@ final class WatchGlanceLayoutTests: XCTestCase {
                 let pixels = try XCTUnwrap(Pixels(cgImage), name)
                 XCTAssertGreaterThan(pixels.distinctColours, 1, "\(name) is a flat colour")
                 XCTAssertGreaterThan(pixels.brightPixels, 0, "\(name) drew no bone text")
+                let glyphColumn = Int((M.horizontalPadding + M.ringDiameter + M.glyphSpacing) * renderer.scale)
+                XCTAssertGreaterThan(pixels.brightPixels(rightOf: glyphColumn), 0,
+                                     "\(name) drew nothing bright beside the mark, so the title is missing")
                 XCTAssertEqual(pixels.emberPixels, 0, "\(name) uses ember")
                 if let directory, let png = image.pngData() {
                     try png.write(to: directory.appendingPathComponent("\(name).png"))

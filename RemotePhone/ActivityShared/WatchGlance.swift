@@ -79,7 +79,10 @@ enum MacGlanceLine {
     static func text(for presence: MacPresence?, isStale: Bool,
                      timeZone: TimeZone = .current, locale: Locale = .current) -> String? {
         guard let presence else { return nil }
-        let seen = presence.seenAt.map { $0.formatted(Date.FormatStyle(locale: locale, timeZone: timeZone).hour().minute()) }
+        // A narrow am/pm marker ("12:59 p", not "12:59 PM") keeps 12-hour locales inside 40 mm.
+        let style = Date.FormatStyle(locale: locale, calendar: Calendar(identifier: .gregorian), timeZone: timeZone)
+            .hour(.defaultDigits(amPM: .narrow)).minute()
+        let seen = presence.seenAt.map { $0.formatted(style) }
         switch (isStale ? MacPresence.State.notSeen : presence.state, seen) {
         case (.awake, let seen?):
             let battery = presence.batteryPercent.flatMap { (1...100).contains($0) ? " · \($0)%" : nil } ?? ""
