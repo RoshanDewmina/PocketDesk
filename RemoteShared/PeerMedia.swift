@@ -167,6 +167,7 @@ final class PeerMedia: NSObject {
     var onFileMessage: ((Data) -> Void)?
     var onFileBufferedAmountChange: (() -> Void)?
     let counters = StreamCounters()
+    private let resourceBudget = MediaResourceBudget()
     var captureMaximumDimension: Int?
     /// Phone: the latest sender stages forwarded by the Mac with its capture heartbeat.
     private(set) var remoteHostSummary: HostStreamSummary?
@@ -774,6 +775,9 @@ final class PeerMedia: NSObject {
         stats.tuning = tuning.liveSummary
         stats.thermalState = ProcessInfo.processInfo.thermalState.rawValue
         stats.lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        resourceBudget.observe(MediaCapacityObservation(at: ProcessInfo.processInfo.systemUptime,
+            route: sample.route, capacityKbps: stats.availableOutgoingKbps,
+            videoKbps: stats.sentKbps, rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs))
         if isHost {
             if nativeDesktopCodecs {
                 stats.targetFPS = targetFPS
@@ -841,6 +845,7 @@ final class PeerMedia: NSObject {
     }
 
     func close() {
+        resourceBudget.end()
         linkMonitor?.cancel(); linkMonitor = nil
         preGateControl.removeAll(); preGateBytes = 0
         statisticsTimer?.invalidate(); statisticsTimer = nil
@@ -953,12 +958,18 @@ extension PeerMedia: FileChannelLink {
     }
 
     func sendFile(_ data: Data) -> Bool {
-        guard localGateOpen(), data.count <= FileTransferLimits.maximumMessageBytes,
+        guard localGateOpen(), data.count <= FileTransferLimits.maximumOutgoingMessageBytes,
               let file = openFileChannel else { return false }
         return file.sendData(RTCDataBuffer(data: data, isBinary: true))
     }
 
     var fileBufferedAmount: UInt64? { openFileChannel?.bufferedAmount }
+
+    func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool {
+        guard localGateOpen() else { return false }
+        return resourceBudget.permits(bytes: bytes, at: now,
+            controlBuffered: controlBufferedAmount, fileBuffered: fileBufferedAmount)
+    }
 }
 extension PeerMedia: RTCDataChannelDelegate {
     func dataChannel(_ dataChannel: RTCDataChannel, didChangeBufferedAmount amount: UInt64) {

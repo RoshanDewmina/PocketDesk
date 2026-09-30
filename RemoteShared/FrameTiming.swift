@@ -321,7 +321,7 @@ final class TimedH264Decoder: NSObject, RTCVideoDecoder {
         inner.startDecode(withNumberOfCores: numberOfCores)
     }
 
-    func releaseDecoder() -> Int { inner.releaseDecoder() }
+    func release() -> Int { inner.release() }
 
     func decode(_ encodedImage: RTCEncodedImage, missingFrames: Bool, codecSpecificInfo info: (any RTCCodecSpecificInfo)?,
                 renderTimeMs: Int64) -> Int {

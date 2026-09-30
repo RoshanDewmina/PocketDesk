@@ -3,19 +3,21 @@ import CryptoKit
 
 /// One file per transfer between the paired phone and Mac. Control frames travel on the ordered
 /// `control` channel as `RemoteAction(action: "file")`; file bytes travel on a separate ordered,
-/// reliable `file` data channel so they never queue behind (or ahead of) input.
+/// reliable `file` data channel. SCTP congestion is shared; bulk admission bounds its contention.
 enum FileTransferLimits {
     static let maximumBytes: Int64 = 1 << 30
     static let chunkHeaderBytes = 28
+    /// Receive compatibility with existing file.1 peers; new sends remain smaller.
     static let maximumMessageBytes = 64 * 1024
-    /// A 64 KiB message is the largest every SCTP stack accepts without `max-message-size`.
-    static let directChunkPayload = maximumMessageBytes - chunkHeaderBytes
+    static let maximumOutgoingMessageBytes = 16 * 1024
+    /// Without proven SCTP message interleaving, keep both paths within 16 KiB.
+    static let directChunkPayload = maximumOutgoingMessageBytes - chunkHeaderBytes
     /// Smaller relay chunks bound how long one message holds the shared association ahead of input.
     static let relayChunkPayload = 16 * 1024 - chunkHeaderBytes
-    static let directHighWater: UInt64 = 1 << 20
-    static let relayHighWater: UInt64 = 256 * 1024
-    /// Relayed bytes share the TURN path with video; cap them so the picture keeps priority.
-    static let relayBytesPerSecond: Double = 1_500_000
+    static let directHighWater: UInt64 = 32 * 1024
+    static let relayHighWater: UInt64 = 32 * 1024
+    /// Backstop only; the media governor further adapts/pauses actual sends.
+    static let relayBytesPerSecond: Double = 62_500
     static let progressInterval: TimeInterval = 0.25
     /// Long enough for someone at the Mac to answer a first-use Downloads consent prompt.
     static let acceptTimeout: TimeInterval = 60
@@ -158,7 +160,7 @@ enum FileChunk {
 
     static func encode(transfer: String, offset: Int64, payload: Data) -> Data? {
         guard let id = FileTransferID.bytes(transfer), offset >= 0, !payload.isEmpty,
-              payload.count <= FileTransferLimits.maximumMessageBytes - FileTransferLimits.chunkHeaderBytes
+              payload.count <= FileTransferLimits.maximumOutgoingMessageBytes - FileTransferLimits.chunkHeaderBytes
         else { return nil }
         var data = Data(capacity: FileTransferLimits.chunkHeaderBytes + payload.count)
         data.append(contentsOf: magic)

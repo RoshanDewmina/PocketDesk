@@ -7,6 +7,12 @@ extension FileTransferStatus: Error {}
 protocol FileChannelLink: AnyObject {
     func sendFile(_ data: Data) -> Bool
     var fileBufferedAmount: UInt64? { get }
+    func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool
+}
+
+extension FileChannelLink {
+    // In-memory test links do not share a real association. PeerMedia overrides this.
+    func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool { true }
 }
 
 protocol FileByteSource: AnyObject {
@@ -588,6 +594,11 @@ final class FileTransferIO: @unchecked Sendable {
             guard let buffered = sending.link.fileBufferedAmount else { fail(sending, .connectionLost); return }
             if buffered >= sending.highWater { schedule(sending, after: 0.005); return }
             let size = Int(min(Int64(sending.chunk), total - sending.sent))
+            guard sending.link.permitsFileSend(bytes: size + FileTransferLimits.chunkHeaderBytes,
+                                              at: ProcessInfo.processInfo.systemUptime) else {
+                schedule(sending, after: 0.01)
+                return
+            }
             guard sending.pacer.allows(size, at: ProcessInfo.processInfo.systemUptime) else {
                 schedule(sending, after: 0.01)
                 return

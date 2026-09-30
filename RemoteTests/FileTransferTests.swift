@@ -8,11 +8,13 @@ final class FileTransferFramingTests: XCTestCase {
     func testChunkRoundTripsTransferOffsetAndPayload() throws {
         let payload = Data((0..<FileTransferLimits.directChunkPayload).map { UInt8(truncatingIfNeeded: $0 * 7) })
         let message = try XCTUnwrap(FileChunk.encode(transfer: transfer, offset: 1_000_000_123, payload: payload))
-        XCTAssertEqual(message.count, FileTransferLimits.maximumMessageBytes, "a full direct chunk is exactly 64 KiB")
+        XCTAssertEqual(message.count, FileTransferLimits.maximumOutgoingMessageBytes, "new sends are bounded to 16 KiB without interleaving")
         XCTAssertEqual(FileChunk.decode(message), FileChunk.Decoded(transfer: transfer, offset: 1_000_000_123, payload: payload))
         let small = try XCTUnwrap(FileChunk.encode(transfer: transfer, offset: 65_508, payload: Data([1, 2, 3])))
         XCTAssertEqual(FileChunk.decode(small), FileChunk.Decoded(transfer: transfer, offset: 65_508, payload: Data([1, 2, 3])))
         XCTAssertLessThanOrEqual(FileTransferLimits.relayChunkPayload + FileTransferLimits.chunkHeaderBytes, 16 * 1024)
+        let legacy = message.prefix(FileTransferLimits.chunkHeaderBytes) + Data(count: FileTransferLimits.maximumMessageBytes - FileTransferLimits.chunkHeaderBytes)
+        XCTAssertEqual(FileChunk.decode(legacy)?.payload.count, 65_508, "existing file.1 peers may still send bounded 64 KiB chunks")
     }
 
     func testChunkCodecRejectsMalformedMessages() throws {
@@ -337,7 +339,7 @@ final class FileTransferEngineTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: saved), data)
         XCTAssertEqual(files(), ["report.pdf"])
         XCTAssertEqual(toMac.sentMessages, 4)
-        XCTAssertEqual(toMac.largestMessage, FileTransferLimits.maximumMessageBytes)
+        XCTAssertEqual(toMac.largestMessage, FileTransferLimits.maximumOutgoingMessageBytes)
         XCTAssertEqual(Array(controlFrames.prefix(2)), ["offer", "accept"])
         XCTAssertTrue(controlFrames.contains("complete"))
         XCTAssertEqual(controlFrames.last, "result")
