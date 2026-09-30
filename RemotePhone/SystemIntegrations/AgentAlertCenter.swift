@@ -249,6 +249,9 @@ final class AgentAlertCenter: ObservableObject {
         return true
     }
 
+    /// Long enough to lock the iPhone, so the test alert goes to a paired Watch.
+    static let watchTestDelay: TimeInterval = 10
+
     /// "Send test alert": a local notification that looks and routes like a real one. It also gives
     /// App Review a way to see the feature without any agent.
     @discardableResult

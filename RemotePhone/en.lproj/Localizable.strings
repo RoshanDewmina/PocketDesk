@@ -2,6 +2,6 @@
    compromised agent cannot put its own words on a lock screen. Literal on purpose: Apple's notification
    summaries and Focus filtering read this text, and quirky wording does not survive them. */
 "AGENT_NEEDS_YOU_TITLE" = "%@ needs you";
-"AGENT_NEEDS_YOU_BODY" = "Stuck on something only a human can click. Tap to look at your Mac.";
+"AGENT_NEEDS_YOU_BODY" = "Stuck on something only a human can click. Open Farside on your iPhone to look.";
 "AGENT_TEST_BODY" = "This is a test. Nothing on your Mac is stuck.";
 "AGENT_REMINDER_BODY" = "Still waiting on you.";
