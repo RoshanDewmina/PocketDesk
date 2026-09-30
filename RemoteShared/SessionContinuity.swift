@@ -15,6 +15,8 @@ enum SessionFeature {
     static let backgroundPause = "pause.1"
     static let displayWake = "display.wake.1"
     static let privacyCurtain = "curtain.1"
+    /// Advertised only when the host release gate and prerequisites allow Away mode.
+    static let away = "away.1"
     /// `moveTo` (display-local absolute pointer placement), triple-click counts and hardware
     /// modifier flags on pointer actions. Direct touch and a hardware pointer need it.
     static let absolutePointer = "pointer.absolute.1"
@@ -87,6 +89,8 @@ enum HostLifecycleEvent: String {
 enum PhoneSessionNotice {
     static let hostRecovered = "Your Mac’s Farside restarted — reconnected."
     static let curtainLiftedLocally = "Someone at your Mac lifted the privacy curtain."
+    static let awayCovered = "Mac covered · locks if touched"
+    static let awayCantUnlock = "Away mode can’t unlock it."
     static let curtainFailed = "Your Mac couldn’t hide its screen safely, so it stayed visible."
 
     /// What changed on the Mac between two `capture` reports, if it is worth telling the person.
@@ -101,7 +105,7 @@ enum PhoneSessionNotice {
 }
 
 extension RemoteAction {
-    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake", "curtain", "file", "viewOnly"]
+    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake", "curtain", "file", "viewOnly", "lockMac"]
 
     /// Validates the appended clipboard/pause/presence/curtain fields. Returns true when the action
     /// is a session-extension action that is now fully validated.
@@ -116,6 +120,9 @@ extension RemoteAction {
         }
         if let hostEvent {
             guard action == "capture", ClipboardFrame.isWellFormedStatus(hostEvent) else { throw RemoteError.invalidMessage }
+        }
+        if let away {
+            guard action == "capture", AwayModeState(rawValue: away) != nil else { throw RemoteError.invalidMessage }
         }
         if let curtain {
             guard action == "capture" || action == "curtain", ClipboardFrame.isWellFormedStatus(curtain) else {
