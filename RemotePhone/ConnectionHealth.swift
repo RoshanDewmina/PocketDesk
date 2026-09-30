@@ -41,7 +41,7 @@ struct ConnectionHealth: Equatable {
     var action: Action = .none
 
     /// True when the cause is not known, only that nothing answered.
-    var causeUnknown: Bool { [.unreachable, .pictureStalled].contains(state) }
+    var causeUnknown: Bool { state == .unreachable || state == .pictureStalled }
 
     // MARK: Before a session: what the last attempt ended with
 

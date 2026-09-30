@@ -105,7 +105,8 @@ final class SessionResumeCapsuleTests: XCTestCase {
     func testTheCapsuleHoldsViewportNumbersOnly() throws {
         let resume = try XCTUnwrap(zoomedView().resumeViewport(viewOnly: true))
         let data = try JSONEncoder().encode(capsule(resume))
-        let keys = Set(try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any]).keys)
+        let object = try JSONSerialization.jsonObject(with: data)
+        let keys = Set(try XCTUnwrap(object as? [String: Any]).keys)
         XCTAssertEqual(keys, ["macKey", "displayID", "displayWidth", "displayHeight", "mode", "zoom",
                               "focusX", "focusY", "atBaseline", "viewOnly", "savedAt"],
                        "No draft, text, input or screen content")
