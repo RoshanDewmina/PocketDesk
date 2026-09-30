@@ -2,4 +2,165 @@ import XCTest
 @testable import PocketDeskRemote
 
 @MainActor
-final class BigTextPhoneTests: XCTestCase {}
+final class BigTextPhoneTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var model: PhoneRemoteModel!
+    private let builtIn = DisplayDescriptor(id: 1, name: "Built-in Retina Display", width: 1470, height: 956)
+    private let studio = DisplayDescriptor(id: 7, name: "Studio Display", width: 2560, height: 1440)
+
+    override func setUp() {
+        super.setUp()
+        defaults = makeTestDefaults("BigTextPhoneTests")
+        model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.bigTextMemory = BigTextMemory(defaults: defaults)
+        model.bigTextRoomOverride = "room-a"
+    }
+
+    override func tearDown() {
+        model.disconnect()
+        model = nil
+        super.tearDown()
+    }
+
+    private func send(_ action: RemoteAction) throws {
+        model.connection.onControl?(try JSONEncoder().encode(action))
+    }
+
+    private func sendSessionStart(features: [String]) throws {
+        try send(RemoteAction(action: "geometry", x: builtIn.width, y: builtIn.height, epoch: 1))
+        try send(RemoteAction(action: "capture", x: 1, epoch: 1, features: features, display: 1))
+    }
+
+    private func described(_ display: DisplayDescriptor? = nil, current: Double = 1470) -> DisplayDescriptor {
+        var d = display ?? builtIn
+        d.scaleSteps = [ScaleStep(width: 1280, height: 832), ScaleStep(width: 1024, height: 665)]
+        d.scaleBaselineWidth = 1470
+        d.scaleCurrentWidth = current
+        return d
+    }
+
+    private func connect(features: [String] = [SessionFeature.displayScale], current: Double = 1470) throws {
+        try sendSessionStart(features: features)
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: current)], display: 1))
+    }
+
+    func testSavedLevelAppliesOnceWhenTheMacSupportsIt() throws {
+        BigTextMemory(defaults: defaults).remember(1280, forRoom: "room-a", display: builtIn, among: [builtIn])
+        try connect()
+        XCTAssertEqual(model.lastBigTextRequest?.display, 1)
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1280)
+        XCTAssertEqual(model.bigText.savedWidth, 1280)
+        XCTAssertEqual(model.bigText.pendingTarget, 1280)
+        model.lastBigTextRequest = nil
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280)], display: 1))
+        XCTAssertNil(model.lastBigTextRequest, "applied once per session")
+        XCTAssertNil(model.bigText.pendingTarget, "the Mac's answer clears the pill")
+        XCTAssertEqual(model.bigText.currentWidth, 1280)
+        XCTAssertEqual(model.bigText.steps.map(\.width), [1280, 1024])
+    }
+
+    func testNothingIsSentToAnOlderMac() throws {
+        BigTextMemory(defaults: defaults).remember(1280, forRoom: "room-a", display: builtIn, among: [builtIn])
+        try connect(features: [])
+        XCTAssertNil(model.lastBigTextRequest)
+        XCTAssertFalse(model.bigTextSupported)
+        model.chooseBigText(1024)
+        model.setBigTextOffForSession(true)
+        XCTAssertNil(model.lastBigTextRequest)
+    }
+
+    func testSavedLevelAtOrAboveTheMacsSizeDoesNothing() throws {
+        BigTextMemory(defaults: defaults).remember(1600, forRoom: "room-a", display: builtIn, among: [builtIn])
+        try connect()
+        XCTAssertNil(model.lastBigTextRequest)
+        XCTAssertNil(model.bigText.pendingTarget)
+        XCTAssertNil(model.sessionNotice)
+    }
+
+    func testRapidChoicesSendOnlyTheLast() async throws {
+        try connect()
+        model.chooseBigText(1280)
+        model.chooseBigText(1024)
+        XCTAssertNil(model.lastBigTextRequest, "nothing leaves before the pause")
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1024)
+        XCTAssertEqual(model.bigTextRequestsSent, 1, "one request for several quick choices")
+        XCTAssertEqual(model.bigText.savedWidth, 1024)
+        XCTAssertEqual(BigTextMemory(defaults: defaults).width(forRoom: "room-a", display: builtIn, among: [builtIn]), 1024)
+    }
+
+    func testBusyKeepsWaitingForTheLatestAnswer() throws {
+        try connect()
+        model.chooseBigTextNow(1024)
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described()], display: 1, scaleError: "busy"))
+        XCTAssertEqual(model.bigText.pendingTarget, 1024, "a superseded request is followed by the latest answer")
+        XCTAssertNil(model.sessionNotice)
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1024)], display: 1))
+        XCTAssertNil(model.bigText.pendingTarget)
+        XCTAssertEqual(model.bigText.currentWidth, 1024)
+    }
+
+    func testOffForThisSessionKeepsTheSavedLevel() async throws {
+        BigTextMemory(defaults: defaults).remember(1280, forRoom: "room-a", display: builtIn, among: [builtIn])
+        try connect(current: 1280)
+        XCTAssertNil(model.lastBigTextRequest, "already at the saved level")
+        model.setBigTextOffForSession(true)
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(model.lastBigTextRequest?.width, 0)
+        XCTAssertTrue(model.bigText.sessionOff)
+        XCTAssertEqual(model.bigText.savedWidth, 1280)
+        XCTAssertEqual(BigTextMemory(defaults: defaults).width(forRoom: "room-a", display: builtIn, among: [builtIn]), 1280)
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described()], display: 1))
+        model.setBigTextOffForSession(false)
+        try await Task.sleep(for: .milliseconds(800))
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1280)
+    }
+
+    func testPendingTimesOutWithAMessage() throws {
+        try connect()
+        var now: TimeInterval = 100
+        model.bigTextClock = { now }
+        model.chooseBigTextNow(1280)
+        XCTAssertNotNil(model.bigText.pendingTarget)
+        now += 7.5
+        model.checkBigTextTimeout()
+        XCTAssertNotNil(model.bigText.pendingTarget, "still within 8 s")
+        now += 1
+        model.checkBigTextTimeout()
+        XCTAssertNil(model.bigText.pendingTarget)
+        XCTAssertEqual(model.sessionNotice, "Couldn't change text size")
+    }
+
+    func testErrorsBecomeFriendlyNotices() throws {
+        try connect()
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described()], display: 1, scaleError: "disabled"))
+        XCTAssertEqual(model.sessionNotice, "Big Text is turned off on this Mac.")
+        XCTAssertEqual(PhoneRemoteModel.bigTextMessage(.noAccessibility), "Big Text needs Accessibility permission on your Mac.")
+        XCTAssertEqual(PhoneRemoteModel.bigTextMessage(.unsupported), "This display doesn't offer larger sizes.")
+        XCTAssertEqual(PhoneRemoteModel.bigTextMessage(.failed),
+                       "Couldn't change text size. If an app is full screen on your Mac, exit full screen and try again.")
+        XCTAssertNil(PhoneRemoteModel.bigTextMessage(.busy))
+    }
+
+    func testSwitchingDisplayAppliesThatDisplaysLevel() throws {
+        let memory = BigTextMemory(defaults: defaults)
+        memory.remember(1280, forRoom: "room-a", display: builtIn, among: [builtIn, studio])
+        memory.remember(1024, forRoom: "room-a", display: studio, among: [builtIn, studio])
+        try sendSessionStart(features: [SessionFeature.displayScale])
+        try send(RemoteAction(action: "displays", epoch: 1, displays: [described(current: 1280), described(studio)], display: 1))
+        XCTAssertNil(model.lastBigTextRequest)
+        try send(RemoteAction(action: "geometry", x: studio.width, y: studio.height, epoch: 2))
+        try send(RemoteAction(action: "displays", epoch: 2, displays: [described(), described(studio)], display: 7))
+        XCTAssertEqual(model.lastBigTextRequest?.display, 7)
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1024)
+    }
+
+    func testEndClearsSessionState() throws {
+        BigTextMemory(defaults: defaults).remember(1280, forRoom: "room-a", display: builtIn, among: [builtIn])
+        try connect()
+        model.disconnect()
+        XCTAssertEqual(model.bigText, BigTextState())
+        XCTAssertNil(model.lastBigTextRequest)
+        XCTAssertFalse(model.bigTextSupported)
+    }
+}

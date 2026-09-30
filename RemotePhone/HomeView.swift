@@ -179,6 +179,7 @@ struct HomeView: View {
         }
         .confirmationDialog("Forget this Mac locally?", isPresented: $confirmForget, titleVisibility: .visible) {
             Button("Forget Mac", role: .destructive) {
+                if let room = connection.invitation?.room { BigTextMemory().forget(room: room) }
                 connection.revoke()
                 lastReachedAt = 0
                 lastFailure = nil
