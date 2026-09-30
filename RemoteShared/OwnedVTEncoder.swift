@@ -87,12 +87,17 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private var bitrate: UInt32 = 0, fps: UInt32 = 60
     private var maximumQP = 30
     private var restart = EncoderRestartPolicy()
-    private(set) var maximumQPApplied = false
-    private(set) var lowLatencyApplied = false
-    private(set) var hardwareReported: Bool?
+    private var storedMaximumQPApplied: Bool = false
+    var maximumQPApplied: Bool { serialized { storedMaximumQPApplied } }
+    private var storedLowLatencyApplied: Bool = false
+    var lowLatencyApplied: Bool { serialized { storedLowLatencyApplied } }
+    private var storedHardwareReported: Bool?
+    var hardwareReported: Bool? { serialized { storedHardwareReported } }
     var hardwareRequired: Bool { true }
-    private(set) var lastStatus: OSStatus = noErr
-    private(set) var lastStage = "not-started"
+    private var storedLastStatus: OSStatus = noErr
+    var lastStatus: OSStatus { serialized { storedLastStatus } }
+    private var storedLastStage: String = "not-started"
+    var lastStage: String { serialized { storedLastStage } }
 
     init(configuration: OwnedVTConfiguration, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil) {
         self.configuration = configuration; self.counters = counters; self.frameTiming = frameTiming
@@ -124,43 +129,43 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         var specification: [CFString: Any] = [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true]
         if configuration.lowLatency { specification[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true }
         var created: VTCompressionSession?
-        lastStage = "create"
+        storedLastStage = "create"
         var status = VTCompressionSessionCreate(allocator: nil, width: width, height: height, codecType: kCMVideoCodecType_H264,
             encoderSpecification: specification as CFDictionary, imageBufferAttributes: nil,
             compressedDataAllocator: nil, outputCallback: nil, refcon: nil, compressionSessionOut: &created)
-        guard status == noErr, let created else { lastStatus = status; return status }
+        guard status == noErr, let created else { storedLastStatus = status; return status }
         session = created
         for (key, value) in [(kVTCompressionPropertyKey_RealTime, kCFBooleanTrue as CFTypeRef),
                              (kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse as CFTypeRef),
                              (kVTCompressionPropertyKey_ProfileLevel, configuration.profileProperty as CFTypeRef)] {
-            lastStage = key as String
+            storedLastStage = key as String
             status = VTSessionSetProperty(created, key: key, value: value)
-            if status != noErr { invalidate(); lastStatus = status; return status }
+            if status != noErr { invalidate(); storedLastStatus = status; return status }
         }
-        lastStage = "rate"
+        storedLastStage = "rate"
         status = applyRate(created)
-        if status != noErr { invalidate(); lastStatus = status; return status }
-        maximumQPApplied = VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxAllowedFrameQP,
+        if status != noErr { invalidate(); storedLastStatus = status; return status }
+        storedMaximumQPApplied = VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxAllowedFrameQP,
                                                value: maximumQP as CFNumber) == noErr
-        lastStage = "prepare"
+        storedLastStage = "prepare"
         status = VTCompressionSessionPrepareToEncodeFrames(created)
-        guard status == noErr else { invalidate(); lastStatus = status; return status }
-        lastStage = "hardware"
+        guard status == noErr else { invalidate(); storedLastStatus = status; return status }
+        storedLastStage = "hardware"
         var hardware: CFTypeRef?
         status = withUnsafeMutablePointer(to: &hardware) {
             VTSessionCopyProperty(created, key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
                                   allocator: nil, valueOut: UnsafeMutableRawPointer($0))
         }
-        hardwareReported = status == noErr ? hardware as? Bool : nil
+        storedHardwareReported = status == noErr ? hardware as? Bool : nil
         // Some public low-latency encoder implementations do not expose this
         // optional getter. Creation required hardware; do not reinterpret an
         // unsupported getter as measured hardware evidence or allow software.
         guard hardwareReported != false,
               status == noErr || status == kVTPropertyNotSupportedErr else {
-            invalidate(); lastStatus = status == noErr ? -1 : status; return lastStatus
+            invalidate(); storedLastStatus = status == noErr ? -1 : status; return lastStatus
         }
-        lowLatencyApplied = configuration.lowLatency
-        lastStatus = noErr
+        storedLowLatencyApplied = configuration.lowLatency
+        storedLastStatus = noErr
         counters?.encoderSessionStarted()
         return noErr
     }
@@ -175,10 +180,13 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     }
     func setBitrate(_ bitrateKbit: UInt32, framerate: UInt32) -> Int32 {
         serialized {
-            bitrate = max(1, min(100_000, bitrateKbit)); fps = max(1, min(120, framerate))
+            bitrate = max(1, min(100_000, bitrateKbit))
+            let frameMacroblocks = ((Int(width) + 15) / 16) * ((Int(height) + 15) / 16)
+            let maximumFPS = frameMacroblocks > 0 ? H264FrameBudget.level(configuration.level).macroblocksPerSecond / frameMacroblocks : 1
+            if framerate > 0 { fps = UInt32(max(1, min(120, min(Int(framerate), maximumFPS)))) }
             restart.updateTarget(kbps: Double(bitrate)); counters?.encoderRateUpdated()
             guard let session else { return -1 }
-            lastStatus = applyRate(session)
+            storedLastStatus = applyRate(session)
             return lastStatus == noErr ? 0 : -1
         }
     }
@@ -208,7 +216,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                     self.queue.async { [weak self] in self?.completed(id: id, epoch: currentEpoch, status: status, flags: flags, sample: sample) }
                 }
             if result != noErr { pending.removeValue(forKey: id); counters?.droppedBeforeEncode() }
-            lastStatus = result
+            storedLastStatus = result
             return result == noErr ? 0 : -1
         }
     }
@@ -276,7 +284,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private func invalidate() {
         epoch = UUID(); pending.removeAll()
         if let session { VTCompressionSessionInvalidate(session) }
-        session = nil; maximumQPApplied = false; lowLatencyApplied = false; hardwareReported = nil
+        session = nil; storedMaximumQPApplied = false; storedLowLatencyApplied = false; storedHardwareReported = nil
     }
     func release() -> Int { serialized { invalidate(); return 0 } }
     deinit { if let session { VTCompressionSessionInvalidate(session) } }
