@@ -84,6 +84,10 @@ final class RemoteCoordinator: ObservableObject {
     private(set) var invitation: PairInvitation?
     /// Sanitized mutation phase and Security status only; never pairing data.
     private(set) var pairingRemovalFailure: String?
+    // Exact scanned QR context survives only this enrollment attempt. It must never
+    // be reclassified as an authenticated credential rotation after a retry or End.
+    private var scannedEnrollment: PairInvitation?
+    private var pendingPhoneReplacementApproval: PhoneTrustReplacementApproval?
     private let isHost: Bool
     private let store: any PairPersistence
     private let hostIdentityStore: HostIdentityStore?
@@ -327,10 +331,20 @@ final class RemoteCoordinator: ObservableObject {
         hostPair = pair; invitation = pair.invitation; peerName = nil
         return pair.invitation
     }
-    func enroll(_ code: String) throws {
+    func enroll(_ code: String, replacementApproval: PhoneTrustReplacementApproval? = nil) throws {
+        guard !isHost else { throw RemoteError.invalidPairing }
         let parsed = try PairInvitation.parse(code)
+        if let phone = store as? PhonePairPersistence {
+            let required = try phone.trust.replacementRequest(for: parsed)
+            guard required == replacementApproval?.request,
+                  replacementApproval == nil || replacementApproval?.enrollment == parsed else {
+                throw PhoneTrustMutationError.replacementRequiresApproval
+            }
+        } else if replacementApproval != nil { throw RemoteError.invalidPairing }
         try prepareForEnrollment?()
         stop()
+        scannedEnrollment = parsed
+        pendingPhoneReplacementApproval = replacementApproval
         invitation = parsed
         #if DEBUG
         e2eEnrolling = true
@@ -347,6 +361,7 @@ final class RemoteCoordinator: ObservableObject {
         }
         guard let invitation else { status = "Pair with your Mac first"; return }
         do {
+            if let scannedEnrollment { try scannedEnrollment.validate(enrollment: true) }
             if isHost, let pair = hostPair, !pair.paired { try invitation.validate() }
             else { try invitation.validate(enrollment: false) }
             if resetRetryBudget { retryCount = 0; recoveringLiveSession = false; reconnecting = false }
@@ -384,8 +399,17 @@ final class RemoteCoordinator: ObservableObject {
     }
     func reject() { fail("Pairing was declined on the Mac") }
     @discardableResult
-    func revoke() -> Bool {
+    func revoke(expectedInvitation: PairInvitation? = nil) -> Bool {
         pairingRemovalFailure = nil
+        if let expectedInvitation {
+            do {
+                guard invitation == expectedInvitation,
+                      try store.read(PairInvitation.self) == expectedInvitation else {
+                    status = "Selected Mac changed. Choose the Mac to forget again."
+                    return false
+                }
+            } catch { status = error.localizedDescription; return false }
+        }
         stop()
         var phase = "delete"
         do {
@@ -442,7 +466,16 @@ final class RemoteCoordinator: ObservableObject {
         }
         return invitation == nil
     }
+    private func cancelEnrollment() {
+        if scannedEnrollment != nil { invitation = try? store.read(PairInvitation.self) }
+        scannedEnrollment = nil
+        pendingPhoneReplacementApproval = nil
+        #if DEBUG
+        e2eEnrolling = false
+        #endif
+    }
     func stop() {
+        cancelEnrollment()
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
         reconnecting = false
         routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
@@ -650,10 +683,11 @@ final class RemoteCoordinator: ObservableObject {
                       next.durableHostID == invitation?.durableHostID,
                       next.ownerPairID == invitation?.ownerPairID,
                       next.localServiceName == invitation?.localServiceName else { throw RemoteError.invalidMessage }
-                try store.save(next); invitation = next
-                #if DEBUG
-                e2eEnrolling = false
-                #endif
+                try persistAcceptedInvitation(next)
+            } else if let scannedEnrollment {
+                // A paired host may accept without rotating credentials. The scanned
+                // QR still needs the same explicit replacement admission and expiry.
+                try persistAcceptedInvitation(scannedEnrollment)
             }
             prepareMedia()
             send(kind: "acceptedAck", body: SessionModeRequest.body(for: sessionModeRequest, name: localDisplayName))
@@ -676,6 +710,18 @@ final class RemoteCoordinator: ObservableObject {
             pendingMediaSignals.append(signal)
         default: throw RemoteError.invalidMessage
         }
+    }
+    private func persistAcceptedInvitation(_ next: PairInvitation) throws {
+        if let phone = store as? PhonePairPersistence {
+            try phone.trust.saveApproved(next, scannedEnrollment: scannedEnrollment,
+                                         replacementApproval: pendingPhoneReplacementApproval)
+        } else { try store.save(next) }
+        invitation = next
+        scannedEnrollment = nil
+        pendingPhoneReplacementApproval = nil
+        #if DEBUG
+        e2eEnrolling = false
+        #endif
     }
     /// Keeps the name a paired phone reports; a phone that sends none keeps the stored one.
     private func recordPeerName(_ name: String?) {
@@ -917,6 +963,10 @@ final class RemoteCoordinator: ObservableObject {
     private func connectionLost(finalStatus: String = "Connection lost. Tap Connect to try again.") {
         SessionLog.log.error("connectionLost: \(finalStatus, privacy: .public) signaling=\(self.relay.lastCloseReason ?? "nil", privacy: .public) stopped=\(self.stopped, privacy: .public) retry=\(self.retryCount, privacy: .public)")
         guard !stopped else { return }
+        if scannedEnrollment != nil {
+            fail("Pairing was interrupted. Scan a fresh QR to try again.")
+            return
+        }
         // A media and signaling failure can report the same outage independently.
         // The first event already closed the old transport and scheduled a retry.
         guard retry == nil else { return }
@@ -959,6 +1009,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func fail(_ message: String) {
+        cancelEnrollment()
         SessionLog.log.error("fail: \(message, privacy: .public)")
         stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false
         reconnecting = false

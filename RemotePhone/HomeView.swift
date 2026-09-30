@@ -538,6 +538,7 @@ struct HomeView: View {
     /// With Settings → Security on, the owner confirms first; a refusal leaves the pairing as it was.
     private func forgetMac() {
         Task { @MainActor in
+            let intendedInvitation = connection.invitation
             let gate = DeviceOwnerGate.live
             let outcome = await gate.check(.forgetMac)
             guard outcome.allows else {
@@ -545,10 +546,14 @@ struct HomeView: View {
                                                       biometryName: gate.authenticator.biometryName) ?? ""
                 return
             }
-            let room = connection.invitation?.room
+            guard let intendedInvitation, connection.invitation == intendedInvitation else {
+                model.error = "Selected Mac changed. Choose the Mac to forget again."
+                return
+            }
+            let room = intendedInvitation.room
             model.disconnect()
-            guard connection.revoke() else { return }
-            if let room { model.bigTextMemory.forget(room: room) }
+            guard connection.revoke(expectedInvitation: intendedInvitation) else { return }
+            model.bigTextMemory.forget(room: room)
             model.refreshSendToMac(force: true)
             model.vitalsMemory.forget()
             refreshLastBattery()
