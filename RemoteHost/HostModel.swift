@@ -178,7 +178,7 @@ final class RemoteHostModel: ObservableObject {
     private var pendingModeReason: SessionModeRefusal?
     private let couchHUD = CouchHUD()
     private var refusalTeardown: Task<Void, Never>?
-    /// Set when displays change during Couch: `displays` could not be reloaded while sharing, so Picture must not use it.
+    /// A display change during Couch requires a fresh catalog before an explicit Picture switch.
     private var displaysStaleFromCouch = false
     private var pendingPictureRefresh: CouchPictureRefreshTicket?
     private weak var pendingPictureRefreshPeer: PeerMedia?
@@ -1352,8 +1352,10 @@ final class RemoteHostModel: ObservableObject {
                 loadDisplays()
             } else {
                 if sessionState == .couch {
+                    let pictureRequested = pendingPictureRefresh != nil
                     cancelPictureRefresh()
                     invalidateDisplays(status: .permissionDenied)
+                    if pictureRequested { pendingModeReason = .screenRecording }
                     sendCaptureHealth(sessionHealthy)
                 } else {
                     stop()
