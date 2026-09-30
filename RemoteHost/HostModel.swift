@@ -64,7 +64,15 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var localPairRemovalMessage: String?
     @Published private(set) var wantsSharing: Bool
     @Published private(set) var screenRecordingPermission: HostPermissionStatus = .unchecked
-    @Published private(set) var accessibilityPermission: HostPermissionStatus = .unchecked
+    /// Control's truth is the right to post events; Accessibility (AX) is read only for the focus
+    /// features and the curtain. Both are cached and refreshed on timers, never per input event.
+    @Published private(set) var inputAccess = HostInputAccess.unchecked
+    private var inputAccessCache = HostInputAccessCache(probe: RemoteHostModel.probeInputAccess)
+    /// macOS stopped or declined the capture although Screen Recording is granted.
+    @Published private(set) var captureApproval = HostCaptureApproval()
+    private var captureApprovalCheck: Task<Void, Never>?
+    @Published private(set) var permissionsTurnedOffByUpdate: [HostSystemSettingsPane] = []
+    @Published private(set) var menuBarIconShown: Bool
     @Published private(set) var screenRecordingSettingsOpened = false
     @Published private(set) var accessibilitySettingsOpened = false
     @Published private(set) var accessibilitySkipped: Bool
@@ -127,7 +135,7 @@ final class RemoteHostModel: ObservableObject {
     #endif
     private var pendingServerRemoval: PendingHostRoomRemoval?
     private var serverRemovalReadFailed = false
-    private let input = RemoteInputDriver()
+    private lazy var input = RemoteInputDriver(isTrusted: { [unowned self] in self.controlPermission.isGranted })
     private let capture = RemoteCapture()
     /// G12: one per capture session while the ladder switch is on.
     private var loadMonitor: HostLoadMonitor?
@@ -164,6 +172,12 @@ final class RemoteHostModel: ObservableObject {
     private var terminating = false
 
     var allowControl: Bool { controlConsent.isAllowed }
+    var controlPermission: HostPermissionStatus { inputAccess.postEvents }
+
+    nonisolated static func probeInputAccess() -> HostInputAccess {
+        HostInputAccess(postEvents: CGPreflightPostEventAccess() ? .granted : .denied,
+                        accessibility: AXIsProcessTrusted() ? .granted : .denied)
+    }
     var hasPairedPhone: Bool { connection.hostPair?.paired == true }
     var serviceAddress: String? {
         HostPreferences.resolveServiceAddress(
@@ -185,7 +199,7 @@ final class RemoteHostModel: ObservableObject {
     var setupStep: HostSetupStep {
         .current(
             screenRecording: screenRecordingPermission,
-            accessibility: accessibilityPermission,
+            accessibility: controlPermission,
             accessibilitySkipped: accessibilitySkipped,
             hasPairedPhone: hasPairedPhone,
             pairingRequested: pairingRequested
@@ -207,7 +221,8 @@ final class RemoteHostModel: ObservableObject {
             reconnecting: connection.reconnecting,
             connected: connection.connected,
             awaitingApproval: connection.awaitingApproval,
-            controlEffective: allowControl && accessibilityPermission.isGranted && captureHealthy,
+            captureApprovalPending: captureApproval.isPending,
+            controlEffective: allowControl && controlPermission.isGranted && captureHealthy,
             unavailable: autoStart.suppressed,
             displayStatus: displayRefreshStatus
         ))
@@ -229,7 +244,8 @@ final class RemoteHostModel: ObservableObject {
             macName: Host.current().localizedName ?? "this Mac",
             appListName: Self.appListName,
             screenRecording: screenRecordingPermission,
-            accessibility: accessibilityPermission,
+            accessibility: controlPermission,
+            focusAccessibility: inputAccess.accessibility,
             screenRecordingSettingsOpened: screenRecordingSettingsOpened,
             accessibilitySettingsOpened: accessibilitySettingsOpened,
             accessibilitySkipped: accessibilitySkipped,
@@ -260,7 +276,9 @@ final class RemoteHostModel: ObservableObject {
             serverRemovalBusy: serverRemovalBusy,
             serverRemovalPending: serverRemovalPending,
             serverRemovalMessage: serverRemovalMessage,
-            localPairRemovalMessage: localPairRemovalMessage
+            localPairRemovalMessage: localPairRemovalMessage,
+            menuBarIconShown: menuBarIconShown,
+            permissionsTurnedOffByUpdate: permissionsTurnedOffByUpdate
         )
     }
 
@@ -285,6 +303,7 @@ final class RemoteHostModel: ObservableObject {
         accessibilitySkipped = preferences.accessibilitySkipped
         pairingDeferred = preferences.pairingDeferred
         curtainPreference = preferences.privacyCurtain
+        menuBarIconShown = preferences.menuBarIconShown
         loadPendingServerRemoval()
         refreshBackgroundStates()
         background.onChange = { [weak self] in self?.refreshBackgroundStates() }
@@ -293,7 +312,10 @@ final class RemoteHostModel: ObservableObject {
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.active && !self.connection.connected }
         connection.restore()
         connection.startAllowed = { [weak self] in self?.serverRemovalPending == false }
-        connection.shareBlocker = { CGPreflightScreenCaptureAccess() ? nil : .screenRecordingOff }
+        connection.shareBlocker = { [weak self] in
+            MacShareBlocker.current(screenRecordingGranted: CGPreflightScreenCaptureAccess(),
+                                    captureApprovalPending: self?.captureApproval.isPending == true)
+        }
         connection.onAuthenticated = { [weak self] in self?.phoneConnected() }
         connection.onEnded = { [weak self] in
             self?.endCapture()
@@ -312,7 +334,7 @@ final class RemoteHostModel: ObservableObject {
         wireAgentAlerts()
         networkPath.onChange = { [weak self] in self?.connection.networkPathChanged() }
         networkPath.start()
-        capture.onFailure = { [weak self] in self?.captureFailed() }
+        capture.onFailure = { [weak self] error in self?.captureFailed(error) }
         capture.onHealth = { [weak self] healthy in self?.captureHealthChanged(healthy) }
         capture.onExclusionLost = { [weak self] in
             guard let self, self.curtain.phase != .down else { return }
@@ -369,10 +391,15 @@ final class RemoteHostModel: ObservableObject {
         observers.append(NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.pollPermissions() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.captureApproval.checkSoon(at: ProcessInfo.processInfo.systemUptime)
+                self.pollPermissions()
+            }
         })
         screenRecordingPermission = CGPreflightScreenCaptureAccess() ? .granted : .denied
-        accessibilityPermission = AXIsProcessTrusted() ? .granted : .denied
+        inputAccess = inputAccessCache.current
+        evaluateUpgradeRegrant()
         permissionTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.pollPermissions() }
         }
@@ -391,6 +418,7 @@ final class RemoteHostModel: ObservableObject {
             _ = CGRequestScreenCaptureAccess()
         case .accessibility:
             accessibilitySettingsOpened = true
+            _ = CGRequestPostEventAccess()
             let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true]
             _ = AXIsProcessTrustedWithOptions(options as CFDictionary)
         }
@@ -671,6 +699,10 @@ final class RemoteHostModel: ObservableObject {
         autoStart.clear()
         detail = nil
         unavailableReason = nil
+        if captureApproval.isPending {
+            captureApproval.checkSoon(at: ProcessInfo.processInfo.systemUptime)
+            checkCaptureApproval()
+        }
         if displayRefreshStatus != .ready { loadDisplays() } else { reconcileSharing() }
     }
 
@@ -712,14 +744,18 @@ final class RemoteHostModel: ObservableObject {
             listening: listeningWithoutSharing,
             otherAccessRunning: browserSession.controller.running,
             screenRecordingGranted: screenRecordingPermission.isGranted,
+            captureApprovalPending: captureApproval.isPending,
             hasPairedPhone: hasPairedPhone,
             serviceConfigured: serviceAddress != nil
         ) {
             listeningWithoutSharing = true
-            events.record(.sharing, "Listening without Screen Recording so the phone can be told why")
+            events.record(.sharing, captureApproval.isPending
+                ? "Listening while screen recording waits for approval, so the phone can be told why"
+                : "Listening without Screen Recording so the phone can be told why")
             connection.start()
             return
         }
+        guard !captureApproval.isPending else { return }
         guard autoStart.shouldStart(
             wantsSharing: wantsSharing,
             sharingActive: active,
@@ -871,8 +907,14 @@ final class RemoteHostModel: ObservableObject {
         snapshot.installedInApplications = background.installed
         snapshot.appUptime = Date().timeIntervalSince(watchdog?.launchedAt ?? Date())
         snapshot.screenRecording = screenRecordingPermission.isGranted ? "allowed" : "not allowed"
-        snapshot.accessibility = accessibilityPermission.isGranted ? "allowed"
+        snapshot.captureApproval = captureApproval.isPending ? "waiting for approval on this Mac" : "not needed"
+        snapshot.postEvents = controlPermission.isGranted ? "allowed"
             : (accessibilitySkipped ? "not allowed (skipped in setup)" : "not allowed")
+        snapshot.accessibility = inputAccess.accessibility.isGranted ? "allowed" : "not allowed"
+        snapshot.menuBarIcon = menuBarIconShown ? "shown" : "hidden"
+        snapshot.permissionsTurnedOffByUpdate = permissionsTurnedOffByUpdate.map {
+            $0.title(macOSMajor: HostSystemSettingsPane.currentMacOSMajor)
+        }
         snapshot.loginItem = loginItemState.diagnosticsText
         snapshot.automaticRecovery = background.recoveryWanted ? recoveryState.diagnosticsText : "off"
         snapshot.status = status.title
@@ -880,7 +922,7 @@ final class RemoteHostModel: ObservableObject {
         snapshot.sharingActive = active
         snapshot.phonePaired = hasPairedPhone
         snapshot.phoneConnected = connection.connected
-        snapshot.controlEffective = allowControl && accessibilityPermission.isGranted && captureHealthy
+        snapshot.controlEffective = allowControl && controlPermission.isGranted && captureHealthy
         snapshot.keepAwake = keepAwakeEnabled
         snapshot.displayCount = displays.count
         snapshot.detail = detail
@@ -1001,7 +1043,7 @@ final class RemoteHostModel: ObservableObject {
             displayAsleep: displayAsleep,
             phonePaused: phonePause.isPaused,
             screenLocked: screenLocked,
-            accessibilityGranted: accessibilityPermission.isGranted,
+            accessibilityGranted: inputAccess.accessibility.isGranted,
             locallyDismissed: curtainLocallyDismissed,
             raiseFailed: curtainRaiseFailed,
             safeMode: crashLoopStopped
@@ -1117,13 +1159,99 @@ final class RemoteHostModel: ObservableObject {
 
     // MARK: Permissions and displays
 
+    /// Asks macOS for both input rights again. Called from timers and app activation only.
+    @discardableResult
+    private func refreshInputAccess() -> Bool {
+        guard inputAccessCache.refresh() else { return false }
+        inputAccess = inputAccessCache.current
+        applyControlState(notifyPhone: true)
+        sendCaptureHealth(captureHealthy)
+        return true
+    }
+
+    private func evaluateUpgradeRegrant() {
+        let outcome = HostUpgradeRegrant.evaluate(
+            record: preferences.osPermissionRecord,
+            osVersion: ProcessInfo.processInfo.operatingSystemVersionString,
+            screenRecording: screenRecordingPermission.isGranted,
+            control: controlPermission.isGranted
+        )
+        if outcome.record != preferences.osPermissionRecord { preferences.osPermissionRecord = outcome.record }
+        if outcome.missing != permissionsTurnedOffByUpdate {
+            if !outcome.missing.isEmpty { events.record(.settings, "macOS update turned off \(outcome.missing.map(\.rawValue))") }
+            permissionsTurnedOffByUpdate = outcome.missing
+        }
+    }
+
+    func setMenuBarIconShown(_ shown: Bool) {
+        guard shown != menuBarIconShown else { return }
+        menuBarIconShown = shown
+        preferences.menuBarIconShown = shown
+        events.record(.settings, shown ? "Menu bar icon shown" : "Menu bar icon hidden; Farside keeps running")
+    }
+
+    /// macOS stopped or declined the capture. The Mac stays registered and tells the phone why; it
+    /// shares again only after a check finds capture allowed.
+    private func captureNeedsApproval() {
+        captureApproval.begin(at: ProcessInfo.processInfo.systemUptime)
+        sendCaptureHealth(false)
+        stop()
+        pollPermissions()
+        guard screenRecordingPermission.isGranted else {
+            clearCaptureApproval()
+            invalidateDisplays(status: .permissionDenied)
+            return
+        }
+        detail = nil
+        events.record(.sharing, "Screen recording needs approval on this Mac")
+        reconcileSharing()
+    }
+
+    private func checkCaptureApproval() {
+        guard captureApproval.isPending, captureApprovalCheck == nil else { return }
+        guard screenRecordingPermission.isGranted, CaptureStopReason.systemAllowsCapture else {
+            captureApproval.checkFailed(at: ProcessInfo.processInfo.systemUptime)
+            return
+        }
+        captureApprovalCheck = Task { [weak self] in
+            // Listing shareable content fails with the same refusal while capture is not allowed, and
+            // starts no capture and no recording indicator.
+            let allowed = (try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)) != nil
+            guard let self else { return }
+            self.captureApprovalCheck = nil
+            guard self.captureApproval.isPending else { return }
+            guard allowed else {
+                self.captureApproval.checkFailed(at: ProcessInfo.processInfo.systemUptime)
+                return
+            }
+            self.events.record(.sharing, "Screen recording allowed again; sharing resumes")
+            self.clearCaptureApproval()
+            self.loadDisplays()
+        }
+    }
+
+    private func clearCaptureApproval() {
+        captureApprovalCheck?.cancel()
+        captureApprovalCheck = nil
+        captureApproval.clear()
+    }
+
+    /// The ScreenCaptureKit code only; never a message that could name windows or content.
+    private static func captureErrorCode(_ error: Error) -> String {
+        if error is CaptureNotCapturingError { return "not capturing" }
+        let error = error as NSError
+        return error.domain == SCStreamErrorDomain ? "SCStreamError \(error.code)" : "other"
+    }
+
     private func pollPermissions() {
         if serverRemovalReadFailed { loadPendingServerRemoval() }
         let screen: HostPermissionStatus = CGPreflightScreenCaptureAccess() ? .granted : .denied
-        let trusted: HostPermissionStatus = AXIsProcessTrusted() ? .granted : .denied
-        if screen != screenRecordingPermission {
+        let screenChanged = screen != screenRecordingPermission
+        if screenChanged {
             screenRecordingPermission = screen
             if screen.isGranted {
+                // A fresh grant is itself the approval macOS was waiting for.
+                clearCaptureApproval()
                 loadDisplays()
             } else {
                 stop()
@@ -1131,11 +1259,8 @@ final class RemoteHostModel: ObservableObject {
                 reconcileSharing()
             }
         }
-        if trusted != accessibilityPermission {
-            accessibilityPermission = trusted
-            applyControlState(notifyPhone: true)
-            sendCaptureHealth(captureHealthy)
-        }
+        if refreshInputAccess() || screenChanged { evaluateUpgradeRegrant() }
+        if captureApproval.isDue(at: ProcessInfo.processInfo.systemUptime) { checkCaptureApproval() }
         if let pairingExpires, !pairingExpired, !pairingCode.isEmpty, pairingExpires <= Date() {
             pairingExpired = true
         }
@@ -1174,7 +1299,7 @@ final class RemoteHostModel: ObservableObject {
             guard !Task.isCancelled, self.displayRefreshGeneration.accepts(generation) else { return }
             let result = HostPermissionRefreshResult.resolve(
                 screenRecordingGranted: CGPreflightScreenCaptureAccess(),
-                accessibilityGranted: AXIsProcessTrusted(),
+                accessibilityGranted: self.controlPermission.isGranted,
                 displayEnumeration: enumeration
             )
             self.applyPermissionRefresh(result, previousSelection: previousSelection)
@@ -1188,10 +1313,7 @@ final class RemoteHostModel: ObservableObject {
         previousSelection: CGDirectDisplayID
     ) {
         screenRecordingPermission = result.screenRecording
-        if accessibilityPermission != result.accessibility {
-            accessibilityPermission = result.accessibility
-            applyControlState(notifyPhone: true)
-        }
+        refreshInputAccess()
         displays = result.displays
         displayRefreshStatus = result.displayStatus
         selected = HostDisplayChoice.preferred(
@@ -1237,11 +1359,11 @@ final class RemoteHostModel: ObservableObject {
     // MARK: Control
 
     private func applyControlState(notifyPhone: Bool) {
-        let effective = allowControl && accessibilityPermission.isGranted
-        if !effective { invalidateTextFocus() }
+        let effective = allowControl && controlPermission.isGranted
+        if !effective || !inputAccess.accessibility.isGranted { invalidateTextFocus() }
         input.enabled = HostControlPolicy.isEnabled(
             userConsent: allowControl,
-            accessibilityPermission: accessibilityPermission,
+            accessibilityPermission: controlPermission,
             captureHealthy: captureHealthy
         )
         if !effective {
@@ -1261,6 +1383,10 @@ final class RemoteHostModel: ObservableObject {
             screenRecordingPermission = .denied
             stop()
             invalidateDisplays(status: .permissionDenied)
+            return
+        }
+        guard CaptureStopReason.systemAllowsCapture else {
+            captureNeedsApproval()
             return
         }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
@@ -1314,10 +1440,7 @@ final class RemoteHostModel: ObservableObject {
                     }
                 }
                 self.sendCaptureHealth(self.captureHealthy)
-                if self.accessibilityPermission.isGranted && !AXIsProcessTrusted() {
-                    self.accessibilityPermission = .denied
-                    self.applyControlState(notifyPhone: true)
-                }
+                self.refreshInputAccess()
                 self.reconcileCurtain()
             }
         }
@@ -1327,7 +1450,7 @@ final class RemoteHostModel: ObservableObject {
         let logicalSize = display.frame.size
         let preflight = [
             RemoteAction(action: "geometry", x: logicalSize.width, y: logicalSize.height, epoch: inputEpoch.value),
-            RemoteAction(action: "viewing", x: allowControl && accessibilityPermission.isGranted ? 1 : 0, epoch: inputEpoch.value),
+            RemoteAction(action: "viewing", x: allowControl && controlPermission.isGranted ? 1 : 0, epoch: inputEpoch.value),
             RemoteAction(action: "capture", x: 0, epoch: inputEpoch.value)
         ]
         guard CaptureStartPreflight.send(
@@ -1350,10 +1473,14 @@ final class RemoteHostModel: ObservableObject {
                 return
             } catch {
                 guard self.captureAttempt == attempt else { return }
+                self.events.record(.error, "Capture could not start (\(Self.captureErrorCode(error)))")
+                if CaptureStopReason.classify(error) == .needsApproval {
+                    self.captureNeedsApproval()
+                    return
+                }
                 self.stop()
                 self.autoStart.suspend()
                 self.detail = "Screen sharing couldn’t start. Try again."
-                self.events.record(.error, "Capture could not start")
             }
         }
     }
@@ -1395,10 +1522,15 @@ final class RemoteHostModel: ObservableObject {
         reconcileCurtain()
     }
 
-    private func captureFailed() {
+    private func captureFailed(_ error: Error) {
         #if DEBUG
         HostE2E.active?.event("capture.failed", ["screenRecording": CGPreflightScreenCaptureAccess()])
         #endif
+        if CaptureStopReason.classify(error) == .needsApproval {
+            events.record(.error, "Capture stopped by macOS (\(Self.captureErrorCode(error)))")
+            captureNeedsApproval()
+            return
+        }
         stop()
         pollPermissions()
         if screenRecordingPermission.isGranted {
@@ -1503,14 +1635,9 @@ final class RemoteHostModel: ObservableObject {
             return
         }
 
-        let trusted: HostPermissionStatus = AXIsProcessTrusted() ? .granted : .denied
-        if trusted != accessibilityPermission {
-            accessibilityPermission = trusted
-            applyControlState(notifyPhone: true)
-        }
         input.enabled = HostControlPolicy.isEnabled(
             userConsent: allowControl,
-            accessibilityPermission: accessibilityPermission,
+            accessibilityPermission: controlPermission,
             captureHealthy: captureHealthy
         )
         #if DEBUG
@@ -1578,7 +1705,7 @@ final class RemoteHostModel: ObservableObject {
                          now: ProcessInfo.processInfo.systemUptime,
                          active: active && !terminating,
                          connected: connection.connected && connection.media === peer,
-                         controlEnabled: allowControl && input.enabled && AXIsProcessTrusted(),
+                         controlEnabled: allowControl && input.enabled && inputAccess.accessibility.isGranted,
                          captureHealthy: captureHealthy)
     }
 
@@ -1601,14 +1728,9 @@ final class RemoteHostModel: ObservableObject {
         }
         captureHealthy = healthy
         defer { reconcileCurtain() }
-        let trusted: HostPermissionStatus = AXIsProcessTrusted() ? .granted : .denied
-        if trusted != accessibilityPermission {
-            accessibilityPermission = trusted
-            applyControlState(notifyPhone: true)
-        }
         input.enabled = HostControlPolicy.isEnabled(
             userConsent: allowControl,
-            accessibilityPermission: accessibilityPermission,
+            accessibilityPermission: controlPermission,
             captureHealthy: healthy
         )
         sendCaptureHealth(healthy)
@@ -1690,10 +1812,13 @@ final class RemoteHostModel: ObservableObject {
 
     private func sendCaptureHealth(_ healthy: Bool, presence: HostPresence? = nil) {
         guard connection.connected else { return }
+        let features = connection.peerFeatures
         let state = MacShareBlocker.sessionState(
             presence: presence ?? (displayAsleep ? .displayAsleep : nil),
-            phoneUnderstands: connection.peerFeatures.contains(MacShareBlocker.feature),
-            controlAllowed: allowControl, accessibilityGranted: accessibilityPermission.isGranted)
+            phoneUnderstands: features.contains(MacShareBlocker.feature) || features.contains(MacShareBlocker.approvalFeature),
+            controlAllowed: allowControl, accessibilityGranted: controlPermission.isGranted,
+            captureApprovalPending: captureApproval.isPending,
+            phoneUnderstandsApproval: features.contains(MacShareBlocker.approvalFeature))
         let capability = inputFreshness.capability(
             epoch: inputEpoch.value,
             now: ProcessInfo.processInfo.systemUptime,
@@ -1719,7 +1844,7 @@ final class RemoteHostModel: ObservableObject {
 
     private func receiveSessionExtension(_ action: RemoteAction) {
         let current = connection.connected && active && action.epoch == inputEpoch.value
-        let controlEffective = allowControl && accessibilityPermission.isGranted
+        let controlEffective = allowControl && controlPermission.isGranted
         switch action.action {
         case "wake":
             if current && controlEffective && !phonePause.isPaused { wakeDisplayForRemoteSession(force: true) }
@@ -1755,7 +1880,7 @@ final class RemoteHostModel: ObservableObject {
             guard let requested = action.display else { return }
             let decision = HostDisplayCatalog.decide(
                 requested: requested, available: displays.map(\.displayID), streaming: capturedDisplayID,
-                controlEffective: allowControl && accessibilityPermission.isGranted)
+                controlEffective: allowControl && controlPermission.isGranted)
             switch decision {
             case .resendList:
                 sendDisplayList()
@@ -2058,7 +2183,7 @@ extension RemoteHostModel {
             "inputEnabled": input.enabled,
             "held": input.held,
             "screenRecording": screenRecordingPermission.isGranted,
-            "accessibility": accessibilityPermission.isGranted,
+            "accessibility": controlPermission.isGranted,
             "displayStatus": "\(displayRefreshStatus)",
             "display": display?.frame as Any,
             "capturedDisplayID": capturedDisplayID.map { Int($0) } as Any,

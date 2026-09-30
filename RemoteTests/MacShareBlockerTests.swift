@@ -105,6 +105,55 @@ final class MacShareBlockerTests: XCTestCase {
         XCTAssertFalse(phone.isRunning, "A missing grant is not retried by itself")
     }
 
+    func testAMacWaitingForApprovalTellsANewPhoneExactlyThatAndAnOlderOneTheNearestReason() throws {
+        let (host, signaling, phone) = try pairedHost(blocker: .screenRecordingApproval)
+        let replies = try handshake(signaling, phone: phone, features: MacShareBlocker.Handshake.phone.features)
+        let refusal = try JSONDecoder().decode(MacShareBlocker.Refusal.self, from: try XCTUnwrap(replies.first?.body))
+        XCTAssertEqual(refusal.reason, .screenRecordingApproval)
+        XCTAssertTrue(host.hostRegistered, "The Mac stays registered while it waits")
+        XCTAssertNil(host.media, "Nothing is streamed, and nothing pretends to be")
+
+        let (_, olderSignaling, olderPhone) = try pairedHost(blocker: .screenRecordingApproval)
+        let older = try handshake(olderSignaling, phone: olderPhone, features: [MacShareBlocker.feature])
+        let olderRefusal = try JSONDecoder().decode(MacShareBlocker.Refusal.self, from: try XCTUnwrap(older.first?.body))
+        XCTAssertEqual(olderRefusal.reason, .screenRecordingOff, "A blocker.1 phone cannot decode the new reason")
+    }
+
+    func testReasonsAreToldOnlyInWordsThePhoneCanRead() {
+        let both: Set<String> = [MacShareBlocker.feature, MacShareBlocker.approvalFeature]
+        XCTAssertEqual(MacShareBlocker.screenRecordingApproval.told(to: both), .screenRecordingApproval)
+        XCTAssertEqual(MacShareBlocker.screenRecordingApproval.told(to: [MacShareBlocker.feature]), .screenRecordingOff)
+        XCTAssertNil(MacShareBlocker.screenRecordingApproval.told(to: []))
+        XCTAssertEqual(MacShareBlocker.screenRecordingOff.told(to: [MacShareBlocker.feature]), .screenRecordingOff)
+        XCTAssertNil(MacShareBlocker.screenRecordingOff.told(to: ["other"]))
+        XCTAssertEqual(MacShareBlocker.current(screenRecordingGranted: false, captureApprovalPending: true), .screenRecordingOff)
+        XCTAssertEqual(MacShareBlocker.current(screenRecordingGranted: true, captureApprovalPending: true), .screenRecordingApproval)
+        XCTAssertNil(MacShareBlocker.current(screenRecordingGranted: true, captureApprovalPending: false))
+        XCTAssertTrue(ClipboardFrame.isWellFormedStatus(MacShareBlocker.screenRecordingApproval.rawValue),
+                      "The reason fits hostState's validation")
+    }
+
+    func testApprovalRidesHostStateOnlyForPhonesThatAskAndPresenceStillWins() {
+        XCTAssertEqual(MacShareBlocker.sessionState(presence: nil, phoneUnderstands: true, controlAllowed: true,
+                                                    accessibilityGranted: false, captureApprovalPending: true,
+                                                    phoneUnderstandsApproval: true), "screenRecordingApproval")
+        XCTAssertEqual(MacShareBlocker.sessionState(presence: nil, phoneUnderstands: true, controlAllowed: true,
+                                                    accessibilityGranted: false, captureApprovalPending: true,
+                                                    phoneUnderstandsApproval: false), "accessibilityOff")
+        XCTAssertEqual(MacShareBlocker.sessionState(presence: .locked, phoneUnderstands: true, controlAllowed: true,
+                                                    accessibilityGranted: true, captureApprovalPending: true,
+                                                    phoneUnderstandsApproval: true), "locked")
+    }
+
+    func testTheMacListensWhileWaitingForApprovalButNeverStartsSharing() {
+        XCTAssertTrue(MacShareBlocker.shouldListenWithoutSharing(
+            wantsSharing: true, suppressed: false, sharingActive: false, listening: false, otherAccessRunning: false,
+            screenRecordingGranted: true, captureApprovalPending: true, hasPairedPhone: true, serviceConfigured: true))
+        XCTAssertFalse(MacShareBlocker.shouldListenWithoutSharing(
+            wantsSharing: true, suppressed: false, sharingActive: false, listening: false, otherAccessRunning: false,
+            screenRecordingGranted: true, captureApprovalPending: false, hasPairedPhone: true, serviceConfigured: true))
+    }
+
     func testHandshakeFeaturesAreBounded() throws {
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: nil), [])
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: Data("not json".utf8)), [])

@@ -44,11 +44,18 @@ final class RemoteHostAppDelegate: NSObject, NSApplicationDelegate {
         sigtermSource = source
     }
 
-    var onLaunch: (() -> Void)?
+    /// True when macOS opened Farside as a login item rather than the person opening it.
+    var onLaunch: ((Bool) -> Void)?
     var onReopen: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        onLaunch?()
+        onLaunch?(Self.launchedAsLoginItem)
+    }
+
+    private static var launchedAsLoginItem: Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent,
+              event.eventID == kAEOpenApplication else { return false }
+        return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {

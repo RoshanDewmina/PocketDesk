@@ -553,8 +553,8 @@ final class RemoteCoordinator: ObservableObject {
     /// An authenticated phone is never accepted while a grant is missing. One that understands blockers
     /// is told which; an older phone just times out, as it did when the Mac was not listening.
     private func refuseSession(_ blocker: MacShareBlocker) {
-        if peerFeatures.contains(MacShareBlocker.feature),
-           let body = try? JSONEncoder().encode(MacShareBlocker.Refusal(reason: blocker)) {
+        if let reason = blocker.told(to: peerFeatures),
+           let body = try? JSONEncoder().encode(MacShareBlocker.Refusal(reason: reason)) {
             send(kind: MacShareBlocker.refusalKind, body: body)
         }
         peerDisconnected()

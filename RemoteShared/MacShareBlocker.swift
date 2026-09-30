@@ -6,11 +6,16 @@ import Foundation
 /// - `screenRecordingOff`: the Mac stays reachable but refuses every session; nothing is streamed.
 /// - `accessibilityOff`: rides `hostState` on `capture` status while control is allowed but not
 ///   possible; the session stays view only and the Mac accepts no input.
+/// - `screenRecordingApproval`: the grant exists but macOS stopped or declined the capture until
+///   someone at the Mac approves it. Told only to a phone that lists `approvalFeature`; a phone that
+///   lists only `feature` hears `screenRecordingOff`, the nearest reason it can read.
 enum MacShareBlocker: String, Codable, Equatable {
     case screenRecordingOff
     case accessibilityOff
+    case screenRecordingApproval
 
     static let feature = "blocker.1"
+    static let approvalFeature = "blocker.2"
     /// The protected-message kind a Mac sends instead of accepting a session.
     static let refusalKind = "unavailable"
 
@@ -22,7 +27,7 @@ enum MacShareBlocker: String, Codable, Equatable {
     struct Handshake: Codable, Equatable {
         var features: [String]
 
-        static let phone = Handshake(features: [MacShareBlocker.feature])
+        static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature])
 
         /// At most eight short names; anything else counts as no features.
         static func features(in body: Data?) -> Set<String> {
@@ -33,21 +38,39 @@ enum MacShareBlocker: String, Codable, Equatable {
         }
     }
 
-    /// A Mac that wants to share but lacks Screen Recording still registers with the service, so its
-    /// phone hears why instead of silence. It never captures or accepts a session in this state.
+    /// The reason as this phone can read it, or nil for a phone that lists no blocker feature.
+    func told(to features: Set<String>) -> MacShareBlocker? {
+        guard features.contains(Self.feature) || features.contains(Self.approvalFeature) else { return nil }
+        if self == .screenRecordingApproval && !features.contains(Self.approvalFeature) { return .screenRecordingOff }
+        return self
+    }
+
+    /// The Mac's own account of what stops it sharing, strongest first.
+    static func current(screenRecordingGranted: Bool, captureApprovalPending: Bool) -> MacShareBlocker? {
+        if !screenRecordingGranted { return .screenRecordingOff }
+        return captureApprovalPending ? .screenRecordingApproval : nil
+    }
+
+    /// A Mac that wants to share but lacks Screen Recording, or waits for its capture to be approved,
+    /// still registers with the service, so its phone hears why instead of silence. It never captures
+    /// or accepts a session in this state.
     static func shouldListenWithoutSharing(wantsSharing: Bool, suppressed: Bool, sharingActive: Bool,
                                            listening: Bool, otherAccessRunning: Bool,
-                                           screenRecordingGranted: Bool, hasPairedPhone: Bool,
-                                           serviceConfigured: Bool) -> Bool {
+                                           screenRecordingGranted: Bool, captureApprovalPending: Bool = false,
+                                           hasPairedPhone: Bool, serviceConfigured: Bool) -> Bool {
         wantsSharing && !suppressed && !sharingActive && !listening && !otherAccessRunning
-            && !screenRecordingGranted && hasPairedPhone && serviceConfigured
+            && current(screenRecordingGranted: screenRecordingGranted, captureApprovalPending: captureApprovalPending) != nil
+            && hasPairedPhone && serviceConfigured
     }
 
     /// What the Mac puts in `hostState` for a phone that understands blockers. The Mac's own
-    /// availability report always wins; a view-only session caused by Accessibility comes last.
+    /// availability report always wins; a capture waiting for approval comes next, and a view-only
+    /// session caused by Accessibility comes last.
     static func sessionState(presence: HostPresence?, phoneUnderstands: Bool, controlAllowed: Bool,
-                             accessibilityGranted: Bool) -> String? {
+                             accessibilityGranted: Bool, captureApprovalPending: Bool = false,
+                             phoneUnderstandsApproval: Bool = false) -> String? {
         if let presence { return presence.rawValue }
+        if captureApprovalPending && phoneUnderstandsApproval { return MacShareBlocker.screenRecordingApproval.rawValue }
         guard phoneUnderstands, controlAllowed, !accessibilityGranted else { return nil }
         return MacShareBlocker.accessibilityOff.rawValue
     }

@@ -111,3 +111,127 @@ struct HostControlConsentState: Equatable {
         isAllowed = allowed
     }
 }
+
+// MARK: Input access
+
+/// The two rights behind remote input. Posting events is what control needs; Accessibility (AX)
+/// only powers the focus features, such as noticing that a click landed in a text field.
+/// Farside never asks for Input Monitoring.
+struct HostInputAccess: Equatable {
+    var postEvents: HostPermissionStatus
+    var accessibility: HostPermissionStatus
+
+    static let unchecked = HostInputAccess(postEvents: .unchecked, accessibility: .unchecked)
+}
+
+/// Read on a timer or a notification, never per input event: every event reads the cached value.
+struct HostInputAccessCache {
+    private(set) var current: HostInputAccess
+    private let probe: () -> HostInputAccess
+
+    init(probe: @escaping () -> HostInputAccess) {
+        self.probe = probe
+        current = probe()
+    }
+
+    /// Asks macOS again. True when either right changed.
+    @discardableResult
+    mutating func refresh() -> Bool {
+        let next = probe()
+        defer { current = next }
+        return next != current
+    }
+}
+
+// MARK: Capture approval
+
+/// macOS stopped or declined the capture although the Screen Recording grant exists. Farside stays
+/// registered and says so, and checks again on a backoff until capture is allowed, then shares again.
+struct HostCaptureApproval: Equatable {
+    static let firstCheck: TimeInterval = 5
+    static let longestCheck: TimeInterval = 60
+
+    private(set) var pendingSince: TimeInterval?
+    private(set) var nextCheckAt: TimeInterval?
+    private var interval = firstCheck
+
+    var isPending: Bool { pendingSince != nil }
+
+    mutating func begin(at now: TimeInterval) {
+        if pendingSince == nil { pendingSince = now }
+        interval = Self.firstCheck
+        nextCheckAt = now + interval
+    }
+
+    func isDue(at now: TimeInterval) -> Bool {
+        nextCheckAt.map { now >= $0 } ?? false
+    }
+
+    /// A check that still found capture refused waits twice as long, up to a minute.
+    mutating func checkFailed(at now: TimeInterval) {
+        guard isPending else { return }
+        interval = min(Self.longestCheck, interval * 2)
+        nextCheckAt = now + interval
+    }
+
+    /// Someone is at the Mac: check on the next tick.
+    mutating func checkSoon(at now: TimeInterval) {
+        guard isPending else { return }
+        nextCheckAt = now
+    }
+
+    mutating func clear() {
+        self = HostCaptureApproval()
+    }
+}
+
+// MARK: OS update re-grant
+
+/// A macOS update can turn off a permission that was on. This remembers what was granted on which
+/// OS build, so Setup can say the update, not the person, turned it off. It never reads or changes
+/// the privacy database; it compares what the public checks reported before and after.
+struct HostOSPermissionRecord: Codable, Equatable {
+    var osVersion: String
+    var screenRecording: Bool
+    var control: Bool
+    /// Set while grants lost in an update are still missing; the grants above are the ones to restore.
+    var updatedFrom: String?
+}
+
+enum HostUpgradeRegrant {
+    struct Outcome: Equatable {
+        var record: HostOSPermissionRecord
+        /// Panes to switch on again because the update turned them off, in Setup's order.
+        var missing: [HostSystemSettingsPane]
+    }
+
+    static func evaluate(record: HostOSPermissionRecord?, osVersion: String, screenRecording: Bool,
+                         control: Bool) -> Outcome {
+        let current = HostOSPermissionRecord(osVersion: osVersion, screenRecording: screenRecording, control: control)
+        guard let record, record.osVersion != osVersion || record.updatedFrom != nil else {
+            return Outcome(record: current, missing: [])
+        }
+        var missing: [HostSystemSettingsPane] = []
+        if record.screenRecording && !screenRecording { missing.append(.screenRecording) }
+        if record.control && !control { missing.append(.accessibility) }
+        guard !missing.isEmpty else { return Outcome(record: current, missing: []) }
+        var kept = record
+        kept.updatedFrom = record.updatedFrom ?? record.osVersion
+        kept.osVersion = osVersion
+        return Outcome(record: kept, missing: missing)
+    }
+}
+
+// MARK: Menu bar icon
+
+/// The person can remove the menu bar icon (Command-drag, or System Settings → Menu Bar). Farside
+/// keeps running and sharing, and reopening it from Finder or Spotlight shows Settings, where
+/// "Show in menu bar" puts the icon back.
+enum HostMenuBarIconPolicy {
+    enum Destination: Equatable { case setup, settings }
+
+    /// Where a reopen from Finder or Spotlight goes when no window is visible.
+    static func reopenDestination(needsSetup: Bool, iconShown: Bool) -> Destination {
+        iconShown && needsSetup ? .setup : .settings
+    }
+}

@@ -68,7 +68,14 @@ struct HostDiagnosticsSnapshot {
     var appUptime: TimeInterval = 0
 
     var screenRecording = "?"
+    /// Whether macOS stopped the capture until someone at the Mac approves it.
+    var captureApproval = "not needed"
+    /// The right to post events: the truth for mouse and keyboard control.
+    var postEvents = "?"
+    /// Accessibility (AX): only the focus features and the curtain read it.
     var accessibility = "?"
+    var menuBarIcon = "shown"
+    var permissionsTurnedOffByUpdate: [String] = []
     var loginItem = "?"
     var automaticRecovery = "?"
 
@@ -136,7 +143,14 @@ enum HostDiagnosticsReport {
         row("Running for", duration(s.appUptime))
         section("Permissions and background items")
         row("Screen Recording", s.screenRecording)
-        row("Accessibility", s.accessibility)
+        row("Screen capture approval", s.captureApproval)
+        row("Post events (control)", s.postEvents)
+        row("Accessibility (focus features)", s.accessibility)
+        row("Input Monitoring", "never requested")
+        if !s.permissionsTurnedOffByUpdate.isEmpty {
+            row("Turned off by a macOS update", s.permissionsTurnedOffByUpdate.joined(separator: ", "))
+        }
+        row("Menu bar icon", s.menuBarIcon)
         row("Open at login", s.loginItem)
         row("Automatic recovery", s.automaticRecovery)
         section("Sharing")

@@ -10,7 +10,9 @@ final class BrowserMediaSession: ObservableObject {
     @Published var allowControl = false
     @Published private(set) var notice = "Start the private browser service, choose a display, then enable browser access."
     private let capture = RemoteCapture()
-    private let input = RemoteInputDriver()
+    private lazy var input = RemoteInputDriver(isTrusted: { [unowned self] in self.canPostEvents })
+    /// The right to post events, refreshed by the status timer rather than read per input event.
+    private var canPostEvents = CGPreflightPostEventAccess()
     private let gate = BrowserInputGate()
     private var lease = RemoteInputLease()
     private var display: SCDisplay?
@@ -30,12 +32,13 @@ final class BrowserMediaSession: ObservableObject {
             if !value { self.gate.invalidateFrames(); self.release() }
             self.healthy = value; self.publishStatus()
         }
-        capture.onFailure = { [weak self] in self?.stop(); self?.notice = "Screen capture stopped. Check this Mac before reconnecting." }
+        capture.onFailure = { [weak self] _ in self?.stop(); self?.notice = "Screen capture stopped. Check this Mac before reconnecting." }
     }
     func start(display: SCDisplay) {
         guard canAcquire(), CGPreflightScreenCaptureAccess() else { notice = "Browser access needs an idle host and Screen Recording permission."; return }
         self.display = display; revision += 1
-        if allowControl && !AXIsProcessTrusted() { allowControl = false }
+        canPostEvents = CGPreflightPostEventAccess()
+        if allowControl && !canPostEvents { allowControl = false }
         guard var url = URLComponents(string: endpoint), ["http", "https"].contains(url.scheme ?? ""), url.path.isEmpty || url.path == "/", url.query == nil, url.fragment == nil, url.user == nil, url.password == nil else { notice = "Use the private service's HTTP(S) origin only."; return }
         url.scheme = url.scheme == "https" ? "wss" : "ws"; url.path = "/browser-host"
         controller.start(serverURL: url.string ?? "", display: String(display.displayID), revision: revision, maximumMode: allowControl ? "interactive" : "view")
@@ -46,7 +49,8 @@ final class BrowserMediaSession: ObservableObject {
     func changeControl(_ value: Bool) {
         // A mode change needs a fresh host grant, never an in-place escalation.
         if controller.running { stop() }
-        allowControl = value && AXIsProcessTrusted()
+        canPostEvents = CGPreflightPostEventAccess()
+        allowControl = value && canPostEvents
         notice = value && !allowControl ? "Accessibility is required for control; view-only remains available." : "Enable browser access again to apply the new scope."
     }
     private func begin(peer: PeerMedia, mode: String) {
@@ -65,7 +69,8 @@ final class BrowserMediaSession: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 if self.lease.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.release() }
-                if !self.healthy || !AXIsProcessTrusted() || !self.allowControl { self.input.enabled = false; self.release() }
+                self.canPostEvents = CGPreflightPostEventAccess()
+                if !self.healthy || !self.canPostEvents || !self.allowControl { self.input.enabled = false; self.release() }
                 if !CGPreflightScreenCaptureAccess() { self.stop(); return }
                 self.publishStatus()
             }
@@ -92,7 +97,7 @@ final class BrowserMediaSession: ObservableObject {
         if !input.held { lease.cancel() }
     }
     private func receive(_ bytes: Data) {
-        let permitted = controller.mode == "interactive" && allowControl && AXIsProcessTrusted()
+        let permitted = controller.mode == "interactive" && allowControl && canPostEvents
         do {
             let action = try gate.accept(bytes, at: ProcessInfo.processInfo.systemUptime, healthy: healthy, control: permitted)
             input.enabled = permitted && healthy
@@ -114,7 +119,7 @@ final class BrowserMediaSession: ObservableObject {
     private func publishStatus() {
         guard controller.connected, let display else { return }
         send(["type":"status", "session":controller.sessionID, "revision":String(revision), "mode":controller.mode,
-              "healthy":healthy, "control":allowControl && AXIsProcessTrusted() && controller.mode == "interactive",
+              "healthy":healthy, "control":allowControl && canPostEvents && controller.mode == "interactive",
               "width":display.width, "height":display.height])
     }
     private func send(_ value: [String:Any]) { if let bytes = try? JSONSerialization.data(withJSONObject:value) { _ = controller.sendStatus(bytes) } }
