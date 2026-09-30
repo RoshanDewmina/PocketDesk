@@ -62,6 +62,17 @@ final class HostWatchdogReporter {
         scheduleHeartbeat()
     }
 
+    func setAwayCoverUp(_ up: Bool) {
+        guard (record.awayCoverUp ?? false) != up else { return }
+        record.awayCoverUp = up
+        beat()
+        scheduleHeartbeat()
+    }
+
+    var currentHeartbeatInterval: TimeInterval {
+        record.curtainUp || record.awayCoverUp == true ? Self.curtainHeartbeatInterval : Self.heartbeatInterval
+    }
+
     /// The person resumed sharing after a crash-loop stop; the helper supervises normally again.
     func requestCrashLoopReset() {
         record.crashLoopResetAt = Date()
@@ -75,6 +86,7 @@ final class HostWatchdogReporter {
         timer = nil
         record.cleanExit = true
         record.curtainUp = false
+        record.awayCoverUp = false
         let snapshot = record, url = files.hostRecord
         writer.sync { _ = WatchdogStore.write(snapshot, to: url) }
     }
@@ -92,7 +104,7 @@ final class HostWatchdogReporter {
 
     private func scheduleHeartbeat() {
         timer?.invalidate()
-        let interval = record.curtainUp ? Self.curtainHeartbeatInterval : Self.heartbeatInterval
+        let interval = currentHeartbeatInterval
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.beat() }
         }

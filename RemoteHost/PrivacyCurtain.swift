@@ -39,6 +39,8 @@ struct PrivacyCurtainInputs: Equatable {
     var locallyDismissed = false
     var raiseFailed = false
     var safeMode = false
+    /// Away mode wants the Mac covered, with or without a phone.
+    var awayCovered = false
 }
 
 enum PrivacyCurtainPolicy {
@@ -48,6 +50,7 @@ enum PrivacyCurtainPolicy {
     enum Desired: Equatable { case up, down }
 
     static func desired(_ inputs: PrivacyCurtainInputs, currentlyUp: Bool) -> Desired {
+        if inputs.awayCovered { return inputs.screenLocked ? .down : .up }
         guard inputs.preference, inputs.sessionLive, !inputs.phonePaused, !inputs.screenLocked,
               !inputs.safeMode, !inputs.locallyDismissed, !inputs.raiseFailed,
               inputs.accessibilityGranted else { return .down }
@@ -175,11 +178,17 @@ final class PrivacyCurtainController {
     /// Called before the curtain lifts after three local Escape presses.
     var onLocalLift: (() -> Void)?
     var onPhaseChange: ((Phase) -> Void)?
+    private(set) var style: PrivacyCurtainStyle = .sharing
+    /// Away mode turns this off: its cover ends only by locking the Mac.
+    var escapeLiftEnabled = true
+    /// When false, a display change is reported through `onScreensChanged` instead of lifting.
+    var liftsOnScreenChange = true
+    var onScreensChanged: (() -> Void)?
     /// One window per display. Tests substitute tiny off-screen windows so nothing is ever shown.
-    private let makeWindows: () -> [NSWindow]
+    private let makeWindows: (() -> [NSWindow])?
 
     init(makeWindows: (() -> [NSWindow])? = nil) {
-        self.makeWindows = makeWindows ?? { NSScreen.screens.map(PrivacyCurtainController.makeWindow) }
+        self.makeWindows = makeWindows
     }
 
     private var windows: [NSWindow] = []
@@ -198,7 +207,7 @@ final class PrivacyCurtainController {
         let current = generation
         phase = .raising
         // Transparent until the stream is known to exclude them.
-        windows = makeWindows()
+        windows = makeWindows?() ?? NSScreen.screens.map { Self.makeWindow(for: $0, style: style) }
         guard !windows.isEmpty else { phase = .down; return .noScreens }
         windows.forEach { $0.orderFrontRegardless() }
         observeScreenChanges()
@@ -234,10 +243,21 @@ final class PrivacyCurtainController {
         if wasShowing { onPhaseChange?(.down) }
     }
 
+    func setStyle(_ style: PrivacyCurtainStyle) {
+        self.style = style
+        for window in windows {
+            (window.contentView as? NSHostingView<PrivacyCurtainView>)?.rootView = PrivacyCurtainView(style: style)
+        }
+    }
+
+    func handleScreenParametersChanged() {
+        if liftsOnScreenChange { lift() } else { onScreensChanged?() }
+    }
+
     /// Feeds a key-down seen by the local or global monitor. Exposed for tests.
     @discardableResult
     func handleKeyDown(keyCode: UInt16, timestamp: TimeInterval, isRepeat: Bool, injected: Bool) -> Bool {
-        guard phase == .up, keyCode == Self.escapeKeyCode,
+        guard phase == .up, escapeLiftEnabled, keyCode == Self.escapeKeyCode,
               escape.register(at: timestamp, isRepeat: isRepeat, injected: injected) else { return false }
         onLocalLift?()
         lift()
@@ -297,11 +317,11 @@ final class PrivacyCurtainController {
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.lift() }
+            MainActor.assumeIsolated { self?.handleScreenParametersChanged() }
         }
     }
 
-    static func makeWindow(for screen: NSScreen) -> NSWindow {
+    static func makeWindow(for screen: NSScreen, style: PrivacyCurtainStyle = .sharing) -> NSWindow {
         let window = NSWindow(contentRect: screen.frame, styleMask: [.borderless],
                               backing: .buffered, defer: false)
         window.setFrame(screen.frame, display: false)
@@ -316,12 +336,33 @@ final class PrivacyCurtainController {
         window.animationBehavior = .none
         window.title = "Farside privacy curtain"
         window.alphaValue = 0
-        window.contentView = NSHostingView(rootView: PrivacyCurtainView())
+        window.contentView = NSHostingView(rootView: PrivacyCurtainView(style: style))
         return window
     }
 }
 
+enum PrivacyCurtainStyle: Equatable {
+    case sharing, away, awayLockFailed
+}
+
 struct PrivacyCurtainView: View {
+    var style: PrivacyCurtainStyle = .sharing
+
+    private var title: LocalizedStringKey {
+        switch style {
+        case .sharing: "This Mac is being used remotely"
+        case .away, .awayLockFailed: "Away mode is on"
+        }
+    }
+
+    private var line: LocalizedStringKey {
+        switch style {
+        case .sharing: "Press Esc three times to lift"
+        case .away: "Touching the keyboard, mouse or trackpad locks this Mac"
+        case .awayLockFailed: "Farside couldn’t lock this Mac. It locks when the display sleeps"
+        }
+    }
+
     var body: some View {
         ZStack {
             Farside.Palette.void.ignoresSafeArea()
@@ -331,11 +372,11 @@ struct PrivacyCurtainView: View {
                         .fill(Farside.Palette.ember)
                         .frame(width: 10, height: 10)
                         .accessibilityHidden(true)
-                    Text("This Mac is being used remotely")
+                    Text(title)
                         .font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(Farside.Palette.bone)
                 }
-                Text("Press Esc three times to lift")
+                Text(line)
                     .font(.system(size: 15, design: .monospaced))
                     .foregroundStyle(Farside.Palette.ash)
             }

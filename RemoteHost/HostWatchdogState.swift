@@ -69,6 +69,8 @@ struct HostRunRecord: Codable, Equatable {
     var safeMode = false
     /// Set when the person at the Mac resumes after a crash-loop stop.
     var crashLoopResetAt: Date?
+    /// Optional so records written by older hosts still decode.
+    var awayCoverUp: Bool?
 }
 
 enum WatchdogExitKind: String, Codable, Equatable {
@@ -193,6 +195,8 @@ struct HostLaunchAssessment: Equatable {
     var previousExit: WatchdogExitKind?
     /// Start with sharing paused and explain that Farside stopped after repeated crashes.
     var safeMode = false
+    /// The previous run ended unexpectedly while Away mode covered the Mac: lock before anything else.
+    var lockFirst = false
 
     static func assess(previous: HostRunRecord?, ledger: WatchdogLedger?, hangNote: HostHangNote?,
                        bootSession: String, previousProcessAlive: Bool,
@@ -201,6 +205,7 @@ struct HostLaunchAssessment: Equatable {
         if let previous, previous.bootSession == bootSession, !previous.cleanExit, !previousProcessAlive {
             result.recoveredFromUnexpectedExit = true
             result.previousExit = hangNote?.launchID == previous.launchID ? .hang : .crash
+            result.lockFirst = previous.awayCoverUp == true
         }
         let stopped = ledger?.isStopped(inBoot: bootSession) == true
         let resetAfterStop: Bool = {
