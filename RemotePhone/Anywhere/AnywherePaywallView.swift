@@ -49,6 +49,7 @@ struct AnywherePaywallView: View {
                 } else {
                     plans.padding(.top, Farside.Space.l)
                 }
+                if store.entitlement.kind == .subscription { oneTimeOffers.padding(.top, Farside.Space.m) }
                 notices.padding(.top, Farside.Space.m)
                 links.padding(.top, Farside.Space.m)
             }
@@ -183,6 +184,31 @@ struct AnywherePaywallView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
         .accessibilityIdentifier("anywhere.plan.\(offer.period == .year ? "yearly" : "monthly")")
+    }
+
+    @ViewBuilder private var oneTimeOffers: some View {
+        ForEach(store.oneTimeProducts, id: \.id) { product in
+            if let entry = store.oneTimePolicy.entry(for: product.id) {
+                VStack(alignment: .leading, spacing: Farside.Space.s) {
+                    Text(entry.kind == .founder
+                         ? CommerceLocalization.text("ONE_TIME_FOUNDER", "Founder lifetime")
+                         : CommerceLocalization.text("ONE_TIME_LIFETIME", "Lifetime"))
+                        .font(.headline)
+                    Text(CommerceLocalization.text("ONE_TIME_TERMS", "%@ once. No subscription renewals. Full Anywhere access; current service verification and Mac pairing are required. Refunded or revoked purchases lose this benefit. This does not cancel an existing subscription.", product.displayPrice))
+                        .font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                    Button(CommerceLocalization.text("ONE_TIME_BUY", "Buy for %@ once", product.displayPrice)) {
+                        Task {
+                            await store.purchase(product) { product, options in try await purchaseAction(product, options: options) }
+                            if store.entitlement.hasAccess { await access.refresh(force: true) }
+                        }
+                    }
+                    .buttonStyle(FarsidePrimaryButtonStyle(height: 56))
+                    .disabled(!canSell || store.purchaseState == .purchasing)
+                    .accessibilityIdentifier("anywhere.oneTime." + entry.kind.rawValue)
+                }
+                .padding(Farside.Space.m).farsidePlate()
+            }
+        }
     }
 
     private var statusPlate: some View {

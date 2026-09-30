@@ -3,9 +3,40 @@
   "status": "economics_decision_pending",
   "live": false,
   "offers": [
-    {"kind": "lifetime", "billing": "one_time", "unmetered_remote_access": true, "usage_hour_cap": null, "relay_quota": null, "price": null, "storekit_product_id": null},
-    {"kind": "founder_lifetime", "billing": "one_time", "unmetered_remote_access": true, "usage_hour_cap": null, "relay_quota": null, "price": null, "cohort_size": null, "storekit_product_id": null}
+    {
+      "kind": "lifetime",
+      "billing": "one_time",
+      "unmetered_remote_access": true,
+      "usage_hour_cap": null,
+      "relay_quota": null,
+      "price": null,
+      "storekit_product_id": null
+    },
+    {
+      "kind": "founder_lifetime",
+      "billing": "one_time",
+      "unmetered_remote_access": true,
+      "usage_hour_cap": null,
+      "relay_quota": null,
+      "price": null,
+      "cohort_size": null,
+      "storekit_product_id": null
+    }
   ],
-  "required_decisions": ["measured_tail_cost", "funded_reserve", "price", "cohort", "continuity_and_shutdown_remedy", "store_and_service_contracts"],
-  "authority": "Billing never supplies owner pairing, route proof, session epoch or control."
+  "required_decisions": [
+    "measured_tail_cost",
+    "funded_reserve",
+    "price",
+    "cohort",
+    "continuity_and_shutdown_remedy",
+    "store_and_service_contracts"
+  ],
+  "authority": "Billing never supplies owner pairing, route proof, session epoch or control.",
+  "source_contract_prepared": true,
+  "source_contract": "ONE-TIME-OFFER-CONTRACT.md",
+  "sales_enabled": false,
+  "production_product_catalog": {
+    "lifetime": null,
+    "founder": null
+  }
 }

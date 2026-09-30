@@ -24,18 +24,22 @@ final class AnywhereStore: ObservableObject {
     var onTransactionUpdate: (() -> Void)?
 
     private let productIDs: [String]
+    let oneTimePolicy: OneTimeOfferPolicy
     private let accountToken: () -> UUID?
     private let serviceAvailable: () -> Bool
     private let sync: () async throws -> Void
     private var signedTransactionValue: String?
     private var listeners: [Task<Void, Never>] = []
     private var expiryRefresh: Task<Void, Never>?
+    private var refreshGeneration: UInt64 = 0
 
     init(productIDs: [String] = AnywherePlan.productIDs,
+         oneTimePolicy: OneTimeOfferPolicy = .disabled,
          accountToken: @escaping () -> UUID? = { InstallIdentity.current()?.accountToken },
          serviceAvailable: @escaping () -> Bool = { AnywhereService.canSell(configured: AnywhereService.configured, ready: AnywhereService.isReady) },
          sync: @escaping () async throws -> Void = { try await AppStore.sync() }) {
-        self.productIDs = productIDs
+        self.oneTimePolicy = oneTimePolicy
+        self.productIDs = productIDs + oneTimePolicy.recognizedProductIDs
         self.accountToken = accountToken
         self.serviceAvailable = serviceAvailable
         self.sync = sync
@@ -76,6 +80,10 @@ final class AnywhereStore: ObservableObject {
 
     var offers: [PlanOffer] { products.compactMap { PlanOffer(product: $0, trialEligible: trialEligible) } }
     var canSell: Bool { serviceAvailable() }
+    var oneTimeProducts: [Product] {
+        products.filter { oneTimePolicy.permitsPurchase(id: $0.id, price: $0.price,
+            currencyCode: $0.priceFormatStyle.currencyCode, isNonConsumable: $0.type == .nonConsumable) }
+    }
 
     func product(for id: String) -> Product? { products.first { $0.id == id } }
 
@@ -94,15 +102,31 @@ final class AnywhereStore: ObservableObject {
 
     /// Re-reads the subscription group's status from StoreKit. `redeemed` joins this one read: a
     /// transaction StoreKit just handed back, which the group status may not show yet.
-    func refresh(including redeemed: SubscriptionSnapshot? = nil) async {
+    func refresh(including redeemed: SubscriptionSnapshot? = nil, includingOneTime: OneTimeEntitlementSnapshot? = nil) async {
+        refreshGeneration &+= 1
+        let generation = refreshGeneration
         if groupID == nil { groupID = await groupIDFromHistory() }
         var snapshots: [SubscriptionSnapshot] = []
         if let groupID, let statuses = try? await Product.SubscriptionInfo.status(for: groupID) {
             snapshots = statuses.map(SubscriptionSnapshot.init)
         }
         if let redeemed { snapshots.append(redeemed) }
-        let best = AnywhereEntitlement.best(snapshots)
-        signedTransactionValue = best.entitlement.hasAccess ? best.snapshot?.signedTransaction : nil
+        var oneTime: [OneTimeEntitlementSnapshot] = []
+        for await result in Transaction.currentEntitlements {
+            if case .verified(let transaction) = result, oneTimePolicy.entry(for: transaction.productID) != nil {
+                oneTime.append(OneTimeEntitlementSnapshot(transaction: transaction, signed: result.jwsRepresentation))
+            }
+        }
+        // Revocations are absent from currentEntitlements; retain their UI fact without re-admitting old history.
+        for id in oneTimePolicy.recognizedProductIDs where !oneTime.contains(where: { $0.productID == id }) {
+            if case .verified(let transaction)? = await Transaction.latest(for: id), transaction.revocationDate != nil {
+                oneTime.append(OneTimeEntitlementSnapshot(transaction: transaction, signed: nil))
+            }
+        }
+        if let includingOneTime { oneTime.append(includingOneTime) }
+        let best = AnywhereEntitlement.bestCombined(subscriptions: snapshots, oneTime: oneTime, policy: oneTimePolicy)
+        guard generation == refreshGeneration else { return }
+        signedTransactionValue = best.entitlement.hasAccess ? best.signedTransaction : nil
         if entitlement != best.entitlement { entitlement = best.entitlement }
         scheduleExpiryRefresh()
         await updateTrialEligibility()
@@ -118,7 +142,10 @@ final class AnywhereStore: ObservableObject {
 
     /// Buys through SwiftUI's purchase action when the paywall provides one (it knows the scene).
     func purchase(_ product: Product, using action: PurchaseAction? = nil) async {
-        guard canSell else {
+        guard canSell, productIDs.contains(product.id),
+              (AnywherePlan.productIDs.contains(product.id) && product.type == .autoRenewable
+               || oneTimePolicy.permitsPurchase(id: product.id, price: product.price,
+                    currencyCode: product.priceFormatStyle.currencyCode, isNonConsumable: product.type == .nonConsumable)) else {
             purchaseState = .failed("Farside Anywhere is temporarily unavailable. We can’t confirm a new purchase right now. Restore Purchases remains available.")
             return
         }
@@ -135,12 +162,16 @@ final class AnywhereStore: ObservableObject {
             if let action { result = try await action(product, options) }
             else { result = try await product.purchase(options: options) }
             switch result {
-            case .success(.verified(let transaction)):
+            case .success(let verification):
+                guard case .verified(let transaction) = verification else {
+                    purchaseState = .failed("The App Store couldn’t verify this purchase. Try Restore Purchases.")
+                    return
+                }
                 await transaction.finish()
-                await refresh()
+                if transaction.productType == .nonConsumable {
+                    await refresh(includingOneTime: OneTimeEntitlementSnapshot(transaction: transaction, signed: verification.jwsRepresentation))
+                } else { await refresh() }
                 purchaseState = .purchased
-            case .success(.unverified):
-                purchaseState = .failed("The App Store couldn’t verify this purchase. You weren’t given Anywhere; try Restore Purchases.")
             case .pending:
                 purchaseState = .pending
             case .userCancelled:
@@ -164,7 +195,11 @@ final class AnywhereStore: ObservableObject {
             return
         }
         await transaction.finish()
-        await refresh(including: SubscriptionSnapshot(redeemed: transaction, signedTransaction: result.jwsRepresentation))
+        if transaction.productType == .nonConsumable {
+            await refresh(includingOneTime: OneTimeEntitlementSnapshot(transaction: transaction, signed: result.jwsRepresentation))
+        } else {
+            await refresh(including: SubscriptionSnapshot(redeemed: transaction, signedTransaction: result.jwsRepresentation))
+        }
     }
 
     /// Only from an explicit tap: `AppStore.sync()` can ask the person to sign in.
@@ -182,7 +217,7 @@ final class AnywhereStore: ObservableObject {
             }
             restoreMessage = entitlement.hasAccess
                 ? CommerceLocalization.text("RESTORE_SUCCESS", "Purchase restored. Farside’s service will confirm your plan next. Restoring does not pair a Mac or grant control.")
-                : CommerceLocalization.text("RESTORE_UNCONFIRMED", "Couldn’t confirm an active Farside Anywhere subscription yet. Check your Apple Account and try Restore Purchases again.")
+                : CommerceLocalization.text("RESTORE_UNCONFIRMED", "Couldn’t confirm an active Farside Anywhere purchase yet. Check your Apple Account and try Restore Purchases again.")
         } catch StoreKitError.userCancelled {
             return
         } catch {
@@ -369,5 +404,13 @@ enum RegulatoryFeatureCheck {
         case .unavailable: log.info("Regulatory feature check unavailable")
         case .unsupportedOS: break
         }
+    }
+}
+
+private extension OneTimeEntitlementSnapshot {
+    init(transaction: Transaction, signed: String?) {
+        self.init(productID: transaction.productID, verified: true, isNonConsumable: transaction.productType == .nonConsumable,
+                  purchasedByOwner: transaction.ownershipType == .purchased, revocationDate: transaction.revocationDate,
+                  signedTransaction: signed, purchaseDate: transaction.purchaseDate)
     }
 }

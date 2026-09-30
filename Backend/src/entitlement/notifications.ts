@@ -94,12 +94,24 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
 
   const existing = await getEntitlement(env.DB, entitlementId);
   const txEnvironment = tx.environment === "LocalTesting" ? "Xcode" : tx.environment;
-  const expiresAt = Math.max(tx.expiresDate ?? 0, existing?.expires_at ?? 0);
+  const kind = config.oneTimeProducts?.get(tx.productId) ?? ("subscription" as const);
+  const expiresAt = kind === "subscription" ? Math.max(tx.expiresDate ?? 0, existing?.expires_at ?? 0) : 0;
   const revokedAt = resolveRevokedAt(existing, tx, notificationType);
-  const base = { id: entitlementId, productId: tx.productId, environment: txEnvironment, expiresAt, revokedAt,
+  const base = { kind, id: entitlementId, productId: tx.productId, environment: txEnvironment, expiresAt, revokedAt,
     purchaseAt: tx.purchaseDate, refundReversed: notificationType === "REFUND_REVERSED", source: "notification" as const };
   const statusFor = (fallback: EntitlementStatus): EntitlementStatus => revokedAt !== null ? "revoked" : fallback;
 
+  if (kind !== "subscription") {
+    // Renewal/grace/expiry events never redefine a non-consumable. Only signed refund/revoke/reversal apply.
+    if (!["REFUND", "REVOKE", "REFUND_REVERSED", "ONE_TIME_CHARGE"].includes(notificationType)) return finish("recorded");
+    const revoked = notificationType === "REFUND" || notificationType === "REVOKE";
+    const applied = await upsertEntitlement(env.DB, { ...base, status: revoked ? "revoked" : statusFor("active"),
+      graceUntil: null, revokedAt: revoked ? tx.revocationDate ?? now : revokedAt }, now);
+    if (!applied) return finish("recorded");
+    if (revoked) await pushRevocation(env, entitlementId, now);
+    await audit(env.DB, "notification_applied", { entitlementId, detail: notificationType }, now);
+    return finish("applied");
+  }
   switch (notificationType) {
     case "SUBSCRIBED":
     case "DID_RENEW":

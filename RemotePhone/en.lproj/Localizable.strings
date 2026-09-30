@@ -118,3 +118,9 @@
 "CONTENT_READY_NOW" = "Content is authorized and ready now";
 "PICTURE_CONFIRM_REASON" = "Confirm only if you can currently see your Mac’s picture.";
 "CONFIRM_VISIBLE_PICTURE" = "I can see my Mac’s picture now";
+
+"ONE_TIME_FOUNDER" = "Founder lifetime";
+"ONE_TIME_LIFETIME" = "Lifetime";
+"ONE_TIME_TERMS" = "%@ once. No subscription renewals. Full Anywhere access; current service verification and Mac pairing are required. Refunded or revoked purchases lose this benefit. This does not cancel an existing subscription.";
+"ONE_TIME_BUY" = "Buy for %@ once";
+"ONE_TIME_ACTIVE" = "Your lifetime purchase has no subscription renewal. Farside’s service still verifies access; pairing and current route approval remain separate.";

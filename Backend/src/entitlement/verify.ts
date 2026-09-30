@@ -1,3 +1,4 @@
+import { appleApiConfigFromEnv, getTransactionInfo } from "../apple/server-api";
 import { decodeJwsUnverified, JwsVerificationError, verifyAppleJws } from "../apple/jws";
 import type { Config } from "../config";
 import { fingerprint, log, logError } from "../log";
@@ -5,7 +6,7 @@ import { addressKey, allow } from "../ratelimit";
 import type { RoomDO } from "../room";
 import { BodyTooLarge, HEX64, isoFromMs, isRecord, json, readJsonBody } from "../util";
 import {
-  appTransactionHashFor, audit, consentStopped, entitlementForDevice, entitlementIdFor, getEntitlement, hasAccess, linkDevice, unlinkDeviceIfInRoom,
+  accessEndMs, appTransactionHashFor, audit, consentStopped, entitlementForDevice, entitlementIdFor, getEntitlement, hasAccess, linkDevice, unlinkDeviceIfInRoom,
   upsertEntitlement, type EntitlementStatus,
 } from "./store";
 import { environmentLetter, MAX_TOKEN_TTL_MS, mintEntitlementToken, verifyEntitlementToken } from "./token";
@@ -66,8 +67,9 @@ export function checkTransactionPolicy(tx: TransactionInfo, config: Config): Pol
   if (tx.bundleId !== config.bundleId) return "wrong_app";
   if (tx.environment === "Sandbox" && !config.acceptSandbox) return "environment_not_accepted";
   if ((tx.environment === "Xcode" || tx.environment === "LocalTesting") && !config.allowXcode) return "environment_not_accepted";
-  if (!config.allowedProductIds.has(tx.productId)) return "wrong_product";
-  if (tx.type !== "Auto-Renewable Subscription") return "not_subscription";
+  const oneTime = config.oneTimeProducts?.get(tx.productId);
+  if (!config.allowedProductIds.has(tx.productId) && !oneTime) return "wrong_product";
+  if (oneTime ? tx.type !== "Non-Consumable" || tx.expiresDate !== undefined : tx.type !== "Auto-Renewable Subscription") return "not_subscription";
   // Anywhere is a personal plan: Family Sharing and multiseat are off in App Store Connect, and a seat
   // assigned by an organization or group is refused even if that setting is ever changed.
   if (tx.inAppOwnershipType !== "PURCHASED") return "not_purchased";
@@ -110,7 +112,7 @@ export async function verifyTransactionJws(compact: string, config: Config, now:
 }
 
 export const statusFromTransaction = (tx: TransactionInfo, now: number): EntitlementStatus =>
-  tx.revocationDate !== undefined ? "revoked" : (tx.expiresDate ?? 0) > now ? "active" : "expired";
+  tx.revocationDate !== undefined ? "revoked" : tx.type === "Non-Consumable" || (tx.expiresDate ?? 0) > now ? "active" : "expired";
 
 const clientIp = (request: Request) => addressKey(request.headers.get("cf-connecting-ip"));
 
@@ -143,7 +145,24 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
       : { reason: verified.reason, device: fingerprint(deviceId) });
     return json({ error: "invalid_transaction", reason: verified.reason }, 401);
   }
-  const tx = verified.tx;
+  let tx = verified.tx;
+  const kind = config.oneTimeProducts?.get(tx.productId) ?? "subscription";
+  // One-time rights cannot repeatedly renew authorization from a years-old cached JWS after a missed refund.
+  // Xcode is exclusively local/test. Real environments require the current Apple server transaction.
+  if (kind !== "subscription" && (tx.environment === "Production" || tx.environment === "Sandbox")) {
+    const api = appleApiConfigFromEnv(env, tx.environment);
+    if (!api) return json({ error: "unavailable" }, 503);
+    try {
+      const response = await getTransactionInfo(api, tx.transactionId, now);
+      if (response.status !== 200 || !isRecord(response.body) || typeof response.body.signedTransactionInfo !== "string") return json({ error: "unavailable" }, 503);
+      const current = await verifyTransactionJws(response.body.signedTransactionInfo, config, now);
+      if (!current.ok || current.tx.originalTransactionId !== tx.originalTransactionId || current.tx.transactionId !== tx.transactionId ||
+          current.tx.productId !== tx.productId || current.tx.environment !== tx.environment || current.tx.bundleId !== tx.bundleId) {
+        return json({ error: "invalid_transaction", reason: "signature" }, 401);
+      }
+      tx = current.tx;
+    } catch { return json({ error: "unavailable" }, 503); }
+  }
   if (tx.environment === "Sandbox" && !(await allow(env.RL_API_SANDBOX, deviceId, "RL_API_SANDBOX"))) {
     return json({ error: "rate_limited", retryAfterSeconds: 60 }, 429, { "retry-after": "60" });
   }
@@ -158,7 +177,7 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     }
     const existing = await getEntitlement(env.DB, id);
     // A notification may already know about a later renewal or a grace period; never move access backwards from a stale JWS.
-    const expiresAt = Math.max(tx.expiresDate ?? 0, existing?.expires_at ?? 0);
+    const expiresAt = kind === "subscription" ? Math.max(tx.expiresDate ?? 0, existing?.expires_at ?? 0) : 0;
     // A purchase made after a refund is a new, valid subscription even before Apple's SUBSCRIBED notice arrives.
     const supersedesRefund = existing?.revoked_at !== null && existing?.revoked_at !== undefined &&
       tx.revocationDate === undefined && (tx.purchaseDate ?? 0) > existing.revoked_at;
@@ -166,25 +185,25 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     let status = statusFromTransaction({ ...tx, expiresDate: expiresAt, revocationDate: revokedAt ?? undefined }, now);
     if (status === "expired" && existing && existing.status === "grace" && (existing.grace_until ?? 0) > now) status = "grace";
     await upsertEntitlement(env.DB, {
-      id, productId: tx.productId, environment, status, expiresAt,
+      id, productId: tx.productId, environment, status, expiresAt, kind,
       graceUntil: existing?.grace_until ?? null, revokedAt, purchaseAt: tx.purchaseDate, appTransactionHash, source: "verify",
     }, now);
     // A refund may have committed after the read above. Use the row that actually survived the
     // conditional upsert before linking a device or issuing a token.
     const row = await getEntitlement(env.DB, id);
     if (!row) throw new Error("entitlement missing after upsert");
-    if (!hasAccess(row, now)) {
+    if (!hasAccess(row, now, config.oneTimeProducts)) {
       ctx.waitUntil(audit(env.DB, "verify_no_access", { entitlementId: id, detail: row.status }, now));
       const reason = row.consent_stopped_at ? "consent_revoked" : row.status === "revoked" ? "revoked" : "expired";
-      return json({ entitled: false, reason, expiresAt: isoFromMs(row.expires_at), environment: row.environment });
+      return json({ entitled: false, reason, expiresAt: row.kind === "subscription" ? isoFromMs(row.expires_at) : undefined, environment: row.environment });
     }
     // Sandbox purchases are free (D5): one device each keeps App Review and TestFlight working without opening a relay pool.
     const link = await linkDevice(env.DB, id, deviceId, now, row.environment === "Sandbox" ? 1 : config.maxDevices);
     if (link === "device_limit") {
       ctx.waitUntil(audit(env.DB, "verify_device_limit", { entitlementId: id }, now));
-      return json({ entitled: false, reason: "device_limit", expiresAt: isoFromMs(row.expires_at), environment: row.environment });
+      return json({ entitled: false, reason: "device_limit", expiresAt: row.kind === "subscription" ? isoFromMs(row.expires_at) : undefined, environment: row.environment });
     }
-    const accessEnd = Math.max(row.expires_at, row.grace_until ?? 0);
+    const accessEnd = accessEndMs(row);
     const tokenExpiresAt = Math.min(now + MAX_TOKEN_TTL_MS, accessEnd);
     const entitlementToken = await mintEntitlementToken(env.ENTITLEMENT_TOKEN_KEY, {
       v: 1, d: deviceId, s: id, x: Math.floor(tokenExpiresAt / 1000), n: environmentLetter(row.environment), e: config.environmentName,
@@ -193,9 +212,10 @@ export async function handleVerify(request: Request, env: Env, ctx: ExecutionCon
     log("verify_ok", { environment: row.environment, status: row.status, device: fingerprint(deviceId), entitlement: fingerprint(id) });
     return json({
       entitled: true,
-      expiresAt: isoFromMs(row.expires_at),
+      expiresAt: row.kind === "subscription" ? isoFromMs(row.expires_at) : undefined,
       environment: row.environment,
-      productId: tx.productId,
+      productId: row.product_id,
+      entitlementKind: row.kind,
       inGracePeriod: row.status === "grace",
       entitlementToken,
       tokenExpiresAt: isoFromMs(tokenExpiresAt),

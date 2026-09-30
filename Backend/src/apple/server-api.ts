@@ -67,3 +67,9 @@ export const requestTestNotification = (config: AppleApiConfig, nowMs: number) =
 
 export const getTestNotificationStatus = (config: AppleApiConfig, token: string, nowMs: number) =>
   call(config, "GET", `/inApps/v1/notifications/test/${encodeURIComponent(token)}`, nowMs);
+
+/** The caller verifies the returned JWS and exact identity; this transport response grants nothing. */
+export const getTransactionInfo = (config: AppleApiConfig, transactionId: string, nowMs: number) => {
+  if (!/^[A-Za-z0-9._-]{1,64}$/.test(transactionId)) throw new Error("transaction identifier invalid");
+  return call(config, "GET", `/inApps/v1/transactions/${encodeURIComponent(transactionId)}`, nowMs);
+};

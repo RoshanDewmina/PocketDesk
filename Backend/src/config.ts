@@ -1,3 +1,4 @@
+import { oneTimeCatalog, type OneTimeCatalog } from "./entitlement/one-time-policy";
 import { parseRootPins } from "./apple/jws";
 import { flagVar, listVar, parseIntegerVar } from "./util";
 
@@ -7,6 +8,7 @@ export type Config = {
   bundleId: string;
   appAppleId: number | undefined;
   allowedProductIds: Set<string>;
+  oneTimeProducts?: OneTimeCatalog;
   acceptSandbox: boolean;
   allowXcode: boolean;
   stunUrls: string[];
@@ -58,12 +60,16 @@ export function loadConfig(env: Env): Config {
   if (appAppleId !== undefined && !Number.isSafeInteger(appAppleId)) throw new Error("APP_APPLE_ID must be an integer");
   const relayConfigured = Boolean(env.CLOUDFLARE_TURN_KEY_ID && env.CLOUDFLARE_TURN_KEY_API_TOKEN);
   if (testForceRelay && !relayConfigured) throw new Error("TEST_FORCE_RELAY requires TURN credentials");
+  const allowedProductIds = new Set(listVar(env.ALLOWED_PRODUCT_IDS));
+  const oneTimeIDs = env as Env & { LIFETIME_PRODUCT_ID?: string; FOUNDER_PRODUCT_ID?: string };
+  const oneTimeProducts = oneTimeCatalog({ lifetime: oneTimeIDs.LIFETIME_PRODUCT_ID, founder: oneTimeIDs.FOUNDER_PRODUCT_ID }, allowedProductIds);
   const config: Config = {
     environmentName,
     isProduction,
     bundleId: env.APP_BUNDLE_ID || "com.roshan.PocketDesk.Remote",
     appAppleId,
-    allowedProductIds: new Set(listVar(env.ALLOWED_PRODUCT_IDS)),
+    allowedProductIds,
+    oneTimeProducts,
     acceptSandbox: flagVar(env.ACCEPT_SANDBOX),
     allowXcode,
     stunUrls,
