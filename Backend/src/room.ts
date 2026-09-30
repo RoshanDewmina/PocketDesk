@@ -907,7 +907,7 @@ export class RoomDO extends DurableObject<Env> {
     this.sendIce(ws, "client", clientServers);
     if (routeAware && this.attachment(host).routeAware) {
       this.publishRoute(entitlement.entitled ? "remote" : "local",
-        Math.min(leaseEndsAt, entitlement.entitled ? entitlement.until ?? 0 : leaseEndsAt));
+        Math.min(leaseEndsAt, entitlement.entitled ? entitlement.until ?? leaseEndsAt : leaseEndsAt));
     }
     this.send(host, { type: "peer", online: true });
     this.send(ws, { type: "peer", online: true });
@@ -954,7 +954,7 @@ export class RoomDO extends DurableObject<Env> {
     if (this.peer("client") && state.route_expires_at !== null) {
       const client = this.attachment(this.peer("client")!);
       this.publishRoute(client.entitled ? "remote" : "local",
-        Math.min(leaseEndsAt, client.entitled ? client.entitlementUntil ?? 0 : leaseEndsAt));
+        Math.min(leaseEndsAt, client.entitled ? client.entitlementUntil ?? leaseEndsAt : leaseEndsAt));
     }
     const renewalRevision = this.state().route_revision;
     const currentForRenewal = (): boolean => {
