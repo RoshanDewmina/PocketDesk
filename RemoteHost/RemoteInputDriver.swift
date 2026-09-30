@@ -233,6 +233,7 @@ final class RemoteInputDriver {
     func configure(_ filter: SCContentFilter) {
         release()
         resetNativeSequence()
+        displayRects = []
         if filter.style == .display {
             displayBounds = filter.includedDisplays.first?.frame
             windowID = nil
@@ -245,8 +246,37 @@ final class RemoteInputDriver {
     func configure(bounds: CGRect?) {
         release()
         resetNativeSequence()
+        displayRects = []
         displayBounds = bounds
         windowID = nil
+    }
+
+    /// Couch mode only: every display the pointer may use. Empty for Picture, which clamps to `displayBounds`.
+    private(set) var displayRects: [CGRect] = []
+
+    func configure(displays: [CGRect]) {
+        release()
+        resetNativeSequence()
+        let usable = displays.filter {
+            $0.width > 0 && $0.height > 0 && [$0.origin.x, $0.origin.y, $0.width, $0.height].allSatisfy(\.isFinite)
+        }
+        displayRects = usable
+        displayBounds = usable.dropFirst().reduce(usable.first) { $0?.union($1) }
+        windowID = nil
+    }
+
+    static func clamp(_ point: CGPoint, toNearestOf rects: [CGRect]) -> CGPoint {
+        guard let first = rects.first else { return point }
+        guard point.x.isFinite, point.y.isFinite else { return CGPoint(x: first.midX, y: first.midY) }
+        var best = point
+        var bestDistance = CGFloat.infinity
+        for rect in rects {
+            let candidate = CGPoint(x: min(rect.maxX.nextDown, max(rect.minX, point.x)),
+                                    y: min(rect.maxY.nextDown, max(rect.minY, point.y)))
+            let distance = hypot(candidate.x - point.x, candidate.y - point.y)
+            if distance < bestDistance { bestDistance = distance; best = candidate }
+        }
+        return best
     }
 
     func handle(_ input: RemoteAction, upgraded: Bool = false, now: TimeInterval = ProcessInfo.processInfo.systemUptime, pointerSnapshot: CGPoint? = nil) -> RemoteInputOutcome {
@@ -587,6 +617,7 @@ final class RemoteInputDriver {
     }
 
     private func clamped(_ point: CGPoint, to bounds: CGRect) -> CGPoint {
+        if displayRects.count > 1 { return Self.clamp(point, toNearestOf: displayRects) }
         let fallback = CGPoint(x: bounds.midX, y: bounds.midY)
         let source = point.x.isFinite && point.y.isFinite ? point : fallback
         return CGPoint(
