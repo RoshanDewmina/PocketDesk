@@ -88,6 +88,9 @@ final class RemoteCoordinator: ObservableObject {
     private var localLinkProof: LocalLinkProof?
     private var pendingLocalEndpoint: LocalProbeEndpoint?
     private var localProofTimeout: Task<Void, Never>?
+    private let localProofTimeoutNanoseconds: UInt64
+    /// Host: why the most recent phone session attempt ended without stopping sharing.
+    @Published private(set) var lastSessionFailure: String?
     /// Media signals that arrive after this side's proof started but before it finished; the faster
     /// side can prove first and send its offer. Bounded and dropped with the session.
     private var pendingMediaSignals: [MediaSignal] = []
@@ -139,8 +142,10 @@ final class RemoteCoordinator: ObservableObject {
         signaling: (any SignalingTransport)? = nil,
         renewalScheduler: any RenewalScheduler = SystemRenewalScheduler(),
         advertisesRenewal: Bool = true,
-        handshakeTimeoutNanoseconds: UInt64 = 20_000_000_000
+        handshakeTimeoutNanoseconds: UInt64 = 20_000_000_000,
+        localProofTimeoutNanoseconds: UInt64 = 8_000_000_000
     ) {
+        self.localProofTimeoutNanoseconds = localProofTimeoutNanoseconds
         self.isHost = isHost
         self.store = store ?? PairStore(account: isHost ? "host" : "phone")
         self.relay = signaling ?? SignalingClient()
@@ -357,7 +362,7 @@ final class RemoteCoordinator: ObservableObject {
                     throw RemoteError.invalidMessage
                 }
                 if let old = routePolicy, old.access != policy.access, media != nil {
-                    fail("Route access changed. Reconnect to verify the new route.")
+                    sessionFailed("Route access changed. Reconnect to verify the new route.")
                     return
                 }
                 routePolicy = policy; routeArmed = true; routeEpochsSeen.insert(policy.epoch)
@@ -369,7 +374,7 @@ final class RemoteCoordinator: ObservableObject {
                     try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
                     guard !Task.isCancelled, let self, self.routePolicy == policy else { return }
                     SessionLog.log.error("route policy expired")
-                    self.fail("Route authorization expired. Reconnect to renew access.")
+                    self.sessionFailed("Route authorization expired. Reconnect to renew access.")
                 }
             case "registered":
                 if isHost {
@@ -392,7 +397,7 @@ final class RemoteCoordinator: ObservableObject {
             case "peer":
                 if message.online == true {
                     guard (routeArmed && (routePolicy?.expiresAt ?? .distantPast) > Date()) || allowLegacyPrivateRoute else {
-                        fail("The connection service did not authorize this route. Update Farside and retry.")
+                        sessionFailed("The connection service did not authorize this route. Update Farside and retry.")
                         return
                     }
                     if !isHost {
@@ -440,7 +445,7 @@ final class RemoteCoordinator: ObservableObject {
             // session that already ended, a replay, or a message sealed with another key. Rejecting
             // it means not acting on it, never tearing down the connection it was aimed at.
             staleMessagesIgnored += 1
-        } catch { fail("Secure connection failed. Reconnect or pair again on your Mac.") }
+        } catch { sessionFailed("Secure connection failed. Reconnect or pair again on your Mac.") }
     }
     private func receiveProtected(_ message: ProtectedMessage) throws {
         if isHost, message.kind == "request" {
@@ -528,7 +533,7 @@ final class RemoteCoordinator: ObservableObject {
     }
     private func prepareMedia() {
         guard (routeArmed && (routePolicy?.expiresAt ?? .distantPast) > Date()) || allowLegacyPrivateRoute else {
-            fail("The connection route is no longer authorized.")
+            sessionFailed("The connection route is no longer authorized.")
             return
         }
         if let routePolicy, routePolicy.access == .local {
@@ -539,7 +544,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func beginLocalProof(_ policy: ServerRoutePolicy) {
-        guard let key = invitation?.key, !session.isEmpty else { fail("Local link proof could not start."); return }
+        guard let key = invitation?.key, !session.isEmpty else { sessionFailed("Local link proof could not start."); return }
         let room = policy.room, epoch = policy.epoch, session = self.session
         Task { [weak self] in
             let proof = await Task.detached(priority: .userInitiated) {
@@ -551,13 +556,13 @@ final class RemoteCoordinator: ObservableObject {
             }
             guard let proof else {
                 self.localProofSummary = "not started: no single directly attached Wi-Fi or Ethernet path"
-                self.fail("No directly attached Wi-Fi or Ethernet link is available."); return
+                self.sessionFailed("No directly attached Wi-Fi or Ethernet link is available."); return
             }
             self.localLinkProof = proof
             self.localProofSummary = nil
             proof.onInvalidated = { [weak self, weak proof] in
                 guard let self, let proof, self.localLinkProof === proof else { return }
-                self.fail("The local network changed. Reconnect to verify the route again.")
+                self.sessionFailed("The local network changed. Reconnect to verify the route again.")
             }
             proof.onProven = { [weak self, weak proof] link in
                 guard let self, let proof, self.localLinkProof === proof,
@@ -568,18 +573,18 @@ final class RemoteCoordinator: ObservableObject {
                 self.finishMedia(localLink: link)
             }
             self.localProofTimeout = Task { [weak self] in
-                try? await Task.sleep(nanoseconds: 8_000_000_000)
+                try? await Task.sleep(nanoseconds: self?.localProofTimeoutNanoseconds ?? 8_000_000_000)
                 guard !Task.isCancelled, let self else { return }
                 if let proof = self.localLinkProof {
                     LocalLinkProof.log.error("timed out after 8 s: \(proof.stageSummary(), privacy: .public)")
                 }
-                self.fail("The devices could not verify a directly attached local link.")
+                self.sessionFailed("The devices could not verify a directly attached local link.")
             }
             if let pending = self.pendingLocalEndpoint {
                 LocalLinkProof.log.info("applying peer endpoint received before the proof existed")
                 proof.setPeer(pending)
             }
-            guard let data = try? JSONEncoder().encode(proof.endpoint) else { self.fail("Local link proof could not start."); return }
+            guard let data = try? JSONEncoder().encode(proof.endpoint) else { self.sessionFailed("Local link proof could not start."); return }
             self.send(kind: "localEndpoint", body: data)
         }
     }
@@ -592,7 +597,7 @@ final class RemoteCoordinator: ObservableObject {
         case .proceed(let force):
             relayOnly = force
         case .relayRequiredUnavailable(let serverRequired):
-            fail(serverRequired ? "The connection service requires a relay, but none was provided." : "Relay-only test requires a configured TURN service.")
+            sessionFailed(serverRequired ? "The connection service requires a relay, but none was provided." : "Relay-only test requires a configured TURN service.")
             return
         }
         let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink)
@@ -624,7 +629,7 @@ final class RemoteCoordinator: ObservableObject {
                 } catch {
                     self.controlRejected["parse-or-validate", default: 0] += 1
                     InputLog.log.error("control rejected: \(String(describing: error), privacy: .public); ending session")
-                    self.fail("Invalid control message. Session ended safely.")
+                    self.sessionFailed("Invalid control message. Session ended safely.")
                 }
             }
         }
@@ -730,6 +735,18 @@ final class RemoteCoordinator: ObservableObject {
             self.retry = nil; self.start(resetRetryBudget: false)
         }
     }
+    /// A failure that belongs to one phone session attempt: a local proof that timed out or was
+    /// invalidated, a route that expired or changed, a relay the policy needs but lacks, or an invalid
+    /// control message. A sharing Mac ends only that attempt and stays registered (same path as a phone
+    /// leaving); if it is not registered at that moment it re-registers. A phone fails as before.
+    /// Registration stops only through `stop()` or a fatal `fail` (update required, pairing, keychain).
+    private func sessionFailed(_ message: String) {
+        guard isHost, !stopped else { fail(message); return }
+        SessionLog.log.error("host session ended, sharing continues: \(message, privacy: .public)")
+        lastSessionFailure = message
+        if hostRegistered { peerDisconnected() } else { connectionLost(finalStatus: message) }
+    }
+
     private func fail(_ message: String) {
         SessionLog.log.error("fail: \(message, privacy: .public)")
         stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false
@@ -816,6 +833,8 @@ final class RemoteCoordinator: ObservableObject {
     func simulateTransportLossForTesting() { connectionLost() }
     var iceServersForTesting: [ICEServerConfiguration] { servers }
     var renewalPlanForTesting: RenewalPlan? { renewalPlan }
+    var localLinkProofForTesting: LocalLinkProof? { localLinkProof }
+    var isStoppedForTesting: Bool { stopped }
     #endif
 }
 

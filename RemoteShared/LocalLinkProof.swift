@@ -397,6 +397,13 @@ final class LocalLinkProof {
         queue.async { [weak self] in self?.finish() }
     }
 
+    #if DEBUG
+    /// Drives the same invalidation a path change causes.
+    func invalidateForTesting(_ reason: String) {
+        queue.async { [weak self] in self?.invalidate(reason) }
+    }
+    #endif
+
     private func finish() {
         guard !closed else { return }
         closed = true

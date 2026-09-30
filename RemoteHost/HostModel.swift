@@ -884,6 +884,7 @@ final class RemoteHostModel: ObservableObject {
         snapshot.route = connection.connected ? connection.diagnostics : nil
         snapshot.input = connection.inputSummary + " host=[" + inputCounts.keys.sorted().map { "\($0)=\(inputCounts[$0] ?? 0)" }.joined(separator: " ") + "]"
         snapshot.localProof = connection.localProofSummary
+        snapshot.lastSessionFailure = connection.lastSessionFailure
         snapshot.streamQuality = capture.appliedQuality?.title
         snapshot.stream = latestSenderStatistics.map(Self.streamDescription)
         snapshot.tuning = StreamTuning.current.summary
