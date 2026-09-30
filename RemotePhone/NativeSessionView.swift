@@ -442,6 +442,18 @@ struct NativeSessionView: View {
                 MacBusyPill(state: busy, device: UIDevice.current.model)
                     .transition(.opacity)
             }
+            if connection.connected && model.awayState == .covered {
+                Text(PhoneSessionNotice.awayCovered)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Farside.Palette.bone)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .padding(.horizontal, 14).padding(.vertical, 8)
+                    .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
+                    .transition(.opacity)
+                    .allowsHitTesting(false)
+                    .accessibilityIdentifier("remote.awayCovered")
+            }
             if streamStatsEnabled && !model.streamSummaryLines.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     let lines = model.streamSummaryLines + [model.cropSummary?.caption].compactMap { $0 }
@@ -700,11 +712,32 @@ struct NativeSessionView: View {
             }
             .buttonStyle(FarsideRoundButtonStyle(diameter: 40))
             .accessibilityLabel("Controls")
-            Button("End session") { model.disconnect() }
-                .buttonStyle(FarsideEndButtonStyle())
-                .fixedSize()
-                .accessibilityLabel("End session")
+            if model.awaySupported {
+                // Side by side where the dock is wide; stacked on a portrait phone so neither is squeezed.
+                if compactHeight || horizontalSizeClass == .regular {
+                    HStack(spacing: 8) { endSessionButton; endAndLockButton }
+                } else {
+                    VStack(alignment: .trailing, spacing: 6) { endSessionButton; endAndLockButton }
+                }
+            } else {
+                endSessionButton
+            }
         }
+    }
+
+    private var endSessionButton: some View {
+        Button("End session") { model.disconnect() }
+            .buttonStyle(FarsideEndButtonStyle())
+            .fixedSize()
+            .accessibilityLabel("End session")
+    }
+
+    private var endAndLockButton: some View {
+        Button("End and lock Mac") { model.endAndLockMac() }
+            .buttonStyle(FarsideEndButtonStyle())
+            .fixedSize()
+            .disabled(!model.canLockMac)
+            .accessibilityIdentifier("remote.endAndLockMac")
     }
 
     private var dockHandle: some View {

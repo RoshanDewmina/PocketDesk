@@ -108,6 +108,13 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var hostPresence: HostPresence?
     /// The Mac's privacy curtain, or nil when the Mac does not support one.
     @Published private(set) var curtainState: PrivacyCurtainState?
+    /// Away mode as the Mac reports it, or nil when the Mac does not offer it.
+    @Published private(set) var awayState: AwayModeState?
+    private let awayMemory = AwayMemory()
+    private var awayRemembered: AwayModeState?
+    private var lockEndTask: Task<Void, Never>?
+    /// How long "End and lock Mac" waits for the Mac to end the session before ending it here.
+    static var lockEndGrace: TimeInterval = 5
     /// A short explanation shown over the live session, cleared after a few seconds.
     @Published private(set) var sessionNotice: String?
     private var sessionNoticeTask: Task<Void, Never>?
@@ -505,6 +512,9 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     #if DEBUG
+    /// Tests: receives what `transmit` would send, instead of the connection.
+    var controlSendOverride: ((RemoteAction) -> Bool)?
+
     /// Offline UI checks (`--ui-layout-check --ui-input-probe`) admit input locally and record
     /// exactly what would have been sent. Nothing leaves the phone.
     let inputProbe: InputProbe? = LaunchOptions.layoutCheck && LaunchOptions.has("--ui-input-probe") ? InputProbe() : nil
@@ -513,6 +523,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// Every control message leaves through here, so the offline probe sees the same actions.
     private func transmit(_ action: RemoteAction) -> Bool {
         #if DEBUG
+        if let controlSendOverride { return controlSendOverride(action) }
         if let inputProbe { return inputProbe.record(action) }
         #endif
         return connection.sendControl(action)
@@ -604,6 +615,37 @@ final class PhoneRemoteModel: ObservableObject {
         guard canChangeCurtain else { return false }
         let request: PrivacyCurtainRequest = on ? .up : .down
         return connection.sendControl(RemoteAction(action: "curtain", epoch: geometryEpoch, curtain: request.rawValue))
+    }
+
+    var awaySupported: Bool { hostFeatures.contains(SessionFeature.away) }
+
+    /// Locking affects the Mac's own screen, so it needs control, like the curtain.
+    var canLockMac: Bool {
+        awaySupported && connection.connected && controlAllowed && !privacyShield && !contentConcealed
+    }
+
+    /// Asks the Mac to lock, then ends the session here if it is still open after `lockEndGrace`.
+    @discardableResult
+    func endAndLockMac() -> Bool {
+        guard canLockMac, transmit(RemoteAction(action: "lockMac", epoch: geometryEpoch)) else { return false }
+        lockEndTask?.cancel()
+        let grace = Self.lockEndGrace
+        lockEndTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(grace * 1_000_000_000))
+            guard !Task.isCancelled, let self else { return }
+            self.lockEndTask = nil
+            if self.connection.connected || self.connection.isRunning { self.disconnect() }
+        }
+        return true
+    }
+
+    private func rememberAway() {
+        guard let room = connection.invitation?.room else { return }
+        let state = awayState ?? .off
+        // Away mode turns itself off once it has locked the Mac; keep "on" so the lock notice can say so.
+        guard state != awayRemembered, !(state == .off && hostPresence == .locked) else { return }
+        awayRemembered = state
+        awayMemory.remember(state, forRoom: room)
     }
 
     /// A short notice over the live session (and to VoiceOver).
@@ -870,6 +912,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     func disconnect() {
+        lockEndTask?.cancel(); lockEndTask = nil
         sessionEndReason = .user
         clearContinuity()
         release()
@@ -1116,6 +1159,9 @@ final class PhoneRemoteModel: ObservableObject {
             if let notice = PhoneSessionNotice.curtainChange(from: previousCurtain, to: curtainState) {
                 showSessionNotice(notice)
             }
+            let away = awaySupported ? AwayModeState(reported: action.away) : nil
+            if away != awayState { awayState = away }
+            rememberAway()
             if action.hostEvent == HostLifecycleEvent.recovered.rawValue, !recoveryNoticeShown {
                 recoveryNoticeShown = true
                 showSessionNotice(PhoneSessionNotice.hostRecovered)
@@ -1186,11 +1232,13 @@ final class PhoneRemoteModel: ObservableObject {
         }
     }
 
-    static func notice(for presence: HostPresence, at date: Date = Date()) -> String {
+    static func notice(for presence: HostPresence, at date: Date = Date(), awayWasOn: Bool = false) -> String {
         let time = date.formatted(date: .omitted, time: .shortened)
         switch presence {
         case .sleeping: return "Your Mac went to sleep at \(time). Wake it to reconnect."
-        case .locked: return "Your Mac was locked at \(time). Farside can’t unlock it; unlock it in person to reconnect."
+        case .locked:
+            let notice = "Your Mac was locked at \(time). Farside can’t unlock it; unlock it in person to reconnect."
+            return awayWasOn ? notice + " " + PhoneSessionNotice.awayCantUnlock : notice
         case .switchedUser: return "Another user started using your Mac at \(time)."
         case .displayAsleep: return "Your Mac’s display is asleep."
         }
@@ -1336,12 +1384,15 @@ final class PhoneRemoteModel: ObservableObject {
         hostFeatures = []
         hostPresence = nil
         curtainState = nil
+        awayState = nil
+        awayRemembered = nil
         recoveryNoticeShown = false
         reducedPictureNoticeShown = false
         clockSync.reset()
         heartbeatsSent = 0
         if let departureReason {
-            macNotice = Self.notice(for: departureReason)
+            let awayWasOn = connection.invitation.map { awayMemory.wasOn(forRoom: $0.room) } ?? false
+            macNotice = Self.notice(for: departureReason, awayWasOn: awayWasOn)
             if sessionEndReason == nil { sessionEndReason = .macStopped }
         }
         departureReason = nil
