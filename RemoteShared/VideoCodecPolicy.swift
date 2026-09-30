@@ -44,6 +44,11 @@ final class PocketDeskVideoEncoderFactory: NSObject, RTCVideoEncoderFactory {
     }
     func createEncoder(_ info: RTCVideoCodecInfo) -> (any RTCVideoEncoder)? {
         if info.name == kRTCVideoCodecH264Name {
+            #if os(macOS)
+            if !VideoEncoderCompatibility.isOn, let configuration = OwnedVTConfiguration(parameters: info.parameters) {
+                return ResilientVTEncoder(configuration: configuration, codecInfo: info, counters: counters, frameTiming: frameTiming)
+            }
+            #endif
             return StreamTuning.current.encoderRestart ? DesktopH264Encoder(codecInfo: info, counters: counters, frameTiming: frameTiming) : RTCVideoEncoderH264(codecInfo: info)
         }
         return fallback.createEncoder(info)

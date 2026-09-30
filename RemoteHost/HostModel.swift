@@ -414,6 +414,7 @@ final class RemoteHostModel: ObservableObject {
             couchMode: sessionState == .couch && connection.connected,
             agentAlerts: agentAlerts.isOn,
             agentAlertsStatus: agentAlerts.statusLine(),
+            compatibilityVideoEncoder: VideoEncoderCompatibility.isOn,
             newestFrameWins: NewestFrameWinsSwitch.isOn,
             crashLoopStopped: crashLoopStopped,
             displays: displays.map { HostDisplayOption(id: $0.displayID, name: Self.displayName(for: $0.displayID)) },
@@ -1136,6 +1137,13 @@ final class RemoteHostModel: ObservableObject {
     func setAgentAlerts(_ enabled: Bool) {
         events.record(.settings, "Agent alerts \(enabled ? "on" : "off")")
         Task { @MainActor [weak self] in await self?.agentAlerts.setEnabled(enabled) }
+    }
+
+    func setCompatibilityVideoEncoder(_ enabled: Bool) {
+        guard VideoEncoderCompatibility.isOn != enabled else { return }
+        VideoEncoderCompatibility.isOn = enabled
+        events.record(.settings, "Compatibility video encoder \(enabled ? "on" : "off") for next session")
+        objectWillChange.send()
     }
 
     /// Takes effect at the next encoded frame; no reconnect needed.

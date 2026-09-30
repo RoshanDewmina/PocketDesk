@@ -77,6 +77,7 @@ struct HostViewState: Equatable {
     /// One line about the last agent alert, or that the Mac is listening.
     var agentAlertsStatus: String?
     /// Diagnostics: drop a frame waiting for the encoder instead of queueing it (efficiency audit P1).
+    var compatibilityVideoEncoder = false
     var newestFrameWins = true
     var crashLoopStopped = false
     var displays: [HostDisplayOption] = []
@@ -141,6 +142,7 @@ struct HostActions {
     var copyAgentHookSetup: () -> Void = {}
     var resetAgentAlertLink: () -> Void = {}
     var copyDiagnostics: () -> Void = {}
+    var setCompatibilityVideoEncoder: (Bool) -> Void = { _ in }
     var setNewestFrameWins: (Bool) -> Void = { _ in }
     var selectDisplay: (UInt32) -> Void = { _ in }
     var refreshCaptureScopes: () -> Void = {}

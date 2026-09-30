@@ -203,6 +203,10 @@ struct HostSettingsView: View {
                     .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
                     .accessibilityIdentifier("farside.settings.copyDiagnostics")
             }
+            HostSettingsRow("Compatibility video encoder", subtitle: "Use the previous encoder if the new picture has trouble. Applies to your next connection") {
+                HostSwitch(label: "Compatibility video encoder", isOn: state.compatibilityVideoEncoder, set: actions.setCompatibilityVideoEncoder)
+                    .accessibilityIdentifier("farside.settings.compatibilityVideoEncoder")
+            }
             HostSettingsRow("Newest frame wins", subtitle: "Skip a frame the encoder can’t take yet instead of queueing it. Lower lag on a busy Mac") {
                 HostSwitch(label: "Newest frame wins", isOn: state.newestFrameWins, set: actions.setNewestFrameWins)
                     .accessibilityIdentifier("farside.settings.newestFrameWins")

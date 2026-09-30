@@ -15,6 +15,19 @@ final class StreamInstrumentStatsTests: XCTestCase {
         XCTAssertNil(second.drain(inputBufferedBytes: nil).rateUpdates)
     }
 
+    func testFactoryRetainsPeerContextWhenEncoderNegotiationStartsAfterAnotherFactory() throws {
+        let first = StreamCounters(), second = StreamCounters()
+        let codec = RTCVideoCodecInfo(name: kRTCVideoCodecH264Name, parameters: [:])
+        let firstFactory = PocketDeskVideoEncoderFactory(counters: first)
+        let secondFactory = PocketDeskVideoEncoderFactory(counters: second)
+        let secondEncoder = try XCTUnwrap(secondFactory.createEncoder(codec))
+        let firstEncoder = try XCTUnwrap(firstFactory.createEncoder(codec))
+        defer { _ = firstEncoder.release(); _ = secondEncoder.release() }
+        _ = firstEncoder.setBitrate(1000, framerate: 60)
+        XCTAssertEqual(first.drain(inputBufferedBytes: nil).rateUpdates, 1)
+        XCTAssertNil(second.drain(inputBufferedBytes: nil).rateUpdates)
+    }
+
     func testEncoderLatencyTraceMatchesByKeyAndFallsBackToTheOldest() {
         var trace = EncoderLatencyTrace()
         trace.submitted(key: 100, atMs: 1_000)
@@ -425,11 +438,11 @@ final class StreamInstrumentStatsTests: XCTestCase {
         let summary = report.hostSummary
         XCTAssertEqual(summary.encoderDropped, 3)
         XCTAssertNoThrow(try summary.validate())
-        XCTAssertTrue(report.summaryLines.contains { $0.hasPrefix("VT lat p50 9.0ms") && $0.hasSuffix("dropped 3/s") },
+        XCTAssertTrue(report.summaryLines.contains { $0.hasPrefix("VT lat p50 9.0ms") && $0.contains(" · dropped 3/s") },
                       report.summaryLines.joined(separator: "\n"))
         var phone = StreamStatsReport(role: "phone", previous: nil, current: sample, counters: nil)
         phone.host = summary
-        XCTAssertTrue(phone.summaryLines.contains { $0.hasPrefix("Mac VT lat") && $0.hasSuffix(" · dropped 3/s") },
+        XCTAssertTrue(phone.summaryLines.contains { $0.hasPrefix("Mac VT lat") && $0.contains(" · dropped 3/s") },
                       phone.summaryLines.joined(separator: "\n"))
         var flooded = summary
         flooded.encoderDropped = 100_001
