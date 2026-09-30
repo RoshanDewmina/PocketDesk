@@ -2733,6 +2733,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func advanceEpoch() {
+        // Retire both posted and admitted holds before publishing the new scope.
+        releaseRemoteInput(notifyPhone: true)
         invalidateTextFocus()
         inputEpoch.beginSession()
         input.invalidateQueued(); inputFreshness.expireTokens()

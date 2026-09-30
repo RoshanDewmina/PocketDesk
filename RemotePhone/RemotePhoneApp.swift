@@ -410,6 +410,16 @@ final class PhoneRemoteModel: ObservableObject {
         connection.onEnded = { [weak self] in
             self?.sessionEnded()
         }
+        connection.onCausalContext = { [weak self] context in
+            guard let self else { return }
+            // The host has already retired this hold. Cancel unsent display-tick
+            // motion before any later geometry callback or semantic flush.
+            self.displayTickInput.cancel()
+            self.cancelInput()
+            if context.epoch != self.geometryEpoch {
+                self.captureHealthy = false; self.fresh = false; self.inputToken = nil
+            }
+        }
         connection.onControl = { [weak self] data in
             guard let action = try? JSONDecoder().decode(RemoteAction.self, from: data) else { return }
             self?.receive(action)
