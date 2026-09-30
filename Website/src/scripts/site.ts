@@ -1,7 +1,11 @@
-// Shared behaviour for every page. Kept tiny: fonts, the mobile menu, the motion switch.
+// Shared behaviour for every page. Kept small: fonts, the mobile menu, the motion switch, scroll reveals.
 
 import { FONTS_URL } from "../lib/fonts";
 import { isPaused, onMotionChange, prefersReduced, setPaused } from "./motion";
+import { initReveals, initStatusChip } from "./reveal";
+
+initReveals();
+initStatusChip();
 
 // Web fonts load right after the first paint, so they never hold up the words. The local fallback
 // faces (src/styles/fallbacks.css) share their metrics, so the swap moves nothing.

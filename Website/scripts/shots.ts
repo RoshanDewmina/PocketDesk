@@ -23,14 +23,16 @@ export async function settle(page: Page) {
   await page.evaluate(() => {
     document.querySelectorAll<HTMLElement>(".sec, .site-footer, .doc-sec").forEach((el) => (el.style.contentVisibility = "visible"));
   });
-  // Walk down the page so lazy art paints, then come back to the top.
+  // Walk down the page so lazy art paints, scroll reveals play and the demos start, then come back to the top.
+  // "instant": the page asks for smooth scrolling, which would turn each jump into a slow glide.
   await page.evaluate(async () => {
-    const step = window.innerHeight * 0.8;
+    const step = window.innerHeight * 0.6;
     for (let y = 0; y < document.documentElement.scrollHeight; y += step) {
-      window.scrollTo(0, y);
-      await new Promise((r) => setTimeout(r, 60));
+      window.scrollTo({ top: y, behavior: "instant" });
+      await new Promise((r) => setTimeout(r, 140));
     }
-    window.scrollTo(0, 0);
+    await new Promise((r) => setTimeout(r, 1200));
+    window.scrollTo({ top: 0, behavior: "instant" });
   });
   // Let the hero finish its entrance and land the contact beat.
   await new Promise((r) => setTimeout(r, 2600));

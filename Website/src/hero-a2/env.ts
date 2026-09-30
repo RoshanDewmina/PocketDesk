@@ -42,15 +42,8 @@ export function tween(ms: number, fn: (t: number) => void, tok: Token): Promise<
 export const wait = (ms: number, tok: Token) => tween(ms, () => {}, tok);
 
 // The site's CSP requires Trusted Types. a2.js writes two fixed, script-built HTML strings (terminal lines and
-// the status line); they go through this one named policy. No user input ever reaches them.
-type Policy = { createHTML: (s: string) => unknown };
-let policy: Policy | null = null;
-export function trustedHTML(s: string): string {
-  const tt = (window as unknown as { trustedTypes?: { createPolicy: (n: string, o: { createHTML: (s: string) => string }) => Policy } }).trustedTypes;
-  if (!tt) return s;
-  policy ??= tt.createPolicy("farside", { createHTML: (x) => x });
-  return policy.createHTML(s) as string;
-}
+// the status line); they go through the site's one named policy (src/scripts/tt.ts). No user input reaches them.
+export { trustedHTML } from "../scripts/tt";
 
 export function mount(el: HTMLElement) {
   stage = el;

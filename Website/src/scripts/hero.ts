@@ -1,11 +1,11 @@
 // Home hero host: measures the layout, runs the halftone scene in a worker (OffscreenCanvas) when the
-// browser allows it, otherwise on the main thread, and keeps the readout, stats and motion switch in sync.
+// browser allows it, otherwise on the main thread, and keeps the distance readout and motion switch in sync.
 // ≤ 30 fps; paused off-screen and on hidden tabs; Reduce Motion, Save-Data or the pause button → still frame.
 
 import type { Rect } from "./art/field";
-import { easeOutExpo } from "./art/shapes";
 import { HeroCore, type HeroEvent, type HeroLayout } from "./hero-core";
 import { motionAllowed, onMotionChange } from "./motion";
+import { trustedScriptURL } from "./tt";
 
 declare const __HERO_WORKER__: string;
 
@@ -16,18 +16,7 @@ const FRAME_MS = 1000 / 30;
 function startWorker(): Worker | null {
   if (typeof Worker !== "function" || typeof OffscreenCanvas !== "function" || !("transferControlToOffscreen" in HTMLCanvasElement.prototype)) return null;
   try {
-    // The site's CSP enforces Trusted Types; this policy allows exactly one script URL: our worker bundle.
-    const tt = (window as unknown as { trustedTypes?: { createPolicy(n: string, p: { createScriptURL(u: string): string }): { createScriptURL(u: string): unknown } } }).trustedTypes;
-    const url = tt
-      ? tt
-          .createPolicy("farside", {
-            createScriptURL: (u) => {
-              if (u === __HERO_WORKER__) return u;
-              throw new TypeError("blocked script URL");
-            },
-          })
-          .createScriptURL(__HERO_WORKER__)
-      : __HERO_WORKER__;
+    const url = trustedScriptURL(__HERO_WORKER__);
     return new Worker(url as string, { type: "module" });
   } catch {
     return null;
@@ -48,7 +37,7 @@ export function initHero(hero: HTMLElement) {
     const add = (r: DOMRect | { left: number; top: number; width: number; height: number }, pad: number) => {
       if (r.width && r.height) quiet.push({ x: r.left - hr.left - pad, y: r.top - hr.top - pad, w: r.width + pad * 2, h: r.height + pad * 2 });
     };
-    hero.querySelectorAll<HTMLElement>(".eyebrow, .sub, .cta, .store, .corner").forEach((el) => add(el.getBoundingClientRect(), 12));
+    hero.querySelectorAll<HTMLElement>(".eyebrow, .sub, .join, .consent, .note, .corner, .motion").forEach((el) => add(el.getBoundingClientRect(), 12));
     // Headline lines: horizontal extent from the text, vertical extent from the line box.
     hero.querySelectorAll<HTMLElement>(".h1 .ln").forEach((ln) => {
       const box = ln.getBoundingClientRect();
@@ -56,29 +45,6 @@ export function initHero(hero: HTMLElement) {
       add({ left: text.left, top: box.top, width: text.width, height: box.height }, 14);
     });
     return { W: hr.width, H: hr.height, dpr: Math.min(2, window.devicePixelRatio || 1), top: sp.top - hr.top, bot: sp.bottom - hr.top, quiet };
-  }
-
-  // ---- stats count-up (only while the stats row is still fading in; never rewind numbers people read) ----
-  const counters = [...hero.querySelectorAll<HTMLElement>("[data-count]")];
-  if (motionAllowed() && performance.now() < 600) counters.forEach((el) => (el.textContent = el.dataset.from ?? el.textContent));
-  else counters.length = 0;
-  function countUp() {
-    for (const el of counters) {
-      const to = Number(el.dataset.count);
-      const from = Number(el.dataset.from);
-      if (!motionAllowed()) {
-        el.textContent = String(to);
-        continue;
-      }
-      const start = performance.now();
-      const tick = (n: number) => {
-        const k = Math.min(1, (n - start) / 1200);
-        el.textContent = String(Math.round(from + (to - from) * easeOutExpo(k)));
-        if (k < 1) requestAnimationFrame(tick);
-      };
-      requestAnimationFrame(tick);
-    }
-    counters.length = 0;
   }
 
   function onEvent(e: HeroEvent) {
@@ -92,7 +58,7 @@ export function initHero(hero: HTMLElement) {
       gapr.classList.add("on");
     } else if (e.type === "contact") {
       gapr?.classList.add("hit");
-      countUp();
+      document.dispatchEvent(new CustomEvent("farside:contact"));
     }
   }
 
