@@ -9,13 +9,15 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     let smoothMotion = SmoothMotionController()
     private let motionGate = VideoMotionGate()
     let legibility = LegibilityProbe()
+    private var videoFeedback: VideoFeedbackContext?
     private var readsMarkers = false
     private var lastNotification: TimeInterval = 0
     private final class SourceReceipt {
         weak var frame: RTCVideoFrame?
         let id = UUID()
         let arrivalMs: Double
-        init(_ frame: RTCVideoFrame, at now: Double) { self.frame = frame; arrivalMs = now }
+        let tag: VideoFrameTag?
+        init(_ frame: RTCVideoFrame, at now: Double, tag: VideoFrameTag?) { self.frame = frame; arrivalMs = now; self.tag = tag }
     }
     private var sources: [SourceReceipt] = []
     private let onFrame: () -> Void
@@ -48,7 +50,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     }
     func configure(admission: VideoPresentationAdmission, counters: StreamCounters?, statistics: Bool,
                    sourceSize: CGSize, displayedPixelWidth: CGFloat, fillsFrame: Bool,
-                   mode: SmoothMotionMode, upscale: Bool, onSourceFrame: ((VideoFrameEnvelope) -> Void)?) {
+                   mode: SmoothMotionMode, upscale: Bool, onSourceFrame: ((VideoFrameEnvelope) -> Void)?, videoFeedback: VideoFeedbackContext? = nil) {
         guard !stopped, fence.renew(admission) else { invalidate(); return }
         expiryTimer?.invalidate()
         let timer = Timer(timeInterval: max(0.001, admission.validUntil - ProcessInfo.processInfo.systemUptime), repeats: false) { [weak self] _ in self?.invalidate() }
@@ -56,6 +58,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         let configured = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) {
             view.counters = counters; view.fillsFrame = fillsFrame; readsMarkers = statistics
             self.onSourceFrame = onSourceFrame
+            self.videoFeedback = videoFeedback; view.videoFeedback = videoFeedback
             legibility.configure(enabled: statistics, counters: counters, sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth)
             return true
         }
@@ -68,12 +71,12 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         guard let frame else { return }
         let receipt = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) {
             let now = MachClock.nowMs()
-            sources.append(SourceReceipt(frame, at: now))
+            sources.append(SourceReceipt(frame, at: now, tag: videoFeedback?.tag(for: frame)))
             if sources.count > 8 { sources.removeFirst(sources.count - 8) }
             let decoded = readsMarkers ? (frame.buffer as? RTCCVPixelBuffer).flatMap { DecodedLuma($0) } : nil
             let marker = decoded?.readMarker()
             let source = VideoFrameEnvelope(receiptID: sources.last!.id, identity: admissionIdentity, frame: frame,
-                arrivalMs: now, marker: marker, originalSource: true)
+                arrivalMs: now, marker: marker, originalSource: true, videoTag: sources.last?.tag)
             if let decoded { legibility.frameArrived(decoded.pixelBuffer, visible: decoded.visible, marker: marker) }
             let uptime = ProcessInfo.processInfo.systemUptime
             var notify = false
@@ -99,7 +102,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
             let source = sources.last { $0.frame === frame }
             view.offer(VideoFrameEnvelope(receiptID: source?.id ?? UUID(), identity: admissionIdentity,
                 frame: frame, arrivalMs: source?.arrivalMs ?? MachClock.nowMs(), marker: readsMarkers ? marker : nil,
-                originalSource: source != nil))
+                originalSource: source != nil, videoTag: source?.tag))
         }
     }
     /// Main thread: immediately cover/clear; only then detach and drain the old motion pipeline.
@@ -111,7 +114,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         view.invalidate(); track.remove(self)
         motionGate.close { smoothMotion.deactivate() } // Late presenter flush callbacks see a closed fence.
         legibility.configure(enabled: false, counters: nil, sourceSize: .zero, displayedPixelWidth: 0)
-        sources.removeAll(); onSourceFrame = nil
+        sources.removeAll(); onSourceFrame = nil; videoFeedback = nil
         if Self.active === self { Self.active = nil }
     }
     /// Root uses this synchronously for End/selection/lock/privacy/proof/content changes, before SwiftUI removal.

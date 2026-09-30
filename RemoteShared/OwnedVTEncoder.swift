@@ -92,11 +92,11 @@ struct OwnedVTConfiguration: Equatable {
 }
 
 /// Public VideoToolbox encoder, with a per-peer callback and two-frame ownership bound.
-/// LTR is deliberately disabled until a receiver-originated token ACK path exists;
-/// submitting a frame is never evidence that the receiver received its reference.
+/// LTR references are acknowledged only by a negotiated receiver successful decode.
 final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private struct Pending {
         let epoch: UUID
+        let videoTag: VideoFrameTag?
         let timestamp: UInt32
         let captureMs: Int64
         let rotation: RTCVideoRotation
@@ -109,6 +109,16 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private let queueKey = DispatchSpecificKey<UInt8>()
     private weak var counters: StreamCounters?
     private weak var frameTiming: HostFrameTimingLog?
+    private let videoFeedback: VideoFeedbackContext?
+    private var ltrApplied = false
+    private var acknowledgedLTRSubmission: [Int64] = []
+    private var forceIDR = false
+    private var refreshSubmission = false
+    var submittedLTRRefresh: Bool { serialized { refreshSubmission } }
+    func requireIndependentKeyFrame() { serialized { forceIDR = true } }
+    var ltrEnabled: Bool { serialized { ltrApplied } }
+    var submittedLTRTokens: [Int64] { serialized { acknowledgedLTRSubmission } }
+    private var ltrGeneration: String?
     private var callback: RTCVideoEncoderCallback?
     private var session: VTCompressionSession?
     private var epoch = UUID()
@@ -131,7 +141,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private var storedLastStage: String = "not-started"
     var lastStage: String { serialized { storedLastStage } }
 
-    init(configuration: any OwnedVideoConfiguration, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil) {
+    init(configuration: any OwnedVideoConfiguration, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil, videoFeedback: VideoFeedbackContext? = nil) {
+        self.videoFeedback = videoFeedback
         self.configuration = configuration; self.counters = counters; self.frameTiming = frameTiming
         super.init(); queue.setSpecific(key: queueKey, value: 1)
     }
@@ -163,6 +174,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             compressedDataAllocator: nil, outputCallback: nil, refcon: nil, compressionSessionOut: &created)
         guard status == noErr, let created else { storedLastStatus = status; return status }
         session = created
+        videoFeedback?.beginEncoder()
         for (key, value) in [(kVTCompressionPropertyKey_RealTime, kCFBooleanTrue as CFTypeRef),
                              (kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse as CFTypeRef),
                              (kVTCompressionPropertyKey_ProfileLevel, configuration.profileProperty as CFTypeRef)] {
@@ -234,20 +246,49 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                   let pixels = adaptedPixels(buffer), nextID < UInt64.max else { return -1 }
             nextID += 1
             let id = nextID, currentEpoch = epoch
-            let entry = Pending(epoch: currentEpoch, timestamp: UInt32(bitPattern: frame.timeStamp),
+            var videoTag = videoFeedback?.encoded(token: nil)
+            if configuration.codecType == kCMVideoCodecType_H264, configuration.lowLatency, videoFeedback?.permitsLTR == true, let videoTag {
+                if ltrGeneration != videoTag.generation {
+                    // A context transition cannot retain an acknowledged reference from another scope.
+                    if ltrGeneration != nil {
+                        invalidate(); guard createSession() == noErr else { return -1 }
+                        return encode(frame, codecSpecificInfo: info, frameTypes: [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)])
+                    }
+                    ltrGeneration = videoTag.generation
+                    ltrApplied = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_EnableLTR, value: kCFBooleanTrue) == noErr
+                }
+            } else if ltrApplied {
+                invalidate(); guard createSession() == noErr else { return -1 }
+                return encode(frame, codecSpecificInfo: info, frameTypes: [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)])
+            }
+            if let tag = videoTag { videoTag = videoFeedback?.prepareRefinement(pixels, tag: tag) }
+            let entry = Pending(epoch: currentEpoch, videoTag: videoTag, timestamp: UInt32(bitPattern: frame.timeStamp),
                 captureMs: frame.timeStampNs / 1_000_000, rotation: frame.rotation, submittedMs: MachClock.nowMs(), width: width, height: height)
             pending[id] = entry
             frameTiming?.submitted(ObjectIdentifier(buffer.pixelBuffer), key: entry.captureMs)
-            let properties = frameTypes.contains { $0.intValue == RTCFrameType.videoFrameKey.rawValue }
-                ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as CFDictionary : nil
+            var submittedTokens: [Int64] = []
+            var properties: [CFString: Any] = [:]
+            let independentKey = forceIDR
+            if independentKey || (frameTypes.contains(where: { $0.intValue == RTCFrameType.videoFrameKey.rawValue }) && !ltrApplied) {
+                properties[kVTEncodeFrameOptionKey_ForceKeyFrame] = true
+            } else if frameTypes.contains(where: { $0.intValue == RTCFrameType.videoFrameKey.rawValue }) && ltrApplied {
+                // Native loss/PLI refresh may use a receiver-proven LTR; VT falls back to IDR without an ACK.
+                properties[kVTEncodeFrameOptionKey_ForceLTRRefresh] = true
+            }
+            if ltrApplied, let options = videoFeedback?.takeOptions() {
+                submittedTokens = options.tokens
+                if !options.tokens.isEmpty { properties[kVTEncodeFrameOptionKey_AcknowledgedLTRTokens] = options.tokens.map { NSNumber(value: $0) } }
+                if options.refresh && !independentKey { properties[kVTEncodeFrameOptionKey_ForceLTRRefresh] = true }
+            }
             let result = VTCompressionSessionEncodeFrame(session, imageBuffer: pixels,
                 presentationTimeStamp: CMTime(value: frame.timeStampNs, timescale: 1_000_000_000),
-                duration: CMTime(value: 1, timescale: Int32(fps)), frameProperties: properties, infoFlagsOut: nil) {
+                duration: CMTime(value: 1, timescale: Int32(fps)), frameProperties: properties as CFDictionary, infoFlagsOut: nil) {
                     [weak self] status, flags, sample in
                     guard let self else { return }
                     self.queue.async { [weak self] in self?.completed(id: id, epoch: currentEpoch, status: status, flags: flags, sample: sample) }
                 }
             if result != noErr { pending.removeValue(forKey: id); counters?.droppedBeforeEncode() }
+            if result == noErr { acknowledgedLTRSubmission = submittedTokens; refreshSubmission = properties[kVTEncodeFrameOptionKey_ForceLTRRefresh] as? Bool == true; forceIDR = false }
             storedLastStatus = result
             return result == noErr ? 0 : -1
         }
@@ -266,6 +307,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         guard count >= 0, count <= 32 * 1024 * 1024 else { return nil }
         var scratch = Data(count: Int(count))
         let success = scratch.withUnsafeMutableBytes { buffer.cropAndScale(to: output, withTempBuffer: $0.baseAddress?.assumingMemoryBound(to: UInt8.self)) }
+        if success, let attachments = CVBufferCopyAttachments(buffer.pixelBuffer, .shouldPropagate) { CVBufferSetAttachments(output, attachments, .shouldPropagate) }
         return success ? output : nil
     }
     private func completed(id: UInt64, epoch: UUID, status: OSStatus, flags: VTEncodeInfoFlags, sample: CMSampleBuffer?) {
@@ -284,7 +326,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                 if bytes.count >= 13 { storedLastStage = "HEVC profile=\(bytes[1]) level=\(bytes[12])" }
             }
         }
-        guard let data = Self.annexB(sample, configuration: configuration) else {
+        guard var data = Self.annexB(sample, configuration: configuration) else {
             counters?.encoderSilentlyDropped(1)
             invalidate(); storedLastStatus = kVTParameterErr
             onFatalFailure?()
@@ -292,6 +334,12 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         }
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
         let isKey = (attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool) != true
+        if let submittedTag = entry.videoTag {
+            // The token is a public CMSampleBuffer attachment, not an inferred frame number.
+            let number = ltrApplied ? attachments?.first?[kVTSampleAttachmentKey_RequireLTRAcknowledgementToken] as? NSNumber : nil
+            if let tag = videoFeedback?.encoded(token: number?.int64Value, expected: submittedTag),
+               let marked = H26xVideoMarker.append(tag, to: data, hevc: configuration.codecType == kCMVideoCodecType_HEVC) { data = marked }
+        }
         let now = MachClock.nowMs()
         let image = RTCEncodedImage()
         image.buffer = data; image.encodedWidth = entry.width; image.encodedHeight = entry.height
@@ -338,7 +386,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         return H264AnnexB.convert(bytes, lengthBytes: Int(lengthBytes), parameterSets: sets)
     }
     private func invalidate() {
-        epoch = UUID(); pending.removeAll()
+        epoch = UUID(); pending.removeAll(); ltrApplied = false; ltrGeneration = nil; acknowledgedLTRSubmission = []; forceIDR = false; refreshSubmission = false
         counters?.recordEncoderEvidence(nil)
         if let session { VTCompressionSessionInvalidate(session) }
         session = nil; storedMaximumQPApplied = false; storedLowLatencyApplied = false; storedHardwareReported = nil
@@ -456,15 +504,15 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
     private var deliveryEpoch: UUID?
     private var usingOwned = false
     init(configuration: OwnedVTConfiguration, codecInfo: RTCVideoCodecInfo,
-         counters: StreamCounters?, frameTiming: HostFrameTimingLog?) {
-        owned = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming)
+         counters: StreamCounters?, frameTiming: HostFrameTimingLog?, videoFeedback: VideoFeedbackContext? = nil) {
+        owned = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback)
         fallback = DesktopH264Encoder(codecInfo: codecInfo, counters: counters, frameTiming: frameTiming)
         maximumKbps = configuration.maximumKbps
         delivery = VideoEncoderCallbackDelivery(counters: counters)
         super.init(); queue.setSpecific(key: key, value: 1)
     }
-    init(configuration: OwnedHEVCConfiguration, counters: StreamCounters?, frameTiming: HostFrameTimingLog?, onFailure: (() -> Void)? = nil) {
-        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming)
+    init(configuration: OwnedHEVCConfiguration, counters: StreamCounters?, frameTiming: HostFrameTimingLog?, onFailure: (() -> Void)? = nil, videoFeedback: VideoFeedbackContext? = nil) {
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback)
         owned = encoder
         fallback = nil // Never label H.264 bytes as H.265. Rollback requires a new negotiation.
         maximumKbps = configuration.maximumKbps
@@ -526,7 +574,9 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
     }
     func encode(_ frame: RTCVideoFrame, codecSpecificInfo info: (any RTCCodecSpecificInfo)?, frameTypes: [NSNumber]) -> Int {
         serialized {
-            let requested = delivery.needsKeyFrame ? [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)] : frameTypes
+            let needsIndependent = delivery.needsKeyFrame
+            if needsIndependent { (active as? OwnedVTEncoder)?.requireIndependentKeyFrame() }
+            let requested = needsIndependent ? [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)] : frameTypes
             let result = active?.encode(frame, codecSpecificInfo: info, frameTypes: requested) ?? -1
             guard result != 0, usingOwned, let settings, let epoch = deliveryEpoch, delivery.isCurrent(epoch) else { return result }
             _ = owned.release()

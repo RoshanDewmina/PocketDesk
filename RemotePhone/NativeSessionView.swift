@@ -558,6 +558,7 @@ struct NativeSessionView: View {
                                        fillsFrame: model.captureRegion != nil,
                                        smoothMotion: smoothMotion, smoothMotionUpscale: smoothMotionUpscale,
                                        admission: model.inlinePresentationAdmission,
+                                       videoFeedback: connection.media?.videoFeedback,
                                        onFrame: model.frameReceived)
                         .frame(width: picture.width, height: picture.height)
                         .offset(x: picture.minX, y: picture.minY)

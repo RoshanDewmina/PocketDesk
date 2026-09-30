@@ -34,7 +34,7 @@ enum SharedCaptureScopePolicy {
     static func features(_ features: [String], kind: CaptureScopeFrame.Kind) -> [String] {
         guard kind != .display else { return features }
         let allowed = Set([SessionFeature.captureScope, SessionFeature.backgroundPause, SessionFeature.liveViewOnly,
-                           SessionFeature.ladder, SessionFeature.macVitals])
+                           SessionFeature.ladder, SessionFeature.macVitals, SessionFeature.videoLTR, SessionFeature.videoRefinement])
         return features.filter { allowed.contains($0) }
     }
 }

@@ -581,7 +581,7 @@ enum RemoteCaptureConfiguration {
     /// it to. Without a crop the configuration is the whole-display one, unchanged.
     static func streamConfiguration(output: CapturePixelDimensions, region: CaptureRegion?, showsCursor: Bool,
                                     fps: Int, displayRefreshHz: Double?,
-                                    tuning: StreamTuning, capturesAudio: Bool = false) -> SCStreamConfiguration {
+                                    tuning: StreamTuning, capturesAudio: Bool = false, refinesText: Bool = false) -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
         configuration.width = output.width
         configuration.height = output.height
@@ -600,7 +600,7 @@ enum RemoteCaptureConfiguration {
         configuration.sampleRate = 48_000
         configuration.channelCount = 2
         configuration.captureMicrophone = false
-        configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        configuration.pixelFormat = refinesText ? kCVPixelFormatType_32BGRA : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         configuration.colorSpaceName = StreamColor.captureColorSpaceName
         configuration.colorMatrix = StreamColor.captureYCbCrMatrix
         return configuration
@@ -691,7 +691,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             throw CaptureSizingError.invalidSource
         }
         let configuration = RemoteCaptureConfiguration.streamConfiguration(
-            output: output, region: nil, showsCursor: true, fps: fps, displayRefreshHz: refresh, tuning: tuning, capturesAudio: resolved.target == nil && peer.systemAudioEnabled
+            output: output, region: nil, showsCursor: true, fps: fps, displayRefreshHz: refresh, tuning: tuning, capturesAudio: resolved.target == nil && peer.systemAudioEnabled, refinesText: peer.refinementCaptureEnabled
         )
         self.display = display
         self.peer = peer
@@ -813,7 +813,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         let configuration = RemoteCaptureConfiguration.streamConfiguration(
             output: output, region: region, showsCursor: inputs.showsCursor,
             fps: min(targetFPS, inputs.ladderFPS ?? targetFPS),
-            displayRefreshHz: displayRefreshHz, tuning: tuning, capturesAudio: capturesAudio
+            displayRefreshHz: displayRefreshHz, tuning: tuning, capturesAudio: capturesAudio, refinesText: peer?.refinementCaptureEnabled == true
         )
         let previousRegion = appliedRegion
         let bufferVersionAtStart = bufferVersion
