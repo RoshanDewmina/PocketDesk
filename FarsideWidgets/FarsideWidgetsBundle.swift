@@ -5,5 +5,6 @@ import WidgetKit
 struct FarsideWidgetsBundle: WidgetBundle {
     var body: some Widget {
         SessionLiveActivity()
+        ConnectWidget()
     }
 }

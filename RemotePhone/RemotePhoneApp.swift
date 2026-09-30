@@ -106,6 +106,8 @@ final class PhoneRemoteModel: ObservableObject {
     /// Why the last session ended, for the Lock Screen and Dynamic Island.
     private(set) var sessionEndReason: FarsideSessionAttributes.EndReason?
     @Published private(set) var hostPresence: HostPresence?
+    /// A grant the Mac reports missing during this session (only `accessibilityOff` arrives here).
+    @Published private(set) var sessionBlocker: MacShareBlocker?
     /// The Mac's privacy curtain, or nil when the Mac does not support one.
     @Published private(set) var curtainState: PrivacyCurtainState?
     /// A short explanation shown over the live session, cleared after a few seconds.
@@ -114,6 +116,8 @@ final class PhoneRemoteModel: ObservableObject {
     private var recoveryNoticeShown = false
     /// Why the last session ended, when the Mac itself said so.
     @Published private(set) var macNotice: String?
+    /// What the Mac said as the last session ended (asleep, locked, another user), until the next session.
+    @Published private(set) var lastDeparture: HostPresence?
     private var departureReason: HostPresence?
     private var continuity = BackgroundContinuity()
     private let background: BackgroundExecution
@@ -203,8 +207,21 @@ final class PhoneRemoteModel: ObservableObject {
     private var heartbeatsSent = 0
     private var reducedPictureNoticeShown = false
 
-    init(background: BackgroundExecution? = nil) {
+    // MARK: Session resume capsule
+
+    /// A view to put back once the new session shows the capsule's display; the session view applies it.
+    @Published private(set) var viewportResume: ResumeViewport?
+    private let resumeStore: SessionResumeStore
+    /// The latest view of this session, or the previous session's view while it waits to be restored.
+    private var resumeCapsule: SessionResumeCapsule?
+    /// False from authentication until the previous view is restored or dropped; nothing is recorded meanwhile.
+    private var resumeResolved = true
+    private var resumeStartedAt: TimeInterval = 0
+
+    init(background: BackgroundExecution? = nil, resumeStore: SessionResumeStore = SessionResumeStore()) {
         self.background = background ?? SystemBackgroundExecution()
+        self.resumeStore = resumeStore
+        resumeCapsule = resumeStore.load()
         NativeCodecCapability.warmUp()
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
@@ -230,10 +247,14 @@ final class PhoneRemoteModel: ObservableObject {
             self.contentConcealed = false
             self.resumeState = .none
             self.macNotice = nil
+            self.lastDeparture = nil
             self.sessionEndReason = nil
             self.backgroundHoldEndsAt = nil
             self.phoneLoad = nil
             self.phoneLoadReportedAt = nil
+            self.viewportResume = nil
+            self.resumeResolved = self.resumeCapsule == nil
+            self.resumeStartedAt = ProcessInfo.processInfo.systemUptime
             if let peer = self.connection.media {
                 peer.onStreamStatistics = { [weak self, weak peer] report in
                     Task { @MainActor in
@@ -871,6 +892,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     func disconnect() {
         sessionEndReason = .user
+        discardResume()
         clearContinuity()
         release()
         connection.stop()
@@ -914,6 +936,7 @@ final class PhoneRemoteModel: ObservableObject {
         phoneLoadReportedAt = nil
         contentConcealed = true
         resumeState = .backgrounded
+        persistResume()
         cancelInput()
         suspendInputReadiness()
         clipboard.cancel()
@@ -1037,6 +1060,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     private func sessionEnded() {
         end()
+        if sessionEndReason != .user { persistResume() }
         guard continuity.isHolding else { return }
         // Lost while backgrounded: stop the coordinator's retries until the app returns.
         if sessionEndReason == nil { sessionEndReason = .error }
@@ -1110,6 +1134,7 @@ final class PhoneRemoteModel: ObservableObject {
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             hostFeatures = Set(action.features ?? [])
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
+            sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
             let previousCurtain = curtainState
             curtainState = curtainSupported
                 ? action.curtain.flatMap(PrivacyCurtainState.init(rawValue:)) ?? .off : nil
@@ -1212,6 +1237,54 @@ final class PhoneRemoteModel: ObservableObject {
         }
     }
 
+    /// The session view reports what it shows. Only a live, fresh picture of a known display counts,
+    /// and never before the previous session's view has been restored or dropped.
+    func recordViewport(_ viewport: ResumeViewport?) {
+        guard resumeResolved, sessionEndReason != .user, connection.connected, fresh, geometryEpoch > 0,
+              let viewport, let room = connection.invitation?.room else { return }
+        resumeCapsule = SessionResumeCapsule(macKey: DisplayMemory.macKey(room: room), displayID: currentDisplayID,
+                                             displaySize: sourceSize, viewport: viewport, savedAt: Date())
+    }
+
+    func viewportResumeApplied() {
+        viewportResume = nil
+    }
+
+    private func resolveResume(at now: TimeInterval) {
+        guard fresh, geometryEpoch > 0 else { return }
+        guard let capsule = resumeCapsule, let room = connection.invitation?.room else {
+            resumeResolved = true
+            return
+        }
+        let switching = hostFeatures.isEmpty
+            || (displaySelectionSupported && (displays.isEmpty || pendingDisplayID != nil))
+        let mayStillSwitch = switching && now - resumeStartedAt < SessionResumeCapsule.displayWait
+        switch capsule.decision(macKey: DisplayMemory.macKey(room: room), displayID: currentDisplayID,
+                                displaySize: sourceSize, now: Date(), mayStillSwitchDisplay: mayStillSwitch) {
+        case .wait:
+            return
+        case .discard:
+            discardResume()
+        case .restore(let viewport):
+            // Kept as this session's view until the person moves it, so leaving again still resumes.
+            resumeResolved = true
+            viewportResume = viewport.isDefaultView ? nil : viewport
+        }
+    }
+
+    private func discardResume() {
+        resumeCapsule = nil
+        resumeResolved = true
+        viewportResume = nil
+        resumeStore.save(nil)
+    }
+
+    /// The lifetime counts from when the session was left, not from the last time the view moved.
+    private func persistResume() {
+        if resumeResolved { resumeCapsule?.savedAt = Date() }
+        resumeStore.save(resumeCapsule)
+    }
+
     /// Stream statistics: a new clock probe, remembered so only its echo counts.
     func registerClockProbe(phoneMs: Double = MachClock.nowMs()) -> ClockProbe {
         clockSync.sent(phoneMs: phoneMs)
@@ -1262,6 +1335,7 @@ final class PhoneRemoteModel: ObservableObject {
         }
         pointerOverlay.refresh()
         if !rememberedDisplayApplied && !displays.isEmpty && canControl { applyRememberedDisplay() }
+        if connection.connected && !resumeResolved { resolveResume(at: now) }
         if fresh && now - lastFrame > 2 {
             fresh = false
             pointerLocator.clear()
@@ -1335,6 +1409,7 @@ final class PhoneRemoteModel: ObservableObject {
         textStatus = ""
         hostFeatures = []
         hostPresence = nil
+        sessionBlocker = nil
         curtainState = nil
         recoveryNoticeShown = false
         reducedPictureNoticeShown = false
@@ -1342,6 +1417,7 @@ final class PhoneRemoteModel: ObservableObject {
         heartbeatsSent = 0
         if let departureReason {
             macNotice = Self.notice(for: departureReason)
+            lastDeparture = departureReason
             if sessionEndReason == nil { sessionEndReason = .macStopped }
         }
         departureReason = nil

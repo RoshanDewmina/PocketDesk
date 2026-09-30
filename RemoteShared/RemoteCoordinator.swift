@@ -46,6 +46,12 @@ final class RemoteCoordinator: ObservableObject {
     /// Phone: the service asked for Farside Anywhere during this attempt. The session continues on
     /// the routes permitted by the service and clients; empty ICE alone is not a LAN boundary.
     @Published private(set) var entitlementRequired = false
+    /// Host: a missing grant that stops this Mac accepting any session (see `MacShareBlocker`).
+    var shareBlocker: (() -> MacShareBlocker?)?
+    /// Host: what the current phone listed in its handshake request.
+    private(set) var peerFeatures: Set<String> = []
+    /// Phone: the grant the Mac said it is missing when it refused this attempt.
+    @Published private(set) var macBlocker: MacShareBlocker?
     var media: PeerMedia?
     private(set) var hostPair: HostPair?
     private(set) var invitation: PairInvitation?
@@ -230,6 +236,7 @@ final class RemoteCoordinator: ObservableObject {
             routeEpochsSeen.removeAll()
             serviceAccess = nil
             entitlementRequired = false
+            macBlocker = nil
             var features = advertisesRenewal ? [SignalingFeature.renewal] : []
             features.append(SignalingFeature.route)
             if !isHost && advertisesRemoteAccess { features.append(SignalingFeature.remoteAccess) }
@@ -348,6 +355,7 @@ final class RemoteCoordinator: ObservableObject {
         diagnostics = "Route not measured"
         sentControl = 0; receivedControl = 0
         request = ""; session = ""; sequence = 0; guardState = nil; proofReceived = false
+        peerFeatures = []
         onEnded?()
     }
     private func receive(_ message: RelayMessage) {
@@ -402,7 +410,8 @@ final class RemoteCoordinator: ObservableObject {
                     }
                     if !isHost {
                         resetSession(); request = try SecureRandom.token()
-                        send(kind: "request", handshake: true); status = "Authenticating your Mac…"; setTimeout()
+                        send(kind: "request", body: try? JSONEncoder().encode(MacShareBlocker.Handshake.phone), handshake: true)
+                        status = "Authenticating your Mac…"; setTimeout()
                     }
                 } else { peerDisconnected() }
             case "signal":
@@ -453,6 +462,7 @@ final class RemoteCoordinator: ObservableObject {
                   let pair = hostPair, pair.paired || pair.invitation.expires > Date() else { throw RemoteError.stale }
             request = message.request; session = try SecureRandom.token()
             guardState = SessionReplayGuard(request: request, session: session)
+            peerFeatures = MacShareBlocker.Handshake.features(in: message.body)
             send(kind: "challenge", handshake: true); setTimeout(); return
         }
         if !isHost, message.kind == "challenge" {
@@ -468,6 +478,10 @@ final class RemoteCoordinator: ObservableObject {
             guard message.request == request, message.session == session, !session.isEmpty,
                   message.sequence == 0, !proofReceived else { throw RemoteError.stale }
             proofReceived = true
+            if let blocker = shareBlocker?() {
+                refuseSession(blocker)
+                return
+            }
             if hostPair?.paired == true { acceptSession() }
             else {
                 #if DEBUG
@@ -504,6 +518,11 @@ final class RemoteCoordinator: ObservableObject {
             }
             prepareMedia()
             send(kind: "acceptedAck")
+        case MacShareBlocker.refusalKind where !isHost:
+            guard media == nil, let body = message.body else { throw RemoteError.invalidMessage }
+            let refusal = try JSONDecoder().decode(MacShareBlocker.Refusal.self, from: body)
+            macBlocker = refusal.reason
+            fail("Mac unavailable: \(refusal.reason.rawValue)")
         case "acceptedAck" where isHost:
             guard proofReceived, media == nil, !awaitingApproval else { throw RemoteError.stale }
             prepareMedia()
@@ -531,6 +550,16 @@ final class RemoteCoordinator: ObservableObject {
             status = "Connecting live desktop…"; setTimeout()
         } catch { fail(error.localizedDescription) }
     }
+    /// An authenticated phone is never accepted while a grant is missing. One that understands blockers
+    /// is told which; an older phone just times out, as it did when the Mac was not listening.
+    private func refuseSession(_ blocker: MacShareBlocker) {
+        if peerFeatures.contains(MacShareBlocker.feature),
+           let body = try? JSONEncoder().encode(MacShareBlocker.Refusal(reason: blocker)) {
+            send(kind: MacShareBlocker.refusalKind, body: body)
+        }
+        peerDisconnected()
+    }
+
     private func prepareMedia() {
         guard (routeArmed && (routePolicy?.expiresAt ?? .distantPast) > Date()) || allowLegacyPrivateRoute else {
             sessionFailed("The connection route is no longer authorized.")

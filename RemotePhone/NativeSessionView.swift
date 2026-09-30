@@ -222,8 +222,17 @@ struct NativeSessionView: View {
         )
     }
 
+    /// Session Resume Capsule: report what is shown, and put back the previous session's view.
+    private var sessionResume: AnyView {
+        AnyView(sessionInteraction
+        .onChange(of: recordableViewport) { _, resume in model.recordViewport(resume) }
+        .onChange(of: model.viewportResume) { _, resume in
+            if let resume { applyResume(resume) }
+        })
+    }
+
     var body: some View {
-        sessionInteraction
+        sessionResume
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
         .onAppear {
             if !offlineLayoutCheck && !model.fresh { lockVisible = true }
@@ -760,14 +769,24 @@ struct NativeSessionView: View {
         return parts.joined(separator: ", ")
     }
 
+    private var sessionHealth: ConnectionHealth? {
+        guard !offlineLayoutCheck else { return nil }
+        return ConnectionHealth.session(.init(connected: connection.connected, fresh: model.fresh,
+                                              captureHealthy: model.captureHealthy, hostPresence: model.hostPresence,
+                                              canWakeDisplay: model.canWakeDisplay, route: model.link?.route,
+                                              roundTripMs: model.link?.roundTripMs, blocker: model.sessionBlocker))
+    }
+
     private var status: String {
         if offlineLayoutCheck { return "No Mac connected · nothing is sent" }
         if model.dragging {
             return model.explicitHoldDeadline != nil ? "Mouse button held · tap Drop to let go" : "Holding click · lift to drop"
         }
-        if !model.fresh || !model.captureHealthy { return "Reconnecting the picture · controls paused" }
+        let health = sessionHealth
+        if let health, !health.isSlowOnly { return health.sessionLine }
         if panMode { return "View · drag or pinch to look around" }
         if model.canControl && clickAcknowledged { return "Click sent" }
+        if let health { return health.sessionLine }
         if model.canControl { return directTouch ? "Controlling your Mac · direct touch" : "Controlling your Mac" }
         return model.controlAllowed ? "View only" : "Mouse and keyboard are off on your Mac"
     }
@@ -1541,7 +1560,11 @@ struct NativeSessionView: View {
         case .clipboard: settingsForm("Clipboard") { clipboardSettingsSection }
         case .keyboard: settingsForm("Keyboard and pointer") { hardwareSection }
         case .steer: settingsForm("How to steer") { gesturesSection }
-        case .diagnostics: settingsForm("Diagnostics") { diagnosticsSection }
+        case .diagnostics:
+            settingsForm("Diagnostics") {
+                connectionHealthSection
+                diagnosticsSection
+            }
         }
     }
 
@@ -1933,6 +1956,30 @@ struct NativeSessionView: View {
         }
     }
 
+    private var connectionHealthSection: some View {
+        Section {
+            let health = sessionHealth
+            VStack(alignment: .leading, spacing: 4) {
+                Text(health?.title ?? "Nothing wrong observed")
+                    .foregroundStyle(Farside.Palette.bone)
+                Text(health.map { "\($0.detail) \($0.nextStep)" } ?? healthyRouteSummary)
+                    .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("remote.health")
+            .listRowBackground(Farside.Palette.panel)
+        } header: {
+            sectionHeader("Connection")
+        }
+    }
+
+    private var healthyRouteSummary: String {
+        let parts = [model.link?.route.map { $0 == "Relay" ? "Relayed route" : "Direct route" },
+                     model.link?.roundTripMs.map { "\($0) ms round trip" }].compactMap { $0 }
+        return parts.isEmpty ? "No route measured yet." : parts.joined(separator: " · ")
+    }
+
     private var diagnosticsSection: some View {
         Section {
             if !offlineLayoutCheck {
@@ -2273,6 +2320,25 @@ struct NativeSessionView: View {
         } else if viewport.safeInsets != insets {
             withAnimation(reduceMotion ? nil : .snappy) { viewport.updateSafeInsets(insets) }
         }
+    }
+
+    /// Only a view of the display the model is streaming counts; a stale canvas mid-resize does not.
+    private var recordableViewport: ResumeViewport? {
+        guard !offlineLayoutCheck, viewport.sourceSize == model.sourceSize, viewport.canvasSize.width > 0 else { return nil }
+        return viewport.resumeViewport(viewOnly: panMode)
+    }
+
+    private func applyResume(_ resume: ResumeViewport) {
+        model.viewportResumeApplied()
+        guard !offlineLayoutCheck else { return }
+        if viewport.sourceSize != model.sourceSize { applyGeometry() }
+        guard viewport.sourceSize == model.sourceSize, viewport.canvasSize.width > 0 else { return }
+        if let current = recordableViewport, current.matches(resume) { return }
+        cancelGesture()
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) { viewport.restore(resume) }
+        setInteractionMode(resume.viewOnly)
+        reportSettledViewport()
+        model.announce("Back where you left off")
     }
 
     private func setMode(_ mode: ViewportMode) {
