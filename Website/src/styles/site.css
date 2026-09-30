@@ -1610,7 +1610,7 @@ a.store {
   position: absolute;
   left: 18px;
   top: 16px;
-  font: 800 22px/1.2 var(--dot);
+  font: 800 28px/1 var(--dot);
   color: var(--ash);
 }
 .setup > li > b:first-child {
@@ -1815,7 +1815,7 @@ a.store {
   scroll-margin-top: 20px;
 }
 .steps-doc .st-n {
-  font: 800 24px/1.1 var(--dot);
+  font: 800 28px/1 var(--dot);
   color: var(--ash);
 }
 .steps-doc h3 {

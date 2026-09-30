@@ -4,7 +4,7 @@
 /* Geist 400 normal: measured against Arial */
 @font-face {
   font-family: "Geist Fallback";
-  src: local("Arial"), local("ArialMT"), local("Helvetica"), local("Roboto");
+  src: local("Arial"), local("ArialMT"), local("Liberation Sans"), local("Helvetica"), local("Roboto");
   font-style: normal;
   font-weight: 100 500;
   size-adjust: 102.03%;
@@ -16,7 +16,7 @@
 /* Geist 600 normal: measured against Arial */
 @font-face {
   font-family: "Geist Fallback";
-  src: local("Arial Bold"), local("Arial-BoldMT"), local("Helvetica Bold"), local("Roboto Bold");
+  src: local("Arial Bold"), local("Arial-BoldMT"), local("Liberation Sans Bold"), local("Helvetica Bold"), local("Roboto Bold");
   font-style: normal;
   font-weight: 501 900;
   size-adjust: 99.09%;
@@ -28,7 +28,7 @@
 /* Geist Mono 400 normal: measured against Courier New */
 @font-face {
   font-family: "Geist Mono Fallback";
-  src: local("Courier New"), local("CourierNewPSMT"), local("Menlo"), local("Roboto Mono");
+  src: local("Courier New"), local("CourierNewPSMT"), local("Liberation Mono"), local("Menlo"), local("Roboto Mono");
   font-style: normal;
   font-weight: 100 900;
   size-adjust: 99.98%;
@@ -40,7 +40,7 @@
 /* Doto 800 normal: measured against Courier New */
 @font-face {
   font-family: "Doto Fallback";
-  src: local("Courier New Bold"), local("CourierNewPS-BoldMT"), local("Courier New"), local("Menlo");
+  src: local("Courier New Bold"), local("CourierNewPS-BoldMT"), local("Liberation Mono Bold"), local("Courier New"), local("Menlo");
   font-style: normal;
   font-weight: 100 900;
   size-adjust: 99.98%;
@@ -52,7 +52,7 @@
 /* Instrument Serif 400 italic: measured against Times New Roman */
 @font-face {
   font-family: "Instrument Serif Fallback";
-  src: local("Times New Roman Italic"), local("TimesNewRomanPS-ItalicMT"), local("Times New Roman"), local("Georgia Italic");
+  src: local("Times New Roman Italic"), local("TimesNewRomanPS-ItalicMT"), local("Liberation Serif Italic"), local("Times New Roman"), local("Georgia Italic");
   font-style: italic;
   font-weight: 100 900;
   size-adjust: 86.83%;

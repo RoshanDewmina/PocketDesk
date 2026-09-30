@@ -11,11 +11,11 @@ import { ROOT } from "./build";
 type Face = { family: string; weight: number; style: "normal" | "italic"; measure: string; local: string[]; fallbackName: string; weightRange: string };
 
 const FACES: Face[] = [
-  { family: "Geist", weight: 400, style: "normal", measure: "Arial", local: ["Arial", "ArialMT", "Helvetica", "Roboto"], fallbackName: "Geist Fallback", weightRange: "100 500" },
-  { family: "Geist", weight: 600, style: "normal", measure: "Arial", local: ["Arial Bold", "Arial-BoldMT", "Helvetica Bold", "Roboto Bold"], fallbackName: "Geist Fallback", weightRange: "501 900" },
-  { family: "Geist Mono", weight: 400, style: "normal", measure: "Courier New", local: ["Courier New", "CourierNewPSMT", "Menlo", "Roboto Mono"], fallbackName: "Geist Mono Fallback", weightRange: "100 900" },
-  { family: "Doto", weight: 800, style: "normal", measure: "Courier New", local: ["Courier New Bold", "CourierNewPS-BoldMT", "Courier New", "Menlo"], fallbackName: "Doto Fallback", weightRange: "100 900" },
-  { family: "Instrument Serif", weight: 400, style: "italic", measure: "Times New Roman", local: ["Times New Roman Italic", "TimesNewRomanPS-ItalicMT", "Times New Roman", "Georgia Italic"], fallbackName: "Instrument Serif Fallback", weightRange: "100 900" },
+  { family: "Geist", weight: 400, style: "normal", measure: "Arial", local: ["Arial", "ArialMT", "Liberation Sans", "Helvetica", "Roboto"], fallbackName: "Geist Fallback", weightRange: "100 500" },
+  { family: "Geist", weight: 600, style: "normal", measure: "Arial", local: ["Arial Bold", "Arial-BoldMT", "Liberation Sans Bold", "Helvetica Bold", "Roboto Bold"], fallbackName: "Geist Fallback", weightRange: "501 900" },
+  { family: "Geist Mono", weight: 400, style: "normal", measure: "Courier New", local: ["Courier New", "CourierNewPSMT", "Liberation Mono", "Menlo", "Roboto Mono"], fallbackName: "Geist Mono Fallback", weightRange: "100 900" },
+  { family: "Doto", weight: 800, style: "normal", measure: "Courier New", local: ["Courier New Bold", "CourierNewPS-BoldMT", "Liberation Mono Bold", "Courier New", "Menlo"], fallbackName: "Doto Fallback", weightRange: "100 900" },
+  { family: "Instrument Serif", weight: 400, style: "italic", measure: "Times New Roman", local: ["Times New Roman Italic", "TimesNewRomanPS-ItalicMT", "Liberation Serif Italic", "Times New Roman", "Georgia Italic"], fallbackName: "Instrument Serif Fallback", weightRange: "100 900" },
 ];
 
 const SAMPLE =
