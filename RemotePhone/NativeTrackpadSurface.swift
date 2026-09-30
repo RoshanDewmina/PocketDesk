@@ -12,6 +12,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
     var pointerScale: CGFloat
     var doubleClickInterval: TimeInterval
     var middleClickAvailable: Bool = false
+    var momentumScroll: Bool = false
     /// Physical key presses go to the Mac.
     var hardwareKeys: Bool = false
     /// A mouse or trackpad on iPad places the Mac pointer and clicks.
@@ -40,6 +41,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
                               doubleClickInterval: doubleClickInterval, direct: direct)
         view.engine.onCommand = onCommand
         view.engine.onPointerMotionEnded = onPointerMotionEnded
+        view.engine.momentumEnabled = momentumScroll
         view.pointer.onCommand = onCommand
         view.pointer.setEnabled(hardwarePointer)
         view.hardwareKeys = hardwareKeys
@@ -139,6 +141,10 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
             HardwarePeripherals.shared.onMiddleButton = { [weak self] pressed in
                 guard let self, !pressed else { return }
                 self.pointer.middleClick()
+            }
+            HardwarePeripherals.shared.onAuxiliaryButton = { [weak self] button, pressed in
+                guard let self, !pressed else { return }
+                self.pointer.auxiliaryClick(button)
             }
             HardwarePeripherals.shared.onKeyboardDisconnect = { [weak self] in self?.keyboard.releaseAll() }
             claimKeyboardFocus()
@@ -373,6 +379,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
                 let now = ProcessInfo.processInfo.systemUptime
                 self?.engine.tick(at: now)
                 self?.pointer.tick(at: now)
+                self?.stopTimerIfIdle()
             }
         }
     }
@@ -466,7 +473,7 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
     }
 
     private func stopTimerIfIdle() {
-        if contacts.isEmpty && !pointer.isPressed {
+        if contacts.isEmpty && !pointer.isPressed && !engine.hasMomentum {
             holdTimer?.invalidate()
             holdTimer = nil
         }

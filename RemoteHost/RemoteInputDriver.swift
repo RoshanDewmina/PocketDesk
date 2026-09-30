@@ -103,7 +103,7 @@ struct RemoteInputEventSink {
             var events: [CGEvent] = []
             for description in descriptions {
                 guard let event = CGEvent(
-                    mouseEventSource: nil,
+                    mouseEventSource: RemoteInputEventSource.shared,
                     mouseType: description.type,
                     mouseCursorPosition: description.point,
                     mouseButton: description.button
@@ -117,7 +117,7 @@ struct RemoteInputEventSink {
         },
         scroll: { point, horizontal, vertical in
             guard let event = CGEvent(
-                scrollWheelEvent2Source: nil,
+                scrollWheelEvent2Source: RemoteInputEventSource.shared,
                 units: .pixel,
                 wheelCount: 2,
                 wheel1: Int32(min(2000, max(-2000, vertical))),
@@ -133,7 +133,7 @@ struct RemoteInputEventSink {
             let clampedX = min(2000, max(-2000, horizontal))
             let clampedY = min(2000, max(-2000, vertical))
             guard let event = CGEvent(
-                scrollWheelEvent2Source: nil,
+                scrollWheelEvent2Source: RemoteInputEventSource.shared,
                 units: .pixel,
                 wheelCount: 2,
                 wheel1: Int32(clampedY.rounded(.towardZero)),
@@ -146,22 +146,16 @@ struct RemoteInputEventSink {
             event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis2, value: Int64((clampedX * 65_536).rounded()))
             event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(clampedY.rounded()))
             event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(clampedX.rounded()))
-            let phaseValue: Int64
-            switch phase {
-            case "began": phaseValue = 1
-            case "changed": phaseValue = 2
-            case "ended": phaseValue = 4
-            case "cancelled": phaseValue = 8
-            default: phaseValue = 0
-            }
-            if phaseValue != 0 { event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phaseValue) }
+            let phases = ScrollEventPhases.values(for: phase)
+            if phases.scroll != 0 { event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phases.scroll) }
+            if phases.momentum != 0 { event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: phases.momentum) }
             RemoteInputTag.mark(event)
             event.post(tap: .cghidEventTap)
             return true
         },
         text: { characters in
-            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else { return false }
+            guard let down = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: 0, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: 0, keyDown: false) else { return false }
             for event in [down, up] {
                 characters.withUnsafeBufferPointer {
                     event.keyboardSetUnicodeString(stringLength: characters.count, unicodeString: $0.baseAddress)
@@ -173,8 +167,8 @@ struct RemoteInputEventSink {
             return true
         },
         key: { key, flags in
-            guard let down = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: true),
-                  let up = CGEvent(keyboardEventSource: nil, virtualKey: key, keyDown: false) else { return false }
+            guard let down = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: key, keyDown: true),
+                  let up = CGEvent(keyboardEventSource: RemoteInputEventSource.shared, virtualKey: key, keyDown: false) else { return false }
             for event in [down, up] {
                 event.flags = flags
                 RemoteInputTag.mark(event)
@@ -219,6 +213,7 @@ final class RemoteInputDriver {
     private var retiredScrolls: Set<String> = []
     private var retiredScrollOrder: [String] = []
     private var scrollDeadline: TimeInterval = 0
+    private(set) var momentum = ScrollMomentumGate()
     private let eventSink: RemoteInputEventSink
     private let isTrusted: () -> Bool
 
@@ -251,6 +246,7 @@ final class RemoteInputDriver {
 
     func handle(_ input: RemoteAction, upgraded: Bool = false, now: TimeInterval = ProcessInfo.processInfo.systemUptime, pointerSnapshot: CGPoint? = nil) -> RemoteInputOutcome {
         let requestID = input.action == "text" ? input.key : nil
+        if input.action != "holdRenew", !Self.isMomentum(input) { endMomentum() }
         if input.action == "release" {
             let hadHold = held
             let released = release()
@@ -321,6 +317,20 @@ final class RemoteInputDriver {
             let events: [RemoteInputEventSink.MouseEvent] = [
                 .init(type: .otherMouseDown, point: point, button: .center, count: 1, flags: flags),
                 .init(type: .otherMouseUp, point: point, button: .center, count: 1, flags: flags)
+            ]
+            guard eventSink.mouseSequence(events) else { break }
+            notePosted(point, at: now)
+            resetClickSequence()
+            outcome.accepted = true
+            outcome.clickPoint = point
+
+        case "auxClick":
+            guard !held, let bounds = validBounds, let button = RemoteMouseButton.auxiliary(input.key) else { break }
+            if upgraded { guard input.interaction?.clickCount == 1 else { break } }
+            let point = eventPoint(in: bounds)
+            let events: [RemoteInputEventSink.MouseEvent] = [
+                .init(type: button.downType, point: point, button: button.cgButton, count: 1, flags: flags),
+                .init(type: button.upType, point: point, button: button.cgButton, count: 1, flags: flags)
             ]
             guard eventSink.mouseSequence(events) else { break }
             notePosted(point, at: now)
@@ -419,25 +429,30 @@ final class RemoteInputDriver {
             if upgraded {
                 guard let stream = input.interaction?.stream,
                       let phase = input.interaction?.phase else { break }
-                if let activeScroll, now >= scrollDeadline {
-                    retireScroll(activeScroll)
-                    self.activeScroll = nil
-                }
-                if phase == "began" {
-                    guard activeScroll != stream, !retiredScrolls.contains(stream) else { break }
-                    if let activeScroll { retireScroll(activeScroll) }
-                    activeScroll = stream
+                if let momentumPhase = ScrollMomentumPhase(rawValue: phase) {
+                    guard momentum.admit(momentumPhase, stream: stream, at: now) == .post else { break }
                 } else {
-                    guard activeScroll == stream, now < scrollDeadline else { break }
-                }
-                scrollDeadline = now + 0.5
-                if phase == "ended" || phase == "cancelled" {
-                    retireScroll(stream)
-                    activeScroll = nil
-                } else if phase == "changed" && input.x == 0 && input.y == 0 {
-                    // Fingers resting mid-scroll: keep the stream alive, post nothing.
-                    outcome.accepted = true
-                    break
+                    if let activeScroll, now >= scrollDeadline {
+                        retireScroll(activeScroll)
+                        self.activeScroll = nil
+                    }
+                    if phase == "began" {
+                        guard activeScroll != stream, !retiredScrolls.contains(stream) else { break }
+                        if let activeScroll { retireScroll(activeScroll) }
+                        activeScroll = stream
+                    } else {
+                        guard activeScroll == stream, now < scrollDeadline else { break }
+                    }
+                    scrollDeadline = now + 0.5
+                    if phase == "ended" || phase == "cancelled" {
+                        retireScroll(stream)
+                        activeScroll = nil
+                        if phase == "ended" { momentum.gestureEnded(stream: stream, at: now) }
+                    } else if phase == "changed" && input.x == 0 && input.y == 0 {
+                        // Fingers resting mid-scroll: keep the stream alive, post nothing.
+                        outcome.accepted = true
+                        break
+                    }
                 }
             }
             let point = eventPoint(in: bounds)
@@ -499,6 +514,7 @@ final class RemoteInputDriver {
     }
 
     func resetNativeSequence() {
+        endMomentum()
         resetClickSequence()
         // A new session or geometry starts from the real cursor, even when it replaces a
         // stream inside the short WindowServer settling window.
@@ -511,6 +527,23 @@ final class RemoteInputDriver {
         retiredScrolls.removeAll()
         retiredScrollOrder.removeAll()
         scrollDeadline = 0
+    }
+
+    /// Ends a momentum the phone stopped sending, from the host's periodic timer.
+    func expireMomentum(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        if momentum.expire(at: now) { postMomentumEnd() }
+    }
+
+    private func endMomentum() {
+        if momentum.interrupt() { postMomentumEnd() }
+    }
+
+    private func postMomentumEnd() {
+        _ = eventSink.scrollDetailed?(lastPoint, 0, 0, ScrollMomentumPhase.ended.rawValue)
+    }
+
+    private static func isMomentum(_ input: RemoteAction) -> Bool {
+        input.action == "scroll" && input.interaction?.phase.flatMap(ScrollMomentumPhase.init(rawValue:)) != nil
     }
 
     private func retireHold(_ identity: String) {

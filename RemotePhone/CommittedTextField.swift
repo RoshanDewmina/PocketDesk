@@ -79,6 +79,9 @@ struct CommittedTextField: UIViewRepresentable {
     @Binding var text: String
     @Binding var isComposing: Bool
     var focusOnAppear = false
+    var style: TextEntryStyle = .exact
+    /// The Mac's focused field takes a password: mask it and keep it out of the keyboard's memory.
+    var secure = false
     @Environment(\.isEnabled) private var isEnabled
 
     func makeCoordinator() -> Coordinator {
@@ -92,8 +95,9 @@ struct CommittedTextField: UIViewRepresentable {
         view.accessibilityIdentifier = "remote.text"
         view.font = .preferredFont(forTextStyle: .body)
         view.adjustsFontForContentSizeCategory = true
-        view.autocapitalizationType = .none
-        view.autocorrectionType = .no
+        ExactTextTraits.apply(style, secure: secure, to: view)
+        view.appliedEntry = (style, secure)
+        view.concealed = secure
         view.textContainerInset = UIEdgeInsets(top: 11, left: 16, bottom: 11, right: 12)
         view.textContainer.lineFragmentPadding = 0
         view.backgroundColor = .clear
@@ -113,6 +117,12 @@ struct CommittedTextField: UIViewRepresentable {
         view.isSelectable = true
         if let editor = view as? InitialFocusTextView {
             editor.focusOnAppear = focusOnAppear
+            if editor.appliedEntry != (style, secure) {
+                ExactTextTraits.apply(style, secure: secure, to: editor)
+                editor.appliedEntry = (style, secure)
+                editor.concealed = secure
+                if editor.isFirstResponder { editor.reloadInputViews() }
+            }
             editor.requestInitialFocus()
         }
 
@@ -133,8 +143,49 @@ struct CommittedTextField: UIViewRepresentable {
     /// Focus once after attachment, without stealing it back on subsequent draft updates.
     final class InitialFocusTextView: UITextView {
         var focusOnAppear = false
+        var appliedEntry: (style: TextEntryStyle, secure: Bool) = (.exact, false)
         private var didFocus = false
         private var keyWindowObserver: NSObjectProtocol?
+        private var visibleTextColor: UIColor?
+        private lazy var maskLabel: UILabel = {
+            let label = UILabel()
+            label.isAccessibilityElement = false
+            label.numberOfLines = 1
+            label.lineBreakMode = .byTruncatingHead
+            addSubview(label)
+            return label
+        }()
+
+        /// Draws bullets over transparent text; the caret and selection still work normally.
+        var concealed = false {
+            didSet {
+                guard concealed != oldValue else { return }
+                if concealed {
+                    visibleTextColor = textColor
+                    textColor = .clear
+                } else {
+                    textColor = visibleTextColor
+                }
+                refreshMask()
+            }
+        }
+
+        func refreshMask() {
+            maskLabel.isHidden = !concealed
+            maskLabel.font = font
+            maskLabel.textColor = visibleTextColor ?? .label
+            maskLabel.text = concealed ? String(repeating: "•", count: text.count) : nil
+            accessibilityValue = concealed ? "\(text.count) hidden characters" : nil
+            setNeedsLayout()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            guard concealed else { return }
+            let frame = bounds.inset(by: textContainerInset)
+            maskLabel.frame = CGRect(x: frame.minX, y: frame.minY + contentOffset.y,
+                                     width: frame.width, height: font?.lineHeight ?? frame.height)
+        }
 
         deinit {
             if let keyWindowObserver { NotificationCenter.default.removeObserver(keyWindowObserver) }
@@ -183,6 +234,7 @@ struct CommittedTextField: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
+            (textView as? InitialFocusTextView)?.refreshMask()
             updateCompositionState(from: textView)
         }
 
@@ -208,6 +260,7 @@ struct CommittedTextField: UIViewRepresentable {
             defer { isApplyingViewUpdate = false }
 
             view.text = value
+            (view as? InitialFocusTextView)?.refreshMask()
             let length = value.utf16.count
             let originalStart = selectedRange.location == NSNotFound ? length : selectedRange.location
             let originalEnd = selectedRange.location == NSNotFound ? length : originalStart + selectedRange.length

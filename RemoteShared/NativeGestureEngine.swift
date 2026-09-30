@@ -14,6 +14,8 @@ enum NativeGestureCommand {
     case secondaryClick
     /// A three-finger tap: the Mac's middle mouse button.
     case middleClick
+    /// A mouse's Back or Forward side button.
+    case auxiliaryClick(AuxiliaryMouseButton)
     case workspaceSwipe(direction: NativeSwipeDirection)
     case dragBegan(id: String, count: Int)
     case dragEnded(id: String)
@@ -61,6 +63,12 @@ final class NativeGestureEngine {
 
     var onCommand: (NativeGestureCommand) -> Bool
     var onPointerMotionEnded: () -> Void = {}
+    /// The Mac posts momentum phases (`SessionFeature.momentumScroll`): a flicked scroll coasts.
+    var momentumEnabled = false
+    private var momentum = ScrollMomentum()
+    private var momentumStream: String?
+    /// Keep calling `tick` while true, even with no touches down.
+    var hasMomentum: Bool { momentumStream != nil }
     private var pointerMotionActive = false
 
     private enum Mode { case candidate, pointer, multiCandidate, scroll, zoom, pan, drag, workspaceCandidate, workspaceFired, blocked }
@@ -122,6 +130,7 @@ final class NativeGestureEngine {
     func configure(enabled: Bool, panMode: Bool, revision: UInt64, sensitivity: CGFloat,
                    pointerScale: CGFloat, doubleClickInterval: TimeInterval, direct: Bool = false) {
         if self.enabled != enabled || self.panMode != panMode || self.revision != revision || self.direct != direct {
+            stopMomentum()
             cancel()
             // A surviving physical contact must lift before it can start a new command.
             mode = .blocked
@@ -149,6 +158,7 @@ final class NativeGestureEngine {
         }.map { ($0.id, $0.point) })
         let oldCount = active.count
         let count = next.count
+        if oldCount == 0 && count > 0 { stopMomentum() }
         if oldCount == 0 {
             active = next
             guard count > 0 else { return }
@@ -300,6 +310,7 @@ final class NativeGestureEngine {
     /// UITouch/system uptime.
     func tick(at time: TimeInterval) {
         guard time.isFinite else { return }
+        if let id = momentumStream { stepMomentum(id, at: time) }
         if active.count == 2, mode == .multiCandidate, !panMode {
             // A deliberate anchored pinch can settle while both contacts are held still.
             processMulti(active, at: time)
@@ -322,6 +333,7 @@ final class NativeGestureEngine {
     }
 
     func cancel() {
+        stopMomentum()
         cancelOwnedCommand()
         lastTap = nil
         if !active.isEmpty { mode = .blocked }
@@ -541,9 +553,45 @@ final class NativeGestureEngine {
     /// at any zoom, the way pointer motion is already scaled.
     private func sendScroll(_ delta: CGSize, phase: String, stream: String) {
         lastScrollSent = lastUpdateTime
-        _ = onCommand(.scroll(delta: CGSize(width: delta.width / gestureScale,
-                                            height: delta.height / gestureScale),
-                              phase: phase, stream: stream))
+        let scaled = CGSize(width: delta.width / gestureScale, height: delta.height / gestureScale)
+        if phase == "began" { momentum.resetSamples() }
+        momentum.record(scaled, at: lastUpdateTime)
+        _ = onCommand(.scroll(delta: scaled, phase: phase, stream: stream))
+    }
+
+    /// After the fingers lift, continue the same stream with momentum phases until it coasts out.
+    private func beginMomentum(stream: String) {
+        guard momentumEnabled, enabled, !panMode, momentum.start(at: lastUpdateTime) else {
+            momentum.resetSamples()
+            return
+        }
+        guard onCommand(.scroll(delta: .zero, phase: ScrollMomentumPhase.began.rawValue, stream: stream)) else {
+            _ = momentum.cancel()
+            return
+        }
+        momentumStream = stream
+    }
+
+    private func stepMomentum(_ stream: String, at time: TimeInterval) {
+        switch momentum.step(at: time) {
+        case .changed(let delta)?:
+            guard delta != .zero else { return }
+            if !onCommand(.scroll(delta: delta, phase: ScrollMomentumPhase.changed.rawValue, stream: stream)) {
+                stopMomentum()
+            }
+        case .ended?:
+            momentumStream = nil
+            _ = onCommand(.scroll(delta: .zero, phase: ScrollMomentumPhase.ended.rawValue, stream: stream))
+        case nil:
+            break
+        }
+    }
+
+    private func stopMomentum() {
+        let wasRunning = momentum.cancel()
+        guard let id = momentumStream else { return }
+        momentumStream = nil
+        if wasRunning { _ = onCommand(.scroll(delta: .zero, phase: ScrollMomentumPhase.ended.rawValue, stream: id)) }
     }
 
     private func beginWorkspace(_ touches: [UInt64: CGPoint], eligible: Bool) {
@@ -613,6 +661,7 @@ final class NativeGestureEngine {
         if let id = scrollID {
             _ = onCommand(.scroll(delta: .zero, phase: cancelled ? "cancelled" : "ended", stream: id))
             scrollID = nil
+            if cancelled { momentum.resetSamples() } else { beginMomentum(stream: id) }
         }
         if let id = dragID {
             _ = onCommand(.dragEnded(id: id))

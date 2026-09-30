@@ -332,6 +332,7 @@ struct NativeSessionView: View {
                                   revision: model.inputRevision &+ revision, sensitivity: CGFloat(sensitivity),
                                   pointerScale: viewport.scale, doubleClickInterval: model.doubleClickInterval,
                                   middleClickAvailable: model.middleButtonSupported,
+                                  momentumScroll: model.momentumScrollSupported,
                                   hardwareKeys: model.canControl && !showControls && !showVoiceInput && !keyboardOpen,
                                   hardwarePointer: model.canControl && model.absolutePointerSupported
                                     && !controlsBlockInput && !showVoiceInput,
@@ -1116,13 +1117,14 @@ struct NativeSessionView: View {
 
     private var textField: some View {
         ZStack(alignment: .leading) {
-            CommittedTextField(text: $model.draft, isComposing: $model.isComposingText, focusOnAppear: true)
+            CommittedTextField(text: $model.draft, isComposing: $model.isComposingText, focusOnAppear: true,
+                               secure: model.passwordFieldFocused)
                 .disabled(!model.textEditable)
                 .opacity(model.textEditable ? 1 : 0)
                 .allowsHitTesting(model.textEditable)
                 .privacySensitive()
             if model.textEditable && model.draft.isEmpty {
-                Text("Type for your Mac")
+                Text(model.passwordFieldFocused ? "Password for your Mac" : "Type for your Mac")
                     .foregroundStyle(Farside.Palette.ash)
                     .padding(.leading, 16)
                     .allowsHitTesting(false)
@@ -1144,6 +1146,7 @@ struct NativeSessionView: View {
                 }
             }
         }
+        .overlay(alignment: .trailing) { PasswordFieldLock(visible: model.passwordFieldFocused) }
         .frame(maxWidth: .infinity)
         .frame(height: 46)
         .farsidePlate(23, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)

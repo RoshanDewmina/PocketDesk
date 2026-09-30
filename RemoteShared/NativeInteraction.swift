@@ -15,7 +15,8 @@ struct NativeInteraction: Codable, Equatable {
         guard version == 1,
               [token, hold, stream].allSatisfy({ $0 == nil || (!$0!.isEmpty && $0!.utf8.count <= 64) }),
               clickCount == nil || (1...3).contains(clickCount!),
-              phase == nil || ["began", "changed", "ended", "cancelled", "momentum"].contains(phase!),
+              phase == nil || ["began", "changed", "ended", "cancelled", "momentum"].contains(phase!)
+                || ScrollMomentumPhase(rawValue: phase!) != nil,
               doubleClickInterval == nil || (doubleClickInterval!.isFinite && (0.1...2).contains(doubleClickInterval!))
         else { throw RemoteError.invalidMessage }
     }

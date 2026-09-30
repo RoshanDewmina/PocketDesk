@@ -58,6 +58,8 @@ final class OnboardingFlow: ObservableObject {
     func replayCoach() { step = .coach }
 
     func primingFinished() {
+        // TN3179: bring up the Local Network alert now, in the foreground, right after explaining it.
+        if step == .priming(.localNetwork) { LocalNetworkAccess.triggerAlert() }
         step = nil
         let next = afterPriming
         afterPriming = nil
@@ -261,7 +263,7 @@ final class GestureCoachModel: ObservableObject {
             flash(at: pointer)
             note = "A three-finger tap is a middle click. Handy in 3D and CAD apps."
             return true
-        case .zoomToggle, .navigate, .pan, .pointTo:
+        case .zoomToggle, .navigate, .pan, .pointTo, .auxiliaryClick:
             return false
         }
     }

@@ -6,16 +6,17 @@ struct FriendlyError: Identifiable, Equatable {
     enum Kind: String {
         case napping, unreachable, busy, locked, switchedUser, needsPlan, codeRejected, declined,
              approvalTimedOut, verifyFailed, keychain, relayUnavailable, connectionLost, sessionGlitch,
-             serviceNotReady, screenSharingOff, anywhereUnverified, macNotResponding
+             serviceNotReady, screenSharingOff, anywhereUnverified, macNotResponding, localNetworkOff
     }
 
     enum Action: Equatable {
-        case retry, pairAgain, seePlans
+        case retry, pairAgain, seePlans, openSettings
         var title: String {
             switch self {
             case .retry: "Try again"
             case .pairAgain: "Pair again"
             case .seePlans: "See Farside Anywhere"
+            case .openSettings: "Open Settings"
             }
         }
     }
@@ -45,6 +46,7 @@ struct FriendlyError: Identifiable, Equatable {
         case .needsPlan, .relayUnavailable, .serviceNotReady, .anywhereUnverified: FarsideArt.anywhere
         case .codeRejected: FarsideArt.staleCode
         case .screenSharingOff: FarsideArt.screenOff
+        case .localNetworkOff: FarsideArt.priming(.localNetwork)
         case .unreachable, .busy, .approvalTimedOut, .connectionLost, .sessionGlitch, .macNotResponding: FarsideArt.unreachable
         }
     }
@@ -67,6 +69,7 @@ struct FriendlyError: Identifiable, Equatable {
         case .screenSharingOff: "Screen sharing stopped"
         case .anywhereUnverified: "Anywhere not confirmed"
         case .macNotResponding: "Found it · not answering"
+        case .localNetworkOff: "Local Network off · turn it on in Settings"
         }
     }
 
@@ -114,6 +117,15 @@ struct FriendlyError: Identifiable, Equatable {
     static let screenSharingOff = FriendlyError(kind: .screenSharingOff, headline: "Your Mac stopped sharing",
                                                 message: "Its screen stopped reaching Farside. Screen Recording may need renewing, and only someone at the Mac can do that.",
                                                 fix: "Open Farside on your Mac and check Screen Recording.")
+
+    /// iOS reported Local Network access denied. Only the person can turn it back on, in Settings.
+    static let localNetworkOff = FriendlyError(kind: .localNetworkOff, headline: LocalNetworkAccess.deniedTitle,
+                                               accent: "off",
+                                               message: LocalNetworkAccess.deniedDetail,
+                                               fix: LocalNetworkAccess.deniedNextStep,
+                                               tipTitle: "Away from home?",
+                                               tip: "Farside Anywhere connects without Local Network access.",
+                                               action: .openSettings, secondary: .retry)
 
     static let busy = FriendlyError(kind: .busy, headline: "Hang on a second",
                                     message: "Farside is still closing your last session.",
@@ -201,6 +213,7 @@ struct FriendlyError: Identifiable, Equatable {
             }
             return .unreachable(macName)
         }
+        if status == LocalNetworkAccess.deniedStatus { return .localNetworkOff }
         if lower.contains("declined") { return .declined }
         if lower.contains("keychain") { return .keychain }
         if lower.contains("invalid or expired") { return .codeRejected }

@@ -1281,6 +1281,7 @@ final class RemoteHostModel: ObservableObject {
                     if self.phonePause.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.expirePhonePause() }
                     return
                 }
+                self.input.expireMomentum()
                 if self.inputLease.isExpired(at: ProcessInfo.processInfo.systemUptime) {
                     let releasedHold = self.input.externalHoldID
                     let releaseEpoch = self.inputEpoch.value
@@ -1541,10 +1542,11 @@ final class RemoteHostModel: ObservableObject {
             do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
             guard let self, self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else { return }
             let editable = await HostTextFocusProbe.editableAtClick(point)
+            let secure = await HostSecureFocus.isSecureNow()
             guard self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else { return }
             _ = self.connection.sendControl(RemoteAction(
                 action: "heartbeat", epoch: ticket.epoch,
-                textFocusProbe: probe, textFocusEditable: editable
+                textFocusProbe: probe, textFocusEditable: editable, textFocusSecure: secure
             ))
         }
     }
@@ -2005,7 +2007,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private static let userInputActions: Set<String> = [
-        "move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "holdRenew", "scroll", "text", "key"
+        "move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "holdRenew", "scroll", "text", "key",
+        "auxClick"
     ]
 }
 

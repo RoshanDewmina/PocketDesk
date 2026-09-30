@@ -423,6 +423,8 @@ struct HomeView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { model.pairingEntry = .scan }
         case .seePlans:
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { showPaywall = true }
+        case .openSettings:
+            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
         }
     }
 

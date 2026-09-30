@@ -21,8 +21,15 @@ enum SessionFeature {
     static let viewportCapture = "capture.viewport.1"
     /// G12: the Mac reports its ladder rung and busy state on `capture` status.
     static let ladder = "ladder.1"
+    /// Momentum phases after a scroll gesture's `ended` (`ScrollMomentumPhase`).
+    static let momentumScroll = "scroll.momentum.1"
+    /// `auxClick`: a mouse's Back and Forward side buttons.
+    static let auxiliaryButtons = "pointer.aux.1"
+    /// `textFocusSecure` on a focus reply: the focused field takes a password.
+    static let secureFocus = "focus.secure.1"
     static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
-                       absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder]
+                       absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
+                       momentumScroll, auxiliaryButtons, secureFocus]
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as

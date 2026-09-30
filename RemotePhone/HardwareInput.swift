@@ -192,6 +192,7 @@ final class HardwarePeripherals: ObservableObject {
     @Published private(set) var mouseConnected = !GCMouse.mice().isEmpty
     var onKeyboardDisconnect: () -> Void = {}
     var onMiddleButton: (_ pressed: Bool) -> Void = { _ in }
+    var onAuxiliaryButton: (_ button: AuxiliaryMouseButton, _ pressed: Bool) -> Void = { _, _ in }
     private var observers: [NSObjectProtocol] = []
 
     private init() {
@@ -222,6 +223,12 @@ final class HardwarePeripherals: ObservableObject {
             mouse.handlerQueue = .main
             mouse.mouseInput?.middleButton?.pressedChangedHandler = { [weak self] _, _, pressed in
                 MainActor.assumeIsolated { self?.onMiddleButton(pressed) }
+            }
+            for (index, input) in (mouse.mouseInput?.auxiliaryButtons ?? []).enumerated() {
+                guard let button = AuxiliaryMouseButton(auxiliaryIndex: index) else { continue }
+                input.pressedChangedHandler = { [weak self] _, _, pressed in
+                    MainActor.assumeIsolated { self?.onAuxiliaryButton(button, pressed) }
+                }
             }
         }
     }

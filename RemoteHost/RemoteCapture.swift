@@ -494,6 +494,8 @@ enum RemoteCaptureConfiguration {
         configuration.showsCursor = showsCursor
         configuration.capturesAudio = false
         configuration.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        configuration.colorSpaceName = StreamColor.captureColorSpaceName
+        configuration.colorMatrix = StreamColor.captureYCbCrMatrix
         return configuration
     }
 }
