@@ -6,6 +6,7 @@ final class ControllerFakeSwitcher: DisplayModeSwitching {
     var modesByDisplay: [CGDirectDisplayID: [DisplayModeInfo]] = [:]
     var currentByDisplay: [CGDirectDisplayID: DisplayModeInfo] = [:]
     var online: Set<CGDirectDisplayID> = [1, 2]
+    var framesByDisplay: [CGDirectDisplayID: CGRect] = [:]
     var applied: [(DisplayModeInfo, CGDirectDisplayID)] = []
     var result: DisplayModeApplyResult = .applied
     var onApply: ((DisplayModeInfo, CGDirectDisplayID) -> Void)?
@@ -13,6 +14,11 @@ final class ControllerFakeSwitcher: DisplayModeSwitching {
     func currentMode(of display: CGDirectDisplayID) -> DisplayModeInfo? { currentByDisplay[display] }
     func modes(of display: CGDirectDisplayID) -> [DisplayModeInfo] { modesByDisplay[display] ?? [] }
     func onlineDisplays() -> Set<CGDirectDisplayID> { online }
+    func bounds(of display: CGDirectDisplayID) -> CGRect {
+        if let frame = framesByDisplay[display] { return frame }
+        let mode = currentByDisplay[display]
+        return CGRect(x: display == 1 ? 0 : 1470, y: 0, width: mode?.width ?? 0, height: mode?.height ?? 0)
+    }
     func apply(_ mode: DisplayModeInfo, to display: CGDirectDisplayID) -> DisplayModeApplyResult {
         applied.append((mode, display))
         if result == .applied { currentByDisplay[display] = mode; onApply?(mode, display) }
@@ -23,8 +29,11 @@ final class ControllerFakeSwitcher: DisplayModeSwitching {
 final class ControllerFakeKeeper: BigTextWindowKeeping, @unchecked Sendable {
     var hasSnapshot = false
     var snapshots = 0, settled = 0, restores = 0, discards = 0
-    func snapshot(within bounds: CGRect, pids: [pid_t]) async { snapshots += 1; hasSnapshot = true }
-    func recordSettled() async { settled += 1 }
+    var onSnapshot: (@MainActor () async -> Void)?
+    var onSettled: (@MainActor () async -> Void)?
+    func snapshot(within bounds: CGRect, pids: [pid_t]) async { snapshots += 1; hasSnapshot = true; await onSnapshot?() }
+    func prepareStep() async {}
+    func recordSettled() async { settled += 1; await onSettled?() }
     func restore() async -> Int { restores += 1; hasSnapshot = false; return 1 }
     func discard() { discards += 1; hasSnapshot = false }
 }
@@ -32,11 +41,13 @@ final class ControllerFakeKeeper: BigTextWindowKeeping, @unchecked Sendable {
 @MainActor
 final class ControllerFakeHost: BigTextHost {
     var quiesces = 0, resumes: [CGDirectDisplayID] = [], replies: [(CGDirectDisplayID, BigTextError?)] = []
+    var replyIDs: [String?] = []
+    var onResume: (() async -> Void)?
     var foreign = 0, stateChanges = 0
     var resumeVerifies = true
     func bigTextQuiesce() { quiesces += 1 }
-    func bigTextResume(display: CGDirectDisplayID) async -> Bool { resumes.append(display); return resumeVerifies }
-    func bigTextReply(display: CGDirectDisplayID, error: BigTextError?) { replies.append((display, error)) }
+    func bigTextResume(display: CGDirectDisplayID) async -> Bool { resumes.append(display); await onResume?(); return resumeVerifies }
+    func bigTextReply(display: CGDirectDisplayID, error: BigTextError?, requestID: String?) { replies.append((display, error)); replyIDs.append(requestID) }
     func bigTextForeignChange() { foreign += 1 }
     func bigTextStateChanged() { stateChanges += 1 }
     func bigTextDisplayBounds(_ display: CGDirectDisplayID) -> CGRect { CGRect(x: 0, y: 0, width: 1470, height: 956) }
@@ -140,7 +151,7 @@ final class BigTextControllerTests: XCTestCase {
         XCTAssertTrue(host.resumes.isEmpty, "the session stops as it does today")
         XCTAssertEqual(controller.baseline, base, "the display still has our mode, so it is still ours to restore")
         XCTAssertEqual(controller.current, large)
-        XCTAssertEqual(keeper.discards, 0)
+        XCTAssertGreaterThanOrEqual(keeper.discards, 1, "foreign apply discards its window plan")
         switcher.onApply = { [unowned self] _, display in
             self.controller.observe(DisplayReconfigurationEvent(display: display, flags: [.setModeFlag]))
         }
@@ -180,7 +191,7 @@ final class BigTextControllerTests: XCTestCase {
         XCTAssertEqual(host.foreign, 1)
         XCTAssertEqual(controller.baseline, base, "the display is still on our previous step")
         XCTAssertEqual(controller.current, large)
-        XCTAssertEqual(keeper.discards, 0)
+        XCTAssertGreaterThanOrEqual(keeper.discards, 1, "foreign apply discards its window plan")
         observeOwnChanges()
         controller.sessionEnded(.sessionEnded)
         await controller.drain()
@@ -513,6 +524,127 @@ final class BigTextControllerTests: XCTestCase {
         XCTAssertEqual(controller.display, 1, "the first display's baseline is kept for the retry")
         XCTAssertEqual(controller.baseline, base)
         XCTAssertTrue(controller.restorePending)
+    }
+
+    func testManualChoiceDuringSnapshotNeverCallsApply() async {
+        let chosen = mode(1024, 665, id: 99)
+        keeper.onSnapshot = { [unowned self] in
+            await Task.yield()
+            self.switcher.currentByDisplay[1] = chosen
+            self.controller.observe(DisplayReconfigurationEvent(display: 1, flags: [.setModeFlag]))
+        }
+        await apply(1280)
+        XCTAssertTrue(appliedModes.isEmpty)
+        XCTAssertEqual(switcher.currentByDisplay[1], chosen)
+        XCTAssertNil(controller.baseline)
+        XCTAssertFalse(keeper.hasSnapshot)
+        XCTAssertEqual(errors, [.failed])
+        XCTAssertEqual(host.foreign, 1)
+    }
+
+    func testManuallyPickingTheRequestedModeDuringSnapshotDoesNotGiveUsOwnership() async {
+        keeper.onSnapshot = { [unowned self] in
+            await Task.yield()
+            self.switcher.currentByDisplay[1] = self.large
+            self.controller.observe(DisplayReconfigurationEvent(display: 1, flags: [.setModeFlag]))
+        }
+        await apply(1280)
+        XCTAssertTrue(appliedModes.isEmpty)
+        XCTAssertNil(controller.baseline)
+        XCTAssertNil(controller.current)
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertTrue(appliedModes.isEmpty, "a target we never applied cannot be ours to restore")
+    }
+
+    func testManualChoiceDuringSettleIsNotAdoptedAsSuccess() async {
+        let chosen = mode(1024, 665, id: 99)
+        controller = BigTextController(switcher: switcher, windows: keeper, now: { [unowned self] in self.clock },
+            sleep: { [unowned self] seconds in
+                self.clock += seconds
+                await Task.yield()
+                self.switcher.currentByDisplay[1] = chosen
+                self.controller.observe(DisplayReconfigurationEvent(display: 1, flags: [.setModeFlag]))
+            })
+        controller.host = host
+        await apply(1280)
+        XCTAssertEqual(appliedModes, [large])
+        XCTAssertNil(controller.baseline)
+        XCTAssertTrue(host.resumes.isEmpty)
+        XCTAssertEqual(errors, [.failed])
+    }
+
+    func testManualChoiceDuringWindowRecordingIsNotAdoptedAsSuccess() async {
+        let chosen = mode(1024, 665, id: 99)
+        keeper.onSettled = { [unowned self] in
+            await Task.yield()
+            self.switcher.currentByDisplay[1] = chosen
+            self.controller.observe(DisplayReconfigurationEvent(display: 1, flags: [.setModeFlag]))
+        }
+        await apply(1280)
+        XCTAssertNil(controller.baseline)
+        XCTAssertFalse(keeper.hasSnapshot)
+        XCTAssertTrue(host.resumes.isEmpty)
+        XCTAssertEqual(errors, [.failed])
+    }
+
+    func testForeignChoiceDuringResumeIsNotRepliedSuccess() async {
+        host.onResume = { [unowned self] in
+            await Task.yield()
+            self.switcher.currentByDisplay[1] = self.mode(1024, 665, id: 99)
+        }
+        await apply(1280)
+        XCTAssertEqual(errors, [.failed])
+        XCTAssertNil(controller.baseline)
+        XCTAssertFalse(controller.ownsLiveConfiguration)
+    }
+
+    func testOtherDisplayModeChangeWithSameTopologyIsForeign() async {
+        switcher.onApply = { [unowned self] _, display in
+            self.switcher.currentByDisplay[2] = self.large
+            self.controller.observe(DisplayReconfigurationEvent(display: display, flags: [.setModeFlag]))
+            self.controller.observe(DisplayReconfigurationEvent(display: 2, flags: [.setModeFlag]))
+        }
+        await apply(1280)
+        XCTAssertEqual(errors, [.failed])
+        XCTAssertTrue(host.resumes.isEmpty)
+        XCTAssertEqual(switcher.currentByDisplay[2], large)
+        XCTAssertFalse(controller.ownsLiveConfiguration)
+    }
+
+    func testUnreadableOtherDisplayPreventsAnUnownedConfigurationCall() async {
+        switcher.currentByDisplay[2] = nil
+        await apply(1280)
+        XCTAssertTrue(appliedModes.isEmpty)
+        XCTAssertEqual(errors, [.failed])
+        XCTAssertNil(controller.baseline)
+    }
+
+    func testUnexpectedArrangementIsForeignWithoutCallback() async {
+        switcher.onApply = { [unowned self] _, display in
+            self.switcher.framesByDisplay[2] = CGRect(x: 2000, y: 40, width: 1470, height: 956)
+            self.controller.observe(DisplayReconfigurationEvent(display: display, flags: [.setModeFlag]))
+        }
+        await apply(1280)
+        XCTAssertEqual(errors, [.failed])
+        XCTAssertTrue(host.resumes.isEmpty)
+        XCTAssertFalse(controller.ownsLiveConfiguration)
+    }
+
+    func testEveryOwnedStepRecordsExpectedWindowGeometry() async {
+        await apply(1280)
+        await apply(1024)
+        XCTAssertEqual(keeper.snapshots, 1)
+        XCTAssertEqual(keeper.settled, 2)
+    }
+
+    func testRepliesCarryRunningAndSupersededRequestIDs() async {
+        controller.request(display: 1, looksLikeWidth: 1280, allowed: true, accessibilityGranted: true, requestID: "a")
+        controller.request(display: 1, looksLikeWidth: 1024, allowed: true, accessibilityGranted: true, requestID: "b")
+        controller.request(display: 1, looksLikeWidth: 1280, allowed: true, accessibilityGranted: true, requestID: "c")
+        await controller.drain()
+        XCTAssertEqual(host.replyIDs, ["b", "a", "c"])
+        XCTAssertEqual(errors, [.busy, nil, nil])
     }
 
     func testDescribeFillsScaleFields() async {

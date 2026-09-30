@@ -14,11 +14,35 @@ struct BigTextScreenSnapshot {
 
     func matches(online: Set<CGDirectDisplayID>, frames liveFrames: [CGDirectDisplayID: CGRect],
                  modeIDs liveModes: [CGDirectDisplayID: Int32]) -> Bool {
-        guard online == Set(frames.keys), Set(liveFrames.keys) == online, liveModes == modeIDs else { return false }
+        guard online == Set(frames.keys), Set(liveFrames.keys) == online, Set(modeIDs.keys) == online,
+              liveModes == modeIDs else { return false }
         return frames.allSatisfy { id, frame in
             liveFrames[id].map { BigTextRefresh.matches(frame: frame, coreGraphicsBounds: $0) } ?? false
         }
     }
+
+    /// CG may move a neighbour attached beyond the resized display's far edge. Other
+    /// sizes, origins and mode IDs must stay at the starting configuration.
+    func matchesChange(display: CGDirectDisplayID, target: DisplayModeInfo, online: Set<CGDirectDisplayID>,
+                       frames live: [CGDirectDisplayID: CGRect], modeIDs modes: [CGDirectDisplayID: Int32]) -> Bool {
+        guard online == Set(frames.keys), Set(live.keys) == online, Set(modes.keys) == online,
+              let original = frames[display], let changed = live[display], modes[display] == target.ioModeID,
+              abs(changed.minX - original.minX) < 1, abs(changed.minY - original.minY) < 1,
+              abs(changed.width - CGFloat(target.width)) < 1, abs(changed.height - CGFloat(target.height)) < 1
+        else { return false }
+        let dx = changed.width - original.width, dy = changed.height - original.height
+        return frames.allSatisfy { id, frame in
+            guard id != display else { return true }
+            guard modes[id] == modeIDs[id], let current = live[id],
+                  abs(current.width - frame.width) < 1, abs(current.height - frame.height) < 1 else { return false }
+            let xShift = frame.minX >= original.maxX - 1 ? dx : 0
+            let yShift = frame.minY >= original.maxY - 1 ? dy : 0
+            let xMatches = abs(current.minX - frame.minX) < 1 || abs(current.minX - frame.minX - xShift) < 1
+            let yMatches = abs(current.minY - frame.minY) < 1 || abs(current.minY - frame.minY - yShift) < 1
+            return xMatches && yMatches
+        }
+    }
+
 }
 
 enum BigTextRefresh {
@@ -34,7 +58,7 @@ enum BigTextRefresh {
 protocol BigTextHost: AnyObject {
     func bigTextQuiesce()
     func bigTextResume(display: CGDirectDisplayID) async -> Bool
-    func bigTextReply(display: CGDirectDisplayID, error: BigTextError?)
+    func bigTextReply(display: CGDirectDisplayID, error: BigTextError?, requestID: String?)
     func bigTextForeignChange()
     func bigTextStateChanged()
     func bigTextDisplayBounds(_ display: CGDirectDisplayID) -> CGRect
@@ -51,8 +75,8 @@ final class BigTextController {
     static let disconnectGrace: TimeInterval = 20
 
     private enum Request: Equatable {
-        case apply(CGDirectDisplayID, Double)
-        case restore(RestoreReason, reply: CGDirectDisplayID?)
+        case apply(CGDirectDisplayID, Double, String?)
+        case restore(RestoreReason, reply: CGDirectDisplayID?, requestID: String?)
     }
     private enum Outcome { case ours, foreign, failed, cancelled }
 
@@ -72,6 +96,8 @@ final class BigTextController {
     private let now: () -> TimeInterval
     private let sleep: (TimeInterval) async -> Void
     private var recognizer: OwnChangeRecognizer?
+    private var completedSnapshot: BigTextScreenSnapshot?
+    private var activeRequestID: String?
     private var pending: Request?
     private var worker: Task<Void, Never>?
     private var grace: Task<Void, Never>?
@@ -99,10 +125,10 @@ final class BigTextController {
         return described
     }
 
-    func request(display: CGDirectDisplayID, looksLikeWidth: Double, allowed: Bool, accessibilityGranted: Bool) {
-        guard allowed else { return reply(display, .disabled) }
-        guard accessibilityGranted else { return reply(display, .noAccessibility) }
-        enqueue(looksLikeWidth == 0 ? .restore(.sessionOff, reply: display) : .apply(display, looksLikeWidth))
+    func request(display: CGDirectDisplayID, looksLikeWidth: Double, allowed: Bool, accessibilityGranted: Bool, requestID: String? = nil) {
+        guard allowed else { return host?.bigTextReply(display: display, error: .disabled, requestID: requestID) ?? () }
+        guard accessibilityGranted else { return host?.bigTextReply(display: display, error: .noAccessibility, requestID: requestID) ?? () }
+        enqueue(looksLikeWidth == 0 ? .restore(.sessionOff, reply: display, requestID: requestID) : .apply(display, looksLikeWidth, requestID))
     }
 
     func observe(_ event: DisplayReconfigurationEvent) {
@@ -118,7 +144,7 @@ final class BigTextController {
         grace?.cancel()
         grace = nil
         guard isEngaged || worker != nil else { return }
-        enqueue(.restore(reason, reply: reason == .restoreButton ? display : nil))
+        enqueue(.restore(reason, reply: reason == .restoreButton ? display : nil, requestID: nil))
     }
 
     func connectionLost() {
@@ -141,7 +167,7 @@ final class BigTextController {
 
     func retryPendingRestore() {
         guard restorePending else { return }
-        enqueue(.restore(.sessionEnded, reply: nil))
+        enqueue(.restore(.sessionEnded, reply: nil, requestID: nil))
     }
 
     func restoreForTermination() {
@@ -149,7 +175,7 @@ final class BigTextController {
         grace?.cancel()
         grace = nil
         pending = nil
-        let inFlight = recognizer?.target
+        let inFlight = recognizer.flatMap { $0.applicationStarted ? $0.target : nil }
         recognizer = nil
         guard let display, let baseline else { return }
         let live = switcher.currentMode(of: display)?.ioModeID
@@ -174,8 +200,8 @@ final class BigTextController {
     private func enqueue(_ request: Request) {
         guard worker != nil else { return start(request) }
         switch pending {
-        case .apply(let superseded, _)?: reply(superseded, .busy)
-        case .restore(_, let superseded?)?: reply(superseded, .busy)
+        case .apply(let superseded, _, let id)?: host?.bigTextReply(display: superseded, error: .busy, requestID: id)
+        case .restore(_, let superseded?, let id)?: host?.bigTextReply(display: superseded, error: .busy, requestID: id)
         default: break
         }
         pending = request
@@ -195,8 +221,12 @@ final class BigTextController {
 
     private func perform(_ request: Request) async {
         switch request {
-        case .apply(let target, let width): await apply(width, on: target)
-        case .restore(let reason, let replyTo): await restore(reason, replyTo: replyTo)
+        case .apply(let target, let width, let id):
+            activeRequestID = id
+            await apply(width, on: target)
+        case .restore(let reason, let replyTo, let id):
+            activeRequestID = id
+            await restore(reason, replyTo: replyTo)
         }
     }
 
@@ -213,6 +243,8 @@ final class BigTextController {
         guard mode.ioModeID != offer.current.ioModeID else { return reply(target, nil) }
 
         let first = current == nil
+        beginChange(to: mode, on: target)
+        defer { recognizer = nil }
         changeTarget = (target, mode)
         phase = .changing
         host?.bigTextStateChanged()
@@ -221,37 +253,36 @@ final class BigTextController {
             display = target
             baseline = offer.baseline
             await windows.snapshot(within: host?.bigTextDisplayBounds(target) ?? .null, pids: host?.bigTextRunningAppPIDs() ?? [])
+        } else {
+            await windows.prepareStep()
         }
         switch await change(to: mode, on: target) {
         case .ours:
-            if first { await windows.recordSettled() }
+            await windows.recordSettled()
             guard !Task.isCancelled else { return }
+            guard configurationIsOurs(applied: true) else {
+                handleForeignApply(mode: mode, target: target)
+                return
+            }
             current = mode
             restorePending = false
             phase = .applied
             // A refreshed display list that cannot be verified is handled by the host as a foreign change.
             let resumed = await host?.bigTextResume(display: target) ?? false
+            guard configurationIsOurs(applied: true) else {
+                handleForeignApply(mode: mode, target: target)
+                return
+            }
+            completedSnapshot = screenSnapshot()
             reply(target, resumed ? nil : .failed)
         case .failed:
             if first { forget() } else { phase = .applied }
             _ = await host?.bigTextResume(display: target)
+            if configurationIsOurs(applied: false) { completedSnapshot = screenSnapshot() }
             reply(target, .failed)
         case .foreign:
-            // Something else changed too (say, a monitor was plugged in). If the display still has our new or
-            // previous mode, keep the baseline so the session end restores it; any other mode is not ours to undo.
-            let live = switcher.currentMode(of: target)?.ioModeID
-            if live == nil || live == mode.ioModeID {
-                // A successful configuration followed by sleep can temporarily hide the mode.
-                // Keep ownership until a live query proves a different choice.
-                current = mode
-                phase = .applied
-            } else if let current, live == current.ioModeID {
-                phase = .applied
-            } else {
-                forget()
-            }
-            reply(target, .failed)
-            host?.bigTextForeignChange()
+            handleForeignApply(mode: mode, target: target)
+            return
         case .cancelled:
             return
         }
@@ -265,6 +296,8 @@ final class BigTextController {
             return
         }
         let sessionContinues = reason == .sessionOff || reason == .restoreButton
+        beginChange(to: baseline, on: target)
+        defer { recognizer = nil }
         changeTarget = (target, baseline)
         phase = .restoring
         host?.bigTextStateChanged()
@@ -278,6 +311,7 @@ final class BigTextController {
             restorePending = false
             phase = .idle
             await windows.restore()
+            if !configurationIsOurs(applied: true) { failed = true; windows.discard(); host?.bigTextForeignChange() }
         case .failed:
             failed = true
             // A live session keeps Big Text and restores when it ends; only an ended one needs the retry flag.
@@ -305,21 +339,85 @@ final class BigTextController {
             return
         }
         if sessionContinues, await host?.bigTextResume(display: target) != true { failed = true }
+        if configurationIsOurs(applied: !failed) { completedSnapshot = screenSnapshot() }
         if let replyTo { reply(replyTo, failed ? .failed : nil) }
+        host?.bigTextStateChanged()
+    }
+
+    private func screenSnapshot() -> BigTextScreenSnapshot {
+        let online = switcher.onlineDisplays()
+        let frames = Dictionary(uniqueKeysWithValues: online.map { ($0, switcher.bounds(of: $0)) })
+        let modes = Dictionary(uniqueKeysWithValues: online.compactMap { id in
+            switcher.currentMode(of: id).map { (id, $0.ioModeID) }
+        })
+        return BigTextScreenSnapshot(frames: frames, modeIDs: modes)
+    }
+
+    private func beginChange(to mode: DisplayModeInfo, on target: CGDirectDisplayID) {
+        let before = screenSnapshot()
+        completedSnapshot = nil
+        recognizer = OwnChangeRecognizer(display: target, target: mode, onlineBefore: Set(before.frames.keys),
+                                        startedAt: now(), before: before, preparing: true)
+    }
+
+    private func configurationIsOurs(applied: Bool) -> Bool {
+        guard let recognizer else { return false }
+        let live = screenSnapshot()
+        return recognizer.configurationMatches(online: Set(live.frames.keys), frames: live.frames,
+                                               modeIDs: live.modeIDs, applied: applied)
+    }
+
+    /// Host observers and asynchronous display refreshes must verify the same ownership
+    /// evidence as the worker, rather than treating every change during an await as ours.
+    var ownsLiveConfiguration: Bool {
+        if let recognizer {
+            return configurationIsOurs(applied: switcher.currentMode(of: recognizer.display)?.ioModeID == recognizer.target.ioModeID)
+        }
+        guard let completedSnapshot else { return false }
+        let live = screenSnapshot()
+        return completedSnapshot.matches(online: Set(live.frames.keys), frames: live.frames, modeIDs: live.modeIDs)
+    }
+
+    private func handleForeignApply(mode: DisplayModeInfo, target: CGDirectDisplayID) {
+        // Retain only display-mode ownership, never a window plan from a foreign configuration.
+        windows.discard()
+        let live = switcher.currentMode(of: target)?.ioModeID
+        if recognizer?.applicationStarted == true, live == nil || live == mode.ioModeID {
+            current = mode
+            phase = .applied
+        } else if let current, live == current.ioModeID {
+            phase = .applied
+        } else {
+            forget()
+        }
+        reply(target, .failed)
+        host?.bigTextForeignChange()
         host?.bigTextStateChanged()
     }
 
     private func change(to mode: DisplayModeInfo, on target: CGDirectDisplayID) async -> Outcome {
         guard !Task.isCancelled else { return .cancelled }
-        if switcher.currentMode(of: target)?.ioModeID == mode.ioModeID { return .ours }
-        recognizer = OwnChangeRecognizer(display: target, target: mode, onlineBefore: switcher.onlineDisplays(), startedAt: now())
-        defer { recognizer = nil }
+        guard configurationIsOurs(applied: false) else { return .foreign }
+        if switcher.currentMode(of: target)?.ioModeID == mode.ioModeID {
+            recognizer?.beginApplying(at: now())
+            return .ours
+        }
+        recognizer?.beginApplying(at: now())
         guard switcher.apply(mode, to: target) == .applied else { return .failed }
         while let recognizer, !Task.isCancelled {
+            let live = screenSnapshot()
+            // The target can be transiently unreadable during configuration. Never accept
+            // another display's mode/arrangement change merely because the IDs stayed online.
+            if !recognizer.configurationMatches(online: Set(live.frames.keys), frames: live.frames,
+                                                modeIDs: live.modeIDs, applied: true),
+               switcher.currentMode(of: target)?.ioModeID == mode.ioModeID {
+                return .foreign
+            }
             switch recognizer.verdict(now: now(), online: switcher.onlineDisplays(), current: switcher.currentMode(of: target)) {
             case .ours:
                 await self.sleep(Self.settle)
-                return Task.isCancelled ? .cancelled : .ours
+                guard !Task.isCancelled else { return .cancelled }
+                return configurationIsOurs(applied: true) ? .ours : .foreign
             case .foreign:
                 return .foreign
             case .pending:
@@ -341,6 +439,7 @@ final class BigTextController {
 
     private func forget() {
         windows.discard()
+        completedSnapshot = nil
         current = nil
         baseline = nil
         display = nil
@@ -350,6 +449,6 @@ final class BigTextController {
     }
 
     private func reply(_ display: CGDirectDisplayID, _ error: BigTextError?) {
-        host?.bigTextReply(display: display, error: error)
+        host?.bigTextReply(display: display, error: error, requestID: activeRequestID)
     }
 }

@@ -42,6 +42,7 @@ enum WindowRestorePlan {
 protocol BigTextWindowKeeping: AnyObject {
     var hasSnapshot: Bool { get }
     func snapshot(within bounds: CGRect, pids: [pid_t]) async
+    func prepareStep() async
     func recordSettled() async
     @discardableResult func restore() async -> Int
     func discard()
@@ -72,6 +73,24 @@ final class BigTextWindowKeeper: BigTextWindowKeeping, @unchecked Sendable {
                 guard self.generation == started else { return }
                 self.before = frames
                 self.after = [:]
+            }
+        }
+    }
+
+    /// Drop windows the person moved before the next mode switch. Their original
+    /// frame cannot be reclaimed by recording a later automatic shrink.
+    func prepareStep() async {
+        let started = lock.withLock { generation }
+        await run {
+            let expected = self.lock.withLock { self.after }
+            let live = self.frames(of: Array(expected.keys))
+            self.lock.withLock {
+                guard self.generation == started else { return }
+                self.before = self.before.filter { window, _ in
+                    guard let prior = expected[window], let current = live[window] else { return false }
+                    return WindowRestorePlan.close(prior, current)
+                }
+                self.after = self.after.filter { self.before[$0.key] != nil }
             }
         }
     }

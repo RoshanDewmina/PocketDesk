@@ -32,6 +32,26 @@ final class BigTextProtocolTests: XCTestCase {
         XCTAssertNil(decoded.scaleError.flatMap(BigTextError.init(rawValue:)))
     }
 
+    func testRequestIdentityRoundTripsOnRequestsAndReplies() throws {
+        let id = String(repeating: "a", count: 32)
+        for action in [RemoteAction(action: "displayScale", epoch: 3, display: 1, looksLikeWidth: 1280, scaleRequestID: id),
+                       RemoteAction(action: "displays", epoch: 3, displays: [], display: 1, scaleRequestID: id)] {
+            let decoded = try JSONDecoder().decode(RemoteAction.self, from: JSONEncoder().encode(action))
+            XCTAssertNoThrow(try decoded.validate())
+            XCTAssertEqual(decoded.scaleRequestID, id)
+        }
+    }
+
+    func testInvalidRequestIdentitiesCannotRideOtherActionsOrEarlyReturns() {
+        for id in ["", "a", String(repeating: "A", count: 32), String(repeating: "g", count: 32), String(repeating: "0", count: 33)] {
+            XCTAssertThrowsError(try RemoteAction(action: "displayScale", display: 1, looksLikeWidth: 1280, scaleRequestID: id).validate())
+        }
+        let id = String(repeating: "a", count: 32)
+        for name in ["heartbeat", "capture", "display", "click"] {
+            XCTAssertThrowsError(try RemoteAction(action: name, display: 1, scaleRequestID: id).validate())
+        }
+    }
+
     func testDescriptorScaleFields() {
         var display = DisplayDescriptor(id: 1, name: "Built-in Retina Display", width: 1470, height: 956)
         display.scaleSteps = [ScaleStep(width: 1280, height: 832), ScaleStep(width: 1024, height: 665)]
@@ -68,7 +88,7 @@ final class BigTextProtocolTests: XCTestCase {
     }
 
     func testCapabilityIsOptIn() {
-        XCTAssertEqual(SessionFeature.displayScale, "display.scale.1")
+        XCTAssertEqual(SessionFeature.displayScale, "display.scale.2")
         XCTAssertFalse(SessionFeature.host.contains(SessionFeature.displayScale), "advertised only when the Mac allows it")
     }
 }

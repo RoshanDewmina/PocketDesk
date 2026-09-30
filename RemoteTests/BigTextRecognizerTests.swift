@@ -29,7 +29,7 @@ final class BigTextRecognizerTests: XCTestCase {
     func testSetModeOnAnotherDisplayDoesNotCount() {
         var r = recognizer()
         r.observe(DisplayReconfigurationEvent(display: 2, flags: [.setModeFlag]))
-        XCTAssertEqual(r.verdict(now: 101, online: [1, 2], current: target), .pending)
+        XCTAssertEqual(r.verdict(now: 101, online: [1, 2], current: target), .foreign)
     }
 
     func testAddedDisplayIsForeign() {
@@ -48,6 +48,12 @@ final class BigTextRecognizerTests: XCTestCase {
     func testTimeoutIsForeign() {
         let r = recognizer()
         XCTAssertEqual(r.verdict(now: 100 + OwnChangeRecognizer.timeout + 0.1, online: [1, 2], current: other), .foreign)
+    }
+
+    func testPreparationRejectsModeEventsBeforeOurConfigurationCall() {
+        var r = OwnChangeRecognizer(display: 1, target: target, onlineBefore: [1, 2], startedAt: 100, preparing: true)
+        r.observe(DisplayReconfigurationEvent(display: 1, flags: [.setModeFlag]))
+        XCTAssertEqual(r.verdict(now: 101, online: [1, 2], current: target), .foreign)
     }
 
     @MainActor

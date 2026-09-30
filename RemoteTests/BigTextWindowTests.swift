@@ -72,6 +72,31 @@ final class BigTextWindowTests: XCTestCase {
         XCTAssertTrue(access.set.isEmpty)
     }
 
+    func testSecondAutomaticShrinkRestoresOnlyWindowsStillOwnedBeforeTheStep() async {
+        let access = FakeWindowAccess()
+        let owned = window(), moved = window()
+        let original = CGRect(x: 0, y: 0, width: 1400, height: 900)
+        access.windows = [owned, moved]
+        access.frames = [owned: original, moved: original]
+        let keeper = BigTextWindowKeeper(access: access)
+        await keeper.snapshot(within: .infinite, pids: [10])
+        let first = CGRect(x: 0, y: 0, width: 1280, height: 800)
+        access.frames = [owned: first, moved: first]
+        await keeper.recordSettled()
+        access.frames[moved] = CGRect(x: 30, y: 40, width: 900, height: 600)
+        await keeper.prepareStep()
+        access.frames[owned] = CGRect(x: 0, y: 0, width: 1024, height: 665)
+        // macOS may also reposition a window the person moved, but it is no longer ours.
+        access.frames[moved] = CGRect(x: 20, y: 20, width: 880, height: 580)
+        await keeper.recordSettled()
+        let movedFrame = access.frames[moved]
+        let count = await keeper.restore()
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(access.frames[owned], original)
+        XCTAssertEqual(access.frames[moved], movedFrame)
+        XCTAssertEqual(access.set.map(\.0), [owned])
+    }
+
     func testDiscardForgetsWithoutMoving() async {
         let access = FakeWindowAccess()
         let a = window()

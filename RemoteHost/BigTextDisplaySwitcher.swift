@@ -9,6 +9,7 @@ protocol DisplayModeSwitching: AnyObject {
     func modes(of display: CGDirectDisplayID) -> [DisplayModeInfo]
     func apply(_ mode: DisplayModeInfo, to display: CGDirectDisplayID) -> DisplayModeApplyResult
     func onlineDisplays() -> Set<CGDirectDisplayID>
+    func bounds(of display: CGDirectDisplayID) -> CGRect
 }
 
 struct DisplayReconfigurationEvent: Equatable {
@@ -25,20 +26,36 @@ struct OwnChangeRecognizer {
     let display: CGDirectDisplayID
     let target: DisplayModeInfo
     let onlineBefore: Set<CGDirectDisplayID>
-    let startedAt: TimeInterval
+    private(set) var startedAt: TimeInterval
     private(set) var sawSetMode = false
     private(set) var sawStructuralChange = false
+    private var preparing: Bool
+    let before: BigTextScreenSnapshot?
 
-    init(display: CGDirectDisplayID, target: DisplayModeInfo, onlineBefore: Set<CGDirectDisplayID>, startedAt: TimeInterval) {
+    var applicationStarted: Bool { !preparing }
+    mutating func beginApplying(at time: TimeInterval) { preparing = false; startedAt = time }
+
+    func configurationMatches(online: Set<CGDirectDisplayID>, frames: [CGDirectDisplayID: CGRect],
+                              modeIDs: [CGDirectDisplayID: Int32], applied: Bool) -> Bool {
+        guard !sawStructuralChange, online == onlineBefore else { return false }
+        guard let before else { return true }
+        if !applied { return before.matches(online: online, frames: frames, modeIDs: modeIDs) }
+        return before.matchesChange(display: display, target: target, online: online, frames: frames, modeIDs: modeIDs)
+    }
+
+    init(display: CGDirectDisplayID, target: DisplayModeInfo, onlineBefore: Set<CGDirectDisplayID>, startedAt: TimeInterval, before: BigTextScreenSnapshot? = nil, preparing: Bool = false) {
         self.display = display
         self.target = target
         self.onlineBefore = onlineBefore
         self.startedAt = startedAt
+        self.before = before
+        self.preparing = preparing
     }
 
     mutating func observe(_ event: DisplayReconfigurationEvent) {
         guard !event.flags.contains(.beginConfigurationFlag) else { return }
         if !event.flags.isDisjoint(with: Self.structural) { sawStructuralChange = true }
+        if preparing || (event.display != display && event.flags.contains(.setModeFlag)) { sawStructuralChange = true }
         if event.display == display, event.flags.contains(.setModeFlag) { sawSetMode = true }
     }
 
@@ -80,6 +97,8 @@ final class LiveDisplayModeSwitcher: DisplayModeSwitching {
         guard CGGetOnlineDisplayList(count, &ids, &count) == .success else { return [] }
         return Set(ids.prefix(Int(count)))
     }
+
+    func bounds(of display: CGDirectDisplayID) -> CGRect { CGDisplayBounds(display) }
 
     private func raw(_ display: CGDirectDisplayID) -> [CGDisplayMode] {
         let options = [kCGDisplayShowDuplicateLowResolutionModes as String: true] as CFDictionary

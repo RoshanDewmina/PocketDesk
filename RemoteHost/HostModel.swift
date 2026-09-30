@@ -1771,7 +1771,9 @@ final class RemoteHostModel: ObservableObject {
 
     private func receiveDisplaySelection(_ action: RemoteAction) {
         // The phone waits on a reply to every scale request, so a stale one learns the current epoch.
-        if action.action == "displayScale", action.epoch != inputEpoch.value { return sendDisplayList() }
+        if action.action == "displayScale", action.epoch != inputEpoch.value {
+            return sendDisplayList(scaleError: .failed, scaleRequestID: action.scaleRequestID)
+        }
         guard connection.connected, active, action.epoch == inputEpoch.value, !phonePause.isPaused else { return }
         switch action.action {
         case "displays":
@@ -1791,10 +1793,10 @@ final class RemoteHostModel: ObservableObject {
         case "displayScale":
             guard let requested = action.display, let width = action.looksLikeWidth else { return }
             guard requested == selected, displays.contains(where: { $0.displayID == requested }) else {
-                return sendDisplayList(scaleError: .unsupported)
+                return sendDisplayList(scaleError: .unsupported, scaleRequestID: action.scaleRequestID)
             }
             bigText.request(display: requested, looksLikeWidth: width, allowed: preferences.allowBigText,
-                            accessibilityGranted: accessibilityPermission.isGranted)
+                            accessibilityGranted: accessibilityPermission.isGranted, requestID: action.scaleRequestID)
         default:
             break
         }
@@ -1810,7 +1812,7 @@ final class RemoteHostModel: ObservableObject {
         sendDisplayList()
     }
 
-    private func sendDisplayList(scaleError: BigTextError? = nil) {
+    private func sendDisplayList(scaleError: BigTextError? = nil, scaleRequestID: String? = nil) {
         guard connection.connected else { return }
         let entries = displays.map { display in
             HostDisplayCatalog.Display(
@@ -1831,7 +1833,7 @@ final class RemoteHostModel: ObservableObject {
         }
         _ = connection.sendControl(RemoteAction(action: "displays", epoch: inputEpoch.value,
                                                 displays: descriptors, display: capturedDisplayID,
-                                                scaleError: scaleError?.rawValue))
+                                                scaleError: scaleError?.rawValue, scaleRequestID: scaleRequestID))
     }
 
     /// The phone is backgrounding: stop capture and input now, but keep the peer and its
@@ -2111,7 +2113,10 @@ extension RemoteHostModel: BigTextHost {
             if !terminating { bigTextForeignChange() }
             return false
         }
-        guard !terminating else { return false }
+        guard !terminating, bigText.ownsLiveConfiguration else {
+            if !terminating { bigTextForeignChange() }
+            return false
+        }
         rememberBigTextScreenSnapshot(refreshed)
         curtain.refitToScreens()
         guard active else {
@@ -2129,8 +2134,8 @@ extension RemoteHostModel: BigTextHost {
         return true
     }
 
-    func bigTextReply(display: CGDirectDisplayID, error: BigTextError?) {
-        sendDisplayList(scaleError: error)
+    func bigTextReply(display: CGDirectDisplayID, error: BigTextError?, requestID: String?) {
+        sendDisplayList(scaleError: error, scaleRequestID: requestID)
     }
 
     func bigTextForeignChange() {
@@ -2174,7 +2179,9 @@ extension RemoteHostModel: BigTextHost {
 
     /// Screen changes Big Text makes are handled by its own completion, not by stopping the session.
     fileprivate var bigTextOwnsScreenChanges: Bool {
-        if bigText.isChanging || bigTextNeedsRefresh || bigTextResuming || bigTextRefreshTask != nil { return true }
+        if bigText.isChanging || bigTextNeedsRefresh || bigTextResuming || bigTextRefreshTask != nil {
+            return bigText.ownsLiveConfiguration
+        }
         guard let snapshot = bigTextScreenSnapshot else { return false }
         let online = LiveDisplayModeSwitcher().onlineDisplays()
         var frames: [CGDirectDisplayID: CGRect] = [:]
@@ -2238,7 +2245,7 @@ extension RemoteHostModel: BigTextHost {
             guard !Task.isCancelled, generation == self.bigTextRefreshGeneration else { return }
             self.bigTextRefreshTask = nil
             guard !self.terminating, !self.bigText.isChanging else { return }
-            guard let refreshed else { return self.handleScreenChange() }
+            guard let refreshed, self.bigText.ownsLiveConfiguration else { return self.handleScreenChange() }
             self.rememberBigTextScreenSnapshot(refreshed)
             self.curtain.refitToScreens()
             guard self.active else { return self.loadDisplays() }

@@ -21,7 +21,7 @@ enum SessionFeature {
     static let viewportCapture = "capture.viewport.1"
     /// G12: the Mac reports its ladder rung and busy state on `capture` status.
     static let ladder = "ladder.1"
-    static let displayScale = "display.scale.1"
+    static let displayScale = "display.scale.2"
     static let host = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder]
 }

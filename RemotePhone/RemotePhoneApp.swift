@@ -383,7 +383,7 @@ final class PhoneRemoteModel: ObservableObject {
         guard let target = bigText.pendingTarget else { return }
         probeScaleWidth = target == 0 ? 1470 : target
         receiveDisplays(RemoteAction(action: "displays", epoch: geometryEpoch,
-                                     displays: probeDisplayList, display: currentDisplayID))
+                                     displays: probeDisplayList, display: currentDisplayID, scaleRequestID: bigTextPendingRequest?.id))
     }
     #endif
 
@@ -466,14 +466,21 @@ final class PhoneRemoteModel: ObservableObject {
     // MARK: Big Text
 
     @Published private(set) var bigText = BigTextState()
-    var lastBigTextRequest: (display: UInt32, width: Double)?
+    var lastBigTextRequest: (display: UInt32, width: Double, requestID: String)?
     private(set) var bigTextRequestsSent = 0
     var bigTextMemory = BigTextMemory()
     var bigTextRoomOverride: String?
     var bigTextClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     private var bigTextSendTask: Task<Void, Never>?
     private var bigTextDisplayID: UInt32?
-    private var bigTextTimedOut: (display: UInt32, width: Double)?
+    private struct BigTextRequest {
+        let id: String
+        let display: UInt32
+        let acceptedWidth: Double?
+    }
+    private var bigTextPendingRequest: BigTextRequest?
+    private var bigTextTimedOut: (request: BigTextRequest, noticeGeneration: UInt64)?
+    private var sessionNoticeGeneration: UInt64 = 0
     static let bigTextDebounce: Duration = .milliseconds(600)
     static let bigTextTimeout: TimeInterval = 8
 
@@ -509,10 +516,12 @@ final class PhoneRemoteModel: ObservableObject {
 
     func checkBigTextTimeout() {
         guard let since = bigText.pendingSince, bigTextClock() - since > Self.bigTextTimeout else { return }
-        if let display = currentDisplayID, let width = bigText.pendingTarget { bigTextTimedOut = (display, width) }
+        let timedOut = bigTextPendingRequest
+        bigTextPendingRequest = nil
         bigText.pendingTarget = nil
         bigText.pendingSince = nil
         showSessionNotice("Couldn't change text size")
+        if let timedOut { bigTextTimedOut = (timedOut, sessionNoticeGeneration) }
     }
 
     static func bigTextMessage(_ error: BigTextError) -> String? {
@@ -536,12 +545,23 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func sendBigText(display: UInt32, width: Double) {
+        if let timedOut = bigTextTimedOut, sessionNoticeGeneration == timedOut.noticeGeneration {
+            sessionNoticeTask?.cancel()
+            sessionNotice = nil
+        }
         bigTextTimedOut = nil
         cancelInput()
-        lastBigTextRequest = (display, width)
+        let id = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        let descriptor = displays.first { $0.id == display }
+        let nearest = descriptor?.scaleSteps?.min { abs($0.width - width) < abs($1.width - width) }?.width
+        let boundedNearest = nearest.flatMap { abs($0 - width) <= width * 0.10 ? $0 : nil }
+        let noOp = descriptor?.scaleBaselineWidth.flatMap { width >= $0 ? descriptor?.scaleCurrentWidth : nil }
+        let accepted = width == 0 ? descriptor?.scaleBaselineWidth : (boundedNearest ?? noOp)
+        bigTextPendingRequest = BigTextRequest(id: id, display: display, acceptedWidth: accepted)
+        lastBigTextRequest = (display, width, id)
         bigTextRequestsSent += 1
         // Pending even if the send failed: the 8 s timeout then tells the person, instead of silence.
-        _ = transmit(RemoteAction(action: "displayScale", epoch: geometryEpoch, display: display, looksLikeWidth: width))
+        _ = transmit(RemoteAction(action: "displayScale", epoch: geometryEpoch, display: display, looksLikeWidth: width, scaleRequestID: id))
         bigText.pendingTarget = width
         bigText.pendingSince = bigTextClock()
     }
@@ -561,19 +581,28 @@ final class PhoneRemoteModel: ObservableObject {
         bigText.currentWidth = descriptor.scaleCurrentWidth
         if let room = bigTextRoom { bigText.savedWidth = bigTextMemory.width(forRoom: room, display: descriptor, among: displays) }
         let error = action.scaleError.flatMap(BigTextError.init(rawValue:))
-        if action.scaleError == nil, let timedOut = bigTextTimedOut, timedOut.display == descriptor.id,
-           descriptor.scaleCurrentWidth == (timedOut.width == 0 ? descriptor.scaleBaselineWidth : timedOut.width) {
+        if action.scaleError == nil, let timedOut = bigTextTimedOut,
+           action.scaleRequestID == timedOut.request.id, timedOut.request.display == descriptor.id,
+           let accepted = timedOut.request.acceptedWidth, descriptor.scaleCurrentWidth == accepted {
             bigTextTimedOut = nil
-            if sessionNotice == "Couldn't change text size" {
+            if sessionNoticeGeneration == timedOut.noticeGeneration {
                 sessionNoticeTask?.cancel()
                 sessionNotice = nil
             }
         }
-        if error != .busy {
+        // A display list is also sent on capture restart, display selection and other
+        // requests. Only the completion of the latest scale request owns its pending UI.
+        let pendingSucceeded = bigTextPendingRequest.map { pending in
+            guard let accepted = pending.acceptedWidth else { return false }
+            return displays.first(where: { $0.id == pending.display })?.scaleCurrentWidth == accepted
+        } ?? false
+        if let pending = bigTextPendingRequest, action.scaleRequestID == pending.id, error != .busy,
+           action.scaleError != nil || pendingSucceeded {
+            bigTextPendingRequest = nil
             bigText.pendingTarget = nil
             bigText.pendingSince = nil
+            if let error, let message = Self.bigTextMessage(error) { showSessionNotice(message) }
         }
-        if let error, let message = Self.bigTextMessage(error) { showSessionNotice(message) }
         applySavedBigText()
     }
 
@@ -783,6 +812,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     private func showSessionNotice(_ text: String) {
+        sessionNoticeGeneration &+= 1
         sessionNotice = text
         sessionNoticeTask?.cancel()
         sessionNoticeTask = Task { @MainActor [weak self] in
@@ -1499,6 +1529,7 @@ final class PhoneRemoteModel: ObservableObject {
         bigTextSendTask = nil
         bigTextDisplayID = nil
         bigTextTimedOut = nil
+        bigTextPendingRequest = nil
         bigText = BigTextState()
         lastBigTextRequest = nil
         bigTextRequestsSent = 0
