@@ -7,7 +7,9 @@ enum AwayModeGate {
     static let releaseDefault = false
     static let previewKey = "FarsideAwayModePreview"
 
-    static func isEnabled(defaults: UserDefaults = .standard) -> Bool { false }
+    static func isEnabled(defaults: UserDefaults = .standard) -> Bool {
+        releaseDefault || defaults.bool(forKey: previewKey)
+    }
 }
 
 struct HostPowerSnapshot: Equatable {
@@ -23,12 +25,34 @@ protocol HostPowerSourceReading {
 enum HostPowerSourceParser {
     /// `providingType` is `IOPSGetProvidingPowerSourceType`'s value; `sources` are the power source descriptions.
     static func snapshot(providingType: String?, sources: [[String: Any]], lowPowerMode: Bool) -> HostPowerSnapshot {
-        HostPowerSnapshot()
+        HostPowerSnapshot(onACPower: providingType != kIOPMBatteryPowerKey,
+                          batteryPercent: batteryPercent(sources),
+                          lowPowerMode: lowPowerMode)
+    }
+
+    private static func batteryPercent(_ sources: [[String: Any]]) -> Int? {
+        guard let battery = sources.first(where: { $0[kIOPSTypeKey] as? String == kIOPSInternalBatteryType }),
+              let current = battery[kIOPSCurrentCapacityKey] as? Int,
+              let maximum = battery[kIOPSMaxCapacityKey] as? Int,
+              maximum > 0 else { return nil }
+        let percent = Int((Double(current) / Double(maximum) * 100).rounded())
+        return min(100, max(0, percent))
     }
 }
 
 struct SystemPowerSource: HostPowerSourceReading {
-    func snapshot() -> HostPowerSnapshot { HostPowerSnapshot() }
+    func snapshot() -> HostPowerSnapshot {
+        let lowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+        guard let info = IOPSCopyPowerSourcesInfo()?.takeRetainedValue() else {
+            return HostPowerSourceParser.snapshot(providingType: nil, sources: [], lowPowerMode: lowPowerMode)
+        }
+        let providingType = IOPSGetProvidingPowerSourceType(info)?.takeUnretainedValue() as String?
+        let list = IOPSCopyPowerSourcesList(info)?.takeRetainedValue() as? [CFTypeRef] ?? []
+        let sources = list.compactMap {
+            IOPSGetPowerSourceDescription(info, $0)?.takeUnretainedValue() as? [String: Any]
+        }
+        return HostPowerSourceParser.snapshot(providingType: providingType, sources: sources, lowPowerMode: lowPowerMode)
+    }
 }
 
 enum ManagedLockPolicy {
@@ -36,15 +60,20 @@ enum ManagedLockPolicy {
     static let keys = ["idleTime", "askForPassword", "askForPasswordDelay"]
 
     static func isManaged(isForced: (_ key: String, _ domain: String) -> Bool = ManagedLockPolicy.systemIsForced) -> Bool {
-        false
+        keys.contains { isForced($0, domain) }
     }
 
-    static func systemIsForced(_ key: String, _ domain: String) -> Bool { false }
+    static func systemIsForced(_ key: String, _ domain: String) -> Bool {
+        CFPreferencesAppValueIsForced(key as CFString, domain as CFString)
+    }
 }
 
 enum HostIdle {
     /// Seconds since any input event in this login session, local or injected.
-    static func systemIdleSeconds() -> TimeInterval { 0 }
+    static func systemIdleSeconds() -> TimeInterval {
+        let anyInput = CGEventType(rawValue: ~0)!
+        return max(0, CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput))
+    }
 }
 
 enum HostLockWarning: Equatable {
@@ -60,12 +89,25 @@ struct HostLockWarningTracker: Equatable {
 
     private(set) var screenSaverStartedAt: TimeInterval?
 
-    mutating func screenSaverStarted(uptime: TimeInterval) {}
-    mutating func screenSaverStopped() {}
+    mutating func screenSaverStarted(uptime: TimeInterval) {
+        screenSaverStartedAt = uptime
+    }
+
+    mutating func screenSaverStopped() {
+        screenSaverStartedAt = nil
+    }
 
     /// A warning only for a lock nobody at the Mac chose while sharing was wanted.
     mutating func screenLocked(at date: Date, uptime: TimeInterval, sharingWanted: Bool, awayArmed: Bool,
                                lockRequestedByFarside: Bool, idleSeconds: TimeInterval) -> HostLockWarning? {
-        nil
+        guard sharingWanted, !lockRequestedByFarside else { return nil }
+        // Stopping the screen saver clears the start time, so a recorded start means it is still running.
+        if screenSaverStartedAt != nil {
+            return .screenSaverLocked(at: date, awayArmed: awayArmed)
+        }
+        if idleSeconds >= Self.idleForAutomaticLock {
+            return .lockedWhileSharing(at: date)
+        }
+        return nil
     }
 }
