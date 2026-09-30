@@ -156,7 +156,7 @@ struct HostSettingsView: View {
     }
 
     private var availabilitySection: some View {
-        HostSettingsSection("Availability", footer: "Start at login and recovery apply after you log in. Farside never stores your Mac password or unlocks FileVault. A supported production virtual-workspace creator is still required; Big Text is a separate feature.") {
+        HostSettingsSection("Availability", footer: "Start at login and recovery apply after you log in. Farside never stores your Mac password or unlocks FileVault. Virtual workspace is unavailable in this build.") {
             if let hostID = state.wakeHelperHostID, state.wakeOwnerPairID != nil {
                 HostSettingsRow("This Mac’s durable host ID", subtitle: "Copy locally to an owner-configured powered helper. This ID is not permission to connect.") {
                     Text(hostID).font(.caption.monospaced()).textSelection(.enabled)
