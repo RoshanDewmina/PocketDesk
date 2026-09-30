@@ -1,6 +1,6 @@
 # Big Text — design spec
 
-30 September 2026, revision 2 (amended by Task 0 of `BIG-TEXT-IMPLEMENTATION-PLAN-2026-09-30.md`). Status: **approved by Roshan 30 Sep; implementation in progress on `farside-big-text`.** PRODUCT.md D38 records the decision; this file holds the engineering design. Physical behaviour below is a requirement to verify, not an observed result.
+30 September 2026, revision 2 (amended by Task 0 of `BIG-TEXT-IMPLEMENTATION-PLAN-2026-09-30.md`). Status: **approved by Roshan 30 Sep; implementation in progress on `farside-big-text`.** PRODUCT.md D50 records the decision; this file holds the engineering design. Physical behaviour below is a requirement to verify, not an observed result.
 
 Revision 2 incorporates an independent adversarial review (Claude Opus, same day; see §11). Its critical findings were checked against the source before being accepted.
 

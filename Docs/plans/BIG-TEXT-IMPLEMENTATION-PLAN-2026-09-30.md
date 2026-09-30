@@ -2146,7 +2146,7 @@ private func bigTextOption(title: String, caption: String, width: Double?, id: S
 - [ ] **Step 1:** Merge waves into `farside-big-text` in order (0 → 1 → 2 → 3 → 4). Run `xcodegen generate`; the project file must have no diff (Task 0 registered everything); if it does, commit it with the reason.
 - [ ] **Step 2:** Full verification, one build at a time under the lock: `RemoteCoreTests` (all), `PocketDeskRemoteHost` build (`CODE_SIGNING_ALLOWED=NO`), `RemotePhoneTests` (all), `RemotePhoneUITests` targeted (`BigTextUITests`, `SessionLayoutTests`, `PhoneParityUITests/testDisplayPickerListsDisplaysAndSwitchesTheStream`), `HostUISnapshotTests`. Record exact counts. Shut down simulators.
 - [ ] **Step 3:** Whole-branch independent review (fresh Opus agent, read-only) against the spec and this plan's Review Focus; fix confirmed findings with bounded follow-up tasks.
-- [ ] **Step 4:** Add a ledger section to `Docs/IMPLEMENTATION-PLAN.md` (`# Big Text — <date>`, package/write-set/evidence table, counts, commit SHAs, "physical acceptance pending"). Update PRODUCT.md D38 status to "Implemented on `farside-big-text`; physical acceptance pending". Push `farside-big-text`. Do **not** merge into `pocketdesk-remote-chat` or install anything without Roshan's go-ahead.
+- [ ] **Step 4:** Add a ledger section to `Docs/IMPLEMENTATION-PLAN.md` (`# Big Text — <date>`, package/write-set/evidence table, counts, commit SHAs, "physical acceptance pending"). Update PRODUCT.md D50 status to "Implemented on `farside-big-text`; physical acceptance pending". Push `farside-big-text`. Do **not** merge into `pocketdesk-remote-chat` or install anything without Roshan's go-ahead.
 
 ### Task 12: Physical gates (Roshan + orchestrator, quiet window only)
 
