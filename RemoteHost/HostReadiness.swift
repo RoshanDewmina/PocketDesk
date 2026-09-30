@@ -28,6 +28,7 @@ enum HostStatus: Equatable {
     case pairing
     case approvalRequested
     case starting
+    case reconnecting
     case ready
     case paused
     case unavailable
@@ -41,6 +42,7 @@ enum HostStatus: Equatable {
         var wantsSharing = true
         var sharingActive = false
         var hostRegistered = false
+        var reconnecting = false
         var connected = false
         var awaitingApproval = false
         var controlEffective = false
@@ -57,6 +59,7 @@ enum HostStatus: Equatable {
         if !inputs.wantsSharing { return .paused }
         if !inputs.sharingActive && (inputs.unavailable || inputs.displayStatus == .failed || inputs.displayStatus == .unavailable) { return .unavailable }
         if inputs.sharingActive && inputs.hostRegistered { return .ready }
+        if inputs.sharingActive && inputs.reconnecting { return .reconnecting }
         return .starting
     }
 
@@ -76,6 +79,7 @@ enum HostStatus: Equatable {
         case .pairing: "Waiting for your phone to scan"
         case .approvalRequested: "A phone wants to connect"
         case .starting: "Getting ready…"
+        case .reconnecting: "Reconnecting to Farside service…"
         case .ready: "Ready"
         case .paused: "Sharing is off"
         case .unavailable: "Sharing needs attention"
@@ -91,6 +95,7 @@ enum HostStatus: Equatable {
         case .pairing: "Waiting for your phone"
         case .approvalRequested: "A phone wants to connect"
         case .starting: "Starting…"
+        case .reconnecting: "Reconnecting…"
         case .ready: "Ready"
         case .paused: "Sharing is off"
         case .unavailable: "Offline"
@@ -106,6 +111,7 @@ enum HostStatus: Equatable {
         case .paused: "pause.circle"
         case .viewing: "rectangle.inset.filled.and.person.filled"
         case .controlling: "cursorarrow.rays"
+        case .reconnecting: "arrow.triangle.2.circlepath"
         case .pairing, .starting, .ready: "macbook.and.iphone"
         }
     }

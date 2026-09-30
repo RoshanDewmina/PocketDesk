@@ -14,7 +14,7 @@ enum HostMarkState: Equatable, CaseIterable {
         case .viewing, .controlling: self = .live
         case .paused: self = .paused
         case .needsScreenRecording, .needsPhone, .unavailable, .approvalRequested: self = .attention
-        case .ready, .starting, .pairing: self = .idle
+        case .ready, .starting, .reconnecting, .pairing: self = .idle
         }
     }
 }
@@ -201,6 +201,12 @@ struct HostPopoverPresentation: Equatable {
                 mood: .calm, headline: "Getting ready", title: "Checking the connection",
                 caption: "This takes a few seconds", message: state.detail,
                 symbol: "antenna.radiowaves.left.and.right", showsSessionToggles: true, actions: [.stopSharing]
+            )
+        case .reconnecting:
+            return Self(
+                mood: .calm, headline: "Reconnecting to the service", title: "Reconnecting to Farside service…",
+                caption: "Your iPhone can’t reach this Mac until it’s back", message: state.detail,
+                symbol: "arrow.triangle.2.circlepath", showsSessionToggles: true, actions: [.stopSharing]
             )
         case .pairing:
             return Self(
@@ -445,6 +451,8 @@ struct HostReadyCheck: Equatable, Identifiable {
             return Self(id: .connection, title: title, detail: "Your iPhone is connected now", result: .pass)
         case .starting, .pairing:
             return Self(id: .connection, title: title, detail: "Checking the connection", result: .waiting)
+        case .reconnecting:
+            return Self(id: .connection, title: title, detail: "Reconnecting to Farside service", result: .waiting)
         case .approvalRequested:
             return Self(id: .connection, title: title, detail: "A phone is waiting for your approval", result: .waiting)
         case .paused:

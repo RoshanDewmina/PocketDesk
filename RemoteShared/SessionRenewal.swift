@@ -121,10 +121,16 @@ protocol SignalingTransport: AnyObject {
     func connect(invitation: PairInvitation, hostToken: String?, features: [String], entitlement: String?) throws
     func send(_ message: RelayMessage)
     func close()
+    /// Pings the open connection now; an unanswered ping closes it through `onClose`.
+    func checkLiveness()
+    /// Why the last connection ended, for diagnostics; nil when unknown.
+    var lastCloseReason: String? { get }
 }
 
 extension SignalingTransport {
     func connect(invitation: PairInvitation, hostToken: String?, features: [String], entitlement: String?) throws {
         try connect(invitation: invitation, hostToken: hostToken, features: features)
     }
+    func checkLiveness() {}
+    var lastCloseReason: String? { nil }
 }

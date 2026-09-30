@@ -25,10 +25,19 @@ private enum HostRoomRemovalCleanupError: LocalizedError {
 final class RemoteHostModel: ObservableObject {
     #if DEBUG
     // E2E mode swaps in isolated trust and preferences; see HostE2E.swift.
-    let connection = RemoteCoordinator(isHost: true, store: HostE2E.active?.pairStore)
+    let connection = RemoteCoordinator(isHost: true, store: HostE2E.active?.pairStore,
+                                       retryBaseNanoseconds: RemoteCoordinator.hostRetryBaseNanoseconds,
+                                       maximumRetryDelayNanoseconds: RemoteCoordinator.hostMaximumRetryDelayNanoseconds,
+                                       retriesIndefinitely: true)
     #else
-    let connection = RemoteCoordinator(isHost: true)
+    let connection = RemoteCoordinator(isHost: true,
+                                       retryBaseNanoseconds: RemoteCoordinator.hostRetryBaseNanoseconds,
+                                       maximumRetryDelayNanoseconds: RemoteCoordinator.hostMaximumRetryDelayNanoseconds,
+                                       retriesIndefinitely: true)
     #endif
+    private let networkPath = NetworkPathWatcher()
+    private var serviceRegistered = false
+    private var serviceReconnecting = false
     let browserSession = BrowserMediaSession()
     @Published private(set) var displays: [SCDisplay] = []
     @Published private(set) var selected: CGDirectDisplayID = 0 {
@@ -191,6 +200,7 @@ final class RemoteHostModel: ObservableObject {
             wantsSharing: wantsSharing,
             sharingActive: active,
             hostRegistered: connection.hostRegistered,
+            reconnecting: connection.reconnecting,
             connected: connection.connected,
             awaitingApproval: connection.awaitingApproval,
             controlEffective: allowControl && accessibilityPermission.isGranted && captureHealthy,
@@ -295,6 +305,8 @@ final class RemoteHostModel: ObservableObject {
             Task { @MainActor [weak self] in self?.connectionDidChange() }
         }
         wireAgentAlerts()
+        networkPath.onChange = { [weak self] in self?.connection.networkPathChanged() }
+        networkPath.start()
         capture.onFailure = { [weak self] in self?.captureFailed() }
         capture.onHealth = { [weak self] healthy in self?.captureHealthChanged(healthy) }
         capture.onExclusionLost = { [weak self] in
@@ -612,11 +624,22 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func connectionDidChange() {
+        recordServiceTransition()
         refreshAgentPushRelay()
         if hasPairedPhone { clearDeferredPairing() }
         guard !pairingCode.isEmpty, hasPairedPhone else { return }
         clearPairingCode()
         pairingRequested = false
+    }
+
+    private func recordServiceTransition() {
+        let registered = connection.hostRegistered, reconnecting = connection.reconnecting
+        defer { serviceRegistered = registered; serviceReconnecting = reconnecting }
+        if registered && !serviceRegistered {
+            events.record(.service, serviceReconnecting ? "Registered again with the Farside service" : "Registered with the Farside service")
+        } else if reconnecting && !serviceReconnecting {
+            events.record(.service, "Lost the Farside service (\(connection.signalingLossReason ?? "unknown")); reconnecting")
+        }
     }
 
     // MARK: Sharing
@@ -842,6 +865,9 @@ final class RemoteHostModel: ObservableObject {
         snapshot.detail = detail
         snapshot.localPairRemovalFailure = connection.pairingRemovalFailure
         snapshot.serviceEnvironment = HostPreferences.serviceEnvironment(for: connection.invitation?.server)
+        snapshot.serviceRegistration = HostServiceRegistration.describe(
+            registered: connection.hostRegistered, reconnecting: connection.reconnecting,
+            attempt: connection.retryAttempt, lossReason: connection.signalingLossReason)
         snapshot.curtainPreference = curtainPreference
         snapshot.curtainState = curtainState.rawValue
         snapshot.recoveredThisLaunch = watchdog?.assessment.recoveredFromUnexpectedExit ?? false
@@ -1781,6 +1807,7 @@ final class RemoteHostModel: ObservableObject {
                 guard screenLocked else { return }
                 screenLocked = false
             }
+            connection.checkSignalingLiveness()
             if HostScreenLock.isLocked() { screenLocked = true; return }
             autoStart.clear()
             detail = nil

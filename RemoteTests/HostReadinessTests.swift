@@ -47,6 +47,22 @@ final class HostReadinessTests: XCTestCase {
         XCTAssertFalse(HostStatus.ready.needsAttention)
     }
 
+    func testALostServiceRegistrationIsNeverReady() {
+        var inputs = HostStatus.Inputs(screenRecording: .granted, hasPairedPhone: true,
+                                       sharingActive: true, hostRegistered: false, reconnecting: true)
+        XCTAssertEqual(HostStatus.resolve(inputs), .reconnecting)
+        XCTAssertEqual(HostStatus.reconnecting.title, "Reconnecting to Farside service…")
+        XCTAssertFalse(HostStatus.reconnecting.isSessionLive)
+        inputs.hostRegistered = true
+        inputs.reconnecting = false
+        XCTAssertEqual(HostStatus.resolve(inputs), .ready)
+        inputs.hostRegistered = false
+        XCTAssertEqual(HostStatus.resolve(inputs), .starting, "Ready requires a live registration")
+        inputs.wantsSharing = false
+        inputs.reconnecting = true
+        XCTAssertEqual(HostStatus.resolve(inputs), .paused)
+    }
+
     func testEveryStatusHasADistinctSessionIndicator() {
         XCTAssertNotEqual(HostStatus.viewing.menuBarSymbol, HostStatus.ready.menuBarSymbol)
         XCTAssertNotEqual(HostStatus.controlling.menuBarSymbol, HostStatus.ready.menuBarSymbol)

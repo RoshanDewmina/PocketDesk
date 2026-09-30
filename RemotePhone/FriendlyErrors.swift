@@ -6,7 +6,7 @@ struct FriendlyError: Identifiable, Equatable {
     enum Kind: String {
         case napping, unreachable, busy, locked, switchedUser, needsPlan, codeRejected, declined,
              approvalTimedOut, verifyFailed, keychain, relayUnavailable, connectionLost, sessionGlitch,
-             serviceNotReady, screenSharingOff, anywhereUnverified
+             serviceNotReady, screenSharingOff, anywhereUnverified, macNotResponding
     }
 
     enum Action: Equatable {
@@ -45,7 +45,7 @@ struct FriendlyError: Identifiable, Equatable {
         case .needsPlan, .relayUnavailable, .serviceNotReady, .anywhereUnverified: FarsideArt.anywhere
         case .codeRejected: FarsideArt.staleCode
         case .screenSharingOff: FarsideArt.screenOff
-        case .unreachable, .busy, .approvalTimedOut, .connectionLost, .sessionGlitch: FarsideArt.unreachable
+        case .unreachable, .busy, .approvalTimedOut, .connectionLost, .sessionGlitch, .macNotResponding: FarsideArt.unreachable
         }
     }
 
@@ -66,6 +66,7 @@ struct FriendlyError: Identifiable, Equatable {
         case .unreachable, .connectionLost: "Couldn’t reach it"
         case .screenSharingOff: "Screen sharing stopped"
         case .anywhereUnverified: "Anywhere not confirmed"
+        case .macNotResponding: "Found it · not answering"
         }
     }
 
@@ -99,6 +100,14 @@ struct FriendlyError: Identifiable, Equatable {
                       fix: "Check that it’s awake and Farside is open, then try again.",
                       tipTitle: "Same Wi-Fi",
                       tip: "Free Farside works when your iPhone and Mac share a network.")
+    }
+
+    /// The service had the Mac's room open but the Mac never answered the handshake: its end of the
+    /// service connection went quiet. Where the phone is has nothing to do with it.
+    static func macNotResponding(_ mac: String) -> FriendlyError {
+        FriendlyError(kind: .macNotResponding, headline: "Your Mac isn’t answering", accent: "answering",
+                      message: "Farside found \(mac), but it didn’t respond. Its connection to Farside may have dropped.",
+                      fix: "Try again in a minute. If it still doesn’t answer, open Farside on the Mac and check it says Ready.")
     }
 
     /// Only someone at the Mac can fix this, so no Retry is offered.
@@ -175,7 +184,11 @@ struct FriendlyError: Identifiable, Equatable {
     static func from(status: String, previous: String?, macName: String) -> FriendlyError? {
         let lower = status.lowercased()
         if lower.hasPrefix("connection timed out") {
-            return previous == "Approve this phone on your Mac" ? .approvalTimedOut : .unreachable(macName)
+            switch previous {
+            case "Approve this phone on your Mac": return .approvalTimedOut
+            case "Authenticating your Mac…": return .macNotResponding(macName)
+            default: return .unreachable(macName)
+            }
         }
         if lower.hasPrefix("connection service:") {
             if lower.contains("plan_required") || lower.contains("subscription_required") || lower.contains("entitlement_required") {

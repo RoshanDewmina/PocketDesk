@@ -56,6 +56,8 @@ final class HostDiagnosticsReportTests: XCTestCase {
         snapshot.automaticRecovery = HostBackgroundItemState.needsApproval.diagnosticsText
         snapshot.status = "Your phone is controlling this Mac"
         snapshot.serviceEnvironment = "staging"
+        snapshot.serviceRegistration = HostServiceRegistration.describe(
+            registered: false, reconnecting: true, attempt: 3, lossReason: "keepalive timed out")
         snapshot.localPairRemovalFailure = "delete:-25308"
         snapshot.detail = "Pair with code pocketdesk:c29tZS1wcml2YXRlLXBhaXJpbmctY29kZTEyMzQ1Ng via wss://mac.example.ts.net"
         snapshot.curtainPreference = true
@@ -72,7 +74,8 @@ final class HostDiagnosticsReportTests: XCTestCase {
                                               message: "Restarted after the previous run ended unexpectedly (hang)")]
         let report = HostDiagnosticsReport.render(snapshot)
 
-        for expected in ["Service environment: staging", "Local pairing removal: delete:-25308", "Farside Mac diagnostics", "Version: 0.1 (20260929.1)", "Screen Recording: allowed",
+        for expected in ["Service environment: staging",
+                         "Service registration: reconnecting (attempt 3; last drop: keepalive timed out)", "Local pairing removal: delete:-25308", "Farside Mac diagnostics", "Version: 0.1 (20260929.1)", "Screen Recording: allowed",
                          "Automatic recovery: needs approval in Login Items", "Curtain: up",
                          "Restarted after a problem: yes (hang)", "Watchdog relaunches this boot: 2",
                          "Last unexpected exit: hang, 1m 30s ago", "Last session length: 12m 5s",
@@ -82,5 +85,14 @@ final class HostDiagnosticsReportTests: XCTestCase {
         for secret in ["c29tZS1w", "ts.net", "wss://"] {
             XCTAssertFalse(report.contains(secret), "\(secret) leaked into the report")
         }
+    }
+
+    func testServiceRegistrationSaysWhetherThePhoneCanReachTheMac() {
+        XCTAssertEqual(HostServiceRegistration.describe(registered: true, reconnecting: false, attempt: 0, lossReason: nil),
+                       "registered")
+        XCTAssertEqual(HostServiceRegistration.describe(registered: false, reconnecting: false, attempt: 0, lossReason: nil),
+                       "not registered")
+        XCTAssertEqual(HostServiceRegistration.describe(registered: false, reconnecting: true, attempt: 1, lossReason: nil),
+                       "reconnecting (attempt 1)")
     }
 }

@@ -8,6 +8,11 @@ final class RemoteCoordinator: ObservableObject {
     @Published var awaitingApproval = false
     @Published var connected = false
     @Published private(set) var hostRegistered = false
+    /// The signaling connection dropped and a retry is pending or in flight; cleared once the
+    /// service registers this device again, a session connects, or the coordinator stops.
+    @Published private(set) var reconnecting = false
+    /// Why the signaling connection last dropped, for diagnostics.
+    private(set) var signalingLossReason: String?
     @Published var remoteVideo: RTCVideoTrack?
     @Published var hasRelay = false
     @Published var diagnostics = "Route not measured"
@@ -82,6 +87,10 @@ final class RemoteCoordinator: ObservableObject {
     private let retryBaseNanoseconds: UInt64
     private let sessionLossRetryLimit: Int?
     private let maximumRetryDelayNanoseconds: UInt64?
+    /// A sharing Mac never gives up on the service by itself; only a phone has a retry budget.
+    private let retriesIndefinitely: Bool
+    static let hostRetryBaseNanoseconds: UInt64 = 500_000_000
+    static let hostMaximumRetryDelayNanoseconds: UInt64 = 60_000_000_000
     /// An established session dropped (for example, the Mac app crashed and is being relaunched);
     /// retries use the longer session-loss budget until a connection succeeds or is stopped.
     private var recoveringLiveSession = false
@@ -107,6 +116,7 @@ final class RemoteCoordinator: ObservableObject {
         retryBaseNanoseconds: UInt64 = 500_000_000,
         sessionLossRetryLimit: Int? = nil,
         maximumRetryDelayNanoseconds: UInt64? = nil,
+        retriesIndefinitely: Bool = false,
         registrationStableNanoseconds: UInt64 = 5_000_000_000,
         signaling: (any SignalingTransport)? = nil,
         renewalScheduler: any RenewalScheduler = SystemRenewalScheduler(),
@@ -123,6 +133,7 @@ final class RemoteCoordinator: ObservableObject {
         self.retryBaseNanoseconds = retryBaseNanoseconds
         self.sessionLossRetryLimit = sessionLossRetryLimit.map { max(0, $0) }
         self.maximumRetryDelayNanoseconds = maximumRetryDelayNanoseconds
+        self.retriesIndefinitely = retriesIndefinitely
         self.registrationStableNanoseconds = registrationStableNanoseconds
         relay.onMessage = { [weak self] message in self?.receive(message) }
         relay.onClose = { [weak self] in self?.connectionLost() }
@@ -174,7 +185,7 @@ final class RemoteCoordinator: ObservableObject {
         do {
             if isHost, let pair = hostPair, !pair.paired { try invitation.validate() }
             else { try invitation.validate(enrollment: false) }
-            if resetRetryBudget { retryCount = 0; recoveringLiveSession = false }
+            if resetRetryBudget { retryCount = 0; recoveringLiveSession = false; reconnecting = false }
             stopped = false
             retry?.cancel(); retry = nil
             cancelRenewal()
@@ -262,6 +273,7 @@ final class RemoteCoordinator: ObservableObject {
     }
     func stop() {
         stopped = true; retry?.cancel(); retry = nil; retryCount = 0; recoveringLiveSession = false
+        reconnecting = false
         routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
         routeEpochsSeen.removeAll()
         cancelRenewal()
@@ -269,6 +281,23 @@ final class RemoteCoordinator: ObservableObject {
     }
     /// Connected, connecting, or waiting to retry.
     var isRunning: Bool { !stopped }
+    /// Retries attempted since the last stable registration or connection.
+    var retryAttempt: Int { retryCount }
+
+    /// Asks the signaling connection to prove it is alive; a dead one closes and retries.
+    func checkSignalingLiveness() {
+        guard !stopped else { return }
+        relay.checkLiveness()
+    }
+
+    /// The network path changed. A registration may be riding a path that no longer exists, so
+    /// check it; a retry waiting out its backoff tries the new path at once.
+    func networkPathChanged() {
+        guard !stopped else { return }
+        guard let pending = retry else { relay.checkLiveness(); return }
+        pending.cancel(); retry = nil
+        start(resetRetryBudget: false)
+    }
     /// Ends only the current phone session. A registered host keeps listening for its paired phone.
     func dropPeerSession() {
         guard isHost, connected || media != nil else { return }
@@ -313,7 +342,7 @@ final class RemoteCoordinator: ObservableObject {
                 }
             case "registered":
                 if isHost {
-                    hostRegistered = true; timeout?.cancel(); status = "Ready for your paired phone"
+                    hostRegistered = true; reconnecting = false; timeout?.cancel(); status = "Ready for your paired phone"
                     resetRetryBudgetAfterStableRegistration()
                 }
                 // The legacy access hint is advisory; only `route` authorizes media.
@@ -549,6 +578,7 @@ final class RemoteCoordinator: ObservableObject {
                 if state == "connected" {
                     guard !self.connected else { return }
                     self.connected = true; self.retryCount = 0; self.recoveringLiveSession = false
+                    self.reconnecting = false
                     self.timeout?.cancel(); self.onAuthenticated?()
                 } else if state == "failed" || state == "disconnected" || state == "closed" { self.peerDisconnected() }
             }
@@ -613,15 +643,18 @@ final class RemoteCoordinator: ObservableObject {
         cancelRenewal()
         routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
         routeEpochsSeen.removeAll()
+        signalingLossReason = relay.lastCloseReason ?? "connection ended"
         relay.close(); registeredInvitation = nil; resetSession()
         let limit = recoveringLiveSession ? max(retryLimit, sessionLossRetryLimit ?? retryLimit) : retryLimit
-        guard retryCount < limit else {
+        guard retriesIndefinitely || retryCount < limit else {
             stopped = true
             recoveringLiveSession = false
+            reconnecting = false
             status = finalStatus
             return
         }
         retryCount += 1
+        reconnecting = true
         let delay = RetrySchedule.delay(attempt: retryCount, base: retryBaseNanoseconds,
                                         maximum: maximumRetryDelayNanoseconds)
         status = "Connection interrupted · retrying…"
@@ -634,6 +667,7 @@ final class RemoteCoordinator: ObservableObject {
     }
     private func fail(_ message: String) {
         stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false
+        reconnecting = false
         cancelRenewal()
         routeExpiry?.cancel(); routeExpiry = nil; routePolicy = nil; routeArmed = false
         routeEpochsSeen.removeAll()

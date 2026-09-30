@@ -175,6 +175,7 @@ struct HostSettingsView: View {
         case .viewing, .controlling: "Live"
         case .ready: "Ready"
         case .starting: "Starting"
+        case .reconnecting: "Reconnecting"
         case .pairing: "Pairing"
         case .paused: state.pausedUntil == nil ? "Off" : "Paused"
         case .approvalRequested, .unavailable, .needsScreenRecording, .needsPhone: "Needs attention"

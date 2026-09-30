@@ -16,7 +16,7 @@ final class HostPresentationTests: XCTestCase {
 
     private let allStatuses: [HostStatus] = [
         .needsScreenRecording, .needsPhone, .pairing, .approvalRequested, .starting,
-        .ready, .paused, .unavailable, .viewing, .controlling
+        .reconnecting, .ready, .paused, .unavailable, .viewing, .controlling
     ]
 
     // MARK: Mark and ember
@@ -244,6 +244,12 @@ final class HostPresentationTests: XCTestCase {
         let starting = HostReadyCheck.checks(for: state(.starting))
         XCTAssertEqual(starting.first { $0.id == .connection }?.result, .waiting)
         XCTAssertFalse(HostReadyCheck.isReady(starting), "Not ready until the Mac is actually listening")
+
+        let reconnecting = HostReadyCheck.checks(for: state(.reconnecting))
+        XCTAssertEqual(reconnecting.first { $0.id == .connection }?.result, .waiting)
+        XCTAssertEqual(reconnecting.first { $0.id == .connection }?.detail, "Reconnecting to Farside service")
+        XCTAssertFalse(HostReadyCheck.isReady(reconnecting), "A Mac the service can’t reach is not ready")
+        XCTAssertEqual(HostPopoverPresentation.make(for: state(.reconnecting)).title, "Reconnecting to Farside service…")
 
         let paused = HostReadyCheck.checks(for: state(.paused))
         XCTAssertEqual(paused.first { $0.id == .connection }?.fix, .resumeSharing)

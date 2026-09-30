@@ -58,6 +58,13 @@ final class SignalingClient: SignalingTransport {
     private var sender: Task<Void, Never>?
     private var pending: [String] = []
     private var generation = UUID()
+    private var keepalive: SignalingKeepalive?
+    private let keepaliveTiming: SignalingKeepalive.Timing
+    private(set) var lastCloseReason: String?
+
+    init(keepalive: SignalingKeepalive.Timing = .standard) {
+        keepaliveTiming = keepalive
+    }
 
     func connect(invitation: PairInvitation, hostToken: String?, features: [String] = []) throws {
         try connect(invitation: invitation, hostToken: hostToken, features: features, entitlement: nil)
@@ -74,6 +81,15 @@ final class SignalingClient: SignalingTransport {
             room: invitation.room, token: hostToken ?? invitation.token,
             clientTokenHash: hostToken == nil ? nil : SecureRandom.digest(invitation.token),
             features: features.isEmpty ? nil : features, entitlement: hostToken == nil ? entitlement : nil))
+        let keepalive = SignalingKeepalive(timing: keepaliveTiming, ping: { [weak socket] handler in
+            guard let socket else { handler(URLError(.networkConnectionLost)); return }
+            socket.sendPing(pongReceiveHandler: handler)
+        }, onFailure: { [weak self] failure in
+            guard let self, self.generation == run else { return }
+            self.lost(failure.rawValue)
+        })
+        self.keepalive = keepalive
+        keepalive.start()
         reader = Task { [weak self, weak socket] in
             guard let socket else { return }
             do {
@@ -91,14 +107,14 @@ final class SignalingClient: SignalingTransport {
                 }
             } catch {
                 guard let self, self.generation == run else { return }
-                self.close(); self.onClose?()
+                self.lost("closed by the service or network")
             }
         }
     }
     func send(_ message: RelayMessage) {
         guard socket != nil, pending.count < 64,
               let bytes = try? JSONEncoder().encode(message), bytes.count < 256 * 1024,
-              let text = String(data: bytes, encoding: .utf8) else { close(); onClose?(); return }
+              let text = String(data: bytes, encoding: .utf8) else { lost("send refused"); return }
         pending.append(text)
         guard sender == nil else { return }
         let run = generation
@@ -112,12 +128,20 @@ final class SignalingClient: SignalingTransport {
                 }
                 if self.generation == run { self.sender = nil }
             } catch {
-                if self.generation == run { self.close(); self.onClose?() }
+                if self.generation == run { self.lost("send failed") }
             }
         }
     }
+    func checkLiveness() { keepalive?.probeNow() }
+
+    private func lost(_ reason: String) {
+        lastCloseReason = reason
+        close(); onClose?()
+    }
+
     func close() {
         generation = UUID()
+        keepalive?.stop(); keepalive = nil
         reader?.cancel(); reader = nil
         sender?.cancel(); sender = nil
         socket?.cancel(with: .goingAway, reason: nil); socket = nil
