@@ -110,6 +110,7 @@ struct StreamCounterSnapshot {
     var rateUpdates: Int?
     var encoderSessionAgeS: Double?
     var encoderDropped: Int?
+    var encoderSilentDrops: Int?
 }
 
 /// Compact sender-side stages the Mac forwards to the phone overlay once per statistics sample.
@@ -142,6 +143,8 @@ struct HostStreamSummary: Codable, Equatable {
     var encoderSessionAgeS: Double?
     /// Frames the encoder's newest-frame-wins gate dropped at submit in the last sample.
     var encoderDropped: Int?
+    /// Frames VideoToolbox dropped without a callback (retired by a later completion) in the last sample.
+    var encoderSilentDrops: Int?
     // Rate, load and region (G5/G4/G12; older phones ignore these).
     var targetFPS: Int?
     var displayRefreshHz: Double?
@@ -164,7 +167,7 @@ struct HostStreamSummary: Codable, Equatable {
                        sentFPS, sentKbps, targetKbps, maxKbps, qpAverage,
                        encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs].compactMap { $0 }
         let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates,
-                        encoderDropped].compactMap { $0 }
+                        encoderDropped, encoderSilentDrops].compactMap { $0 }
         let bytes = [encodeBytesP50, keyFrameBytesMax].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 10_000_000 }),
               integers.allSatisfy({ $0 >= 0 && $0 <= 100_000 }),
@@ -287,6 +290,7 @@ struct StreamStatsReport: Codable, Equatable {
     var rateUpdates: Int?
     var encoderSessionAgeS: Double?
     var encoderDropped: Int?
+    var encoderSilentDrops: Int?
     // Rate, load and region. This device's thermal state and Low Power Mode on both roles; the
     // rest is the host's (the phone sees the Mac's through `host`).
     var targetFPS: Int?
@@ -382,6 +386,7 @@ struct StreamStatsReport: Codable, Equatable {
                 rateUpdates = counters.rateUpdates
                 encoderSessionAgeS = Self.round(counters.encoderSessionAgeS)
                 encoderDropped = counters.encoderDropped
+                encoderSilentDrops = counters.encoderSilentDrops
             } else {
                 renderedFPS = Self.round(Double(counters.renderedFrames) / seconds)
                 renderGapMedianMs = Self.round(counters.renderGapMedianMs)
@@ -443,6 +448,7 @@ struct StreamStatsReport: Codable, Equatable {
                           rateUpdates: rateUpdates.map { min($0, 100_000) },
                           encoderSessionAgeS: encoderSessionAgeS.map { min($0, 10_000_000) },
                           encoderDropped: encoderDropped.map { min($0, 100_000) },
+                          encoderSilentDrops: encoderSilentDrops.map { min($0, 100_000) },
                           targetFPS: targetFPS.map { Self.clamp($0, HostStreamSummary.fpsRange) },
                           displayRefreshHz: displayRefreshHz.flatMap {
                               $0.isFinite ? Self.clamp($0, HostStreamSummary.refreshRange) : nil
@@ -498,7 +504,9 @@ struct StreamStatsReport: Codable, Equatable {
             return number >= 100 ? "\(Int(number.rounded()))\(unit)" : String(format: "%.1f%@", number, unit)
         }
         func hardware(_ flag: Bool?) -> String { flag == true ? "hw" : flag == false ? "sw?" : "hw?" }
-        func dropped(_ count: Int?) -> String { count.map { " · dropped \($0)/s" } ?? "" }
+        func dropped(_ count: Int?, _ silent: Int? = nil) -> String {
+            (count.map { " · dropped \($0)/s" } ?? "") + (silent.map { " · VT lost \($0)" } ?? "")
+        }
         func rateLine(_ prefix: String, target: Int?, refresh: Double?, display: String?, gapMedian: Double?,
                       thermal: Int?, lowPower: Bool?) -> String? {
             var parts: [String] = []
@@ -549,7 +557,7 @@ struct StreamStatsReport: Codable, Equatable {
             lines.append("\(encoderImplementation ?? "encoder?") \(hardware(powerEfficientEncoder)) · limit \(qualityLimitation ?? "?") · QP \(value(qpAverage)) · rtx \(retransmittedPackets ?? 0)")
             if encodeLatencyMs != nil || encoderDropped != nil {
                 lines.append("VT lat p50 \(value(encodeLatencyMs, "ms")) p90 \(value(encodeLatencyP90Ms, "ms")) max \(value(encodeLatencyMaxMs, "ms")) · in-flight ≤\(encodeInFlightMax ?? 0) · bytes p50 \(encodeBytesP50 ?? 0) · key ≤\((keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(rateUpdates ?? 0) · session \(value(encoderSessionAgeS, "s"))"
-                             + dropped(encoderDropped))
+                             + dropped(encoderDropped, encoderSilentDrops))
             }
             if let load = loadLine("", ladder: ladder, busy: busy, region: captureRegion) { lines.append(load) }
         } else {
@@ -565,7 +573,7 @@ struct StreamStatsReport: Codable, Equatable {
                 lines.append("Mac \(host.encoder ?? "encoder?") \(hardware(host.hardwareEncoder)) \(host.sentWidth ?? 0)×\(host.sentHeight ?? 0) · limit \(host.qualityLimitation ?? "?") · age \(value(hostSummaryAgeMs, "ms"))")
                 if host.encodeLatencyMs != nil || host.encoderDropped != nil {
                     lines.append("Mac VT lat p50 \(value(host.encodeLatencyMs, "ms")) p90 \(value(host.encodeLatencyP90Ms, "ms")) · in-flight ≤\(host.encodeInFlightMax ?? 0) · bytes p50 \(host.encodeBytesP50 ?? 0) · key ≤\((host.keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(host.rateUpdates ?? 0) · session \(value(host.encoderSessionAgeS, "s"))"
-                                 + dropped(host.encoderDropped))
+                                 + dropped(host.encoderDropped, host.encoderSilentDrops))
                 }
                 if let load = loadLine("Mac ", ladder: host.ladder, busy: host.busy, region: host.captureRegion) {
                     lines.append(load)
@@ -748,6 +756,7 @@ final class StreamCounters: @unchecked Sendable {
     private var keyFrameBytesMax = 0
     private var rateUpdates = 0
     private var encoderDropped = 0
+    private var encoderSilentDrops = 0
     private var encoderSessionStartedMs: Double?
 
     /// The refresh rate the video view presents at, fixed once the view is on screen.
@@ -861,6 +870,11 @@ final class StreamCounters: @unchecked Sendable {
         lock.lock(); encoderDropped += 1; lock.unlock()
     }
 
+    /// VideoToolbox dropped frames without a callback; a later completion retired them.
+    func encoderSilentlyDropped(_ count: Int) {
+        lock.lock(); encoderSilentDrops += max(0, count); lock.unlock()
+    }
+
     func encoderSessionStarted(atMs ms: Double = MachClock.nowMs()) {
         lock.lock(); encoderSessionStartedMs = ms; lock.unlock()
     }
@@ -920,10 +934,12 @@ final class StreamCounters: @unchecked Sendable {
         result.rateUpdates = encode.count > 0 || rateUpdates > 0 ? rateUpdates : nil
         result.encoderSessionAgeS = encoderSessionStartedMs.map { max(0, (MachClock.nowMs() - $0) / 1000) }
         result.encoderDropped = encode.count > 0 || encoderDropped > 0 ? encoderDropped : nil
+        result.encoderSilentDrops = encode.count > 0 || encoderSilentDrops > 0 ? encoderSilentDrops : nil
         encodeInFlightMax = 0
         keyFrameBytesMax = 0
         rateUpdates = 0
         encoderDropped = 0
+        encoderSilentDrops = 0
         snapshot = StreamCounterSnapshot(interval: 0)
         startedAt = time
         return result
