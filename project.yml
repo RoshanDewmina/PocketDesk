@@ -175,6 +175,8 @@ targets:
       - RemotePhoneTests
       - path: StoreKitTesting/FarsideAnywhere.storekit
         buildPhase: resources
+      - path: StoreKitTesting/FarsideOneTimeTestOnly.storekit
+        buildPhase: resources
     dependencies:
       - target: PocketDeskRemote
     settings:
