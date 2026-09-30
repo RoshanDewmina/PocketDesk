@@ -4,6 +4,7 @@ import Foundation
 /// extension action after seeing the matching feature, so older hosts never receive an
 /// action name their validator would reject.
 enum SessionFeature {
+    static let liveViewOnly = "viewOnlyLive.1"
     static let extendedFeatureList = "features.32"
     static let causalInput = "input.causal.1"
     static let clipboardText = "clipboard.text.1"
@@ -39,7 +40,7 @@ enum SessionFeature {
     static let legacyHost = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
                        momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]
-    static let host = [causalInput] + legacyHost
+    static let host = [causalInput, liveViewOnly] + legacyHost
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as
@@ -96,7 +97,7 @@ enum PhoneSessionNotice {
 }
 
 extension RemoteAction {
-    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake", "curtain", "file"]
+    static let sessionExtensionActions: Set<String> = ["clipboard", "pause", "resume", "wake", "curtain", "file", "viewOnly"]
 
     /// Validates the appended clipboard/pause/presence/curtain fields. Returns true when the action
     /// is a session-extension action that is now fully validated.
@@ -129,6 +130,7 @@ extension RemoteAction {
               pointerSync == nil, streamQuality == nil, textFocusProbe == nil, textFocusEditable == nil,
               x == 0, y == 0, text.isEmpty, key.isEmpty, modifiers.isEmpty
         else { throw RemoteError.invalidMessage }
+        guard (action == "viewOnly") == (liveViewOnly != nil) else { throw RemoteError.invalidMessage }
         if action == "clipboard" {
             guard let clipboard else { throw RemoteError.invalidMessage }
             try clipboard.validate()

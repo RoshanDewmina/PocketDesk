@@ -99,11 +99,12 @@ final class RemoteCoordinator: ObservableObject {
     // continuous physical one-hop proof and never supplies an ActivityKit server epoch.
     private var ownerLocalEpoch: String?
     /// Correlation only; route/grant authorization below remains the authority.
+    var onPresentationInvalidated: (() -> Void)?
     private(set) var presentationSessionID = UUID()
     private(set) var presentationTrackID = UUID()
     /// Current monotonic media lease; local media requires continuous physical proof.
     func presentationDeadline(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> TimeInterval? {
-        guard !stopped, connected, media != nil, cipher != nil, proofReceived, routeAuthorized else { return nil }
+        guard !stopped, connected, media != nil, cipher != nil, (!isHost || proofReceived), guardState != nil, routeAuthorized else { return nil }
         if localOnly || routePolicy?.access == .local {
             guard provenLocalLinkActive else { return nil }
         }
@@ -745,6 +746,7 @@ final class RemoteCoordinator: ObservableObject {
         peerDisconnected()
     }
     private func resetSession() {
+        onPresentationInvalidated?()
         presentationSessionID = UUID(); presentationTrackID = UUID()
         timeout?.cancel(); timeout = nil
         localProofTimeout?.cancel(); localProofTimeout = nil
@@ -1104,7 +1106,7 @@ final class RemoteCoordinator: ObservableObject {
             }
         }
         peer.onRemoteVideo = { [weak self, weak peer] track in Task { @MainActor in if let self, let peer, self.media === peer {
-            if self.remoteVideo !== track { self.presentationTrackID = UUID() }
+            if self.remoteVideo !== track { self.onPresentationInvalidated?(); self.presentationTrackID = UUID() }
             self.remoteVideo = track
         } } }
         peer.onPointerMessage = { [weak self, weak peer] data in
