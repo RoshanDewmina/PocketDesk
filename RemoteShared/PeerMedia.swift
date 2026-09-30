@@ -431,9 +431,6 @@ final class PeerMedia: NSObject {
         frameTimingReceiver = !isHost && nativeDesktopCodecs && tuning.frameTiming
             ? FrameTimingReceiver(log: PhoneFrameTimingLog()) : nil
         super.init()
-        if isHost, nativeDesktopCodecs { DesktopH264Encoder.sharedCounters = counters }
-        if isHost, nativeDesktopCodecs { DesktopH264Encoder.sharedFrameTiming = frameTimingLog }
-        if !isHost, nativeDesktopCodecs { TimedH264Decoder.sharedLog = frameTimingReceiver?.log }
         if isHost {
             let monitor = NWPathMonitor()
             linkMonitor = monitor
@@ -450,13 +447,19 @@ final class PeerMedia: NSObject {
         configuration.iceTransportPolicy = forceRelay ? .relay : .all
         configuration.continualGatheringPolicy = .gatherContinually
         configuration.iceServers = servers.map { RTCIceServer(urlStrings: $0.urls, username: $0.username ?? "", credential: $0.credential ?? "") }
-        var factory = nativeDesktopCodecs ? Self.factory : Self.compatibleFactory
+        // Context is owned by this peer, including negotiation that starts after another
+        // peer is created. Never publish a process-global 'next encoder' binding.
+        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(counters: counters, frameTiming: frameTimingLog)
+        let ownedDecoderFactory = PocketDeskVideoDecoderFactory(frameTiming: frameTimingReceiver?.log)
+        var factory = nativeDesktopCodecs
+            ? RTCPeerConnectionFactory(encoderFactory: ownedEncoderFactory, decoderFactory: ownedDecoderFactory)
+            : Self.compatibleFactory
         #if os(macOS)
         if isHost {
             let device = FPSystemAudioDevice()
             // One ADM per peer: the shared video factories must never share captured samples.
-            factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? PocketDeskVideoEncoderFactory() : RTCDefaultVideoEncoderFactory(),
-                                               decoderFactory: nativeDesktopCodecs ? PocketDeskVideoDecoderFactory() : RTCDefaultVideoDecoderFactory(),
+            factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? ownedEncoderFactory : RTCDefaultVideoEncoderFactory(),
+                                               decoderFactory: nativeDesktopCodecs ? ownedDecoderFactory : RTCDefaultVideoDecoderFactory(),
                                                audioDevice: device)
             sessionAudioFactory = factory
             withAudioLifetime { _ in systemAudioDevice = device }
@@ -469,13 +472,16 @@ final class PeerMedia: NSObject {
         if !isHost {
             let device = PhoneSystemAudioDevice()
             device.onFailure = { [weak self] in self?.onAudioPlaybackFailure?() }
-            factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? PocketDeskVideoEncoderFactory() : RTCDefaultVideoEncoderFactory(),
-                                               decoderFactory: nativeDesktopCodecs ? PocketDeskVideoDecoderFactory() : RTCDefaultVideoDecoderFactory(), audioDevice: device)
+            factory = RTCPeerConnectionFactory(encoderFactory: nativeDesktopCodecs ? ownedEncoderFactory : RTCDefaultVideoEncoderFactory(),
+                                               decoderFactory: nativeDesktopCodecs ? ownedDecoderFactory : RTCDefaultVideoDecoderFactory(), audioDevice: device)
             withAudioLifetime { _ in phoneAudioDevice = device }; phoneAudioFactory = factory
             #if DEBUG
             E2EMedia.restrictToLoopbackIfNeeded(factory)
             #endif
         }
+        #endif
+        #if DEBUG
+        E2EMedia.restrictToLoopbackIfNeeded(factory)
         #endif
         connection = factory.peerConnection(with: configuration, constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
         if isHost {

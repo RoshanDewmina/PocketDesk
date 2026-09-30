@@ -5,12 +5,10 @@ final class StreamInstrumentStatsTests: XCTestCase {
     func testEncoderKeepsItsOwnCountersAfterAnotherHostStarts() {
         let first = StreamCounters()
         let second = StreamCounters()
-        DesktopH264Encoder.sharedCounters = first
-        defer { DesktopH264Encoder.sharedCounters = nil }
         let codec = RTCVideoCodecInfo(name: kRTCVideoCodecH264Name, parameters: [:])
-        let firstEncoder = DesktopH264Encoder(codecInfo: codec)
+        let firstEncoder = DesktopH264Encoder(codecInfo: codec, counters: first)
 
-        DesktopH264Encoder.sharedCounters = second
+        _ = DesktopH264Encoder(codecInfo: codec, counters: second)
         _ = firstEncoder.setBitrate(1_000, framerate: 60)
 
         XCTAssertEqual(first.drain(inputBufferedBytes: nil).rateUpdates, 1)
