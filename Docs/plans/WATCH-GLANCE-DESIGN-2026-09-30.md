@@ -110,3 +110,16 @@ Leading glyph: `FarsideMarkGlyph` (`FarsideWidgets/SessionLiveActivity.swift:32`
 
 Roshan approved this design and every recommended answer to the open questions above ("Sounds good … go ahead"). Implementation is authorized on a feature branch; no install, merge into `pocketdesk-remote-chat`, deployment or submission without his separate go-ahead.
 Watch ownership (question 1) was not answered: treat as "no Watch available", build the no-Watch-app options, and mark all on-wrist behaviour unverified.
+
+## Amendments — 30 September 2026 (implementation)
+
+Made while planning the build (`Docs/plans/WATCH-GLANCE-IMPLEMENTATION-PLAN-2026-09-30.md`). They change wording and layout detail only; the approved scope and every answer above stand.
+
+1. **Session stale in `.small`.** The session activity carries no Mac seen time, so the stale row's line 3 cannot exist for it. A stale session shows `Session ended?` / `Check your iPhone.`, matching the Lock Screen's existing "Session ended?", and never a live title or a running clock.
+2. **Session phases the §3 table omits** get short copy: reconnecting `Reconnecting` / `Hold on.`; ended by the person `Session ended` / `Mac handed back.`; timeout `Farside let go` / `You were away.`; stopped at the Mac `Sharing stopped` / `Stopped at the Mac.`; error `Session ended` / `Nothing left open.`; paused with no time left `Paused` / `Lets go soon.`. The sample preview's line 3 is `Sample · preview`.
+3. **Mac line wording.** `Mac · seen 11:41 · 64%`, not `Your Mac · seen 1 min ago · 64%`. A Live Activity redraws only on an update, and LA2 updates only on a state change, so "1 min ago" would freeze and become false; an absolute time never does, and matches `Not seen since 11:42`. "Mac" rather than the Mac label keeps the line inside 40 mm and matches the Mac vitals spec's `Mac · …` lines. Asleep reads `Mac · asleep since 11:40`, with no battery.
+4. **Times** use SF Pro with monospaced digits, as the existing `SessionClock` does, not SF Mono: SF Mono's `Lets go in 0:42` does not fit 40 mm.
+5. **No pulse at all** in `.small`. §3 already forbids it on Always-On and with Reduce Motion; none is simpler and loses nothing on a glance.
+6. **Fit findings for LA2** (not built here): at 40 mm, `Claude Code needs you` does not fit the title width even at the 0.7× minimum (`An agent needs you` does), and `12 min · nothing needs you` and `Nothing was sent to your Mac.` do not fit one line at any allowed scale. LA2 must shorten them or let its title wrap; the layout's fit tests are the check to use.
+7. **Mac presence fields** are modelled now as `MacPresence` (every field optional; an unknown state decodes as not seen, because a state that fails to decode silently stops a Live Activity updating) so LA2 can carry them. No existing activity carries them, so nothing shows a Mac line yet.
+8. **Dismissal.** The existing ended-session dismissal (6 s after End, 90 s otherwise, `RemotePhone/ActivityShared/EndSessionIntent.swift:39-41`) is already shorter than the 2 min in §6, so it stays.

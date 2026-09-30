@@ -54,9 +54,9 @@
 - **Phone test command** (own simulator, created in Task 0):
   ```bash
   SIM=$(xcrun simctl list devices -j | python3 -c "import json,sys;print([d['udid'] for r in json.load(sys.stdin)['devices'].values() for d in r if d['name']=='Farside Watch iPhone'][0])")
-  lockf -k /tmp/farside-xcodebuild.lock xcodebuild -project PocketDesktop.xcodeproj -scheme PocketDeskRemote -destination "id=$SIM" -derivedDataPath "$DD" -parallel-testing-enabled NO -collect-test-diagnostics never -only-testing:RemotePhoneTests/<ClassName> test
-  xcrun simctl shutdown "$SIM"
+  lockf -k /tmp/farside-xcodebuild.lock sh -c 'xcodebuild -project PocketDesktop.xcodeproj -scheme PocketDeskRemote -destination "id=$0" -derivedDataPath "$1" -parallel-testing-enabled NO -collect-test-diagnostics never -only-testing:RemotePhoneTests/<ClassName> test; rc=$?; xcrun simctl shutdown "$0"; exit $rc' "$SIM" "$DD"
   ```
+  Parallel tasks share this simulator, so the shutdown runs **inside** the lock; shutting it down outside would kill another task's run. Several `-only-testing:` flags may be combined in one run.
 - **Widget build check** (Tasks 3, 4): `lockf -k /tmp/farside-xcodebuild.lock xcodebuild -project PocketDesktop.xcodeproj -scheme PocketDeskRemote -destination "id=$SIM" -derivedDataPath "$DD" build` (the app scheme embeds and builds `FarsideWidgets`).
 - **Report** exact pass/fail/skip counts. A failing unrelated pre-existing test is reported, not "fixed".
 
