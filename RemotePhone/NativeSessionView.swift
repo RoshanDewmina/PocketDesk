@@ -71,9 +71,9 @@ struct NativeSessionView: View {
     private var sessionChrome: AnyView {
         AnyView(ZStack {
             stage.ignoresSafeArea()
-            PrecisionLoupeOverlay(controller: precisionTap, model: model, viewport: viewport,
+            if !couch { PrecisionLoupeOverlay(controller: precisionTap, model: model, viewport: viewport,
                                   track: connection.remoteVideo, offline: offlineLayoutCheck)
-                .ignoresSafeArea()
+                .ignoresSafeArea() }
             ReconnectVeil(active: (!offlineLayoutCheck && !connection.connected && !lockVisible) || LaunchOptions.has("--ui-reconnecting"))
             Color.clear
                 .allowsHitTesting(false)

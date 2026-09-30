@@ -99,6 +99,9 @@ struct ConnectionHealth: Equatable {
                                     nextStep: step, action: .retry)
         case .connectionLost:
             return unreachable(detail: "The connection dropped and retrying didn’t bring it back. The cause is unknown.")
+        case .couchNotLocal, .couchControlOff:
+            return ConnectionHealth(state: .stoppedToStaySafe, title: failure.shortStatus, detail: failure.message,
+                                    nextStep: step, action: .retry)
         case .localNetworkOff:
             return ConnectionHealth(state: .localNetworkOff, title: failure.headline, detail: failure.message,
                                     nextStep: step, action: .openSettings)

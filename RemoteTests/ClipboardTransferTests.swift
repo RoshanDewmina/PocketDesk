@@ -161,7 +161,8 @@ final class SessionExtensionProtocolTests: XCTestCase {
         XCTAssertNoThrow(try RemoteAction(action: "clipboard", epoch: 3, clipboard: .pull(transfer)).validate())
         XCTAssertNoThrow(try RemoteAction(action: "pause", epoch: 3).validate())
         XCTAssertNoThrow(try RemoteAction(action: "resume", epoch: 3).validate())
-        XCTAssertNoThrow(try RemoteAction(action: "capture", x: 1, features: SessionFeature.host).validate())
+        XCTAssertNoThrow(try RemoteAction(action: "capture", x: 1, features: SessionFeature.host + [SessionFeature.couch]).validate())
+        XCTAssertNoThrow(try RemoteAction(action: "capture", features: Array(repeating: "a", count: 32)).validate())
 
         let invalid = [
             RemoteAction(action: "clipboard", epoch: 3),
@@ -173,7 +174,7 @@ final class SessionExtensionProtocolTests: XCTestCase {
             RemoteAction(action: "move", clipboard: .pull(transfer)),
             RemoteAction(action: "heartbeat", features: ["pause.1"]),
             RemoteAction(action: "capture", features: ["bad feature"]),
-            RemoteAction(action: "capture", features: Array(repeating: "a", count: 17))
+            RemoteAction(action: "capture", features: Array(repeating: "a", count: 33))
         ]
         for (index, action) in invalid.enumerated() {
             XCTAssertThrowsError(try action.validate(), "case \(index) must be rejected")

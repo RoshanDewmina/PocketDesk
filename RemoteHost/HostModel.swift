@@ -1989,8 +1989,6 @@ final class RemoteHostModel: ObservableObject {
         input.enabled = HostControlPolicy.isEnabled(
             userConsent: allowControl,
             accessibilityPermission: controlPermission,
-            captureHealthy: healthy
-            accessibilityPermission: accessibilityPermission,
             session: sessionState,
             captureHealthy: healthy,
             couchHealthy: couchHealthy
@@ -2087,7 +2085,7 @@ final class RemoteHostModel: ObservableObject {
             presence: presence ?? (displayAsleep ? .displayAsleep : nil),
             phoneUnderstands: features.contains(MacShareBlocker.feature) || features.contains(MacShareBlocker.approvalFeature),
             controlAllowed: allowControl, accessibilityGranted: controlPermission.isGranted,
-            captureApprovalPending: captureApproval.isPending,
+            captureApprovalPending: sessionState == .picture && captureApproval.isPending,
             phoneUnderstandsApproval: features.contains(MacShareBlocker.approvalFeature))
         let capability = sessionState.issuesTokens(healthy: healthy) ? inputFreshness.capability(
             epoch: inputEpoch.value,
