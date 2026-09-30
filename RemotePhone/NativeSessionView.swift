@@ -417,7 +417,7 @@ struct NativeSessionView: View {
         } else if (!offlineLayoutCheck && model.fresh && !model.captureHealthy) || LaunchOptions.has("--ui-issue-sharing") {
             SessionIssueCard(error: .screenSharingOff)
                 .allowsHitTesting(false)
-        } else if !offlineLayoutCheck && !model.fresh && !lockVisible {
+        } else if !offlineLayoutCheck && !model.fresh && !lockVisible && model.bigText.pendingTarget == nil {
             Label("Waiting for your Mac’s screen…", systemImage: "hourglass")
                 .font(.callout.weight(.medium))
                 .foregroundStyle(Farside.Palette.bone)
@@ -471,6 +471,7 @@ struct NativeSessionView: View {
                 .transition(.opacity)
             }
             clipboardStatus
+            bigTextStatus
             if let notice = model.sessionNotice {
                 FarsideNotice(message: notice, tone: .info)
                     .frame(maxWidth: 420)
@@ -513,6 +514,23 @@ struct NativeSessionView: View {
                 .transition(.opacity)
                 .onTapGesture { model.clipboard.clearNotice() }
                 .accessibilityIdentifier("remote.clipboard.notice")
+        }
+    }
+
+    @ViewBuilder private var bigTextStatus: some View {
+        if let target = model.bigText.pendingTarget {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small).tint(Farside.Palette.bone)
+                Text(target == 0 ? "Restoring text size…" : "Making text bigger…")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Farside.Palette.bone)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
+            .transition(.opacity)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("remote.bigText.pill")
         }
     }
 
@@ -1238,12 +1256,17 @@ struct NativeSessionView: View {
 
     private var showsDisplayRow: Bool { model.displaySelectionSupported && model.displays.count > 1 }
 
-    /// Header, two rows of keys and up to two session rows. Nothing in the panel scrolls.
+    private var showsBigTextRow: Bool { model.bigTextSupported && model.bigText.savedWidth != nil }
+
+    private var showsSessionRows: Bool { showsCurtainRow || showsDisplayRow || showsBigTextRow }
+
+    /// Header, two rows of keys and up to three session rows. Nothing in the panel scrolls.
     private var panelHeight: CGFloat {
         var height: CGFloat = 288
-        if showsCurtainRow || showsDisplayRow { height += 14 }
+        if showsSessionRows { height += 14 }
         if showsCurtainRow { height += 61 }
         if showsDisplayRow { height += showsCurtainRow ? 53 : 52 }
+        if showsBigTextRow { height += showsCurtainRow || showsDisplayRow ? 53 : 52 }
         return height
     }
 
@@ -1292,7 +1315,7 @@ struct NativeSessionView: View {
             .frame(minHeight: 44)
             .padding(.bottom, 12)
             macKeys(compact: false)
-            if showsCurtainRow || showsDisplayRow {
+            if showsSessionRows {
                 sessionRows.padding(.top, 14)
             }
             Spacer(minLength: 0)
@@ -1404,12 +1427,31 @@ struct NativeSessionView: View {
     private var sessionRows: some View {
         VStack(spacing: 0) {
             if showsCurtainRow { curtainPanelRow }
-            if showsCurtainRow && showsDisplayRow {
-                Rectangle().fill(Farside.Palette.line).frame(height: 1).padding(.leading, 50)
-            }
+            if showsCurtainRow && showsDisplayRow { sessionRowDivider }
             if showsDisplayRow { displayPanelRow }
+            if showsBigTextRow && (showsCurtainRow || showsDisplayRow) { sessionRowDivider }
+            if showsBigTextRow { bigTextPanelRow }
         }
         .farsidePlate(Farside.Radius.card, fill: Farside.Palette.panel, stroke: Farside.Palette.line)
+    }
+
+    private var sessionRowDivider: some View {
+        Rectangle().fill(Farside.Palette.line).frame(height: 1).padding(.leading, 50)
+    }
+
+    private var bigTextPanelRow: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "textformat.size")
+                .foregroundStyle(Farside.Palette.ash)
+                .frame(width: 24)
+                .accessibilityHidden(true)
+            Toggle("Big Text", isOn: Binding(get: { !model.bigText.sessionOff },
+                                             set: { model.setBigTextOffForSession(!$0) }))
+                .toggleStyle(FarsideSwitchStyle())
+                .accessibilityIdentifier("remote.bigTextRow")
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 52)
     }
 
     private var curtainPanelRow: some View {
@@ -1911,7 +1953,7 @@ struct NativeSessionView: View {
         reportSettledViewport()
     }
 
-    private var pictureSection: some View {
+    @ViewBuilder private var pictureSection: some View {
         Section {
             FarsideSegmented(label: "Picture quality",
                              options: StreamQuality.allCases.map { (value: $0, title: $0.title) },
@@ -1930,6 +1972,64 @@ struct NativeSessionView: View {
         } header: {
             sectionHeader("Quality")
         }
+        bigTextSection
+    }
+
+    @ViewBuilder private var bigTextSection: some View {
+        if model.bigTextSupported {
+            Section {
+                bigTextOption(title: "Off", caption: "Your Mac's own size", width: nil, id: "remote.bigText.off")
+                ForEach(Array(model.bigText.steps.enumerated()), id: \.offset) { index, step in
+                    bigTextOption(title: Self.bigTextNames[min(index, Self.bigTextNames.count - 1)],
+                                  caption: "looks like \(Int(step.width)) × \(Int(step.height))",
+                                  width: step.width, id: "remote.bigText.step.\(index)")
+                }
+                if model.bigText.steps.isEmpty && model.bigText.baselineWidth != nil {
+                    Text("Already at the largest size")
+                        .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                        .listRowBackground(Farside.Palette.panel)
+                }
+                if model.bigText.savedWidth != nil {
+                    Toggle("Off for this session", isOn: Binding(get: { model.bigText.sessionOff },
+                                                                 set: { model.setBigTextOffForSession($0) }))
+                        .toggleStyle(FarsideSwitchStyle())
+                        .listRowBackground(Farside.Palette.panel)
+                        .accessibilityIdentifier("remote.bigText.sessionOff")
+                }
+            } header: {
+                sectionHeader("Big Text")
+            } footer: {
+                Text("Makes everything on your Mac bigger while this phone is connected. Saved for this Mac.")
+                    .foregroundStyle(Farside.Palette.ash)
+            }
+        }
+    }
+
+    private static let bigTextNames = ["Large", "Larger", "Very large", "Largest"]
+
+    private func bigTextOption(title: String, caption: String, width: Double?, id: String) -> some View {
+        let selected = model.bigText.savedWidth == width
+        return Button { model.chooseBigText(width) } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).foregroundStyle(Farside.Palette.bone)
+                    Text(caption).farsideCaption()
+                }
+                Spacer(minLength: 8)
+                if selected {
+                    Image(systemName: "checkmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Farside.Palette.bone)
+                        .accessibilityHidden(true)
+                }
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(title), \(caption)")
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityIdentifier(id)
+        .listRowBackground(Farside.Palette.panel)
     }
 
     private var diagnosticsSection: some View {
