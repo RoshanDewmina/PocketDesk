@@ -6,11 +6,14 @@ protocol OwnedVideoConfiguration {
     var codecType: CMVideoCodecType { get }
     var maximumKbps: UInt32 { get }
     var lowLatency: Bool { get }
+    var fullColor444: Bool { get }
     var profileProperty: CFString { get }
     func fits(width: Int, height: Int, fps: Int) -> Bool
     func acceptsSPS(_ data: Data) -> Bool
     func codecSpecificInfo() -> any RTCCodecSpecificInfo
 }
+
+extension OwnedVideoConfiguration { var fullColor444: Bool { false } }
 
 extension OwnedVTConfiguration: OwnedVideoConfiguration {
     var codecType: CMVideoCodecType { kCMVideoCodecType_H264 }
@@ -26,16 +29,19 @@ extension OwnedVTConfiguration: OwnedVideoConfiguration {
 /// Main profile, negotiated tier and level ceiling up to 5.1. No 4:4:4/RExt or HDR claim.
 struct OwnedHEVCConfiguration: OwnedVideoConfiguration {
     static var codecInfo: RTCVideoCodecInfo { RTCVideoCodecInfo(name: "H265", parameters: ["profile-id": "1", "tier-flag": "1", "level-id": "153", "tx-mode": "SRST"]) }
+    static var fullColorCodecInfo: RTCVideoCodecInfo { RTCVideoCodecInfo(name: "H265", parameters: ["profile-id": "4", "tier-flag": "1", "level-id": "153", "tx-mode": "SRST"]) }
     let level: UInt8
     let tier: UInt8
+    let profile: UInt8
+    var fullColor444: Bool { profile == 4 }
     var codecType: CMVideoCodecType { kCMVideoCodecType_HEVC }
     var maximumKbps: UInt32 { [UInt8(120): 12_000, 123: 20_000, 150: 25_000, 153: 40_000][level] ?? 12_000 }
     var lowLatency: Bool { false } // Standard HEVC hardware; no unsupported low-latency request.
     var profileProperty: CFString { kVTProfileLevel_HEVC_Main_AutoLevel }
     init?(parameters: [String: String]) {
-        guard parameters["profile-id"] == "1", let tier = UInt8(parameters["tier-flag"] ?? ""), tier <= 1, parameters["tx-mode"] == "SRST",
+        guard let profile = UInt8(parameters["profile-id"] ?? ""), [1, 4].contains(profile), let tier = UInt8(parameters["tier-flag"] ?? ""), tier <= 1, parameters["tx-mode"] == "SRST",
               let level = UInt8(parameters["level-id"] ?? ""), [120, 123, 150, 153].contains(level) else { return nil }
-        self.level = level; self.tier = tier
+        self.level = level; self.tier = tier; self.profile = profile
     }
     func fits(width: Int, height: Int, fps: Int) -> Bool {
         let picture = level < 150 ? 2_228_224 : 8_912_896
@@ -44,6 +50,10 @@ struct OwnedHEVCConfiguration: OwnedVideoConfiguration {
         return width * height <= picture && width * height * fps <= rate
     }
     func acceptsSPS(_ data: Data) -> Bool {
+        if fullColor444 {
+            guard let actual = HEVC444SPS.parse(data), actual.tier <= tier, actual.level <= level else { return false }
+            return fits(width: actual.width, height: actual.height, fps: 1)
+        }
         guard data.count >= 2, (data[0] >> 1) & 63 == 33 else { return false }
         let bytes = H26xAnnexB.rbsp(data.dropFirst(2))
         // sps_video_parameter_set_id/max_sub_layers/temporal_nesting then general profile/tier/level.
@@ -154,7 +164,7 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                 retire(); format = next
                 let result = VTDecompressionSessionCreate(allocator: kCFAllocatorDefault, formatDescription: next,
                     decoderSpecification: [kVTVideoDecoderSpecification_RequireHardwareAcceleratedVideoDecoder: true] as CFDictionary,
-                    imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+                    imageBufferAttributes: [kCVPixelBufferPixelFormatTypeKey: config.fullColor444 ? kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
                         kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, outputCallback: nil, decompressionSessionOut: &session)
                 guard result == noErr else { fail(result); return -1 }
             }
@@ -182,6 +192,7 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                         if status != noErr { self.fail(status) }
                         return
                     }
+                    guard !self.configuration.fullColor444 || HEVC444PixelTransfer.isFullColor(pixels) else { self.fail(kVTVideoDecoderUnsupportedDataFormatErr); return }
                     let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: pixels), rotation: rotation, timeStampNs: capture * 1_000_000)
                     frame.timeStamp = Int32(bitPattern: rtp)
                     self.timing?.decoded(rtp: frame.timeStamp, atMs: MachClock.nowMs())

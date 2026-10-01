@@ -4,6 +4,88 @@ import CoreVideo
 import VideoToolbox
 
 final class OwnedHEVCCodecTests: XCTestCase {
+    @MainActor
+    func testActualProfile4RTPDecoded444AndMain1H264LegacyFallback() async throws {
+        for receiver in ["444", "Main1", "H264"] {
+            let host = PeerMedia(isHost: true, servers: [], hevc: true, hevc444: true)
+            let phone = PeerMedia(isHost: false, servers: [], hevc: receiver != "H264", hevc444: receiver == "444")
+            defer { host.close(); phone.close() }
+            var answer = "", track: RTCVideoTrack?, connected = false
+            host.onSignal = { [weak phone] signal in phone?.receive(signal) }
+            phone.onSignal = { [weak host] signal in if signal.kind == "answer" { answer = signal.sdp ?? "" }; host?.receive(signal) }
+            phone.onRemoteVideo = { track = $0 }
+            host.onState = { if $0 == "connected" { connected = true } }
+            host.offer()
+            let deadline = Date().addingTimeInterval(10)
+            while (!connected || track == nil || answer.isEmpty) && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+            XCTAssertTrue(connected)
+            let remote = try XCTUnwrap(track)
+            let video = try XCTUnwrap(answer.components(separatedBy: .newlines).first { $0.hasPrefix("m=video ") })
+            let payload = try XCTUnwrap(video.split(separator: " ").dropFirst(3).first)
+            let codec = try XCTUnwrap(answer.components(separatedBy: .newlines).first { $0.hasPrefix("a=rtpmap:\(payload) ") })
+            if receiver == "H264" { XCTAssertTrue(codec.lowercased().contains("h264/90000")) }
+            else {
+                XCTAssertTrue(codec.lowercased().contains("h265/90000"))
+                let fmtp = try XCTUnwrap(answer.components(separatedBy: .newlines).first { $0.hasPrefix("a=fmtp:\(payload) ") })
+                XCTAssertTrue(fmtp.contains("profile-id=\(receiver == "444" ? 4 : 1)"), fmtp)
+            }
+            let sink = HEVC444NativeSink(); remote.add(sink)
+            defer { remote.remove(sink) }
+            let pixels = try fullColorBGRA()
+            for _ in 0..<150 {
+                host.pushFrame(pixels, timeStampNs: Int64(ProcessInfo.processInfo.systemUptime * 1e9))
+                try await Task.sleep(for: .milliseconds(20))
+                if sink.snapshot.count >= 2 { break }
+            }
+            let snapshot = sink.snapshot
+            XCTAssertGreaterThanOrEqual(snapshot.count, 2, "Genuine native RTP decoding, no toI420 probe conversion")
+            XCTAssertEqual(snapshot.fullColor, receiver == "444", "Only mutually negotiated profile4 produces actual full-size chroma")
+            print("CHROMA RTP receiver=\(receiver) payload=\(payload) decoded=\(snapshot.count) actual444=\(snapshot.fullColor)")
+        }
+    }
+    func testMain444PublicHardwareProbeAndFactoryFallbackAreHonest() {
+        XCTAssertTrue(NativeHEVC444Capability.encodeFixture())
+        XCTAssertTrue(NativeHEVC444Capability.decodeFixture())
+        let unsupported = PocketDeskVideoEncoderFactory(hevc: true, hevc444: false)
+        XCTAssertFalse(unsupported.supportedCodecs().contains { $0.parameters["profile-id"] == "4" })
+        XCTAssertNil(unsupported.createEncoder(OwnedHEVCConfiguration.fullColorCodecInfo))
+        XCTAssertNotNil(unsupported.createEncoder(OwnedHEVCConfiguration.codecInfo))
+        let legacy = PocketDeskVideoDecoderFactory(hevc: false, hevc444: false)
+        XCTAssertNil(legacy.createDecoder(OwnedHEVCConfiguration.fullColorCodecInfo))
+        XCTAssertTrue(legacy.supportedCodecs().contains { $0.name == kRTCVideoCodecH264Name })
+    }
+    func testAdmittedColoredBGRAPublicTransferRetainsNeighborChromaAndRefuses420Upsampling() throws {
+        let source = try fullColorBGRA()
+        let converted = try XCTUnwrap(HEVC444PixelTransfer.fullColor(source))
+        XCTAssertTrue(HEVC444PixelTransfer.isFullColor(converted))
+        XCTAssertEqual(CVBufferCopyAttachment(converted, kCVImageBufferYCbCrMatrixKey, nil) as? String, kCVImageBufferYCbCrMatrix_ITU_R_709_2 as String)
+        XCTAssertEqual(CVPixelBufferLockBaseAddress(converted, .readOnly), kCVReturnSuccess)
+        defer { CVPixelBufferUnlockBaseAddress(converted, .readOnly) }
+        let chroma = try XCTUnwrap(CVPixelBufferGetBaseAddressOfPlane(converted, 1)).assumingMemoryBound(to: UInt8.self)
+        // Alternating saturated red/blue input at adjacent pixels must not collapse into 4:2:0's shared chroma.
+        XCTAssertGreaterThan(abs(Int(chroma[0]) - Int(chroma[2])) + abs(Int(chroma[1]) - Int(chroma[3])), 80)
+        var subsampled: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, nil, &subsampled), kCVReturnSuccess)
+        XCTAssertNil(HEVC444PixelTransfer.fullColor(try XCTUnwrap(subsampled)))
+        CVBufferRemoveAttachment(source, kCVImageBufferColorPrimariesKey)
+        XCTAssertNil(HEVC444PixelTransfer.fullColor(source), "Missing color may not be guessed")
+    }
+    private func fullColorBGRA() throws -> CVPixelBuffer {
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        XCTAssertEqual(CVPixelBufferLockBaseAddress(buffer, []), kCVReturnSuccess)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        let base = try XCTUnwrap(CVPixelBufferGetBaseAddress(buffer)).assumingMemoryBound(to: UInt8.self)
+        for y in 0..<64 { for x in 0..<64 {
+            let at = y * CVPixelBufferGetBytesPerRow(buffer) + x * 4
+            base[at] = x % 2 == 0 ? 0 : 255; base[at + 1] = 0; base[at + 2] = x % 2 == 0 ? 255 : 0; base[at + 3] = 255
+        } }
+        return buffer
+    }
+
     func testActualDecoderSubmissionRecoverableBadDataAndTerminalFailureLifecycle() {
         let failed = expectation(description: "Terminal synchronous decode requests rollback exactly once")
         failed.assertForOverFulfill = true
@@ -181,4 +263,15 @@ private final class HEVCRenderSink: NSObject, RTCVideoRenderer, @unchecked Senda
     var count: Int { lock.lock(); defer { lock.unlock() }; return rendered }
     func setSize(_ size: CGSize) {}
     func renderFrame(_ frame: RTCVideoFrame?) { guard frame != nil else { return }; lock.lock(); rendered += 1; lock.unlock() }
+}
+
+private final class HEVC444NativeSink: NSObject, RTCVideoRenderer {
+    private let lock = NSLock()
+    private var count = 0, fullColor = false
+    var snapshot: (count: Int, fullColor: Bool) { lock.lock(); defer { lock.unlock() }; return (count, fullColor) }
+    func setSize(_ size: CGSize) {}
+    func renderFrame(_ frame: RTCVideoFrame?) {
+        guard let frame, let pixels = (frame.buffer as? RTCCVPixelBuffer)?.pixelBuffer else { return }
+        lock.lock(); count += 1; fullColor = HEVC444PixelTransfer.isFullColor(pixels); lock.unlock()
+    }
 }

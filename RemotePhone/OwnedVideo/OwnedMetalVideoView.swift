@@ -156,7 +156,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             crop: SIMD4(Float(crop.minX / CGFloat(CVPixelBufferGetWidth(buffer))), Float(crop.minY / CGFloat(CVPixelBufferGetHeight(buffer))),
                         Float(crop.width / CGFloat(CVPixelBufferGetWidth(buffer))), Float(crop.height / CGFloat(CVPixelBufferGetHeight(buffer)))),
             color: SIMD4(pixels.conversion?.kr ?? 0, pixels.conversion?.kb ?? 0, pixels.conversion?.yOffset ?? 0, pixels.conversion?.yScale ?? 1),
-            range: SIMD4(pixels.conversion?.uvScale ?? 1, Float((pixels.bgra ? 0.5 : 1) / Double(CVPixelBufferGetWidth(buffer))), Float((pixels.bgra ? 0.5 : 1) / Double(CVPixelBufferGetHeight(buffer))), pixels.transfer == .srgb ? 1 : 0))
+            range: SIMD4(pixels.conversion?.uvScale ?? 1, Float(0.5 / Double(pixels.bgra ? CVPixelBufferGetWidth(buffer) : CVPixelBufferGetWidthOfPlane(buffer, 1))), Float(0.5 / Double(pixels.bgra ? CVPixelBufferGetHeight(buffer) : CVPixelBufferGetHeightOfPlane(buffer, 1))), pixels.transfer == .srgb ? 1 : 0))
         var refinement = RefinementUniform(rect: .zero, options: .zero)
         var refinementPixels: CVPixelBuffer?
         var refinementTexture: MTLTexture?
@@ -200,13 +200,20 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
     private func showFallback(_ envelope: VideoFrameEnvelope) {
         timingAvailable = false
+        var buffer = envelope.frame.buffer
+        if let cv = buffer as? RTCCVPixelBuffer, HEVC444PixelTransfer.isFullColor(cv.pixelBuffer) {
+            // Pinned M153 stock/crop/toI420 paths do not support raw 444. Public declared-color
+            // conversion is only a compatibility picture; it never creates a presented receipt.
+            guard let converted = HEVC444PixelTransfer.compatibilityFrameBuffer(cv) else { invalidate(); return }
+            buffer = converted
+        }
         if fallback == nil {
             let view = RTCMTLVideoView(frame: bounds); addSubview(view); fallback = view
         }
         fallback?.isHidden = false
         fallback?.videoContentMode = fillsFrame ? .scaleToFill : .scaleAspectFit
         stamp = max(stamp + 1, Int64(ProcessInfo.processInfo.systemUptime * 1e9))
-        fallback?.renderFrame(RTCVideoFrame(buffer: envelope.frame.buffer, rotation: envelope.frame.rotation, timeStampNs: stamp))
+        fallback?.renderFrame(RTCVideoFrame(buffer: buffer, rotation: envelope.frame.rotation, timeStampNs: stamp))
     }
     private struct RefinementUniform { var rect: SIMD4<Float>; var options: SIMD4<Float> }
     private struct Uniforms {

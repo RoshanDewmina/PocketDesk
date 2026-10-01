@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import WebRTC
+import CoreVideo
 
 /// One Precision Tap: the finger moves the target at half speed for fine adjustment, and a slide far
 /// from where it started, or off the canvas, arms a cancel. Canvas coordinates throughout.
@@ -168,7 +169,14 @@ final class LoupeCropRenderer: NSObject, RTCVideoRenderer {
         guard let crop, let pixels = LoupeGeometry.pixelCrop(crop, baseX: Int(buffer.cropX), baseY: Int(buffer.cropY),
                                                              baseWidth: Int(buffer.cropWidth),
                                                              baseHeight: Int(buffer.cropHeight)) else { return }
-        let cropped = RTCCVPixelBuffer(pixelBuffer: buffer.pixelBuffer, adaptedWidth: Int32(pixels.width),
+        var drawablePixels = buffer.pixelBuffer
+        if HEVC444PixelTransfer.isFullColor(drawablePixels) {
+            guard let converted = HEVC444PixelTransfer.compatibilityBGRA(drawablePixels),
+                  CVPixelBufferGetWidth(converted) == CVPixelBufferGetWidth(drawablePixels),
+                  CVPixelBufferGetHeight(converted) == CVPixelBufferGetHeight(drawablePixels) else { return }
+            drawablePixels = converted // Original exact crop remains in the same pixel coordinates.
+        }
+        let cropped = RTCCVPixelBuffer(pixelBuffer: drawablePixels, adaptedWidth: Int32(pixels.width),
                                        adaptedHeight: Int32(pixels.height), cropWidth: Int32(pixels.width),
                                        cropHeight: Int32(pixels.height), cropX: Int32(pixels.x), cropY: Int32(pixels.y))
         let size = CGSize(width: pixels.width, height: pixels.height)
