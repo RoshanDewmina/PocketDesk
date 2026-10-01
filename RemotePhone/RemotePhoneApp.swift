@@ -131,6 +131,58 @@ final class PhoneRemoteModel: ObservableObject {
     private var shareDestination: SendToMacDestination?
     private var sendToMacBeaconAt: TimeInterval = 0
     private var fileTransferWasAvailable = false
+    @Published private(set) var awayState: AwayModeState?
+    @Published private(set) var lockMacStatus: String?
+    private let awayMemory = AwayMemory()
+    private var pendingLockMac: PhoneAwayLockRequest?
+    private var awayStatusEpoch: UInt64?
+    private var lockMacTimeout: Task<Void, Never>?
+    var awaySupported: Bool { hostFeatures.contains(SessionFeature.away) }
+    var canLockMac: Bool {
+        awaySupported && awayStatusEpoch == geometryEpoch && pendingLockMac == nil && canControl && sceneIsActive && !captureScopeViewOnly &&
+            !viewOnlyConfirmed && !pendingViewOnlyStart && !awaitingViewOnlyExit && !pipBackground &&
+            connection.presentationDeadline() != nil && connection.presentationHostTrust != nil
+    }
+    @discardableResult
+    func endAndLockMac() -> Bool {
+        guard canLockMac, let host = connection.presentationHostTrust else { return false }
+        let request = PhoneAwayLockRequest(hostKey: AwayMemory.macKey(host: host),
+            session: connection.presentationSessionID, epoch: geometryEpoch, sentAt: ProcessInfo.processInfo.systemUptime)
+        cancelInput(); setMacAudioMuted(true)
+        guard connection.sendControl(RemoteAction(action: "lockMac", epoch: geometryEpoch)) else { return false }
+        pendingLockMac = request
+        lockMacStatus = "Lock requested. Waiting for this Mac’s status…"
+        invalidatePresentation()
+        lockMacTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(PhoneAwayLockRequest.timeout))
+            guard !Task.isCancelled, let self, self.pendingLockMac == request else { return }
+            self.lockMacStatus = "Lock wasn’t confirmed. Unlock or check your Mac in person."
+            let notice = self.lockMacStatus
+            self.disconnect()
+            self.macNotice = notice
+        }
+        return true
+    }
+    private func receiveAwayStatus(_ action: RemoteAction) {
+        guard action.epoch == geometryEpoch, let host = connection.presentationHostTrust else { return }
+        awayStatusEpoch = action.epoch
+        let next = awaySupported ? AwayModeState(reported: action.away) : nil
+        if next != awayState {
+            awayState = next
+            if next == .covered { showSessionNotice("Mac covered · requests a lock if touched") }
+        }
+        if let next, !(next == .off && hostPresence == .locked) { awayMemory.remember(next, host: host) }
+        if let request = pendingLockMac, hostPresence == .locked,
+           request.matches(hostKey: AwayMemory.macKey(host: host), session: connection.presentationSessionID,
+                           epoch: action.epoch, at: ProcessInfo.processInfo.systemUptime) {
+            lockMacStatus = "This Mac reports that it is locked. Unlock it in person."
+            departureReason = .locked
+            disconnect()
+        }
+    }
+    private func cancelLockMacRequest() {
+        lockMacTimeout?.cancel(); lockMacTimeout = nil; pendingLockMac = nil
+    }
     @Published private(set) var wakeStatus: String?
     private var pendingWake: (request: WakeRequest, host: PhoneHostTrust, session: UUID, epoch: UInt64, sentAt: TimeInterval)?
     private var wakeTimeout: Task<Void, Never>?
@@ -441,7 +493,7 @@ final class PhoneRemoteModel: ObservableObject {
                 sessionID: connection.presentationSessionID, trackID: connection.presentationTrackID,
                 contentEpoch: presentationContentEpoch, geometryEpoch: geometryEpoch)
         }
-        let blocked = host?.invitation != connection.invitation || hostPresence == .locked || hostPresence == .switchedUser
+        let blocked = pendingLockMac != nil || host?.invitation != connection.invitation || hostPresence == .locked || hostPresence == .switchedUser
         let proof = PresentationLeasePolicy.admission(identity: identity, routeDeadline: connection.presentationDeadline(at: now),
             captureHealthAt: lastCaptureHealth, healthy: captureHealthy, picture: sessionMode == .picture,
             trackPresent: connection.remoteVideo != nil, blocked: blocked, now: now)
@@ -650,6 +702,10 @@ final class PhoneRemoteModel: ObservableObject {
             guard let self else { return }
             self.invalidatePresentation()
             self.cachePresentationHost()
+            self.cancelLockMacRequest()
+            self.awayState = nil
+            self.awayStatusEpoch = nil
+            self.lockMacStatus = nil
             self.contentConcealed = false
             self.resumeState = .none
             self.macNotice = nil
@@ -738,6 +794,7 @@ final class PhoneRemoteModel: ObservableObject {
     #endif
 
     var canControl: Bool {
+        guard pendingLockMac == nil else { return false }
         guard !captureScopeViewOnly, bigText.pendingTarget == nil, !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground else { return false }
         #if DEBUG
         if inputProbe != nil { return !privacyShield && !contentConcealed }
@@ -998,7 +1055,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// One physical key press from a hardware keyboard, by position, with its modifiers.
     @discardableResult
     func hardwareKey(_ key: String, modifiers: [String]) -> Bool {
-        guard canControl else { return false }
+        guard canControl, pendingLockMac == nil else { return false }
         if HardwareKeyMap.needsExtendedKeys(key) && !extendedKeysSupported {
             if !extendedKeyNoticeShown {
                 extendedKeyNoticeShown = true
@@ -1571,7 +1628,7 @@ final class PhoneRemoteModel: ObservableObject {
 
     @discardableResult
     func commandShortcut(_ key: String) -> Bool {
-        guard canControl else { return false }
+        guard canControl, pendingLockMac == nil else { return false }
         return sendInput("key", key: key, modifiers: ["command"])
     }
 
@@ -1647,7 +1704,7 @@ final class PhoneRemoteModel: ObservableObject {
                            text: String = "", key: String = "", modifiers: [String] = [],
                            probeTextFocus: Bool = false, pointerSync: PointerSync? = nil, pencil: PencilFrame? = nil) -> Bool {
         textFocusProbe.invalidate()
-        guard canControl else { return false }
+        guard canControl, pendingLockMac == nil else { return false }
         // Moves still go while the Mac is behind, so it can catch up; presses wait.
         if sessionMode == .couch, Self.couchPressActions.contains(name),
            couchAck.stalled(at: ProcessInfo.processInfo.systemUptime) { return false }
@@ -1875,6 +1932,7 @@ let now = ProcessInfo.processInfo.systemUptime
 
     func disconnect() { disconnect(explicitEnd: true) }
     func disconnect(explicitEnd: Bool) {
+        cancelLockMacRequest()
         usefulSession.invalidate(explicitEnd: explicitEnd)
         pipBackground = false
         invalidatePresentation()
@@ -2237,6 +2295,8 @@ let now = ProcessInfo.processInfo.systemUptime
             if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
             sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
+            receiveAwayStatus(action)
+            if !connection.connected { return }
             let previousCurtain = curtainState
             curtainState = curtainSupported
                 ? action.curtain.flatMap(PrivacyCurtainState.init(rawValue:)) ?? .off : nil
@@ -2552,6 +2612,10 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     private func end() {
+        let awayWasOn = (presentationHost ?? connection.presentationHostTrust).map { awayMemory.wasOn(host: $0) } ?? false
+        cancelLockMacRequest()
+        awayState = nil
+        awayStatusEpoch = nil
         pipBackground = false
         invalidatePresentation()
         shareLiveSessionID = nil
@@ -2628,6 +2692,7 @@ let now = ProcessInfo.processInfo.systemUptime
         heartbeatsSent = 0
         if let departureReason {
             macNotice = Self.notice(for: departureReason)
+            if departureReason == .locked, awayWasOn { macNotice = (macNotice ?? "") + " Away mode can’t unlock it." }
             lastDeparture = departureReason
             if sessionEndReason == nil { sessionEndReason = .macStopped }
         }

@@ -41,6 +41,8 @@ struct PrivacyCurtainInputs: Equatable {
     var safeMode = false
     /// Big Text is changing the display mode; capture blips during it must not uncover the Mac.
     var displayReconfiguring = false
+    /// Away mode wants the Mac covered, with or without a phone.
+    var awayCovered = false
 }
 
 enum PrivacyCurtainPolicy {
@@ -50,6 +52,8 @@ enum PrivacyCurtainPolicy {
     enum Desired: Equatable { case up, down }
 
     static func desired(_ inputs: PrivacyCurtainInputs, currentlyUp: Bool) -> Desired {
+        // Only the Away machine's positive verifier retires awayCovered; notifications cannot.
+        if inputs.awayCovered { return .up }
         guard inputs.preference, inputs.sessionLive, !inputs.phonePaused, !inputs.screenLocked,
               !inputs.safeMode, !inputs.locallyDismissed, !inputs.raiseFailed,
               inputs.accessibilityGranted else { return .down }
@@ -203,11 +207,17 @@ final class PrivacyCurtainController {
     var ownsScreenChange: (() -> Bool)?
     private var changeCoverage: CGRect?
     private var finishingDisplayChange = false
+    private(set) var style: PrivacyCurtainStyle = .sharing
+    /// Away mode turns this off: its cover ends only by locking the Mac.
+    var escapeLiftEnabled = true
+    /// When false, a display change is reported through `onScreensChanged` instead of lifting.
+    var liftsOnScreenChange = true
+    var onScreensChanged: (() -> Void)?
     /// One window per display. Tests substitute tiny off-screen windows so nothing is ever shown.
-    private let makeWindows: () -> [NSWindow]
+    private let makeWindows: (() -> [NSWindow])?
 
     init(makeWindows: (() -> [NSWindow])? = nil) {
-        self.makeWindows = makeWindows ?? { NSScreen.screens.map(PrivacyCurtainController.makeWindow) }
+        self.makeWindows = makeWindows
     }
 
     private var windows: [NSWindow] = []
@@ -225,11 +235,20 @@ final class PrivacyCurtainController {
         generation &+= 1
         let current = generation
         phase = .raising
-        // Transparent until the stream is known to exclude them.
-        windows = makeWindows()
+        // Sharing waits for exclusion; Away protects the local screen before any async work.
+        windows = makeWindows?() ?? NSScreen.screens.map { Self.makeWindow(for: $0, style: style) }
         guard !windows.isEmpty else { phase = .down; return .noScreens }
+        if style != .sharing { windows.forEach { $0.alphaValue = 1 } }
         windows.forEach { $0.orderFrontRegardless() }
         observeScreenChanges()
+        if style != .sharing {
+            phase = .up
+            installKeyMonitors()
+            onPhaseChange?(.up)
+            let ids = windowIDs
+            Task { @MainActor in _ = await hooks.exclude(ids) }
+            return .raised
+        }
         let excluded = await hooks.exclude(windowIDs)
         guard isCurrent(current, .raising) else { return .cancelled }
         guard excluded else { tearDown(); return .exclusionFailed }
@@ -258,6 +277,11 @@ final class PrivacyCurtainController {
     /// Cancel an unfinished raise before its capture owner is invalidated. An already raised
     /// curtain keeps exactly the same window IDs and capture exclusions throughout the switch.
     func prepareForDisplayChange(coverage: CGRect) {
+        if style != .sharing {
+            changeCoverage = coverage
+            refitAwayCover()
+            return
+        }
         if phase == .raising { lift(); return }
         guard phase == .up, !coverage.isNull, !coverage.isEmpty else { return }
         changeCoverage = coverage
@@ -268,6 +292,7 @@ final class PrivacyCurtainController {
     /// Early callbacks must never shrink to lagging AppKit frames; union them with the guard
     /// envelope until ScreenCaptureKit and CoreGraphics agree at completion.
     func refitDuringDisplayChange() {
+        if style != .sharing { refitAwayCover(); return }
         guard phase == .up, let coverage = changeCoverage else { return }
         if finishingDisplayChange { return refitToScreens() }
         let expanded = NSScreen.screens.reduce(coverage) { $0.union($1.frame) }
@@ -277,6 +302,18 @@ final class PrivacyCurtainController {
 
     /// Windows are made in `NSScreen.screens` order, so they pair with screens by position.
     func refitToScreens() {
+        if style != .sharing {
+            let mainHeight = CGDisplayBounds(CGMainDisplayID()).height
+            if changeCoverage != nil {
+                guard NSScreen.screens.allSatisfy({ screen in
+                    guard let id = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value else { return false }
+                    return CurtainDisplayCoverage.matchesAppKit(frame: screen.frame, bounds: CGDisplayBounds(id), mainHeight: mainHeight)
+                }) else { return }
+            }
+            changeCoverage = nil
+            refitAwayCover()
+            return
+        }
         let screens = NSScreen.screens
         guard windows.count == screens.count else { return lift() }
         if changeCoverage != nil {
@@ -301,10 +338,53 @@ final class PrivacyCurtainController {
         if wasShowing { onPhaseChange?(.down) }
     }
 
+    func setStyle(_ style: PrivacyCurtainStyle) {
+        guard self.style != style else { return }
+        // Retire any old sharing canary/exclusion completion before promoting to Away.
+        generation &+= 1
+        self.style = style
+        for window in windows {
+            (window.contentView as? NSHostingView<PrivacyCurtainView>)?.rootView = PrivacyCurtainView(style: style)
+        }
+        if style != .sharing && phase == .raising {
+            windows.forEach { $0.alphaValue = 1 }
+            phase = .up
+            installKeyMonitors()
+            onPhaseChange?(.up)
+        }
+    }
+
+    func handleScreenParametersChanged() {
+        guard phase != .down else { return }
+        if !liftsOnScreenChange || style != .sharing {
+            refitAwayCover()
+            if followsScreenChanges && ownsScreenChange?() != true { onScreensChanged?() }
+        } else if !followsScreenChanges || ownsScreenChange?() == true {
+            refitDuringDisplayChange()
+        } else { lift() }
+    }
+
+    /// Keep old windows opaque until replacements cover the new display geometry.
+    func refitAwayCover() {
+        guard phase != .down, style != .sharing else { return }
+        let replacements = makeWindows?() ?? NSScreen.screens.map { Self.makeWindow(for: $0, style: style) }
+        guard !replacements.isEmpty else { return }
+        replacements.forEach {
+            if let coverage = changeCoverage { $0.setFrame($0.frame.union(coverage), display: true) }
+            $0.alphaValue = 1; $0.orderFrontRegardless()
+        }
+        let previous = windows
+        windows = replacements
+        generation &+= 1
+        phase = .up
+        for window in previous { window.orderOut(nil); window.close() }
+        onPhaseChange?(.up)
+    }
+
     /// Feeds a key-down seen by the local or global monitor. Exposed for tests.
     @discardableResult
     func handleKeyDown(keyCode: UInt16, timestamp: TimeInterval, isRepeat: Bool, injected: Bool) -> Bool {
-        guard phase == .up, keyCode == Self.escapeKeyCode,
+        guard phase == .up, escapeLiftEnabled, keyCode == Self.escapeKeyCode,
               escape.register(at: timestamp, isRepeat: isRepeat, injected: injected) else { return false }
         onLocalLift?()
         lift()
@@ -362,22 +442,15 @@ final class PrivacyCurtainController {
 
     private func observeScreenChanges() {
         guard screenObserver == nil else { return }
-        // A display added or removed would be left uncovered or half-covered: lift everything.
+        // Foreign screen changes lift the sharing curtain; Away replaces its cover first.
         screenObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                if !self.followsScreenChanges || self.ownsScreenChange?() == true {
-                    self.refitDuringDisplayChange()
-                    return
-                }
-                self.lift()
-            }
+            MainActor.assumeIsolated { self?.handleScreenParametersChanged() }
         }
     }
 
-    static func makeWindow(for screen: NSScreen) -> NSWindow {
+    static func makeWindow(for screen: NSScreen, style: PrivacyCurtainStyle = .sharing) -> NSWindow {
         let window = NSWindow(contentRect: screen.frame, styleMask: [.borderless],
                               backing: .buffered, defer: false)
         window.setFrame(screen.frame, display: false)
@@ -392,12 +465,33 @@ final class PrivacyCurtainController {
         window.animationBehavior = .none
         window.title = "Farside privacy curtain"
         window.alphaValue = 0
-        window.contentView = NSHostingView(rootView: PrivacyCurtainView())
+        window.contentView = NSHostingView(rootView: PrivacyCurtainView(style: style))
         return window
     }
 }
 
+enum PrivacyCurtainStyle: Equatable {
+    case sharing, away, awayLockFailed
+}
+
 struct PrivacyCurtainView: View {
+    var style: PrivacyCurtainStyle = .sharing
+
+    private var title: LocalizedStringKey {
+        switch style {
+        case .sharing: "This Mac is being used remotely"
+        case .away, .awayLockFailed: "Away mode is on"
+        }
+    }
+
+    private var line: LocalizedStringKey {
+        switch style {
+        case .sharing: "Press Esc three times to lift"
+        case .away: "Touching the keyboard, mouse or trackpad locks this Mac"
+        case .awayLockFailed: "This Mac stays covered. Unlock it at the Mac to continue"
+        }
+    }
+
     var body: some View {
         ZStack {
             Farside.Palette.void.ignoresSafeArea()
@@ -407,11 +501,11 @@ struct PrivacyCurtainView: View {
                         .fill(Farside.Palette.ember)
                         .frame(width: 10, height: 10)
                         .accessibilityHidden(true)
-                    Text("This Mac is being used remotely")
+                    Text(title)
                         .font(.system(size: 28, weight: .semibold))
                         .foregroundStyle(Farside.Palette.bone)
                 }
-                Text("Press Esc three times to lift")
+                Text(line)
                     .font(.system(size: 15, design: .monospaced))
                     .foregroundStyle(Farside.Palette.ash)
             }

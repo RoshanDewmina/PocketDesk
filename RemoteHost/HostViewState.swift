@@ -83,6 +83,12 @@ struct HostViewState: Equatable {
     var curtainStatus: String?
     /// A Couch-mode session: the phone steers with no picture.
     var couchMode = false
+    /// Away mode: the Mac's preference, whether its explanation sheet was seen, and what it is doing now.
+    var awayMode = false
+    var awayIntroShown = false
+    var away = HostAwayReadout()
+    /// The Mac locked while sharing without anyone choosing to lock it.
+    var lockWarning: HostLockWarning?
     /// Agent alerts (beta): a hook on this Mac tells the phone an agent needs a person.
     var agentAlerts = false
     /// One line about the last agent alert, or that the Mac is listening.
@@ -153,6 +159,10 @@ struct HostActions {
     var setPrivacyCurtain: (Bool) -> Void = { _ in }
     var setAllowBigText: (Bool) -> Void = { _ in }
     var restoreNormalSize: () -> Void = {}
+    var setAwayMode: (Bool) -> Void = { _ in }
+    var coverNow: () -> Void = {}
+    var dismissLockWarning: () -> Void = {}
+    var openLockScreenSettings: () -> Void = {}
     var setAgentAlerts: (Bool) -> Void = { _ in }
     var copyAgentHookSetup: () -> Void = {}
     var resetAgentAlertLink: () -> Void = {}

@@ -13,7 +13,7 @@ struct RemoteHostApp: App {
         HostFonts.registerBundledFonts()
         let model = RemoteHostModel()
         _model = StateObject(wrappedValue: model)
-        appDelegate.configure { model.stopForTermination() }
+        appDelegate.configure(cleanup: { model.stopForTermination() }, prepare: model.prepareForTermination)
         appDelegate.onLaunch = { launchedAsLoginItem in
             HostAppActivation.shared.start()
             if model.presentsSetupAtLaunch && !Self.e2eActive { HostAppActivation.shared.bringForward() }
@@ -157,6 +157,10 @@ extension HostActions {
             setPrivacyCurtain: model.setPrivacyCurtain,
             setAllowBigText: model.setAllowBigText,
             restoreNormalSize: model.restoreNormalSize,
+            setAwayMode: model.setAwayMode,
+            coverNow: model.coverNow,
+            dismissLockWarning: model.dismissLockWarning,
+            openLockScreenSettings: model.openLockScreenSettings,
             setAgentAlerts: model.setAgentAlerts,
             copyAgentHookSetup: model.copyAgentHookSetup,
             resetAgentAlertLink: model.resetAgentAlertLink,
@@ -175,7 +179,6 @@ extension HostActions {
             openSetup: openSetup,
             openSettings: openSettings,
             quit: {
-                model.stop()
                 NSApplication.shared.terminate(nil)
             }
         )

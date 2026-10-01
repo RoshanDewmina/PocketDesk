@@ -54,12 +54,22 @@ final class HostHangWatchdog: @unchecked Sendable {
     private var displayChanging = false
     private var started = false
     private let interval: TimeInterval
-    private let onHang: @Sendable (TimeInterval) -> Void
+    private let onHang: @Sendable (TimeInterval) -> Bool
     private let logger = Logger(subsystem: "com.roshan.PocketDesk", category: "watchdog")
 
     init(interval: TimeInterval = 0.5, onHang: @escaping @Sendable (TimeInterval) -> Void) {
         self.interval = interval
-        self.onHang = onHang
+        self.onHang = { stall in onHang(stall); return true }
+    }
+
+    private init(interval: TimeInterval, terminationHandler: @escaping @Sendable (TimeInterval) -> Bool) {
+        self.interval = interval
+        self.onHang = terminationHandler
+    }
+
+    static func retainingUnconfirmedCover(interval: TimeInterval = 0.5,
+        onHang: @escaping @Sendable (TimeInterval) -> Bool) -> HostHangWatchdog {
+        HostHangWatchdog(interval: interval, terminationHandler: onHang)
     }
 
     static var disabledByEnvironment: Bool {
@@ -104,8 +114,9 @@ final class HostHangWatchdog: @unchecked Sendable {
             lock.unlock()
             if stalled && !HostProcessInfo.isTraced(pid: getpid()) {
                 logger.fault("Main thread stalled for \(stall, privacy: .public) s; ending the host for recovery")
-                onHang(stall)
-                return
+                if onHang(stall) { return }
+                // The covered host could not prove a lock. Retain the process/cover and retry.
+                Thread.sleep(forTimeInterval: 1)
             }
         }
     }

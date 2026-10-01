@@ -229,6 +229,8 @@ struct HostPreferences {
         static let menuBarIconShown = "menuBarIconShown"
         static let osPermissionRecord = "osPermissionRecord"
         static let allowBigText = "allowBigTextFromPhone"
+        static let awayMode = "awayModeWhileSharing"
+        static let awayIntroShown = "awayModeIntroShown"
     }
 
     let defaults: UserDefaults
@@ -312,6 +314,16 @@ struct HostPreferences {
     var osPermissionRecord: HostOSPermissionRecord? {
         get { defaults.data(forKey: Key.osPermissionRecord).flatMap { try? JSONDecoder().decode(HostOSPermissionRecord.self, from: $0) } }
         nonmutating set { defaults.set(newValue.flatMap { try? JSONEncoder().encode($0) }, forKey: Key.osPermissionRecord) }
+    }
+
+    /// Explicit local choices; neither setup, restore nor recovery enables Away mode.
+    var awayMode: Bool {
+        get { defaults.bool(forKey: Key.awayMode) }
+        nonmutating set { defaults.set(newValue, forKey: Key.awayMode) }
+    }
+    var awayIntroShown: Bool {
+        get { defaults.bool(forKey: Key.awayIntroShown) }
+        nonmutating set { defaults.set(newValue, forKey: Key.awayIntroShown) }
     }
 
     var allowBigText: Bool {

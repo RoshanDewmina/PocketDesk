@@ -631,6 +631,13 @@ struct NativeSessionView: View {
 
     @ViewBuilder private var topPills: some View {
         VStack(spacing: 8) {
+            if connection.connected && model.awayState == .covered {
+                Text("Mac covered · requests a lock if touched")
+                    .font(.footnote).foregroundStyle(Farside.Palette.bone)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .farsidePlate(Farside.Radius.card, fill: Farside.Palette.panel, stroke: Farside.Palette.line)
+                    .accessibilityIdentifier("remote.awayCovered")
+            }
             if couch { couchTopLine }
             if (!offlineLayoutCheck && !connection.connected) || LaunchOptions.has("--ui-reconnecting") {
                 ReconnectPill(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "your Mac",
@@ -1551,12 +1558,13 @@ struct NativeSessionView: View {
 
     private var showsBigTextRow: Bool { model.bigTextSupported && model.bigText.savedWidth != nil }
 
-    private var showsSessionRows: Bool { showsCurtainRow || showsDisplayRow || showsBigTextRow }
+    private var showsSessionRows: Bool { showsCurtainRow || showsDisplayRow || showsBigTextRow || model.awaySupported }
 
     /// Header, two rows of keys and up to three session rows. Nothing in the panel scrolls.
     private var panelHeight: CGFloat {
         var height: CGFloat = 288
         if showsSessionRows { height += 14 }
+        if model.awaySupported { height += 112 }
         if showsCurtainRow { height += 61 }
         if showsDisplayRow { height += showsCurtainRow ? 53 : 52 }
         if showsBigTextRow { height += showsCurtainRow || showsDisplayRow ? 53 : 52 }
@@ -1765,6 +1773,20 @@ struct NativeSessionView: View {
 
     private var sessionRows: some View {
         VStack(spacing: 0) {
+            if model.awaySupported {
+                VStack(alignment: .leading, spacing: 8) {
+                    if model.awayState == .covered {
+                        Text("Mac covered · requests a lock if touched").font(.footnote)
+                    }
+                    if let status = model.lockMacStatus { Text(status).font(.footnote) }
+                    Button("End and lock Mac") { _ = model.endAndLockMac() }
+                        .frame(minHeight: 44)
+                        .disabled(!model.canLockMac)
+                        .accessibilityHint("Requests Lock Screen, then ends this session. Unlock at your Mac.")
+                        .accessibilityIdentifier("remote.endAndLockMac")
+                }.padding()
+                sessionRowDivider
+            }
             if showsCurtainRow { curtainPanelRow }
             if showsCurtainRow && showsDisplayRow { sessionRowDivider }
             if showsDisplayRow { displayPanelRow }
@@ -1952,6 +1974,14 @@ struct NativeSessionView: View {
     /// One row per setting with its current value; each opens its own page.
     private func settingsPage(session: Bool) -> some View {
         settingsForm("Settings") {
+            if session && model.awaySupported {
+                Section {
+                    Button("End and lock Mac") { _ = model.endAndLockMac() }
+                        .frame(minHeight: 44).disabled(!model.canLockMac)
+                        .accessibilityIdentifier("remote.endAndLockMac")
+                    if let status = model.lockMacStatus { Text(status).font(.footnote) }
+                } footer: { Text("Requests Lock Screen, then ends this session. Unlock at your Mac.") }
+            }
             if session && (showsCurtainRow || showsDisplayRow) {
                 macPrivacySection
                 if showsDisplayRow {

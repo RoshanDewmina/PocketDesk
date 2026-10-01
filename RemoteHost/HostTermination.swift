@@ -5,11 +5,13 @@ import Dispatch
 @MainActor
 final class HostTerminationLifecycle {
     private let cleanup: () -> Void
+    private let prepare: (@escaping (Bool) -> Void) -> Bool
     private var didCleanUp = false
     private var didRequestTermination = false
 
-    init(cleanup: @escaping () -> Void) {
+    init(prepare: @escaping (@escaping (Bool) -> Void) -> Bool = { _ in false }, cleanup: @escaping () -> Void) {
         self.cleanup = cleanup
+        self.prepare = prepare
     }
 
     func applicationWillTerminate() {
@@ -21,8 +23,16 @@ final class HostTerminationLifecycle {
     func requestTermination(using terminate: () -> Void) {
         guard !didRequestTermination else { return }
         didRequestTermination = true
-        applicationWillTerminate()
         terminate()
+    }
+
+    func shouldTerminate(reply: @escaping (Bool) -> Void) -> NSApplication.TerminateReply {
+        guard !didCleanUp else { return .terminateNow }
+        if prepare({ [weak self] allowed in
+            if !allowed { self?.didRequestTermination = false }
+            reply(allowed)
+        }) { return .terminateLater }
+        return .terminateNow
     }
 }
 
@@ -31,9 +41,9 @@ final class RemoteHostAppDelegate: NSObject, NSApplicationDelegate {
     private var lifecycle: HostTerminationLifecycle?
     private var sigtermSource: DispatchSourceSignal?
 
-    func configure(cleanup: @escaping () -> Void) {
+    func configure(cleanup: @escaping () -> Void, prepare: @escaping (@escaping (Bool) -> Void) -> Bool = { _ in false }) {
         guard lifecycle == nil else { return }
-        lifecycle = HostTerminationLifecycle(cleanup: cleanup)
+        lifecycle = HostTerminationLifecycle(prepare: prepare, cleanup: cleanup)
 
         _ = Darwin.signal(SIGTERM, SIG_IGN)
         let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
@@ -65,6 +75,10 @@ final class RemoteHostAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         lifecycle?.applicationWillTerminate()
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        lifecycle?.shouldTerminate { sender.reply(toApplicationShouldTerminate: $0) } ?? .terminateNow
     }
 
     private func handleSIGTERM() {
