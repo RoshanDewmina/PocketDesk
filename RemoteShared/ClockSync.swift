@@ -55,10 +55,14 @@ struct ClockSyncEstimator {
         return true
     }
 
-    func estimate(now: Double) -> ClockSyncEstimate? {
-        let live = samples.filter { now - $0.at <= windowMs }
+    func estimate(now: Double) -> ClockSyncEstimate? { observation(now: now)?.estimate }
+
+    /// The selected lowest-RTT sample's receive time, not the time a cached estimate was read.
+    func observation(now: Double) -> (estimate: ClockSyncEstimate, atMs: Double)? {
+        guard now.isFinite else { return nil }
+        let live = samples.filter { now >= $0.at && now - $0.at <= windowMs }
         guard let best = live.min(by: { $0.rtt < $1.rtt }) else { return nil }
-        return ClockSyncEstimate(offsetMs: best.offset, uncertaintyMs: best.rtt / 2, samples: live.count)
+        return (ClockSyncEstimate(offsetMs: best.offset, uncertaintyMs: best.rtt / 2, samples: live.count), best.at)
     }
 
     mutating func reset() {

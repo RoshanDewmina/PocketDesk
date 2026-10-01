@@ -188,6 +188,10 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                 guard shown.presentedTime.isFinite, shown.presentedTime > 0, let self else { return }
                 _ = self.fence.withAdmission(envelope.identity, at: ProcessInfo.processInfo.systemUptime) {
                     self.counters?.presentedFrame(atMs: shown.presentedTime * 1000, marker: envelope.marker)
+                    let clock = self.counters?.clockObservation
+                    self.videoFeedback?.presentedTiming(envelope.videoTag, originalSource: envelope.originalSource,
+                        newSubmission: submission.isNew, presentedTime: shown.presentedTime,
+                        clock: clock?.estimate, observedAtMs: clock?.atMs)
                     if envelope.originalSource { receiptCallback?(envelope.identity, envelope.receiptID) }
                 }
             }

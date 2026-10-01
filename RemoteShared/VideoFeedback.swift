@@ -25,9 +25,11 @@ struct VideoFrameTag: Codable, Equatable {
     let scopeEpoch: UInt64
     let ltrToken: Int64?
     var refinement: VideoRefinementIdentity? = nil
+    var timing: ExactVideoTiming? = nil
     func validate() throws {
         guard version == 1, InputCausalEnvelope.validID(generation), InputCausalEnvelope.validID(nonce),
               geometryEpoch > 0, scopeEpoch > 0 else { throw RemoteError.invalidMessage }
+        try timing?.validate()
         try refinement?.validate()
         if let refinement { guard refinement.generation == generation, refinement.geometryEpoch == geometryEpoch, refinement.scopeEpoch == scopeEpoch else { throw RemoteError.invalidMessage } }
     }
@@ -38,6 +40,9 @@ struct VideoFrameTag: Codable, Equatable {
 final class VideoFeedbackContext: @unchecked Sendable {
     private let lock = NSLock()
     private var refinementAllowed = false
+    private var timingAllowed = false
+    private let timingPushes = HostExactVideoTimingLog()
+    private let timingReceiver = ExactVideoTimingReceiver()
     private let producer = VideoRefinementProducer()
     private var refinementImage: ((VideoRefinementImage) -> Void)?
     private var overlay: (VideoRefinementImage, CVPixelBuffer, Double)?
@@ -73,14 +78,15 @@ final class VideoFeedbackContext: @unchecked Sendable {
         var alive: Bool { value != nil || pixels != nil }
     }
     static func id() -> String { UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased() }
-    func configure(allowed: Bool, ltr: Bool = true, refinement: Bool = false, geometry: UInt64, scope: UInt64) {
+    func configure(allowed: Bool, ltr: Bool = true, refinement: Bool = false, timing: Bool = false, geometry: UInt64, scope: UInt64) {
         lock.lock(); defer { lock.unlock() }
         guard !ended else { return }
-        if self.geometry != geometry || self.scope != scope || self.allowed != allowed || ltrAllowed != ltr || refinementAllowed != refinement { clear() }
-        self.allowed = allowed; ltrAllowed = ltr; refinementAllowed = refinement; self.geometry = geometry; self.scope = scope
+        if self.geometry != geometry || self.scope != scope || self.allowed != allowed || ltrAllowed != ltr || refinementAllowed != refinement || timingAllowed != timing { clear() }
+        self.allowed = allowed; ltrAllowed = ltr; refinementAllowed = refinement; timingAllowed = timing; self.geometry = geometry; self.scope = scope
     }
     private func clear() {
         overlay = nil
+        timingPushes.reset(); timingReceiver.reset()
         producer.reset(terminal: ended)
         generation = Self.id(); tokens.removeAll(); acknowledged.removeAll(); refresh = false
         pending.removeAll(); retired.removeAll(); decoded.removeAll(); decoderGeneration = UUID(); lastRefresh = -.infinity
@@ -88,7 +94,7 @@ final class VideoFeedbackContext: @unchecked Sendable {
     func end() { lock.lock(); refinementImage = nil; overlay = nil; ended = true; allowed = false; clear(); feedback = nil; lock.unlock() }
     var permitsLTR: Bool { lock.lock(); defer { lock.unlock() }; return allowed && ltrAllowed && !ended && geometry > 0 && scope > 0 }
     func disableRefinement() { lock.lock(); refinementAllowed = false; overlay = nil; producer.reset(); lock.unlock() }
-    func beginEncoder() { lock.lock(); producer.reset(); generation = Self.id(); tokens.removeAll(); acknowledged.removeAll(); refresh = false; lock.unlock() }
+    func beginEncoder() { lock.lock(); timingPushes.reset(); producer.reset(); generation = Self.id(); tokens.removeAll(); acknowledged.removeAll(); refresh = false; lock.unlock() }
     #if DEBUG
     var refinementProducerForTesting: VideoRefinementProducer { producer }
     #endif
@@ -96,7 +102,7 @@ final class VideoFeedbackContext: @unchecked Sendable {
         lock.lock(); let now = ProcessInfo.processInfo.systemUptime
         retired = retired.filter { now >= $0.value && now - $0.value <= 5 }
         for wire in pending.keys where retired.count < 128 { retired[wire] = now }
-        pending.removeAll(); decoded.removeAll(); decoderGeneration = UUID(); lock.unlock()
+        pending.removeAll(); decoded.removeAll(); timingReceiver.reset(); decoderGeneration = UUID(); lock.unlock()
     }
     func setFeedback(_ callback: ((VideoFeedback, UInt64) -> Void)?) { lock.lock(); feedback = callback; lock.unlock() }
     func encoded(token: Int64?, expected: VideoFrameTag? = nil, at now: Double = ProcessInfo.processInfo.systemUptime) -> VideoFrameTag? {
@@ -106,6 +112,7 @@ final class VideoFeedbackContext: @unchecked Sendable {
         tokens = tokens.filter { now >= $0.value.1 && now - $0.value.1 <= 5 }
         var tag = VideoFrameTag(generation: generation, nonce: expected?.nonce ?? Self.id(), geometryEpoch: geometry, scopeEpoch: scope, ltrToken: token)
         tag.refinement = expected?.refinement
+        tag.timing = timingAllowed ? expected?.timing : nil
         if token != nil, tokens.count < 32 { tokens[tag.nonce] = (tag, now) }
         return tag
     }
@@ -186,7 +193,16 @@ final class VideoFeedbackContext: @unchecked Sendable {
         lock.unlock(); callback?(packet, epoch)
     }
     func rejected(wire: UInt32) { lock.lock(); pending.removeValue(forKey: wire); if retired.count < 128 { retired[wire] = ProcessInfo.processInfo.systemUptime }; lock.unlock() }
-    func decoded(_ frame: RTCVideoFrame, at now: Double = ProcessInfo.processInfo.systemUptime) {
+    #if DEBUG && AUDIO_LIFETIME_TESTS
+    var beforeDecodedAdmissionForTesting: (() -> Void)?
+    func withTimingAdmissionHeldForTesting(_ body: () -> Void) { lock.lock(); defer { lock.unlock() }; body() }
+    #endif
+    func decoded(_ frame: RTCVideoFrame, at now: Double = ProcessInfo.processInfo.systemUptime,
+                 decodedAtMs: Double = MachClock.nowMs()) {
+        // Default arguments are evaluated at native callback entry, before association/producer lock wait.
+        #if DEBUG && AUDIO_LIFETIME_TESTS
+        beforeDecodedAdmissionForTesting?()
+        #endif
         lock.lock()
         guard allowed, !ended, let entry = pending.removeValue(forKey: UInt32(bitPattern: frame.timeStamp)),
               entry.2 == decoderGeneration, entry.0.geometryEpoch == geometry, entry.0.scopeEpoch == scope,
@@ -194,12 +210,38 @@ final class VideoFeedbackContext: @unchecked Sendable {
         decoded = decoded.filter { $0.0.alive && now >= $0.2 && now - $0.2 <= 5 }
         if decoded.count >= 128 { decoded.removeFirst() }
         decoded.append((WeakFrame(frame), entry.0, now))
+        if timingAllowed, let timing = entry.0.timing {
+            timingReceiver.decoded(timing, generation: entry.0.generation, nonce: entry.0.nonce, atMs: decodedAtMs)
+        }
         if retired.count < 128 { retired[UInt32(bitPattern: frame.timeStamp)] = now }
         let packet = entry.0.ltrToken.map { VideoFeedback(operation: .ltrAck, generation: entry.0.generation,
             nonce: entry.0.nonce, token: $0, scopeEpoch: entry.0.scopeEpoch) }
         let callback = feedback; let epoch = geometry
         lock.unlock()
         if let packet { callback?(packet, epoch) }
+    }
+    func pushedTiming(_ timing: ExactVideoTiming?, buffer: CVPixelBuffer) {
+        lock.lock(); defer { lock.unlock() }
+        guard allowed, timingAllowed, !ended else { return }
+        timingPushes.pushed(timing, buffer: buffer)
+    }
+    func submittedTiming(buffer: CVPixelBuffer, atMs: Double) -> ExactVideoTiming? {
+        lock.lock(); defer { lock.unlock() }
+        guard allowed, timingAllowed, !ended else { return nil }
+        return timingPushes.submitted(buffer: buffer, atMs: atMs)
+    }
+    /// Caller must hold its actual public presentation fence; interpolated/redrawn outputs never enter here.
+    func presentedTiming(_ tag: VideoFrameTag?, originalSource: Bool, newSubmission: Bool, presentedTime: Double, clock: ClockSyncEstimate?, observedAtMs: Double?, nowMs: Double = MachClock.nowMs()) {
+        lock.lock(); defer { lock.unlock() }
+        guard originalSource, newSubmission, presentedTime.isFinite, presentedTime > 0,
+              allowed, timingAllowed, !ended, let tag, tag.geometryEpoch == geometry, tag.scopeEpoch == scope,
+              let timing = tag.timing else { return }
+        timingReceiver.presented(timing, generation: tag.generation, nonce: tag.nonce, atMs: presentedTime * 1000,
+            clock: clock, clockRecordedAtMs: observedAtMs, nowMs: nowMs)
+    }
+    func drainTiming() -> ExactVideoTimingReceiver.Drain? {
+        lock.lock(); defer { lock.unlock() }
+        guard allowed, timingAllowed, !ended else { return nil }; return timingReceiver.drain()
     }
     func tag(for frame: RTCVideoFrame) -> VideoFrameTag? {
         lock.lock(); defer { lock.unlock() }
