@@ -1,6 +1,7 @@
 import Foundation
 import CoreGraphics
 import Vision
+import CoreML
 
 struct LegibilityCellScore: Equatable {
     let cell: LegibilityChart.Cell
@@ -86,14 +87,37 @@ enum LegibilityScore {
     /// Words Vision reads in `image`: accurate level, no language correction (the tokens are not
     /// words), English script. Synchronous; call it off the main thread.
     static func recognizeWords(in image: CGImage, minimumTextHeight: Float = 0.004) throws -> [String] {
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false
-        request.recognitionLanguages = ["en-US"]
-        request.automaticallyDetectsLanguage = false
-        request.minimumTextHeight = minimumTextHeight
-        let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        try handler.perform([request])
+        func makeRequest() -> VNRecognizeTextRequest {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.usesLanguageCorrection = false
+            request.recognitionLanguages = ["en-US"]
+            request.automaticallyDetectsLanguage = false
+            request.minimumTextHeight = minimumTextHeight
+            return request
+        }
+        var request = makeRequest()
+        do {
+            try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        } catch {
+            // An accelerator can fail to initialize even in a fresh process. Retry once with
+            // a fresh request, using only CPU devices Vision advertises for this request.
+            // Preserve the same OCR model and settings; failure still propagates to the caller.
+            let originalError = error
+            let fallback = makeRequest()
+            let stages = try fallback.supportedComputeStageDevices
+            var selectedCPU = false
+            for (stage, devices) in stages {
+                guard let cpu = devices.first(where: { if case .cpu = $0 { return true }; return false }) else {
+                    throw originalError
+                }
+                fallback.setComputeDevice(cpu, for: stage)
+                selectedCPU = true
+            }
+            guard selectedCPU else { throw originalError }
+            try VNImageRequestHandler(cgImage: image, options: [:]).perform([fallback])
+            request = fallback
+        }
         let observations = request.results ?? []
         return observations
             .compactMap { $0.topCandidates(1).first?.string }
