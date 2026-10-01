@@ -87,6 +87,22 @@ final class PhoneFileTransferTests: XCTestCase {
         files.reset()
     }
 
+    /// 1 Oct device report: File, Photo and From Mac all said only "isn't accepting files". A newer Mac says why.
+    func testAMacRefusalSaysWhichConditionRefused() throws {
+        let files = PhoneFileTransfer(destination: { self.folder }, staging: folder, availableSpace: { _ in nil })
+        files.engine.sendControl = { _ in true }
+        let request = try files.engine.request().get()
+        files.engine.receive(.result(request, .notAllowed, reason: "viewOnly"))
+        XCTAssertEqual(files.notice?.message, "Files are off in live view only (Picture in Picture). Return to control, then try again.")
+        let older = try files.engine.request().get()
+        files.engine.receive(.result(older, .notAllowed))
+        XCTAssertEqual(files.notice?.message, "Your Mac isn’t sharing files right now.", "an older Mac keeps the old copy")
+        for reason in ["noSession", "notSharing", "paused", "viewOnly", "locking"] {
+            XCTAssertNotNil(PhoneFileTransfer.message(refusal: reason, status: .notAllowed), reason)
+        }
+        XCTAssertNil(PhoneFileTransfer.message(refusal: "paused", status: .busy))
+    }
+
     func testMidTransferStallSaysTheMacStoppedSending() throws {
         var now: TimeInterval = 1_000
         let files = PhoneFileTransfer(destination: { self.folder }, staging: folder, availableSpace: { _ in nil }, clock: { now })

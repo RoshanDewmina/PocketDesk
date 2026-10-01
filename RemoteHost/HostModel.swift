@@ -1056,9 +1056,15 @@ final class RemoteHostModel: ObservableObject {
 
     /// File transfer needs a full-control sharing scope and a current, unpaused session (MS05: no Mac setting).
     /// Received files only land quarantined in Downloads › Farside, never opened; Mac-to-phone needs a pick here.
-    private var fileTransferRefusal: FileTransferStatus? {
-        HostFileTransferService.refusal(viewOnlyScope: captureScopeViewOnly, sessionLive: connection.connected && active
-            && !phonePause.isPaused && !liveViewOnly && !away.isLocking)
+    private var fileTransferRefusal: HostFileTransferService.Refusal? {
+        HostFileTransferService.refusal(viewOnlyScope: captureScopeViewOnly, connected: connection.connected, sharing: active,
+            paused: phonePause.isPaused, liveViewOnly: liveViewOnly, locking: away.isLocking)
+    }
+
+    /// One line per refusal with every input, so a device report names the condition (no file names).
+    private func logFileRefusal(_ refusal: HostFileTransferService.Refusal) -> String {
+        SessionLog.log.error("file refused: \(refusal.rawValue, privacy: .public) connected=\(self.connection.connected, privacy: .public) active=\(self.active, privacy: .public) paused=\(self.phonePause.isPaused, privacy: .public) liveViewOnly=\(self.liveViewOnly, privacy: .public) away=\(Self.awayPhaseDescription(self.away.machine.phase), privacy: .public) scopeViewOnly=\(self.captureScopeViewOnly, privacy: .public) listening=\(self.listeningWithoutSharing, privacy: .public)")
+        return refusal.rawValue
     }
 
     private func wireFileTransfer() {
@@ -1069,7 +1075,11 @@ final class RemoteHostModel: ObservableObject {
         }
         engine.link = { [weak self] in self?.connection.media }
         engine.isRelayed = { [weak self] in self?.connection.media?.isRelayRoute ?? false }
-        fileTransfer.refusal = { [weak self] in self?.fileTransferRefusal ?? .notAllowed }
+        fileTransfer.refusal = { [weak self] in self.map { $0.fileTransferRefusal?.status } ?? .notAllowed }
+        fileTransfer.refusalReason = { [weak self] in
+            guard let self, let refusal = self.fileTransferRefusal else { return nil }
+            return self.logFileRefusal(refusal)
+        }
         connection.fileTransfer = engine
     }
 

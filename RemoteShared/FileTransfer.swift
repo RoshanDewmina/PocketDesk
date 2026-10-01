@@ -83,6 +83,8 @@ struct FileFrame: Codable, Equatable {
     var digest: String? = nil
     var status: String? = nil
     var url: String? = nil
+    /// Why a Mac refused (`result` only, newer hosts): lets the phone say why instead of a generic refusal.
+    var reason: String? = nil
 
     static let operations: Set<String> = ["offer", "accept", "progress", "complete", "result", "cancel", "request", "link"]
 
@@ -106,6 +108,7 @@ struct FileFrame: Codable, Equatable {
         case "result":
             valid = status.map(ClipboardFrame.isWellFormedStatus) == true
                 && name == nil && bytes == nil && type == nil && digest == nil && url == nil
+                && (reason == nil || reason.map(Self.isWellFormedReason) == true)
         case "link":
             valid = url.map(Self.isWellFormedLink) == true
                 && name == nil && bytes == nil && type == nil && digest == nil && status == nil
@@ -113,6 +116,10 @@ struct FileFrame: Codable, Equatable {
             valid = name == nil && bytes == nil && type == nil && digest == nil && status == nil && url == nil
         }
         guard valid else { throw RemoteError.invalidMessage }
+    }
+
+    static func isWellFormedReason(_ value: String) -> Bool {
+        (1...32).contains(value.utf8.count) && value.unicodeScalars.allSatisfy { $0.isASCII && CharacterSet.letters.contains($0) }
     }
 
     static func isWellFormedName(_ value: String) -> Bool {
@@ -140,8 +147,8 @@ struct FileFrame: Codable, Equatable {
     static func accept(_ transfer: String) -> FileFrame { FileFrame(op: "accept", transfer: transfer) }
     static func progress(_ transfer: String, bytes: Int64) -> FileFrame { FileFrame(op: "progress", transfer: transfer, bytes: bytes) }
     static func complete(_ transfer: String, digest: String) -> FileFrame { FileFrame(op: "complete", transfer: transfer, digest: digest) }
-    static func result(_ transfer: String, _ status: FileTransferStatus) -> FileFrame {
-        FileFrame(op: "result", transfer: transfer, status: status.rawValue)
+    static func result(_ transfer: String, _ status: FileTransferStatus, reason: String? = nil) -> FileFrame {
+        FileFrame(op: "result", transfer: transfer, status: status.rawValue, reason: reason)
     }
     static func cancel(_ transfer: String) -> FileFrame { FileFrame(op: "cancel", transfer: transfer) }
     static func request(_ transfer: String) -> FileFrame { FileFrame(op: "request", transfer: transfer) }

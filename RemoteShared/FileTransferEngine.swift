@@ -63,6 +63,8 @@ struct FileTransferFinish: Equatable {
     let name: String?
     let status: FileTransferStatus
     let savedURL: URL?
+    /// The Mac's stated reason for a refusal, when it gave one.
+    var reason: String? = nil
 }
 
 final class DataByteSource: FileByteSource {
@@ -280,8 +282,8 @@ final class FileTransferEngine {
     }
 
     /// Host: the phone's request ended without a file (the picker was cancelled or refused).
-    func answerRequest(_ transfer: String, _ status: FileTransferStatus) {
-        _ = sendControl?(.result(transfer, status))
+    func answerRequest(_ transfer: String, _ status: FileTransferStatus, reason: String? = nil) {
+        _ = sendControl?(.result(transfer, status, reason: reason))
     }
 
     func cancelAll(status: FileTransferStatus = .cancelled, notify: Bool = true) {
@@ -346,9 +348,9 @@ final class FileTransferEngine {
         case "result":
             let status = frame.status.flatMap(FileTransferStatus.init(rawValue:)) ?? .invalid
             if outgoing?.transfer == frame.transfer {
-                finishOutgoing(frame.transfer, status, notify: .none)
+                finishOutgoing(frame.transfer, status, notify: .none, reason: frame.reason)
             } else if pendingRequest == frame.transfer {
-                finishRequest(frame.transfer, status, notify: false)
+                finishRequest(frame.transfer, status, notify: false, reason: frame.reason)
             } else {
                 onOtherResult?(frame.transfer, status)
             }
@@ -486,14 +488,14 @@ final class FileTransferEngine {
 
     private enum Notice { case none, cancel, result }
 
-    private func finishOutgoing(_ transfer: String, _ status: FileTransferStatus, notify: Notice) {
+    private func finishOutgoing(_ transfer: String, _ status: FileTransferStatus, notify: Notice, reason: String? = nil) {
         guard let current = outgoing, current.transfer == transfer else { return }
         if let work = outgoingWork { io.stopSending(work) }
         outgoing = nil
         outgoingWork = nil
         if notify == .cancel { _ = sendControl?(.cancel(transfer)) }
         stopWatchdogIfIdle()
-        onFinish?(FileTransferFinish(transfer: transfer, direction: .outgoing, name: current.name, status: status, savedURL: nil))
+        onFinish?(FileTransferFinish(transfer: transfer, direction: .outgoing, name: current.name, status: status, savedURL: nil, reason: reason))
         onChange?()
     }
 
@@ -513,12 +515,12 @@ final class FileTransferEngine {
         onChange?()
     }
 
-    private func finishRequest(_ transfer: String, _ status: FileTransferStatus, notify: Bool) {
+    private func finishRequest(_ transfer: String, _ status: FileTransferStatus, notify: Bool, reason: String? = nil) {
         guard pendingRequest == transfer else { return }
         pendingRequest = nil
         if notify { _ = sendControl?(.cancel(transfer)) }
         stopWatchdogIfIdle()
-        onFinish?(FileTransferFinish(transfer: transfer, direction: .incoming, name: nil, status: status, savedURL: nil))
+        onFinish?(FileTransferFinish(transfer: transfer, direction: .incoming, name: nil, status: status, savedURL: nil, reason: reason))
         onChange?()
     }
 

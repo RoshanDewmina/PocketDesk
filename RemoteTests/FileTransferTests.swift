@@ -867,15 +867,37 @@ final class HostFileLinkRevocationTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(false, forKey: "allowFileTransfer")
         _ = HostPreferences(defaults: defaults)
-        XCTAssertNil(HostFileTransferService.refusal(viewOnlyScope: false, sessionLive: true))
-        XCTAssertEqual(HostFileTransferService.refusal(viewOnlyScope: true, sessionLive: true), .disabled)
-        XCTAssertEqual(HostFileTransferService.refusal(viewOnlyScope: false, sessionLive: false), .notAllowed)
+        func refusal(scope: Bool = false, connected: Bool = true, sharing: Bool = true, paused: Bool = false,
+                     viewOnly: Bool = false, locking: Bool = false) -> HostFileTransferService.Refusal? {
+            HostFileTransferService.refusal(viewOnlyScope: scope, connected: connected, sharing: sharing, paused: paused,
+                                            liveViewOnly: viewOnly, locking: locking)
+        }
+        XCTAssertNil(refusal())
+        XCTAssertEqual(refusal(scope: true)?.status, .disabled)
+        XCTAssertEqual(refusal(connected: false), .noSession)
+        XCTAssertEqual(refusal(sharing: false), .notSharing)
+        XCTAssertEqual(refusal(paused: true), .paused)
+        XCTAssertEqual(refusal(viewOnly: true), .viewOnly)
+        XCTAssertEqual(refusal(locking: true)?.status, .notAllowed)
         let service = HostFileTransferService(destination: { nil })
         var sent: [FileFrame] = []
         service.engine.sendControl = { sent.append($0); return true }
-        service.refusal = { HostFileTransferService.refusal(viewOnlyScope: true, sessionLive: true) }
+        service.refusal = { refusal(scope: true)?.status }
         service.receive(.request(String(repeating: "b", count: 32)))
         XCTAssertEqual(sent.last?.status, FileTransferStatus.disabled.rawValue, "view-only scope keeps its refusal")
+        // 1 Oct device report: every send said only "isn't accepting files". The refusal now says which condition.
+        service.refusal = { refusal(paused: true)?.status }
+        service.refusalReason = { refusal(paused: true)?.rawValue }
+        service.receive(.offer(String(repeating: "c", count: 32), name: "a.txt", bytes: 1, type: nil))
+        let result = try XCTUnwrap(sent.last)
+        XCTAssertEqual(result.reason, "paused"); XCTAssertNoThrow(try result.validate())
+        let phone = FileTransferEngine(acceptsUnsolicitedOffers: false)
+        var finish: FileTransferFinish?
+        phone.onFinish = { finish = $0 }
+        phone.sendControl = { _ in true }
+        let transfer = try phone.send(DataByteSource(Data([1])), name: "a.txt", type: nil).get()
+        phone.receive(.result(transfer, .notAllowed, reason: "paused"))
+        XCTAssertEqual(finish?.reason, "paused")
         XCTAssertEqual(HostFileTransferService.defaultDestination()?.pathComponents.suffix(2), ["Downloads", "Farside"])
     }
 }
