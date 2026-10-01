@@ -323,4 +323,19 @@ final class FrameCadenceWindowTests: XCTestCase {
         XCTAssertEqual(summary.frames, 0)
         XCTAssertNil(summary.maxGapMs)
     }
+    func testHostSummaryRoundTripsTheUniqueFrameAndGovernorFieldsTogether() throws {
+        let sample = StreamStatsSample(entries: [])
+        var snapshot = StreamCounterSnapshot(interval: 1)
+        snapshot.uniqueSourceFrames = 58; snapshot.captureResends = 2
+        var report = StreamStatsReport(role: "host", previous: sample, current: sample, counters: snapshot)
+        report.transportPriorityRequested = "DSCP on · priority high"; report.bweCeilingKbps = 12_000; report.lanCeilingApplied = true
+        report.senderQueueMs = 12; report.networkQueueMs = 3; report.backlogDrainMs = 40; report.senderQueueGovernor = "shadow, no cap"
+        let summary = report.hostSummary
+        XCTAssertEqual(summary.uniqueSourceFPS, 58); XCTAssertEqual(summary.resendFPS, 2)
+        XCTAssertEqual(summary.senderQueueMs, 12); XCTAssertEqual(summary.lanCeilingApplied, true)
+        XCTAssertEqual(summary.transportPriorityRequested, "DSCP on · priority high"); XCTAssertEqual(summary.senderQueueGovernor, "shadow, no cap")
+        XCTAssertNoThrow(try summary.validate())
+        XCTAssertEqual(try JSONDecoder().decode(HostStreamSummary.self, from: JSONEncoder().encode(summary)), summary)
+    }
+
 }

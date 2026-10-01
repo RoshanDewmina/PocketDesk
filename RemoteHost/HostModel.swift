@@ -2777,12 +2777,16 @@ final class RemoteHostModel: ObservableObject {
         let vitals = MacVitalsMonitor(sources: LiveMacVitalsSources())
         vitals.start(now: ProcessInfo.processInfo.systemUptime)
         vitalsMonitor = vitals
+        connection.media?.senderQueueGovernorStatus = nil
+        connection.media?.senderQueueGovernorShedding = false
     }
 
     private func endLoadMonitor() {
         phoneLoad = nil
         phoneLoadReceivedAt = nil
         loadMonitor = nil
+        connection.media?.senderQueueGovernorStatus = nil
+        connection.media?.senderQueueGovernorShedding = false
         vitalsMonitor?.stop()
         vitalsMonitor = nil
         ladderState = nil
