@@ -134,7 +134,7 @@ struct HostSettingsView: View {
                            set: actions.setChimeOnConnect)
                     .accessibilityIdentifier("farside.settings.chime")
             }
-            HostSettingsRow("Share Mac audio", subtitle: "Sound from all apps, even outside the shared display. Off after restarting Farside.") {
+            HostSettingsRow("Share Mac audio", subtitle: "Sound from all apps, even outside the shared display.") {
                 HostSwitch(label: "Share Mac audio", isOn: state.allowSystemAudio, set: actions.setAllowSystemAudio)
                     .accessibilityIdentifier("farside.settings.systemAudio")
                     .disabled(state.captureScopeViewOnly)

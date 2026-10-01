@@ -242,6 +242,8 @@ struct HostPreferences {
         static let privacyCurtain = "privacyCurtainWhileSharing"
         static let agentAlerts = "agentAlertsEnabled"
         static let allowFileTransfer = "allowFileTransfer"
+        static let allowSystemAudio = "allowSystemAudio"
+        static let localOnly = "localNetworkOnly"
         static let menuBarIconShown = "menuBarIconShown"
         static let osPermissionRecord = "osPermissionRecord"
         static let allowBigText = "allowBigTextFromPhone"
@@ -277,6 +279,12 @@ struct HostPreferences {
     var allowFileTransfer: Bool {
         get { defaults.bool(forKey: Key.allowFileTransfer) }
         nonmutating set { defaults.set(newValue, forKey: Key.allowFileTransfer) }
+    }
+
+    /// Off unless the owner turns it on; the choice survives relaunch.
+    var allowSystemAudio: Bool {
+        get { defaults.bool(forKey: Key.allowSystemAudio) }
+        nonmutating set { defaults.set(newValue, forKey: Key.allowSystemAudio) }
     }
 
     var allowControl: Bool {

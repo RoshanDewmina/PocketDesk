@@ -293,6 +293,7 @@ final class RemoteHostModel: ObservableObject {
         let generation = captureScopeSelectionGeneration
         captureScopeSelectionTask?.cancel()
         allowSystemAudio = false
+        preferences.allowSystemAudio = false
         connection.media?.setSystemAudioEnabled(false)
         capture.setSystemAudioEnabled(false)
         guests.endAll()
@@ -505,6 +506,7 @@ final class RemoteHostModel: ObservableObject {
         consentPending = preferences.consentPending()
         chimeOnConnect = preferences.chimeOnConnect
         allowFileTransfer = preferences.allowFileTransfer
+        allowSystemAudio = preferences.allowSystemAudio
         captureScopeNeedsSelection = preferences.captureScopeRequiresSelection
         wantsSharing = preferences.sharingMayResumeWithoutScopeSelection
         if preferences.captureScopeRequiresSelection { preferences.sharingEnabled = false }
@@ -1044,6 +1046,7 @@ final class RemoteHostModel: ObservableObject {
         guard !enabled || !captureScopeViewOnly else { return }
         guard allowSystemAudio != enabled else { return }
         allowSystemAudio = enabled
+        preferences.allowSystemAudio = enabled
         connection.media?.setSystemAudioEnabled(enabled && !liveViewOnly && !away.isLocking)
         capture.setSystemAudioEnabled(enabled && !liveViewOnly && !away.isLocking)
         if connection.connected, active, !phonePause.isPaused && !liveViewOnly, sessionState == .picture { beginCapture() }
