@@ -95,6 +95,9 @@ final class VideoRefinementTests: XCTestCase {
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(flooded)), Set(base), "Too many options drop only the options")
         let bounded = MacShareBlocker.Handshake(features: base, options: [SessionFeature.textClarity, "", String(repeating: "x", count: 33)])
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(bounded)), Set(base + [SessionFeature.textClarity]))
+        let smuggled = MacShareBlocker.Handshake(features: [MacShareBlocker.feature], options: [SessionFeature.causalInput, "video.unknown.1", SessionFeature.textClarity])
+        XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(smuggled)), [MacShareBlocker.feature, SessionFeature.textClarity],
+                       "Unknown option names are dropped; only text clarity rides in options")
     }
     func testReliableChannelUsesEncodedSizeAndOneAckBoundaryAndRevokeRetiresQueuedImage() throws {
         let sender = VideoRefinementChannel(), receiver = VideoRefinementChannel()

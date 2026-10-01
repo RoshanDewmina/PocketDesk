@@ -31,6 +31,8 @@ enum MacShareBlocker: String, Codable, Equatable {
         /// many options are dropped on their own without touching `features`.
         var options: [String]? = nil
         static let maximumOptions = 4
+        /// Only known opt-ins; an option can never stand in for a feature such as causal input.
+        static let knownOptions: Set<String> = [SessionFeature.textClarity]
 
         static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature, SessionFeature.extendedFeatureList, SessionFeature.causalInput, SessionFeature.pencilInput, SessionFeature.videoLTR, SessionFeature.exactVideoTiming])
         /// Refinement rides in `features` so a Mac that predates `options` still honours it; text
@@ -49,13 +51,13 @@ enum MacShareBlocker: String, Codable, Equatable {
             return decoded.mode.flatMap(SessionMode.init(rawValue:)) ?? .picture
         }
 
-        /// At most eight short names, plus at most four short options; too many features counts as
-        /// no features, too many options as no options.
+        /// At most eight short names, plus at most four options of which only known opt-ins count;
+        /// too many features counts as no features, too many options as no options.
         static func features(in body: Data?) -> Set<String> {
             guard let body, body.count <= 1024,
                   let decoded = try? JSONDecoder().decode(Handshake.self, from: body),
                   decoded.features.count <= 8 else { return [] }
-            let options = (decoded.options?.count ?? 0) <= maximumOptions ? decoded.options ?? [] : []
+            let options = (decoded.options?.count ?? 0) <= maximumOptions ? (decoded.options ?? []).filter(knownOptions.contains) : []
             return Set((decoded.features + options).filter { (1...32).contains($0.utf8.count) })
         }
     }
