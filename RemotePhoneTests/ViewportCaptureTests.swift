@@ -1,5 +1,7 @@
 import XCTest
 import UIKit
+import CoreVideo
+import WebRTC
 @testable import PocketDeskRemote
 
 /// G4 on the phone (Docs/perf/PLAN-120FPS-AND-LOAD.md §4): what a heartbeat carries, when a viewport
@@ -348,6 +350,42 @@ final class ViewportCaptureTests: XCTestCase {
             XCTAssertEqual(shown.y, pointer.y, accuracy: 1e-9)
         }
         XCTAssertEqual(view.picturePlacement(for: nil), CGRect(origin: .zero, size: view.contentRect.size))
+    }
+
+    /// An encoded frame 2 % off the display's aspect (alignment, or a size change racing `sourceSize`)
+    /// is drawn where the layer actually puts it; the glyph must still sit on the pixel showing its Mac point.
+    func testATwoPercentAspectMismatchKeepsThePointerGlyphOnTarget() throws {
+        let view = ViewportTransform(sourceSize: display, canvasSize: CGSize(width: 874, height: 402), mode: .fit,
+                                     safeInsets: ViewportInsets(left: 62, bottom: 21, right: 62))
+        let placement = view.picturePlacement(for: nil)
+        let output = CGSize(width: 294, height: 195) // 1.508 against the display's 1.538
+        XCTAssertGreaterThan(abs((output.width / output.height) / (display.width / display.height) - 1), 0.019)
+        let id = VideoPresentationIdentity(hostRecordID: "host-A", ownerPairID: "grant-A", sessionID: UUID(), trackID: UUID(),
+                                           contentEpoch: 1, geometryEpoch: 1)
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let surface = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
+        defer { surface.invalidate() }
+        surface.frame = placement
+        surface.setNeedsLayout(); surface.layoutIfNeeded()
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, Int(output.width), Int(output.height), kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        surface.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
+            frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1),
+            arrivalMs: 1, marker: nil, originalSource: true))
+        surface.draw(in: surface.metal)
+        XCTAssertEqual(surface.metal.drawableSize, output)
+        let shownRect = surface.pictureRect.offsetBy(dx: placement.minX, dy: placement.minY)
+        for pointer in [CGPoint(x: 0, y: 0), CGPoint(x: 735, y: 478), CGPoint(x: 1470, y: 956), CGPoint(x: 120, y: 900)] {
+            let glyph = PointerOverlayView.picturePoint(pointer, scale: view.scale)
+            let shown = CGPoint(x: (glyph.x - shownRect.minX) / shownRect.width * display.width,
+                                y: (glyph.y - shownRect.minY) / shownRect.height * display.height)
+            XCTAssertEqual(shown.x, pointer.x, accuracy: 1e-6, "the glyph sits on the pixel showing its Mac point")
+            XCTAssertEqual(shown.y, pointer.y, accuracy: 1e-6)
+        }
     }
 
     func testTheVideoFillsItsRegionOnlyWhileCropped() {
