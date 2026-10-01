@@ -2344,6 +2344,7 @@ final class RemoteHostModel: ObservableObject {
         couchHealthy = healthy
         input.enabled = HostControlPolicy.isEnabled(userConsent: sessionControlAllowed, accessibilityPermission: controlPermission,
                                                     session: sessionState, captureHealthy: captureHealthy, couchHealthy: healthy)
+        reconcileAutomaticClipboard()
         return healthy
     }
 
@@ -2758,8 +2759,17 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private var automaticClipboardAllowed: Bool {
-        active && !terminating && connection.connected && connection.media != nil &&
-            sessionState == .picture && sessionHealthy && input.enabled &&
+        if sessionState == .couch {
+            // Cached Couch health handles lock/console/permission events. These cheap
+            // use-time checks fence link loss and heartbeat expiry between lifecycle ticks.
+            guard connection.routeIsLocal, connection.provenLocalLinkActive,
+                  unavailabilityTeardown == nil, !bigTextHandlingScreenChanges,
+                  let heartbeat = lastPhoneHeartbeatAt,
+                  (0..<CouchHealth.heartbeatLimit).contains(ProcessInfo.processInfo.systemUptime - heartbeat)
+            else { return false }
+        }
+        return active && !terminating && connection.connected && connection.media != nil &&
+            !sessionRefused && sessionHealthy && input.enabled &&
             controlPermission.isGranted && sessionControlAllowed && !screenLocked &&
             !phonePause.isPaused && !liveViewOnly && !captureScopeViewOnly &&
             !captureScopeNeedsSelection && !away.wantsCover && !away.isLocking &&

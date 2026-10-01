@@ -290,6 +290,31 @@ final class HostClipboardServiceTests: XCTestCase {
         waitUntil("explicit baseline eventually completes") { explicit?.wait(timeout: .now()) == .success }
     }
 
+    func testHealthyCouchAuthorityExportsWithoutPictureAndStaleHeartbeatCancelsChunks() {
+        let pasteboard = FakePasteboard(), clipboard = service(pasteboard)
+        var health = CouchHealthInputs(routeLocal: true, provenLinkActive: true, heartbeatAge: 0.2,
+            screenLocked: false, consoleUserActive: true, allowControl: true, accessibility: .granted, phonePaused: false)
+        clipboard.automaticPolicy = { CouchHealth.isHealthy(health) }
+        let enabled = HostControlPolicy.isEnabled(userConsent: true, accessibilityPermission: .granted,
+            session: .couch, captureHealthy: false, couchHealthy: CouchHealth.isHealthy(health))
+        XCTAssertTrue(enabled, "Couch control does not require a Picture capture")
+        clipboard.reconcileAutomaticSync(allowed: enabled, peerSupports: true)
+        waitUntil("Couch baseline sampled") { pasteboard.countReads > 0 }
+        pasteboard.set(.text(ClipboardPayload(text: "Couch copy"))); pasteboard.bump()
+        waitUntil("Couch copy exported") { self.sent.count == 1 }
+        XCTAssertEqual(sent.first?.automatic, true)
+        sent = []; buffered = ClipboardLimits.bufferedHighWater
+        pasteboard.set(.text(ClipboardPayload(text: "queued Couch copy"))); pasteboard.bump()
+        waitUntil("second Couch read completed") { pasteboard.reads == 2 }
+        settle()
+        health.heartbeatAge = CouchHealth.heartbeatLimit
+        // No lifecycle reconciliation: the send path must recheck live Couch authority.
+        buffered = 0; settle()
+        XCTAssertTrue(sent.isEmpty)
+        XCTAssertTrue(clipboard.isIdle, "Use-time heartbeat expiry cancels queued chunks before the next health tick")
+        clipboard.reset()
+    }
+
     func testPushStoresTextOnlyAfterTheWholeTransferVerifies() throws {
         let pasteboard = FakePasteboard()
         let clipboard = service(pasteboard)

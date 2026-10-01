@@ -1639,7 +1639,7 @@ final class PhoneRemoteModel: ObservableObject {
     #endif
 
     var automaticClipboardSupported: Bool {
-        sessionMode == .picture && hostFeatures.contains(SessionFeature.clipboardSync)
+        hostFeatures.contains(SessionFeature.clipboardSync)
             && connection.requestedFeatures.contains(SessionFeature.clipboardSync)
             && !UserDefaults.standard.bool(forKey: PhoneClipboard.automaticDisabledKey)
     }
@@ -1649,7 +1649,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// Clipboard transfer needs a live session with control allowed on the Mac, but not a
     /// fresh picture: it changes pasteboards, not the screen.
     var clipboardAvailable: Bool {
-        sceneIsActive && !captureScopeViewOnly && !viewOnlyConfirmed && !pendingViewOnlyStart && !awaitingViewOnlyExit && !pipBackground && clipboardSupported && connection.connected && controlAllowed && !privacyShield && !contentConcealed
+        sceneIsActive && (sessionMode != .couch || canControl) && !captureScopeViewOnly && !viewOnlyConfirmed && !pendingViewOnlyStart && !awaitingViewOnlyExit && !pipBackground && clipboardSupported && connection.connected && controlAllowed && !privacyShield && !contentConcealed
     }
 
     func pasteToMac(_ strings: [String], sourceChangeCount: Int? = nil) {
