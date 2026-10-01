@@ -67,6 +67,14 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         view.setNeedsLayout(); view.layoutIfNeeded()
         XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240))
         XCTAssertEqual(view.pictureRect, CGRect(x: 0, y: 150, width: 1200, height: 900))
+        view.frame = CGRect(x: 0, y: 0, width: 400, height: 301) // 0.3 % off 4:3, e.g. encoder alignment
+        view.setNeedsLayout(); view.layoutIfNeeded()
+        XCTAssertEqual(view.metal.layer.contentsGravity, .resize, "a near match fills so the pointer overlay stays aligned")
+        XCTAssertEqual(view.pictureRect, CGRect(x: 0, y: 0, width: 400, height: 301))
+        view.frame = CGRect(x: 0, y: 0, width: 400, height: 306) // 2 % off
+        view.setNeedsLayout(); view.layoutIfNeeded()
+        XCTAssertEqual(view.metal.layer.contentsGravity, .resizeAspect)
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240))
         view.invalidate()
     }
     private func identity(_ epoch: UInt64 = 1) -> VideoPresentationIdentity {

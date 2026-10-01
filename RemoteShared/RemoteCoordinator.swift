@@ -24,8 +24,6 @@ final class RemoteCoordinator: ObservableObject {
     @Published var diagnostics = "Route not measured"
     /// Stage counters from the most recent local-link proof; no keys, nonces or addresses.
     @Published private(set) var localProofSummary: String?
-    /// Phone: input is waiting for the Mac's fresh anchor after a bounded-queue recovery.
-    @Published private(set) var inputRecovering = false
     var forceRelay = false
     var onAuthenticated: (() -> Void)?
     private(set) var controlArrivedFrames: Int?
@@ -240,20 +238,8 @@ final class RemoteCoordinator: ObservableObject {
     static let reliableCheckpointRetransmitNanoseconds: UInt64 = 250_000_000
     /// About 6.75 s without any ACK: stop resending and ask the host to rebase instead.
     static let maximumReliableCheckpointRetransmits = 8
-    private var inputRecoveryPending = false {
-        didSet { if inputRecovering != inputRecoveryPending { inputRecovering = inputRecoveryPending } }
-    }
+    private var inputRecoveryPending = false
     private var inputRecoveryTimeout: Task<Void, Never>?
-    private struct RecoveredInput { let action: RemoteAction; let queuedAt: TimeInterval }
-    /// Discrete work offered while recovery is pending, replayed in order on the fresh anchor.
-    private var recoveredInput: [RecoveredInput] = []
-    private var recoveredScrollStreams: Set<String> = []
-    /// A click or scroll lands wherever the Mac pointer is. Once motion was discarded the pointer
-    /// is not where the user aimed, so positional work is dropped instead of misplaced.
-    private var recoveryPointerTrusted = false
-    static let maximumRecoveredActions = 32
-    static let maximumRecoveredAge: TimeInterval = 2
-    var recoveryClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     private static let maximumDeferredActions = 512
     private static let maximumDeferredSemantics = 64
     var causalInputNegotiated: Bool { causalContext != nil }
@@ -391,35 +377,6 @@ final class RemoteCoordinator: ObservableObject {
     private func clearDeferredInput() {
         deferredInput.removeAll(); deferredInputSizes.removeAll(); deferredInputBytes = 0
     }
-    private func clearRecoveredInput() {
-        recoveredInput.removeAll(); recoveredScrollStreams.removeAll(); recoveryPointerTrusted = false
-    }
-    private static let positionalSemantics: Set<String> = ["click", "double", "right", "middle", "auxClick", "scroll"]
-    /// Text, motion, holds and pencil never replay: a hold's press was already released by the
-    /// Mac's recovery, so its release (dragUp/release/holdRenew) is dropped with it.
-    private func queueRecoveredInput(_ action: RemoteAction) -> Bool {
-        let now = recoveryClock()
-        recoveredInput.removeAll { now - $0.queuedAt > Self.maximumRecoveredAge }
-        guard action.pencil == nil, recoveredInput.count < Self.maximumRecoveredActions,
-              action.action == "key" || (Self.positionalSemantics.contains(action.action) && recoveryPointerTrusted) else { return false }
-        if action.action == "scroll", let stream = action.interaction?.stream, let phase = action.interaction?.phase {
-            if phase == "began" { recoveredScrollStreams.insert(stream) }
-            else if !recoveredScrollStreams.contains(stream) { return false }
-        }
-        recoveredInput.append(RecoveredInput(action: action, queuedAt: now))
-        return true
-    }
-    private func replayRecoveredInput(epoch: UInt64) {
-        let now = recoveryClock(), queued = recoveredInput
-        clearRecoveredInput()
-        var streams: Set<String> = []
-        for entry in queued where entry.action.epoch == epoch && now - entry.queuedAt <= Self.maximumRecoveredAge {
-            if entry.action.action == "scroll", let stream = entry.action.interaction?.stream, let phase = entry.action.interaction?.phase {
-                if phase == "began" { streams.insert(stream) } else if !streams.contains(stream) { continue }
-            }
-            guard sendControl(entry.action) else { return }
-        }
-    }
     private func enqueueDeferredInput(_ action: RemoteAction) -> Bool {
         if let last = deferredInput.last, let merged = PointerMoveCoalescer.coalescedUnsentMove(last, action),
            let oldSize = deferredInputSizes.last, let size = try? JSONEncoder().encode(merged).count {
@@ -443,8 +400,6 @@ final class RemoteCoordinator: ObservableObject {
     private func requestInputRecovery() -> Bool {
         guard !isHost, connected, var context = causalContext else { return false }
         if inputRecoveryPending { return false }
-        let pointerTrusted = motionPrefix.segments.isEmpty && !deferredInput.contains { ["move", "moveTo"].contains($0.action) }
-        clearRecoveredInput(); recoveryPointerTrusted = pointerTrusted
         inputRecoveryPending = true; clearDeferredInput(); clearReliableCheckpoint()
         context.kind = "rebase"; context.applied = 0; context.segments = []
         guard transmit(RemoteAction(action: "heartbeat", epoch: context.epoch), input: context) else { return false }
@@ -467,7 +422,7 @@ final class RemoteCoordinator: ObservableObject {
         moveFlush?.cancel(); moveFlush = nil
         media?.allowPointerChannel()
         let nonce = InputCausalEnvelope.identity()
-        clearDeferredInput(); clearRecoveredInput() // A replacement offer cannot carry queued work from retired geometry.
+        clearDeferredInput() // A replacement offer cannot carry queued work from retired geometry.
         offeredInputNonce = nonce; offeredInputEpoch = epoch
         let offer = InputCausalEnvelope(kind: "offer", nonce: nonce, anchor: String(repeating: "0", count: 32), epoch: epoch)
         _ = transmit(RemoteAction(action: "heartbeat", epoch: epoch), input: offer)
@@ -480,7 +435,6 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     func sendInputMoves(_ actions: [RemoteAction]) -> Bool {
-        if inputRecoveryPending { recoveryPointerTrusted = false }
         guard !isHost, connected, !inputRecoveryPending else { return false }
         guard causalContext != nil else {
             if offeredInputNonce != nil {
@@ -613,11 +567,9 @@ final class RemoteCoordinator: ObservableObject {
             guard let current = causalContext, input.nonce == current.nonce else { return }
             guard input.anchor != current.anchor || input.epoch != current.epoch else { return }
             causalContext = input; motionPrefix = InputMotionPrefix(); clearDeferredInput()
-            let recovered = inputRecoveryPending
             clearReliableCheckpoint(); inputRecoveryPending = false
             inputRecoveryTimeout?.cancel(); inputRecoveryTimeout = nil
             onCausalContext?(input)
-            if recovered { replayRecoveredInput(epoch: input.epoch) } else { clearRecoveredInput() }
         case "ack":
             guard !isHost, let current = causalContext, input.nonce == current.nonce,
                   input.anchor == current.anchor, input.epoch == current.epoch,
@@ -677,10 +629,7 @@ final class RemoteCoordinator: ObservableObject {
             return false
         }
         do { try action.validate() } catch { connectionLost(); return false }
-        if !isHost, inputRecoveryPending {
-            if ["move", "moveTo"].contains(action.action) { recoveryPointerTrusted = false }
-            if Self.causalSemantics.contains(action.action) { return queueRecoveredInput(action) }
-        }
+        if !isHost, inputRecoveryPending, Self.causalSemantics.contains(action.action) { return false }
         if !isHost, offeredInputNonce != nil, Self.causalSemantics.contains(action.action) {
             guard action.epoch == offeredInputEpoch else { return false }
             if action.action == "release" { clearDeferredInput() }
@@ -963,7 +912,7 @@ final class RemoteCoordinator: ObservableObject {
         causalContext = nil; offeredInputNonce = nil; offeredInputEpoch = 0; hostInputEpoch = 0
         hostInputAnchor = InputCausalEnvelope.identity(); motionPrefix = InputMotionPrefix()
         motionSequence = 0; motionReplay = InputMotionReplay(); clearDeferredInput()
-        clearReliableCheckpoint(); inputRecoveryPending = false; clearRecoveredInput()
+        clearReliableCheckpoint(); inputRecoveryPending = false
         inputRecoveryTimeout?.cancel(); inputRecoveryTimeout = nil
         request = ""; session = ""; sequence = 0; guardState = nil; proofReceived = false
         peerFeatures = []
