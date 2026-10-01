@@ -13,6 +13,8 @@ export type Assets = {
   /** Home-only styles (hero demo, home sections), inlined after cssText on the home page only. */
   homeCss: string;
   js: { home: string; site: string };
+  /** The footer games bundle, loaded on demand by src/scripts/footer.ts. */
+  games: string;
   /** Versioned URL of each Open Graph image, keyed by page slug. */
   og: Record<string, string>;
   /** Content-hashed design-preview images, keyed by shot key (src/pages/images.ts). */
@@ -170,12 +172,12 @@ const FOOT_GUIDES: [string, string][] = [
  * the links sit on solid plates so they stay readable over it. The text wordmark below the canvas is the
  * fallback without script and for Reduce Motion until the still frame is drawn.
  */
-function footer(): Html {
+function footer(assets: Assets): Html {
   const owner = config.contact.legalName ?? "Farside";
   const social = SOCIAL.filter(([key]) => config.social[key]);
   const support = config.contact.supportEmail;
   const link = (href: string, label: string) => html`<li><a class="plate" href="${href}">${label}</a></li>`;
-  return html`<footer class="site-footer" aria-labelledby="foot-title">
+  return html`<footer class="site-footer" aria-labelledby="foot-title" data-arcade="${assets.games}">
   <canvas class="foot-cv" aria-hidden="true"></canvas>
   <div class="foot-in w">
     <div class="foot-head">
@@ -269,7 +271,7 @@ ${header(meta)}
 ${body}
 </main>
 <div class="foot-space" aria-hidden="true"></div>
-${footer()}
+${footer(assets)}
 </body>
 </html>
 `;

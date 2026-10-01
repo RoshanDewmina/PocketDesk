@@ -258,6 +258,21 @@ async function bundle(out: string) {
   }
   for (const e of ENTRIES) if (!jsMap[e]) throw new Error(`missing bundle for ${e}`);
 
+  // The footer games: their own bundle, fetched by footer.ts only once the footer's dot field starts.
+  const games = await Bun.build({
+    entrypoints: [join(ROOT, "src/games/arcade.ts")],
+    outdir: join(out, "assets"),
+    naming: "[name]-[hash].[ext]",
+    target: "browser",
+    format: "esm",
+    minify: true,
+    splitting: false,
+    sourcemap: "none",
+  });
+  if (!games.success) throw new AggregateError(games.logs, "games bundle failed");
+  const arcade = games.outputs.find((o) => o.kind === "entry-point");
+  if (!arcade) throw new Error("missing bundle for arcade");
+
   // CSS is bundled in memory and inlined: site.css into every page, home.css (the hero demo and the home
   // sections) only into the home page.
   const sheet = async (file: string) => {
@@ -269,7 +284,8 @@ async function bundle(out: string) {
     if (text.includes("</style")) throw new Error("CSS must not contain </style");
     return text;
   };
-  return { js: jsMap, cssText: await sheet("site.css"), homeCss: `${await sheet("home.css")}\n${posterCss()}` };
+  return { js: jsMap, games: `/assets/${basename(arcade.path)}`, cssText: await sheet("site.css"), homeCss: `${await sheet("home.css")}
+${posterCss()}` };
 }
 
 /** Design-preview images: copied into /assets/img with content hashes, sizes from static/img/manifest.json. */
@@ -344,7 +360,7 @@ export async function build(opts: { outDir?: string; quiet?: boolean } = {}) {
 
   const b = await bundle(out);
   await cp(STATIC, out, { recursive: true, filter: (src) => !src.includes(`${join(STATIC, "img")}`) });
-  const assets: Assets = { cssText: b.cssText, homeCss: b.homeCss, js: b.js, og: await ogVersions(), img: await images(out) };
+  const assets: Assets = { cssText: b.cssText, homeCss: b.homeCss, js: b.js, games: b.games, og: await ogVersions(), img: await images(out) };
   const styleHashes = [b.cssText, b.homeCss].map((t) => `sha256-${sha256b64(t)}`);
   await checkLaunch();
 
@@ -368,6 +384,7 @@ export async function build(opts: { outDir?: string; quiet?: boolean } = {}) {
     console.log(`built ${Object.keys(pages).length} pages → ${out}`);
     console.log(`  css inlined: site ${(b.cssText.length / 1024).toFixed(1)} KB, home +${(b.homeCss.length / 1024).toFixed(1)} KB`);
     for (const [k, v] of Object.entries(assets.js)) console.log(`  js  ${k}: ${v}`);
+    console.log(`  js  games (lazy): ${assets.games}`);
     console.log(`  images ${Object.keys(assets.img).length}, og cards ${Object.values(assets.og).filter((v) => !v.endsWith("=dev")).length}/${OG.length}`);
     console.log(`  SITE_URL ${config.SITE_URL}`);
     if (missing.length) console.log(`  placeholders still to fill (site.config.ts): ${missing.join(", ")}`);

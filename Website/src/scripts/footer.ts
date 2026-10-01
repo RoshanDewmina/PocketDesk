@@ -5,7 +5,11 @@
 // Cost: nothing runs until the page end is near; then one canvas, ≤ 2× DPR (less on huge screens), drawn only
 // while some of the footer is showing and the tab is visible. Reduce Motion, Save-Data or the pause button get
 // one still frame of the finished wordmark.
+//
+// Games: once the field starts, the footer games (src/games/arcade.ts, its own bundle, URL in data-arcade) load
+// and can borrow this canvas, grid and loop. The loop still runs only while the footer shows and the tab is visible.
 
+import type { ArcadeModule, Host, Runner } from "../games/types";
 import { motionAllowed, onMotionChange } from "./motion";
 
 const BONE = [237, 232, 223];
@@ -51,7 +55,7 @@ export function initFooter(fonts: Promise<void>) {
   // Keyboard: the links sit under the page until the end, and a browser won't scroll to a fixed element, so
   // tabbing into the footer scrolls to the end first (no focus lands on something hidden).
   foot.addEventListener("focusin", () => {
-    if (reveal() < 0.99) window.scrollTo({ top: document.documentElement.scrollHeight, behavior: motionAllowed() ? "smooth" : "instant" });
+    if (getComputedStyle(foot).position === "fixed" && reveal() < 0.99) window.scrollTo({ top: document.documentElement.scrollHeight, behavior: motionAllowed() ? "smooth" : "instant" });
   });
   let starting = false;
 
@@ -79,6 +83,7 @@ export function initFooter(fonts: Promise<void>) {
       idle(() => {
         field = new Field(cv, foot);
         field.setReveal(reveal());
+        loadArcade(field);
       }),
     );
   };
@@ -90,6 +95,12 @@ export function initFooter(fonts: Promise<void>) {
     check();
   });
   check();
+}
+
+function loadArcade(field: Field) {
+  const url = field.foot.dataset.arcade;
+  if (!url) return;
+  import(url).then((m: ArcadeModule) => m.mountArcade(field.host()), () => {});
 }
 
 class Field {
@@ -120,8 +131,11 @@ class Field {
   private t = 0;
   private still: boolean;
   private resizeRaf = 0;
+  private game: Runner | null = null;
+  private layoutFns: (() => void)[] = [];
+  private awayFns: (() => void)[] = [];
 
-  constructor(private cv: HTMLCanvasElement, private foot: HTMLElement) {
+  constructor(private cv: HTMLCanvasElement, readonly foot: HTMLElement) {
     this.ctx = cv.getContext("2d")!;
     this.still = !motionAllowed();
     this.layout();
@@ -137,7 +151,7 @@ class Field {
       this.still = !motionAllowed();
       if (this.still) this.rest();
       this.sync();
-      if (this.still) this.draw();
+      if (this.still || this.game) this.draw();
     });
     document.addEventListener("visibilitychange", () => this.sync());
   }
@@ -154,20 +168,63 @@ class Field {
   setReveal(r: number) {
     this.target = r;
     if (this.still) this.shown = 1;
+    // A game only plays with its band (nearly) all showing; scrolling back up to the page pauses it.
+    if (this.game && this.bandShown() < 0.85) {
+      this.game.suspend();
+      this.awayFns.forEach((f) => f());
+    }
     this.sync();
     if (!this.raf && r > 0) this.draw();
   }
 
-  /** Run the loop only while some footer shows, the tab is visible and motion is allowed. */
+  /** Run the loop only while some footer shows, the tab is visible and motion is allowed (or a game was asked for). */
   private sync() {
-    const on = !this.still && this.target > 0 && !document.hidden;
+    const on = (this.game ? true : !this.still) && this.target > 0 && !document.hidden;
     if (on && !this.raf) {
       this.last = 0;
       this.raf = requestAnimationFrame(this.frame);
     } else if (!on && this.raf) {
       cancelAnimationFrame(this.raf);
       this.raf = 0;
+      this.game?.suspend();
+      if (this.game) this.draw();
     }
+  }
+
+  private bandShown() {
+    const m = this.foot.querySelector<HTMLElement>(".foot-mark")!.getBoundingClientRect();
+    const top = Math.max(m.top, 0, document.getElementById("main")?.getBoundingClientRect().bottom ?? 0);
+    return clamp((Math.min(m.bottom, window.innerHeight) - top) / Math.max(1, m.height), 0, 1);
+  }
+
+  /** What the games get: this canvas, its grid and its loop. */
+  host(): Host {
+    return {
+      foot: this.foot,
+      cv: this.cv,
+      geo: () => ({ W: this.W, H: this.H, step: this.step, band: { ...this.band } }),
+      motionAllowed,
+      onMotionChange,
+      setRunner: (r) => {
+        this.game = r;
+        this.last = 0;
+        this.waves.length = 0;
+        if (!r && this.still) this.rest();
+        this.sync();
+        this.draw();
+      },
+      grain: (ctx) => this.grain(ctx),
+      onLayout: (fn) => this.layoutFns.push(fn),
+      onAway: (fn) => this.awayFns.push(fn),
+    };
+  }
+
+  private grain(ctx: CanvasRenderingContext2D) {
+    const { n, hx, hy } = this;
+    ctx.fillStyle = "rgba(237,232,223,0.14)";
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) ctx.rect(hx[i]! - 0.6, hy[i]! - 0.6, 1.2, 1.2);
+    ctx.fill();
   }
 
   private listen() {
@@ -182,11 +239,12 @@ class Field {
     };
     let down: { x: number; y: number; t: number } | null = null;
     this.foot.addEventListener("pointermove", (e) => {
+      if (this.game) return;
       const p = at(e);
       this.ptr = { ...p, until: this.t + (e.pointerType === "mouse" ? 2500 : 1500) };
     });
     this.foot.addEventListener("pointerdown", (e) => {
-      if (!e.isPrimary || (e.target as Element).closest("a, button")) return;
+      if (this.game || !e.isPrimary || (e.target as Element).closest("a, button, .arc")) return;
       const p = at(e);
       this.ptr = { ...p, until: this.t + 1800 };
       // A mouse click sends the shockwave at once; a finger only on a tap, so swiping to scroll stays calm.
@@ -214,11 +272,20 @@ class Field {
     this.dpr = dpr;
     this.cv.width = Math.round(W * dpr);
     this.cv.height = Math.round(H * dpr);
-    const mark = this.foot.querySelector<HTMLElement>(".foot-mark")!.getBoundingClientRect();
-    this.band = { x: mark.left - fr.left, y: mark.top - fr.top, w: mark.width, h: mark.height };
+    // Layout offsets, not client rects: the footer content rises into place as it is uncovered (a transform),
+    // and the band must be where it settles.
+    const mark = this.foot.querySelector<HTMLElement>(".foot-mark")!;
+    let bx = 0, by = 0;
+    for (let el: HTMLElement | null = mark; el && el !== this.foot; el = el.offsetParent as HTMLElement | null) {
+      bx += el.offsetLeft;
+      by += el.offsetTop;
+    }
+    this.band = { x: bx, y: by, w: mark.offsetWidth, h: mark.offsetHeight };
     this.step = W < 640 ? 7 : W < 1100 ? 9 : 11;
     this.build();
     if (this.still) this.rest();
+    this.game?.layout();
+    this.layoutFns.forEach((f) => f());
   }
 
   /** Lay the grid and work out how much of each cell the wordmark covers (supersampled text, 4 × 4 per cell). */
@@ -297,7 +364,8 @@ class Field {
     const dt = this.last ? Math.min(33, now - this.last) : 16;
     this.last = now;
     this.t += dt;
-    this.step1(dt);
+    if (this.game) this.game.step(dt);
+    else this.step1(dt);
     this.draw();
     this.sync();
   };
@@ -364,6 +432,13 @@ class Field {
   draw() {
     const { ctx, W, H, dpr, n, hx, hy, cov, step } = this;
     if (!n) return;
+    if (this.game) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      this.grain(ctx);
+      this.game.draw(ctx);
+      return;
+    }
     const still = this.still;
     const x = still ? hx : this.x, y = still ? hy : this.y;
     const shown = still ? 1 : this.shown;
