@@ -501,16 +501,15 @@ final class PeerMedia: NSObject {
     /// Public DataChannel Send proxies to the network thread; observer notifications post
     /// to signaling rather than synchronously acquiring this authority lock from Send.
     /// No channel lock or owner-queue drain is held inside callback-thread retirement.
-    private func withNativeRouteSubmissionAuthority<T>(_ operation: () -> T) -> T? {
+    func withNativeRouteSubmissionAuthority<T>(_ operation: () -> T) -> T? {
         localRouteLock.lock()
+        defer { localRouteLock.unlock() }
         #if DEBUG && AUDIO_LIFETIME_TESTS
         let requiresAuthority = localLink != nil || forcedNativeRouteAuthorityForTesting
         #else
         let requiresAuthority = localLink != nil
         #endif
-        guard requiresAuthority else { localRouteLock.unlock(); return operation() }
-        defer { localRouteLock.unlock() }
-        guard localPathAuthorized else { return nil }
+        guard !requiresAuthority || localPathAuthorized else { return nil }
         return operation()
     }
     #if DEBUG && AUDIO_LIFETIME_TESTS
@@ -1443,11 +1442,6 @@ extension PeerMedia: FileChannelLink {
 
     /// Lock order: transfer effect → local route → file channel lifetime. Native observer callbacks
     /// enqueue owner work; they must never synchronously call a native send while inside a callback.
-    func withNativeRouteSubmissionAuthority<T>(_ submit: () -> T) -> T? {
-        localRouteLock.lock(); defer { localRouteLock.unlock() }
-        guard localLink == nil || localPathAuthorized else { return nil }
-        return submit()
-    }
     func sendFile(_ data: Data) -> Bool {
         guard data.count <= FileTransferLimits.maximumOutgoingMessageBytes else { return false }
         let message = RTCDataBuffer(data: data, isBinary: true)
