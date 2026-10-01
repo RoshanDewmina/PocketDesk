@@ -37,10 +37,11 @@ final class VideoRefinementTests: XCTestCase {
         RemoteCaptureConfiguration.streamConfiguration(output: CapturePixelDimensions(width: 1920, height: 1200), region: nil, showsCursor: true,
             fps: 60, displayRefreshHz: 60, tuning: .tuned, refinesText: peer.refinementCaptureEnabled, fullColor444: peer.fullColorCaptureEnabled).pixelFormat
     }
-    func testRefinementIsNotRequestedWhenTheSettingIsOffAndCaptureStaysOnTheOriginal420Path() throws {
+    func testRefinementIsNotRequestedWhenTheOverrideIsOffAndCaptureStaysOnTheOriginal420Path() throws {
         let suite = "VideoRefinementTests.off.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [], "All picture refinements default off")
+        defaults.set(false, forKey: StillTextPreferences.sharpenKey); defaults.set(false, forKey: StillTextPreferences.textClarityKey)
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [], "The internal overrides still turn both refinements off")
         let request = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(defaults))
         let heard = MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(request))
         XCTAssertFalse(heard.contains(SessionFeature.videoRefinement)); XCTAssertFalse(heard.contains(SessionFeature.textClarity))
@@ -51,10 +52,23 @@ final class VideoRefinementTests: XCTestCase {
         XCTAssertFalse(host.refinementCaptureEnabled); XCTAssertFalse(host.textClarity.enabled)
         XCTAssertEqual(capturedFormat(host), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
     }
-    func testRefinementIsRequestedOnlyWhenTheSettingIsOnAndThenCapturesBGRA() throws {
+    func testByDefaultOnlyTextClarityIsRequestedAndCaptureStaysOn420() throws {
+        let suite = "VideoRefinementTests.default.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [SessionFeature.textClarity], "Text clarity is on with no setting; refinement is not")
+        let heard = MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(defaults))))
+        XCTAssertFalse(heard.contains(SessionFeature.videoRefinement)); XCTAssertTrue(heard.contains(SessionFeature.textClarity))
+        let host = PeerMedia(isHost: true, servers: [], hevc: false, hevc444: false, textClarity: heard.contains(SessionFeature.textClarity))
+        defer { host.close() }
+        host.requestRefinementCapture(heard.contains(SessionFeature.videoRefinement))
+        XCTAssertFalse(host.refinementCaptureEnabled); XCTAssertTrue(host.textClarity.enabled)
+        XCTAssertEqual(capturedFormat(host), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+    }
+    func testRefinementIsRequestedOnlyWhenTheOverrideIsOnAndThenCapturesBGRA() throws {
         let suite = "VideoRefinementTests.on.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
-        defaults.set(true, forKey: StillTextPreferences.sharpenKey); defaults.set(true, forKey: StillTextPreferences.textClarityKey)
+        defaults.set(true, forKey: StillTextPreferences.sharpenKey)
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [SessionFeature.videoRefinement, SessionFeature.textClarity])
         let request = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(defaults))
         let body = try JSONEncoder().encode(request)
         XCTAssertLessThanOrEqual(request.features.count, 8); XCTAssertLessThanOrEqual(body.count, 1024)
@@ -68,6 +82,20 @@ final class VideoRefinementTests: XCTestCase {
         XCTAssertEqual(capturedFormat(host), kCVPixelFormatType_32BGRA)
         host.requestRefinementCapture(false)
         XCTAssertEqual(capturedFormat(host), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+    }
+    func testValuesTheRemovedTogglesWroteAreForgottenOnce() throws {
+        let suite = "VideoRefinementTests.retire.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: StillTextPreferences.sharpenKey); defaults.set(false, forKey: StillTextPreferences.textClarityKey)
+        StillTextPreferences.retireSettingValues(defaults)
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [SessionFeature.textClarity], "Old toggle values give way to the defaults")
+        defaults.set(false, forKey: StillTextPreferences.textClarityKey)
+        StillTextPreferences.retireSettingValues(defaults)
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [], "A later override is kept")
+        defaults.set("YES", forKey: StillTextPreferences.sharpenKey)
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [SessionFeature.videoRefinement], "A launch argument arrives as a string and still overrides")
+        defaults.removeObject(forKey: StillTextPreferences.sharpenKey); defaults.set("NO", forKey: StillTextPreferences.textClarityKey)
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [], "A string NO turns text clarity off")
     }
     func testAnEarlierPhoneThatAlwaysListsRefinementStillNegotiatesWithinTheBound() throws {
         let earlierBody = Data(#"{"features":["blocker.1","blocker.2","features.32","input.causal.1","input.pencil.1","video.ltr.1","video.refine.1"]}"#.utf8)

@@ -210,11 +210,12 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private let clock: () -> Double
     private let newestFrameWins: () -> Bool
     private let inFlightLimit: () -> Int?
+    private let maximumQPCeiling: () -> Int
     var inFlightCounts: EncoderInFlightCounts { serialized { gate.counts } }
     private var nextID: UInt64 = 0
     private var width: Int32 = 0, height: Int32 = 0
     private var bitrate: UInt32 = 0, fps: UInt32 = 60
-    private var maximumQP = 30
+    private var maximumQP = StreamTuning.tuned.encoderMaximumQP
     private var restart = EncoderRestartPolicy()
     private var storedMaximumQPApplied: Bool = false
     var maximumQPApplied: Bool { serialized { storedMaximumQPApplied } }
@@ -241,10 +242,11 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
          textClarity: TextClarityContext? = nil, propertyCatalog: @escaping (VTCompressionSession) -> [String: Any]? = OwnedVTEncoder.supportedProperties,
          setFrameQP: @escaping (VTCompressionSession, Int) -> OSStatus = OwnedVTEncoder.setFrameQP,
          inFlightLimit: @escaping () -> Int? = { StreamTuning.current.encoderMaxInFlight },
+         maximumQPCeiling: @escaping () -> Int = { StreamTuning.current.encoderMaximumQP },
          newestFrameWins: @escaping () -> Bool = { NewestFrameWinsSwitch.isOn },
          clock: @escaping () -> Double = { MachClock.nowMs() }) {
         self.videoFeedback = videoFeedback; self.textClarity = textClarity; self.propertyCatalog = propertyCatalog; self.setFrameQP = setFrameQP
-        self.inFlightLimit = inFlightLimit; self.newestFrameWins = newestFrameWins; self.clock = clock
+        self.inFlightLimit = inFlightLimit; self.maximumQPCeiling = maximumQPCeiling; self.newestFrameWins = newestFrameWins; self.clock = clock
         self.configuration = configuration; self.counters = counters; self.frameTiming = frameTiming
         super.init(); queue.setSpecific(key: queueKey, value: 1)
     }
@@ -259,7 +261,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             width = Int32(settings.width); height = Int32(settings.height)
             fps = max(1, min(120, settings.maxFramerate))
             bitrate = max(1, min(configuration.maximumKbps, settings.startBitrate))
-            maximumQP = max(1, min(30, settings.qpMax == 0 ? 30 : Int(settings.qpMax)))
+            let ceiling = maximumQPCeiling()
+            maximumQP = max(1, min(ceiling, settings.qpMax == 0 ? ceiling : Int(settings.qpMax)))
             guard configuration.fits(width: Int(width), height: Int(height), fps: Int(fps)) else { return -1 }
             gate.limit = inFlightLimit()
             restart = EncoderRestartPolicy(); restart.keyFrameBudgetMs = 250
@@ -304,8 +307,10 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         if status != noErr { invalidate(); storedLastStatus = status; return status }
         storedMaximumQPApplied = VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxAllowedFrameQP,
                                                value: maximumQP as CFNumber) == noErr
-        // Asked for only when the phone requested it; otherwise the session is exactly the default one.
-        textClarityArmed = textClarity?.enabled == true && !textClarityRejected && storedMaximumQPApplied && TextClarityPolicy.supported(propertyCatalog(created))
+        // Asked for only when the phone requested it and the still ceiling is tighter than the session's own.
+        textClarityArmed = textClarity?.enabled == true && !textClarityRejected && storedMaximumQPApplied
+            && TextClarityPolicy.stillFrameQP(hevc: configuration.codecType == kCMVideoCodecType_HEVC, sessionBound: maximumQP) < maximumQP
+            && TextClarityPolicy.supported(propertyCatalog(created))
         textClarityApplied = false
         storedLastStage = "prepare"
         status = VTCompressionSessionPrepareToEncodeFrames(created)

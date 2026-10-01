@@ -10,6 +10,17 @@ final class HEVCFallbackPolicyTests: XCTestCase {
         XCTAssertTrue(policy.permits(at: 100 + HEVCFallbackPolicy.retryAfter), "A later session tries HEVC again")
     }
 
+    func testHEVCIsOnByDefaultWithAnInternalSwitchOnly() throws {
+        XCTAssertTrue(StreamTuning.tuned.hevc)
+        XCTAssertTrue(StreamTuning.experimentKeys.contains(StreamTuning.hevcKey))
+        let suite = "HEVCFallbackPolicyTests.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertTrue(StreamTuning.resolve(defaults: defaults).hevc)
+        defaults.set(false, forKey: StreamTuning.hevcKey)
+        XCTAssertFalse(StreamTuning.resolve(defaults: defaults).hevc)
+        XCTAssertTrue(StreamTuning.resolve(defaults: defaults).summary.contains("no HEVC"))
+    }
+
     func testRepeatedFailureKeepsH264ForTheLaunch() {
         var policy = HEVCFallbackPolicy()
         policy.failed(at: 100)

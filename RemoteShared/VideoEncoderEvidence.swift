@@ -9,7 +9,8 @@ struct VideoEncoderEvidence: Codable, Equatable {
     let lowLatencyRequested: Bool
     let hardwareRequired: Bool
     let hardwareReported: Bool?
-    /// Nil unless the phone asked for text clarity and the encoder accepted the QP setter; true while the still-picture floor is applied.
+    /// Nil unless the phone asked for text clarity, the encoder accepted the QP setter and the still QP is tighter than the session's
+    /// (so nil for H.264 at the default ceiling of 26); true while the still-picture floor is applied.
     var textClarityActive: Bool? = nil
     func validate() throws {
         guard maximumQPBound.map({ (1...51).contains($0) }) ?? true,

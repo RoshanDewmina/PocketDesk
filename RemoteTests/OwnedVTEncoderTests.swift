@@ -92,7 +92,7 @@ final class OwnedVTEncoderTests: XCTestCase {
     func testOwnedHardwareEncoderProducesDecodableAnnexBWithOriginalTimestamp() throws {
         let configuration = try XCTUnwrap(OwnedVTConfiguration(parameters: ["profile-level-id": "640034", "packetization-mode": "1"]))
         let counters = StreamCounters()
-        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters)
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, maximumQPCeiling: { StreamTuning.tuned.encoderMaximumQP })
         let decoder = RTCVideoDecoderH264()
         defer { _ = encoder.release(); _ = decoder.release() }
         let settings = RTCVideoEncoderSettings()
@@ -107,7 +107,7 @@ final class OwnedVTEncoderTests: XCTestCase {
         XCTAssertTrue(encoder.lowLatencyApplied)
         let evidence = try XCTUnwrap(counters.drain(inputBufferedBytes: nil).encoderEvidence)
         XCTAssertEqual(evidence.path, .ownedVideoToolbox)
-        XCTAssertEqual(evidence.maximumQPBound, encoder.maximumQPApplied ? 30 : nil)
+        XCTAssertEqual(evidence.maximumQPBound, encoder.maximumQPApplied ? 26 : nil, "The negotiated 30 is capped at the crisp-text ceiling")
         XCTAssertEqual(evidence.hardwareReported, encoder.hardwareReported)
         XCTAssertNoThrow(try evidence.validate())
         let encoded = expectation(description: "Public VT encoded frame")
@@ -171,8 +171,9 @@ final class OwnedVTEncoderTests: XCTestCase {
     }
     private func clarityEncoder(_ configuration: any OwnedVideoConfiguration, name: String, counters: StreamCounters, context: TextClarityContext?,
                                 catalog: @escaping (VTCompressionSession) -> [String: Any]? = OwnedVTEncoder.supportedProperties,
-                                setFrameQP: @escaping (VTCompressionSession, Int) -> OSStatus = OwnedVTEncoder.setFrameQP) -> OwnedVTEncoder {
-        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, textClarity: context, propertyCatalog: catalog, setFrameQP: setFrameQP)
+                                setFrameQP: @escaping (VTCompressionSession, Int) -> OSStatus = OwnedVTEncoder.setFrameQP, ceiling: Int = 30) -> OwnedVTEncoder {
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, textClarity: context, propertyCatalog: catalog, setFrameQP: setFrameQP,
+                                     maximumQPCeiling: { ceiling })
         let settings = RTCVideoEncoderSettings()
         settings.width = 256; settings.height = 128; settings.startBitrate = 4000; settings.maxBitrate = 4000
         settings.maxFramerate = 60; settings.qpMax = 30; settings.name = name; settings.mode = .screensharing
@@ -235,6 +236,27 @@ final class OwnedVTEncoderTests: XCTestCase {
         XCTAssertEqual(counters.drain(inputBufferedBytes: nil).encoderEvidence?.textClarityActive, false)
         lock.lock(); let observed = bounds; lock.unlock()
         XCTAssertEqual(observed, [still, 30, still, 30])
+    }
+    func testCrispTextCeilingIs26WithAnInternalOverrideAndClarityArmsOnlyWhereItTightens() throws {
+        XCTAssertEqual(StreamTuning.tuned.encoderMaximumQP, 26); XCTAssertEqual(StreamTuning.legacy.encoderMaximumQP, 30)
+        XCTAssertTrue(StreamTuning.experimentKeys.contains(StreamTuning.encoderMaximumQPKey))
+        let suite = "OwnedVTEncoderTests.qp.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(30, forKey: StreamTuning.encoderMaximumQPKey)
+        XCTAssertEqual(StreamTuning.resolve(defaults: defaults).encoderMaximumQP, 30)
+        defaults.set(99, forKey: StreamTuning.encoderMaximumQPKey)
+        XCTAssertEqual(StreamTuning.resolve(defaults: defaults).encoderMaximumQP, 26, "An out-of-range override is ignored")
+        var now: TimeInterval = 100
+        for hevc in [false, true] {
+            let (configuration, name, still) = try clarityConfiguration(hevc: hevc)
+            let counters = StreamCounters(), context = TextClarityContext(enabled: true) { now }
+            let encoder = clarityEncoder(configuration, name: name, counters: counters, context: context, ceiling: StreamTuning.tuned.encoderMaximumQP)
+            defer { _ = encoder.release() }
+            guard encoder.maximumQPApplied else { throw XCTSkip("\(name): this encoder does not accept MaxAllowedFrameQP") }
+            XCTAssertEqual(counters.drain(inputBufferedBytes: nil).encoderEvidence?.maximumQPBound, 26, name)
+            XCTAssertEqual(encoder.textClarityAvailable, still < 26, "\(name): the still floor arms only when it is tighter than 26")
+            now += 1
+        }
     }
     func testH264StillFloorFollowsTheDetectorAndSparesRecoveryFrames() throws { try assertStillFloorFollowsTheDetectorAndSparesRecoveryFrames(hevc: false) }
     func testHEVCStillFloorFollowsTheDetectorAndSparesRecoveryFrames() throws { try assertStillFloorFollowsTheDetectorAndSparesRecoveryFrames(hevc: true) }
