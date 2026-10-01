@@ -118,6 +118,8 @@ struct AnywherePaywallView: View {
                 if store.load == .unavailable {
                     Text(CommerceLocalization.text("ANYWHERE_UNAVAILABLE", "Anywhere isn’t available yet."))
                         .font(.subheadline).foregroundStyle(Farside.Palette.bone)
+                    Button("Try again") { Task { await store.loadProducts() } }
+                        .buttonStyle(FarsideLinkButtonStyle())
                 } else if store.load == .failed {
                     Text(CommerceLocalization.text("APP_STORE_OFFLINE", "Couldn’t reach the App Store. Check your connection, then try again."))
                         .font(.subheadline).foregroundStyle(Farside.Palette.bone)
