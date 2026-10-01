@@ -1,20 +1,22 @@
 # Farside
 
-> Farside lets you see and control your own Mac from your iPhone or iPad. The whole screen is a trackpad with click haptics, a big sharp pointer drawn by the phone, zoom that follows the pointer, voice dictation into the Mac and a clipboard that goes both ways. Pairing is a QR code approved on the Mac, with no account, and everything is encrypted end to end. Farside is in beta; no launch date has been announced.
+> Farside lets you see and control your own Mac from your iPhone or iPad. The whole screen is a trackpad with click haptics, a big sharp pointer drawn by the phone, zoom that follows the pointer, voice dictation into the Mac and a clipboard that goes both ways. Pairing is a QR code approved on the Mac, with no account, and everything is encrypted end to end. Farside is in beta and coming soon to the App Store; anyone can join the beta at https://getfarside.com/#beta.
 
 Key facts:
 
 - Free on the same local network as the Mac, with no account and no ads.
 - The Anywhere plan adds access over the internet through an encrypted relay: CA$7.99 a month or CA$59.99 a year, with a 7-day free trial, sold only inside the iPhone and iPad app through Apple.
-- The Mac helper is a free download from this website, signed with an Apple Developer ID and notarized by Apple. The iPhone and iPad app will be on the App Store.
+- Farside for Mac (the companion that runs on the Mac) will be a free download from this website, signed with an Apple Developer ID and notarized by Apple. Farside for iPhone and iPad will be on the App Store.
 - Planned requirements: macOS 26 or later on a Mac with Apple silicon (M1 or later); iOS 26 or later; iPadOS 26 or later.
 - "Agent needs you" alerts for AI coding agents running on the Mac arrive as a beta; alerts carry no prompts, file names or screen content.
 - Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; no audio; the Mac must be awake and logged in; no pressure gestures.
 - The website sets no cookies and runs no analytics.
+- Farside (getfarside.com) is not related to farside.app or to other products with a similar name.
 
 ## Main
 
-- [Home](https://getfarside.com/): what Farside does, how it works, features, the agent-alerts beta, pricing, FAQ
+- [Home](https://getfarside.com/): what Farside does, how it works, features, pricing, FAQ, beta sign-up
+- [About](https://getfarside.com/about): who makes Farside, what it is, how to get in touch
 
 ## Guides
 
