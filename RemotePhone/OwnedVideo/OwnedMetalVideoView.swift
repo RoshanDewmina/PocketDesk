@@ -9,7 +9,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     let mailbox = NewestFrameMailbox<VideoFrameEnvelope>()
     var counters: StreamCounters?
     var beforeDraw: ((MTKView) -> Void)?
-    var fillsFrame = false
+    var fillsFrame = false { didSet { if fillsFrame != oldValue { applyGravity() } } }
     var videoFeedback: VideoFeedbackContext?
     /// Only an actual original source drawable presentation may report this receipt.
     /// Consumers enqueue owner-validated work; they must not synchronously hop to main.
@@ -49,6 +49,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         metal.preferredFramesPerSecond = fps
         (metal.layer as? CAMetalLayer)?.maximumDrawableCount = 2
         (metal.layer as? CAMetalLayer)?.colorspace = CGColorSpace(name: CGColorSpace.itur_709)
+        applyGravity()
         addSubview(metal); metal.delegate = self
         if let device {
             CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
@@ -67,6 +68,26 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
     override func layoutSubviews() {
         super.layoutSubviews(); metal.frame = bounds; fallback?.frame = bounds; redraw = true
+        applyGravity()
+    }
+    // The drawable is the frame's own pixel size, so a view whose aspect differs (encoder
+    // alignment, a size change racing `sourceSize`, rotation) must letterbox, never stretch.
+    // Below 1 % the pointer overlay, which assumes the picture fills its container, would
+    // drift by half the inset, so a near match still fills.
+    static let letterboxTolerance: CGFloat = 0.01
+    private func applyGravity() {
+        let drawable = metal.drawableSize, area = metal.bounds.size
+        let mismatch = drawable.width > 0 && drawable.height > 0 && area.width > 0 && area.height > 0
+            ? abs((area.width / area.height) / (drawable.width / drawable.height) - 1) : 0
+        let gravity: CALayerContentsGravity = fillsFrame || mismatch < Self.letterboxTolerance ? .resize : .resizeAspect
+        if metal.layer.contentsGravity != gravity { metal.layer.contentsGravity = gravity }
+    }
+    var pictureRect: CGRect {
+        let drawable = metal.drawableSize, area = metal.bounds
+        guard metal.layer.contentsGravity == .resizeAspect, drawable.width > 0, drawable.height > 0 else { return area }
+        let scale = min(area.width / drawable.width, area.height / drawable.height)
+        let size = CGSize(width: drawable.width * scale, height: drawable.height * scale)
+        return CGRect(x: area.midX - size.width / 2, y: area.midY - size.height / 2, width: size.width, height: size.height)
     }
 
     func offer(_ envelope: VideoFrameEnvelope) {
@@ -120,7 +141,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         guard let submission = mailbox.take(redraw: redraw) else { return }
         let envelope = submission.frame
         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
-        if view.drawableSize != geometry.displaySize { view.drawableSize = geometry.displaySize }
+        if view.drawableSize != geometry.displaySize { view.drawableSize = geometry.displaySize; applyGravity() }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
               let command = commandQueue?.makeCommandBuffer(),
               let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else {

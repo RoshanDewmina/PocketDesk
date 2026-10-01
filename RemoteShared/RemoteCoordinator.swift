@@ -24,6 +24,8 @@ final class RemoteCoordinator: ObservableObject {
     @Published var diagnostics = "Route not measured"
     /// Stage counters from the most recent local-link proof; no keys, nonces or addresses.
     @Published private(set) var localProofSummary: String?
+    /// Phone: input is refused while waiting for the Mac's fresh anchor after a bounded-queue recovery.
+    @Published private(set) var inputRecovering = false
     var forceRelay = false
     var onAuthenticated: (() -> Void)?
     private(set) var controlArrivedFrames: Int?
@@ -238,7 +240,9 @@ final class RemoteCoordinator: ObservableObject {
     static let reliableCheckpointRetransmitNanoseconds: UInt64 = 250_000_000
     /// About 6.75 s without any ACK: stop resending and ask the host to rebase instead.
     static let maximumReliableCheckpointRetransmits = 8
-    private var inputRecoveryPending = false
+    private var inputRecoveryPending = false {
+        didSet { if inputRecovering != inputRecoveryPending { inputRecovering = inputRecoveryPending } }
+    }
     private var inputRecoveryTimeout: Task<Void, Never>?
     private static let maximumDeferredActions = 512
     private static let maximumDeferredSemantics = 64
@@ -560,6 +564,7 @@ final class RemoteCoordinator: ObservableObject {
             let changedGeometry = input.epoch != offeredInputEpoch
             inputNegotiationTimeout?.cancel(); inputNegotiationTimeout = nil
             offeredInputNonce = nil; causalContext = input; motionPrefix = InputMotionPrefix(); clearReliableCheckpoint()
+            inputRecoveryPending = false; inputRecoveryTimeout?.cancel(); inputRecoveryTimeout = nil // A fresh context also ends recovery.
             if changedGeometry { clearDeferredInput(); onCausalContext?(input) }
             try drainDeferredInput()
         case "anchor":

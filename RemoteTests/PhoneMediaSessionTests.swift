@@ -104,6 +104,41 @@ final class PhoneMediaSessionTests: XCTestCase {
         registry.release(next); XCTAssertEqual(releases, 2)
     }
 
+    func testDeviceRemovalRetiresMacAudioButKeepsPictureInPictureAndInterruptionStillRetiresAll() {
+        var events: [String] = []
+        let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: { events.append("deactivate") }))
+        let pip = UUID(), mac = UUID()
+        XCTAssertTrue(session.acquire(pip, kind: .pictureInPicture, onRetired: { events.append("stopPiP") }))
+        XCTAssertTrue(session.acquire(mac, kind: .macAudio, onRetired: {
+            events.append("muteMac")
+            XCTAssertFalse(session.acquire(UUID(), kind: .macAudio, onRetired: {}), "no restart inside retirement")
+        }))
+        session.routeChanged(deviceRemoved: false)
+        XCTAssertTrue(events.isEmpty, "a newly connected device carries Mac audio and PiP on")
+        XCTAssertTrue(session.contains(pip)); XCTAssertTrue(session.contains(mac))
+        session.routeChanged(deviceRemoved: true)
+        XCTAssertEqual(events, ["muteMac"], "removing AirPods must not stop PiP or deactivate its session")
+        XCTAssertTrue(session.contains(pip)); XCTAssertFalse(session.contains(mac))
+        session.routeChanged(deviceRemoved: true); XCTAssertEqual(events, ["muteMac"])
+        session.retireAll()
+        XCTAssertEqual(events, ["muteMac", "stopPiP", "deactivate"])
+    }
+    func testDeviceRemovalEndsDictationAndDeactivatesWhenItWasTheLastOwner() {
+        var retired = 0, releases = 0
+        let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: { releases += 1 }))
+        let mic = UUID()
+        XCTAssertTrue(session.acquire(mic, kind: .recording, onRetired: { retired += 1 }))
+        session.routeChanged(deviceRemoved: false); XCTAssertTrue(session.contains(mic))
+        session.routeChanged(deviceRemoved: true)
+        XCTAssertFalse(session.contains(mic)); XCTAssertEqual(retired, 1); XCTAssertEqual(releases, 1)
+        XCTAssertFalse(session.release(mic)); XCTAssertEqual(releases, 1)
+        let mac = UUID()
+        XCTAssertTrue(session.acquire(mac, kind: .macAudio, onRetired: {}))
+        session.beginInterruption(); session.routeChanged(deviceRemoved: true)
+        XCTAssertFalse(session.isInterrupted, "the last owner's retirement ends the interruption")
+        XCTAssertEqual(releases, 2)
+    }
+
     func testDuplicateOwnerCannotChangeKindAndRegistryIsBounded() {
         let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
         let id = UUID()
