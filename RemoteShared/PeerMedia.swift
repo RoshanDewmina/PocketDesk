@@ -1199,6 +1199,8 @@ final class PeerMedia: NSObject {
         let observedAt = ProcessInfo.processInfo.systemUptime
         stats.transportUsage = transportUsageSampler.sample(identity: transport.flatMap { item in sample.pair.map { item.id + "/" + $0.id } },
             timestamp: transport?.timestamp, bytesSent: transport?.number("bytesSent"), bytesReceived: transport?.number("bytesReceived"), at: observedAt)
+        stats.transportUsage?.mediaBytes = TransportByteSplit.media(entries)
+        stats.transportUsage?.fileBytes = TransportByteSplit.files(entries, label: Self.fileChannelLabel)
         if isHost {
             onGuestTransportStatistics?(GuestTransportObservation(at: observedAt, totalKbps: transportRate.kbps,
                 capacityKbps: stats.availableOutgoingKbps, rttMs: stats.rttMs, baselineRTTMs: transportRate.baselineRTT,

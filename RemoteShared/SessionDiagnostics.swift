@@ -40,18 +40,21 @@ struct DiagnosticSessionRecorder {
     private var started: TimeInterval?
     private var facts: [DiagnosticFact] = []
     private var bytes = DiagnosticByteLedger()
-    mutating func observe(_ report: StreamStatsReport, at now: TimeInterval) {
+    private var estimate: DataUseEstimate?
+    mutating func observe(_ report: StreamStatsReport, at now: TimeInterval, estimate: DataUseEstimate? = nil) {
         guard now.isFinite else { return }; if started == nil { started = now }; samples = min(1000000, samples + 1)
+        if let estimate { self.estimate = estimate }
         if let usage = report.transportUsage {
             bytes.observe(.init(generation: usage.generation, at: usage.sampledAt, sent: usage.bytesSent,
-                received: usage.bytesReceived, sentKbps: usage.sentKbps, receivedKbps: usage.receivedKbps))
+                received: usage.bytesReceived, sentKbps: usage.sentKbps, receivedKbps: usage.receivedKbps,
+                media: usage.mediaBytes, files: usage.fileBytes))
         } else {
             bytes.observe(.init(generation: UUID(), at: now, sent: nil, received: nil, sentKbps: nil, receivedKbps: nil))
         }
         let host = report.role == "host" ? report : nil
         let remote = (report.hostSummaryAgeMs ?? .infinity) <= 2500 ? report.host : nil
         let video = report.role == "host" ? report.sentKbps : report.receivedKbps
-        facts = [.init(.videoKbps, video), .init(.videoGBPerHour, video.map { $0 * 0.00045 }, source: .inferred), .init(.networkRoundTripMs, report.rttMs),
+        facts = [.init(.videoKbps, video), .init(.videoGBPerHour, video.map(DataUseEstimate.gigabytesPerHour(kbps:)), source: .inferred), .init(.networkRoundTripMs, report.rttMs),
             .init(.roundTripSpreadMs, report.rttStdDevMs), .init(.missedFramePercent, report.frameHealthPercent),
             .init(.hostPacerMeanMs, host?.pacerDelayMs ?? remote?.pacerDelayMs), .init(.decodeMeanMs, report.decodeMs),
             .init(.hostEncodeMeanMs, host?.encodeMs ?? remote?.encodeMs),
@@ -66,7 +69,9 @@ struct DiagnosticSessionRecorder {
     func finish(kind: SessionDiagnosticReport.Kind = .session, outcome: SessionDiagnosticReport.Outcome = .sessionEnded,
                 at now: TimeInterval, additional: [DiagnosticFact] = []) -> SessionDiagnosticReport {
         let unknown: [DiagnosticFact.Metric] = [.hostScreenRecording, .hostPostEvents, .hostAccessibility, .transportSentBytes, .transportReceivedBytes, .transportGBPerHour, .preEncodeWaitP95Ms, .awdlCause, .billableBytes, .oneOffFileBytes, .guestBytes, .energyJoules, .physicalGlassMs]
-        let supplemental = additional + bytes.facts.filter { fact in !additional.contains { $0.metric == fact.metric } }
+        let estimated = estimate.map { [DiagnosticFact(.estimateLowGBPerHour, $0.lowGBPerHour, source: .inferred),
+                                         DiagnosticFact(.estimateHighGBPerHour, $0.highGBPerHour, source: .inferred)] } ?? []
+        let supplemental = additional + (bytes.facts + estimated).filter { fact in !additional.contains { $0.metric == fact.metric } }
         let override = Set(supplemental.map(\.metric))
         return SessionDiagnosticReport(kind: kind, outcome: outcome, seconds: now - (started ?? now), samples: samples,
             facts: facts.filter { !override.contains($0.metric) } + supplemental + unknown.filter { !override.contains($0) }.map { DiagnosticFact($0, nil) })
@@ -75,6 +80,7 @@ struct DiagnosticSessionRecorder {
 
 /// Counts only differences actually observed on one selected transport generation.
 /// No RTP addition (would double count), billing conversion, guest aggregation or gap extrapolation.
+/// The media/file split is reported only when every counted interval could also be split.
 struct DiagnosticByteLedger {
     struct Reading {
         let generation: UUID
@@ -83,12 +89,18 @@ struct DiagnosticByteLedger {
         let received: UInt64?
         let sentKbps: Double?
         let receivedKbps: Double?
+        var media: UInt64? = nil
+        var files: UInt64? = nil
     }
     private var previous: Reading?
     private var sent: UInt64 = 0
     private var received: UInt64 = 0
+    private var media: UInt64 = 0
+    private var files: UInt64 = 0
+    private var seconds = 0.0
     private var measured = false
     private var complete = true
+    private var splitComplete = true
     private var recentKbps: Double?
     mutating func observe(_ next: Reading) {
         guard next.at.isFinite, let s = next.sent, let r = next.received else { previous = nil; recentKbps = nil; complete = false; return }
@@ -98,15 +110,24 @@ struct DiagnosticByteLedger {
               next.at > old.at, next.at - old.at <= 5, s >= os, r >= or else { recentKbps = nil; complete = false; return }
         let (ns, so) = sent.addingReportingOverflow(s - os), (nr, ro) = received.addingReportingOverflow(r - or)
         guard !so, !ro else { complete = false; recentKbps = nil; return }
-        sent = ns; received = nr; measured = true
+        sent = ns; received = nr; measured = true; seconds += next.at - old.at
+        if let om = old.media, let nm = next.media, let of = old.files, let nf = next.files, nm >= om, nf >= of {
+            media = media &+ (nm - om); files = files &+ (nf - of)
+        } else { splitComplete = false }
         if let up = next.sentKbps, let down = next.receivedKbps, up.isFinite, down.isFinite, up >= 0, down >= 0 {
             recentKbps = up + down
         } else { recentKbps = nil }
     }
     var facts: [DiagnosticFact] {
-        [.init(.transportSentBytes, measured ? Double(sent) : nil),
+        let total = Double(sent) + Double(received)
+        let split = measured && splitComplete
+        return [.init(.transportSentBytes, measured ? Double(sent) : nil),
          .init(.transportReceivedBytes, measured ? Double(received) : nil),
-         .init(.transportGBPerHour, recentKbps.map { $0 * 0.00045 }, source: .inferred),
-         .init(.transportIntervalsComplete, measured ? (complete ? 1 : 0) : nil)]
+         .init(.transportGBPerHour, recentKbps.map(DataUseEstimate.gigabytesPerHour(kbps:)), source: .inferred),
+         .init(.transportIntervalsComplete, measured ? (complete ? 1 : 0) : nil),
+         .init(.mediaRTPBytes, split ? Double(media) : nil),
+         .init(.oneOffFileBytes, split ? Double(files) : nil),
+         .init(.otherTransportBytes, split ? max(0, total - Double(media) - Double(files)) : nil),
+         .init(.transportAverageGBPerHour, measured && seconds > 0 ? DataUseEstimate.gigabytesPerHour(kbps: total * 8 / 1000 / seconds) : nil)]
     }
 }

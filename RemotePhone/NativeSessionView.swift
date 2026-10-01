@@ -2384,6 +2384,21 @@ struct NativeSessionView: View {
                                                : "Lower resolution for a more responsive connection.")
                 .font(.footnote).foregroundStyle(Farside.Palette.ash)
                 .listRowBackground(Farside.Palette.panel)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(StreamQuality.allCases, id: \.self) { quality in
+                    let estimate = model.dataUseEstimate(for: quality)
+                    Text(DataUseCopy.presetLine(quality, estimate))
+                        .foregroundStyle(quality == model.streamQuality ? Farside.Palette.bone : Farside.Palette.ash)
+                        .accessibilityLabel(DataUseCopy.presetSpoken(quality, estimate))
+                        .accessibilityAddTraits(quality == model.streamQuality ? .isSelected : [])
+                }
+                Text(DataUseCopy.note()).foregroundStyle(Farside.Palette.ash)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .font(.footnote)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("remote.dataUseEstimates")
+            .listRowBackground(Farside.Palette.panel)
             if !offlineLayoutCheck, let status = model.streamQualityStatus {
                 Text(status).font(.footnote).foregroundStyle(Farside.Palette.bone)
                     .listRowBackground(Farside.Palette.panel)

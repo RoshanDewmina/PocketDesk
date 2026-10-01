@@ -10,6 +10,34 @@ struct TransportUsage: Codable, Equatable, Sendable {
     let sentKbps: Double?
     let receivedKbps: Double?
     let coverage: Coverage
+    var mediaBytes: UInt64? = nil
+    var fileBytes: UInt64? = nil
+}
+
+/// Cumulative bytes the selected transport's counters can attribute, both directions: RTP payload and
+/// headers of every audio and video stream, and messages on the one-off file channel. The rest of the
+/// transport (control, pointer, RTCP, DTLS/SCTP/ICE) is only known as the remainder.
+enum TransportByteSplit {
+    static func media(_ entries: [StreamStatsEntry]) -> UInt64? {
+        var total = 0.0
+        for entry in entries where entry.type == "inbound-rtp" || entry.type == "outbound-rtp" {
+            let inbound = entry.type == "inbound-rtp"
+            guard let payload = entry.number(inbound ? "bytesReceived" : "bytesSent") else { return nil }
+            total += payload + (entry.number(inbound ? "headerBytesReceived" : "headerBytesSent") ?? 0)
+        }
+        return count(total)
+    }
+    static func files(_ entries: [StreamStatsEntry], label: String) -> UInt64? {
+        var total = 0.0
+        for entry in entries where entry.type == "data-channel" && entry.string("label") == label {
+            guard let sent = entry.number("bytesSent"), let received = entry.number("bytesReceived") else { return nil }
+            total += sent + received
+        }
+        return count(total)
+    }
+    private static func count(_ value: Double) -> UInt64? {
+        value.isFinite && value >= 0 && value <= 9_007_199_254_740_991 ? UInt64(value.rounded(.towardZero)) : nil
+    }
 }
 struct TransportUsageSampler {
     private var generation = UUID()

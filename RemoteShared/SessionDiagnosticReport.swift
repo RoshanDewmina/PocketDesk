@@ -9,7 +9,8 @@ struct DiagnosticFact: Codable, Equatable {
              transportGBPerHour, transportIntervalsComplete, phoneThermal, phoneLowPower, hostThermal, hostLowPower, missedFramePercent,
              networkRoundTripMs, roundTripSpreadMs, hostPacerMeanMs, decodeMeanMs, hostEncodeMeanMs,
              inputPostingP95Ms, preEncodeWaitP95Ms, wifiBurstPossible, awdlCause, billableBytes,
-             oneOffFileBytes, guestBytes, energyJoules, physicalGlassMs
+             oneOffFileBytes, guestBytes, energyJoules, physicalGlassMs, mediaRTPBytes, otherTransportBytes,
+             transportAverageGBPerHour, estimateLowGBPerHour, estimateHighGBPerHour
         var title: String {
             switch self {
             case .authenticatedEchoes: "Authenticated replies"
@@ -44,10 +45,15 @@ struct DiagnosticFact: Codable, Equatable {
             case .wifiBurstPossible: "Wi-Fi burst interference may contribute"
             case .awdlCause: "AWDL causation"
             case .billableBytes: "Carrier/provider billable bytes"
-            case .oneOffFileBytes: "One-off file total (not separately counted)"
+            case .oneOffFileBytes: "One-off file channel bytes, both directions"
             case .guestBytes: "Other guest peer total (not counted by this peer)"
             case .energyJoules: "Measured energy joules"
             case .physicalGlassMs: "Calibrated physical glass-to-glass ms"
+            case .mediaRTPBytes: "Video + audio RTP bytes, both directions"
+            case .otherTransportBytes: "Other transport bytes (control, pointer, RTCP, DTLS/SCTP/ICE)"
+            case .transportAverageGBPerHour: "Measured average peer transport GB/hour"
+            case .estimateLowGBPerHour: "Preset estimate GB/hour, still screen"
+            case .estimateHighGBPerHour: "Preset estimate GB/hour, sustained motion"
             }
         }
     }
@@ -98,10 +104,11 @@ struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
     let samples: Int
     let facts: [DiagnosticFact]
     let artifact: DiagnosticArtifact?
+    static let maximumFacts = 48
     init(kind: Kind, outcome: Outcome, seconds: Double, samples: Int, facts: [DiagnosticFact], at: Date = Date()) {
         version = 1; id = UUID(); artifact = .current; createdAt = at; self.kind = kind; self.outcome = outcome
         self.seconds = seconds.isFinite ? min(86400, max(0, seconds)) : 0
-        self.samples = min(1000000, max(0, samples)); self.facts = Array(facts.prefix(40))
+        self.samples = min(1000000, max(0, samples)); self.facts = Array(facts.prefix(Self.maximumFacts))
     }
     var preview: String {
         (["Farside local diagnostics · \(kind.rawValue) · \(outcome.rawValue)",
@@ -109,11 +116,29 @@ struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
           "Report window \(Int(seconds))s · \(samples) samples. No screen, text, host name, address or pairing identifiers.",
           "Observed facts describe this artifact/session; inferred causes are suggestions. Unknown does not mean zero.",
           "Transport payload is not carrier billing or IP/wire overhead. Video RTP excludes other streams. GB is decimal.",
-          "Preflight measures bounded authenticated app echoes and current health, not throughput or physical latency."] + facts.map(\.line)).joined(separator: "\n")
+          "Preflight measures bounded authenticated app echoes and current health, not throughput or physical latency."]
+         + [dataUseSummary].compactMap { $0 } + facts.map(\.line)).joined(separator: "\n")
+    }
+    private func value(_ metric: DiagnosticFact.Metric) -> Double? { facts.first { $0.metric == metric }?.value }
+    /// Measured session bytes beside the preset's modelled range, so the two can be compared.
+    var dataUseSummary: String? {
+        guard let sent = value(.transportSentBytes), let received = value(.transportReceivedBytes) else { return nil }
+        func size(_ bytes: Double) -> String { bytes >= 1e9 ? String(format: "%.2f GB", bytes / 1e9) : String(format: "%.1f MB", bytes / 1e6) }
+        var parts = ["Data used \(size(sent + received)) total"]
+        if let media = value(.mediaRTPBytes), let files = value(.oneOffFileBytes), let other = value(.otherTransportBytes) {
+            parts.append("video + audio \(size(media)) · files \(size(files)) · other \(size(other))")
+        } else {
+            parts.append("these counters could not split video and audio from files, so only the total is shown")
+        }
+        if let average = value(.transportAverageGBPerHour) { parts.append(String(format: "measured %.2f GB/hour", average)) }
+        if let low = value(.estimateLowGBPerHour), let high = value(.estimateHighGBPerHour) {
+            parts.append(String(format: "preset estimate %.2f–%.2f GB/hour (files and guests not included)", low, high))
+        }
+        return parts.joined(separator: " · ") + "."
     }
     func validate() throws {
         guard version == 1, createdAt.timeIntervalSince1970.isFinite, seconds.isFinite, (0...86400).contains(seconds),
-              (0...1000000).contains(samples), facts.count <= 40, artifact?.valid ?? true,
+              (0...1000000).contains(samples), facts.count <= Self.maximumFacts, artifact?.valid ?? true,
               Set(facts.map(\.metric)).count == facts.count,
               facts.allSatisfy({ $0.value.map { $0.isFinite && $0 >= 0 } ?? ($0.source == .unknown) }) else { throw RemoteError.invalidMessage }
     }
