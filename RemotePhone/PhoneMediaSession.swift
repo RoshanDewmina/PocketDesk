@@ -77,6 +77,12 @@ final class PhoneMediaSession {
     }
 
     func contains(_ owner: UUID) -> Bool { owners[owner] != nil }
+    /// Auto-PiP: the OS decides at backgrounding, before our start runs, so the playback category must already be
+    /// set. Category only (mixing with others, not activated), and only while nothing else owns the session.
+    func preparePlaybackCategory() {
+        guard owners.isEmpty, !acquiring, !retiring, !deactivating, !isInterrupted else { return }
+        do { try backend.configure(.playback) } catch { lastOperationFailed = true }
+    }
     @discardableResult
     func acquire(_ owner: UUID, kind: Kind, onRetired: @escaping () -> Void,
                  onSuspended: @escaping () -> Void = {}, onResumed: @escaping () -> Bool = { false }) -> Bool {

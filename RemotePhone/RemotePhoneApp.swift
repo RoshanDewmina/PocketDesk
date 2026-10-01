@@ -2164,6 +2164,7 @@ let now = ProcessInfo.processInfo.systemUptime
 
     func disconnect() { disconnect(explicitEnd: true) }
     func disconnect(explicitEnd: Bool) {
+        autoPiPBackgroundGrace?.cancel(); autoPiPBackgroundGrace = nil
         PhoneIdleTimer.shared.endSession()
         cancelLockMacRequest()
         usefulSession.invalidate(explicitEnd: explicitEnd)
@@ -2241,6 +2242,7 @@ let now = ProcessInfo.processInfo.systemUptime
         displayTickInput.cancel()
         setMacAudioMuted(true) // Background is a terminal boundary for Mac-audio consent.
         if !mayKeepLivePiP, autoPiPMayStart, !autoPiPGraceSpent, autoPiPBackgroundGrace == nil {
+            LivePiPController.log.notice("pip background grace: waiting for the automatic start")
             privacyShield = true // The app-switcher snapshot stays shielded while the prepared PiP waits.
             pipTransitional = true
             autoPiPBackgroundGrace = Task { @MainActor [weak self] in
@@ -2248,6 +2250,7 @@ let now = ProcessInfo.processInfo.systemUptime
                 guard let self, !Task.isCancelled else { return }
                 self.autoPiPBackgroundGrace = nil
                 self.autoPiPGraceSpent = true
+                LivePiPController.log.notice("pip background grace expired without an automatic start")
                 if self.sceneWasBackground && !self.sceneIsActive && !self.pipBackground { self.enterBackground() }
             }
             return

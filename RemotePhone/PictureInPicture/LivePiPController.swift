@@ -1,5 +1,6 @@
 import AVKit
 import WebRTC
+import os
 
 /// Class identity is the platform operation identity; injected fixtures never manufacture AVKit objects.
 protocol LivePiPPlatformController: AnyObject {
@@ -73,7 +74,15 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     /// Auto-start (leaving the app with a live session). The root sets this only while its session is live in
     /// picture mode; the OS then starts PiP from the inline layer, `mayStartAutomatically` must still agree, and
     /// `didStartAutomatically` then asks the Mac for live view only (which must confirm, as for a button start).
-    var automaticStartAllowed = false { didSet { applyAutomaticStart() } }
+    var automaticStartAllowed = false {
+        didSet {
+            guard automaticStartAllowed != oldValue else { return }
+            if automaticStartAllowed { MainActor.assumeIsolated { mediaSession.preparePlaybackCategory() } }
+            Self.log.notice("pip auto-start armed=\(self.automaticStartAllowed, privacy: .public) state=\(String(describing: self.policy.state), privacy: .public) possible=\(self.controller?.isPossible ?? false, privacy: .public) category=\(AVAudioSession.sharedInstance().category.rawValue, privacy: .public)")
+            applyAutomaticStart()
+        }
+    }
+    static let log = Logger(subsystem: "com.roshan.PocketDesk.Remote", category: "pip")
     var mayStartAutomatically: (() -> Bool)?
     var didStartAutomatically: (() -> Void)?
     /// An OS start shows only the last inline frame until the Mac confirms live view only.
@@ -260,6 +269,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         self.controller?.nativeController === controller
     }
     func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        Self.log.notice("pip willStart state=\(String(describing: self.policy.state), privacy: .public) armed=\(self.automaticStartAllowed, privacy: .public)")
         guard matchesNative(controller), policy.state == .ready else { return } // A button start is already .starting.
         beginAutomaticStart(self.controller)
     }
@@ -288,7 +298,10 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     }
     #endif
     func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) { if matchesNative(controller) { stop() } }
-    func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) { if matchesNative(controller) { stop() } }
+    func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) {
+        Self.log.error("pip failedToStart \((error as NSError).domain, privacy: .public) \((error as NSError).code, privacy: .public)")
+        if matchesNative(controller) { stop() }
+    }
     func pictureInPictureController(_ controller: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
         guard matchesNative(controller) else { completionHandler(false); return }
         restoreUserInterface(platform: self.controller, native: controller, completionHandler)
