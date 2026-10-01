@@ -4,6 +4,7 @@ import Combine
 import ScreenCaptureKit
 import ServiceManagement
 import SystemConfiguration
+import os
 
 /// Kept until both the server deletion and local Keychain cleanup have completed.
 private struct PendingHostRoomRemoval: Codable {
@@ -2627,21 +2628,44 @@ final class RemoteHostModel: ObservableObject {
 
     /// `point` nil re-checks the focus after typed text; only geometry is ever measured or sent.
     private func scheduleTextFocusProbe(_ probe: String, point: CGPoint?, geometry: Bool, issuedAt: TimeInterval) {
-        guard let peer = connection.media else { return }
+        let log = HostTextFocusLog.logger
+        guard let peer = connection.media else {
+            log.info("probe dropped reason=noPeer")
+            return
+        }
         let ticket = HostTextFocusTicket(epoch: inputEpoch.value,
                                          revision: textFocusRevision, issuedAt: issuedAt)
         let displayFrame = geometry ? input.displayBounds : nil
+        log.info("probe scheduled click=\(point != nil, privacy: .public) geometry=\(displayFrame != nil, privacy: .public)")
         textFocusTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
-            guard let self, self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else { return }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch {
+                log.info("probe dropped reason=cancelledBeforeQuery")
+                return
+            }
+            guard let self else { return }
+            guard self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else {
+                log.info("probe dropped reason=staleBeforeQuery")
+                return
+            }
             let focus = await HostTextFocusProbe.focus(at: point, geometry: displayFrame != nil)
             let secure = await HostSecureFocus.isSecureNow()
-            guard self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled,
-                  displayFrame == nil || self.input.displayBounds == displayFrame else { return }
+            guard !Task.isCancelled else {
+                log.info("probe dropped reason=cancelledDuringQuery")
+                return
+            }
+            guard self.textFocusIsCurrent(ticket, peer: peer) else {
+                log.info("probe dropped reason=staleAfterQuery")
+                return
+            }
+            guard displayFrame == nil || self.input.displayBounds == displayFrame else {
+                log.info("probe dropped reason=displayChanged")
+                return
+            }
             let rect = focus.editable ? focus.frame.flatMap { field in
                 displayFrame.flatMap { FocusGeometry.make(field: field, anchor: focus.anchor,
                                                           displayFrame: $0, geometrySize: $0.size) }
             } : nil
+            log.info("probe answered editable=\(focus.editable, privacy: .public) role=\(focus.role.rawValue, privacy: .public) engine=\(focus.engine.rawValue, privacy: .public) activated=\(focus.activation?.attribute.rawValue ?? "none", privacy: .public) retried=\(focus.retried, privacy: .public) axDropped=\(focus.dropped, privacy: .public) secure=\(secure, privacy: .public) rect=\(rect != nil, privacy: .public)")
             _ = self.connection.sendControl(RemoteAction(
                 action: "heartbeat", epoch: ticket.epoch,
                 textFocusProbe: probe, textFocusEditable: focus.editable, textFocusSecure: secure, textFocusRect: rect
