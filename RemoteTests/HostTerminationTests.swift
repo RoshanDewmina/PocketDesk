@@ -50,6 +50,11 @@ final class HostTerminationTests: XCTestCase {
     }
 
     @MainActor
+    func testHidingTheLastWindowDoesNotQuitTheHost() {
+        XCTAssertFalse(RemoteHostAppDelegate().applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared))
+    }
+
+    @MainActor
     func testOrdinaryQuitRemainsImmediate() {
         let lifecycle = HostTerminationLifecycle { }
         XCTAssertEqual(lifecycle.shouldTerminate { _ in XCTFail("No deferred reply") }, .terminateNow)
