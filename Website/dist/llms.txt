@@ -20,7 +20,7 @@ Key facts:
 
 ## Guides
 
-- [Control your Mac from your iPhone](https://getfarside.com/control-mac-from-iphone): requirements, six setup steps, gestures, typing and voice, away from home, FAQ
+- [Control your Mac from your iPhone](https://getfarside.com/control-mac-from-iphone): requirements, setup step by step, gestures, typing and voice, away from home, FAQ
 - [Use your iPhone as a Mac trackpad](https://getfarside.com/iphone-as-mac-trackpad): every gesture, click haptics, the pointer, zoom, keyboard and voice, FAQ
 - [Remote desktop for Mac](https://getfarside.com/remote-desktop-for-mac): free on your own network, the Anywhere plan over the internet, how the encrypted connection works, limits, FAQ
 - [Farside compared](https://getfarside.com/compare): feature table against Astropad Workbench, Jump Desktop, Screens 5 and Remote Mac Desktop Control, as of 28 September 2026, with sources
