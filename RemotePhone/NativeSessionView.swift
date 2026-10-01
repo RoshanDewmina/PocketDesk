@@ -1067,6 +1067,7 @@ struct NativeSessionView: View {
         if model.dragging {
             return model.explicitHoldDeadline != nil ? "Mouse button held · tap Drop to let go" : "Holding click · lift to drop"
         }
+        if connection.inputRecovering { return "Input catching up…" }
         if couch {
             if model.couchStalled { return CouchCopy.notAnswering }
             if model.canControl && clickAcknowledged { return "Click sent" }

@@ -428,6 +428,101 @@ final class InputCoordinatorTests: XCTestCase {
         XCTAssertFalse(host.recoverCausalInput(stale)); XCTAssertEqual(cleanups, 1)
     }
 
+    private final class Wire { var up: [ControlPacket] = []; var down: [ControlPacket] = [] }
+    /// `trusted`: recovery starts with no motion in doubt (an invalid move with nothing in flight).
+    /// Otherwise a bounded-queue overflow discards unsent motion, so the Mac pointer is not where the user aimed.
+    private func recovering(trusted: Bool) throws -> (RemoteCoordinator, RemoteCoordinator, Wire) {
+        let (host, phone) = rig(), wire = Wire()
+        host.inputPacketSenderForTesting = { wire.down.append($0); return true }
+        phone.inputPacketSenderForTesting = { wire.up.append($0); return true }
+        phone.requestCausalInput(epoch: 7)
+        try host.receiveInputFixtureForTesting(wire.up.removeFirst())
+        try phone.receiveInputFixtureForTesting(wire.down.removeFirst())
+        XCTAssertFalse(phone.inputRecovering)
+        if trusted {
+            XCTAssertFalse(phone.sendInputMoves([RemoteAction(action: "move", x: 1, epoch: 7, interaction: NativeInteraction(version: 2))]))
+        } else {
+            for tick in 0..<600 where !phone.sendInputMoves([RemoteAction(action: "move", x: tick % 2 == 0 ? 1 : -1, epoch: 7)]) { break }
+        }
+        XCTAssertTrue(phone.inputRecovering)
+        XCTAssertEqual(wire.up.filter { $0.input?.kind == "rebase" }.count, 1)
+        return (host, phone, wire)
+    }
+    private func settle(_ host: RemoteCoordinator, _ phone: RemoteCoordinator, _ wire: Wire) throws {
+        var rounds = 0
+        while !wire.up.isEmpty || !wire.down.isEmpty {
+            rounds += 1; XCTAssertLessThan(rounds, 100); if rounds >= 100 { return }
+            while !wire.up.isEmpty { try host.receiveInputFixtureForTesting(wire.up.removeFirst()) }
+            while !wire.down.isEmpty { try phone.receiveInputFixtureForTesting(wire.down.removeFirst()) }
+        }
+    }
+    private func scroll(_ phase: String, stream: String) -> RemoteAction {
+        RemoteAction(action: "scroll", y: 4, epoch: 7, interaction: NativeInteraction(phase: phase, stream: stream))
+    }
+
+    func testDiscreteInputDuringRecoveryReplaysInOrderAfterTheFreshAnchor() throws {
+        let (host, phone, wire) = try recovering(trusted: true); defer { host.stop(); phone.stop() }
+        var posted: [String] = []
+        host.onCausalInput = { _, action in if let action { posted.append(action.action + action.key + (action.interaction?.phase ?? "")) } }
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "click", epoch: 7)))
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "a", epoch: 7)))
+        XCTAssertTrue(phone.sendControl(scroll("began", stream: "s1")))
+        XCTAssertTrue(phone.sendControl(scroll("ended", stream: "s1")))
+        XCTAssertFalse(phone.sendControl(RemoteAction(action: "text", text: "never replayed", key: "draft", epoch: 7)))
+        XCTAssertFalse(phone.sendControl(scroll("changed", stream: "s0")), "a scroll whose start was before recovery is dropped")
+        XCTAssertFalse(phone.sendControl(RemoteAction(action: "dragUp", epoch: 7)), "a release whose press the Mac already released is dropped")
+        XCTAssertFalse(phone.sendInputMoves([RemoteAction(action: "move", x: 5, epoch: 7)]))
+        XCTAssertFalse(phone.sendControl(RemoteAction(action: "click", epoch: 7)), "after discarded motion a click would land elsewhere")
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "b", epoch: 7)))
+        XCTAssertFalse(wire.up.contains { $0.action.action != "heartbeat" }, "nothing semantic leaves before the anchor")
+        try settle(host, phone, wire)
+        XCTAssertFalse(phone.inputRecovering)
+        XCTAssertEqual(posted, ["click", "keya", "scrollbegan", "scrollended", "keyb"])
+        XCTAssertTrue(phone.connected); XCTAssertTrue(host.connected)
+    }
+
+    func testRecoveredInputIsDroppedWhenTheAnchorArrivesForAnotherEpoch() throws {
+        let (host, phone, wire) = try recovering(trusted: true); defer { host.stop(); phone.stop() }
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "click", epoch: 7)))
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "a", epoch: 7)))
+        wire.up.removeAll() // The geometry change overtakes the rebase.
+        host.setHostInputEpoch(8)
+        try settle(host, phone, wire)
+        XCTAssertFalse(phone.inputRecovering)
+        XCTAssertFalse(wire.up.contains { $0.action.action != "heartbeat" })
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "c", epoch: 8)))
+        XCTAssertEqual(wire.up.last?.action.key, "c")
+    }
+
+    func testOverflowRecoveryReplaysKeysButNeverClicksOrText() throws {
+        let (host, phone, wire) = try recovering(trusted: false); defer { host.stop(); phone.stop() }
+        var posted: [String] = []
+        host.onCausalInput = { _, action in if let action { posted.append(action.action + action.key) } }
+        XCTAssertFalse(phone.sendControl(RemoteAction(action: "click", epoch: 7)))
+        XCTAssertFalse(phone.sendControl(RemoteAction(action: "text", text: "never replayed", key: "draft", epoch: 7)))
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "z", modifiers: ["command"], epoch: 7)))
+        try settle(host, phone, wire)
+        XCTAssertFalse(phone.inputRecovering)
+        XCTAssertEqual(posted, ["keyz"])
+    }
+
+    func testRecoveredInputIsBoundedInCountAndAge() throws {
+        let (host, phone, wire) = try recovering(trusted: true); defer { host.stop(); phone.stop() }
+        var now = 100.0
+        phone.recoveryClock = { now }
+        var posted: [String] = []
+        host.onCausalInput = { _, action in if let action { posted.append(action.key) } }
+        for index in 0..<RemoteCoordinator.maximumRecoveredActions {
+            XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "\(index % 10)", epoch: 7)))
+        }
+        XCTAssertFalse(phone.sendControl(RemoteAction(action: "key", key: "x", epoch: 7)), "the queue is bounded")
+        now += RemoteCoordinator.maximumRecoveredAge + 0.5
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "y", epoch: 7)), "expired entries make room")
+        now += 1
+        try settle(host, phone, wire)
+        XCTAssertEqual(posted, ["y"], "only work younger than the age bound replays")
+    }
+
     func testInvalidLegacyInputEndsOnlyPeerAndLeavesHostRegistrationRunning() {
         let (host, phone) = rig(); defer { host.stop(); phone.stop() }
         host.endPhoneInputSession("fixture rejection")
