@@ -4,6 +4,32 @@ final class AwayModeMachineTests: XCTestCase {
     private let ready = AwayConditions(enabled: true, sharingWanted: true, sharingActive: true, accessibility: true,
                                        recoveryRunning: true, inputMonitoring: true)
 
+    func testExclusionLossRejectsDelayedOldSuccessEvenForSameWindowsAndStream() {
+        let receipt = AwayExclusionReceipt(windowIDs: [1, 2], captureAttempt: 4)
+        var state = AwayExclusionState()
+        let oldGeneration = state.generation
+        XCTAssertTrue(state.confirm(receipt, generation: oldGeneration))
+        XCTAssertTrue(state.matches(windowIDs: [1, 2], captureAttempt: 4))
+        state.invalidate()
+        XCTAssertFalse(state.matches(windowIDs: [1, 2], captureAttempt: 4))
+        XCTAssertFalse(state.confirm(receipt, generation: oldGeneration))
+        XCTAssertFalse(state.matches(windowIDs: [1, 2], captureAttempt: 4), "Ordinary health is not a fresh filter receipt")
+        XCTAssertTrue(state.confirm(receipt, generation: state.generation))
+        XCTAssertTrue(state.matches(windowIDs: [1, 2], captureAttempt: 4))
+        XCTAssertFalse(state.confirm(nil, generation: oldGeneration), "Old failure cannot clobber newer proof")
+        XCTAssertTrue(state.matches(windowIDs: [1, 2], captureAttempt: 4))
+    }
+
+    func testUnknownBatteryWithConnectedPhoneFailsClosedAndKeepsCoverUntilVerifiedLock() {
+        var machine = AwayModeMachine(); machine.update(ready, now: 0); machine.coverNow(now: 1)
+        var battery = ready; battery.onACPower = false; battery.batteryPercent = nil; battery.phoneConnected = true
+        XCTAssertEqual(machine.update(battery, now: 2), .lock(.battery))
+        XCTAssertTrue(machine.wantsCover)
+        machine.tick(now: 4)
+        XCTAssertEqual(machine.phase, .lockFailed(.battery))
+        XCTAssertTrue(machine.wantsCover)
+    }
+
     func testCaptureExclusionReceiptCannotSurviveTopologyOrStreamReplacement() {
         let receipt = AwayExclusionReceipt(windowIDs: [1, 2], captureAttempt: 4)
         XCTAssertTrue(receipt.matches(windowIDs: [2, 1], captureAttempt: 4))
