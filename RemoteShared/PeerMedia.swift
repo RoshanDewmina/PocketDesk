@@ -427,7 +427,7 @@ final class PeerMedia: NSObject {
               let packet = try? JSONDecoder().decode(VideoRefinementChunk.self, from: data),
               videoFeedback.permitsRefinement(packet.identity, sender: isHost && !packet.ack),
               resourceBudget.permits(bytes: data.count, at: ProcessInfo.processInfo.systemUptime,
-                controlBuffered: controlBufferedAmount, fileBuffered: aggregateBulkBuffered) else { return false }
+                controlBuffered: inputBufferedAmount, fileBuffered: aggregateBulkBuffered) else { return false }
         refinementLock.lock()
         let target = refinementEnded ? nil : refinementChannel
         refinementLock.unlock()
@@ -1144,6 +1144,14 @@ final class PeerMedia: NSObject {
         guard let channel, channel.readyState == .open else { return nil }
         return channel.bufferedAmount
     }
+    /// Control plus pointer queues: bulk yields to either kind of input.
+    private var inputBufferedAmount: UInt64? {
+        guard let control = controlBufferedAmount else { return nil }
+        pointerLock.lock(); let pointer = pointerEnded ? nil : pointerChannel; pointerLock.unlock()
+        guard let pointer, pointer.readyState == .open else { return control }
+        let (total, overflow) = control.addingReportingOverflow(pointer.bufferedAmount)
+        return overflow ? nil : total
+    }
     /// `displayMs` is the frame's ScreenCaptureKit display time in mach ms, 0 for a re-send.
     func pushFrame(_ buffer: CVPixelBuffer, timeStampNs: Int64, displayMs: Double = 0, exactTiming: ExactVideoTiming? = nil) {
         guard captureLock.try() else { counters.pushSkipped(); return }
@@ -1259,12 +1267,13 @@ final class PeerMedia: NSObject {
                 capacityKbps: stats.availableOutgoingKbps, rttMs: stats.rttMs, baselineRTTMs: transportRate.baselineRTT,
                 pacerDelayMs: stats.pacerDelayMs, controlBufferedBytes: controlBufferedAmount))
         }
+        let senderMaxKbps = isHost ? appliedSenderMaxKbps : nil
         resourceBudget.observe(MediaCapacityObservation(at: observedAt,
             // A receive-only phone has no outbound-video GCC estimate for its file uploads.
             // The transport's camera bootstrap estimate is not observed upload capacity.
             route: sample.route, capacityKbps: isHost ? stats.availableOutgoingKbps : nil,
             videoKbps: transportRate.kbps ?? stats.sentKbps, totalTransportKbps: transportRate.kbps, rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs,
-            routeDetail: sample.routeDetail))
+            routeDetail: sample.routeDetail, rttSampleMs: stats.rttSampleMs, senderMaxKbps: senderMaxKbps))
         if isHost {
             if nativeDesktopCodecs {
                 stats.targetFPS = targetFPS
@@ -1529,8 +1538,10 @@ extension PeerMedia: FileChannelLink {
     func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool {
         guard localGateOpen() else { return false }
         return resourceBudget.permits(bytes: bytes, at: now,
-            controlBuffered: controlBufferedAmount, fileBuffered: fileChannelOpen ? aggregateBulkBuffered : nil)
+            controlBuffered: inputBufferedAmount, fileBuffered: fileChannelOpen ? aggregateBulkBuffered : nil)
     }
+
+    func fileMessageBytes(at now: TimeInterval) -> Int { resourceBudget.messageBytes(at: now) }
 }
 extension PeerMedia: RTCDataChannelDelegate {
     func dataChannel(_ dataChannel: RTCDataChannel, didChangeBufferedAmount amount: UInt64) {

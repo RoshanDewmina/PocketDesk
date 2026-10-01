@@ -8,11 +8,14 @@ protocol FileChannelLink: AnyObject {
     func sendFile(_ data: Data) -> Bool
     var fileBufferedAmount: UInt64? { get }
     func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool
+    /// Whole message size, header included, for the next chunk.
+    func fileMessageBytes(at now: TimeInterval) -> Int
 }
 
 extension FileChannelLink {
-    // In-memory test links do not share a real association. PeerMedia overrides this.
+    // In-memory test links do not share a real association. PeerMedia overrides these.
     func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool { true }
+    func fileMessageBytes(at now: TimeInterval) -> Int { FileTransferLimits.maximumOutgoingMessageBytes }
 }
 
 protocol FileByteSource: AnyObject {
@@ -618,9 +621,13 @@ final class FileTransferIO: @unchecked Sendable {
             guard work.lease.isActive else { return }
             guard let buffered = sending.link.fileBufferedAmount else { fail(sending, .connectionLost); return }
             if buffered >= sending.highWater { schedule(sending, after: 0.005); return }
-            let size = Int(min(Int64(sending.chunk), total - sending.sent))
-            guard sending.link.permitsFileSend(bytes: size + FileTransferLimits.chunkHeaderBytes, at: ProcessInfo.processInfo.systemUptime),
-                  sending.pacer.allows(size, at: ProcessInfo.processInfo.systemUptime) else { schedule(sending, after: 0.01); return }
+            let now = ProcessInfo.processInfo.systemUptime
+            let chunk = min(sending.chunk, max(1, sending.link.fileMessageBytes(at: now) - FileTransferLimits.chunkHeaderBytes))
+            let size = Int(min(Int64(chunk), total - sending.sent))
+            guard sending.pacer.allows(size, at: now) else { schedule(sending, after: 0.01); return }
+            guard sending.link.permitsFileSend(bytes: size + FileTransferLimits.chunkHeaderBytes, at: now) else {
+                sending.pacer.refund(size); schedule(sending, after: 0.01); return
+            }
             let payload: Data
             do { payload = try work.source.read(upTo: size) } catch { fail(sending, .unreadable); return }
             guard payload.count == size, let message = FileChunk.encode(transfer: work.transfer, offset: sending.sent, payload: payload)
