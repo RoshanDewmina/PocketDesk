@@ -34,10 +34,77 @@ final class OwnedVideoLifecycleTests: XCTestCase {
             XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240), "pinch layout must not allocate view-sized backing pixels")
         }
         offer(rotation: ._90, cropped: true)
-        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 80, height: 120))
+        let rotated = OwnedMetalVideoView.drawablePixels(viewPoints: view.metal.bounds.size, scale: view.displayScale,
+                                                         picture: CGSize(width: 80, height: 120))
+        XCTAssertEqual(view.metal.drawableSize, rotated)
+        XCTAssertLessThanOrEqual(rotated.width, 80); XCTAssertLessThanOrEqual(rotated.height, 120)
         view.invalidate()
         offer(rotation: ._0, cropped: false)
-        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 80, height: 120), "retired source cannot reallocate a closed surface")
+        XCTAssertEqual(view.metal.drawableSize, rotated, "retired source cannot reallocate a closed surface")
+    }
+    func testDrawableFollowsViewPixelsButNeverExceedsDecodedPicture() {
+        let picture = CGSize(width: 2560, height: 1600)
+        XCTAssertEqual(OwnedMetalVideoView.drawablePixels(viewPoints: CGSize(width: 402, height: 251), scale: 3, picture: picture),
+                       CGSize(width: 1206, height: 753), "unzoomed canvas keeps the 20260930.7 view-sized drawable")
+        for zoom in [3.0, 10.0, 40.0] {
+            let pixels = OwnedMetalVideoView.drawablePixels(viewPoints: CGSize(width: 402 * zoom, height: 251 * zoom), scale: 3, picture: picture)
+            XCTAssertLessThanOrEqual(pixels.width, picture.width); XCTAssertLessThanOrEqual(pixels.height, picture.height)
+            XCTAssertEqual(pixels.width, picture.width, "zoomed canvas is capped at the source, not the zoomed view")
+        }
+        XCTAssertEqual(OwnedMetalVideoView.drawablePixels(viewPoints: .zero, scale: 3, picture: CGSize(width: 1280, height: 800)),
+                       CGSize(width: 1280, height: 800))
+    }
+    /// Core Animation calls presented handlers holding the layer lock that `addPresentedHandler`
+    /// needs on main while main holds the fence (8BADF00D reports from build 20260930.8).
+    @MainActor
+    func testPresentedReceiptNeverWaitsOnTheDrawFence() throws {
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let fence = VideoPresentationFence(admission)
+        let view = OwnedMetalVideoView(admission: admission, fence: fence)
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
+        let envelope = VideoFrameEnvelope(receiptID: UUID(), identity: id,
+            frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
+            arrivalMs: 1, marker: nil, originalSource: true)
+        let delivered = expectation(description: "receipt delivered once the draw releases the fence")
+        let receipt = view.presentedReceipt(envelope) { identity, receiptID in
+            XCTAssertEqual(identity, id); XCTAssertEqual(receiptID, envelope.receiptID); delivered.fulfill()
+        }
+        let held = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async {
+            _ = fence.withAdmission(id, at: ProcessInfo.processInfo.systemUptime) { held.signal(); _ = release.wait(timeout: .now() + 5) }
+        }
+        XCTAssertEqual(held.wait(timeout: .now() + 2), .success)
+        let returned = DispatchSemaphore(value: 0)
+        DispatchQueue.global().async { receipt(1); returned.signal() } // Stands in for Core Animation's presented-callback thread.
+        XCTAssertEqual(returned.wait(timeout: .now() + 0.5), .success, "presented handler blocked on the fence held by the drawing thread")
+        release.signal()
+        wait(for: [delivered], timeout: 2)
+
+        let late = expectation(description: "no receipt after retirement"); late.isInverted = true
+        let retired = view.presentedReceipt(envelope) { _, _ in late.fulfill() }
+        view.invalidate()
+        retired(1)
+        wait(for: [late], timeout: 0.3)
+    }
+    @MainActor
+    func testInlinePresentationRecoversWithFreshLifetimeAfterProofGap() throws {
+        let id = identity()
+        let first = try XCTUnwrap(VideoPresentationAdmission.renewed(
+            VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 10), from: nil))
+        XCTAssertNil(VideoPresentationAdmission.renewed(nil, from: first), "stale capture health withdraws the proof")
+        XCTAssertFalse(first.lifetime.isActive)
+        let back = try XCTUnwrap(VideoPresentationAdmission.renewed(
+            VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 10), from: nil))
+        XCTAssertTrue(back.permits(at: ProcessInfo.processInfo.systemUptime))
+        let factory = RTCPeerConnectionFactory()
+        let track = factory.videoTrack(with: factory.videoSource(), trackId: "gap-recovery")
+        let coordinator = RemoteVideoSurface.Coordinator()
+        defer { coordinator.invalidate() }
+        XCTAssertFalse(coordinator.ensureSession(track: track, admission: first, onFrame: {}, primary: false))
+        XCTAssertTrue(coordinator.ensureSession(track: track, admission: back, onFrame: {}, primary: false))
+        XCTAssertNotNil(coordinator.session?.fence.withAdmission(id, at: ProcessInfo.processInfo.systemUptime) { true })
     }
     @MainActor
     func testThePictureFillsItsPlacementWhateverTheAspectSoOverlaysStayOnTarget() throws {

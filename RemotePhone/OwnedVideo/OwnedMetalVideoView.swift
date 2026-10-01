@@ -41,8 +41,8 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         backgroundColor = .black; clipsToBounds = true
         metal.clearColor = MTLClearColorMake(0, 0, 0, 1)
         metal.colorPixelFormat = .bgra8Unorm
-        // Zoom changes the layer's view bounds, not the backing pixel allocation. Allocate
-        // only the current validated source crop; Core Animation scales it for the viewport.
+        // Backing pixels follow the view (as autoResizeDrawable did) but never exceed the decoded
+        // picture, so pinch zoom cannot allocate view-sized drawables beyond the source.
         metal.autoResizeDrawable = false
         metal.drawableSize = CGSize(width: 1, height: 1)
         metal.framebufferOnly = true
@@ -112,6 +112,13 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         fallback?.isEnabled = false; fallback?.removeFromSuperview(); fallback = nil
         cache.map { CVMetalTextureCacheFlush($0, 0) }
     }
+    var displayScale: CGFloat { metal.window?.screen.scale ?? metal.traitCollection.displayScale }
+    static func drawablePixels(viewPoints: CGSize, scale: CGFloat, picture: CGSize) -> CGSize {
+        let width = (viewPoints.width * scale).rounded(), height = (viewPoints.height * scale).rounded()
+        guard scale > 0, width.isFinite, height.isFinite, width >= 1, height >= 1 else { return picture }
+        let fit = min(1, picture.width / width, picture.height / height)
+        return CGSize(width: max(1, (width * fit).rounded()), height: max(1, (height * fit).rounded()))
+    }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { redraw = true }
     func draw(in view: MTKView) {
         guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) == true else { invalidate(); return }
@@ -130,7 +137,9 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         guard let submission = mailbox.take(redraw: redraw) else { return }
         let envelope = submission.frame
         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
-        if view.drawableSize != geometry.displaySize { view.drawableSize = geometry.displaySize }
+        // MTKView derives contentScaleFactor from drawableSize when it does not auto-resize.
+        let backing = Self.drawablePixels(viewPoints: view.bounds.size, scale: displayScale, picture: geometry.displaySize)
+        if view.drawableSize != backing { view.drawableSize = backing }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
               let command = commandQueue?.makeCommandBuffer(),
               let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else {
@@ -198,24 +207,36 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         // Capture this drawable's exact envelope, not whichever frame is newest at callback time.
         #if !targetEnvironment(simulator)
         if submission.isNew {
-            let receiptCallback = originalSourcePresented // Snapshot under this draw's admission fence.
-            drawable.addPresentedHandler { [weak self, envelope] shown in
-                guard shown.presentedTime.isFinite, shown.presentedTime > 0, let self else { return }
-                _ = self.fence.withAdmission(envelope.identity, at: ProcessInfo.processInfo.systemUptime) {
-                    self.counters?.presentedFrame(atMs: shown.presentedTime * 1000, marker: envelope.marker)
-                    let clock = self.counters?.clockObservation
-                    self.videoFeedback?.presentedTiming(envelope.videoTag, originalSource: envelope.originalSource,
-                        newSubmission: submission.isNew, presentedTime: shown.presentedTime,
-                        clock: clock?.estimate, observedAtMs: clock?.atMs)
-                    if envelope.originalSource { receiptCallback?(envelope.identity, envelope.receiptID) }
-                }
-            }
+            let receipt = presentedReceipt(envelope, callback: originalSourcePresented) // Snapshot under this draw's admission fence.
+            drawable.addPresentedHandler { shown in receipt(shown.presentedTime) }
         }
         #endif
         command.addCompletedHandler { [mailbox, wrappers, envelope, refinementPixels] _ in
             withExtendedLifetime((wrappers, envelope, refinementPixels)) { mailbox.completed(submission.id) }
         }
         command.present(drawable); command.commit()
+    }
+    /// Core Animation runs presented handlers while holding the layer's private lock, and this view
+    /// calls `addPresentedHandler` on main while holding the fence. Waiting on the fence inside the
+    /// handler inverts that order and deadlocks main (20260930.8 watchdog reports), so the handler
+    /// only enqueues; admission is rechecked off Core Animation's thread.
+    static let presentedReceiptQueue = DispatchQueue(label: "farside.owned-video.presented", qos: .userInteractive)
+    func presentedReceipt(_ envelope: VideoFrameEnvelope,
+                          callback: ((VideoPresentationIdentity, UUID) -> Void)?) -> (CFTimeInterval) -> Void {
+        { [weak self] presentedTime in
+            guard presentedTime.isFinite, presentedTime > 0 else { return }
+            Self.presentedReceiptQueue.async { [weak self] in
+                guard let self else { return }
+                _ = self.fence.withAdmission(envelope.identity, at: ProcessInfo.processInfo.systemUptime) {
+                    self.counters?.presentedFrame(atMs: presentedTime * 1000, marker: envelope.marker)
+                    let clock = self.counters?.clockObservation
+                    self.videoFeedback?.presentedTiming(envelope.videoTag, originalSource: envelope.originalSource,
+                        newSubmission: true, presentedTime: presentedTime,
+                        clock: clock?.estimate, observedAtMs: clock?.atMs)
+                    if envelope.originalSource { callback?(envelope.identity, envelope.receiptID) }
+                }
+            }
+        }
     }
     private func showFallback(_ envelope: VideoFrameEnvelope) {
         timingAvailable = false
