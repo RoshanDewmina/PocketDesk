@@ -26,6 +26,9 @@ struct HostLoadSample: Equatable {
     var provenLocalLink = false
     var sentFPS: Double? = nil
     var encoderSessionAgeS: Double? = nil
+    var sourceFPS: Double? = nil
+    var rttMs: Double? = nil
+    var remoteLossPercent: Double? = nil
 }
 
 extension HostLoadSample {
@@ -40,7 +43,8 @@ extension HostLoadSample {
                   qualityLimitation: report.qualityLimitation, hostThermalState: hostThermalState,
                   lowPowerMode: lowPowerMode, sentKbps: report.sentKbps, senderQueueMs: report.senderQueueMs,
                   networkQueueMs: report.networkQueueMs, routeDetail: report.routeDetail, sentFPS: report.sentFPS,
-                  encoderSessionAgeS: report.encoderSessionAgeS)
+                  encoderSessionAgeS: report.encoderSessionAgeS, sourceFPS: report.sourceFPS, rttMs: report.rttMs,
+                  remoteLossPercent: report.remoteLossPercent)
     }
 }
 
@@ -89,7 +93,9 @@ struct HostLoadMonitor {
                      phonePresentedFPS: sample.phoneLoad?.presentedFPS,
                      phoneThermalState: sample.phoneLoad?.thermalState.map(String.init),
                      phoneLowPowerMode: sample.phoneLoad?.lowPowerMode, sentFPS: sample.sentFPS,
-                     encoderSessionAgeS: sample.encoderSessionAgeS)
+                     encoderSessionAgeS: sample.encoderSessionAgeS, sourceFPS: sample.sourceFPS,
+                     provenLocalLink: sample.provenLocalLink, rttMs: sample.rttMs,
+                     remoteLossPercent: sample.remoteLossPercent)
     }
 
     /// The new rung to apply and the new busy state to send, each nil when unchanged.

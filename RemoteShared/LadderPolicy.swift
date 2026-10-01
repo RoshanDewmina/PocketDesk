@@ -33,9 +33,16 @@ enum LadderTrigger: CaseIterable {
     /// Three frames in VideoToolbox's queue already cost ~40 ms at 2560 px: step on the first sample.
     var isImmediate: Bool { self == .encodeBacklog }
 
-    func fires(_ inputs: LadderInputs, at rung: LadderState, falseLoadRules: Bool = LadderFalseLoadSwitch.isOn) -> Bool {
+    var isNetwork: Bool { reason == .network }
+
+    func fires(_ inputs: LadderInputs, at rung: LadderState, falseLoadRules: Bool = LadderFalseLoadSwitch.isOn,
+               lanTrustRules: Bool = LadderLANTrustSwitch.isOn) -> Bool {
         let fps = LadderPolicy.rungFPS(rung)
         let interval = LadderPolicy.frameIntervalMs(rung)
+        // The bandwidth estimate is not evidence on a proven LAN with a clean round trip and no loss:
+        // it collapses to the sent rate of a still screen (1 Oct 2026, .4: 25,000 -> 3,720 -> 2,395 kbps
+        // at rtt 6-8 ms, loss 0, sent 1 Mbps), and the next key frame's pacer wait then stepped the size.
+        if lanTrustRules, isNetwork, LANTrustPolicy.trusted(inputs) { return false }
         switch self {
         case .hostThermal:
             return (LadderPolicy.thermalLevel(inputs.hostThermalState) ?? 0) >= LadderPolicy.seriousThermalLevel
@@ -101,8 +108,28 @@ enum LadderTrigger: CaseIterable {
     }
 
     static func firing(_ inputs: LadderInputs, at rung: LadderState,
-                       falseLoadRules: Bool = LadderFalseLoadSwitch.isOn) -> [LadderTrigger] {
-        allCases.filter { $0.fires(inputs, at: rung, falseLoadRules: falseLoadRules) }
+                       falseLoadRules: Bool = LadderFalseLoadSwitch.isOn,
+                       lanTrustRules: Bool = LadderLANTrustSwitch.isOn) -> [LadderTrigger] {
+        allCases.filter { $0.fires(inputs, at: rung, falseLoadRules: falseLoadRules, lanTrustRules: lanTrustRules) }
+    }
+}
+
+/// A link whose capacity is known to exceed the stream: a proven local link (host candidates on both
+/// ends, authorised) with remote loss under `lossLimitPercent` (libwebrtc's own no-change band) and a
+/// round trip under `roundTripLimitMs`. Home Wi-Fi shows 50-150 ms spikes with no loss while the
+/// phone's radio sleeps on a still screen (1 Oct 2026: 85 of 469 rows over 60 ms, 22 over 100, loss
+/// in 23); real congestion holds the round trip up and loses packets, which ends the trust within a sample.
+enum LANTrustPolicy {
+    static let roundTripLimitMs = 100.0
+    static let lossLimitPercent = 2.0
+
+    static func trusted(provenLocalLink: Bool, lossPercent: Double?, rttMs: Double?) -> Bool {
+        guard provenLocalLink, let rttMs, rttMs.isFinite, rttMs <= roundTripLimitMs else { return false }
+        return (lossPercent ?? 0) < lossLimitPercent
+    }
+
+    static func trusted(_ inputs: LadderInputs) -> Bool {
+        trusted(provenLocalLink: inputs.provenLocalLink, lossPercent: inputs.remoteLossPercent, rttMs: inputs.rttMs)
     }
 }
 
@@ -123,6 +150,8 @@ enum LadderTrigger: CaseIterable {
 ///   (10, 20, 40, 60 s); it returns to 10 s after 120 s on one rung or a down step with another reason.
 /// - Low Power Mode caps the top at the first rung of 60 fps or less (reason `power`), in one move.
 /// - A target change restarts at the top of the new ladder.
+/// - On a trusted LAN (`LANTrustPolicy`) the network triggers are not evidence: the estimate collapses
+///   on a still screen while the link itself is fine.
 struct LadderPolicy: LadderEngine {
     static let downSamples = 2
     static let upAfter: TimeInterval = 10
@@ -153,6 +182,8 @@ struct LadderPolicy: LadderEngine {
     private var warmingSince: TimeInterval?
     /// `LadderFalseLoadSwitch` (read once per process; tests turn it off per policy).
     var falseLoadRules = LadderFalseLoadSwitch.isOn
+    /// `LadderLANTrustSwitch`, likewise.
+    var lanTrustRules = LadderLANTrustSwitch.isOn
 
     init(targetFPS: Int) {
         self.targetFPS = targetFPS
@@ -177,9 +208,9 @@ struct LadderPolicy: LadderEngine {
     mutating func evaluate(_ inputs: LadderInputs, at time: TimeInterval) -> LadderState? {
         let previous = state
         if inputs.targetFPS != targetFPS {
-            let rules = falseLoadRules
+            let rules = (falseLoadRules, lanTrustRules)
             self = LadderPolicy(targetFPS: inputs.targetFPS)
-            falseLoadRules = rules
+            (falseLoadRules, lanTrustRules) = rules
             calmSince = time
         }
         step(inputs, at: time)
@@ -196,7 +227,7 @@ struct LadderPolicy: LadderEngine {
         }
         if lastClimbAt != nil, !Self.isStill(inputs) { movingSinceClimb += 1 }
         let warming = warmingUp(inputs, at: time)
-        let raw = LadderTrigger.firing(inputs, at: state, falseLoadRules: falseLoadRules)
+        let raw = LadderTrigger.firing(inputs, at: state, falseLoadRules: falseLoadRules, lanTrustRules: lanTrustRules)
         let firing = raw.filter { !warming || $0.isThermal || $0.isImmediate }
         let thermal = firing.first { $0.isThermal }
         let load = firing.first { !$0.isThermal }
@@ -283,8 +314,11 @@ struct LadderPolicy: LadderEngine {
 
     /// The frames there were to encode: the rung's rate, or fewer when the screen changed less
     /// (ScreenCaptureKit sends no complete frames for a still desktop, so a low encoded rate is not load).
+    /// Judged by the frames offered to the encoder (`sourceFPS`): at a 30 fps rung the capture still runs
+    /// at 60 and is thinned on the way in, so `captureFPS` overstates the demand by two (1 Oct 2026, .4:
+    /// capture 36, source 19, encoded 18 read as a shortfall and stepped 2560 to 1920 px).
     static func demandFPS(_ inputs: LadderInputs, at rung: LadderState) -> Double {
-        max(0, min(rungFPS(rung), inputs.captureFPS ?? rungFPS(rung)))
+        max(0, min(rungFPS(rung), inputs.sourceFPS ?? inputs.captureFPS ?? rungFPS(rung)))
     }
 
     /// The source changed at most once in the window: what went out was the idle refresh, or the one
@@ -328,6 +362,33 @@ struct LadderPolicy: LadderEngine {
 enum LadderFalseLoadSwitch {
     static let defaultsKey = "PocketDeskLadderFalseLoad"
     static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+}
+
+/// Kill switch for the LAN trust rule (`defaults write <bundle id> PocketDeskLadderLANTrust -bool NO`,
+/// then relaunch the host): off, the pacer wait, a low estimate and a bandwidth-limited encoder step
+/// the ladder on a proven local link as anywhere else.
+enum LadderLANTrustSwitch {
+    static let defaultsKey = "PocketDeskLadderLANTrust"
+    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+}
+
+/// The floor under the host's bandwidth estimate while the link is trusted (`LANTrustPolicy`): the
+/// picture mode's LAN start rate, so a collapsed estimate cannot starve the encoder or queue a key
+/// frame for a second. `defaults write <bundle id> PocketDeskLANBitrateFloorKbps -int 0` turns it off,
+/// another value replaces the start rate; relaunch the host.
+enum LANBitrateFloor {
+    static let defaultsKey = "PocketDeskLANBitrateFloorKbps"
+    static let override: Int? = {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: defaultsKey) != nil else { return nil }
+        return max(0, min(100_000, defaults.integer(forKey: defaultsKey)))
+    }()
+
+    /// nil when switched off.
+    static func bps(startBitrateBps: Int) -> Int? {
+        let kbps = override ?? startBitrateBps / 1000
+        return kbps > 0 ? kbps * 1000 : nil
+    }
 }
 
 /// X17: a send-path cap layered over the G12 ladder. Once per statistics window it reads the pacer

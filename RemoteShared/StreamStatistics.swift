@@ -407,6 +407,8 @@ struct StreamStatsReport: Codable, Equatable {
     var transportPriorityRequested: String?
     var bweCeilingKbps: Double?
     var lanCeilingApplied: Bool?
+    /// The `LANBitrateFloor` under the estimate this second, nil while the link is not trusted.
+    var lanFloorKbps: Double?
     var senderQueueMs: Double?
     var networkQueueMs: Double?
     var backlogDrainMs: Double?

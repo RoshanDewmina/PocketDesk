@@ -92,6 +92,13 @@ struct LadderInputs: Equatable {
     /// Seconds since the encoder session started: every session start, size move and rate restart
     /// begins a new one with a key frame. nil when the encoder reports none.
     var encoderSessionAgeS: Double? = nil
+    /// Frames offered to the encoder in the window, after the rate thinning (a 30 fps rung on a 60 Hz
+    /// capture offers half of `captureFPS`). nil on an older report.
+    var sourceFPS: Double? = nil
+    /// The link, for `LANTrustPolicy`: a proven local link, the last round trip and the remote loss.
+    var provenLocalLink = false
+    var rttMs: Double? = nil
+    var remoteLossPercent: Double? = nil
 
     var frameIntervalMs: Double { 1000 / Double(max(1, targetFPS)) }
 }
