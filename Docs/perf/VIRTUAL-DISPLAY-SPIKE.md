@@ -84,40 +84,31 @@ ScreenCaptureKit needs Screen Recording for the *responsible* process. By defaul
 
 No entitlement, SIP change or private entitlement is involved: the classes are ordinary Objective-C classes in CoreGraphics, and DeskPad and BetterDisplay use them from hardened, Developer ID-signed apps **[3P]**. Whether hardened-runtime Debug builds behave the same on 27.0 is part of what the first run shows.
 
-## Measured
+## Measured (1 Oct 2026, phone-shaped runs)
 
-**Pending — the lead runs it.** Fill in from the log:
+Conditions: macOS 27.0.1 (26A434), Mac16,13 (M4 Air), branch `claude/vdisplay-spike` 3d8b439 (batch-3 ab733b4 merged), Debug build launched with `--direct`, quiet window 14:15–15:05 with load 5–9, **ASUS VG32VQ1B attached** (display 2, 2560×1440 @ 144 Hz) and the built-in at a scaled 1920×1243 pt. Raw logs: `~/Documents/Codex/2026-10-01/perf-push/vdisplay/logs/`.
 
-| Field | 1x-120 | 1x-144 | hidpi-120 |
-|---|---|---|---|
-| Date and time, macOS build, Mac model, branch and SHA | | | |
-| Mac state (quiet flag, installed host paused, load average) | | | |
-| Online after (ms) | | | |
-| `CGDisplayCopyDisplayMode`: pt, px, `refreshRate` | | | |
-| `NSScreen.maximumFramesPerSecond`, backing scale, refresh intervals | | | |
-| Host view: `DisplayRefresh.rateHz` → target fps | | | |
-| Display link, moving: ticks/s and interval (ms) | | | |
-| SCK moving, per second (10 values) | | | |
-| SCK moving: mean fps, gap median / p90 / max (ms), distinct | | | |
-| SCK moving: statuses, repeated / missing `displayTime` | | | |
-| SCK idle 5 s: complete/s, statuses | | | |
-| Scenario verdict line | | | |
+| Scenario | Mode reached | Distinct SCK fps, 10 s moving (gap median / p90 ms) | Display link ticks/s | Idle fps |
+|---|---|---|---|---|
+| phone-2x-120 (1311×603 pt, 2× = 2622×1206 px) | yes, scale 2.0, 120 Hz | 90.3 (8.33 / 16.67); repeats 89.5, 89.0, 87.9, 85.5 | 60.0 | 0.4 |
+| phone-2x-60 | yes, 60 Hz | 59.8 (16.67 / 16.67) | 60.0 | 0.2 |
+| points-2x-120 (874×402 pt, 2× = 1748×804 px) | yes, 120 Hz | 89.6 (8.33 / 16.67) | 60.0 | 0.0 |
+| phone-2x-120 portrait (603×1311 pt) | yes, 120 Hz | 89.0 | 60.0 | 0.2 |
+| 1x-120 (2560×1440) | 120 Hz | 88.9 (8.33 / 16.67) | 60.0 | 0.2 |
+| 1x-144 | 144 Hz | 97.9 (6.94 / 20.83) | 60.0 | 0.2 |
+| hidpi-120 (1280×720 pt) | yes, 120 Hz | 91.5 (8.33 / 16.67) | 60.0 | 0.2 |
 
-Final line (verbatim): `pending`
+Every scenario is NO-GO on the ≥110 fps gate. The spike window's display link ticked at 60/s on every virtual display, so the drawn content changed 60 times a second; the extra distinct `displayTime`s are compositor presents.
 
-Decision: `pending` (GO: 120 fps sessions can be tested on the virtual display without the ASUS; NO-GO: 120 fps testing needs the ASUS, and the feature claim stays "120 fps on ProMotion and 120 Hz displays").
+Encode at 2622×1206 (420v capture frames, one in flight, 240 frames, hardware, 25 Mb/s): HEVC p50 7.62 ms, p90 8.03, max 9.45, IDR 24.0 ms; H.264 p50 7.27 ms, p90 7.70, max 9.02, IDR 19.4 ms.
 
-## Phone-shaped display extension (1 Oct 2026)
+Rotation by `applySettings:` on the same object (display ID kept): landscape→portrait: bounds, NSScreen and the 2× mode settled at 366–367 ms, ScreenCaptureKit size fresh at 412 ms, first full-size frame at 457 ms; no other window moved. Portrait→landscape: bounds at 381 ms but on the 1× mode; after re-selecting 2× it settled about 0.3 s later (0.7 s total without the spike's 2 s grace).
 
-The spike grew three HiDPI scenarios shaped like an iPhone 17 (2622×1206 px at 3×, 874×402 pt): `phone-2x-60` and `phone-2x-120` (1311×603 pt, 2× = pixel-exact 2622×1206 px) and `points-2x-120` (874×402 pt, 2× = 1748×804 px). `--virtual-display-spike-portrait` swaps width and height. The descriptor's `maxPixelsWide/High` is now the larger pixel side on both axes (override: `--virtual-display-spike-max-pixels N`), and a HiDPI scenario advertises two modes, the 2× raster anchor then the logical size, as node-mac-virtual-display does; the HiDPI selection still asks for duplicate low-resolution modes, as OpenDisplay does. Optional steps after the gate, `--virtual-display-spike-steps a,b,…` (script: `--steps`):
+Teardown: normal release removed the display in every run; `kill -9` removed it 224 ms later (shell poller). Display sleep/wake, mirroring and the ASUS-detached condition were not run (not approved). Side effect seen on every release: the iPhone Mirroring window on the ASUS shrank by 11 px (restored by the lane tool).
 
-- `encode`: HEVC then H.264 `VTCompressionSession` (hardware required, RealTime, no reordering, 25 Mb/s, ExpectedFrameRate = the scenario's rate) fed from the capture callback at the stream's pixel size, one frame in flight, 240 frames; prints the IDR, p50, p90 and max submit→callback ms and the mean P-frame size (`SPIKE ENCODE …`).
-- `rotate`: re-applies settings with swapped width and height on the **same** `CGVirtualDisplay` object, then reports the ms until `CGDisplayBounds` changes, until the `NSScreen` frame changes, and until the first complete captured frame at the new size, whether the display ID survived, and every other app's window that moved or ended up off every display; then 3 s of moving capture in the new orientation.
-- `mirror:virtual` (default for `mirror`) / `mirror:panel`: `CGConfigureDisplayMirrorOfDisplay` (`.forAppOnly`) so the virtual display shows the panel (the panel stays main), or the built-in panel shows the virtual display, for 5 s of moving capture, then undone and verified with `CGDisplayIsInMirrorSet`. **Only with Roshan's OK** (it changes what his screen shows).
-- `sleep`: `pmset displaysleepnow`, 15 s of capture while dark, `caffeinate -u -t 2`, then checks the virtual display, its NSScreen, its mode and the stream, plus 3 s of moving capture. Never `pmset sleepnow`. **Only with Roshan's OK**: if the Mac requires a password after display sleep, the wake lands on the lock screen, which breaks iPhone Mirroring and any live host session.
-- `hold:<s>`: keeps the display alive after the measurements and prints `HOLD display <id> pid <pid>`; the script's `--kill9 N` SIGKILLs it N seconds later and polls `CGGetOnlineDisplayList` to time the teardown.
+Final line (phone-2x-120, verbatim): `VIRTUAL-DISPLAY-SPIKE: NO-GO fps=90.3 p90gap=16.67ms median=8.33ms distinct=903 reported=120Hz link=59.9 idle=0.4 scenario=phone-2x-120`
 
-Results: `~/Documents/Codex/2026-10-01/perf-push/vdisplay/NOTES.md` (run logs in `logs/`).
+Decision: 2× phone-shaped display works and rotates in place; 120 fps does not (content runs at 60 Hz on a virtual display here).
 
 ## Caveats
 
