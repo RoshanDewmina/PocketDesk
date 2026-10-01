@@ -226,7 +226,7 @@ final class PhoneMediaSessionIntegrationTests: XCTestCase {
         registry.endInterruption(shouldResume: true)
         XCTAssertFalse(playback.isAdmitted); XCTAssertEqual(resumed, 1)
     }
-    func testHeadphoneRouteChangeMutesMacAudioWithoutEndingBackgroundPiPOrAutoResuming() throws {
+    func testHeadphonesConnectingKeepMacAudioAndRemovalMutesItWithoutEndingBackgroundPiPOrAutoResuming() throws {
         var muted = 0, releases = 0, resumed = 0
         let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: { releases += 1 }))
         let mac = PhoneSystemAudioPlayback(session: registry)
@@ -236,8 +236,11 @@ final class PhoneMediaSessionIntegrationTests: XCTestCase {
         XCTAssertTrue(pip.startFromUserAction(foreground: true))
         let platform = try XCTUnwrap(pip.controller)
         pip.confirmPlatformStartForTesting(platform)
-        registry.routeChanged()
+        registry.routeChanged(deviceRemoved: false)
         XCTAssertEqual(pip.policy.state, .active, "AirPods connecting during background PiP keeps PiP")
+        XCTAssertEqual(muted, 0); XCTAssertTrue(mac.isAdmitted, "Mac audio moves to the new route")
+        registry.routeChanged(deviceRemoved: true)
+        XCTAssertEqual(pip.policy.state, .active, "AirPods removed during background PiP keeps PiP")
         XCTAssertEqual((platform as? FixturePiPPlatformController)?.stops, 0)
         XCTAssertEqual(muted, 1); XCTAssertFalse(mac.isAdmitted); XCTAssertEqual(releases, 0)
         registry.beginInterruption(); registry.endInterruption(shouldResume: true)

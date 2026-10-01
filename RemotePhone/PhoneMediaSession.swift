@@ -65,7 +65,7 @@ final class PhoneMediaSession {
                             let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
                             guard reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue ||
                                   reason == AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue else { return }
-                            self?.routeChanged()
+                            self?.routeChanged(deviceRemoved: reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue)
                             return
                         }
                         self?.retireAll()
@@ -161,9 +161,13 @@ final class PhoneMediaSession {
         deactivate()
         retiring = false
     }
-    /// Plugging or unplugging headphones must not end a background PiP (and with it the session).
-    /// Mac audio stays retired until the user opts in again; the microphone's input route changed.
-    func routeChanged() { retire(kinds: [.macAudio, .recording]) }
+    /// Headphones must never end a background PiP (and with it the session). Apple asks apps to pause
+    /// only when a device is removed: Mac audio then stays retired until the user opts in again, and
+    /// dictation loses its microphone route. A newly connected device just carries the audio on.
+    func routeChanged(deviceRemoved: Bool) {
+        guard deviceRemoved else { return }
+        retire(kinds: [.macAudio, .recording])
+    }
 
     func retire(kinds: Set<Kind>) {
         guard !acquiring else { retireAll(); return } // The pending owner's kind is unknown.
