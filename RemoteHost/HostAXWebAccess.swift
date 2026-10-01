@@ -161,15 +161,18 @@ final class HostAXWebActivator: @unchecked Sendable {
 
     /// The activation that was sent, or nil when nothing was (see `request`).
     func activateIfNeeded(_ key: HostAXProcessKey, engine: HostAppEngine,
+                          manualOnly: Bool = false,
                           set: (HostAXWebAttribute) -> HostAXSetOutcome,
                           isOn: (HostAXWebAttribute) -> HostAXFlagRead) -> HostAXWebActivation? {
-        if case .sent(let activation) = request(key, engine: engine, set: set, isOn: isOn) { return activation }
+        if case .sent(let activation) = request(key, engine: engine, manualOnly: manualOnly,
+                                               set: set, isOn: isOn) { return activation }
         return nil
     }
 
     /// One request per process; a sent request that failed may be repeated after a cooldown, and one
     /// that was never sent leaves the process askable.
     func request(_ key: HostAXProcessKey, engine: HostAppEngine,
+                 manualOnly: Bool = false,
                  set: (HostAXWebAttribute) -> HostAXSetOutcome,
                  isOn: (HostAXWebAttribute) -> HostAXFlagRead) -> HostAXActivationAttempt {
         let now = clock()
@@ -185,7 +188,7 @@ final class HostAXWebActivator: @unchecked Sendable {
         let manual = set(.manual)
         guard manual != .notAttempted else { return unsent() }
         var result = HostAXWebActivation(attribute: .manual, outcome: manual)
-        if manual == .unsupported {
+        if manual == .unsupported && !manualOnly {
             let enhanced = isOn(.enhanced)
             guard enhanced != .notAttempted else { return unsent() }
             if HostAXWebActivationPolicy.needsEnhancedFallback(after: manual, enhanced: enhanced) {
@@ -272,7 +275,7 @@ enum HostTextFocusLog {
 }
 
 enum HostAXPrewarmOutcome: Equatable, Sendable {
-    case noSession, notTrusted, native, alreadyAsked, laneBusy, timedOut, notSent
+    case noSession, notTrusted, native, alreadyAsked, alreadyAccessible, laneBusy, timedOut, notSent
     case requested(HostAXWebActivation)
 
     var reason: String {
@@ -280,6 +283,7 @@ enum HostAXPrewarmOutcome: Equatable, Sendable {
         case .noSession: "noSession"
         case .native: "native"
         case .alreadyAsked: "alreadyAsked"
+        case .alreadyAccessible: "alreadyAccessible"
         case .notTrusted: "notTrusted"
         case .laneBusy: "laneBusy"
         case .timedOut: "timedOut"
@@ -294,6 +298,7 @@ enum HostAXPrewarmOutcome: Equatable, Sendable {
 /// Chromium-based app becomes frontmost instead, under the same once-per-process policy and on the
 /// same bounded AX lane; never outside a session and never for a native app.
 struct HostAXWebPrewarm: Sendable {
+    static let tapFocusEnabledDefaultsKey = "keyboard.tapFocusEnabled"
     typealias SetAttribute = @Sendable (HostAXWebAttribute, Bool, pid_t, HostAXBudget) -> HostAXSetOutcome
     typealias IsOn = @Sendable (HostAXWebAttribute, pid_t, HostAXBudget) -> HostAXFlagRead
 
@@ -307,6 +312,9 @@ struct HostAXWebPrewarm: Sendable {
     }
     var trusted: @Sendable () -> Bool = { AXIsProcessTrusted() }
     var isAlive: @Sendable (HostAXProcessKey) -> Bool = { HostAXWebActivator.isAlive($0) }
+    var sessionIsCurrent: @Sendable () -> Bool = { true }
+    var reportsFocus: @Sendable (pid_t, HostAXBudget) -> Bool = { HostTextFocusProbe.appReportsFocus(pid: $0, budget: $1) }
+    var manualOnly: Bool = UserDefaults.standard.object(forKey: HostAXWebPrewarm.tapFocusEnabledDefaultsKey) as? Bool ?? true
 
     func appActivated(pid: pid_t, launched: TimeInterval?, bundleURL: URL?,
                       sessionActive: Bool) async -> HostAXPrewarmOutcome {
@@ -327,10 +335,15 @@ struct HostAXWebPrewarm: Sendable {
             started.set()
             // The session predicate checks the post-events permission; without AX trust a write fails
             // with apiDisabled and would count as a failed attempt.
+            guard sessionIsCurrent() else { return .noSession }
             guard trusted() else { return .notTrusted }
+            if manualOnly { HostTextFocusChanges.shared.watch(pid: pid, budget: budget) }
             let engine = activator.engine(for: bundleURL)
             guard engine.isWeb else { return .native }
-            switch activator.request(key, engine: engine, set: { set($0, true, pid, budget) },
+            if manualOnly, reportsFocus(pid, budget) { return .alreadyAccessible }
+            guard sessionIsCurrent() else { return .noSession }
+            switch activator.request(key, engine: engine, manualOnly: manualOnly,
+                                     set: { set($0, true, pid, budget) },
                                      isOn: { isOn($0, pid, budget) }) {
             case .skipped: return .alreadyAsked
             case .notSent: return .notSent
