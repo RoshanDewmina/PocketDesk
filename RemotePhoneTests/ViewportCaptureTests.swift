@@ -377,7 +377,7 @@ final class ViewportCaptureTests: XCTestCase {
             frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1),
             arrivalMs: 1, marker: nil, originalSource: true))
         surface.draw(in: surface.metal)
-        XCTAssertEqual(surface.metal.drawableSize, output)
+        XCTAssertEqual(surface.metal.drawableSize, OwnedMetalVideoView.backingSize(picture: output, longSide: surface.backingLongSide, current: nil))
         let shownRect = surface.pictureRect.offsetBy(dx: placement.minX, dy: placement.minY)
         for pointer in [CGPoint(x: 0, y: 0), CGPoint(x: 735, y: 478), CGPoint(x: 1470, y: 956), CGPoint(x: 120, y: 900)] {
             let glyph = PointerOverlayView.picturePoint(pointer, scale: view.scale)

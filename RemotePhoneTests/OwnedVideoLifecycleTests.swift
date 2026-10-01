@@ -27,7 +27,8 @@ final class OwnedVideoLifecycleTests: XCTestCase {
             view.draw(in: view.metal) // Production admission and drawable preparation, no GPU timing claim.
         }
         offer(rotation: ._0, cropped: false)
-        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240))
+        let landscape = OwnedMetalVideoView.backingSize(picture: CGSize(width: 320, height: 240), longSide: view.backingLongSide, current: nil)
+        XCTAssertEqual(view.metal.drawableSize, landscape, "the backing follows the stable box, not the decoded size")
         XCTAssertEqual(view.metal.layer.contentsGravity, .resize, "Core Animation fills the picture placement")
         var pinched: [CGSize] = []
         for zoom in [0.25, 1.0, 3.0, 10.0] {
@@ -36,14 +37,49 @@ final class OwnedVideoLifecycleTests: XCTestCase {
             view.draw(in: view.metal) // The relayout redraw is what would resize the drawable.
             pinched.append(view.metal.drawableSize)
         }
-        XCTAssertEqual(pinched, Array(repeating: CGSize(width: 320, height: 240), count: 4),
+        XCTAssertEqual(pinched, Array(repeating: landscape, count: 4),
                        "pinch layout neither allocates view-sized backing pixels nor resizes per frame")
         offer(rotation: ._90, cropped: true)
-        let rotated = CGSize(width: 80, height: 120)
-        XCTAssertEqual(view.metal.drawableSize, rotated, "the decoded crop, rotated")
+        let rotated = OwnedMetalVideoView.backingSize(picture: CGSize(width: 80, height: 120), longSide: view.backingLongSide, current: landscape)
+        XCTAssertNotEqual(rotated, landscape)
+        XCTAssertEqual(view.metal.drawableSize, rotated, "only an aspect change (rotation) resizes the backing")
         view.invalidate()
         offer(rotation: ._0, cropped: false)
         XCTAssertEqual(view.metal.drawableSize, rotated, "retired source cannot reallocate a closed surface")
+    }
+    func testBackingSizeIgnoresLadderResolutionAndPinchButFollowsAspect() {
+        let box: CGFloat = 2622
+        let full = OwnedMetalVideoView.backingSize(picture: CGSize(width: 2560, height: 1600), longSide: box, current: nil)
+        XCTAssertEqual(full, CGSize(width: 2622, height: 1639))
+        for ladder in [CGSize(width: 1920, height: 1200), CGSize(width: 1680, height: 1050), CGSize(width: 1280, height: 800), CGSize(width: 2560, height: 1598)] {
+            XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: ladder, longSide: box, current: full), full, "\(ladder) keeps the drawable")
+        }
+        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 1600, height: 2560), longSide: box, current: full),
+                       CGSize(width: 1639, height: 2622), "a rotation is a real aspect change")
+        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 100, height: 50), longSide: 9000, current: nil).width, 4096)
+        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: .zero, longSide: box, current: full), full)
+    }
+    @MainActor
+    func testLadderResolutionStepsNeverReallocateTheDrawableAndEveryDrawPresents() throws {
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
+        view.frame = CGRect(x: 0, y: 0, width: 402, height: 251); view.setNeedsLayout(); view.layoutIfNeeded()
+        var sizes: [CGSize] = []
+        for (width, height) in [(256, 160), (128, 80), (192, 120), (256, 160)] {
+            var pixels: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
+                [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+            let buffer = try XCTUnwrap(pixels)
+            view.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
+                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: Int64(sizes.count + 1)),
+                arrivalMs: 1, marker: nil, originalSource: true))
+            view.draw(in: view.metal)
+            sizes.append(view.metal.drawableSize)
+        }
+        XCTAssertEqual(Set(sizes).count, 1, "2560→1280→1920 style steps share one drawable: \(sizes)")
+        XCTAssertEqual(view.drawsPresented, 4, "every draw presented the latest frame; no blank pass")
+        view.invalidate()
     }
     /// Core Animation calls presented handlers holding the layer lock that `addPresentedHandler`
     /// needs on main while main holds the fence (8BADF00D reports from build 20260930.8).

@@ -72,6 +72,22 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     override func layoutSubviews() {
         super.layoutSubviews(); metal.frame = bounds; fallback?.frame = bounds; redraw = true
     }
+    /// Backing pixels come from a stable box (the phone's native long side, at most 4096) fitted to the
+    /// picture's aspect quantised to 1/32. A ladder resolution step or a pinch therefore never reallocates
+    /// the drawable (each reallocation showed a blank pass on 20260930.11); only an aspect change does.
+    static func backingSize(picture: CGSize, longSide: CGFloat, current: CGSize?) -> CGSize {
+        guard picture.width > 0, picture.height > 0, picture.width.isFinite, picture.height.isFinite else { return current ?? picture }
+        let aspect = (picture.width / picture.height * 32).rounded() / 32
+        if let current, current.width > 0, current.height > 0, (current.width / current.height * 32).rounded() / 32 == aspect { return current }
+        let long = max(1, min(4096, longSide.isFinite ? longSide.rounded() : 4096))
+        return aspect >= 1 ? CGSize(width: long, height: max(1, (long / aspect).rounded()))
+                           : CGSize(width: max(1, (long * aspect).rounded()), height: long)
+    }
+    var backingLongSide: CGFloat {
+        let native = (metal.window?.screen ?? UIScreen.main).nativeBounds.size
+        return max(native.width, native.height)
+    }
+    private(set) var drawsPresented = 0
     var pictureRect: CGRect {
         let drawable = metal.drawableSize, area = metal.bounds
         guard metal.layer.contentsGravity == .resizeAspect, drawable.width > 0, drawable.height > 0 else { return area }
@@ -131,7 +147,9 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         guard let submission = mailbox.take(redraw: redraw) else { return }
         let envelope = submission.frame
         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
-        if view.drawableSize != geometry.displaySize { view.drawableSize = geometry.displaySize }
+        let backing = Self.backingSize(picture: geometry.displaySize, longSide: backingLongSide,
+                                       current: view.drawableSize == CGSize(width: 1, height: 1) ? nil : view.drawableSize)
+        if view.drawableSize != backing { view.drawableSize = backing }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
               let command = commandQueue?.makeCommandBuffer(),
               let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else {
@@ -206,7 +224,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         command.addCompletedHandler { [mailbox, wrappers, envelope, refinementPixels] _ in
             withExtendedLifetime((wrappers, envelope, refinementPixels)) { mailbox.completed(submission.id) }
         }
-        command.present(drawable); command.commit()
+        command.present(drawable); command.commit(); drawsPresented += 1
     }
     /// Core Animation runs presented handlers while holding the layer's private lock, and this view
     /// calls `addPresentedHandler` on main while holding the fence. Waiting on the fence inside the
