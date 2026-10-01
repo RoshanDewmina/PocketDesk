@@ -218,7 +218,7 @@ struct HomeView: View {
             PairingSheet(model: model, entry: entry, replacing: connection.invitation?.name) { pairedInSheet = true }
         }
         .sheet(isPresented: $showDetails) {
-            ConnectionDetailsSheet(connection: connection, health: health)
+            ConnectionDetailsSheet(model: model, connection: connection, health: health)
         }
         .sheet(isPresented: $showTroubleshoot) {
             TroubleshootSheet(macName: macName ?? "Your Mac", retry: { connect(mode: model.attemptMode) })
@@ -961,6 +961,7 @@ private struct HomeRow: View {
 }
 
 private struct ConnectionDetailsSheet: View {
+    @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
     var health: ConnectionHealth?
     @Environment(\.dismiss) private var dismiss
@@ -1012,6 +1013,12 @@ private struct ConnectionDetailsSheet: View {
                     } header: {
                         Text("Local link proof").farsideCaption()
                     }
+                }
+                Section {
+                    DiagnosticReportRows(model: model)
+                        .listRowBackground(Farside.Palette.panel)
+                } header: {
+                    Text("Test My Mac and session reports").farsideCaption()
                 }
                 Section {
                     Toggle("Relay-only test", isOn: Binding(get: { connection.forceRelay },
