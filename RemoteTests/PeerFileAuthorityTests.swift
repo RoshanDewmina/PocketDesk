@@ -11,7 +11,7 @@ final class PeerFileAuthorityTests: XCTestCase {
         let cutStarted = DispatchSemaphore(value: 0), cutFinished = DispatchSemaphore(value: 0)
         let submissionFinished = DispatchSemaphore(value: 0)
         DispatchQueue.global().async {
-            _ = peer.withFileRouteAuthority { entered.signal(); _ = release.wait(timeout: .now()+3); return true }
+            _ = peer.withNativeRouteSubmissionAuthority { entered.signal(); _ = release.wait(timeout: .now()+3); return true }
             submissionFinished.signal()
         }
         XCTAssertEqual(entered.wait(timeout: .now()+3), .success)
@@ -22,7 +22,7 @@ final class PeerFileAuthorityTests: XCTestCase {
         XCTAssertEqual(submissionFinished.wait(timeout: .now()+3), .success)
         XCTAssertEqual(cutFinished.wait(timeout: .now()+3), .success)
         var attempted = false
-        XCTAssertNil(peer.withFileRouteAuthority { attempted = true; return true })
+        XCTAssertNil(peer.withNativeRouteSubmissionAuthority { attempted = true; return true })
         XCTAssertFalse(attempted)
         XCTAssertFalse(peer.sendFile(Data([1])))
     }
