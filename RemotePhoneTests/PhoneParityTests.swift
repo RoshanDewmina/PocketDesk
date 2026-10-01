@@ -191,7 +191,9 @@ final class DirectTouchModelTests: XCTestCase {
     }
 
     func testHiddenSettingsLandOnTheirDefaultsOnceAndLaterWritesStick() {
-        let defaults = UserDefaults(suiteName: "hidden-surface-\(UUID().uuidString)")!
+        let suite = "hidden-surface-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set("direct", forKey: TouchInputMode.key)
         defaults.set("extraLarge", forKey: PointerSizePreference.key)
         defaults.set("off", forKey: PointerFollowStyle.key)

@@ -672,6 +672,13 @@ final class RemoteInputDriver {
         endMomentum()
     }
 
+    /// Drops a Mac-run coast whose route is gone: nothing can be posted, so no end event either.
+    func abandonHostMomentum() {
+        guard coast.isRunning else { return }
+        _ = coast.cancel()
+        _ = momentum.interrupt()
+    }
+
     private func endMomentum() {
         _ = coast.cancel()
         if momentum.interrupt() { postMomentumEnd() }

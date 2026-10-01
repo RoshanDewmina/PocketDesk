@@ -152,34 +152,44 @@ final class HostInputExecutor: @unchecked Sendable {
     /// The driver itself ends it when any other input lands.
     private var coastTimer: DispatchSourceTimer?
     private var coastGeneration: UInt64 = 0
+    private var coastRoute: ((@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome)?
     private func coastIfStarted(_ routeAuthority: @escaping (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome) {
-        guard driver.isCoasting, coastTimer == nil else { return }
+        guard driver.isCoasting else { return }
+        // A new coast always takes the route and generation of the post that started it, even
+        // when it begins inside the previous coast's last tick.
         coastGeneration = generation
+        coastRoute = routeAuthority
+        guard coastTimer == nil else { return }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + RemoteInputDriver.hostMomentumInterval,
                        repeating: RemoteInputDriver.hostMomentumInterval, leeway: .milliseconds(1))
         timer.setEventHandler { [weak self] in
             guard let self else { return }
-            self.withAuthority {
-                let now = self.clock()
-                if self.generation != self.coastGeneration || !self.driver.enabled || self.lease.isExpired(at: now) {
-                    _ = routeAuthority { [self] in self.driver.endHostMomentum(); return RemoteInputOutcome() }
-                    self.stopCoast()
-                    return
-                }
-                let running = routeAuthority { [self] in
-                    RemoteInputOutcome(accepted: self.driver.stepHostMomentum(now: now))
-                }.accepted
-                if !running { self.stopCoast() }
-            }
+            self.withAuthority { self.stepCoast() }
         }
         coastTimer = timer
         timer.resume()
+    }
+    private func stepCoast() {
+        guard let route = coastRoute else { stopCoast(); return }
+        let now = clock()
+        let revoked = generation != coastGeneration || !driver.enabled || lease.isExpired(at: now)
+        var routed = false
+        let running = route { [self] in
+            routed = true
+            if revoked { driver.endHostMomentum(); return RemoteInputOutcome() }
+            return RemoteInputOutcome(accepted: driver.stepHostMomentum(now: now))
+        }.accepted
+        // A closed route posts nothing, so the coast and its gate are dropped rather than left
+        // open for a later message to resume.
+        if !routed { driver.abandonHostMomentum() }
+        if !running { stopCoast() }
     }
     deinit { coastTimer?.cancel() }
     private func stopCoast() {
         coastTimer?.cancel()
         coastTimer = nil
+        coastRoute = nil
     }
     var isCoasting: Bool { withAuthority { driver.isCoasting } }
 

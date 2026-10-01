@@ -397,10 +397,16 @@ final class HostMomentumDriverTests: XCTestCase {
     func testTheExecutorStopsTheCoastWhenControlIsTurnedOff() {
         let lock = NSLock()
         var phases: [String] = []
+        let ended = expectation(description: "the end event is posted after revocation")
+        ended.assertForOverFulfill = false
         let sink = RemoteInputEventSink(
             pointerLocation: { CGPoint(x: 50, y: 50) },
             mouseSequence: { _ in true }, scroll: { _, _, _ in true },
-            scrollDetailed: { _, _, _, phase in lock.lock(); phases.append(phase); lock.unlock(); return true },
+            scrollDetailed: { _, _, _, phase in
+                lock.lock(); phases.append(phase); lock.unlock()
+                if phase == "momentumEnded" { ended.fulfill() }
+                return true
+            },
             text: { _ in true }, key: { _, _ in true })
         let driver = RemoteInputDriver(eventSink: sink, isTrusted: { true })
         driver.hostMomentum = true
@@ -414,9 +420,7 @@ final class HostMomentumDriverTests: XCTestCase {
         settled.isInverted = true
         wait(for: [settled], timeout: 0.1)
         executor.enabled = false
-        let ended = expectation(description: "the timer's next tick ends the coast")
-        ended.isInverted = true
-        wait(for: [ended], timeout: 0.1)
+        wait(for: [ended], timeout: 2)
         lock.lock(); let atRevoke = phases; lock.unlock()
         XCTAssertFalse(executor.isCoasting)
         XCTAssertEqual(atRevoke.last, "momentumEnded", "Control off ends the coast with its end event")
@@ -484,6 +488,7 @@ final class MouseEventFieldTests: XCTestCase {
                                         scroll: { _, _, _ in true }, text: { _ in true }, key: { _, _ in true })
         let driver = RemoteInputDriver(eventSink: sink, isTrusted: { true })
         driver.enabled = true
+        driver.eventDeltas = true
         driver.configure(bounds: CGRect(x: 0, y: 0, width: 100, height: 100))
         return driver
     }
