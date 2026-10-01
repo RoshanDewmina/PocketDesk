@@ -79,7 +79,7 @@
         "MAX_DEVICES_PER_ENTITLEMENT": "3",
         "TEST_FORCE_RELAY": "0",
         "ALLOW_UNENTITLED_RELAY": "0",
-        "KEEPALIVE_SECONDS": "0"
+        "KEEPALIVE_SECONDS": "50"
       }
     },
     "production": {

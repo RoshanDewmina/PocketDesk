@@ -1,9 +1,9 @@
-import { runDurableObjectAlarm } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { RoomDO } from "../src/room";
 import { randomHex } from "../src/util";
 import { parseChain, signCompactJws, transactionPayload, type TestChain } from "./helpers/apple-chain";
-import { connectClient, connectHost, open, pairing, postJson, registerMessage, sleep, testEnv } from "./helpers/client";
+import { connectClient, connectHost, open, pairing, payload64, postJson, registerMessage, sleep, testEnv } from "./helpers/client";
 import { installTurnMock, type TurnMock } from "./helpers/turn-mock";
 
 const minute = 60_000;
@@ -352,5 +352,85 @@ describe("lease and renewal", () => {
     const late = await open();
     late.send(registerMessage(p, "client"));
     expect((await late.next()).type).toBe("registered");
+  });
+});
+
+describe("NW24: keepalive and stale peer replacement", () => {
+  it("a quiet phone socket is replaced by the same phone re-registering; a recent one is not", async () => {
+    const p = await pairing();
+    const host = await connectHost(p);
+    const first = await connectClient(p);
+    await first.next(); await host.next();
+    const tooSoon = await open();
+    tooSoon.send(registerMessage(p, "client"));
+    expect((await tooSoon.next()).code).toBe("already_connected");
+
+    await advance(11_000);
+    const wrong = await open();
+    wrong.send({ ...registerMessage(p, "client"), token: "c".repeat(64) });
+    expect((await wrong.next()).code).toBe("host_unavailable_or_unauthorized");
+    expect(first.ws.readyState).toBe(WebSocket.OPEN);
+    const second = await connectClient(p);
+    expect((await first.closed).reason).toBe("replaced");
+    expect(await host.next()).toEqual({ type: "peer", online: false });
+    expect(await host.next()).toEqual({ type: "peer", online: true });
+    expect(await second.next()).toEqual({ type: "peer", online: true });
+    const again = await open();
+    again.send(registerMessage(p, "client"));
+    expect((await again.next()).code).toBe("already_connected");
+    second.send({ type: "signal", payload: payload64(3) });
+    expect((await host.next()).payload).toBe(payload64(3));
+  });
+
+  it("a Mac socket is replaced only after it has been quiet; its phone is told to reconnect", async () => {
+    const p = await pairing();
+    const host = await connectHost(p, { features: renewing });
+    const client = await connectClient(p);
+    await client.next(); await host.next();
+    await advance(8000);
+    host.send({ type: "renew" });
+    expect((await host.next()).type).toBe("renewed");
+    await advance(8000);
+    const tooSoon = await open();
+    tooSoon.send(registerMessage(p, "host"));
+    expect((await tooSoon.next()).code).toBe("already_connected");
+
+    await advance(3000);
+    const replacement = await connectHost(p);
+    expect(replacement.registered.role).toBe("host");
+    expect((await host.closed).reason).toBe("replaced");
+    expect((await client.closed).reason).toBe("host_disconnected");
+    const rejoined = await connectClient(p);
+    expect(await rejoined.next()).toEqual({ type: "peer", online: true });
+  });
+
+  it("the keepalive repeats each peer's current ice, including servers refreshed by a renewal", async () => {
+    turn.reset();
+    const token = await entitlementToken();
+    const p = await pairing();
+    const host = await connectHost(p, { features: renewing });
+    const client = await connectClient(p, { features: [...renewing, "remote.1"], entitlement: token });
+    const hostIce = await host.next();
+    expect(hostIce.type).toBe("ice");
+    await host.next(); await client.next();
+    await runInDurableObject(stub(p.room), (instance: RoomDO) => {
+      const room = instance as unknown as { config: Record<string, unknown> };
+      room.config = { ...room.config, keepaliveMs: 50_000 };
+    });
+
+    await advance(51_000);
+    await runDurableObjectAlarm(stub(p.room));
+    expect(await host.next()).toEqual(hostIce);
+    expect(await client.next()).toEqual(client.ice);
+
+    await advance(21 * minute);
+    client.send({ type: "renew" });
+    const refreshed = await client.next();
+    expect(refreshed.servers).toBeDefined();
+    expect(refreshed.servers).not.toEqual(client.ice.servers);
+    await advance(51_000);
+    await runDurableObjectAlarm(stub(p.room));
+    expect(await client.next()).toEqual({ type: "ice", servers: refreshed.servers });
+    expect(await host.next()).toEqual(hostIce);
   });
 });
