@@ -66,7 +66,8 @@ export function initStatusChip() {
   };
   if (document.querySelector(".hero-demo") && motionAllowed()) {
     document.addEventListener("farside:contact", on, { once: true });
-    setTimeout(on, 4000);
+    // Fallback only: the demo waits for the web fonts and an idle moment, then taps Connect about 2.7 s in.
+    setTimeout(on, 7000);
   } else if (motionAllowed()) setTimeout(on, 700);
   else on();
 }

@@ -113,9 +113,7 @@ export class Instance {
       while (!tok.dead) {
         this.v.reset(this);
         this.field.clear();
-        const t0 = this.clock.time;
         if (!(await this.v.run(this, tok))) return;
-        this.fig.dataset.loopMs = String(Math.round(this.clock.time - t0));
       }
     })();
   }
@@ -124,6 +122,7 @@ export class Instance {
     const cw = this.fig.clientWidth, ch = this.fig.clientHeight;
     if (!cw || !ch) return;
     const tall = cw / ch < 0.95;
+    const flipped = !!this.L && tall !== this.tall;
     const L = this.v.layout(tall);
     this.L = L;
     this.tall = tall;
@@ -142,6 +141,10 @@ export class Instance {
     this.status.style.top = `${L.status}px`;
     this.field.resize(L.W, L.H, k);
     this.rig.tick(0);
+    // Crossing between the tall and wide layouts moves the devices; the script's rectangles are from the old
+    // one, so start the loop (or the still frame) again.
+    if (flipped && this.running) this.start();
+    else if (flipped && this.running === false) this.showStill();
   }
 
   place() {

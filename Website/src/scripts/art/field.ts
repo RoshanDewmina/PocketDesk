@@ -1,6 +1,6 @@
 // Halftone field from concept 21: a scene is drawn small (one pixel per cell), read back, and every
 // cell becomes a dot whose radius follows the luminance. Ember (blue channel) picks the dot colour.
-// DOM-free, so it runs on the main thread or in a worker on an OffscreenCanvas.
+// DOM-free: it draws on any 2D canvas context (the gap demo, and the build-time art in render.ts).
 
 import { rng, type Ctx } from "./shapes";
 

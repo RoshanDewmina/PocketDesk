@@ -34,7 +34,7 @@ export async function settle(page: Page) {
     await new Promise((r) => setTimeout(r, 1200));
     window.scrollTo({ top: 0, behavior: "instant" });
   });
-  // Let the hero finish its entrance and land the contact beat.
+  // Let the hero finish its entrance and the demo reach its Connect tap.
   await new Promise((r) => setTimeout(r, 2600));
 }
 

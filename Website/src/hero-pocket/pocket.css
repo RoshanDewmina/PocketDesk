@@ -103,6 +103,11 @@
 /* Two greys in the drawn Mac scene sit just under 4.5:1; lifted as in #see. */
 .lx .s-tb span { color: #9d988f; }
 .lx .ch-in .ph { color: #938e86; }
-/* The pause button stops the loop; stop the little blinking and pulsing too. */
+/* The pause button stops the loop; stop the Mac scene's blinking caret and progress bar and the status pulse too. */
 .motion-off .lx .s-cr,
+.motion-off .lx .mu-bar i,
 .motion-off .lx-status i { animation: none; }
+/* The stage needs the script to size and place it; without one, leave no empty box. */
+@media (scripting: none) {
+  .lx { display: none; }
+}

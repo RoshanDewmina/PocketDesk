@@ -1,5 +1,5 @@
-// Dev helper: measures how long the hero's animation-frame callbacks take (mobile emulation, real CPU),
-// so the canvas stays well under the 50 ms long-task line even with Lighthouse's 4x CPU slowdown.
+// Dev helper: measures how long the page's animation-frame callbacks take (mobile emulation, real CPU), mostly
+// the hero demo's, so they stay well under the 50 ms long-task line even with Lighthouse's 4x CPU slowdown.
 //   bun scripts/frame-cost.ts [--width 412 --height 823 --dpr 1.75]
 
 import { launch } from "./chrome";
