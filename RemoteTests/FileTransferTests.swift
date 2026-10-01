@@ -861,4 +861,21 @@ final class HostFileLinkRevocationTests: XCTestCase {
             service.reset(); await withCheckedContinuation { c in queue.async { c.resume() } }
         }
     }
+    /// MS05: no "Allow file transfer" switch. A stored legacy `false` is ignored; the view-only scope still refuses.
+    func testFilesNeedOnlyALiveFullScopeSessionAndIgnoreTheRemovedMacSetting() throws {
+        let suite = "MS05-\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "allowFileTransfer")
+        _ = HostPreferences(defaults: defaults)
+        XCTAssertNil(HostFileTransferService.refusal(viewOnlyScope: false, sessionLive: true))
+        XCTAssertEqual(HostFileTransferService.refusal(viewOnlyScope: true, sessionLive: true), .disabled)
+        XCTAssertEqual(HostFileTransferService.refusal(viewOnlyScope: false, sessionLive: false), .notAllowed)
+        let service = HostFileTransferService(destination: { nil })
+        var sent: [FileFrame] = []
+        service.engine.sendControl = { sent.append($0); return true }
+        service.refusal = { HostFileTransferService.refusal(viewOnlyScope: true, sessionLive: true) }
+        service.receive(.request(String(repeating: "b", count: 32)))
+        XCTAssertEqual(sent.last?.status, FileTransferStatus.disabled.rawValue, "view-only scope keeps its refusal")
+        XCTAssertEqual(HostFileTransferService.defaultDestination()?.pathComponents.suffix(2), ["Downloads", "Farside"])
+    }
 }

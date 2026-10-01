@@ -89,7 +89,6 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var openAtLogin = false
     @Published private(set) var chimeOnConnect: Bool
     @Published private(set) var allowSystemAudio = false
-    @Published private(set) var allowFileTransfer: Bool
     @Published private(set) var timedPause = HostTimedPause()
     @Published private(set) var unavailableReason: HostAvailabilityNote?
     @Published private(set) var loginItemState: HostBackgroundItemState = .off
@@ -433,7 +432,6 @@ final class RemoteHostModel: ObservableObject {
             openAtLogin: openAtLogin,
             consentPending: consentPending,
             chimeOnConnect: chimeOnConnect,
-            allowFileTransfer: !captureScopeViewOnly && allowFileTransfer,
             wakeHelperHostID: hasPairedPhone ? connection.invitation?.durableHostID : nil,
             wakeOwnerPairID: hasPairedPhone ? connection.invitation?.ownerPairID : nil,
             localOnly: connection.localOnly,
@@ -505,7 +503,6 @@ final class RemoteHostModel: ObservableObject {
         keepAwakeEnabled = preferences.keepAwake
         consentPending = preferences.consentPending()
         chimeOnConnect = preferences.chimeOnConnect
-        allowFileTransfer = preferences.allowFileTransfer
         allowSystemAudio = preferences.allowSystemAudio
         captureScopeNeedsSelection = preferences.captureScopeRequiresSelection
         wantsSharing = preferences.sharingMayResumeWithoutScopeSelection
@@ -1057,18 +1054,11 @@ final class RemoteHostModel: ObservableObject {
         if connection.connected, active, !phonePause.isPaused && !liveViewOnly, sessionState == .picture { beginCapture() }
     }
 
-    func setAllowFileTransfer(_ enabled: Bool) {
-        allowFileTransfer = enabled
-        preferences.allowFileTransfer = enabled
-        if !enabled { fileTransfer.revoke() }
-    }
-
-    /// File transfer needs this Mac's setting and a current, unpaused session. It does not need control:
-    /// the setting is the owner's permission, and files only land in Downloads › Farside, never opened.
+    /// File transfer needs a full-control sharing scope and a current, unpaused session (MS05: no Mac setting).
+    /// Received files only land quarantined in Downloads › Farside, never opened; Mac-to-phone needs a pick here.
     private var fileTransferRefusal: FileTransferStatus? {
-        guard !captureScopeViewOnly, allowFileTransfer else { return .disabled }
-        guard connection.connected, active, !phonePause.isPaused && !liveViewOnly && !away.isLocking else { return .notAllowed }
-        return nil
+        HostFileTransferService.refusal(viewOnlyScope: captureScopeViewOnly, sessionLive: connection.connected && active
+            && !phonePause.isPaused && !liveViewOnly && !away.isLocking)
     }
 
     private func wireFileTransfer() {

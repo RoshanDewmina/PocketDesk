@@ -41,6 +41,13 @@ final class HostFileTransferService {
         engine.onFinish = { [weak self] finish in self?.finished(finish) }
     }
 
+    /// MS05: there is no Mac setting. A view-only sharing scope refuses files; otherwise only a current,
+    /// unpaused session may transfer. A stored legacy `allowFileTransfer` value is never read.
+    nonisolated static func refusal(viewOnlyScope: Bool, sessionLive: Bool) -> FileTransferStatus? {
+        if viewOnlyScope { return .disabled }
+        return sessionLive ? nil : .notAllowed
+    }
+
     nonisolated static func defaultDestination() -> URL? {
         FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Farside", isDirectory: true)
@@ -54,7 +61,7 @@ final class HostFileTransferService {
         engine.receive(frame)
     }
 
-    /// Authority changed mid-transfer (the setting was turned off): stop and tell the phone.
+    /// Authority changed mid-transfer: stop and tell the phone.
     func revoke() {
         effectLease.retire(); effectLease = TransferEffectLease()
         if let linkOfferID { linkOffer.dismiss(matching: linkOfferID) }; linkOfferID = nil

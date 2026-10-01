@@ -157,7 +157,6 @@ extension HostActions {
             setChimeOnConnect: model.setChimeOnConnect,
             setLocalOnly: model.setLocalOnly,
             setAllowSystemAudio: model.setAllowSystemAudio,
-            setAllowFileTransfer: model.setAllowFileTransfer,
             setOpenAtLogin: model.setOpenAtLogin,
             confirmBackgroundChoices: { model.confirmBackgroundChoices(openAtLogin: $0, keepAwake: $1) },
             setAutomaticRecovery: model.setAutomaticRecovery,

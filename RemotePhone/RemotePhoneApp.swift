@@ -1615,7 +1615,7 @@ final class PhoneRemoteModel: ObservableObject {
     var fileTransferSupported: Bool { hostFeatures.contains(SessionFeature.fileTransfer) }
 
     /// Files need a live foreground session and the Mac's `file` channel. Control is not required:
-    /// the Mac's own "Allow file transfer" setting decides, and it answers with a clear refusal.
+    /// the Mac answers with a clear refusal when its sharing scope does not allow files.
     var fileTransferAvailable: Bool {
         !captureScopeViewOnly && !viewOnlyConfirmed && !pendingViewOnlyStart && !awaitingViewOnlyExit && !pipBackground && fileTransferSupported && connection.connected && connection.media?.fileChannelOpen == true
             && !privacyShield && !contentConcealed
