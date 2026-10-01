@@ -205,3 +205,23 @@ struct HostAXWebPrewarm: Sendable {
         } ?? .laneBusy
     }
 }
+
+/// When a live controlled session starts (or resumes) with a Chromium app already frontmost, no
+/// activation notification arrives, so the start itself is the moment to ask.
+struct HostAXPrewarmEdge {
+    private(set) var wasActive = false
+
+    /// True only when the live-controlled-session predicate flips from false to true.
+    mutating func update(active: Bool) -> Bool {
+        defer { wasActive = active }
+        return active && !wasActive
+    }
+}
+
+extension HostAXWebPrewarm {
+    func controlStarted(frontmost app: NSRunningApplication?) async -> HostAXPrewarmOutcome {
+        guard let app else { return .native }
+        return await appActivated(pid: app.processIdentifier, launched: app.launchDate?.timeIntervalSince1970,
+                                  bundleURL: app.bundleURL, sessionActive: true)
+    }
+}

@@ -214,6 +214,7 @@ final class RemoteHostModel: ObservableObject {
     private var inputFreshness = NativeInputFreshness()
     private var textFocusRevision: UInt64 = 0
     private var textFocusTask: Task<Void, Never>?
+    private var axPrewarmEdge = HostAXPrewarmEdge()
     private var captureHealthy = false
     private var sessionState: HostSessionState = .picture
     private var couchHealthy = false
@@ -2166,6 +2167,7 @@ final class RemoteHostModel: ObservableObject {
         let lifecycleTimer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                self.reconcileAXPrewarm()
                 if self.phonePause.isPaused {
                     if self.phonePause.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.expirePhonePause() }
                     return
@@ -2686,6 +2688,15 @@ final class RemoteHostModel: ObservableObject {
     private var axPrewarmSessionActive: Bool {
         active && !terminating && connection.connected && !phonePause.isPaused &&
             sessionControlAllowed && input.enabled && controlPermission.isGranted
+    }
+
+    /// Checked on the 4 Hz lifecycle tick: when control becomes effective, ask the app already in front.
+    private func reconcileAXPrewarm() {
+        guard axPrewarmEdge.update(active: axPrewarmSessionActive) else { return }
+        let front = NSWorkspace.shared.frontmostApplication
+        Task.detached(priority: .utility) {
+            _ = await HostAXWebPrewarm().controlStarted(frontmost: front)
+        }
     }
 
     private func prewarmAXTree(for app: NSRunningApplication) {

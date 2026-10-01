@@ -253,4 +253,20 @@ final class HostAXWebAccessTests: XCTestCase {
         XCTAssertNotNil(activator.activateIfNeeded(HostAXProcessKey(pid: 4247, launched: 1), engine: .electron,
                                                    set: { _ in .applied }, isOn: { _ in false }))
     }
+
+    func testControlStartPrewarmsTheFrontmostChromiumAppOnce() async {
+        let writes = Writes()
+        let warm = prewarm(engine: .chromium, writes: writes, manual: .applied)
+        var edge = HostAXPrewarmEdge()
+        var outcomes: [HostAXPrewarmOutcome] = []
+        // Session starts with the app already frontmost, stays on, ends, then control starts again.
+        for active in [false, true, true, true, false, true] where edge.update(active: active) {
+            outcomes.append(await warm.appActivated(pid: 5150, launched: 9, bundleURL: app, sessionActive: true))
+        }
+        XCTAssertEqual(outcomes, [.requested(HostAXWebActivation(attribute: .manual, outcome: .applied)), .alreadyAsked])
+        XCTAssertEqual(writes.attributes, [.manual], "Exactly one request for the process")
+        XCTAssertEqual(writes.pids, [5150])
+        let nobody = await warm.controlStarted(frontmost: nil)
+        XCTAssertEqual(nobody, .native)
+    }
 }
