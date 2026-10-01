@@ -2422,7 +2422,6 @@ struct NativeSessionView: View {
         }
         bigTextSection
         Section { FullColorSettingRows() } header: { sectionHeader("Experimental full color") }
-        Section { StillTextSettingRows() } header: { sectionHeader("Still text") }
         Section {
             SmoothMotionPictureRows(mode: $smoothMotion)
         } header: {
