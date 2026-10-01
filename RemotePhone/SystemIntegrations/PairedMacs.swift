@@ -65,11 +65,42 @@ enum PairedMacs {
     }
 }
 
-/// The last time this phone reached its Mac, as the Home card records it.
+/// The last time this phone reached each Mac, keyed by a digest of the Mac's room.
 enum LastReached {
-    static func date(in defaults: UserDefaults = .standard) -> Date? {
-        let stamp = defaults.double(forKey: HomeView.lastReachedKey)
-        return stamp > 0 ? Date(timeIntervalSince1970: stamp) : nil
+    static let defaultsKey = "lastReachedByMac"
+    static let legacyDefaultsKey = "lastReachedAt"
+
+    static func macKey(room: String) -> String { String(SecureRandom.digest("farside-reached|" + room).prefix(24)) }
+
+    static func date(room: String?, in defaults: UserDefaults = .standard) -> Date? {
+        guard let room, let stamp = all(in: defaults)[macKey(room: room)], stamp > 0 else { return nil }
+        return Date(timeIntervalSince1970: stamp)
+    }
+
+    static func record(_ date: Date, room: String?, in defaults: UserDefaults = .standard) {
+        guard let room else { return }
+        var stamps = all(in: defaults)
+        stamps[macKey(room: room)] = date.timeIntervalSince1970
+        defaults.set(stamps, forKey: defaultsKey)
+    }
+
+    static func forget(room: String, in defaults: UserDefaults = .standard) {
+        var stamps = all(in: defaults)
+        guard stamps.removeValue(forKey: macKey(room: room)) != nil else { return }
+        defaults.set(stamps, forKey: defaultsKey)
+    }
+
+    /// The single pre-per-Mac stamp was written by the last Mac reached, which is almost always the
+    /// selected one, so it moves to that Mac once instead of disappearing.
+    static func adoptLegacy(room: String?, in defaults: UserDefaults = .standard) {
+        let legacy = defaults.double(forKey: legacyDefaultsKey)
+        guard legacy > 0, let room else { return }
+        defaults.removeObject(forKey: legacyDefaultsKey)
+        if date(room: room, in: defaults) == nil { record(Date(timeIntervalSince1970: legacy), room: room, in: defaults) }
+    }
+
+    private static func all(in defaults: UserDefaults) -> [String: Double] {
+        defaults.dictionary(forKey: defaultsKey) as? [String: Double] ?? [:]
     }
 
     /// "11:48 PM", "yesterday 11:48 PM" or "Sep 27": short enough to speak.

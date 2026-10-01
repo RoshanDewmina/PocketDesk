@@ -163,7 +163,7 @@ final class FarsideIntentsTests: XCTestCase {
     func testMacStatusSpeaksPlainlyAndNeverCallsSilenceSleep() throws {
         let mac = try TestPairing.mac(name: "Studio Mac")
         let service = MacStatusService()
-        service.lastReached = { nil }
+        service.lastReached = { _ in nil }
         XCTAssertEqual(service.report(for: mac, outcome: .answering),
                        .init(state: .awake, spoken: "Studio Mac answered just now and looks awake."))
         let silent = service.report(for: mac, outcome: .notAnswering)
@@ -187,7 +187,7 @@ final class FarsideIntentsTests: XCTestCase {
         let now = calendar.date(from: DateComponents(year: 2026, month: 9, day: 29, hour: 12, minute: 0))!
         let earlier = calendar.date(from: DateComponents(year: 2026, month: 9, day: 29, hour: 9, minute: 5))!
         service.now = { now }
-        service.lastReached = { earlier }
+        service.lastReached = { _ in earlier }
         let report = service.report(for: mac, outcome: .notAnswering)
         XCTAssertEqual(report.spoken, "I have not heard from Studio Mac since \(earlier.formatted(date: .omitted, time: .shortened)). It may be asleep, off or offline.")
         let yesterday = calendar.date(byAdding: .day, value: -1, to: earlier)!

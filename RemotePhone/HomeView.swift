@@ -4,7 +4,6 @@ struct PhoneRemoteView: View {
     @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
     @StateObject private var onboarding = OnboardingFlow()
-    @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
     /// A live session stays on screen while it reconnects by itself, so zoom and pan survive a blip.
     @State private var sessionHeld = false
     /// `showsSession`, changed inside an animation so the session opens and closes with D38's motion.
@@ -85,7 +84,7 @@ struct PhoneRemoteView: View {
             if connected {
                 // Finger meets pointer (D38). A held session coming back gets its own "back" beat.
                 if !sessionHeld { ConnectHaptics.shared.play(.meet) }
-                lastReachedAt = Date().timeIntervalSince1970
+                LastReached.record(Date(), room: connection.invitation?.room)
                 sessionHeld = true
             }
         }
@@ -134,8 +133,6 @@ enum LaunchOptions {
 }
 
 struct HomeView: View {
-    static let lastReachedKey = "lastReachedAt"
-
     @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
     @ObservedObject var onboarding: OnboardingFlow
@@ -168,7 +165,7 @@ struct HomeView: View {
     @ObservedObject private var anywhere = AnywhereStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
-    @AppStorage(HomeView.lastReachedKey) private var lastReachedAt = 0.0
+    @State private var lastReached: Date?
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.dynamicTypeSize) private var typeSize
@@ -221,7 +218,7 @@ struct HomeView: View {
             PairingSheet(model: model, entry: entry, replacing: connection.invitation?.name) { pairedInSheet = true }
         }
         .sheet(isPresented: $showDetails) {
-            ConnectionDetailsSheet(connection: connection, health: health)
+            ConnectionDetailsSheet(model: model, connection: connection, health: health)
         }
         .sheet(isPresented: $showTroubleshoot) {
             TroubleshootSheet(macName: macName ?? "Your Mac", retry: { connect(mode: model.attemptMode) })
@@ -251,6 +248,7 @@ struct HomeView: View {
         .onChange(of: model.couchRefusal) { _, _ in showCouchRefusalIfNeeded() }
         .onAppear {
             refreshSavedMacs()
+            refreshLastReached()
             showDepartureIfNeeded()
             showCouchRefusalIfNeeded()
             if macName != nil && connection.invitation != nil { onboarding.offerCoach() }
@@ -261,18 +259,23 @@ struct HomeView: View {
         }
         .onChange(of: connection.invitation) { _, _ in
             refreshSavedMacs()
-            lastReachedAt = 0
+            refreshLastReached()
             checkedHealth = nil
             lastFailure = nil
             lastBattery = nil
             model.refreshSendToMac(force: true)
         }
-        .onChange(of: connection.connected) { _, _ in refreshLastBattery() }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { refreshSavedMacs(); refreshLastBattery() } }
+        .onChange(of: connection.connected) { _, _ in refreshLastBattery(); refreshLastReached() }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { refreshSavedMacs(); refreshLastBattery(); refreshLastReached() } }
     }
 
     private func refreshLastBattery() {
-        lastBattery = connection.connected ? nil : model.vitalsMemory.lastSeen(now: Date())
+        lastBattery = connection.connected ? nil : model.vitalsMemory.lastSeen(room: connection.invitation?.room, now: Date())
+    }
+
+    private func refreshLastReached() {
+        LastReached.adoptLegacy(room: connection.invitation?.room)
+        lastReached = LastReached.date(room: connection.invitation?.room)
     }
 
     // MARK: Sections
@@ -481,11 +484,7 @@ struct HomeView: View {
             .accessibilityIdentifier("home.pairedMacs")
             Rectangle().fill(Farside.Palette.line).frame(height: 1)
             VStack(alignment: .leading, spacing: 6) {
-                Toggle("Local network only", isOn: Binding(get: { connection.localOnly }, set: { value in
-                    model.disconnect()
-                    connection.setLocalOnly(value)
-                    model.refreshSendToMac(force: true)
-                }))
+                Toggle("Local network only", isOn: Binding(get: { connection.localOnly }, set: { model.setLocalOnly($0) }))
                 .accessibilityIdentifier("home.localOnly")
                 .disabled(!connection.localOnly && connection.invitation?.hasOwnerLocalIdentity != true)
                 Text(connection.invitation == nil
@@ -524,10 +523,6 @@ struct HomeView: View {
         .farsidePlate(Farside.Radius.card, fill: .clear)
     }
 
-    private var lastReached: Date? {
-        lastReachedAt > 0 ? Date(timeIntervalSince1970: lastReachedAt) : nil
-    }
-
     /// Connection Health for the card: the newest check, else what the last attempt ended with.
     private var health: ConnectionHealth? {
         guard status.tone != .busy else { return nil }
@@ -562,7 +557,7 @@ struct HomeView: View {
             checking = false
             guard connection.invitation == invitation, !connection.localOnly,
                   !connection.isRunning, !connection.connected else { return }
-            MacWidgetSync.shared.update(macName: invitation.name, observed: MacWidgetSync.presence(for: outcome))
+            MacWidgetSync.shared.update(macName: invitation.name, room: invitation.room, observed: MacWidgetSync.presence(for: outcome))
             checkedHealth = .checked(outcome, lastReached: lastReached.map { LastReached.spoken($0) })
         }
     }
@@ -600,9 +595,10 @@ struct HomeView: View {
             guard connection.revoke(expectedInvitation: intendedInvitation) else { return }
             model.bigTextMemory.forget(room: room)
             model.refreshSendToMac(force: true)
-            model.vitalsMemory.forget()
+            model.vitalsMemory.forget(room: room)
             refreshLastBattery()
-            lastReachedAt = 0
+            LastReached.forget(room: room)
+            lastReached = nil
             lastFailure = nil
             checkedHealth = nil
         }
@@ -692,7 +688,7 @@ struct HomeView: View {
             connection.status = "Ready to connect"
         }
         if LaunchOptions.has("--ui-last-reached") {
-            lastReachedAt = Calendar.current.date(bySettingHour: 23, minute: 48, second: 0, of: Date())?.timeIntervalSince1970 ?? 0
+            lastReached = Calendar.current.date(bySettingHour: 23, minute: 48, second: 0, of: Date())
         }
         guard let kind = LaunchOptions.value("--ui-error=") else { return }
         let name = macName ?? "MacBook Air"
@@ -965,6 +961,7 @@ private struct HomeRow: View {
 }
 
 private struct ConnectionDetailsSheet: View {
+    @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
     var health: ConnectionHealth?
     @Environment(\.dismiss) private var dismiss
@@ -1016,6 +1013,12 @@ private struct ConnectionDetailsSheet: View {
                     } header: {
                         Text("Local link proof").farsideCaption()
                     }
+                }
+                Section {
+                    DiagnosticReportRows(model: model)
+                        .listRowBackground(Farside.Palette.panel)
+                } header: {
+                    Text("Test My Mac and session reports").farsideCaption()
                 }
                 Section {
                     Toggle("Relay-only test", isOn: Binding(get: { connection.forceRelay },

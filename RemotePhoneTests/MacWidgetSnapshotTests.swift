@@ -84,12 +84,12 @@ final class MacWidgetSnapshotTests: XCTestCase {
         var reloads = 0
         sync.reload = { reloads += 1 }
         sync.now = { self.start }
-        sync.lastReached = { nil }
-        sync.update(macName: "Studio Mac", observed: .awake)
-        sync.update(macName: "Studio Mac", observed: .awake)
-        sync.update(macName: "Studio Mac", observed: nil)
+        sync.lastReached = { _ in nil }
+        sync.update(macName: "Studio Mac", room: "studio-room", observed: .awake)
+        sync.update(macName: "Studio Mac", room: "studio-room", observed: .awake)
+        sync.update(macName: "Studio Mac", room: "studio-room", observed: nil)
         XCTAssertEqual(reloads, 1)
-        sync.update(macName: nil, observed: nil)
+        sync.update(macName: nil, room: nil, observed: nil)
         XCTAssertEqual(reloads, 2)
     }
 }

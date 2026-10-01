@@ -16,4 +16,9 @@ struct PresentationLeasePolicy {
                                       viewOnlyConfirmed: Bool, now: TimeInterval) -> Bool {
         state == .active && viewOnlyConfirmed && admission?.permits(at: now) == true
     }
+    /// Entering the background needs live playback, but the PiP pause button must hold the session, not end it.
+    static func mayHoldBackground(state: LivePiPPolicy.State, admission: VideoPresentationAdmission?,
+                                  viewOnlyConfirmed: Bool, now: TimeInterval) -> Bool {
+        (state == .active || state == .paused) && viewOnlyConfirmed && admission?.permits(at: now) == true
+    }
 }

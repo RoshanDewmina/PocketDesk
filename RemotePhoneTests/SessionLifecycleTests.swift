@@ -72,6 +72,38 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(model.pipState, .active)
         XCTAssertFalse(packets().contains { $0.action.action == "pause" || $0.action.liveViewOnly == false })
     }
+    func testBackgroundPiPPauseHoldsTheSessionAndResumeContinues() throws {
+        let (model, _, platform, packets) = try activePiPModel()
+        defer { model.disconnect() }
+        let lifetime = try XCTUnwrap(model.pipAdmission).lifetime
+        model.sceneChanged(.inactive); model.sceneChanged(.background)
+        XCTAssertTrue(model.pipBackgroundForTesting)
+        model.livePiP.setPlayingForTesting(false, on: platform)
+        XCTAssertEqual(model.pipState, .paused)
+        XCTAssertTrue(model.connection.connected, "The PiP pause button holds the session")
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 0.3)
+        XCTAssertEqual(model.pipState, .paused, "The heartbeat keeps a paused background PiP admitted")
+        XCTAssertTrue(model.pipAdmission?.lifetime === lifetime)
+        XCTAssertTrue(model.connection.connected)
+        model.livePiP.setPlayingForTesting(true, on: platform)
+        XCTAssertEqual(model.pipState, .active)
+        XCTAssertTrue(model.connection.connected); XCTAssertTrue(model.pipBackgroundForTesting)
+        XCTAssertFalse(packets().contains { $0.action.action == "pause" || $0.action.liveViewOnly == false })
+    }
+    func testOpeningTheAppFromAPausedBackgroundPiPKeepsTheSession() throws {
+        let (model, _, platform, packets) = try activePiPModel()
+        defer { model.disconnect() }
+        model.sceneChanged(.inactive); model.sceneChanged(.background)
+        model.livePiP.setPlayingForTesting(false, on: platform)
+        model.sceneChanged(.inactive)
+        XCTAssertTrue(model.connection.connected, "The app-switcher return passes .inactive with the privacy shield up")
+        XCTAssertEqual(model.pipState, .paused)
+        model.sceneChanged(.active)
+        XCTAssertTrue(model.connection.connected)
+        XCTAssertFalse(model.pipBackgroundForTesting)
+        XCTAssertTrue(packets().contains { $0.action.action == "viewOnly" && $0.action.liveViewOnly == false },
+                      "Foreground return asks the Mac to leave view-only, as it does for a playing PiP")
+    }
     func testControlCenterReturnKeepsSamePiPConsentAndLifetime() throws {
         let (model, _, _, packets) = try activePiPModel()
         defer { model.disconnect() }
@@ -383,5 +415,32 @@ final class ViewportPreferenceTests: XCTestCase {
     func testUnknownStoredValueFallsBackToFill() {
         defaults.set("stretch", forKey: ViewportPreference.key)
         XCTAssertEqual(ViewportPreference.stored(in: defaults), .fill)
+    }
+}
+
+@MainActor
+final class LocalOnlyPreferenceTests: XCTestCase {
+    private let suite = "LocalOnlyPreferenceTests"
+    private var defaults: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        defaults = UserDefaults(suiteName: suite)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suite)
+        super.tearDown()
+    }
+
+    func testLocalNetworkOnlySurvivesRelaunch() {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults)
+        XCTAssertFalse(model.connection.localOnly)
+        model.setLocalOnly(true)
+        XCTAssertTrue(model.connection.localOnly)
+        XCTAssertTrue(PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults).connection.localOnly)
+        model.setLocalOnly(false)
+        XCTAssertFalse(PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults).connection.localOnly)
     }
 }

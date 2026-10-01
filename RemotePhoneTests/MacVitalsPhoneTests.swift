@@ -42,6 +42,44 @@ final class MacVitalsPhoneTests: XCTestCase {
                   lowPowerMode: false, load: load)
     }
 
+    // MARK: Per Mac
+
+    func testLastReachedIsKeptPerMac() throws {
+        let studio = Date(timeIntervalSince1970: 1_790_000_000), laptop = studio.addingTimeInterval(600)
+        XCTAssertNil(LastReached.date(room: "studio-room", in: defaults))
+        LastReached.record(studio, room: "studio-room", in: defaults)
+        LastReached.record(laptop, room: "laptop-room", in: defaults)
+        XCTAssertEqual(LastReached.date(room: "studio-room", in: defaults), studio, "Reaching another Mac never changes this one")
+        XCTAssertEqual(LastReached.date(room: "laptop-room", in: defaults), laptop)
+        LastReached.forget(room: "laptop-room", in: defaults)
+        XCTAssertNil(LastReached.date(room: "laptop-room", in: defaults))
+        XCTAssertEqual(LastReached.date(room: "studio-room", in: defaults), studio)
+        XCTAssertNil(LastReached.date(room: nil, in: defaults))
+        let stored = try XCTUnwrap(defaults.dictionary(forKey: LastReached.defaultsKey))
+        XCTAssertFalse(stored.keys.contains("studio-room"), "Keyed by a digest, never the room")
+    }
+
+    func testTheOldSharedLastReachedMovesToTheSelectedMacOnce() {
+        let legacy = Date(timeIntervalSince1970: 1_790_000_000)
+        defaults.set(legacy.timeIntervalSince1970, forKey: LastReached.legacyDefaultsKey)
+        LastReached.adoptLegacy(room: "studio-room", in: defaults)
+        XCTAssertEqual(LastReached.date(room: "studio-room", in: defaults), legacy)
+        XCTAssertNil(defaults.object(forKey: LastReached.legacyDefaultsKey))
+        LastReached.adoptLegacy(room: "laptop-room", in: defaults)
+        XCTAssertNil(LastReached.date(room: "laptop-room", in: defaults))
+    }
+
+    func testMacStatusSpeaksTheAskedMacsLastReached() throws {
+        let studio = try TestPairing.mac(name: "Studio Mac"), laptop = try TestPairing.mac(name: "Laptop")
+        let reached = Date(timeIntervalSince1970: 1_790_000_000)
+        LastReached.record(reached, room: studio.invitation?.room, in: defaults)
+        let service = MacStatusService()
+        service.lastReached = { LastReached.date(room: $0.invitation?.room, in: self.defaults) }
+        XCTAssertTrue(service.report(for: studio, outcome: .notAnswering).spoken.contains("since"))
+        XCTAssertEqual(service.report(for: laptop, outcome: .notAnswering).spoken,
+                       "I could not reach Laptop. It may be asleep, off or offline.")
+    }
+
     // MARK: Model
 
     func testVitalsNeedTheFeature() throws {
@@ -87,16 +125,16 @@ final class MacVitalsPhoneTests: XCTestCase {
         let model = model()
         try send(battery(4), to: model)
         model.connection.stop()
-        XCTAssertEqual(model.vitalsMemory.lastSeen(now: Date())?.percent, 4)
+        XCTAssertEqual(model.vitalsMemory.lastSeen(room: nil, now: Date())?.percent, 4)
         XCTAssertNil(model.macVitals)
         XCTAssertFalse(model.macVitalsSupported)
     }
 
     func testAFailedAttemptKeepsTheLastSeenBattery() {
         let model = model(connected: false)
-        model.vitalsMemory.record(battery(4), at: Date())
+        model.vitalsMemory.record(battery(4), at: Date(), room: nil)
         model.connection.stop()
-        XCTAssertEqual(model.vitalsMemory.lastSeen(now: Date())?.percent, 4,
+        XCTAssertEqual(model.vitalsMemory.lastSeen(room: nil, now: Date())?.percent, 4,
                        "An attempt that never got a status knows nothing new about the battery")
     }
 
@@ -107,26 +145,26 @@ final class MacVitalsPhoneTests: XCTestCase {
         let receive = try XCTUnwrap(model.connection.onControl)
         receive(try JSONEncoder().encode(sleeping))
         model.connection.stop()
-        XCTAssertEqual(model.vitalsMemory.lastSeen(now: Date())?.percent, 4,
+        XCTAssertEqual(model.vitalsMemory.lastSeen(room: nil, now: Date())?.percent, 4,
                        "The Mac's last status before sleeping carries no vitals and must not erase the reading")
         XCTAssertEqual(model.lastDeparture, .sleeping)
     }
 
     func testAnOlderMacKeepsTheLastSeenBattery() throws {
         let model = model()
-        model.vitalsMemory.record(battery(4), at: Date())
+        model.vitalsMemory.record(battery(4), at: Date(), room: nil)
         try send(nil, to: model, features: SessionFeature.host.filter { $0 != SessionFeature.macVitals })
         model.connection.stop()
-        XCTAssertEqual(model.vitalsMemory.lastSeen(now: Date())?.percent, 4,
+        XCTAssertEqual(model.vitalsMemory.lastSeen(room: nil, now: Date())?.percent, 4,
                        "A Mac that never reports vitals knows nothing new about the battery")
     }
 
     func testAHealthySessionClearsTheLastSeen() throws {
         let model = model()
-        model.vitalsMemory.record(battery(4), at: Date())
+        model.vitalsMemory.record(battery(4), at: Date(), room: nil)
         try send(MacVitals(power: "ac", batteryPercent: 30, charging: true, load: "ok"), to: model)
         model.connection.stop()
-        XCTAssertNil(model.vitalsMemory.lastSeen(now: Date()))
+        XCTAssertNil(model.vitalsMemory.lastSeen(room: nil, now: Date()))
     }
 
     func testANewSessionAnnouncesAgain() throws {
@@ -162,7 +200,7 @@ final class MacVitalsPhoneTests: XCTestCase {
         XCTAssertNil(model.macVitals)
         XCTAssertNil(model.sessionNotice, "A late low-battery status cannot publish a new notice")
         model.connection.stop()
-        XCTAssertNil(model.vitalsMemory.lastSeen(now: Date()), "A late status cannot become remembered battery evidence")
+        XCTAssertNil(model.vitalsMemory.lastSeen(room: nil, now: Date()), "A late status cannot become remembered battery evidence")
     }
 
     #if DEBUG

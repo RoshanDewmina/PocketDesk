@@ -293,6 +293,7 @@ final class RemoteHostModel: ObservableObject {
         let generation = captureScopeSelectionGeneration
         captureScopeSelectionTask?.cancel()
         allowSystemAudio = false
+        preferences.allowSystemAudio = false
         connection.media?.setSystemAudioEnabled(false)
         capture.setSystemAudioEnabled(false)
         guests.endAll()
@@ -505,6 +506,7 @@ final class RemoteHostModel: ObservableObject {
         consentPending = preferences.consentPending()
         chimeOnConnect = preferences.chimeOnConnect
         allowFileTransfer = preferences.allowFileTransfer
+        allowSystemAudio = preferences.allowSystemAudio
         captureScopeNeedsSelection = preferences.captureScopeRequiresSelection
         wantsSharing = preferences.sharingMayResumeWithoutScopeSelection
         if preferences.captureScopeRequiresSelection { preferences.sharingEnabled = false }
@@ -529,6 +531,7 @@ final class RemoteHostModel: ObservableObject {
         startWatchdog()
         startAwayMode()
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.captureScopeViewOnly && !self.away.isLocking && !self.away.wantsCover && !self.active && !self.connection.connected }
+        if preferences.localOnly { connection.setLocalOnly(true) }
         connection.restore()
         connection.startAllowed = { [weak self] in self?.serverRemovalPending == false && self?.captureScopeNeedsSelection == false }
         connection.shareBlocker = { [weak self] in
@@ -986,10 +989,14 @@ final class RemoteHostModel: ObservableObject {
 
     // MARK: Sharing
 
+    /// Changes only the route: the session on the old route ends and sharing, if on, restarts on the new one.
     func setLocalOnly(_ enabled: Bool) {
         guard connection.localOnly != enabled else { return }
-        stopSharing()
+        if active || listeningWithoutSharing { stop() }
         connection.setLocalOnly(enabled)
+        preferences.localOnly = enabled
+        events.record(.sharing, enabled ? "Local network only on" : "Local network only off")
+        reconcileSharing()
     }
 
     func stopSharing() {
@@ -1044,6 +1051,7 @@ final class RemoteHostModel: ObservableObject {
         guard !enabled || !captureScopeViewOnly else { return }
         guard allowSystemAudio != enabled else { return }
         allowSystemAudio = enabled
+        preferences.allowSystemAudio = enabled
         connection.media?.setSystemAudioEnabled(enabled && !liveViewOnly && !away.isLocking)
         capture.setSystemAudioEnabled(enabled && !liveViewOnly && !away.isLocking)
         if connection.connected, active, !phonePause.isPaused && !liveViewOnly, sessionState == .picture { beginCapture() }
