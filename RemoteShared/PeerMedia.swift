@@ -1288,10 +1288,21 @@ extension PeerMedia: FileChannelLink {
         return fileChannel === dataChannel
     }
 
+    /// Lock order: transfer effect → local route → file channel lifetime. Native observer callbacks
+    /// enqueue owner work; they must never synchronously call a native send while inside a callback.
+    func withFileRouteAuthority<T>(_ submit: () -> T) -> T? {
+        localRouteLock.lock(); defer { localRouteLock.unlock() }
+        guard localLink == nil || localPathAuthorized else { return nil }
+        return submit()
+    }
     func sendFile(_ data: Data) -> Bool {
-        guard localGateOpen(), data.count <= FileTransferLimits.maximumOutgoingMessageBytes,
-              let file = openFileChannel else { return false }
-        return file.sendData(RTCDataBuffer(data: data, isBinary: true))
+        guard data.count <= FileTransferLimits.maximumOutgoingMessageBytes else { return false }
+        let message = RTCDataBuffer(data: data, isBinary: true)
+        return withFileRouteAuthority {
+            fileLock.lock(); defer { fileLock.unlock() }
+            guard let fileChannel, fileChannel.readyState == .open else { return false }
+            return fileChannel.sendData(message)
+        } ?? false
     }
 
     var fileBufferedAmount: UInt64? { openFileChannel?.bufferedAmount }

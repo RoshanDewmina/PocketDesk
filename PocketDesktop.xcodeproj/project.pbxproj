@@ -461,6 +461,7 @@
 		674C6416DB661DDF48B9058E /* CouchPhoneGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ECD26525DE27E40748D832C /* CouchPhoneGate.swift */; };
 		677411D95D97E56CDEAD2EDD /* DeviceOwnerGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF0FCAAFBBF58C0EBFE5D4E6 /* DeviceOwnerGate.swift */; };
 		67FB42A35DF29E7D014B4435 /* HostReadiness.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90D90505BF498BF2C1FA801F /* HostReadiness.swift */; };
+		685BC878ED386D65CA717580 /* PeerFileAuthorityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7CEDBB968D09AAD5447CB506 /* PeerFileAuthorityTests.swift */; };
 		6874699E55C83234D6E1D50A /* MacVitalsMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE6B3010CAE1D666498E6667 /* MacVitalsMonitor.swift */; };
 		6885C8FB273C2E0AB4AE7614 /* LadderPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 652B094C95978F6D605C1E82 /* LadderPolicy.swift */; };
 		6899A5CEF3D9D3D2AC1D0D67 /* FileTransferEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B96D61D9BF42284078B295EC /* FileTransferEngine.swift */; };
@@ -1162,10 +1163,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1195,10 +1196,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1474,6 +1475,7 @@
 		7C6F33F73A09DA48AA0E90E9 /* AnywherePaywallUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AnywherePaywallUITests.swift; sourceTree = "<group>"; };
 		7C7EC9F5459AD7B89C4F329B /* CouchHostPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CouchHostPolicyTests.swift; sourceTree = "<group>"; };
 		7CD8798C3462294A16F7DE09 /* NativeTrackpadSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeTrackpadSurface.swift; sourceTree = "<group>"; };
+		7CEDBB968D09AAD5447CB506 /* PeerFileAuthorityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PeerFileAuthorityTests.swift; sourceTree = "<group>"; };
 		7D4506E07050A57F267A3797 /* VideoPresentationProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPresentationProbe.swift; sourceTree = "<group>"; };
 		7D99E7F09D13D70C68FF3489 /* FarsideShare.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = FarsideShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		7D9FEB3672F5FB2B7EA2BE8B /* CouchProtocolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CouchProtocolTests.swift; sourceTree = "<group>"; };
@@ -2240,6 +2242,7 @@
 				6260AE7D364B38797238AE24 /* OwnerLocalCoordinatorTests.swift */,
 				66FDE764B193EF993CFCF635 /* PairStoreDeletionTests.swift */,
 				3213600B3AABB6616A17F34E /* PeerAudioLifetimeTests.swift */,
+				7CEDBB968D09AAD5447CB506 /* PeerFileAuthorityTests.swift */,
 				48398D8D2C7942261624C9D8 /* PhoneTrustStoreTests.swift */,
 				5B45BA3810586D5E7548CC90 /* PointerLocationTests.swift */,
 				0C792ABF9D495176D081B6D7 /* PointerTelemetryTests.swift */,
@@ -3976,6 +3979,7 @@
 				F614EBB3B5796328CD19E445 /* PairStoreDeletionTests.swift in Sources */,
 				1C1C88B47E7708FA8010F74A /* Pairing.swift in Sources */,
 				A2889047DFD9C297D9ACC3FC /* PeerAudioLifetimeTests.swift in Sources */,
+				685BC878ED386D65CA717580 /* PeerFileAuthorityTests.swift in Sources */,
 				AE9AC143ECFF68174B9561FF /* PeerMedia.swift in Sources */,
 				02FDADF396A35E9CDCBA9E51 /* PhoneSystemAudioDevice.swift in Sources */,
 				D83F69D7ED8F8142F115BC25 /* PhoneTrustStore.swift in Sources */,
