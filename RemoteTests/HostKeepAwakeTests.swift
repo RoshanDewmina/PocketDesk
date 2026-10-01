@@ -94,6 +94,28 @@ final class HostAvailabilityTests: XCTestCase {
                       "Turning off Keep awake leaves normal macOS sleep settings in charge")
     }
 
+    func testIdleConnectedSessionKeepsAssertionsWithoutInputOrAudioActivityAndPauseReleasesDisplay() {
+        var acquired = 0
+        var released: [UInt32] = []
+        let display = HostKeepAwake(backend: .init(acquire: { acquired += 1; return 17 },
+                                                 release: { released.append($0); return true }))
+        // The owner chose keep-awake. Idle video/view-only/audio activity is not a power predicate.
+        for _ in 0..<4 {
+            let desired = HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: true)
+            XCTAssertTrue(desired.system)
+            if desired.display { XCTAssertTrue(display.start()) }
+        }
+        XCTAssertEqual(acquired, 1, "A long idle session reuses its assertion")
+        let paused = HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: false)
+        XCTAssertTrue(paused.system, "Explicit reachability choice remains independent of live display")
+        XCTAssertFalse(paused.display)
+        XCTAssertTrue(display.stop())
+        XCTAssertEqual(released, [17])
+        XCTAssertFalse(display.isActive)
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: false, phoneConnected: false) == (false, false))
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: false, sharing: true, phoneConnected: true) == (false, false))
+    }
+
     func testLockDetectionReadsTheSessionDictionary() {
         XCTAssertTrue(HostScreenLock.isLocked(["CGSSessionScreenIsLocked": true]))
         XCTAssertFalse(HostScreenLock.isLocked(["CGSSessionScreenIsLocked": false]))
