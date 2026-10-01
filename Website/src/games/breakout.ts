@@ -5,6 +5,10 @@ import { Game, isAction, type PointerKind, type Pt } from "./base";
 import { BONE, clamp, EMBER, heatColor, rand, Sparks, TAU, wordCells } from "./kit";
 
 const BALLS = 3;
+/** Auto play: seconds before a served ball leaves the bar, before a finished run starts over, and of the first run's controls hint. */
+const SERVE = 0.9;
+const AGAIN = 3;
+const HINT = 6;
 type State = "ready" | "play" | "won" | "lost";
 
 export class Breakout extends Game {
@@ -41,6 +45,9 @@ export class Breakout extends Game {
   private aim: number | null = null;
   private down: { x: number; y: number; moved: boolean } | null = null;
   private sparks = new Sparks(360, 600);
+  private wait = 0;
+  private hint = 0;
+  private hinted = false;
 
   protected reset() {
     const { w, h, c } = this;
@@ -70,6 +77,7 @@ export class Breakout extends Game {
     this.r = Math.max(4, c * 0.5);
     this.speed = clamp(h * 0.95, 230, 470);
     this.sparks.clear();
+    if (this.auto && !this.hinted) (this.hint = HINT), (this.hinted = true);
     this.serve();
   }
 
@@ -77,6 +85,7 @@ export class Breakout extends Game {
     this.state = "ready";
     this.combo = 0;
     this.trail.length = 0;
+    this.wait = SERVE;
     this.bx = this.px;
     this.by = this.py - this.r - 1;
   }
@@ -101,9 +110,15 @@ export class Breakout extends Game {
     this.px = clamp(this.px, this.pw / 2, w - this.pw / 2);
     for (let i = 0; i < this.heat.length; i++) if (this.heat[i]! > 0) this.heat[i] = Math.max(0, this.heat[i]! - dt * 1.1);
     this.sparks.step(dt);
+    if (this.hint > 0) this.hint -= dt;
+    if (this.over) {
+      if (this.auto && (this.wait -= dt) <= 0) this.start();
+      return;
+    }
     if (this.state === "ready") {
       this.bx = this.px;
       this.by = this.py - this.r - 1;
+      if (this.auto && (this.wait -= dt) <= 0) this.launch();
       return;
     }
     if (this.state !== "play") return;
@@ -181,6 +196,7 @@ export class Breakout extends Game {
   private end(won: boolean) {
     this.state = won ? "won" : "lost";
     this.over = true;
+    this.wait = AGAIN;
     if (won) this.score += this.balls * 100;
     const best = this.record(this.score);
     this.ui.say(`${won ? "Gap closed. You reached across. Every dot." : "Out of balls."} Score ${this.score}.${best ? " A new best." : ""}`);
@@ -231,16 +247,12 @@ export class Breakout extends Game {
   }
 
   protected status() {
-    switch (this.state) {
-      case "ready":
-        return this.act("Tap to launch. Drag to move the bar.", "Space to launch. Arrows or the pointer move the bar.");
-      case "won":
-        return `Gap closed. You reached across. Every dot. ${this.act("Tap", "Space")} for another go.`;
-      case "lost":
-        return `Out of balls. ${this.act("Tap", "Space")} for another go.`;
-      default:
-        return null;
-    }
+    const again = this.auto ? "Again in a moment." : `${this.act("Tap", "Space")} for another go.`;
+    if (this.state === "won") return `Gap closed. You reached across. Every dot. ${again}`;
+    if (this.state === "lost") return `Out of balls. ${again}`;
+    // Auto play needs no launch key; it only names the controls, for a while.
+    if (this.auto) return this.hint > 0 ? this.act("Drag sideways to move the bar.", "Arrows or the pointer move the bar.") : null;
+    return this.state === "ready" ? this.act("Tap to launch. Drag to move the bar.", "Space to launch. Arrows or the pointer move the bar.") : null;
   }
 
   protected hudText() {
@@ -259,8 +271,8 @@ export class Breakout extends Game {
   }
 
   protected onKey(k: string, down: boolean, repeat: boolean) {
-    if (k === "ArrowLeft" || k === "a") return (this.keys.l = down), (this.aim = null), true;
-    if (k === "ArrowRight" || k === "d") return (this.keys.r = down), (this.aim = null), true;
+    if (k === "ArrowLeft" || k === "a") return (this.keys.l = down), (this.aim = null), (this.hint = 0), true;
+    if (k === "ArrowRight" || k === "d") return (this.keys.r = down), (this.aim = null), (this.hint = 0), true;
     if (isAction(k)) {
       if (down && !repeat) this.action();
       return true;
@@ -272,6 +284,7 @@ export class Breakout extends Game {
     if (kind === "move") {
       if (e.pointerType === "mouse" || this.down) this.aim = p.x;
       if (this.down && Math.hypot(p.x - this.down.x, p.y - this.down.y) > 10) this.down.moved = true;
+      if (e.pointerType === "mouse" || this.down?.moved) this.hint = 0;
     } else if (kind === "down") {
       this.down = { x: p.x, y: p.y, moved: false };
       if (e.pointerType === "mouse") this.action();

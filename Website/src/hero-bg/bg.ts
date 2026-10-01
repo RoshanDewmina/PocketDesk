@@ -6,7 +6,8 @@
 //   bloom     a soft ember/amber/gold bloom seen through a coarse LED tile grid, breathing and turning
 // A CSS poster of the same look (home.css + the generated poster.css) is there from the first paint and matches
 // the shader's first frame; the shader fades in over it. ≤ 30 fps (24 on phones), rendered below full resolution,
-// paused off screen and on hidden tabs, frozen by the pause button. Reduce Motion and Save-Data show the poster.
+// paused off screen and on hidden tabs, frozen by the pause button. Reduce Motion, Save-Data and software-only
+// WebGL (no GPU) show the poster.
 
 import { isPaused, motionAllowed, onMotionChange, prefersReduced } from "../scripts/motion";
 import { BLOOM, DOT_CELL, DOT_COLS, T0 } from "./pattern";
@@ -110,6 +111,13 @@ void main(){
 }`;
 
 const MODE: Record<Exclude<Look, "reach">, number> = { spectrum: 0, aurora: 1, bloom: 2 };
+
+function softwareGl(c: WebGLRenderingContext) {
+  const info = c.getExtension("WEBGL_debug_renderer_info");
+  const name = String(c.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : c.RENDERER));
+  return /swiftshader|llvmpipe|softpipe|software|basic render/i.test(name);
+}
+
 /** Rendered at this fraction of CSS px (× DPR, capped) and scaled up: the looks are soft by design. */
 const RES = 0.6;
 const MAX_PIXELS = 900_000;
@@ -164,8 +172,10 @@ function run(el: HTMLElement, look: Exclude<Look, "reach">) {
   };
 
   const init = () => {
-    const c = cv.getContext("webgl", { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: "low-power" });
-    if (!c) return false;
+    // Software WebGL (no usable GPU, e.g. SwiftShader): every frame would be drawn on the CPU and read back
+    // for compositing, blocking the page, so the poster stays instead.
+    const c = cv.getContext("webgl", { alpha: false, antialias: false, depth: false, stencil: false, powerPreference: "low-power", failIfMajorPerformanceCaveat: true });
+    if (!c || softwareGl(c)) return false;
     gl = c;
     const shader = (type: number, src: string) => {
       const s = c.createShader(type)!;

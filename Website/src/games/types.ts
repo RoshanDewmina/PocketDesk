@@ -35,6 +35,10 @@ export interface Host {
   onLayout(fn: () => void): void;
   /** The band scrolled out of view while a game was running. */
   onAway(fn: () => void): void;
+  /** Is the page scrolled to its end with the band all in view? */
+  shown(): boolean;
+  /** After every scroll or resize while some of the footer shows. */
+  onReveal(fn: () => void): void;
   /** Draw the field's background grain (the faint dots) across the canvas. */
   grain(ctx: CanvasRenderingContext2D): void;
 }

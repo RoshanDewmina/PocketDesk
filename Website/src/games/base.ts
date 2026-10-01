@@ -31,6 +31,8 @@ export abstract class Game implements Runner {
 
   over = false;
   paused = false;
+  /** Started by itself at the page end (motion allowed): serves and new runs come without a key or tap. */
+  auto = false;
   protected w = 0;
   protected h = 0;
   /** Dot pitch of the field when the run started. */
@@ -92,7 +94,9 @@ export abstract class Game implements Runner {
     ctx.scale(this.sx, this.sy);
     this.paint(ctx);
     ctx.restore();
-    this.ui.msg(this.paused ? (this.touch ? "Paused. Tap to go on." : "Paused. Press Space to go on.") : this.status());
+    // A self-started run may not have the keys (src/games/arcade.ts), but a click or tap always resumes.
+    const paused = this.touch ? "Paused. Tap to go on." : this.auto ? "Paused. Click to go on." : "Paused. Press Space to go on.";
+    this.ui.msg(this.paused ? paused : this.status());
     this.ui.hud(this.hudText());
   }
 

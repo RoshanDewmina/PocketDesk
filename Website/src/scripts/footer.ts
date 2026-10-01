@@ -7,7 +7,8 @@
 // one still frame of the finished wordmark.
 //
 // Games: once the field starts, the footer games (src/games/arcade.ts, its own bundle, URL in data-arcade) load
-// and can borrow this canvas, grid and loop. The loop still runs only while the footer shows and the tab is visible.
+// and borrow this canvas, grid and loop at the page end. The loop still runs only while the footer shows and the
+// tab is visible.
 
 import type { ArcadeModule, Host, Runner } from "../games/types";
 import { motionAllowed, onMotionChange } from "./motion";
@@ -134,6 +135,7 @@ class Field {
   private game: Runner | null = null;
   private layoutFns: (() => void)[] = [];
   private awayFns: (() => void)[] = [];
+  private revealFns: (() => void)[] = [];
 
   constructor(private cv: HTMLCanvasElement, readonly foot: HTMLElement) {
     this.ctx = cv.getContext("2d")!;
@@ -175,6 +177,7 @@ class Field {
     }
     this.sync();
     if (!this.raf && r > 0) this.draw();
+    if (r > 0) this.revealFns.forEach((f) => f());
   }
 
   /** Run the loop only while some footer shows, the tab is visible and motion is allowed (or a game was asked for). */
@@ -216,6 +219,10 @@ class Field {
       grain: (ctx) => this.grain(ctx),
       onLayout: (fn) => this.layoutFns.push(fn),
       onAway: (fn) => this.awayFns.push(fn),
+      // The fixed footer is all uncovered only at the page end; one that follows the page (.foot-flow) may be
+      // taller than the window, so for it the end of the page counts.
+      shown: () => this.bandShown() > 0.97 && (this.target > 0.97 || window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 4),
+      onReveal: (fn) => this.revealFns.push(fn),
     };
   }
 

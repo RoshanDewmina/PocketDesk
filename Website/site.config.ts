@@ -137,7 +137,7 @@ export const config = {
    * still compare the others with ?bg=reach|spectrum|aurora|bloom and ?game=breakout|reach|lander|snake.
    */
   look: {
-    heroBackground: "reach" as "reach" | "spectrum" | "aurora" | "bloom",
+    heroBackground: "bloom" as "reach" | "spectrum" | "aurora" | "bloom",
     footerGame: "breakout" as "breakout" | "reach" | "lander" | "snake",
   },
 
