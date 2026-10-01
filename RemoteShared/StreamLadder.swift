@@ -89,6 +89,9 @@ struct LadderInputs: Equatable {
     var phoneLowPowerMode: Bool? = nil
     /// Frames the Mac sent in the window, which bounds what the phone could decode and show.
     var sentFPS: Double? = nil
+    /// Seconds since the encoder session started: every session start, size move and rate restart
+    /// begins a new one with a key frame. nil when the encoder reports none.
+    var encoderSessionAgeS: Double? = nil
 
     var frameIntervalMs: Double { 1000 / Double(max(1, targetFPS)) }
 }
