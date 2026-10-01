@@ -324,7 +324,7 @@ final class HostAXWebAccessTests: XCTestCase {
         let activator = HostAXWebActivator(classify: { _ in .chromium })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.revert"),
                                     set: { attribute, value, pid, _ in flags.set(attribute, value, pid) },
-                                    isOn: { _, pid, _ in flags.read(pid) }, trusted: { true })
+                                    isOn: { _, pid, _ in flags.read(pid) }, trusted: { true }, isAlive: { _ in true })
         let ours = await warm.appActivated(pid: 70, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(ours, .requested(HostAXWebActivation(attribute: .enhanced, outcome: .applied)))
         let theirs = await warm.appActivated(pid: 71, launched: 1, bundleURL: app, sessionActive: true)
@@ -333,15 +333,15 @@ final class HostAXWebAccessTests: XCTestCase {
         _ = await warm.appActivated(pid: 72, launched: 1, bundleURL: app, sessionActive: true)
         flags.force(72, false) // Something else turned it off during the session.
 
-        let reverted = await warm.sessionEnded()
-        XCTAssertEqual(reverted, [HostAXProcessKey(pid: 70, launched: 1)])
+        let reverted = await warm.sessionEnded(voiceOverOn: false, stillCurrent: { true })
+        XCTAssertEqual(reverted, .reverted([HostAXProcessKey(pid: 70, launched: 1)]))
         XCTAssertEqual(flags.offWrites, [70], "Only a process Farside turned on and still on is turned off")
         XCTAssertEqual(flags.read(71), .on)
         XCTAssertFalse(activator.isClaimed(HostAXProcessKey(pid: 70, launched: 1)), "The next session may ask again")
         XCTAssertFalse(activator.isClaimed(HostAXProcessKey(pid: 72, launched: 1)))
         XCTAssertTrue(activator.isClaimed(HostAXProcessKey(pid: 71, launched: 1)))
-        let again = await warm.sessionEnded()
-        XCTAssertEqual(again, [])
+        let again = await warm.sessionEnded(voiceOverOn: false, stillCurrent: { true })
+        XCTAssertEqual(again, .reverted([]))
         XCTAssertEqual(flags.offWrites, [70])
     }
 
@@ -353,9 +353,9 @@ final class HostAXWebAccessTests: XCTestCase {
         _ = activator.activateIfNeeded(chrome, engine: .chromium, set: { $0 == .manual ? .unsupported : .applied },
                                        isOn: { _ in .off })
         var turnedOff: [HostAXProcessKey] = []
-        XCTAssertEqual(activator.revertEnhanced(isOn: { _ in .notAttempted }, turnOff: { turnedOff.append($0); return .applied }), [])
+        XCTAssertEqual(activator.revertEnhanced(isAlive: { _ in true }, isOn: { _ in .notAttempted }, turnOff: { turnedOff.append($0); return .applied }), [])
         XCTAssertTrue(activator.isClaimed(chrome), "Out of budget: kept for the next session end")
-        XCTAssertEqual(activator.revertEnhanced(isOn: { _ in .on }, turnOff: { turnedOff.append($0); return .applied }), [chrome])
+        XCTAssertEqual(activator.revertEnhanced(isAlive: { _ in true }, isOn: { _ in .on }, turnOff: { turnedOff.append($0); return .applied }), [chrome])
         XCTAssertEqual(turnedOff, [chrome], "AXManualAccessibility on the Electron app is left on")
         XCTAssertTrue(activator.isClaimed(electron))
     }
@@ -419,5 +419,62 @@ final class HostAXWebAccessTests: XCTestCase {
         try? await Task.sleep(for: .milliseconds(300))
         XCTAssertTrue(activator.isClaimed(HostAXProcessKey(pid: 93, launched: 1)),
                       "The write that ran late was sent and counts as a failed attempt")
+    }
+
+    // MARK: Third review: VoiceOver, errors kept, reconnect
+
+    private func chromeWithEnhancedByUs(_ flags: Flags, pid: pid_t, label: String) async -> (HostAXWebPrewarm, HostAXWebActivator) {
+        let activator = HostAXWebActivator(classify: { _ in .chromium })
+        let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: label),
+                                    set: { attribute, value, pid, _ in flags.set(attribute, value, pid) },
+                                    isOn: { _, pid, _ in flags.read(pid) }, trusted: { true }, isAlive: { _ in true })
+        let outcome = await warm.appActivated(pid: pid, launched: 1, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(outcome, .requested(HostAXWebActivation(attribute: .enhanced, outcome: .applied)))
+        return (warm, activator)
+    }
+
+    func testVoiceOverKeepsEnhancedUIOnAtSessionEnd() async {
+        let flags = Flags()
+        let (warm, activator) = await chromeWithEnhancedByUs(flags, pid: 100, label: "test.ax.voiceover")
+        let skipped = await warm.sessionEnded(voiceOverOn: true, stillCurrent: { true })
+        XCTAssertEqual(skipped, .voiceOver)
+        XCTAssertEqual(flags.offWrites, [], "A VoiceOver user needs AXEnhancedUserInterface on")
+        XCTAssertEqual(flags.read(100), .on)
+        XCTAssertTrue(activator.isClaimed(HostAXProcessKey(pid: 100, launched: 1)))
+        let later = await warm.sessionEnded(voiceOverOn: false, stillCurrent: { true })
+        XCTAssertEqual(later, .reverted([HostAXProcessKey(pid: 100, launched: 1)]), "Still owned for a later session end")
+    }
+
+    func testReconnectBeforeTheRevertRunsLeavesEnhancedUIOn() async {
+        let flags = Flags()
+        let (warm, _) = await chromeWithEnhancedByUs(flags, pid: 101, label: "test.ax.reconnect")
+        let generation = HostAXSessionGeneration()
+        let ended = generation.current
+        generation.advance() // The phone reconnected before the session-end work ran.
+        let skipped = await warm.sessionEnded(voiceOverOn: false, stillCurrent: { generation.current == ended })
+        XCTAssertEqual(skipped, .newSession)
+        XCTAssertEqual(flags.offWrites, [])
+        let next = generation.current
+        let reverted = await warm.sessionEnded(voiceOverOn: false, stillCurrent: { generation.current == next })
+        XCTAssertEqual(reverted, .reverted([HostAXProcessKey(pid: 101, launched: 1)]))
+    }
+
+    func testUnreadableOrFailedRevertIsKeptAndExitedProcessIsDropped() {
+        let activator = HostAXWebActivator(classify: { _ in .chromium })
+        let key = HostAXProcessKey(pid: 102, launched: 1)
+        let gone = HostAXProcessKey(pid: 103, launched: 1)
+        for pid in [key, gone] {
+            _ = activator.activateIfNeeded(pid, engine: .chromium, set: { $0 == .manual ? .unsupported : .applied },
+                                           isOn: { _ in .off })
+        }
+        let alive: (HostAXProcessKey) -> Bool = { $0 == key }
+        XCTAssertEqual(activator.revertEnhanced(isAlive: alive, isOn: { _ in .unknown }, turnOff: { _ in .applied }), [])
+        XCTAssertTrue(activator.isClaimed(key), "An unreadable state is kept for the next session end")
+        XCTAssertFalse(activator.isClaimed(gone), "An exited process is forgotten, not kept forever")
+        XCTAssertEqual(activator.revertEnhanced(isAlive: alive, isOn: { _ in .on }, turnOff: { _ in .failed }), [])
+        XCTAssertTrue(activator.isClaimed(key), "A failed turn-off is kept too")
+        XCTAssertEqual(activator.revertEnhanced(isAlive: alive, isOn: { _ in .on }, turnOff: { _ in .applied }), [key])
+        XCTAssertFalse(activator.isClaimed(key))
+        XCTAssertEqual(activator.revertEnhanced(isAlive: alive, isOn: { _ in .on }, turnOff: { _ in .applied }), [])
     }
 }

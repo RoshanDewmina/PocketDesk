@@ -209,9 +209,11 @@ final class HostAXWebActivator: @unchecked Sendable {
 
     /// At session end, turns AXEnhancedUserInterface off where Farside turned it on and it is still on,
     /// and forgets those processes so the next session can ask again. AXManualAccessibility stays on.
-    /// Processes the budget did not reach are kept for the next session end. Returns the processes
-    /// turned off.
-    func revertEnhanced(isOn: (HostAXProcessKey) -> HostAXFlagRead,
+    /// A process whose state could not be read or written (out of budget, an AX error, a failed write)
+    /// is kept for the next session end; one that has exited, is already off, or rejects the write is
+    /// dropped. Returns the processes turned off.
+    func revertEnhanced(isAlive: (HostAXProcessKey) -> Bool = HostAXWebActivator.isAlive,
+                        isOn: (HostAXProcessKey) -> HostAXFlagRead,
                         turnOff: (HostAXProcessKey) -> HostAXSetOutcome) -> [HostAXProcessKey] {
         lock.lock()
         let keys = enhancedByUs.sorted { ($0.pid, $0.launched ?? 0) < ($1.pid, $1.launched ?? 0) }
@@ -220,12 +222,18 @@ final class HostAXWebActivator: @unchecked Sendable {
         var reverted: [HostAXProcessKey] = []
         var kept: [HostAXProcessKey] = []
         for key in keys {
-            let flag = isOn(key)
-            if flag == .notAttempted { kept.append(key); continue }
-            if flag == .on {
-                let outcome = turnOff(key)
-                if outcome == .notAttempted { kept.append(key); continue }
-                if outcome == .applied { reverted.append(key) }
+            guard isAlive(key) else { lock.lock(); policy.release(key); lock.unlock(); continue }
+            switch isOn(key) {
+            case .notAttempted, .unknown:
+                kept.append(key); continue
+            case .off:
+                break
+            case .on:
+                switch turnOff(key) {
+                case .notAttempted, .failed: kept.append(key); continue
+                case .applied: reverted.append(key)
+                case .unsupported: break
+                }
             }
             lock.lock(); policy.release(key); lock.unlock()
         }
@@ -234,6 +242,12 @@ final class HostAXWebActivator: @unchecked Sendable {
             HostTextFocusLog.logger.info("AX enhanced UI reverted=\(reverted.count, privacy: .public) kept=\(kept.count, privacy: .public)")
         }
         return reverted
+    }
+
+    /// The same process instance is still running; a kept entry for an exited app would never clear.
+    static func isAlive(_ key: HostAXProcessKey) -> Bool {
+        guard let app = NSRunningApplication(processIdentifier: key.pid), !app.isTerminated else { return false }
+        return key.launched == nil || app.launchDate?.timeIntervalSince1970 == key.launched
     }
 
     /// Writes one boolean attribute on an application element. Never touches any element's value.
@@ -292,6 +306,7 @@ struct HostAXWebPrewarm: Sendable {
         HostAXWebActivator.isOn(attribute, on: AXUIElementCreateApplication(pid), budget: budget)
     }
     var trusted: @Sendable () -> Bool = { AXIsProcessTrusted() }
+    var isAlive: @Sendable (HostAXProcessKey) -> Bool = { HostAXWebActivator.isAlive($0) }
 
     func appActivated(pid: pid_t, launched: TimeInterval?, bundleURL: URL?,
                       sessionActive: Bool) async -> HostAXPrewarmOutcome {
@@ -333,14 +348,50 @@ struct HostAXWebPrewarm: Sendable {
         var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
     }
 
-    /// Session end: undo AXEnhancedUserInterface where Farside set it. A busy lane leaves it for the next end.
-    func sessionEnded() async -> [HostAXProcessKey] {
-        let (activator, set, isOn) = (activator, set, isOn)
-        return await broker.run(waitForLane: HostTextFocusProbe.lanePatience) { budget -> [HostAXProcessKey]? in
-            activator.revertEnhanced(isOn: { isOn(.enhanced, $0.pid, budget) },
-                                     turnOff: { set(.enhanced, false, $0.pid, budget) })
-        } ?? []
+    /// Session end: undo AXEnhancedUserInterface where Farside set it. Skipped while VoiceOver runs (it
+    /// needs the attribute on) and when a new session has started since (a quick reconnect must not
+    /// lose it under a live session); a busy lane leaves it for the next session end. `stillCurrent`
+    /// is checked on the lane, immediately before any write.
+    func sessionEnded(voiceOverOn: Bool, stillCurrent: @escaping @Sendable () -> Bool) async -> HostAXRevertResult {
+        guard !voiceOverOn else { return log(.voiceOver) }
+        guard stillCurrent() else { return log(.newSession) }
+        let (activator, set, isOn, isAlive) = (activator, set, isOn, isAlive)
+        let result = await broker.run(waitForLane: HostTextFocusProbe.lanePatience) { budget -> HostAXRevertResult? in
+            guard stillCurrent() else { return .newSession }
+            return .reverted(activator.revertEnhanced(isAlive: isAlive,
+                                                      isOn: { isOn(.enhanced, $0.pid, budget) },
+                                                      turnOff: { set(.enhanced, false, $0.pid, budget) }))
+        } ?? .laneBusy
+        return log(result)
     }
+
+    private func log(_ result: HostAXRevertResult) -> HostAXRevertResult {
+        HostTextFocusLog.logger.info("session-end revert \(result.reason, privacy: .public)")
+        return result
+    }
+}
+
+enum HostAXRevertResult: Equatable, Sendable {
+    case voiceOver, newSession, laneBusy
+    case reverted([HostAXProcessKey])
+
+    var reason: String {
+        switch self {
+        case .voiceOver: "skippedVoiceOver"
+        case .newSession: "skippedNewSession"
+        case .laneBusy: "laneBusy"
+        case .reverted(let keys): "reverted=\(keys.count)"
+        }
+    }
+}
+
+/// Counts sessions so work scheduled at one session's end can tell that another has begun.
+final class HostAXSessionGeneration: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: UInt64 = 0
+
+    var current: UInt64 { lock.lock(); defer { lock.unlock() }; return value }
+    func advance() { lock.lock(); value &+= 1; lock.unlock() }
 }
 
 /// When a live controlled session starts (or resumes) with a Chromium app already frontmost, no
