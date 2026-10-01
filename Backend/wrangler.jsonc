@@ -81,7 +81,7 @@
         "TEST_FORCE_RELAY": "0",
         "ALLOW_UNENTITLED_RELAY": "0",
         "KEEPALIVE_SECONDS": "50",
-        "REPLACE_QUIET_SECONDS": "10"
+        "REPLACE_QUIET_SECONDS": "0"
       }
     },
     "production": {
