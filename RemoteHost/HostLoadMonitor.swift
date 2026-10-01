@@ -23,6 +23,7 @@ struct HostLoadSample: Equatable {
     var senderQueueMs: Double? = nil
     var networkQueueMs: Double? = nil
     var routeDetail: String? = nil
+    var provenLocalLink = false
 }
 
 extension HostLoadSample {
@@ -41,21 +42,26 @@ extension HostLoadSample {
 }
 
 /// Runs the ladder and the busy policy on each host statistics sample. Create one per capture
-/// session; a change of `targetFPS` inside a session restarts both at the top. With the X17 governor
-/// on, the rung applied is the ladder's rung under the governor's send-path cap.
+/// session; a change of `targetFPS` inside a session restarts both at the top. The X17 governor, when
+/// computed, runs in shadow (reported only) unless `applyGovernor`; then the rung applied is the
+/// ladder's rung under its send-path cap.
 struct HostLoadMonitor {
     static let phoneFeedbackMaxAge: TimeInterval = 2.5
     private(set) var ladder: LadderPolicy
     private(set) var busy = BusyPolicy()
     private(set) var longEdge = 0
     private(set) var governor: SenderQueueGovernor?
+    let applyGovernor: Bool
     private(set) var applied: LadderState
 
-    init(targetFPS: Int, senderQueueGovernor: Bool = false) {
+    init(targetFPS: Int, senderQueueGovernor: Bool = false, applyGovernor: Bool = false) {
         ladder = LadderPolicy(targetFPS: targetFPS)
         governor = senderQueueGovernor ? SenderQueueGovernor() : nil
+        self.applyGovernor = senderQueueGovernor && applyGovernor
         applied = ladder.state
     }
+
+    var governorStatus: String { governor?.status(applied: applyGovernor) ?? "off" }
 
     static func currentPhoneLoad(_ feedback: PhoneLoadFeedback?, receivedAt: TimeInterval?,
                                  now: TimeInterval) -> PhoneLoadFeedback? {
@@ -85,8 +91,9 @@ struct HostLoadMonitor {
         let inputs = Self.inputs(from: sample)
         _ = ladder.evaluate(inputs, at: time)
         _ = governor?.observe(SenderQueueGovernor.Window(route: sample.routeDetail, availableKbps: sample.availableKbps,
-            sentKbps: sample.sentKbps, senderQueueMs: sample.senderQueueMs, networkQueueMs: sample.networkQueueMs))
-        let next = governor?.apply(to: ladder.state) ?? ladder.state
+            sentKbps: sample.sentKbps, senderQueueMs: sample.senderQueueMs, networkQueueMs: sample.networkQueueMs,
+            provenLocalLink: sample.provenLocalLink))
+        let next = applyGovernor ? governor?.apply(to: ladder.state) ?? ladder.state : ladder.state
         let ladderChange = next == applied ? nil : next
         applied = next
         let busyChange = busy.evaluate(ladder: next, inputs: inputs, longEdge: longEdge, at: time)

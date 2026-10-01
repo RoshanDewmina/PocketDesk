@@ -986,6 +986,8 @@ final class PeerMedia: NSObject {
     private(set) var ladderState: LadderState?
     /// Host: what the Mac reports on `capture` status, copied into every statistics sample.
     var busyState: BusyState?
+    /// Host: the X17 governor's status from the load monitor, copied into every statistics sample.
+    var senderQueueGovernorStatus: String?
     var captureRegion: CaptureRegion?
 
     private var currentSenderRate: SenderRateParameters {
@@ -1262,6 +1264,7 @@ final class PeerMedia: NSObject {
                 stats.ladder = ladderState
                 stats.busy = busyState
                 stats.captureRegion = captureRegion
+                stats.senderQueueGovernor = senderQueueGovernorStatus
             }
             stats.maxKbps = appliedSenderMaxKbps
             if nativeDesktopCodecs { stats.transportPriorityRequested = transportPriority.summary }

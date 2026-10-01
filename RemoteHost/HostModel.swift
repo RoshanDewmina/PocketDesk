@@ -2753,7 +2753,8 @@ final class RemoteHostModel: ObservableObject {
         ladderState = nil
         busyState = nil
         let tuning = StreamTuning.current
-        loadMonitor = tuning.ladder ? HostLoadMonitor(targetFPS: peer.targetFPS, senderQueueGovernor: tuning.senderQueueGovernor) : nil
+        loadMonitor = tuning.ladder ? HostLoadMonitor(targetFPS: peer.targetFPS, senderQueueGovernor: tuning.senderQueueGovernor,
+                                                      applyGovernor: tuning.senderQueueGovernorApply) : nil
         vitalsMonitor?.stop()
         let vitals = MacVitalsMonitor(sources: LiveMacVitalsSources())
         vitals.start(now: ProcessInfo.processInfo.systemUptime)
@@ -2783,8 +2784,10 @@ final class RemoteHostModel: ObservableObject {
         var sampleWithPhone = sample
         sampleWithPhone.phoneLoad = HostLoadMonitor.currentPhoneLoad(phoneLoad, receivedAt: phoneLoadReceivedAt,
                                                                     now: process.systemUptime)
+        sampleWithPhone.provenLocalLink = peer.provenLocalLinkActive
         let change = monitor.tick(sample: sampleWithPhone, at: process.systemUptime)
         loadMonitor = monitor
+        peer.senderQueueGovernorStatus = monitor.governorStatus
         if let ladder = change.ladder {
             ladderState = ladder
             capture.setLadder(ladder)

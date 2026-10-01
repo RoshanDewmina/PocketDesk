@@ -12,7 +12,7 @@ final class EfficiencyDefaultsTests: XCTestCase {
     func testNewestFrameWinsIsTheTunedDefaultAndZeroTurnsItOff() throws {
         XCTAssertEqual(StreamTuning.tuned.encoderMaxInFlight, 1)
         XCTAssertNil(StreamTuning.legacy.encoderMaxInFlight)
-        XCTAssertTrue(StreamTuning.tuned.summary.hasSuffix("max refresh · max in-flight 1"), StreamTuning.tuned.summary)
+        XCTAssertTrue(StreamTuning.tuned.summary.hasSuffix("max refresh · max in-flight 1 · governor shadow"), StreamTuning.tuned.summary)
         let (defaults, cleanup) = try defaults()
         defer { cleanup() }
         defaults.set(0, forKey: StreamTuning.encoderMaxInFlightKey)

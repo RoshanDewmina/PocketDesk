@@ -233,13 +233,18 @@ struct LadderPolicy: LadderEngine {
     }
 }
 
-/// X17: a send-path cap layered over the G12 ladder. Once per statistics window it reads the estimate
-/// (`SenderQueueEstimate`) and the available outgoing rate, and caps the stream rate first, then size:
-/// 30 fps, 15 fps, then 15 fps at 0.75 and 0.5 of the picture.
-/// - A bad window is a saturated link under `capacityKbps` (sending at ≥ 80 % of an estimate below 5 Mb/s;
-///   an app-limited still screen is not a bottleneck) or a send + network queue over `queueLimitMs`.
+/// X17: a send-path cap layered over the G12 ladder. Once per statistics window it reads the pacer
+/// delay, the network queue estimate (`SenderQueueEstimate`) and the available outgoing rate, and caps
+/// the stream rate first, then size: 30 fps, 15 fps, then 15 fps at 0.75 and 0.5 of the picture. The
+/// host runs it in shadow (reported, not applied) unless `StreamTuning.senderQueueGovernorApply`.
+/// - A bad window is a saturated link under `capacityKbps` (sending at ≥ 80 % of an estimate below 5 Mb/s
+///   that has stopped rising, outside `idleGraceWindows` after an app-limited window) or a queue over
+///   `queueLimitMs`. The queue is the pacer delay plus the network term, which is capped at
+///   `networkCapMs` unless the pacer itself waits over `networkUncappedPacerMs`, so a stale RTT spike
+///   alone never steps. The unsent-backlog estimate is never a trigger.
 ///   Low capacity alone stops at 15 fps full size, so text stays readable; only a queue that persists
 ///   at 15 fps costs resolution.
+/// - Inactive on a proven local link: no level, reported as "LAN, inactive".
 /// - Down one level after `downWindows` bad windows in a row; up one level after `climbWindows` clean
 ///   windows (estimate ≥ `clearCapacityKbps` or app-limited, and queue under `clearQueueMs`). A climb
 ///   that is undone within `failedClimbWindows` doubles the wait, up to `maxClimbWindows`.
@@ -255,6 +260,7 @@ struct SenderQueueGovernor: Equatable {
         var sentKbps: Double?
         var senderQueueMs: Double?
         var networkQueueMs: Double?
+        var provenLocalLink = false
     }
     struct Level: Equatable {
         var fps: Int?
@@ -275,6 +281,11 @@ struct SenderQueueGovernor: Equatable {
     static let levels = [Level(fps: nil, sizeFraction: 1), Level(fps: 30, sizeFraction: 1), Level(fps: 15, sizeFraction: 1),
                          Level(fps: 15, sizeFraction: 0.75), Level(fps: 15, sizeFraction: 0.5)]
     static let capacityFloor = 2
+    static let networkCapMs = 50.0
+    static let networkUncappedPacerMs = 30.0
+    static let plateauRise = 1.05
+    static let idleShare = 0.5
+    static let idleGraceWindows = 3
 
     private(set) var level = 0
     /// Level moves that changed the picture size, each one encoder restart and so one key frame.
@@ -286,12 +297,29 @@ struct SenderQueueGovernor: Equatable {
     private var cleanWindows = 0
     private var windowsSinceSizeStep = SenderQueueGovernor.sizeStepSpacing
     private var windowsSinceClimb: Int?
+    private var lastAvailableKbps: Double?
+    private var windowsSinceIdle: Int?
+    private(set) var inactiveOnLocalLink = false
 
     var cap: Level { Self.levels[level] }
+
+    func status(applied: Bool) -> String {
+        if inactiveOnLocalLink { return "LAN, inactive" }
+        let mode = applied ? "applied" : "shadow, would cap"
+        guard level > 0 else { return applied ? "applied, no cap" : "shadow, no cap" }
+        let fps = cap.fps.map { "\($0) fps" } ?? "full rate"
+        return "\(mode): \(fps)" + (cap.sizeFraction < 1 ? " ×\(String(format: "%g", cap.sizeFraction))" : "")
+    }
 
     /// True when `level` changed.
     mutating func observe(_ window: Window) -> Bool {
         let before = level
+        if window.provenLocalLink {
+            self = SenderQueueGovernor()
+            inactiveOnLocalLink = true
+            return level != before
+        }
+        if inactiveOnLocalLink { self = SenderQueueGovernor() }
         if let next = window.route, next != route {
             if route != nil { self = SenderQueueGovernor() }
             route = next
@@ -299,12 +327,24 @@ struct SenderQueueGovernor: Equatable {
         windows += 1
         windowsSinceSizeStep += 1
         windowsSinceClimb = windowsSinceClimb.map { $0 + 1 }
+        let previousAvailable = lastAvailableKbps
+        lastAvailableKbps = window.availableKbps
+        let appLimited = window.availableKbps.flatMap { available in
+            window.sentKbps.map { available > 0 && $0 < Self.idleShare * available }
+        } ?? false
+        windowsSinceIdle = appLimited ? 0 : windowsSinceIdle.map { $0 + 1 }
         guard windows > Self.warmupWindows else { return level != before }
-        let queue = (window.senderQueueMs ?? 0) + (window.networkQueueMs ?? 0)
+        let pacer = max(0, window.senderQueueMs ?? 0)
+        let network = min(max(0, window.networkQueueMs ?? 0), pacer > Self.networkUncappedPacerMs ? .infinity : Self.networkCapMs)
+        let queue = pacer + network
         let saturated = window.availableKbps.flatMap { available in
             window.sentKbps.map { available > 0 && $0 >= Self.saturation * available }
         } ?? false
-        let lowCapacity = saturated && (window.availableKbps ?? .infinity) < Self.capacityKbps
+        let plateau = window.availableKbps.flatMap { available in
+            previousAvailable.map { available <= $0 * Self.plateauRise }
+        } ?? false
+        let idleGrace = windowsSinceIdle.map { $0 < Self.idleGraceWindows } ?? false
+        let lowCapacity = saturated && plateau && !idleGrace && (window.availableKbps ?? .infinity) < Self.capacityKbps
         let queueHigh = queue > Self.queueLimitMs
         if lowCapacity || queueHigh {
             cleanWindows = 0
