@@ -39,15 +39,34 @@ struct CaptureStartPreflight {
 struct CaptureHealthState {
     private(set) var lastStatusAt: TimeInterval?
     private(set) var statusIsHealthy = false
+    private(set) var lastStatusWasIdle = false
 
     mutating func observe(_ status: SCFrameStatus, at time: TimeInterval) {
         lastStatusAt = time
         statusIsHealthy = status == .complete || status == .idle
+        lastStatusWasIdle = status == .idle
     }
 
-    func isHealthy(at time: TimeInterval, staleAfter: TimeInterval = 0.8) -> Bool {
-        guard statusIsHealthy, let lastStatusAt else { return false }
-        return time >= lastStatusAt && time - lastStatusAt <= staleAfter
+    /// Fresh complete/idle status, or a still screen: ScreenCaptureKit stops sending idle status
+    /// about 9 s after the picture last changed (PocketDeskStreamStats, 1 Oct 2026: captureIdleFPS
+    /// ~36 then 0 in every still run), so after an idle status `streamCapturing` (macOS 27's
+    /// `SCStream.isCapturing`, nil before it) is the proof the source is alive. Any other status,
+    /// or a stream that says it stopped, fails closed as before.
+    func isHealthy(at time: TimeInterval, staleAfter: TimeInterval = 0.8, streamCapturing: Bool? = nil) -> Bool {
+        guard statusIsHealthy, let lastStatusAt, time >= lastStatusAt else { return false }
+        if time - lastStatusAt <= staleAfter { return true }
+        return lastStatusWasIdle && streamCapturing == true
+    }
+}
+
+/// The idle refresh: while the source is healthy and nothing new was sent, the last frame goes out
+/// again, so a still screen keeps arriving at about 1.25 fps (one 0.4 s health tick in two), well
+/// inside the phone's 2 s freshness limit and enough traffic that the bandwidth estimate holds.
+enum CaptureIdleRefresh {
+    static let interval: TimeInterval = 0.45
+
+    static func isDue(healthy: Bool, hasFrame: Bool, now: TimeInterval, lastSentAt: TimeInterval) -> Bool {
+        healthy && hasFrame && now - lastSentAt >= interval
     }
 }
 
@@ -1008,19 +1027,23 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         if !failureReported && (scopeTarget?.processIsAlive == false || !scopeLease.performIfValid({})) {
             reportStopped(HostCaptureScopeError.targetUnavailable); return
         }
+        var streamCapturing: Bool?
         if #available(macOS 27, *), !failureReported {
-            notCapturingTicks = stream.isCapturing ? 0 : notCapturingTicks + 1
+            let capturing = stream.isCapturing
+            streamCapturing = capturing
+            notCapturingTicks = capturing ? 0 : notCapturingTicks + 1
             // Two ticks apart, so a stream still settling is never mistaken for one macOS stopped.
             if notCapturingTicks >= 2 { reportStopped(CaptureNotCapturingError()); return }
         }
         let now = CACurrentMediaTime()
-        let healthy = health.isHealthy(at: now)
+        let healthy = !failureReported && health.isHealthy(at: now, streamCapturing: streamCapturing)
         let callback = onHealth
         DispatchQueue.main.async { callback?(healthy) }
 
-        // Keep a static desktop visible, but only while fresh ScreenCaptureKit
-        // complete/idle status independently proves the source is still alive.
-        if healthy, now - lastSentAt >= 0.45, let lastBuffer {
+        // Keep a static desktop visible, but only while ScreenCaptureKit status (or, once a still
+        // screen silences it, the stream's own capturing state) proves the source is still alive.
+        if CaptureIdleRefresh.isDue(healthy: healthy, hasFrame: lastBuffer != nil, now: now, lastSentAt: lastSentAt),
+           let lastBuffer {
             deliver(lastBuffer, at: now, timing: sourceTiming.resent(), idleResend: true)
         }
     }

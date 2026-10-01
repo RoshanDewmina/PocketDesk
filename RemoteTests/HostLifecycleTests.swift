@@ -99,6 +99,67 @@ final class HostLifecycleTests: XCTestCase {
         }
     }
 
+    /// Device test, 1 Oct 2026: ScreenCaptureKit sent ~36 idle statuses a second for about 9 s of a
+    /// still screen, then nothing; the refresh stopped, the phone saw no frame for 2 s and paused
+    /// control. Health ticks every 0.4 s as in `RemoteCapture.start()`.
+    private func stillScreen(seconds: Double, idleStatusUntil: Double, last: SCFrameStatus = .idle,
+                             streamCapturing: Bool?) -> (healthyTicks: [Bool], sends: [Double]) {
+        var health = CaptureHealthState()
+        var nextStatus = 0.0
+        var lastSentAt = 0.0
+        var healthyTicks: [Bool] = []
+        var sends: [Double] = []
+        for tick in 1...Int(seconds / 0.4) {
+            let now = Double(tick) * 0.4
+            while nextStatus <= min(now, idleStatusUntil) {
+                health.observe(nextStatus + 1 / 36 > idleStatusUntil ? last : .idle, at: nextStatus)
+                nextStatus += 1 / 36
+            }
+            let healthy = health.isHealthy(at: now, streamCapturing: streamCapturing)
+            healthyTicks.append(healthy)
+            if CaptureIdleRefresh.isDue(healthy: healthy, hasFrame: true, now: now, lastSentAt: lastSentAt) {
+                lastSentAt = now
+                sends.append(now)
+            }
+        }
+        return (healthyTicks, sends)
+    }
+
+    func testAStillScreenStaysHealthyAndKeepsRefreshingAfterIdleStatusStops() {
+        let still = stillScreen(seconds: 30, idleStatusUntil: 9, streamCapturing: true)
+        XCTAssertTrue(still.healthyTicks.allSatisfy { $0 }, "the stream says it is capturing; nothing changed")
+        let gaps = zip(still.sends.dropFirst(), still.sends).map { $0 - $1 }
+        XCTAssertLessThan(gaps.max() ?? .infinity, 2, "inside the phone's 2 s freshness limit")
+        for second in 0..<29 {
+            let inSecond = still.sends.filter { $0 > Double(second) && $0 <= Double(second + 1) }.count
+            XCTAssertGreaterThanOrEqual(inSecond, 1, "second \(second): at least 1 refresh frame a second")
+        }
+    }
+
+    func testOnlyAnIdleSourceThatStillCapturesOutlivesItsStatus() {
+        let stopped = stillScreen(seconds: 12, idleStatusUntil: 9, streamCapturing: false)
+        XCTAssertFalse(stopped.healthyTicks.last ?? true, "a stream that says it stopped fails closed")
+        XCTAssertFalse(stopped.sends.contains { $0 > 9.8 }, "and nothing is refreshed")
+        let unknown = stillScreen(seconds: 12, idleStatusUntil: 9, streamCapturing: nil)
+        XCTAssertFalse(unknown.healthyTicks.last ?? true, "before macOS 27 the status alone decides, as before")
+        let changed = stillScreen(seconds: 12, idleStatusUntil: 9, last: .complete, streamCapturing: true)
+        XCTAssertFalse(changed.healthyTicks.last ?? true,
+                       "silence right after a new frame is not a still screen; only an idle status says nothing changed")
+
+        for status: SCFrameStatus in [.blank, .suspended, .started, .stopped] {
+            var health = CaptureHealthState()
+            health.observe(.idle, at: 0)
+            health.observe(status, at: 1)
+            XCTAssertFalse(health.isHealthy(at: 1, streamCapturing: true), "\(status) must fail closed")
+            XCTAssertFalse(health.isHealthy(at: 5, streamCapturing: true), "\(status) must stay closed")
+        }
+        var future = CaptureHealthState()
+        future.observe(.idle, at: 5)
+        XCTAssertFalse(future.isHealthy(at: 4, streamCapturing: true), "a clock running backwards is not proof")
+        XCTAssertFalse(CaptureIdleRefresh.isDue(healthy: true, hasFrame: false, now: 10, lastSentAt: 0),
+                       "no frame of the current region, nothing to refresh")
+    }
+
     func testCaptureOwnershipMakesOldCleanupStale() {
         var ownership = ScopedCaptureOwner()
         let first = ownership.begin()
