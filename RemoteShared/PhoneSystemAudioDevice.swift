@@ -30,8 +30,10 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
         })
         observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { [weak self] note in
             let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
-            guard reason != AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue else { return }
-            self?.restartIfStopped()
+            guard reason != AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue, let self else { return }
+            let builtIn = self.outputIsBuiltIn()
+            self.lock.withLock { self.startedOnBuiltInOutput = builtIn } // A running engine follows the new route.
+            self.restartIfStopped()
         })
     }
     deinit { observers.forEach(NotificationCenter.default.removeObserver) }

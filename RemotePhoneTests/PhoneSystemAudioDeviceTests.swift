@@ -90,6 +90,19 @@ final class PhoneSystemAudioDeviceTests: XCTestCase {
         XCTAssertTrue(device.isRenderingForTesting, "Headphones → other headphones resumes")
     }
 
+    func testHeadphonesAddedToARunningSpeakerEngineAreRememberedForTheirRemoval() throws {
+        let route = RouteProbe(); route.builtIn = true
+        let (device, _) = try playingDevice(route: route)
+        defer { _ = device.terminateDevice() }
+        route.builtIn = false
+        let added = [AVAudioSessionRouteChangeReasonKey: AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue]
+        NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil, userInfo: added)
+        route.builtIn = true
+        let stopped = device.stopEngineForTesting()
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: stopped)
+        XCTAssertFalse(device.isRenderingForTesting, "Pulling AirPods that joined mid-playback never restarts on the speaker")
+    }
+
     func testSpeakerPlaybackResumesOnTheSpeaker() throws {
         let route = RouteProbe(); route.builtIn = true
         let (device, _) = try playingDevice(route: route)
