@@ -1020,6 +1020,7 @@ private struct ConnectionDetailsSheet: View {
                 } header: {
                     Text("Test My Mac and session reports").farsideCaption()
                 }
+                #if DEBUG
                 Section {
                     Toggle("Relay-only test", isOn: Binding(get: { connection.forceRelay },
                                                               set: { connection.forceRelay = $0 }))
@@ -1030,6 +1031,7 @@ private struct ConnectionDetailsSheet: View {
                     Text("For testing the relay route. Leave off for normal use.")
                         .foregroundStyle(Farside.Palette.ash)
                 }
+                #endif
             }
             .scrollContentBackground(.hidden)
             .background(Farside.Palette.void2)

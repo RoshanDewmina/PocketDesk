@@ -2570,6 +2570,7 @@ struct NativeSessionView: View {
                     .listRowBackground(Farside.Palette.panel)
             }
             SmoothMotionDiagnosticsRows(upscale: $smoothMotionUpscale, showsTestingControls: streamStatsEnabled)
+            #if DEBUG
             Toggle("Stream statistics", isOn: $streamStatsEnabled)
                 .toggleStyle(FarsideSwitchStyle())
                 .listRowBackground(Farside.Palette.panel)
@@ -2597,6 +2598,7 @@ struct NativeSessionView: View {
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .listRowBackground(Farside.Palette.panel)
             }
+            #endif
         } header: {
             sectionHeader("For testing")
         }
