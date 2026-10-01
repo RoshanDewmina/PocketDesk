@@ -13,6 +13,8 @@ export class Clock {
   private visible = false;
   private held = false;
   private tickers = new Set<Ticker>();
+  /** Run after every tween of the frame, so what they changed is drawn in the same frame (no one-frame lag). */
+  private posts = new Set<Ticker>();
   private raf = 0;
   private last = 0;
 
@@ -37,6 +39,11 @@ export class Clock {
     if (!p) this.start();
   }
 
+  addPost(fn: Ticker) {
+    this.posts.add(fn);
+    this.start();
+  }
+
   add(fn: Ticker) {
     this.tickers.add(fn);
     this.start();
@@ -46,7 +53,7 @@ export class Clock {
   }
 
   private start() {
-    if (this.raf || this.paused || !this.tickers.size) return;
+    if (this.raf || this.paused || !(this.tickers.size || this.posts.size)) return;
     this.last = 0;
     this.raf = requestAnimationFrame(this.frame);
   }
@@ -58,7 +65,8 @@ export class Clock {
     this.last = now;
     this.time += dt;
     for (const f of [...this.tickers]) f(dt);
-    if (this.tickers.size) this.raf = requestAnimationFrame(this.frame);
+    for (const f of this.posts) f(dt);
+    if (this.tickers.size || this.posts.size) this.raf = requestAnimationFrame(this.frame);
   };
 
   tween(ms: number, fn: (e: number) => void, tok: Tok, ease: Ease = IO): Promise<boolean> {

@@ -1,12 +1,13 @@
 /* The home hero: variant 2 "From the pocket" from the hero lab (website/hero-lab, Website/lab/lab.css), only the
    rules it uses. The Mac scene itself is A2's markup and styles (a2.css). Sizes are stage px; the script scales
    the whole stage into .hero-demo. The drawn devices keep the system font they were designed with. */
+@keyframes blink { 50% { opacity: 0; } }
 .lx { --ui: var(--sys); position: relative; width: 100%; margin: 0; overflow: hidden; }
 /* Hidden until the script has scaled the stage and placed the devices (the loop's first frame is the empty field
    anyway). The whole box, not just the stage: a hidden box doesn't count as a layout shift if a font swap above
    nudges it before the demo starts. */
 .lx:not(.ready) { visibility: hidden; }
-.lx-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; perspective: 1900px; }
+.lx-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .lx-field, .lx-fx { position: absolute; left: 0; top: 0; pointer-events: none; }
 .lx-field { -webkit-mask: radial-gradient(closest-side, #000 55%, transparent); mask: radial-gradient(closest-side, #000 55%, transparent); }
 .lx-fx { z-index: 30; }
@@ -20,15 +21,17 @@
 
 
 /* ---------- the Mac (display width --mac-sw, all parts scale with it) ---------- */
-.lx-mac { position: absolute; width: calc(var(--mac-sw) * 1.156); transform-style: preserve-3d; perspective: calc(var(--mac-sw) * 8); perspective-origin: 50% 36%; }
-.lx-lid { position: relative; margin: 0 calc(var(--mac-sw) * 0.05); transform-origin: 50% 100%; transform-style: preserve-3d; }
+.lx-mac { position: absolute; width: calc(var(--mac-sw) * 1.156); }
+.lx-lid { position: relative; margin: 0 calc(var(--mac-sw) * 0.05); }
 .lx-lidf { position: relative; padding: calc(var(--mac-sw) * 0.028) calc(var(--mac-sw) * 0.028) calc(var(--mac-sw) * 0.04); background: #0c0c0c; border-radius: calc(var(--mac-sw) * 0.034) calc(var(--mac-sw) * 0.034) calc(var(--mac-sw) * 0.01) calc(var(--mac-sw) * 0.01); box-shadow: inset 0 0 0 1px #37342f, inset 0 0 0 calc(var(--mac-sw) * 0.005) #050505; backface-visibility: hidden; }
 .lx-scr { position: relative; width: var(--mac-sw); aspect-ratio: 16 / 10; overflow: hidden; border-radius: calc(var(--mac-sw) * 0.006); background: #000; }
 .lx-scr > .a2-scene { transform-origin: 0 0; }
-.lx-deck { position: absolute; left: 0; right: 0; top: calc(var(--mac-sw) * 0.693); height: calc(var(--mac-sw) * 0.693); transform-origin: 50% 0; transform: rotateX(90deg); background: linear-gradient(180deg, #34322e, #22211e 70%, #1b1a18); border-radius: 0 0 calc(var(--mac-sw) * 0.03) calc(var(--mac-sw) * 0.03); }
-.lx-deck::before { content: ""; position: absolute; left: 9%; right: 9%; top: 7%; height: 38%; border-radius: calc(var(--mac-sw) * 0.008); background: radial-gradient(circle, rgba(237, 232, 223, 0.22) 0 1.2px, transparent 1.7px) 0 0 / calc(var(--mac-sw) * 0.022) calc(var(--mac-sw) * 0.022), #151412; }
-.lx-deck i { position: absolute; left: 34%; right: 34%; top: 52%; height: 34%; border-radius: calc(var(--mac-sw) * 0.01); box-shadow: inset 0 0 0 1px rgba(237, 232, 223, 0.1); background: #262420; }
-.lx-base { position: absolute; left: 0; right: 0; top: calc(var(--mac-sw) * 0.693); height: calc(var(--mac-sw) * 0.034); transform: translateZ(calc(var(--mac-sw) * 0.693)); background: linear-gradient(#45423e, #1f1e1c 55%, #0d0d0c); border-radius: 0 0 calc(var(--mac-sw) * 0.04) calc(var(--mac-sw) * 0.04) / 0 0 calc(var(--mac-sw) * 0.028) calc(var(--mac-sw) * 0.028); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6); }
+/* The base is drawn flat, seen from slightly above: a thin keyboard deck as wide as the lid at the hinge and
+   flaring a little toward you, then the front lip. The pocket hero never opens the lid, so nothing here is 3D
+   (the lab's rotated deck projected wider than the lid and could show as a stray edge in some browsers). */
+.lx-deck { position: absolute; left: calc(var(--mac-sw) * 0.028); right: calc(var(--mac-sw) * 0.028); top: calc(var(--mac-sw) * 0.693); height: calc(var(--mac-sw) * 0.026); clip-path: polygon(2% 0, 98% 0, 100% 100%, 0 100%); background: linear-gradient(180deg, #1d1c1a, #34322e 70%, #3d3a35); }
+.lx-deck::before { content: ""; position: absolute; left: 9%; right: 9%; top: 22%; height: 46%; background: radial-gradient(circle, rgba(237, 232, 223, 0.2) 0 0.9px, transparent 1.3px) 0 0 / calc(var(--mac-sw) * 0.016) calc(var(--mac-sw) * 0.012), #151412; }
+.lx-base { position: absolute; left: calc(var(--mac-sw) * 0.028); right: calc(var(--mac-sw) * 0.028); top: calc(var(--mac-sw) * 0.719); height: calc(var(--mac-sw) * 0.03); background: linear-gradient(#45423e, #1f1e1c 55%, #0d0d0c); border-radius: 0 0 calc(var(--mac-sw) * 0.04) calc(var(--mac-sw) * 0.04) / 0 0 calc(var(--mac-sw) * 0.026) calc(var(--mac-sw) * 0.026); box-shadow: 0 18px 40px rgba(0, 0, 0, 0.6); }
 .lx-base::before { content: ""; position: absolute; left: 43%; width: 14%; top: 0; height: 42%; background: #141312; border-radius: 0 0 calc(var(--mac-sw) * 0.012) calc(var(--mac-sw) * 0.012); }
 
 .lx-view { position: absolute; left: 0; top: 0; z-index: 6; border: 1.5px solid var(--ember); border-radius: 3px; box-shadow: 0 0 0 1px rgba(5, 5, 5, 0.55), 0 0 12px rgba(255, 91, 31, 0.5); pointer-events: none; opacity: 0; }

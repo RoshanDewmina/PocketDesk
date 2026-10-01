@@ -1,7 +1,7 @@
 // Variant 2, "From the pocket": phone first. The iPhone slides up full-size on Farside's Home screen, Connect
 // is tapped, the camera pulls back to reveal the Mac with the outline locking on, a window is dragged across
 // the Mac, the phone pinches in and out, then turns to landscape. From the hero lab (website/hero-lab,
-// Website/lab/src/variants/pocket.ts); the only change is the contact event for the header's status chip.
+// Website/lab/src/variants/pocket.ts); changes: the contact event for the header's status chip, and a shorter gap between loops.
 
 import type { Tok } from "./clock";
 import { EASE, LIN, REVEAL, clamp, lerp } from "./ease";
@@ -12,6 +12,8 @@ import { DONE, park } from "./common";
 
 export function pocketVariant(): Variant {
   const A = { cam: 0, rise: 0, home: 0, status: 0, world: 1 };
+  /** Only the first run waits before the phone rises; after that the loop goes from fade-out to rise in ~0.3 s. */
+  let first = true;
   const INIT = { ...A };
 
   const layout = (tall: boolean): Layout =>
@@ -61,7 +63,8 @@ export function pocketVariant(): Variant {
     },
     async run(x, tok: Tok) {
       const r = x.rig, c = x.clock, W = (ms: number) => c.wait(ms, tok);
-      if (!(await W(350))) return false;
+      if (first && !(await W(350))) return false;
+      first = false;
       if (!(await c.tween(1050, (e) => (A.rise = e), tok, EASE))) return false;
       if (!(await W(450))) return false;
 
@@ -122,7 +125,7 @@ export function pocketVariant(): Variant {
       r.flag("nx", true);
       r.fade(0, 0, 400, tok);
       if (!(await W(1800))) return false;
-      return c.tween(550, (e) => (A.world = 1 - e), tok, LIN);
+      return c.tween(300, (e) => (A.world = 1 - e), tok, LIN);
     },
     still(x) {
       Object.assign(A, { cam: 1, rise: 1, home: 1, status: 1, world: 1 });

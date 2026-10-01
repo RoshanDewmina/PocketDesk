@@ -64,7 +64,7 @@ export class Instance {
       const p = this.stagePt(el);
       this.field.ripple(p.x, p.y);
     };
-    this.clock.add((dt) => this.rig.tick(dt));
+    this.clock.addPost((dt) => this.rig.tick(dt));
     new ResizeObserver(() => this.resize()).observe(fig);
     this.resize();
   }
