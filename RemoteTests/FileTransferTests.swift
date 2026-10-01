@@ -74,7 +74,9 @@ final class FileTransferFramingTests: XCTestCase {
     func testCapabilityIsAdvertisedWithinTheFeatureLimit() throws {
         XCTAssertEqual(SessionFeature.fileTransfer, "file.1")
         XCTAssertTrue(SessionFeature.host.contains(SessionFeature.fileTransfer))
-        XCTAssertLessThanOrEqual(SessionFeature.host.count, 16)
+        XCTAssertEqual(SessionFeature.legacyHost.count, 16)
+        XCTAssertLessThanOrEqual(SessionFeature.host.count, 32)
+        XCTAssertFalse(SessionFeature.legacyHost.contains(SessionFeature.videoRefinement))
         XCTAssertNoThrow(try RemoteAction(action: "capture", features: SessionFeature.host).validate())
     }
 

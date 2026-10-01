@@ -296,6 +296,7 @@ targets:
       - RemoteHost/HostReadiness.swift
       - RemoteHost/HostViewState.swift
       - RemoteHost/AwayModeMachine.swift
+      - RemoteHost/HostAwayEnvironment.swift
       - RemoteShared/AwayModeProtocol.swift
       - RemoteHost/HostPresentation.swift
       - RemoteHost/HostPermissionState.swift

@@ -69,7 +69,7 @@ final class WiFiStallDetectorTests: XCTestCase {
         XCTAssertNil(detector.tip)
         XCTAssertTrue(detector.observe(second(gap: 110)))
         XCTAssertEqual(detector.tip?.message,
-                       "Wi-Fi hiccups every second — turning off AirDrop/Handoff on your Mac can smooth this")
+                       "Picture pauses about once a second — Setting AirDrop to Receiving Off on this iPhone can help smooth this.")
     }
 
     func testStaticLossyRelayAndMacSideSecondsDoNotCount() {

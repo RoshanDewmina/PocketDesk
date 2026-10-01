@@ -236,7 +236,7 @@ final class SessionIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testEnrollmentRecoversWhenPhoneRegistersBeforeHost() async throws {
+    func testInterruptedEnrollmentBeforeHostRegistrationRequiresFreshScan() async throws {
         let (service, url) = try service(); defer { service.terminate() }
         let hostStore = MemoryTrust(), phoneStore = MemoryTrust()
         let host = RemoteCoordinator(isHost: true, store: hostStore)
@@ -247,16 +247,21 @@ final class SessionIntegrationTests: XCTestCase {
 
         let original = try host.createPair(server: url, name: "Late Host")
         try phone.enroll(original.code())
-        try await waitFor("phone entered bounded retry before the host room existed") {
-            phone.status.contains("retrying")
+        try await waitFor("unapproved scan retires when its transport fails") {
+            phone.status == "Pairing was interrupted. Scan a fresh QR to try again."
         }
+        XCTAssertNil(phone.invitation); XCTAssertNil(phoneStore.data)
+        XCTAssertFalse(phone.reconnecting, "An unapproved scan is not saved trust")
         XCTAssertFalse(host.hostRegistered)
         XCTAssertFalse(host.connected)
         XCTAssertFalse(phone.connected)
 
         host.start()
-        try await waitFor("host registered during the phone retry window") { host.hostRegistered }
-        try await waitFor("retried enrollment still requires explicit host approval") { host.awaitingApproval }
+        try await waitFor("host registered after the retired scan") { host.hostRegistered }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertFalse(host.awaitingApproval); XCTAssertFalse(phone.connected)
+        try phone.enroll(original.code()) // fresh, deliberate scan of the still-current QR
+        try await waitFor("fresh enrollment still requires explicit host approval") { host.awaitingApproval }
         XCTAssertFalse(host.connected)
         XCTAssertFalse(phone.connected)
 
@@ -298,7 +303,7 @@ final class SessionIntegrationTests: XCTestCase {
     }
 
     @MainActor
-    func testPhoneSaveFailureKeepsRotatedHostTrust() async throws {
+    func testPhoneSaveFailureKeepsRotatedHostTrustAndRetiresOldScan() async throws {
         let (service, url) = try service(); defer { service.terminate() }
         let hostStore = MemoryTrust(), phoneStore = MemoryTrust()
         phoneStore.refuseSave = true
@@ -323,14 +328,15 @@ final class SessionIntegrationTests: XCTestCase {
         phone.stop(); host.stop(); host.start()
         try await waitFor("rotated host re-registered") { host.status == "Ready for your paired phone" }
         try phone.enroll(original.code())
-        try await waitFor("original invitation exhausts its bounded retry budget") {
-            phone.status.contains("host_unavailable_or_unauthorized")
+        try await waitFor("old scan retires after the service rejects its rotated key") {
+            phone.status == "Pairing was interrupted. Scan a fresh QR to try again."
         }
+        XCTAssertNil(phone.invitation); XCTAssertNil(phoneStore.data)
+        XCTAssertEqual(try hostStore.read(HostPair.self), committed, "Failure cannot roll back the host's approved trust")
         XCTAssertFalse(host.awaitingApproval); XCTAssertFalse(host.connected)
         phone.start()
-        try await waitFor("explicit Connect starts a fresh bounded retry budget") {
-            phone.status.contains("retrying")
-        }
+        XCTAssertEqual(phone.status, "Pair with your Mac first")
+        XCTAssertFalse(phone.reconnecting, "Connect cannot resurrect an unapproved or failed-to-save scan")
         XCTAssertFalse(host.awaitingApproval); XCTAssertFalse(host.connected); XCTAssertFalse(phone.connected)
     }
 

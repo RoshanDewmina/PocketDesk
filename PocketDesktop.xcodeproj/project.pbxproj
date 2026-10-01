@@ -749,6 +749,7 @@
 		9E23F3D7A556F4C76DF28DEF /* AgentAlertPushUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 578EF156F79B236F46430BE1 /* AgentAlertPushUITests.swift */; };
 		9E30BA836236D0A4A3672F45 /* CouchPhoneGate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8ECD26525DE27E40748D832C /* CouchPhoneGate.swift */; };
 		9E888AB5D9DB40DE7CA890DF /* HardwarePointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E5C51F87E4D48EB606171AC /* HardwarePointer.swift */; };
+		9E8E4AFBA3F2BC24B7E731BA /* HostAwayEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FE77690E764FC40EA4AFD60 /* HostAwayEnvironment.swift */; };
 		9EB5CD9BF4A64423B552F382 /* Pairing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9211D8B9DD746165FF31BB31 /* Pairing.swift */; };
 		9EF611D369E330D8DA0FD6E2 /* VideoFeedback.swift in Sources */ = {isa = PBXBuildFile; fileRef = B269874C9D20768E2CE20056 /* VideoFeedback.swift */; };
 		9EF6D9D1F691F0ECA6E4E30B /* BigTextControllerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02A9DCB25E30CE1D20492DFC /* BigTextControllerTests.swift */; };
@@ -1251,10 +1252,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1284,10 +1285,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -3516,6 +3517,7 @@
 				1866420E46E0544DA1407E95 /* HostActivity.swift in Sources */,
 				3042945957F1DCF81CD9F5D9 /* HostArt.swift in Sources */,
 				F9A33330FBB937E2059B98C4 /* HostArtTests.swift in Sources */,
+				9E8E4AFBA3F2BC24B7E731BA /* HostAwayEnvironment.swift in Sources */,
 				025C7C5ACA218DE7AC3619BE /* HostFontTests.swift in Sources */,
 				C451862110535A7F0F73D284 /* HostIdentityStore.swift in Sources */,
 				0DFB4E414B448734F36B004E /* HostLANWake.swift in Sources */,
