@@ -41,7 +41,7 @@ final class MediaResourceBudgetTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(next, admitted - 1_000, "a transfer's own bytes do not shrink its next window")
     }
 
-    func testMissingCapacityStartsAtTheProbeFloorAndDoesNotClaimAnEstimate() throws {
+    func testMissingCapacityStartsAtTheProbeStartRateAndDoesNotClaimAnEstimate() throws {
         XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(sample(capacity: nil), at: 1, baselineRTT: 40), 48_000)
         XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(sample(route: "Direct", capacity: nil), at: 1, baselineRTT: 40), 64_000)
         XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(sample(route: "Route pending"), at: 1, baselineRTT: 40))
@@ -52,7 +52,11 @@ final class MediaResourceBudgetTests: XCTestCase {
         probed.route = "Relay"
         XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(probed, at: 1, baselineRTT: 40), 187_500, "relay probe ceiling 1.5 Mbps")
         probed.probeKbps = .nan
-        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(probed, at: 1, baselineRTT: 40), 48_000)
+        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(probed, at: 1, baselineRTT: 40), 48_000, "unknown probe uses the start rate")
+        probed.probeKbps = 50
+        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(probed, at: 1, baselineRTT: 40), 16_000, "relay floor 128 kbps")
+        probed.route = "Direct"
+        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(probed, at: 1, baselineRTT: 40), 32_000, "direct floor 256 kbps")
         var measured = sample(); measured.probeKbps = 1_500
         XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(measured, at: 1, baselineRTT: 40), 117_000, "a real estimate ignores the probe")
     }
@@ -76,16 +80,44 @@ final class MediaResourceBudgetTests: XCTestCase {
         other = lan; other.pacerDelayMs = 50
         XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(other, at: 1, baselineRTT: 8))
 
-        var host = lan; host.capacityKbps = 300; host.videoKbps = 0
+        var host = lan; host.capacityKbps = 300; host.videoKbps = 0; host.senderMaxKbps = 350
         XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 1_000_000, "an allocation-limited host estimate does not hide the LAN")
         host.videoKbps = 5_000
         XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 1_000_000)
         host.pacerDelayMs = 50
         XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), "a backed-up video pacer still pauses files")
-        host = lan; host.capacityKbps = 300; host.videoKbps = 0; host.rttMs = 80
+        host = lan; host.capacityKbps = 300; host.videoKbps = 0; host.senderMaxKbps = 350; host.rttMs = 80
         XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), "RTT inflation still pauses files")
-        host.routeDetail = "p2p"; host.rttMs = 8
+        host.rttMs = 8; host.senderMaxKbps = 20_000
+        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 10_750, "a low estimate at the edge of Wi-Fi is a real limit")
+        host.senderMaxKbps = nil
+        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 10_750, "unknown encoder ceiling keeps the formula")
+        host.videoKbps = 5_000
+        XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), "and video keeps the whole estimate")
+        host.routeDetail = "p2p"; host.senderMaxKbps = 350; host.videoKbps = 0
         XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 10_750, "off-LAN host keeps the measured formula")
+    }
+
+    func testDegradedSenderGovernorOrDeepSenderQueueStopsBulkEverywhere() {
+        var lan = sample(route: "Direct", capacity: nil, rtt: 8); lan.routeDetail = "lan"
+        var host = lan; host.capacityKbps = 300; host.videoKbps = 0; host.senderMaxKbps = 350
+        var probed = sample(route: "Direct", capacity: nil); probed.probeKbps = 2_000
+        for base in [lan, host, probed, sample()] {
+            XCTAssertNotNil(BulkAdmissionPolicy.bytesPerSecond(base, at: 1, baselineRTT: 8))
+            var next = base; next.governorDegraded = true
+            XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(next, at: 1, baselineRTT: 8))
+            next = base; next.senderQueueMs = 100
+            XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(next, at: 1, baselineRTT: 8))
+            next.senderQueueMs = .nan
+            XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(next, at: 1, baselineRTT: 8))
+            next.senderQueueMs = 99
+            XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(next, at: 1, baselineRTT: 8), BulkAdmissionPolicy.bytesPerSecond(base, at: 1, baselineRTT: 8))
+        }
+        let budget = MediaResourceBudget()
+        budget.observe(lan)
+        XCTAssertTrue(budget.permits(bytes: 16_384, at: 0.1, controlBuffered: 0, fileBuffered: 0))
+        lan.at = 0.2; lan.governorDegraded = true; budget.observe(lan)
+        XCTAssertFalse(budget.permits(bytes: 1, at: 0.5, controlBuffered: 0, fileBuffered: 0))
     }
 
     func testLANAllowanceBucketReachesTheAllowanceAt10msPumpTicksAndStaysGoverned() {
@@ -114,6 +146,31 @@ final class MediaResourceBudgetTests: XCTestCase {
         XCTAssertEqual(BulkAdmissionPolicy.bucketBytes(rate: 48_000), 16_384)
         XCTAssertEqual(BulkAdmissionPolicy.bucketBytes(rate: 1_000_000), 30_000)
         XCTAssertEqual(BulkAdmissionPolicy.bucketBytes(rate: 2_000_000), 60_000)
+    }
+
+    func testMessagesCarryFiftyMillisecondsOfRateBetweenTwoAndSixteenKiB() {
+        XCTAssertEqual(BulkAdmissionPolicy.messageBytes(rate: 16_000), 2_048)
+        XCTAssertEqual(BulkAdmissionPolicy.messageBytes(rate: 48_000), 2_400)
+        XCTAssertEqual(BulkAdmissionPolicy.messageBytes(rate: 187_500), 9_375)
+        XCTAssertEqual(BulkAdmissionPolicy.messageBytes(rate: 1_000_000), 16_384)
+        XCTAssertEqual(BulkAdmissionPolicy.messageBytes(rate: .nan), 16_384)
+        let budget = MediaResourceBudget()
+        XCTAssertEqual(budget.messageBytes(at: 0), 16_384, "no observation: the send is refused anyway")
+        budget.observe(sample(capacity: nil))
+        XCTAssertEqual(budget.messageBytes(at: 0.5), 2_400)
+    }
+
+    func testBaselineRTTExpiresAfterALegitimatePathChange() {
+        let budget = MediaResourceBudget()
+        func observe(_ at: Double, _ rtt: Double) {
+            var next = sample(at: at, route: "Direct", capacity: nil, rtt: rtt); next.routeDetail = "p2p"; next.rttSampleMs = rtt
+            budget.observe(next)
+        }
+        observe(0, 40)
+        for second in 1...14 { observe(Double(second), 150) }
+        XCTAssertFalse(budget.permits(bytes: 2_048, at: 14.5, controlBuffered: 0, fileBuffered: 0), "+110 ms over the old path pauses files")
+        observe(15, 150)
+        XCTAssertTrue(budget.permits(bytes: 2_048, at: 15.5, controlBuffered: 0, fileBuffered: 0), "after 15 s the new path is the baseline")
     }
 
     func testStalenessNegativeClockAndNonfiniteCapacityFailClosed() {
@@ -159,23 +216,21 @@ final class MediaResourceBudgetTests: XCTestCase {
         XCTAssertFalse(budget.permits(bytes: 1, at: 3, controlBuffered: 0, fileBuffered: 0))
     }
 
-    func testProbeRampsOnlyWhenUsedAndCalmHalvesOnInflationOrStandingQueueAndIsBounded() {
+    func testProbeRampsOnlyWhenUsedAndCalmHalvesOnInflationAndIsBounded() {
         var probe = BulkRateProbe(route: "Direct")
-        XCTAssertEqual(probe.kbps, 512)
-        probe.update(achievedKbps: 300, rttMs: 40, baselineRTTMs: 40, standingQueue: false)
+        XCTAssertEqual([probe.startKbps, probe.floorKbps, probe.ceilingKbps, probe.kbps], [512, 256, 8_000, 512])
+        probe.update(achievedKbps: 300, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 0)
         XCTAssertEqual(probe.kbps, 512, "an under-used allowance is not evidence of headroom")
-        probe.update(achievedKbps: 512, rttMs: nil, baselineRTTMs: 40, standingQueue: false)
-        XCTAssertEqual(probe.kbps, 512, "no RTT, no ramp")
-        probe.update(achievedKbps: 360, rttMs: 59, baselineRTTMs: 40, standingQueue: false)
+        probe.update(achievedKbps: 512, rttSampleMs: nil, baselineRTTMs: 40, queueRefusedShare: 0)
+        XCTAssertEqual(probe.kbps, 512, "no fresh RTT sample, no RTT decision")
+        probe.update(achievedKbps: 360, rttSampleMs: 59, baselineRTTMs: 40, queueRefusedShare: 0)
         XCTAssertEqual(probe.kbps, 768, "70% use and +19 ms ramps x1.5")
-        probe.update(achievedKbps: 768, rttMs: 61, baselineRTTMs: 40, standingQueue: false)
-        XCTAssertEqual(probe.kbps, 512, "+21 ms is over 1.5x a 40 ms baseline")
-        probe.update(achievedKbps: 512, rttMs: 40, baselineRTTMs: 40, standingQueue: true)
-        XCTAssertEqual(probe.kbps, 512, "halving stops at the floor")
-        for _ in 0..<20 { probe.update(achievedKbps: probe.kbps, rttMs: 40, baselineRTTMs: 40, standingQueue: false) }
+        probe.update(achievedKbps: 768, rttSampleMs: 61, baselineRTTMs: 40, queueRefusedShare: 0)
+        XCTAssertEqual(probe.kbps, 384, "+21 ms is over 1.5x a 40 ms baseline")
+        probe.update(achievedKbps: 384, rttSampleMs: 100, baselineRTTMs: 40, queueRefusedShare: 0)
+        XCTAssertEqual(probe.kbps, 256, "halving stops at the floor, below the start rate")
+        for _ in 0..<20 { probe.update(achievedKbps: probe.kbps, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 0) }
         XCTAssertEqual(probe.kbps, 8_000)
-        probe.update(achievedKbps: 8_000, rttMs: 40, baselineRTTMs: 40, standingQueue: true)
-        XCTAssertEqual(probe.kbps, 4_000)
 
         XCTAssertTrue(BulkRateProbe.inflated(rttMs: 251, baselineRTTMs: 200), "+50 ms caps the 1.5x rule on long paths")
         XCTAssertFalse(BulkRateProbe.inflated(rttMs: 249, baselineRTTMs: 200))
@@ -183,23 +238,55 @@ final class MediaResourceBudgetTests: XCTestCase {
         XCTAssertTrue(BulkRateProbe.inflated(rttMs: 12.5, baselineRTTMs: 2))
 
         var relay = BulkRateProbe(route: "Relay")
-        XCTAssertEqual(relay.kbps, 384)
-        for _ in 0..<20 { relay.update(achievedKbps: relay.kbps, rttMs: 80, baselineRTTMs: 80, standingQueue: false) }
+        XCTAssertEqual([relay.startKbps, relay.floorKbps, relay.ceilingKbps], [384, 128, 1_500])
+        for _ in 0..<20 { relay.update(achievedKbps: relay.kbps, rttSampleMs: 80, baselineRTTMs: 80, queueRefusedShare: 0) }
         XCTAssertEqual(relay.kbps, 1_500)
     }
 
-    /// Mirrors the engine pump: 16 KiB messages at 10 ms retries, stats every second, an instantly
-    /// draining queue unless `buffered` says otherwise. Returns bytes admitted per one-second window.
+    func testProbeFallsBelowAchievedWhenTheFileQueueRefusesMostSends() {
+        var probe = BulkRateProbe(route: "Direct")
+        for _ in 0..<4 { probe.update(achievedKbps: probe.kbps, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 0) }
+        XCTAssertEqual(probe.kbps, 2_592)
+        probe.update(achievedKbps: 2_000, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 0.6)
+        XCTAssertEqual(probe.kbps, 1_700, "0.85 x achieved, no ramp despite calm RTT")
+        probe.update(achievedKbps: 1_700, rttSampleMs: nil, baselineRTTMs: 40, queueRefusedShare: 0.5)
+        XCTAssertEqual(probe.kbps, 1_700, "half the sends refused is not yet a standing queue")
+        probe.update(achievedKbps: 100, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 0.9)
+        XCTAssertEqual(probe.kbps, 256, "never below the floor")
+    }
+
+    func testIdleProbeDecaysBackToTheStartRate() {
+        var probe = BulkRateProbe(route: "Direct")
+        for _ in 0..<7 { probe.update(achievedKbps: probe.kbps, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 0) }
+        XCTAssertEqual(probe.kbps, 8_000)
+        var decay: [Double] = []
+        for _ in 0..<6 { probe.update(achievedKbps: 0, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 0); decay.append(probe.kbps) }
+        XCTAssertEqual(decay, [4_000, 2_000, 1_000, 512, 512, 512], "an idle window halves, never below the start rate")
+        probe.update(achievedKbps: 300, rttSampleMs: 100, baselineRTTMs: 40, queueRefusedShare: 0)
+        XCTAssertEqual(probe.kbps, 256)
+        probe.update(achievedKbps: 0, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 0)
+        XCTAssertEqual(probe.kbps, 256, "idle does not lift a probe that congestion pushed below the start")
+    }
+
+    /// Mirrors the engine pump: rate-sized messages (or `fixedMessage`) on 10 ms retries, stats every second,
+    /// and a link draining `drain` B/s (instant when nil). `each` sees the queue before each tick's sends.
+    /// Returns bytes admitted per one-second window.
     private func simulatePump(_ budget: MediaResourceBudget, seconds: Int, observation: (Double) -> MediaCapacityObservation,
-                              buffered: (Int) -> UInt64 = { _ in 0 }, total: Int = .max) -> [Int] {
-        var windows: [Int] = [], sent = 0
+                              drain: Double? = nil, fixedMessage: Int? = nil, total: Int = .max,
+                              each: (Int, UInt64) -> Void = { _, _ in }) -> [Int] {
+        var windows: [Int] = [], sent = 0, buffered: UInt64 = 0
         for second in 0..<seconds {
             budget.observe(observation(Double(second)))
             var window = 0
             for tick in 1...100 where sent < total {
                 let at = Double(second) + Double(tick) / 100
-                while sent < total, budget.permits(bytes: 16_384, at: at, controlBuffered: 0, fileBuffered: buffered(second)) {
-                    window += 16_384; sent += 16_384
+                buffered = drain.map { UInt64(max(0, Double(buffered) - $0 / 100)) } ?? 0
+                each(second, buffered)
+                while sent < total {
+                    let bytes = fixedMessage ?? budget.messageBytes(at: at)
+                    guard budget.permits(bytes: bytes, at: at, controlBuffered: 0, fileBuffered: buffered) else { break }
+                    window += bytes; sent += bytes
+                    if drain != nil { buffered += UInt64(bytes) }
                 }
             }
             windows.append(window)
@@ -207,33 +294,84 @@ final class MediaResourceBudgetTests: XCTestCase {
         return windows
     }
 
+    private func offLAN(_ route: String, rtt: Double, at: Double) -> MediaCapacityObservation {
+        var next = MediaCapacityObservation(at: at, route: route, capacityKbps: nil, videoKbps: 200, rttMs: rtt, pacerDelayMs: 0)
+        next.routeDetail = route == "Relay" ? "relay" : "p2p"; next.rttSampleMs = rtt
+        return next
+    }
+
     func testPhoneProbeMovesFourMebibytesOffLANFarFasterThanTheOldFixedFallback() {
         let fourMiB = 4 * 1024 * 1024
-        for (route, detail, rtt, oldRate, bound) in [("Direct", "p2p", 40.0, 32_000.0, 12), ("Relay", "relay", 90.0, 16_000.0, 30)] {
+        for (route, rtt, oldRate, bound) in [("Direct", 40.0, 32_000.0, 12), ("Relay", 90.0, 16_000.0, 30)] {
             let budget = MediaResourceBudget()
-            let windows = simulatePump(budget, seconds: 40, observation: { at in
-                var next = MediaCapacityObservation(at: at, route: route, capacityKbps: nil, videoKbps: 200, rttMs: rtt, pacerDelayMs: 0)
-                next.routeDetail = detail; return next
-            }, total: fourMiB)
+            let windows = simulatePump(budget, seconds: 40, observation: { self.offLAN(route, rtt: rtt, at: $0) }, total: fourMiB)
             var seconds = 0, moved = 0
             for bytes in windows where moved < fourMiB { seconds += 1; moved += bytes }
             XCTAssertGreaterThanOrEqual(windows.reduce(0, +), fourMiB)
-            XCTAssertLessThanOrEqual(seconds, bound, "\(route): 4 MiB in \(seconds) s; the old fixed fallback needed \(Int(Double(fourMiB) / oldRate)) s")
+            XCTAssertLessThanOrEqual(seconds, bound, "\(route): 4 MiB in \(seconds) s \(windows); the old fixed fallback needed \(Int(Double(fourMiB) / oldRate)) s")
             XCTAssertLessThanOrEqual(windows.max() ?? 0, route == "Relay" ? 187_500 + 16_384 : 1_000_000 + 32_768, "probe ceiling holds")
         }
     }
 
-    func testPhoneProbeBacksOffOnRTTInflationAndStandingQueue() {
+    func testProbeDoesNotRampPastALinkSlowerThanItsAllowance() {
+        let link = 55_000.0, linkKbps = 440.0
+        for fixed in [16_384, nil] as [Int?] {
+            let label = "message \(fixed.map(String.init) ?? "rate-sized")"
+            let budget = MediaResourceBudget()
+            var allowance: [Double] = [], low: [UInt64] = [], high: UInt64 = 0
+            let windows = simulatePump(budget, seconds: 30, observation: { at in
+                if at > 0, let kbps = budget.probedKbps { allowance.append(kbps) }
+                return self.offLAN("Direct", rtt: 40, at: at)
+            }, drain: link, fixedMessage: fixed) { second, buffered in
+                if low.count == second { low.append(buffered) } else { low[second] = min(low[second], buffered) }
+                high = max(high, buffered)
+            }
+            XCTAssertLessThanOrEqual(high, 32 * 1_024, label)
+            XCTAssertGreaterThan(high, 30 * 1_024, "\(label): the allowance outruns the link and fills the queue")
+            let steady = Array(allowance.dropFirst(5))
+            XCTAssertLessThanOrEqual(steady.reduce(0, +) / Double(steady.count), linkKbps * 1.5, "\(label): \(allowance)")
+            XCTAssertLessThanOrEqual(steady.max() ?? .infinity, linkKbps * 2, "\(label): one probe step at most: \(allowance)")
+            let moved = Double(windows.dropFirst(5).reduce(0, +)) / Double(windows.count - 5)
+            XCTAssertLessThanOrEqual(moved, link * 1.05, label)
+            XCTAssertGreaterThan(moved, link * 0.6, "\(label): backing off does not starve the transfer")
+            guard fixed == nil else {
+                // A whole 16 KiB message takes 0.3 s to drain here, so the queue swings 15-31 KiB by
+                // granularity alone; the refused-send share keeps the probe from running away.
+                XCTAssertLessThanOrEqual(low.dropFirst(5).min() ?? 0, 16 * 1_024, "\(label): \(low)")
+                continue
+            }
+            var standing = 0
+            for window in 1..<(allowance.count - 1) where low[window] >= 16 * 1_024 {
+                standing += 1
+                XCTAssertLessThanOrEqual(allowance[window + 1], allowance[window],
+                                         "\(label): no ramp after window \(window) whose queue never drained below 16 KiB: \(allowance)")
+            }
+            XCTAssertGreaterThan(standing, 2, "\(label): \(low)")
+        }
+    }
+
+    func testPhoneProbeBacksOffOnPerWindowRTTInflation() {
         let budget = MediaResourceBudget()
-        let windows = simulatePump(budget, seconds: 10, observation: { at in
-            var next = MediaCapacityObservation(at: at, route: "Direct", capacityKbps: nil, videoKbps: 200,
-                                                rttMs: at == 6 ? 120 : 40, pacerDelayMs: 0)
-            next.routeDetail = "p2p"; return next
-        }, buffered: { $0 == 8 ? 20_000 : 0 })
+        let windows = simulatePump(budget, seconds: 9, observation: { at in
+            var next = self.offLAN("Direct", rtt: 40, at: at)
+            if at == 6 { next.rttSampleMs = 75 }
+            return next
+        })
         XCTAssertGreaterThan(windows[5], windows[4], "ramping while calm")
-        XCTAssertEqual(windows[6], 0, "+80 ms over a 40 ms baseline pauses files")
-        XCTAssertLessThan(windows[7], windows[5], "the window after inflation runs at half rate")
-        XCTAssertEqual(windows[8], 0, "a queue that never drains admits nothing")
-        XCTAssertLessThan(windows[9], windows[7], "and halves the next window")
+        XCTAssertLessThan(windows[6], windows[5], "a +35 ms window mean halves the next window")
+        XCTAssertGreaterThan(windows[7], windows[6], "and the ramp resumes once calm")
+    }
+
+    func testGovernorHookStopsAnOngoingTransferWithinOneWindow() {
+        let budget = MediaResourceBudget()
+        let windows = simulatePump(budget, seconds: 4, observation: { at in
+            var next = self.offLAN("Direct", rtt: 40, at: at)
+            if at == 2 { next.senderQueueMs = 120 }
+            if at == 3 { next.governorDegraded = true }
+            return next
+        })
+        XCTAssertGreaterThan(windows[1], 0)
+        XCTAssertEqual(windows[2], 0)
+        XCTAssertEqual(windows[3], 0)
     }
 }

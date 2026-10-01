@@ -18,23 +18,36 @@ struct MediaCapacityObservation {
     /// Adaptive allowance learned from this budget's own achieved rate, used only without a
     /// capacity estimate. It is never a capacity estimate and never admits guest replication.
     var probeKbps: Double? = nil
+    /// Mean STUN round trip over the last stats window; `rttMs` is the pair's latest, refreshed only every few seconds.
+    var rttSampleMs: Double? = nil
+    /// Host: the encoder ceiling actually applied, to tell an allocation-limited estimate from a link limit.
+    var senderMaxKbps: Double? = nil
+    /// Sender-queue governor (X17). A degraded governor or a deep sender queue stops all bulk admission.
+    var senderQueueMs: Double? = nil
+    var governorDegraded = false
 }
 
 /// Off-LAN allowance for a sender with no outbound-video GCC estimate (the receive-only phone).
-/// Starts at a conservative floor, ramps while the allowance is actually used and RTT is calm,
-/// halves on moderate RTT inflation or a standing file queue.
+/// Ramps while the allowance is used and the per-window RTT is calm; backs off to the achieved
+/// rate when the file queue refuses most sends, halves on RTT inflation, decays while idle.
 struct BulkRateProbe: Equatable {
     static let rampFactor = 1.5
     static let rampUtilization = 0.7
+    static let idleUtilization = 0.1
+    static let queueRefusalShare = 0.5
+    static let queueBackoff = 0.85
     static let jitterFloorMs: Double = 10
+    let startKbps: Double
     let floorKbps: Double
     let ceilingKbps: Double
     private(set) var kbps: Double
 
     init(route: String) {
-        floorKbps = route == "Relay" ? 384 : 512
-        ceilingKbps = route == "Relay" ? 1_500 : 8_000
-        kbps = floorKbps
+        let relay = route == "Relay"
+        startKbps = relay ? 384 : 512
+        floorKbps = relay ? 128 : 256
+        ceilingKbps = relay ? 1_500 : 8_000
+        kbps = startKbps
     }
 
     static func inflated(rttMs: Double?, baselineRTTMs: Double?) -> Bool {
@@ -42,11 +55,22 @@ struct BulkRateProbe: Equatable {
         return rttMs - baselineRTTMs > max(jitterFloorMs, min(50, baselineRTTMs * 0.5))
     }
 
-    mutating func update(achievedKbps: Double?, rttMs: Double?, baselineRTTMs: Double?, standingQueue: Bool) {
-        if standingQueue || Self.inflated(rttMs: rttMs, baselineRTTMs: baselineRTTMs) {
+    /// `standingQueue`: the file queue never drained below half its bound during the window.
+    mutating func update(achievedKbps: Double?, rttSampleMs: Double?, baselineRTTMs: Double?,
+                         queueRefusedShare: Double, standingQueue: Bool = false) {
+        guard let achievedKbps, achievedKbps.isFinite, achievedKbps >= 0 else { return }
+        if queueRefusedShare > Self.queueRefusalShare || standingQueue {
+            kbps = min(kbps, max(floorKbps, achievedKbps * Self.queueBackoff))
+            return
+        }
+        if achievedKbps < kbps * Self.idleUtilization {
+            kbps = max(min(startKbps, kbps), kbps / 2)
+            return
+        }
+        guard let rttSampleMs, rttSampleMs.isFinite, rttSampleMs >= 0 else { return }
+        if Self.inflated(rttMs: rttSampleMs, baselineRTTMs: baselineRTTMs) {
             kbps = max(floorKbps, kbps / 2)
-        } else if let achievedKbps, achievedKbps.isFinite, achievedKbps >= kbps * Self.rampUtilization,
-                  let rttMs, rttMs.isFinite, rttMs >= 0 {
+        } else if achievedKbps >= kbps * Self.rampUtilization {
             kbps = min(ceilingKbps, kbps * Self.rampFactor)
         }
     }
@@ -54,6 +78,7 @@ struct BulkRateProbe: Equatable {
 
 enum BulkAdmissionPolicy {
     static let maximumMessageBytes = 16 * 1024
+    static let minimumMessageBytes = 2 * 1024
     static let maximumBufferedBytes: UInt64 = 32 * 1024
     static let freshness: TimeInterval = 3
     // Includes room for output audio and control even before audio counters are available.
@@ -62,18 +87,31 @@ enum BulkAdmissionPolicy {
     static let spareShare = 0.5
     static let directCeilingKbps: Double = 16_000
     static let relayCeilingKbps: Double = 1_500
-    /// A fresh selected LAN pair with measured low RTT may use a bounded policy allowance on either
-    /// side. This is NOT a measured capacity or a throughput guarantee.
+    /// A fresh selected LAN pair with measured low RTT may use a bounded policy allowance. On the host
+    /// it applies only while the estimate is allocation-limited. NOT a measured capacity or a guarantee.
     static let lanBytesPerSecond: Double = 1_000_000
+    static let allocationLimitedShare = 0.8
+    static let maximumSenderQueueMs: Double = 100
     static let creditWindow: TimeInterval = 0.03
+    static let messageWindow: TimeInterval = 0.05
+    /// A legitimate path change (cellular handover) must not leave files paused against an old minimum.
+    static let baselineRTTWindow: TimeInterval = 15
 
     static func bucketBytes(rate: Double) -> Double { max(Double(maximumMessageBytes), rate * creditWindow) }
+
+    /// Smaller messages at low rates bound how long input can wait behind one file message.
+    static func messageBytes(rate: Double) -> Int {
+        guard rate.isFinite, rate > 0 else { return maximumMessageBytes }
+        return min(maximumMessageBytes, max(minimumMessageBytes, Int(rate * messageWindow)))
+    }
 
     static func bytesPerSecond(_ observation: MediaCapacityObservation, at now: TimeInterval,
                                baselineRTT: Double?) -> Double? {
         guard now.isFinite, observation.at.isFinite, now >= observation.at,
               now - observation.at <= freshness,
-              ["Direct", "Relay"].contains(observation.route) else { return nil }
+              ["Direct", "Relay"].contains(observation.route), !observation.governorDegraded else { return nil }
+        if let queue = observation.senderQueueMs,
+           !queue.isFinite || queue < 0 || queue >= maximumSenderQueueMs { return nil }
         if let delay = observation.pacerDelayMs,
            !delay.isFinite || delay < 0 || delay >= 50 { return nil }
         if let rtt = observation.rttMs {
@@ -86,20 +124,21 @@ enum BulkAdmissionPolicy {
         guard let capacity = observation.capacityKbps else {
             if lan { return lanBytesPerSecond }
             let probe = BulkRateProbe(route: observation.route)
-            let kbps = observation.probeKbps.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? probe.floorKbps
+            let kbps = observation.probeKbps.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? probe.startKbps
             return min(max(kbps, probe.floorKbps), probe.ceilingKbps) * 1_000 / 8
         }
         guard capacity.isFinite, capacity > 0 else { return nil }
         let measured = observation.videoKbps ?? 0
         let bulk = observation.bulkKbps ?? 0
         guard measured.isFinite, measured >= 0, bulk.isFinite, bulk >= 0 else { return nil }
+        // Only an estimate pinned near the encoder ceiling says nothing about the LAN link itself; a low
+        // estimate at the edge of Wi-Fi range is a real limit and keeps the measured formula.
+        let lanFloor = lan && observation.senderMaxKbps.map { $0.isFinite && $0 > 0 && capacity >= $0 * allocationLimitedShare } == true
         let spareKbps = capacity - max(0, measured - bulk) - reservedKbps
-        // The host's GCC estimate is allocation-limited on a LAN; the pacer and RTT gates above
-        // still pause files when video backs up.
-        guard spareKbps > 0 else { return lan ? lanBytesPerSecond : nil }
+        guard spareKbps > 0 else { return lanFloor ? lanBytesPerSecond : nil }
         let kbps = min(capacity * capacityShare, spareKbps * spareShare,
                        relay ? relayCeilingKbps : directCeilingKbps)
-        return max(kbps * 1_000 / 8, lan ? lanBytesPerSecond : 0)
+        return max(kbps * 1_000 / 8, lanFloor ? lanBytesPerSecond : 0)
     }
 }
 
@@ -107,14 +146,20 @@ enum BulkAdmissionPolicy {
 final class MediaResourceBudget: @unchecked Sendable {
     private let lock = NSLock()
     private var observation: MediaCapacityObservation?
-    private var baselineRTT: Double?
+    private var rttSamples: [(at: TimeInterval, ms: Double)] = []
     private var tokens: Double = 0
     private var lastCredit: TimeInterval?
     private var ended = false
     private var replicatedGuests: (count: Int, at: TimeInterval, kbps: Double?) = (0, 0, 0)
     private var probe: BulkRateProbe?
     private var windowAdmittedBytes = 0
+    private var windowAdmittedSends = 0
+    private var windowQueueRefusals = 0
     private var windowMinimumBuffered: UInt64?
+    private var windowStartBuffered: UInt64 = 0
+    private var lastBuffered: UInt64?
+
+    private var baselineRTT: Double? { rttSamples.map(\.ms).min() }
 
     func observe(_ next: MediaCapacityObservation) {
         lock.lock(); defer { lock.unlock() }
@@ -122,21 +167,34 @@ final class MediaResourceBudget: @unchecked Sendable {
         var next = next
         if let previous = observation, previous.route == next.route, previous.routeDetail == next.routeDetail {
             let elapsed = next.at - previous.at
-            let achieved = elapsed > 0 && elapsed <= BulkAdmissionPolicy.freshness
-                ? Double(windowAdmittedBytes) * 8 / 1_000 / elapsed : nil
-            let standingQueue = windowMinimumBuffered.map { $0 >= UInt64(BulkAdmissionPolicy.maximumMessageBytes) } ?? false
-            probe?.update(achievedKbps: achieved, rttMs: next.rttMs, baselineRTTMs: baselineRTT, standingQueue: standingQueue)
+            // Bytes that left the file queue, not bytes admitted into it: the 32 KiB queue would
+            // otherwise hide a link slower than the allowance for a whole window.
+            let drained = max(0, Double(windowAdmittedBytes) + Double(windowStartBuffered) - Double(lastBuffered ?? 0))
+            let achieved = elapsed > 0 && elapsed <= BulkAdmissionPolicy.freshness ? drained * 8 / 1_000 / elapsed : nil
+            let attempts = windowAdmittedSends + windowQueueRefusals
+            let refused = attempts > 0 ? Double(windowQueueRefusals) / Double(attempts) : 0
+            let standing = windowMinimumBuffered.map { $0 >= BulkAdmissionPolicy.maximumBufferedBytes / 2 } ?? false
+            probe?.update(achievedKbps: achieved, rttSampleMs: next.rttSampleMs, baselineRTTMs: baselineRTT,
+                          queueRefusedShare: refused, standingQueue: standing)
             if next.totalTransportKbps != nil { next.bulkKbps = achieved }
         } else {
-            baselineRTT = nil; tokens = 0; lastCredit = next.at
+            rttSamples = []; tokens = 0; lastCredit = next.at; lastBuffered = nil
             probe = BulkRateProbe(route: next.route)
         }
-        windowAdmittedBytes = 0; windowMinimumBuffered = nil
-        if let rtt = next.rttMs, rtt.isFinite, rtt >= 0 {
-            baselineRTT = min(baselineRTT ?? rtt, rtt)
+        if windowMinimumBuffered == nil { lastBuffered = nil } // An idle window says nothing about the queue now.
+        windowAdmittedBytes = 0; windowAdmittedSends = 0; windowQueueRefusals = 0; windowMinimumBuffered = nil
+        windowStartBuffered = lastBuffered ?? 0
+        rttSamples.removeAll { !(next.at - $0.at < BulkAdmissionPolicy.baselineRTTWindow) }
+        for rtt in [next.rttMs, next.rttSampleMs].compactMap({ $0 }) where rtt.isFinite && rtt >= 0 {
+            rttSamples.append((next.at, rtt))
         }
         next.probeKbps = probe?.kbps
         observation = next
+    }
+
+    var probedKbps: Double? {
+        lock.lock(); defer { lock.unlock() }
+        return probe?.kbps
     }
 
     /// Active guest associations share this uplink. Unknown or stale replication pauses bulk files.
@@ -160,42 +218,53 @@ final class MediaResourceBudget: @unchecked Sendable {
         ended = true; observation = nil; tokens = 0; lastCredit = nil; probe = nil
     }
 
-    func permits(bytes: Int, at now: TimeInterval, controlBuffered: UInt64?, fileBuffered: UInt64?) -> Bool {
+    func messageBytes(at now: TimeInterval) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return BulkAdmissionPolicy.messageBytes(rate: admissionRate(at: now) ?? 0)
+    }
+
+    private func admissionRate(at now: TimeInterval) -> Double? {
+        guard !ended, var observation,
+              replicatedGuests.count == 0 || (replicatedGuests.count > 0 && replicatedGuests.count <= 2 &&
+                replicatedGuests.at.isFinite && now >= replicatedGuests.at && now - replicatedGuests.at < 2 &&
+                replicatedGuests.kbps.map { $0.isFinite && $0 >= 0 } == true) else { return nil }
+        if replicatedGuests.count > 0 {
+            // A host guest lane never inherits the receive-only bulk fallback or probe.
+            guard observation.capacityKbps != nil, let total = observation.totalTransportKbps, total.isFinite, total >= 0,
+                  let kbps = replicatedGuests.kbps else { return nil }
+            observation.videoKbps = total + kbps
+        }
+        return BulkAdmissionPolicy.bytesPerSecond(observation, at: now, baselineRTT: baselineRTT)
+    }
+
+    /// `inputBuffered` is every input channel's queue (control and pointer); any queued input pauses bulk.
+    func permits(bytes: Int, at now: TimeInterval, controlBuffered inputBuffered: UInt64?, fileBuffered: UInt64?) -> Bool {
         lock.lock(); defer { lock.unlock() }
         func refuse() -> Bool {
             // Congestion/staleness never accumulates a burst that fires when input resumes.
             tokens = 0; lastCredit = now
             return false
         }
-        guard !ended, bytes > 0, bytes <= BulkAdmissionPolicy.maximumMessageBytes,
-              let controlBuffered else { return refuse() }
-        guard controlBuffered == 0 else {
-            // Input always wins: no credit accrues while control is queued, but credit already
+        guard bytes > 0, bytes <= BulkAdmissionPolicy.maximumMessageBytes, let inputBuffered, let fileBuffered,
+              let rate = admissionRate(at: now), let previous = lastCredit, now >= previous else { return refuse() }
+        guard inputBuffered == 0 else {
+            // Input always wins: no credit accrues while input is queued, but credit already
             // earned survives the pause instead of restarting the bulk ramp from empty.
             lastCredit = now
             return false
         }
-        guard let fileBuffered, var observation,
-              replicatedGuests.count == 0 || (replicatedGuests.count > 0 && replicatedGuests.count <= 2 &&
-                replicatedGuests.at.isFinite && now >= replicatedGuests.at && now - replicatedGuests.at < 2 &&
-                replicatedGuests.kbps.map { $0.isFinite && $0 >= 0 } == true)
-        else { return refuse() }
-        if replicatedGuests.count > 0 {
-            // A host guest lane never inherits the receive-only bulk fallback or probe.
-            guard observation.capacityKbps != nil, let total = observation.totalTransportKbps, total.isFinite, total >= 0,
-                  let kbps = replicatedGuests.kbps else { return refuse() }
-            observation.videoKbps = total + kbps
-        }
-        guard let rate = BulkAdmissionPolicy.bytesPerSecond(observation, at: now, baselineRTT: baselineRTT),
-              let previous = lastCredit, now >= previous else { return refuse() }
         tokens = min(BulkAdmissionPolicy.bucketBytes(rate: rate), tokens + min(1, now - previous) * rate)
         lastCredit = now
         windowMinimumBuffered = min(windowMinimumBuffered ?? fileBuffered, fileBuffered)
+        lastBuffered = fileBuffered
+        guard tokens >= Double(bytes) else { return false }
         guard fileBuffered <= BulkAdmissionPolicy.maximumBufferedBytes,
-              UInt64(bytes) <= BulkAdmissionPolicy.maximumBufferedBytes - fileBuffered,
-              tokens >= Double(bytes) else { return false }
+              UInt64(bytes) <= BulkAdmissionPolicy.maximumBufferedBytes - fileBuffered else {
+            windowQueueRefusals += 1
+            return false
+        }
         tokens -= Double(bytes)
-        windowAdmittedBytes += bytes
+        windowAdmittedBytes += bytes; windowAdmittedSends += 1
         return true
     }
 }
