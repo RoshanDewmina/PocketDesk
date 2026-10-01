@@ -90,6 +90,20 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertTrue(model.connection.connected); XCTAssertTrue(model.pipBackgroundForTesting)
         XCTAssertFalse(packets().contains { $0.action.action == "pause" || $0.action.liveViewOnly == false })
     }
+    func testOpeningTheAppFromAPausedBackgroundPiPKeepsTheSession() throws {
+        let (model, _, platform, packets) = try activePiPModel()
+        defer { model.disconnect() }
+        model.sceneChanged(.inactive); model.sceneChanged(.background)
+        model.livePiP.setPlayingForTesting(false, on: platform)
+        model.sceneChanged(.inactive)
+        XCTAssertTrue(model.connection.connected, "The app-switcher return passes .inactive with the privacy shield up")
+        XCTAssertEqual(model.pipState, .paused)
+        model.sceneChanged(.active)
+        XCTAssertTrue(model.connection.connected)
+        XCTAssertFalse(model.pipBackgroundForTesting)
+        XCTAssertTrue(packets().contains { $0.action.action == "viewOnly" && $0.action.liveViewOnly == false },
+                      "Foreground return asks the Mac to leave view-only, as it does for a playing PiP")
+    }
     func testControlCenterReturnKeepsSamePiPConsentAndLifetime() throws {
         let (model, _, _, packets) = try activePiPModel()
         defer { model.disconnect() }

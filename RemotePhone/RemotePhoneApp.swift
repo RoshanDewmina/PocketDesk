@@ -434,7 +434,7 @@ final class PhoneRemoteModel: ObservableObject {
             macAudioPlayback.end()
         }
     }
-    @Published private(set) var privacyShield = false { willSet { if newValue { invalidatePresentation(keepingPiP: mayKeepLivePiP) } } }
+    @Published private(set) var privacyShield = false { willSet { if newValue { invalidatePresentation(keepingPiP: mayKeepLivePiP || pipBackground && mayHoldBackgroundPiP) } } }
     private var hasBeenActive = false
     @Published var draft = "" { didSet { secureTextFocus.draftChanged(draft) } }
     @Published var secureTextFocus = SecureTextFocus()
