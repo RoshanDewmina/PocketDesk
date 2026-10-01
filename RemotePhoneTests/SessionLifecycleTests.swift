@@ -58,6 +58,104 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(model.pipState, .active)
         return (model, proof, platform, { packets })
     }
+    /// Auto-PiP: armed only while a live picture session is in front; the OS start (simulated) keeps the session
+    /// through `.inactive` and `.background` while the Mac's live-view-only confirmation is pending; a refusal ends it.
+    func testLeavingALivePictureSessionStartsPiPAutomaticallyAndTheMacMustConfirmViewOnly() throws {
+        // (refuse, the Mac answers before AVKit finishes the start: the usual order on a LAN)
+        for (refuse, confirmFirst) in [(false, false), (true, false), (false, true)] {
+            let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+            let platform = LifecyclePiPPlatform()
+            let pip = LivePiPController(mediaSession: registry, supported: { true }, platformFactory: { _, _ in platform })
+            let model = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip)
+            defer { model.disconnect() }
+            model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+            model.connection.startInputFixtureForTesting(session: "auto-pip")
+            model.geometryEpoch = 1
+            var packets: [ControlPacket] = []
+            model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+            _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+            XCTAssertTrue(pip.automaticStartAllowed, "armed while live in the foreground")
+            XCTAssertTrue(model.showsInlinePiPSource)
+            model.sceneChanged(.inactive)
+            XCTAssertEqual(model.pipState, .ready, "the prepared PiP survives the shield so the OS can still start it")
+            pip.automaticStartForTesting(platform)
+            XCTAssertEqual(platform.starts, 0, "the OS starts it; the app never calls start in the background")
+            let entry = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == true })
+            XCTAssertTrue(pip.automaticStartUnconfirmed, "only the last inline frame shows until the Mac confirms")
+            let reply = RemoteAction(action: "capture", liveViewOnly: !refuse, liveViewOnlyRequestID: entry.action.liveViewOnlyRequestID,
+                                     x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])
+            if confirmFirst {
+                model.connection.onControl?(try JSONEncoder().encode(reply))
+                XCTAssertFalse(pip.automaticStartUnconfirmed)
+                model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 0.3)
+                XCTAssertEqual(model.pipState, .starting, "a confirmed start still finishing in AVKit is kept")
+                model.sceneChanged(.background)
+                pip.confirmPlatformStartForTesting(platform)
+                XCTAssertEqual(model.pipState, .active); XCTAssertTrue(model.connection.connected)
+                XCTAssertTrue(model.pipBackgroundForTesting)
+                continue
+            }
+            pip.confirmPlatformStartForTesting(platform)
+            XCTAssertEqual(model.pipState, .active)
+            model.sceneChanged(.background)
+            XCTAssertTrue(model.pipBackgroundForTesting); XCTAssertTrue(model.connection.connected)
+            model.connection.onControl?(try JSONEncoder().encode(reply))
+            if refuse {
+                XCTAssertFalse(model.connection.connected, "a Mac that refuses live view only ends the background PiP")
+            } else {
+                XCTAssertTrue(model.viewOnlyConfirmedForTesting); XCTAssertEqual(model.pipState, .active)
+                XCTAssertTrue(model.connection.connected)
+            }
+        }
+        let suite = "auto-pip-\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: PhoneRemoteModel.autoPiPDisabledKey)
+        let pip = LivePiPController(mediaSession: PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {})),
+                                    supported: { true }, platformFactory: { _, _ in LifecyclePiPPlatform() })
+        let off = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip, preferences: defaults)
+        defer { off.disconnect() }
+        off.prepareConnection(mode: .picture); off.sceneChanged(.active)
+        off.connection.startInputFixtureForTesting(session: "auto-pip-off"); off.geometryEpoch = 1
+        _ = off.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+        XCTAssertFalse(pip.automaticStartAllowed, "the internal kill switch disarms it")
+        XCTAssertFalse(off.showsInlinePiPSource)
+    }
+    /// Crash 1 Oct 15:33 (build .3): tapping the PiP window to return ran AVKit's restore completion after the
+    /// foreground return had already stopped the PiP and released its controller, so AVKit read freed memory.
+    func testPiPRestoreKeepsThePlatformControllerAliveUntilTheCompletionReturns() throws {
+        let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+        weak var latest: LifecyclePiPPlatform?
+        let pip = LivePiPController(mediaSession: registry, supported: { true },
+                                    platformFactory: { _, _ in let made = LifecyclePiPPlatform(); latest = made; return made })
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip)
+        defer { model.disconnect() }
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "pip-restore-lifetime")
+        model.geometryEpoch = 1
+        var packets: [ControlPacket] = []
+        model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+        _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+        model.sendViewOnlyEntryForTesting()
+        let entry = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == true })
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: true,
+            liveViewOnlyRequestID: entry.action.liveViewOnlyRequestID, x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
+        weak var started: LifecyclePiPPlatform?
+        var aliveAtCompletion: Bool?, restored: Bool?
+        do {
+            let platform = try XCTUnwrap(latest)
+            started = platform
+            pip.confirmPlatformStartForTesting(platform)
+            XCTAssertEqual(model.pipState, .active)
+            model.sceneChanged(.inactive); model.sceneChanged(.background)
+            XCTAssertTrue(model.pipBackgroundForTesting)
+            pip.restoreUserInterfaceForTesting(on: platform) { aliveAtCompletion = started != nil; restored = $0 }
+        }
+        XCTAssertNil(aliveAtCompletion, "the restore waits for the foreground")
+        model.sceneChanged(.active) // Returning stops the PiP (releasing its controller), then completes the restore.
+        XCTAssertEqual(restored, true)
+        XCTAssertFalse(pip.controller === started, "the foreground return did stop that PiP before completing")
+        XCTAssertEqual(aliveAtCompletion, true, "AVKit's completion must never run after its controller was freed")
+    }
     func testActivePiPSurvivesInactiveHeartbeatThenBackgroundWithoutExitOrPause() throws {
         let (model, _, _, packets) = try activePiPModel()
         defer { model.disconnect() }

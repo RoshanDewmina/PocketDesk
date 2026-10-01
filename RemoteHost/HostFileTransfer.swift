@@ -12,6 +12,8 @@ final class HostFileTransferService {
     let engine = FileTransferEngine(acceptsUnsolicitedOffers: true)
     /// Nil when this session may transfer files, otherwise the refusal to send.
     var refusal: () -> FileTransferStatus? = { .notAllowed }
+    /// Which condition refused, sent with the refusal so the phone can say why (and logged by the owner).
+    var refusalReason: () -> String? = { nil }
 
     private let destination: () -> URL?
     private let pasteboard: HostPasteboardAccess
@@ -41,6 +43,27 @@ final class HostFileTransferService {
         engine.onFinish = { [weak self] finish in self?.finished(finish) }
     }
 
+    /// Why files are refused, first failing condition wins. Travels as the result's `reason`.
+    enum Refusal: String {
+        case viewOnlyScope, noSession, notSharing, paused, viewOnly, locking, lockFailed
+        var status: FileTransferStatus { self == .viewOnlyScope ? .disabled : .notAllowed }
+    }
+
+    /// MS05: there is no Mac setting. A view-only sharing scope refuses files; otherwise only a current,
+    /// unpaused, sharing session that is not in live view only or locking may transfer. A stored legacy
+    /// `allowFileTransfer` value is never read.
+    nonisolated static func refusal(viewOnlyScope: Bool, connected: Bool, sharing: Bool, paused: Bool,
+                                    liveViewOnly: Bool, locking: Bool, lockFailed: Bool = false) -> Refusal? {
+        if viewOnlyScope { return .viewOnlyScope }
+        if !connected { return .noSession }
+        if !sharing { return .notSharing }
+        if paused { return .paused }
+        if liveViewOnly { return .viewOnly }
+        if lockFailed { return .lockFailed }
+        if locking { return .locking }
+        return nil
+    }
+
     nonisolated static func defaultDestination() -> URL? {
         FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Farside", isDirectory: true)
@@ -48,13 +71,13 @@ final class HostFileTransferService {
 
     func receive(_ frame: FileFrame) {
         if ["offer", "request", "link"].contains(frame.op), let status = refusal() {
-            _ = engine.sendControl?(.result(frame.transfer, status))
+            _ = engine.sendControl?(.result(frame.transfer, status, reason: refusalReason()))
             return
         }
         engine.receive(frame)
     }
 
-    /// Authority changed mid-transfer (the setting was turned off): stop and tell the phone.
+    /// Authority changed mid-transfer: stop and tell the phone.
     func revoke() {
         effectLease.retire(); effectLease = TransferEffectLease()
         if let linkOfferID { linkOffer.dismiss(matching: linkOfferID) }; linkOfferID = nil
@@ -83,11 +106,13 @@ final class HostFileTransferService {
         let generation = authorityGeneration, lease = effectLease
         queue.async { [weak self] in
             guard lease.isActive else {
+                SessionLog.log.error("file refused: superseded (session reset while admitting)")
                 DispatchQueue.main.async { MainActor.assumeIsolated { answer(.failure(.notAllowed)) } }; return
             }
             let result = Self.prepareSink(for: offer, in: folder)
             DispatchQueue.main.async { MainActor.assumeIsolated {
                 guard let self, self.authorityGeneration == generation else {
+                    SessionLog.log.error("file refused: superseded (session reset while admitting)")
                     if case .success(let sink) = result { sink.discard() }
                     answer(.failure(.notAllowed)); return
                 }
@@ -145,7 +170,7 @@ final class HostFileTransferService {
     // MARK: Mac → phone
 
     private func presentPicker(for transfer: String) {
-        if let status = refusal() { engine.answerRequest(transfer, status); return }
+        if let status = refusal() { engine.answerRequest(transfer, status, reason: refusalReason()); return }
         guard panel == nil else { engine.answerRequest(transfer, .busy); return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
@@ -173,7 +198,7 @@ final class HostFileTransferService {
 
     private func picked(_ url: URL?, transfer: String) {
         guard let url else { engine.answerRequest(transfer, .cancelled); return }
-        if let status = refusal() { engine.answerRequest(transfer, status); return }
+        if let status = refusal() { engine.answerRequest(transfer, status, reason: refusalReason()); return }
         let source: FileHandleByteSource
         do {
             source = try FileHandleByteSource(url: url)

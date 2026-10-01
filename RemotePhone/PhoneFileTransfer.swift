@@ -168,12 +168,12 @@ final class PhoneFileTransfer: ObservableObject {
         case (.outgoing, .stored):
             post("Saved to Downloads › Farside on your Mac", .success)
         case (.outgoing, let status):
-            post(Self.message(sending: status), .caution)
+            post(Self.message(refusal: finish.reason, status: status) ?? Self.message(sending: status), .caution)
         case (.incoming, .stored):
             post("Saved to Files › On My iPhone › Farside", .success)
             if let url = finish.savedURL { received = ReceivedFile(url: url) }
         case (.incoming, let status):
-            post(Self.message(receiving: status, fileOffered: finish.name != nil), .caution)
+            post(Self.message(refusal: finish.reason, status: status) ?? Self.message(receiving: status, fileOffered: finish.name != nil), .caution)
         }
     }
 
@@ -196,6 +196,20 @@ final class PhoneFileTransfer: ObservableObject {
 
     // MARK: Copy
 
+    /// A newer Mac says which condition refused files, so the phone can say why (1 Oct device report).
+    static func message(refusal reason: String?, status: FileTransferStatus) -> String? {
+        guard status == .notAllowed, let reason else { return nil }
+        switch reason {
+        case "noSession": return "Your Mac’s session ended. Reconnect, then try again."
+        case "notSharing": return "Your Mac isn’t sharing its screen right now, so files are off. Start sharing on the Mac, then try again."
+        case "paused": return "Your Mac still has this session paused for the background. Reconnect, then try again."
+        case "viewOnly": return "Files are off in live view only (Picture in Picture). Return to control, then try again."
+        case "locking": return "Your Mac is locking, so files are off for now."
+        case "lockFailed": return "Your Mac didn’t confirm it locked, so files are off. Lock or use your Mac, then try again."
+        default: return nil
+        }
+    }
+
     static func message(sending status: FileTransferStatus) -> String {
         switch status {
         case .cancelled: "Transfer cancelled."
@@ -203,7 +217,7 @@ final class PhoneFileTransfer: ObservableObject {
         case .empty: "That file is empty."
         case .unsupported: "Folders and packages can’t be sent. Zip them first."
         case .unreadable: "Farside couldn’t read that file. Try saving it to Files first."
-        case .disabled: "File transfer is off in Farside Settings on your Mac."
+        case .disabled: "File transfer is off on your Mac right now."
         case .notAllowed: "Your Mac isn’t accepting files right now."
         case .busy: "Wait for the current transfer to finish."
         case .diskFull: "Your Mac doesn’t have enough space for that file."
@@ -224,7 +238,7 @@ final class PhoneFileTransfer: ObservableObject {
         case .empty: "That file is empty."
         case .unsupported: "Folders and packages can’t be sent. Zip them on your Mac first."
         case .unreadable: "Your Mac couldn’t read that file."
-        case .disabled: "File transfer is off in Farside Settings on your Mac."
+        case .disabled: "File transfer is off on your Mac right now."
         case .notAllowed: "Your Mac isn’t sharing files right now."
         case .busy: "Your Mac is already choosing a file. Finish or cancel it on the Mac."
         case .diskFull: "Not enough space on this iPhone for that file."

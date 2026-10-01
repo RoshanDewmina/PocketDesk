@@ -69,7 +69,6 @@ struct HostViewState: Equatable {
     /// Open at login and keep-awake still need the person's confirmation of the current explanation.
     var consentPending = false
     var chimeOnConnect = true
-    var allowFileTransfer = true
     var wakeHelperHostID: String? = nil
     var wakeOwnerPairID: String? = nil
     var localOnly = false
@@ -157,7 +156,6 @@ struct HostActions {
     var setChimeOnConnect: (Bool) -> Void = { _ in }
     var setLocalOnly: (Bool) -> Void = { _ in }
     var setAllowSystemAudio: (Bool) -> Void = { _ in }
-    var setAllowFileTransfer: (Bool) -> Void = { _ in }
     var setOpenAtLogin: (Bool) -> Void = { _ in }
     var confirmBackgroundChoices: (_ openAtLogin: Bool, _ keepAwake: Bool) -> Void = { _, _ in }
     var setAutomaticRecovery: (Bool) -> Void = { _ in }

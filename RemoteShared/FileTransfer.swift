@@ -7,14 +7,15 @@ import CryptoKit
 enum FileTransferLimits {
     static let maximumBytes: Int64 = 1 << 30
     static let chunkHeaderBytes = 28
-    /// Receive compatibility with existing file.1 peers; new sends remain smaller.
+    /// Every file.1 receiver accepts 64 KiB. The link's budget picks each message's size: 64 KiB only on the
+    /// calm-LAN fast lane with a peer whose SDP max-message-size allows it, otherwise 16 KiB.
     static let maximumMessageBytes = 64 * 1024
-    static let maximumOutgoingMessageBytes = 16 * 1024
-    /// Without proven SCTP message interleaving, keep both paths within 16 KiB.
+    static let maximumOutgoingMessageBytes = maximumMessageBytes
     static let directChunkPayload = maximumOutgoingMessageBytes - chunkHeaderBytes
     /// Smaller relay chunks bound how long one message holds the shared association ahead of input.
     static let relayChunkPayload = 16 * 1024 - chunkHeaderBytes
-    static let directHighWater: UInt64 = 32 * 1024
+    /// An upper bound only: the budget's own queue bound (2 MiB fast lane, else 32 KiB) governs admission.
+    static let directHighWater: UInt64 = BulkAdmissionPolicy.fastLaneBufferedBytes
     static let relayHighWater: UInt64 = 32 * 1024
     /// Backstop only, kept above the media governor's relay ceiling; the governor adapts/pauses actual sends.
     static let relayBytesPerSecond: Double = 250_000
@@ -82,6 +83,8 @@ struct FileFrame: Codable, Equatable {
     var digest: String? = nil
     var status: String? = nil
     var url: String? = nil
+    /// Why a Mac refused (`result` only, newer hosts): lets the phone say why instead of a generic refusal.
+    var reason: String? = nil
 
     static let operations: Set<String> = ["offer", "accept", "progress", "complete", "result", "cancel", "request", "link"]
 
@@ -105,13 +108,19 @@ struct FileFrame: Codable, Equatable {
         case "result":
             valid = status.map(ClipboardFrame.isWellFormedStatus) == true
                 && name == nil && bytes == nil && type == nil && digest == nil && url == nil
+                && (reason == nil || reason.map(Self.isWellFormedReason) == true)
         case "link":
             valid = url.map(Self.isWellFormedLink) == true
                 && name == nil && bytes == nil && type == nil && digest == nil && status == nil
         default:
             valid = name == nil && bytes == nil && type == nil && digest == nil && status == nil && url == nil
         }
+        guard op == "result" || reason == nil else { throw RemoteError.invalidMessage }
         guard valid else { throw RemoteError.invalidMessage }
+    }
+
+    static func isWellFormedReason(_ value: String) -> Bool {
+        (1...32).contains(value.utf8.count) && value.unicodeScalars.allSatisfy { $0.isASCII && CharacterSet.letters.contains($0) }
     }
 
     static func isWellFormedName(_ value: String) -> Bool {
@@ -139,8 +148,8 @@ struct FileFrame: Codable, Equatable {
     static func accept(_ transfer: String) -> FileFrame { FileFrame(op: "accept", transfer: transfer) }
     static func progress(_ transfer: String, bytes: Int64) -> FileFrame { FileFrame(op: "progress", transfer: transfer, bytes: bytes) }
     static func complete(_ transfer: String, digest: String) -> FileFrame { FileFrame(op: "complete", transfer: transfer, digest: digest) }
-    static func result(_ transfer: String, _ status: FileTransferStatus) -> FileFrame {
-        FileFrame(op: "result", transfer: transfer, status: status.rawValue)
+    static func result(_ transfer: String, _ status: FileTransferStatus, reason: String? = nil) -> FileFrame {
+        FileFrame(op: "result", transfer: transfer, status: status.rawValue, reason: reason)
     }
     static func cancel(_ transfer: String) -> FileFrame { FileFrame(op: "cancel", transfer: transfer) }
     static func request(_ transfer: String) -> FileFrame { FileFrame(op: "request", transfer: transfer) }

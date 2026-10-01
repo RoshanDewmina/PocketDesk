@@ -2,6 +2,7 @@ import XCTest
 import AVKit
 import SwiftUI
 import UIKit
+import WebRTC
 @testable import PocketDeskRemote
 
 private final class PresentationLifecyclePiPPlatform: LivePiPPlatformController {
@@ -101,6 +102,50 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         XCTAssertNil(admission()); XCTAssertNil(admission(identity(), route: nil))
         XCTAssertNil(admission(identity(geometry: 0))); XCTAssertNil(admission(identity(), picture: false))
         XCTAssertNil(admission(identity(), track: false)); XCTAssertNil(admission(identity(), blocked: true))
+    }
+    /// Frozen PiP 1 Oct: iOS refuses a background app's GPU work, so the GPU CIContext conversion stopped producing
+    /// frames once Farside left the screen. The sink renders on the CPU while backgrounded and back on the GPU after.
+    func testBackgroundPiPFramesRenderOnTheCPU() {
+        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 10)
+        let center = NotificationCenter()
+        let sink = LivePiPSampleBufferSink(admission: admission, fence: VideoPresentationFence(admission), center: center)
+        defer { sink.invalidate() }
+        sink.setBackground(false)
+        center.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        XCTAssertTrue(sink.rendersInSoftware)
+        center.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        XCTAssertFalse(sink.rendersInSoftware)
+    }
+    /// Frozen PiP 1 Oct: the Mac's ladder resized the stream (1920x1232 <-> 2560x1656) inside one identity, and the
+    /// sink refused every frame of a new size for the rest of the session. A resize now replaces the output pool.
+    func testPiPSinkKeepsEnqueueingAfterTheStreamChangesSize() throws {
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let sink = LivePiPSampleBufferSink(admission: admission, fence: VideoPresentationFence(admission), center: NotificationCenter())
+        defer { sink.invalidate() }
+        sink.setEnabled(true)
+        func offer(width: Int, height: Int) throws {
+            var pixels: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
+                                               [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+            let buffer = try XCTUnwrap(pixels)
+            CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+            CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+            sink.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
+                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
+                arrivalMs: 1, marker: nil, originalSource: true))
+        }
+        func waitFor(_ count: Int) {
+            let deadline = Date().addingTimeInterval(3)
+            while sink.enqueued < count, Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+        }
+        try offer(width: 64, height: 40); waitFor(1)
+        XCTAssertEqual(sink.enqueued, 1)
+        try offer(width: 96, height: 60); waitFor(2)
+        XCTAssertEqual(sink.enqueued, 2, "a resized stream keeps reaching the PiP window")
+        sink.setBackground(true)
+        try offer(width: 64, height: 40); waitFor(3)
+        XCTAssertEqual(sink.enqueued, 3, "the CPU path also converts and enqueues")
     }
     func testBackgroundRequiresActualActivePiPAndHostAppliedConfirmation() {
         let proof = VideoPresentationAdmission(identity: identity(), validUntil: 12)

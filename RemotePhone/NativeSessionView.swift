@@ -563,6 +563,15 @@ struct NativeSessionView: View {
             // The picture and the pointer share one placement, so an eased camera pan can never
             // separate them: the pointer is positioned in picture points inside this container.
             ZStack(alignment: .topLeading) {
+                if model.showsInlinePiPSource {
+                    // Auto-start PiP needs its source inline: the same live picture, behind the visible one.
+                    // Kept while concealed so a started PiP keeps its layer; the shield and concealment overlays cover it.
+                    let picture = viewport.picturePlacement(for: model.captureRegion)
+                    LivePiPPreview(layer: model.livePiP.displayLayer, inline: true)
+                        .frame(width: picture.width, height: picture.height)
+                        .offset(x: picture.minX, y: picture.minY)
+                        .accessibilityHidden(true)
+                }
                 if let track = connection.remoteVideo, !model.contentConcealed {
                     let picture = viewport.picturePlacement(for: model.captureRegion)
                     RemoteVideoSurface(track: track, counters: connection.media?.counters,
@@ -2369,6 +2378,7 @@ struct NativeSessionView: View {
         Section {
             if model.pipAdmission != nil {
                 LivePiPPreview(layer: model.livePiP.displayLayer)
+                    .overlay { if model.privacyShield || model.contentConcealed { Farside.Palette.void } }
                     .frame(height: 120)
                     .accessibilityLabel("Live Mac preview for Picture in Picture")
                 Button(model.pipState == .active ? "Stop Picture in Picture" : "Start Picture in Picture") {

@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreImage
 import ImageIO
+import UIKit
 
 /// One conversion plus one newest pending source. Pool threshold bounds retained output buffers to three.
 final class LivePiPSampleBufferSink: @unchecked Sendable {
@@ -10,6 +11,13 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "Farside.pip.samples", qos: .userInitiated)
     private let context = CIContext(options: [.cacheIntermediates: false])
+    /// iOS refuses a background app's GPU work (Metal "notPermitted"), so a GPU CIContext render in background
+    /// PiP silently leaves the output unchanged and the window freezes (1 Oct 15:3x). Render on the CPU there.
+    private lazy var softwareContext = CIContext(options: [.cacheIntermediates: false, .useSoftwareRenderer: true])
+    private var background = false
+    private var observers: [NSObjectProtocol] = []
+    var rendersInSoftware: Bool { lock.lock(); defer { lock.unlock() }; return background }
+    func setBackground(_ value: Bool) { lock.lock(); background = value; lock.unlock() }
     private var pending: VideoFrameEnvelope?
     private var working = false
     private var closed = false
@@ -21,10 +29,18 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
     private var poolSize: CGSize = .zero
     private var enqueueCount = 0
     var enqueued: Int { lock.lock(); defer { lock.unlock() }; return enqueueCount } // never presented FPS
-    init(admission: VideoPresentationAdmission, fence: VideoPresentationFence) {
+    private let center: NotificationCenter
+    init(admission: VideoPresentationAdmission, fence: VideoPresentationFence, center: NotificationCenter = .default) {
+        self.center = center
         identity = admission.identity; self.fence = fence
         layer.videoGravity = .resizeAspect
+        if Thread.isMainThread { background = MainActor.assumeIsolated { UIApplication.shared.applicationState == .background } }
+        observers = [
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in self?.setBackground(true) },
+            center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil) { [weak self] _ in self?.setBackground(false) }
+        ]
     }
+    deinit { observers.forEach(center.removeObserver) }
     func offer(_ frame: VideoFrameEnvelope) {
         guard frame.originalSource, frame.identity == identity,
               fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {}) != nil else { return }
@@ -39,7 +55,9 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
         fence.invalidate()
         lock.lock(); closed = true; pending = nil; lock.unlock()
         layer.sampleBufferRenderer.flush(removingDisplayedImage: true, completionHandler: {})
-        queue.async { [weak self] in self?.pool = nil; self?.poolSize = .zero; self?.context.clearCaches() }
+        queue.async { [weak self] in
+            self?.pool = nil; self?.poolSize = .zero; self?.context.clearCaches(); self?.softwareContext.clearCaches()
+        }
     }
     private func drain() {
         while true {
@@ -67,12 +85,15 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
         let orientation: CGImagePropertyOrientation
         switch frame.frame.rotation.rawValue { case 90: orientation = .right; case 180: orientation = .down; case 270: orientation = .left; default: orientation = .up }
         image = image.oriented(orientation)
-        let scale = min(1, 2048 / max(image.extent.width, image.extent.height))
+        lock.lock(); let software = background; lock.unlock()
+        // The CPU path costs per pixel; the PiP window is small, so cap its output lower.
+        let scale = min(1, (software ? 1280 : 2048) / max(image.extent.width, image.extent.height))
         image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         let size = CGSize(width: max(1, Int(image.extent.width)), height: max(1, Int(image.extent.height)))
         if poolSize != size {
-            // A geometry change needs a new identity; never accumulate multiple output pools.
-            guard pool == nil else { return nil }
+            // The Mac's ladder resizes the stream within one identity (1 Oct: 1920x1232 <-> 2560x1656 during a PiP
+            // session). Returning nil here froze the PiP for good. Replace the pool; buffers the layer holds stay valid.
+            pool = nil; poolSize = .zero
             let attributes: [CFString: Any] = [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferWidthKey: Int(size.width), kCVPixelBufferHeightKey: Int(size.height),
                 kCVPixelBufferIOSurfacePropertiesKey: [:], kCVPixelBufferMetalCompatibilityKey: true]
@@ -84,7 +105,7 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
         let limits = [kCVPixelBufferPoolAllocationThresholdKey: 3] as CFDictionary
         guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pool, limits, &output) == kCVReturnSuccess,
               let output else { return nil }
-        context.render(image, to: output, bounds: CGRect(origin: .zero, size: size), colorSpace: colorSpace)
+        (software ? softwareContext : context).render(image, to: output, bounds: CGRect(origin: .zero, size: size), colorSpace: colorSpace)
         CVBufferSetAttachment(output, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
         CVBufferSetAttachment(output, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
         var format: CMVideoFormatDescription?

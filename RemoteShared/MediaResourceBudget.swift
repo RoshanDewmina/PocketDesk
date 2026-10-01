@@ -97,6 +97,36 @@ enum BulkAdmissionPolicy {
     static let messageWindow: TimeInterval = 0.05
     /// A legitimate path change (cellular handover) must not leave files paused against an old minimum.
     static let baselineRTTWindow: TimeInterval = 15
+    /// DF10 fast lane: on a calm LAN with the video ladder at rung 0, files keep up to 2 MiB queued (Chrome
+    /// Remote Desktop keeps 1 MiB) at a bounded allowance. Queued input still pauses admission, and dcSCTP sends
+    /// whole messages per stream in turn, so input waits behind at most one file message, not the queue.
+    static let fastLaneBufferedBytes: UInt64 = 2 * 1024 * 1024
+    static let fastLaneBytesPerSecond: Double = 25_000_000
+    static let fastLaneMessageBytes = 64 * 1024
+    static let wireOverhead = 1.08
+    /// Internal kill switch (no UI): `defaults write <bundle id> farsideFileFastLaneDisabled -bool YES`.
+    static let fastLaneDisabledKey = "farsideFileFastLaneDisabled"
+
+    /// RFC 8841: the largest message the peer will take, 0 meaning no limit; nil when the SDP does not say.
+    static func maxMessageSize(sdp: String) -> Int? {
+        for line in sdp.split(whereSeparator: \.isNewline) where line.hasPrefix("a=max-message-size:") {
+            return Int(line.dropFirst("a=max-message-size:".count).trimmingCharacters(in: .whitespaces))
+        }
+        return nil
+    }
+
+    /// The same calm LAN that earns the 1 MB/s floor: selected LAN pair, low RTT, a calm window sample and, on the
+    /// host, an estimate video is not using. Call only after `bytesPerSecond` admitted the observation.
+    static func qualifiesForFastLane(_ observation: MediaCapacityObservation, baselineRTT: Double?) -> Bool {
+        guard observation.route == "Direct", observation.routeDetail == "lan",
+              observation.rttMs.map({ $0 <= 20 }) == true,
+              observation.rttSampleMs.map({ $0 <= 20 && !BulkRateProbe.inflated(rttMs: $0, baselineRTTMs: baselineRTT) }) ?? true
+        else { return false }
+        guard let capacity = observation.capacityKbps else { return true }
+        let media = max(0, (observation.videoKbps ?? 0) - (observation.bulkKbps ?? 0))
+        return observation.senderMaxKbps.map { $0.isFinite && $0 > 0 && capacity >= $0 * allocationLimitedShare } == true
+            || media <= capacity * allocationLimitedShare
+    }
 
     static func bucketBytes(rate: Double) -> Double { max(Double(maximumMessageBytes), rate * creditWindow) }
 
@@ -164,6 +194,13 @@ final class MediaResourceBudget: @unchecked Sendable {
     private var windowMinimumBuffered: UInt64?
     private var windowStartBuffered: UInt64 = 0
     private var lastBuffered: UInt64?
+    private let fastLaneEnabled: Bool
+    private var ladderSteppedDown = false
+    private var peerTakesLargeMessages = false
+
+    init(fastLane: Bool = !UserDefaults.standard.bool(forKey: BulkAdmissionPolicy.fastLaneDisabledKey)) {
+        fastLaneEnabled = fastLane
+    }
 
     private var baselineRTT: Double? { rttSamples.map(\.ms).min() }
 
@@ -182,7 +219,9 @@ final class MediaResourceBudget: @unchecked Sendable {
             let standing = windowMinimumBuffered.map { $0 >= BulkAdmissionPolicy.maximumBufferedBytes / 2 } ?? false
             probe?.update(achievedKbps: achieved, rttSampleMs: next.rttSampleMs, baselineRTTMs: baselineRTT,
                           queueRefusedShare: refused, standingQueue: standing)
-            if next.totalTransportKbps != nil { next.bulkKbps = achieved }
+            // Transport bytes include each file packet's SCTP/DTLS/UDP/IP headers (~8% at full packets); without them
+            // a fast-lane transfer reads as video in `videoKbps - bulkKbps` and pauses itself on the host.
+            if next.totalTransportKbps != nil { next.bulkKbps = achieved.map { $0 * BulkAdmissionPolicy.wireOverhead } }
         } else {
             rttSamples = []; tokens = 0; lastCredit = next.at; lastBuffered = nil
             probe = BulkRateProbe(route: next.route)
@@ -219,6 +258,17 @@ final class MediaResourceBudget: @unchecked Sendable {
         replicatedGuests = (count, at, kbps)
     }
 
+    /// Any rung below 0 (this host's own ladder, or the Mac's as reported to the phone) backs files off.
+    func observeLadder(steppedDown: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        ladderSteppedDown = steppedDown
+    }
+
+    func observePeerMaxMessageSize(_ bytes: Int?) {
+        lock.lock(); defer { lock.unlock() }
+        peerTakesLargeMessages = bytes.map { $0 == 0 || $0 >= BulkAdmissionPolicy.fastLaneMessageBytes } ?? false
+    }
+
     func end() {
         lock.lock(); defer { lock.unlock() }
         ended = true; observation = nil; tokens = 0; lastCredit = nil; probe = nil
@@ -226,7 +276,19 @@ final class MediaResourceBudget: @unchecked Sendable {
 
     func messageBytes(at now: TimeInterval) -> Int {
         lock.lock(); defer { lock.unlock() }
+        if fastLane(at: now), peerTakesLargeMessages { return BulkAdmissionPolicy.fastLaneMessageBytes }
         return BulkAdmissionPolicy.messageBytes(rate: admissionRate(at: now) ?? 0)
+    }
+
+    func queueBytes(at now: TimeInterval) -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return fastLane(at: now) ? BulkAdmissionPolicy.fastLaneBufferedBytes : BulkAdmissionPolicy.maximumBufferedBytes
+    }
+
+    private func fastLane(at now: TimeInterval) -> Bool {
+        guard fastLaneEnabled, !ladderSteppedDown, replicatedGuests.count == 0, let observation,
+              admissionRate(at: now) != nil else { return false }
+        return BulkAdmissionPolicy.qualifiesForFastLane(observation, baselineRTT: baselineRTT)
     }
 
     private func admissionRate(at now: TimeInterval) -> Double? {
@@ -251,8 +313,12 @@ final class MediaResourceBudget: @unchecked Sendable {
             tokens = 0; lastCredit = now
             return false
         }
-        guard bytes > 0, bytes <= BulkAdmissionPolicy.maximumMessageBytes, let inputBuffered, let fileBuffered,
-              let rate = admissionRate(at: now), let previous = lastCredit, now >= previous else { return refuse() }
+        let fast = fastLane(at: now)
+        let maximumBytes = fast && peerTakesLargeMessages ? BulkAdmissionPolicy.fastLaneMessageBytes : BulkAdmissionPolicy.maximumMessageBytes
+        let maximumBuffered = fast ? BulkAdmissionPolicy.fastLaneBufferedBytes : BulkAdmissionPolicy.maximumBufferedBytes
+        guard bytes > 0, bytes <= maximumBytes, let inputBuffered, let fileBuffered,
+              let measured = admissionRate(at: now), let previous = lastCredit, now >= previous else { return refuse() }
+        let rate = fast ? max(measured, BulkAdmissionPolicy.fastLaneBytesPerSecond) : measured
         guard inputBuffered == 0 else {
             // Input always wins: no credit accrues while input is queued, but credit already
             // earned survives the pause instead of restarting the bulk ramp from empty.
@@ -264,8 +330,7 @@ final class MediaResourceBudget: @unchecked Sendable {
         windowMinimumBuffered = min(windowMinimumBuffered ?? fileBuffered, fileBuffered)
         lastBuffered = fileBuffered
         guard tokens >= Double(bytes) else { return false }
-        guard fileBuffered <= BulkAdmissionPolicy.maximumBufferedBytes,
-              UInt64(bytes) <= BulkAdmissionPolicy.maximumBufferedBytes - fileBuffered else {
+        guard fileBuffered <= maximumBuffered, UInt64(bytes) <= maximumBuffered - fileBuffered else {
             windowQueueRefusals += 1
             return false
         }

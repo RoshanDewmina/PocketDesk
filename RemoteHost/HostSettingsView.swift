@@ -139,11 +139,6 @@ struct HostSettingsView: View {
                     .accessibilityIdentifier("farside.settings.systemAudio")
                     .disabled(state.captureScopeViewOnly)
             }
-            HostSettingsRow("Allow file transfer", subtitle: "Files from your iPhone go to Downloads › Farside") {
-                HostSwitch(label: "Allow file transfer", isOn: state.allowFileTransfer, set: actions.setAllowFileTransfer)
-                    .accessibilityIdentifier("farside.settings.allowFileTransfer")
-                    .disabled(state.captureScopeViewOnly)
-            }
             HostSettingsRow("Hide this Mac’s screen", subtitle: HostCurtainCopy.subtitle(for: state)) {
                 HostSwitch(label: "Hide this Mac’s screen", isOn: state.privacyCurtain,
                            set: actions.setPrivacyCurtain)

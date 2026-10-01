@@ -89,7 +89,6 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var openAtLogin = false
     @Published private(set) var chimeOnConnect: Bool
     @Published private(set) var allowSystemAudio = false
-    @Published private(set) var allowFileTransfer: Bool
     @Published private(set) var timedPause = HostTimedPause()
     @Published private(set) var unavailableReason: HostAvailabilityNote?
     @Published private(set) var loginItemState: HostBackgroundItemState = .off
@@ -433,7 +432,6 @@ final class RemoteHostModel: ObservableObject {
             openAtLogin: openAtLogin,
             consentPending: consentPending,
             chimeOnConnect: chimeOnConnect,
-            allowFileTransfer: !captureScopeViewOnly && allowFileTransfer,
             wakeHelperHostID: hasPairedPhone ? connection.invitation?.durableHostID : nil,
             wakeOwnerPairID: hasPairedPhone ? connection.invitation?.ownerPairID : nil,
             localOnly: connection.localOnly,
@@ -505,7 +503,6 @@ final class RemoteHostModel: ObservableObject {
         keepAwakeEnabled = preferences.keepAwake
         consentPending = preferences.consentPending()
         chimeOnConnect = preferences.chimeOnConnect
-        allowFileTransfer = preferences.allowFileTransfer
         allowSystemAudio = preferences.allowSystemAudio
         captureScopeNeedsSelection = preferences.captureScopeRequiresSelection
         wantsSharing = preferences.sharingMayResumeWithoutScopeSelection
@@ -1057,18 +1054,17 @@ final class RemoteHostModel: ObservableObject {
         if connection.connected, active, !phonePause.isPaused && !liveViewOnly, sessionState == .picture { beginCapture() }
     }
 
-    func setAllowFileTransfer(_ enabled: Bool) {
-        allowFileTransfer = enabled
-        preferences.allowFileTransfer = enabled
-        if !enabled { fileTransfer.revoke() }
+    /// File transfer needs a full-control sharing scope and a current, unpaused session (MS05: no Mac setting).
+    /// Received files only land quarantined in Downloads › Farside, never opened; Mac-to-phone needs a pick here.
+    private var fileTransferRefusal: HostFileTransferService.Refusal? {
+        HostFileTransferService.refusal(viewOnlyScope: captureScopeViewOnly, connected: connection.connected, sharing: active,
+            paused: phonePause.isPaused, liveViewOnly: liveViewOnly, locking: away.isLocking, lockFailed: awayLockFailed)
     }
 
-    /// File transfer needs this Mac's setting and a current, unpaused session. It does not need control:
-    /// the setting is the owner's permission, and files only land in Downloads › Farside, never opened.
-    private var fileTransferRefusal: FileTransferStatus? {
-        guard !captureScopeViewOnly, allowFileTransfer else { return .disabled }
-        guard connection.connected, active, !phonePause.isPaused && !liveViewOnly && !away.isLocking else { return .notAllowed }
-        return nil
+    /// One line per refusal with every input, so a device report names the condition (no file names).
+    private func logFileRefusal(_ refusal: HostFileTransferService.Refusal) -> String {
+        SessionLog.log.error("file refused: \(refusal.rawValue, privacy: .public) connected=\(self.connection.connected, privacy: .public) active=\(self.active, privacy: .public) paused=\(self.phonePause.isPaused, privacy: .public) liveViewOnly=\(self.liveViewOnly, privacy: .public) away=\(Self.awayPhaseDescription(self.away.machine.phase), privacy: .public) scopeViewOnly=\(self.captureScopeViewOnly, privacy: .public) listening=\(self.listeningWithoutSharing, privacy: .public)")
+        return refusal.rawValue
     }
 
     private func wireFileTransfer() {
@@ -1079,7 +1075,11 @@ final class RemoteHostModel: ObservableObject {
         }
         engine.link = { [weak self] in self?.connection.media }
         engine.isRelayed = { [weak self] in self?.connection.media?.isRelayRoute ?? false }
-        fileTransfer.refusal = { [weak self] in self?.fileTransferRefusal ?? .notAllowed }
+        fileTransfer.refusal = { [weak self] in self.map { $0.fileTransferRefusal?.status } ?? .notAllowed }
+        fileTransfer.refusalReason = { [weak self] in
+            guard let self, let refusal = self.fileTransferRefusal else { return nil }
+            return self.logFileRefusal(refusal)
+        }
         connection.fileTransfer = engine
     }
 
@@ -1089,6 +1089,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func phoneConnected() {
+        // A connected phone with sharing off breaks files (and causal input) silently; say so for device reports.
+        if !active { SessionLog.log.error("phone connected while sharing is not active (listening=\(self.listeningWithoutSharing, privacy: .public))") }
         axSessionGeneration.advance()
         away.refresh()
         bigText.retryPendingRestore()

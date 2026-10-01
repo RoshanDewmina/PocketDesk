@@ -8,7 +8,7 @@ final class FileTransferFramingTests: XCTestCase {
     func testChunkRoundTripsTransferOffsetAndPayload() throws {
         let payload = Data((0..<FileTransferLimits.directChunkPayload).map { UInt8(truncatingIfNeeded: $0 * 7) })
         let message = try XCTUnwrap(FileChunk.encode(transfer: transfer, offset: 1_000_000_123, payload: payload))
-        XCTAssertEqual(message.count, FileTransferLimits.maximumOutgoingMessageBytes, "new sends are bounded to 16 KiB without interleaving")
+        XCTAssertEqual(message.count, FileTransferLimits.maximumMessageBytes, "fast-lane sends stay within every file.1 receiver's 64 KiB")
         XCTAssertEqual(FileChunk.decode(message), FileChunk.Decoded(transfer: transfer, offset: 1_000_000_123, payload: payload))
         let small = try XCTUnwrap(FileChunk.encode(transfer: transfer, offset: 65_508, payload: Data([1, 2, 3])))
         XCTAssertEqual(FileChunk.decode(small), FileChunk.Decoded(transfer: transfer, offset: 65_508, payload: Data([1, 2, 3])))
@@ -359,7 +359,7 @@ final class FileTransferEngineTests: XCTestCase {
         let saved = try XCTUnwrap(macFinishes.first?.savedURL)
         XCTAssertEqual(try Data(contentsOf: saved), data)
         XCTAssertEqual(files(), ["report.pdf"])
-        XCTAssertEqual(toMac.sentMessages, 193)
+        XCTAssertEqual(toMac.sentMessages, 49)
         XCTAssertEqual(toMac.largestMessage, FileTransferLimits.maximumOutgoingMessageBytes)
         XCTAssertEqual(Array(controlFrames.prefix(2)), ["offer", "accept"])
         XCTAssertTrue(controlFrames.contains("complete"))
@@ -498,8 +498,8 @@ final class FileChannelLoopbackTests: XCTestCase {
     private func connect(phoneAcceptsFiles: Bool) async throws -> (PeerMedia, PeerMedia) {
         let host = PeerMedia(isHost: true, servers: [], fileChannel: true)
         let phone = PeerMedia(isHost: false, servers: [], fileChannel: phoneAcceptsFiles)
-        host.onSignal = { [weak phone] in phone?.receive($0) }
-        phone.onSignal = { [weak host] in host?.receive($0) }
+        host.onSignal = { [weak self, weak phone] in if let sdp = $0.sdp { self?.descriptions.append("host " + sdp) }; phone?.receive($0) }
+        phone.onSignal = { [weak self, weak host] in if let sdp = $0.sdp { self?.descriptions.append("phone " + sdp) }; host?.receive($0) }
         var connected = false
         phone.onState = { if $0 == "connected" { connected = true } }
         host.offer()
@@ -526,6 +526,7 @@ final class FileChannelLoopbackTests: XCTestCase {
 
     private var hostStats: StreamStatsReport?
     private var phoneStats: StreamStatsReport?
+    private var descriptions: [String] = []
 
     private func routeSummary() -> String {
         func line(_ name: String, _ report: StreamStatsReport?) -> String {
@@ -624,6 +625,72 @@ final class FileChannelLoopbackTests: XCTestCase {
             XCTAssertGreaterThan(downRate, 400_000, "an app-limited host estimate keeps the LAN floor: \(routeSummary())")
         }
         XCTAssertNotNil(link.host.controlBufferedAmount, "the control channel is untouched")
+    }
+
+    /// DF10 bench, opt in with `FARSIDE_FILE_BENCH_MB=100`: throughput both ways on loopback, and the
+    /// phone->Mac control-message delay (send to the host's main-queue delivery) idle and during each transfer.
+    func testFileBenchBothWaysWithControlLatency() async throws {
+        guard let megabytes = ProcessInfo.processInfo.environment["FARSIDE_FILE_BENCH_MB"].flatMap(Int.init), megabytes > 0 else {
+            throw XCTSkip("set FARSIDE_FILE_BENCH_MB to run the DF10 bench")
+        }
+        let link = try await loopback()
+        defer { link.host.close(); link.phone.close(); try? FileManager.default.removeItem(at: link.folder) }
+        var data = Data(count: megabytes * 1_000_000)
+        data.withUnsafeMutableBytes { arc4random_buf($0.baseAddress, $0.count) }
+        var delays: [Double] = []
+        link.host.onControl = { message in
+            guard message.count == 8 else { return }
+            let sent = message.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self) }
+            delays.append(Double(DispatchTime.now().uptimeNanoseconds - sent) / 1_000_000)
+        }
+        func probe(for seconds: Double) async throws {
+            let end = Date().addingTimeInterval(seconds)
+            while Date() < end {
+                var now = DispatchTime.now().uptimeNanoseconds
+                _ = link.phone.sendControl(Data(bytes: &now, count: 8))
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        func summary(_ values: [Double]) -> String {
+            let sorted = values.sorted()
+            guard !sorted.isEmpty else { return "n=0" }
+            func pct(_ p: Double) -> Double { sorted[min(sorted.count - 1, Int(Double(sorted.count) * p))] }
+            return String(format: "n=%d p50 %.1f p95 %.1f p99 %.1f max %.1f ms", sorted.count, pct(0.5), pct(0.95), pct(0.99), sorted.last!)
+        }
+        try await probe(for: 3)
+        let idle = summary(delays)
+
+        func timed(_ start: () throws -> Void, finished: @escaping () -> FileTransferFinish?) async throws -> (Double, String) {
+            delays = []
+            let started = Date()
+            try start()
+            let deadline = Date().addingTimeInterval(600)
+            while finished() == nil, Date() < deadline {
+                var now = DispatchTime.now().uptimeNanoseconds
+                _ = link.phone.sendControl(Data(bytes: &now, count: 8))
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            XCTAssertEqual(finished()?.status, .stored, routeSummary())
+            return (Double(data.count) / Date().timeIntervalSince(started), summary(delays))
+        }
+        var phoneFinish: FileTransferFinish?, macFinish: FileTransferFinish?
+        link.phoneEngine.onFinish = { if $0.direction == .outgoing { phoneFinish = $0 } }
+        link.macEngine.onFinish = { if $0.direction == .outgoing { macFinish = $0 } }
+        let (up, upDelay) = try await timed({ _ = try link.phoneEngine.send(DataByteSource(data), name: "up.bin", type: nil).get() },
+                                            finished: { phoneFinish })
+        link.macEngine.onRequest = { transfer in
+            _ = link.macEngine.send(DataByteSource(data), name: "down.bin", type: nil, transfer: transfer)
+        }
+        let (down, downDelay) = try await timed({ _ = try link.phoneEngine.request().get() }, finished: { macFinish })
+        print(String(format: "FILE-BENCH %d MB phone->mac %.2f MB/s, mac->phone %.2f MB/s", megabytes, up / 1e6, down / 1e6))
+        print("FILE-BENCH control delay idle: \(idle)")
+        print("FILE-BENCH control delay during phone->mac: \(upDelay)")
+        print("FILE-BENCH control delay during mac->phone: \(downDelay)")
+        print("FILE-BENCH route: \(routeSummary())")
+        for description in descriptions {
+            let role = description.prefix { $0 != " " }
+            print("FILE-BENCH \(role) SDP " + description.split(separator: "\r\n").filter { $0.hasPrefix("a=max-message-size") || $0.hasPrefix("a=sctp-port") }.joined(separator: " "))
+        }
     }
 }
 
@@ -793,5 +860,47 @@ final class HostFileLinkRevocationTests: XCTestCase {
             refusal = nil; offer.openOffer(current); XCTAssertEqual(opened.map(\.absoluteString), [next]); XCTAssertNil(offer.currentID)
             service.reset(); await withCheckedContinuation { c in queue.async { c.resume() } }
         }
+    }
+    /// MS05: no "Allow file transfer" switch. A stored legacy `false` is ignored; the view-only scope still refuses.
+    func testFilesNeedOnlyALiveFullScopeSessionAndIgnoreTheRemovedMacSetting() throws {
+        let suite = "MS05-\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(false, forKey: "allowFileTransfer")
+        _ = HostPreferences(defaults: defaults)
+        func refusal(scope: Bool = false, connected: Bool = true, sharing: Bool = true, paused: Bool = false,
+                     viewOnly: Bool = false, locking: Bool = false) -> HostFileTransferService.Refusal? {
+            HostFileTransferService.refusal(viewOnlyScope: scope, connected: connected, sharing: sharing, paused: paused,
+                                            liveViewOnly: viewOnly, locking: locking)
+        }
+        XCTAssertNil(refusal())
+        XCTAssertEqual(refusal(scope: true)?.status, .disabled)
+        XCTAssertEqual(refusal(connected: false), .noSession)
+        XCTAssertEqual(refusal(sharing: false), .notSharing)
+        XCTAssertEqual(refusal(paused: true), .paused)
+        XCTAssertEqual(refusal(viewOnly: true), .viewOnly)
+        XCTAssertEqual(refusal(locking: true)?.status, .notAllowed)
+        XCTAssertEqual(HostFileTransferService.refusal(viewOnlyScope: false, connected: true, sharing: true, paused: false,
+                                                       liveViewOnly: false, locking: true, lockFailed: true), .lockFailed)
+        XCTAssertThrowsError(try FileFrame(op: "cancel", transfer: String(repeating: "d", count: 32), reason: "paused").validate())
+        let service = HostFileTransferService(destination: { nil })
+        var sent: [FileFrame] = []
+        service.engine.sendControl = { sent.append($0); return true }
+        service.refusal = { refusal(scope: true)?.status }
+        service.receive(.request(String(repeating: "b", count: 32)))
+        XCTAssertEqual(sent.last?.status, FileTransferStatus.disabled.rawValue, "view-only scope keeps its refusal")
+        // 1 Oct device report: every send said only "isn't accepting files". The refusal now says which condition.
+        service.refusal = { refusal(paused: true)?.status }
+        service.refusalReason = { refusal(paused: true)?.rawValue }
+        service.receive(.offer(String(repeating: "c", count: 32), name: "a.txt", bytes: 1, type: nil))
+        let result = try XCTUnwrap(sent.last)
+        XCTAssertEqual(result.reason, "paused"); XCTAssertNoThrow(try result.validate())
+        let phone = FileTransferEngine(acceptsUnsolicitedOffers: false)
+        var finish: FileTransferFinish?
+        phone.onFinish = { finish = $0 }
+        phone.sendControl = { _ in true }
+        let transfer = try phone.send(DataByteSource(Data([1])), name: "a.txt", type: nil).get()
+        phone.receive(.result(transfer, .notAllowed, reason: "paused"))
+        XCTAssertEqual(finish?.reason, "paused")
+        XCTAssertEqual(HostFileTransferService.defaultDestination()?.pathComponents.suffix(2), ["Downloads", "Farside"])
     }
 }

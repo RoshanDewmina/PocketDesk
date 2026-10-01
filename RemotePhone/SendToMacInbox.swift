@@ -116,7 +116,8 @@ final class SendToMacInbox: ObservableObject {
             transferItems[transfer] = nil
             let stored = finish.status == .stored
             receipt(id, stored ? .sent : .failed, fraction: stored ? 1 : nil,
-                    stored ? "Saved to Downloads › Farside on your Mac" : PhoneFileTransfer.message(sending: finish.status))
+                    stored ? "Saved to Downloads › Farside on your Mac"
+                        : PhoneFileTransfer.message(refusal: finish.reason, status: finish.status) ?? PhoneFileTransfer.message(sending: finish.status))
             done(id)
         }
     }

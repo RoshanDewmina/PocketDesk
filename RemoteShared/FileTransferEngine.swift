@@ -10,12 +10,15 @@ protocol FileChannelLink: AnyObject {
     func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool
     /// Whole message size, header included, for the next chunk.
     func fileMessageBytes(at now: TimeInterval) -> Int
+    /// The queue the link's lane allows now (2 MiB on the calm-LAN fast lane, else 32 KiB).
+    func fileQueueBytes(at now: TimeInterval) -> UInt64
 }
 
 extension FileChannelLink {
     // In-memory test links do not share a real association. PeerMedia overrides these.
     func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool { true }
     func fileMessageBytes(at now: TimeInterval) -> Int { FileTransferLimits.maximumOutgoingMessageBytes }
+    func fileQueueBytes(at now: TimeInterval) -> UInt64 { FileTransferLimits.directHighWater }
 }
 
 protocol FileByteSource: AnyObject {
@@ -60,6 +63,8 @@ struct FileTransferFinish: Equatable {
     let name: String?
     let status: FileTransferStatus
     let savedURL: URL?
+    /// The Mac's stated reason for a refusal, when it gave one.
+    var reason: String? = nil
 }
 
 final class DataByteSource: FileByteSource {
@@ -277,8 +282,8 @@ final class FileTransferEngine {
     }
 
     /// Host: the phone's request ended without a file (the picker was cancelled or refused).
-    func answerRequest(_ transfer: String, _ status: FileTransferStatus) {
-        _ = sendControl?(.result(transfer, status))
+    func answerRequest(_ transfer: String, _ status: FileTransferStatus, reason: String? = nil) {
+        _ = sendControl?(.result(transfer, status, reason: reason))
     }
 
     func cancelAll(status: FileTransferStatus = .cancelled, notify: Bool = true) {
@@ -343,9 +348,9 @@ final class FileTransferEngine {
         case "result":
             let status = frame.status.flatMap(FileTransferStatus.init(rawValue:)) ?? .invalid
             if outgoing?.transfer == frame.transfer {
-                finishOutgoing(frame.transfer, status, notify: .none)
+                finishOutgoing(frame.transfer, status, notify: .none, reason: frame.reason)
             } else if pendingRequest == frame.transfer {
-                finishRequest(frame.transfer, status, notify: false)
+                finishRequest(frame.transfer, status, notify: false, reason: frame.reason)
             } else {
                 onOtherResult?(frame.transfer, status)
             }
@@ -483,14 +488,14 @@ final class FileTransferEngine {
 
     private enum Notice { case none, cancel, result }
 
-    private func finishOutgoing(_ transfer: String, _ status: FileTransferStatus, notify: Notice) {
+    private func finishOutgoing(_ transfer: String, _ status: FileTransferStatus, notify: Notice, reason: String? = nil) {
         guard let current = outgoing, current.transfer == transfer else { return }
         if let work = outgoingWork { io.stopSending(work) }
         outgoing = nil
         outgoingWork = nil
         if notify == .cancel { _ = sendControl?(.cancel(transfer)) }
         stopWatchdogIfIdle()
-        onFinish?(FileTransferFinish(transfer: transfer, direction: .outgoing, name: current.name, status: status, savedURL: nil))
+        onFinish?(FileTransferFinish(transfer: transfer, direction: .outgoing, name: current.name, status: status, savedURL: nil, reason: reason))
         onChange?()
     }
 
@@ -510,12 +515,12 @@ final class FileTransferEngine {
         onChange?()
     }
 
-    private func finishRequest(_ transfer: String, _ status: FileTransferStatus, notify: Bool) {
+    private func finishRequest(_ transfer: String, _ status: FileTransferStatus, notify: Bool, reason: String? = nil) {
         guard pendingRequest == transfer else { return }
         pendingRequest = nil
         if notify { _ = sendControl?(.cancel(transfer)) }
         stopWatchdogIfIdle()
-        onFinish?(FileTransferFinish(transfer: transfer, direction: .incoming, name: nil, status: status, savedURL: nil))
+        onFinish?(FileTransferFinish(transfer: transfer, direction: .incoming, name: nil, status: status, savedURL: nil, reason: reason))
         onChange?()
     }
 
@@ -566,7 +571,7 @@ final class FileTransferIO: @unchecked Sendable {
     }
     private final class Sending {
         let work: Outgoing, link: FileChannelLink, chunk: Int, highWater: UInt64
-        var pacer: FilePacer, hasher = SHA256(), sent: Int64 = 0, pumpScheduled = false
+        var pacer: FilePacer, hasher = SHA256(), sent: Int64 = 0, pumpScheduled = false, awaitingDrain = false
         init(work: Outgoing, link: FileChannelLink, chunk: Int, highWater: UInt64, pacer: FilePacer) {
             self.work = work; self.link = link; self.chunk = chunk; self.highWater = highWater; self.pacer = pacer
         }
@@ -584,6 +589,8 @@ final class FileTransferIO: @unchecked Sendable {
     private var sending: Sending? // IO queue only.
     private var receiving: Receiving?
     private static let chunksPerTurn = 64
+    /// Refill comes from the channel's buffered-amount callbacks (`wake`); this timer is only a backstop.
+    static let drainBackstop: TimeInterval = 0.02
     init(queue: DispatchQueue = DispatchQueue(label: "Farside.file-transfer", qos: .utility)) { self.queue = queue }
 
     func reserveSending(transfer: String, source: FileByteSource) -> Outgoing {
@@ -620,10 +627,16 @@ final class FileTransferIO: @unchecked Sendable {
         while sending.sent < total {
             guard work.lease.isActive else { return }
             guard let buffered = sending.link.fileBufferedAmount else { fail(sending, .connectionLost); return }
-            if buffered >= sending.highWater { schedule(sending, after: 0.005); return }
             let now = ProcessInfo.processInfo.systemUptime
             let chunk = min(sending.chunk, max(1, sending.link.fileMessageBytes(at: now) - FileTransferLimits.chunkHeaderBytes))
             let size = Int(min(Int64(chunk), total - sending.sent))
+            // Low-water refill: once full, wait until half the queue has drained so each wake sends a batch.
+            let highWater = min(sending.highWater, sending.link.fileQueueBytes(at: now))
+            if buffered + UInt64(size + FileTransferLimits.chunkHeaderBytes) > highWater
+                || (sending.awaitingDrain && buffered > highWater / 2) {
+                sending.awaitingDrain = true; schedule(sending, after: Self.drainBackstop); return
+            }
+            sending.awaitingDrain = false
             guard sending.pacer.allows(size, at: now) else { schedule(sending, after: 0.01); return }
             guard sending.link.permitsFileSend(bytes: size + FileTransferLimits.chunkHeaderBytes, at: now) else {
                 sending.pacer.refund(size); schedule(sending, after: 0.01); return

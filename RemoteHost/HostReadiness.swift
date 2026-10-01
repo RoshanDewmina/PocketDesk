@@ -241,7 +241,6 @@ struct HostPreferences {
         static let chimeOnConnect = "chimeOnConnect"
         static let privacyCurtain = "privacyCurtainWhileSharing"
         static let agentAlerts = "agentAlertsEnabled"
-        static let allowFileTransfer = "allowFileTransfer"
         static let allowSystemAudio = "allowSystemAudio"
         static let localOnly = "localNetworkOnly"
         static let menuBarIconShown = "menuBarIconShown"
@@ -265,20 +264,13 @@ struct HostPreferences {
             defaults.set(defaults.bool(forKey: "launchAtLoginDefaultApplied"), forKey: Key.keepAwake)
         }
         defaults.register(defaults: [Key.allowControl: true, Key.sharingEnabled: true,
-                                     Key.chimeOnConnect: true, Key.allowBigText: true, Key.allowFileTransfer: true, Key.menuBarIconShown: true])
+                                     Key.chimeOnConnect: true, Key.allowBigText: true, Key.menuBarIconShown: true])
     }
 
     /// A short sound when a phone connects, so someone at the Mac always knows.
     var chimeOnConnect: Bool {
         get { defaults.bool(forKey: Key.chimeOnConnect) }
         nonmutating set { defaults.set(newValue, forKey: Key.chimeOnConnect) }
-    }
-
-    /// Files from the paired phone may land in Downloads › Farside, and the phone may ask for a file
-    /// someone picks on this Mac. On by default (owner decision, 30 Sep 2026).
-    var allowFileTransfer: Bool {
-        get { defaults.bool(forKey: Key.allowFileTransfer) }
-        nonmutating set { defaults.set(newValue, forKey: Key.allowFileTransfer) }
     }
 
     /// Off unless the owner turns it on; the choice survives relaunch.
