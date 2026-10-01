@@ -565,7 +565,18 @@ final class RemoteHostModel: ObservableObject {
         capture.onHealth = { [weak self] healthy in self?.captureHealthChanged(healthy) }
         capture.onExclusionLost = { [weak self] in
             guard let self, self.curtain.phase != .down else { return }
-            if self.away.wantsCover { self.captureHealthChanged(false); return }
+            if self.away.wantsCover {
+                self.awayExclusion.invalidate()
+                self.input.withAuthority {
+                    self.input.enabled = false
+                    self.input.invalidateQueued(); self.inputFreshness.expireTokens()
+                    self.releaseRemoteInput(notifyPhone: false)
+                }
+                self.captureHealthChanged(false)
+                self.sendCaptureHealth(false)
+                self.excludeCoverFromCapture()
+                return
+            }
             self.curtain.lift()
             self.reconcileCurtain()
         }
@@ -573,6 +584,14 @@ final class RemoteHostModel: ObservableObject {
         curtain.onLocalLift = { [weak self] in self?.curtainLiftedLocally() }
         curtain.onPhaseChange = { [weak self] phase in
             guard let self else { return }
+            if self.away.wantsCover && phase == .up {
+                self.awayExclusion.invalidate()
+                self.input.withAuthority {
+                    self.input.enabled = false
+                    self.input.invalidateQueued(); self.inputFreshness.expireTokens()
+                    self.releaseRemoteInput(notifyPhone: false)
+                }
+            }
             self.reconcileCurtain()
             if self.away.wantsCover && phase == .up { self.excludeCoverFromCapture() }
         }
@@ -1405,10 +1424,10 @@ final class RemoteHostModel: ObservableObject {
     private var awayMarkerCommitted = false
     private var awayCoverWasWanted = false
     private var awayMarkerFailed = false
-    private var awayExclusionReceipt: AwayExclusionReceipt?
+    private var awayExclusion = AwayExclusionState()
     private var awayPictureClear: Bool {
         !away.wantsCover || sessionState != .picture ||
-            awayExclusionReceipt?.matches(windowIDs: curtain.windowIDs, captureAttempt: captureAttempt) == true
+            awayExclusion.matches(windowIDs: curtain.windowIDs, captureAttempt: captureAttempt)
     }
 
     private static func makeAwayLocker() -> HostScreenLocking {
@@ -1568,10 +1587,11 @@ final class RemoteHostModel: ObservableObject {
 
     private func excludeAwayCover(_ ids: Set<CGWindowID>) async -> Bool {
         guard active, connection.connected, !terminating else { return false }
-        let attempt = captureAttempt, peer = connection.media
+        let attempt = captureAttempt, peer = connection.media, generation = awayExclusion.generation
         let excluded = await capture.excludeWindows(ids)
         guard attempt == captureAttempt, connection.media === peer, ids == curtain.windowIDs else { return false }
-        awayExclusionReceipt = excluded ? AwayExclusionReceipt(windowIDs: ids, captureAttempt: attempt) : nil
+        guard awayExclusion.confirm(excluded ? AwayExclusionReceipt(windowIDs: ids, captureAttempt: attempt) : nil,
+                                    generation: generation) else { return false }
         if !excluded && away.wantsCover {
             // The cover stays opaque; conceal the remote picture instead of promising exclusion.
             captureHealthChanged(false)

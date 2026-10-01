@@ -232,7 +232,8 @@ struct AwayModeMachine: Equatable {
     private func batteryRuleFires(now: TimeInterval) -> Bool {
         guard let onBatterySince else { return false }
         if conditions.phoneConnected {
-            return (conditions.batteryPercent ?? 100) <= AwayModeLimits.batteryFloorWithPhone
+            guard let percent = conditions.batteryPercent else { return true }
+            return percent <= AwayModeLimits.batteryFloorWithPhone
         }
         return elapsed(since: onBatterySince, now: now) >= AwayModeLimits.batteryGraceWithoutPhone
     }
@@ -264,5 +265,20 @@ struct AwayExclusionReceipt: Equatable {
     let captureAttempt: UInt64
     func matches(windowIDs: Set<UInt32>, captureAttempt: UInt64) -> Bool {
         !windowIDs.isEmpty && captureAttempt > 0 && self.windowIDs == windowIDs && self.captureAttempt == captureAttempt
+    }
+}
+
+struct AwayExclusionState: Equatable {
+    private(set) var generation: UInt64 = 0
+    private(set) var receipt: AwayExclusionReceipt?
+    mutating func invalidate() { generation &+= 1; receipt = nil }
+    @discardableResult
+    mutating func confirm(_ receipt: AwayExclusionReceipt?, generation: UInt64) -> Bool {
+        guard generation == self.generation else { return false }
+        self.receipt = receipt
+        return true
+    }
+    func matches(windowIDs: Set<UInt32>, captureAttempt: UInt64) -> Bool {
+        receipt?.matches(windowIDs: windowIDs, captureAttempt: captureAttempt) == true
     }
 }
