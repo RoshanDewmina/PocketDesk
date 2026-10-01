@@ -994,6 +994,7 @@ final class PeerMedia: NSObject {
     var busyState: BusyState?
     /// Host: the X17 governor's status from the load monitor, copied into every statistics sample.
     var senderQueueGovernorStatus: String?
+    var senderQueueGovernorShedding = false
     var captureRegion: CaptureRegion?
 
     private var currentSenderRate: SenderRateParameters {
@@ -1273,7 +1274,8 @@ final class PeerMedia: NSObject {
             // The transport's camera bootstrap estimate is not observed upload capacity.
             route: sample.route, capacityKbps: isHost ? stats.availableOutgoingKbps : nil,
             videoKbps: transportRate.kbps ?? stats.sentKbps, totalTransportKbps: transportRate.kbps, rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs,
-            routeDetail: sample.routeDetail, rttSampleMs: stats.rttSampleMs, senderMaxKbps: senderMaxKbps))
+            routeDetail: sample.routeDetail, rttSampleMs: stats.rttSampleMs, senderMaxKbps: senderMaxKbps,
+            senderQueueMs: isHost ? stats.senderQueueMs : nil, governorDegraded: isHost && senderQueueGovernorShedding))
         if isHost {
             if nativeDesktopCodecs {
                 stats.targetFPS = targetFPS

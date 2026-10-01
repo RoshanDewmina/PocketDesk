@@ -2806,6 +2806,7 @@ final class RemoteHostModel: ObservableObject {
         let change = monitor.tick(sample: sampleWithPhone, at: process.systemUptime)
         loadMonitor = monitor
         peer.senderQueueGovernorStatus = monitor.governorStatus
+        peer.senderQueueGovernorShedding = monitor.governorShedding
         if let ladder = change.ladder {
             ladderState = ladder
             capture.setLadder(ladder)

@@ -942,6 +942,39 @@ final class SenderQueueGovernorTests: XCTestCase {
         XCTAssertFalse(governor.observe(queued), "at the floor nothing moves")
     }
 
+    func testOnlyAQueueTriggeredLevelCountsAsSheddingAndClimbingBackClearsIt() {
+        var queued = SenderQueueGovernor()
+        _ = feed(&queued, window(available: 20_000, sent: 8_000, queue: 90, network: 30), 6)
+        XCTAssertGreaterThan(queued.level, 0)
+        XCTAssertTrue(queued.queueShedding, "a building send queue is real shedding")
+        var small = SenderQueueGovernor()
+        _ = feed(&small, window(), 7)
+        XCTAssertGreaterThan(small.level, 0)
+        XCTAssertFalse(small.queueShedding, "a small saturated link is a cap, not shedding; files keep flowing")
+        let clean = window(available: 20_000, sent: 17_000, queue: 10)
+        _ = feed(&queued, clean, SenderQueueGovernor.climbWindows * 4)
+        XCTAssertEqual(queued.level, 0)
+        XCTAssertFalse(queued.queueShedding, "back at level 0 nothing is shed")
+    }
+
+    func testShadowNeverReportsSheddingAndApplyReportsItOnlyForAQueue() {
+        var queueSample = constrainedSample
+        queueSample.availableKbps = 20_000; queueSample.sentKbps = 8_000; queueSample.senderQueueMs = 150
+        var shadow = HostLoadMonitor(targetFPS: 60, senderQueueGovernor: true, applyGovernor: false)
+        var apply = HostLoadMonitor(targetFPS: 60, senderQueueGovernor: true, applyGovernor: true)
+        var capped = HostLoadMonitor(targetFPS: 60, senderQueueGovernor: true, applyGovernor: true)
+        for second in 0..<8 {
+            _ = shadow.tick(sample: queueSample, at: TimeInterval(second))
+            _ = apply.tick(sample: queueSample, at: TimeInterval(second))
+            _ = capped.tick(sample: constrainedSample, at: TimeInterval(second))
+        }
+        XCTAssertGreaterThan(shadow.governor?.level ?? 0, 0)
+        XCTAssertFalse(shadow.governorShedding, "shadow mode never pauses bulk transfers")
+        XCTAssertTrue(apply.governorShedding)
+        XCTAssertGreaterThan(capped.governor?.level ?? 0, 0)
+        XCTAssertFalse(capped.governorShedding, "a capacity cap is not shedding")
+    }
+
     func testHysteresisDownAfterTwoBadUpOnlyAfterTenCleanWindows() {
         var governor = SenderQueueGovernor()
         let bad = window(), clean = window(available: 20_000, sent: 17_000, queue: 10)

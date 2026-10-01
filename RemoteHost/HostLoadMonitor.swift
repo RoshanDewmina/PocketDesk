@@ -62,6 +62,9 @@ struct HostLoadMonitor {
     }
 
     var governorStatus: String { governor?.status(applied: applyGovernor) ?? "off" }
+    /// Bulk transfers pause only while an applied governor is actually shedding for a building queue;
+    /// shadow mode and a small-link cap never stop files.
+    var governorShedding: Bool { applyGovernor && (governor?.level ?? 0) > 0 && governor?.queueShedding == true }
 
     static func currentPhoneLoad(_ feedback: PhoneLoadFeedback?, receivedAt: TimeInterval?,
                                  now: TimeInterval) -> PhoneLoadFeedback? {

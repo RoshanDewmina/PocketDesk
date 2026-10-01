@@ -300,6 +300,9 @@ struct SenderQueueGovernor: Equatable {
     private var lastAvailableKbps: Double?
     private var windowsSinceIdle: Int?
     private(set) var inactiveOnLocalLink = false
+    /// True while the current level was reached because the send queue was building, not because the
+    /// link is merely small; only this kind of shedding should pause bulk transfers.
+    private(set) var queueShedding = false
 
     var cap: Level { Self.levels[level] }
 
@@ -351,6 +354,7 @@ struct SenderQueueGovernor: Equatable {
             badWindows += 1
             let floor = queueHigh ? Self.levels.count - 1 : Self.capacityFloor
             if badWindows >= Self.downWindows, level < floor, move(to: level + 1) {
+                queueShedding = queueHigh
                 if windowsSinceClimb.map({ $0 <= Self.failedClimbWindows }) ?? false {
                     climbWait = min(climbWait * 2, Self.maxClimbWindows)
                 }
@@ -368,6 +372,7 @@ struct SenderQueueGovernor: Equatable {
         if level > 0, cleanWindows >= climbWait, move(to: level - 1) {
             cleanWindows = 0
             windowsSinceClimb = 0
+            if level == 0 { queueShedding = false }
         }
         if let windowsSinceClimb, windowsSinceClimb > Self.failedClimbWindows, level == 0 { climbWait = Self.climbWindows }
         return level != before
