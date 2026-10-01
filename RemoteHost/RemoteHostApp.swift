@@ -8,6 +8,9 @@ struct RemoteHostApp: App {
 
     init() {
         #if DEBUG
+        if PortraitPrototypeOptions.requested(CommandLine.arguments) {
+            exit(VirtualDisplayPortraitPrototype.run(arguments: CommandLine.arguments))
+        }
         if CommandLine.arguments.contains(VirtualDisplaySpike.launchArgument) { VirtualDisplaySpike.run(); exit(0) }
         #endif
         HostFonts.registerBundledFonts()

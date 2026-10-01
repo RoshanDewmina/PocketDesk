@@ -89,7 +89,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote
-        CURRENT_PROJECT_VERSION: '20260930.7'
+        CURRENT_PROJECT_VERSION: '20260930.8'
         MARKETING_VERSION: '1.0'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
@@ -137,7 +137,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote.Widgets
-        CURRENT_PROJECT_VERSION: '20260930.7'
+        CURRENT_PROJECT_VERSION: '20260930.8'
         MARKETING_VERSION: '1.0'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
@@ -158,7 +158,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote.Share
-        CURRENT_PROJECT_VERSION: '20260930.7'
+        CURRENT_PROJECT_VERSION: '20260930.8'
         MARKETING_VERSION: '1.0'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
@@ -229,7 +229,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Farside
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: '20260930.7'
+        CURRENT_PROJECT_VERSION: '20260930.8'
         MARKETING_VERSION: '1.0'
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect directly to your paired iPhone or iPad on your local network.
         INFOPLIST_FILE: RemoteHost/Info.plist
@@ -268,7 +268,7 @@ targets:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: '26.0'
-    sources: [RemoteTests, RemoteShared, RemotePhone/OwnedVideo/VideoPresentationAdmission.swift, RemoteHost/AwayLock.swift, RemoteHost/AwayModeController.swift, RemoteHost/AwayModeMachine.swift, RemoteHost/HostAwayEnvironment.swift, RemoteHost/HostAwayPresentation.swift, RemotePhone/AwayMemory.swift, RemotePhone/PhoneAwayLockRequest.swift, RemoteHost/HostPresentation.swift, RemoteHost/HostTextFocusProbe.swift, RemoteHost/HostAXBroker.swift, RemoteHost/RemoteCapture.swift, RemoteHost/ViewportCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/RemoteInputEvents.swift, RemoteHost/HostSecureFocus.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostFeatureList.swift, RemoteHost/GuestMediaPeer.swift, RemoteHost/HostGuestController.swift, RemoteHost/Availability/HostLANWake.swift, RemoteHost/Availability/LANMagicPacketSender.swift, RemoteHost/HostInputExecutor.swift, RemoteHost/HostCaptureScope.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift, RemoteHost/HostWatchdogState.swift, RemoteHost/HostHangWatchdog.swift, RemoteHost/HostWatchdogReporter.swift, RemoteHost/HostLoginItem.swift, RemoteHost/HostViewState.swift, RemoteHost/PrivacyCurtain.swift, RemoteHost/HostDiagnostics.swift, RemoteHost/HostE2EInputFence.swift, RemoteWatchdog/WatchdogE2E.swift, RemoteHost/HostDisplayCatalog.swift, RemoteHost/AgentAlertGate.swift, RemoteHost/AgentBridgeHTTP.swift, RemoteHost/AgentAlertBridge.swift, RemoteHost/HostAgentAlerts.swift,
+    sources: [RemoteTests, RemoteShared, RemotePhone/OwnedVideo/VideoPresentationAdmission.swift, RemotePhone/PhoneIdleTimer.swift, RemoteHost/AwayLock.swift, RemoteHost/AwayModeController.swift, RemoteHost/AwayModeMachine.swift, RemoteHost/HostAwayEnvironment.swift, RemoteHost/HostAwayPresentation.swift, RemotePhone/AwayMemory.swift, RemotePhone/PhoneAwayLockRequest.swift, RemoteHost/HostPresentation.swift, RemoteHost/HostTextFocusProbe.swift, RemoteHost/HostAXBroker.swift, RemoteHost/RemoteCapture.swift, RemoteHost/ViewportCapture.swift, RemoteHost/RemoteInputDriver.swift, RemoteHost/RemoteInputEvents.swift, RemoteHost/HostSecureFocus.swift, RemoteHost/HostCursorShape.swift, RemoteHost/HostClipboard.swift, RemoteHost/HostPairingPreflight.swift, RemoteHost/HostPermissionState.swift, RemoteHost/HostReadiness.swift, RemoteHost/HostFeatureList.swift, RemoteHost/GuestMediaPeer.swift, RemoteHost/HostGuestController.swift, RemoteHost/Availability/HostLANWake.swift, RemoteHost/Availability/LANMagicPacketSender.swift, RemoteHost/HostInputExecutor.swift, RemoteHost/HostCaptureScope.swift, RemoteHost/HostKeepAwake.swift, RemoteHost/HostTermination.swift, RemoteHost/BrowserPeerController.swift, RemoteHost/BrowserPeerStore.swift, RemoteHost/BrowserFrameMarker.swift, RemoteHost/BrowserInputGate.swift, RemoteHost/HostWatchdogState.swift, RemoteHost/HostHangWatchdog.swift, RemoteHost/HostWatchdogReporter.swift, RemoteHost/HostLoginItem.swift, RemoteHost/HostViewState.swift, RemoteHost/PrivacyCurtain.swift, RemoteHost/HostDiagnostics.swift, RemoteHost/HostE2EInputFence.swift, RemoteWatchdog/WatchdogE2E.swift, RemoteHost/HostDisplayCatalog.swift, RemoteHost/AgentAlertGate.swift, RemoteHost/AgentBridgeHTTP.swift, RemoteHost/AgentAlertBridge.swift, RemoteHost/HostAgentAlerts.swift,
               RemoteHost/HostLoadMonitor.swift, FarsideTestPad/BenchState.swift, RemoteHost/HostFileTransfer.swift,
               RemoteHost/HostAppActivation.swift, RemoteHost/HostActivity.swift, RemoteHost/MacVitalsSources.swift, RemoteHost/MacVitalsMonitor.swift, RemoteHost/CouchSessionPolicy.swift, RemoteHost/BigTextModes.swift, RemoteHost/BigTextDisplaySwitcher.swift, RemoteHost/BigTextWindows.swift, RemoteHost/BigTextController.swift]
     dependencies:

@@ -467,6 +467,7 @@ final class PhoneRemoteModel: ObservableObject {
         presentationContentEpoch &+= 1
     }
     private func invalidatePresentation(keepingPiP: Bool = false) {
+        PhoneIdleTimer.shared.endSession()
         if pendingWake != nil { wakeStatus = "The helper session changed. No new wake result can be confirmed." }
         pendingWake = nil; wakeTimeout?.cancel(); wakeTimeout = nil
         appliedReceiptTracker.clear()
@@ -495,6 +496,7 @@ final class PhoneRemoteModel: ObservableObject {
         }
     }
     private func refreshPresentation(at now: TimeInterval) {
+        refreshIdleTimer(at: now)
         let host = presentationHost
         let identity: VideoPresentationIdentity? = host.map {
             VideoPresentationIdentity(hostRecordID: $0.id,
@@ -1946,6 +1948,7 @@ let now = ProcessInfo.processInfo.systemUptime
 
     func disconnect() { disconnect(explicitEnd: true) }
     func disconnect(explicitEnd: Bool) {
+        PhoneIdleTimer.shared.endSession()
         cancelLockMacRequest()
         usefulSession.invalidate(explicitEnd: explicitEnd)
         pipBackground = false
@@ -1967,6 +1970,9 @@ let now = ProcessInfo.processInfo.systemUptime
     /// is active again. `.background` conceals the screen, releases input and pauses video; a
     /// live session is held briefly for a quick return, then closed and resumed on return.
     func sceneChanged(_ phase: ScenePhase) {
+        PhoneIdleTimer.shared.setForeground(phase == .active)
+        if phase == .active { files.refreshIdleTimer() }
+        defer { refreshIdleTimer(at: ProcessInfo.processInfo.systemUptime) }
         switch phase {
         case .active:
             sceneIsActive = true
@@ -2000,6 +2006,7 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     func enterBackground() {
+        PhoneIdleTimer.shared.setForeground(false)
         if pendingLockMac != nil {
             let notice = "Lock wasn’t confirmed. Unlock or check your Mac in person."
             disconnect()
@@ -2577,6 +2584,11 @@ let now = ProcessInfo.processInfo.systemUptime
     func sendViewOnlyEntryForTesting() { requestViewOnlyEntry() }
     var viewOnlyExitDeadlineForTesting: TimeInterval? { viewOnlyExitDeadline }
     #endif
+    private func refreshIdleTimer(at now: TimeInterval) {
+        PhoneIdleTimer.shared.updateSession(authenticated: connection.connected && connection.presentationDeadline(at: now) != nil,
+            paused: pendingLockMac != nil || resumeState == .backgrounded,
+            concealed: contentConcealed || privacyShield)
+    }
     private func tick(at suppliedNow: TimeInterval? = nil) {
         let now = suppliedNow ?? ProcessInfo.processInfo.systemUptime
         if awaitingViewOnlyExit, let deadline = viewOnlyExitDeadline, now >= deadline {
@@ -2646,6 +2658,7 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     private func end() {
+        PhoneIdleTimer.shared.endSession()
         let awayWasOn = (presentationHost ?? connection.presentationHostTrust).map { awayMemory.wasOn(host: $0) } ?? false
         cancelLockMacRequest()
         awayState = nil

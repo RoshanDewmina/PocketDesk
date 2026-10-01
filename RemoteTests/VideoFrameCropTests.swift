@@ -26,8 +26,8 @@ final class VideoFrameCropTests: XCTestCase {
     func testMalformedNormalizedCropCannotTrapOrExpandBeyondOriginalPixels() throws {
         let source = try frame()
         for crop in [CGRect(x: -0.1, y: 0, width: 0.5, height: 0.5), CGRect(x: 0, y: 0, width: 1.1, height: 1),
-                     CGRect(x: 0, y: 0, width: 0, height: 1), CGRect(x: .infinity, y: 0, width: 1, height: 1),
-                     CGRect(x: 0, y: 0, width: .nan, height: 1)] { XCTAssertNil(VideoFrameCrop.apply(crop, to: source)) }
+                     CGRect(x: 0, y: 0, width: 0, height: 1), CGRect(x: CGFloat.infinity, y: 0, width: 1, height: 1),
+                     CGRect(x: 0, y: 0, width: CGFloat.nan, height: 1)] { XCTAssertNil(VideoFrameCrop.apply(crop, to: source)) }
         let tiny = try XCTUnwrap(VideoFrameCrop.apply(CGRect(x: 0.99, y: 0.99, width: 0.01, height: 0.01), to: source).flatMap { $0.buffer as? RTCCVPixelBuffer })
         XCTAssertEqual(tiny.cropWidth, 2); XCTAssertEqual(tiny.cropHeight, 2)
         XCTAssertLessThanOrEqual(tiny.cropX + tiny.cropWidth, 80); XCTAssertLessThanOrEqual(tiny.cropY + tiny.cropHeight, 56)
