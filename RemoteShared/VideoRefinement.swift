@@ -37,8 +37,24 @@ final class VideoRefinementProducer {
     private var offered: VideoRefinementIdentity?
     private var offeredAt = -Double.infinity
     private var cached: VideoRefinementImage?
+    private var generation = UUID()
+    private var ended = false
+    func reset(terminal: Bool = false) {
+        lock.lock(); defer { lock.unlock() }
+        generation = UUID(); ended = ended || terminal
+        stable = nil; stableAt = 0; offered = nil; offeredAt = -.infinity; cached = nil
+        // An already-running bounded job owns its copy until completion. Keep `working` true
+        // until it finishes so retirement cannot admit a second concurrent copy/job.
+    }
+    #if DEBUG
+    var beforeEncodeForTesting: (() -> Void)?
+    var cachedBytesForTesting: Int { lock.lock(); defer { lock.unlock() }; return cached?.png.count ?? 0 }
+    func drainForTesting() { queue.sync {} }
+    #endif
     func inspect(_ buffer: CVPixelBuffer, tag: VideoFrameTag, at now: Double,
                  emit: @escaping (VideoRefinementImage) -> Void) -> VideoRefinementIdentity? {
+        lock.lock(); let ticket = generation, terminal = ended; lock.unlock()
+        guard !terminal else { return nil }
         guard now.isFinite, CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA,
               let primaries = CVBufferCopyAttachment(buffer, kCVImageBufferColorPrimariesKey, nil) as? String,
               primaries == kCVImageBufferColorPrimaries_ITU_R_709_2 as String,
@@ -63,6 +79,7 @@ final class VideoRefinementProducer {
             scopeEpoch: tag.scopeEpoch, content: digest, width: width, height: height, x: x, y: y,
             roiWidth: rw, roiHeight: rh, transfer: transfer == kCVImageBufferTransferFunction_sRGB as String ? "srgb" : "bt709")
         lock.lock()
+        guard !ended, generation == ticket else { lock.unlock(); return nil }
         if stable != identity { stable = identity; stableAt = now; offered = nil; cached = nil }
         let cachedImage = !working && cached?.identity == identity && now - offeredAt >= 1.5 ? cached : nil
         if cachedImage != nil { offeredAt = now; working = true }
@@ -72,7 +89,7 @@ final class VideoRefinementProducer {
         if let cachedImage {
             queue.async { [weak self] in
                 guard let self else { return }
-                self.lock.lock(); let current = self.stable == cachedImage.identity; self.lock.unlock()
+                self.lock.lock(); let current = !self.ended && self.generation == ticket && self.stable == cachedImage.identity; self.lock.unlock()
                 if current { emit(cachedImage) }
                 self.lock.lock(); self.working = false; self.lock.unlock()
             }
@@ -85,9 +102,14 @@ final class VideoRefinementProducer {
             queue.async { [weak self] in
                 guard let self else { return }
                 defer { self.lock.lock(); self.working = false; self.lock.unlock() }
+                #if DEBUG
+                self.beforeEncodeForTesting?()
+                #endif
+                self.lock.lock(); let admitted = !self.ended && self.generation == ticket && self.stable == identity; self.lock.unlock()
+                guard admitted else { return }
                 guard let png = VideoRefinementPNG.encode(bytes, identity: identity) else { return }
                 let image = VideoRefinementImage(identity: identity, png: png)
-                self.lock.lock(); let current = self.stable == identity; if current { self.cached = image }; self.lock.unlock()
+                self.lock.lock(); let current = !self.ended && self.generation == ticket && self.stable == identity; if current { self.cached = image }; self.lock.unlock()
                 if current { emit(image) }
             }
         }
