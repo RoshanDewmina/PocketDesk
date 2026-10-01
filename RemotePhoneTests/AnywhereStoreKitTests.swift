@@ -232,7 +232,7 @@ final class AnywhereStoreKitTests: XCTestCase {
         print("STOREKIT REDEMPTION: exact unfinished verification")
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(8))
-        var matching: VerificationResult<Transaction>?
+        var matching: VerificationResult<StoreKit.Transaction>?
         var externallyUnfinished = false
         while clock.now < deadline {
             try Task.checkCancellation()
