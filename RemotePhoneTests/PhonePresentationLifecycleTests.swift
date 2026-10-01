@@ -110,6 +110,14 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         XCTAssertFalse(PresentationLeasePolicy.mayContinueBackground(state: .active, admission: proof, viewOnlyConfirmed: false, now: 11))
         XCTAssertFalse(PresentationLeasePolicy.mayContinueBackground(state: .active, admission: proof, viewOnlyConfirmed: true, now: 12))
         XCTAssertTrue(PresentationLeasePolicy.mayContinueBackground(state: .active, admission: proof, viewOnlyConfirmed: true, now: 11))
+        for state in [LivePiPPolicy.State.active, .paused] {
+            XCTAssertTrue(PresentationLeasePolicy.mayHoldBackground(state: state, admission: proof, viewOnlyConfirmed: true, now: 11))
+            XCTAssertFalse(PresentationLeasePolicy.mayHoldBackground(state: state, admission: proof, viewOnlyConfirmed: false, now: 11))
+            XCTAssertFalse(PresentationLeasePolicy.mayHoldBackground(state: state, admission: proof, viewOnlyConfirmed: true, now: 12))
+        }
+        for state in [LivePiPPolicy.State.ready, .starting, .stopping, .ineligible] {
+            XCTAssertFalse(PresentationLeasePolicy.mayHoldBackground(state: state, admission: proof, viewOnlyConfirmed: true, now: 11))
+        }
     }
     func testContentOrTrackReplacementCannotResumeOldWindow() {
         let old = VideoPresentationAdmission(identity: identity(), validUntil: 12)

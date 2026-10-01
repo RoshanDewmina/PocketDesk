@@ -95,6 +95,18 @@ final class BusyPresentationTests: XCTestCase {
         }
     }
 
+    func testOnlyANetworkCauseSaysTheConnectionIsSlow() throws {
+        for level in [BusyState.Level.strained, .busy] {
+            for reason in LadderReason.allCases {
+                let presentation = try XCTUnwrap(words(level, reason: reason.rawValue))
+                XCTAssertEqual(presentation.title.lowercased().contains("connection"), reason == .network, "\(level) \(reason)")
+                XCTAssertEqual(presentation.symbol == "wifi", reason == .network, "\(level) \(reason)")
+            }
+        }
+        XCTAssertEqual(words(.busy, reason: "phone", device: "iPad")?.title, "Your iPad is busy")
+        XCTAssertEqual(words(.busy, reason: "encoding")?.title, "Your Mac is busy")
+    }
+
     func testEveryStateThePolicyCanSendIsValidAndWorded() throws {
         for target in [60, 120] {
             for rung in LadderPolicy.ladder(targetFPS: target) {

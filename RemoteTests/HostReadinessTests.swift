@@ -125,6 +125,29 @@ final class HostReadinessTests: XCTestCase {
                        "Stop Sharing must survive quitting and reopening the host")
     }
 
+    func testShareMacAudioIsOffByDefaultAndSurvivesRelaunch() throws {
+        let suite = "HostReadinessTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertFalse(HostPreferences(defaults: defaults).allowSystemAudio, "Sound sharing stays opt-in")
+        HostPreferences(defaults: defaults).allowSystemAudio = true
+        XCTAssertTrue(HostPreferences(defaults: defaults).allowSystemAudio, "The owner's choice survives a host relaunch")
+        HostPreferences(defaults: defaults).allowSystemAudio = false
+        XCTAssertFalse(HostPreferences(defaults: defaults).allowSystemAudio)
+    }
+
+    func testLocalNetworkOnlyIsOffByDefaultAndSurvivesRelaunch() throws {
+        let suite = "HostReadinessTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertFalse(HostPreferences(defaults: defaults).localOnly)
+        HostPreferences(defaults: defaults).localOnly = true
+        XCTAssertTrue(HostPreferences(defaults: defaults).localOnly)
+        XCTAssertTrue(HostPreferences(defaults: defaults).sharingEnabled, "The route choice never turns sharing off")
+    }
+
     func testLoginAndKeepAwakeConsentIsAskedOnceAndAgainOnlyWhenItsVersionRises() throws {
         let suite = "HostReadinessTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

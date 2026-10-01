@@ -24,6 +24,7 @@ struct HostLoadSample: Equatable {
     var networkQueueMs: Double? = nil
     var routeDetail: String? = nil
     var provenLocalLink = false
+    var sentFPS: Double? = nil
 }
 
 extension HostLoadSample {
@@ -37,7 +38,7 @@ extension HostLoadSample {
                   targetKbps: report.targetKbps, availableKbps: report.availableOutgoingKbps,
                   qualityLimitation: report.qualityLimitation, hostThermalState: hostThermalState,
                   lowPowerMode: lowPowerMode, sentKbps: report.sentKbps, senderQueueMs: report.senderQueueMs,
-                  networkQueueMs: report.networkQueueMs, routeDetail: report.routeDetail)
+                  networkQueueMs: report.networkQueueMs, routeDetail: report.routeDetail, sentFPS: report.sentFPS)
     }
 }
 
@@ -85,7 +86,7 @@ struct HostLoadMonitor {
                      phoneDecodeMs: sample.phoneLoad?.decodeMs,
                      phonePresentedFPS: sample.phoneLoad?.presentedFPS,
                      phoneThermalState: sample.phoneLoad?.thermalState.map(String.init),
-                     phoneLowPowerMode: sample.phoneLoad?.lowPowerMode)
+                     phoneLowPowerMode: sample.phoneLoad?.lowPowerMode, sentFPS: sample.sentFPS)
     }
 
     /// The new rung to apply and the new busy state to send, each nil when unchanged.

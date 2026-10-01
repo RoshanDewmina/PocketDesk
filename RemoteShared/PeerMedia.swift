@@ -230,6 +230,7 @@ final class PeerMedia: NSObject {
     private var remoteHostSummaryAt: TimeInterval?
     let tuning: StreamTuning
     private(set) var streamQuality: StreamQuality = .balanced
+    private var hevcRun: HEVCRun?
     private var latestHostSummary: HostStreamSummary?
     private var bandwidthSeed = BandwidthSeedPolicy()
     private var ceilingRoute = CeilingRouteTracker()
@@ -694,8 +695,10 @@ final class PeerMedia: NSObject {
             NativeHEVC444Capability.failed() // Fresh negotiation may use Main1 or H264, never active-byte relabeling.
             DispatchQueue.main.async { [weak self] in guard let self, !self.closed else { return }; self.onState?("failed") }
         }
+        let hevcRun = NativeHEVCCapability.begin()
+        self.hevcRun = useHEVC ? hevcRun : nil
         let codecFailure: () -> Void = { [weak self] in
-            NativeHEVCCapability.failed() // Next session negotiates H264; never relabel active HEVC bytes.
+            NativeHEVCCapability.failed(hevcRun) // The reconnect negotiates H264; never relabel active HEVC bytes.
             DispatchQueue.main.async { [weak self] in
                 guard let self, !self.closed else { return }
                 self.onState?("failed")
@@ -1366,6 +1369,7 @@ final class PeerMedia: NSObject {
     }
 
     func close() {
+        if let hevcRun { NativeHEVCCapability.ended(hevcRun) }
         videoFeedback.end()
         let retireRefinement = { () -> RTCDataChannel? in
             self.refinementPipe.end()

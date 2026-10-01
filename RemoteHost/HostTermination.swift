@@ -73,6 +73,10 @@ final class RemoteHostAppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    /// SwiftUI otherwise answers yes for this scene set, so hiding the Couch HUD or losing a menu bar
+    /// to a display change quit the host whenever no other window was open.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
     func applicationWillTerminate(_ notification: Notification) {
         lifecycle?.applicationWillTerminate()
     }
