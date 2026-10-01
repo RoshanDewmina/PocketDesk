@@ -3,6 +3,95 @@
 @import "../hero-a2/a2.css";
 @import "../hero-pocket/pocket.css";
 
+/* ---------- hero background (src/hero-bg/) ----------
+   A CSS poster of the chosen look (data-bg) from the first paint; the WebGL canvas fades in over it once it has
+   drawn. Scrims keep the words and the demo readable: a dark band under the header, a soft dark ellipse behind
+   the text block, and a dark backing behind the devices. The spectrum look deliberately breaks "ember only"
+   (owner's choice); everything else stays on Reach tokens. */
+.hero-bg {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--void);
+}
+.hero-bg::before,
+.hero-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+}
+.hero-bg canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity 1.4s var(--ease2);
+}
+.hero-bg.bg-on canvas {
+  opacity: 1;
+}
+.hero-bg[data-bg="spectrum"]::before,
+.hero-bg[data-bg="aurora"]::before {
+  background: linear-gradient(90deg, #ff2b2b, #ff2bd0 14%, #8a3bff 28%, #2f5bff 42%, #2ad8ff 56%, #2bff86 70%, #ffe52b 85%, #ff8a2b);
+  -webkit-mask:
+    linear-gradient(#000, rgba(0, 0, 0, 0.5) 34%, transparent 66%),
+    repeating-linear-gradient(90deg, #000 0 1.4%, rgba(0, 0, 0, 0.3) 2.2%, transparent 3% 4.4%);
+  -webkit-mask-composite: source-in;
+  mask:
+    linear-gradient(#000, rgba(0, 0, 0, 0.5) 34%, transparent 66%),
+    repeating-linear-gradient(90deg, #000 0 1.4%, rgba(0, 0, 0, 0.3) 2.2%, transparent 3% 4.4%);
+  mask-composite: intersect;
+  opacity: 0.6;
+}
+.hero-bg[data-bg="aurora"]::before {
+  background: linear-gradient(90deg, #6b0a07, #ff5b1f 18%, #ff9a2e 34%, #ffc94d 48%, #ef5a6c 64%, #ff5b1f 80%, #6b0a07);
+}
+.hero-bg[data-bg="bloom"]::before {
+  background:
+    repeating-linear-gradient(90deg, var(--void) 0 1.6px, transparent 1.6px 16px),
+    repeating-linear-gradient(0deg, var(--void) 0 1.6px, transparent 1.6px 16px),
+    radial-gradient(circle at 50% 66%, #ffe08a 0, #ffa63a 12%, #ff5b1f 26%, #7a160c 46%, transparent 66%);
+  opacity: 0.9;
+}
+.hero-bg::after {
+  background: linear-gradient(rgba(5, 5, 5, 0.92), rgba(5, 5, 5, 0.8) 70px, rgba(5, 5, 5, 0) 180px);
+}
+@media (max-width: 639px) {
+  .hero-bg[data-bg="bloom"]::before {
+    background:
+      repeating-linear-gradient(90deg, var(--void) 0 1.4px, transparent 1.4px 12px),
+      repeating-linear-gradient(0deg, var(--void) 0 1.4px, transparent 1.4px 12px),
+      radial-gradient(circle at 50% 66%, #ffe08a 0, #ffa63a 12%, #ff5b1f 26%, #7a160c 46%, transparent 66%);
+  }
+}
+/* Behind the words: a soft dark ellipse, so the headline and the form never sit on bright light. */
+.hero-c::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: -64px -18% -72px;
+  background: radial-gradient(closest-side, rgba(5, 5, 5, 0.94), rgba(5, 5, 5, 0.9) 58%, rgba(5, 5, 5, 0));
+  pointer-events: none;
+}
+/* Small mono labels over the light get a solid plate (the eyebrow, and the header's status chip on the home page). */
+.hero .eyebrow {
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--void);
+}
+.home .site-header .status {
+  padding: 6px 12px;
+  border-radius: 12px;
+  background: var(--void);
+}
+/* Behind the devices: a dark backing so the phone and the MacBook stand out from the light. */
+.hero-demo {
+  background: radial-gradient(ellipse 58% 54% at 48% 46%, rgba(5, 5, 5, 0.9), rgba(5, 5, 5, 0.62) 55%, rgba(5, 5, 5, 0));
+}
+
 /* ---------- hero ---------- */
 .hero {
   position: relative;
@@ -96,6 +185,8 @@
   }
 }
 .hero-foot {
+  position: relative;
+  z-index: 1;
   display: flex;
   justify-content: flex-end;
   padding-top: 8px;
@@ -444,7 +535,10 @@
 }
 @media (max-width: 520px) {
   .hero .eyebrow {
-    letter-spacing: 0.06em;
+    padding: 5px 10px;
+    font-size: 12px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
   }
   .hero .eyebrow i {
     display: none;

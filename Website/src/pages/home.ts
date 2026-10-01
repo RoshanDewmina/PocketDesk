@@ -92,7 +92,14 @@ const joinNotes = html`<div class="join-notes">
   <p id="join-error-forbidden">That sign-up was blocked. Reload this page and try again.</p>
 </div>`;
 
+/**
+ * The hero background (src/hero-bg/): a CSS poster from the first paint, then a WebGL shader of the same look.
+ * Three looks on the preview, ?bg=spectrum|aurora|bloom; the poster here is the default.
+ */
+const heroBg = html`<div class="hero-bg" data-bg="spectrum" aria-hidden="true"><canvas></canvas></div>`;
+
 const hero = html`<section class="hero" id="top" aria-labelledby="hero-title">
+  ${heroBg}
   ${A2_SPRITE}
   <div class="hero-c w">
     <p class="eyebrow"><i></i>Farside · remote desktop for your Mac<i></i></p>
