@@ -16,39 +16,7 @@ final class PhoneParityUITests: XCTestCase {
         super.tearDown()
     }
 
-    // MARK: - Direct touch
-
-    @MainActor
-    func testTouchSettingOffersTrackpadAndDirectAndPersists() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit", "--ui-touch-trackpad"]
-        launchOffline(app)
-        let canvas = app.descendants(matching: .any)["remote.canvas"].firstMatch
-        XCTAssertEqual(canvas.label, "Remote desktop trackpad", "Trackpad is the default")
-        openControls(app)
-        openSettingsPage(app, "touch")
-        let direct = app.buttons["Direct"]
-        scrollControls(app, to: direct)
-        XCTAssertTrue(app.buttons["Trackpad"].isSelected)
-        direct.tap()
-        XCTAssertTrue(direct.isSelected)
-        let footer = app.staticTexts["remote.touchMode.footer"]
-        XCTAssertTrue(footer.label.contains("tap exactly where you want to click"), footer.label)
-        attachScreenshot("Touch setting - Direct")
-        tapDone(app)
-        XCTAssertEqual(canvas.label, "Remote desktop, direct touch")
-        app.terminate()
-
-        app.launchArguments = ["--ui-layout-check", "--ui-input-probe", "--ui-viewport-fit"]
-        launchOffline(app)
-        XCTAssertEqual(app.descendants(matching: .any)["remote.canvas"].firstMatch.label,
-                       "Remote desktop, direct touch", "The touch style is remembered")
-        openControls(app)
-        openSettingsPage(app, "touch")
-        scrollControls(app, to: app.buttons["Trackpad"])
-        app.buttons["Trackpad"].tap()
-        XCTAssertTrue(app.buttons["Trackpad"].isSelected)
-    }
+    // MARK: - Direct touch (internal key `touchInputMode`; no settings row)
 
     @MainActor
     func testDirectTapsLandOnTheTouchedMacPointAtFitFillZoomAndLandscape() {
@@ -434,11 +402,6 @@ final class PhoneParityUITests: XCTestCase {
         openDisplayPicker(app)
         scrollControls(app, to: app.buttons["remote.display.2"])
         attachScreenshot("\(prefix)display-picker")
-        tapDone(app)
-        openControls(app)
-        openSettingsPage(app, "touch")
-        scrollControls(app, to: app.buttons["Direct"])
-        attachScreenshot("\(prefix)touch-direct")
         tapDone(app)
         openControls(app)
         openSettingsPage(app, "keyboard")

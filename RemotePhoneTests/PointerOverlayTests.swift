@@ -143,6 +143,14 @@ final class PointerOverlayTests: XCTestCase {
         XCTAssertEqual(xs.last!, 100 + 48 * 4, "Prediction stays authoritative while the finger moves")
     }
 
+    func testPointerSizeIsMediumOrLargeWithLargerTextUnlessTheInternalKeyIsSet() {
+        XCTAssertEqual(PointerSizePreference.resolved(stored: nil, largerText: false), .medium)
+        XCTAssertEqual(PointerSizePreference.resolved(stored: nil, largerText: true), .large)
+        XCTAssertEqual(PointerSizePreference.resolved(stored: .extraLarge, largerText: false), .extraLarge)
+        XCTAssertEqual(PointerSizePreference.resolved(stored: .small, largerText: true), .small,
+                       "A `defaults write pointerSize` still wins over Larger Text")
+    }
+
     func testFollowStylesOfferSmoothRigidAndOff() {
         XCTAssertEqual(PointerFollowStyle.allCases, [.smooth, .rigid, .off])
         XCTAssertNotNil(PointerFollowStyle.smooth.animation(reduceMotion: false))

@@ -53,8 +53,13 @@ struct NativeSessionView: View {
     @ObservedObject private var peripherals = HardwarePeripherals.shared
     @State private var lockedMouseRequested = false
     @State private var lockedMouseNotice = ""
-    @AppStorage(PointerSizePreference.key) private var pointerSize: PointerSizePreference = .medium
+    /// Internal keys, no UI: `pointerSize` (small … extraLarge) and `pointerFollow` (smooth, rigid, off).
+    @AppStorage(PointerSizePreference.key) private var storedPointerSize: PointerSizePreference?
     @AppStorage(PointerFollowStyle.key) private var followStyle: PointerFollowStyle = .smooth
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private var pointerSize: PointerSizePreference {
+        PointerSizePreference.resolved(stored: storedPointerSize, largerText: dynamicTypeSize.isAccessibilitySize)
+    }
     @AppStorage(StreamDebug.defaultsKey) private var streamStatsEnabled = false
     @AppStorage(StreamDebug.markerReadingKey) private var markerReadingEnabled = true
     @AppStorage(StreamTuning.legacyDefaultsKey) private var legacyStreamTuning = false
@@ -2001,8 +2006,7 @@ struct NativeSessionView: View {
             }
             Section {
                 summaryRow("Picture", "photo", value: model.streamQuality.title, page: .picture)
-                summaryRow("Pointer", "cursorarrow", value: "\(pointerSize.title) · \(followStyle.title)", page: .pointer)
-                summaryRow("Touch", "hand.point.up.left", value: touchMode.title, page: .touch)
+                summaryRow("Pointer", "cursorarrow", value: "", page: .pointer)
                 summaryRow("View", "arrow.up.left.and.arrow.down.right", value: zoomDescription, page: .view)
                 if showsClipboard {
                     summaryRow("Clipboard", "list.clipboard",
@@ -2664,26 +2668,10 @@ struct NativeSessionView: View {
                 .accessibilityLabel("Pointer sensitivity")
             }
             .listRowBackground(Farside.Palette.panel)
-            Picker("Pointer size", selection: $pointerSize) {
-                ForEach(PointerSizePreference.allCases) { size in
-                    Text(size.title).tag(size)
-                }
-            }
-            .foregroundStyle(Farside.Palette.bone)
-            .accessibilityIdentifier("remote.pointerSize")
-            .listRowBackground(Farside.Palette.panel)
-            Picker("Follow the pointer", selection: $followStyle) {
-                ForEach(PointerFollowStyle.allCases) { style in
-                    Text(style.title).tag(style)
-                }
-            }
-            .foregroundStyle(Farside.Palette.bone)
-            .accessibilityIdentifier("remote.pointerFollow")
-            .listRowBackground(Farside.Palette.panel)
         } header: {
             sectionHeader("Feel")
         } footer: {
-            Text("Your iPhone draws the Mac pointer at this size at every zoom level. An older Mac companion shows its streamed pointer instead. While zoomed in, Smooth eases the picture after the pointer near an edge, Rigid moves it exactly with your finger, and Off leaves panning to two fingers and the mini map.")
+            Text("Your iPhone draws the Mac pointer at every zoom level, larger when Larger Text is on. An older Mac companion shows its streamed pointer instead. While zoomed in, the picture eases after the pointer near an edge.")
                 .foregroundStyle(Farside.Palette.ash)
         }
     }
