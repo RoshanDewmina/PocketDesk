@@ -253,6 +253,14 @@ final class RemoteCapture {
     var onCaptureRegion: ((CaptureRegion) -> Void)?
     private(set) var appliedCaptureRegion: CaptureRegion?
 
+    /// Stream pixels per displayed phone pixel for the applied region and the latest viewport, to 3 places.
+    var deliveredSharpness: Double? {
+        guard let region = appliedCaptureRegion, let geometry = session?.geometry,
+              let value = ViewportCapturePolicy.deliveredSharpness(region: region, viewport: requestedViewport,
+                                                                   display: geometry) else { return nil }
+        return (value * 1000).rounded() / 1000
+    }
+
     private var ownership = ScopedCaptureOwner()
     private var session: RemoteCaptureSession?
     private weak var streamPeer: PeerMedia?
