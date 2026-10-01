@@ -237,6 +237,33 @@ final class MomentumGestureEngineTests: XCTestCase {
         XCTAssertEqual(phases.firstIndex(of: "ended").map { $0 + 1 }, phases.firstIndex(of: "momentumBegan"))
     }
 
+    func testWithAMacRunCoastTheFlickSendsOneVelocityAndTheNextTouchOneEnd() {
+        let recorder = Recorder(); let input = engine(recorder, momentum: true)
+        input.hostMomentumEnabled = true
+        flick(input)
+        let began = recorder.scrolls.last
+        XCTAssertEqual(began?.phase, "momentumBegan")
+        XCTAssertGreaterThan(began?.delta.height ?? 0, ScrollMomentum.minimumLiftSpeed, "The begin carries the lift velocity in points per second")
+        XCTAssertFalse(input.hasMomentum, "No ticks are needed: the Mac paces the coast")
+        let sent = recorder.scrolls.count
+        for step in 1...30 { input.tick(at: 1 + 6.0 / 60 + Double(step) * 0.02) }
+        XCTAssertEqual(recorder.scrolls.count, sent, "Nothing crosses the link while the Mac coasts")
+
+        input.update([.init(id: 3, point: CGPoint(x: 10, y: 10))], at: 1.8)
+        XCTAssertEqual(recorder.scrolls.last?.phase, "momentumEnded", "A finger landing catches the page")
+        XCTAssertEqual(recorder.scrolls.last?.stream, began?.stream)
+        XCTAssertEqual(recorder.scrolls.count, sent + 1)
+        input.update([], at: 1.9)
+
+        let late = Recorder(); let other = engine(late, momentum: true)
+        other.hostMomentumEnabled = true
+        flick(other)
+        let count = late.scrolls.count
+        other.update([.init(id: 3, point: CGPoint(x: 10, y: 10))], at: 1 + 6.0 / 60 + ScrollMomentum.maximumDuration + ScrollMomentum.hostCoastSlack + 0.01)
+        XCTAssertEqual(late.scrolls.count, count, "A coast the Mac has certainly finished needs no end")
+        other.update([], at: 6)
+    }
+
     func testWithoutTheMacFeatureTheScrollJustStops() {
         let recorder = Recorder(); let input = engine(recorder, momentum: false)
         flick(input)
@@ -263,6 +290,251 @@ final class MomentumGestureEngineTests: XCTestCase {
         third.configure(enabled: false, panMode: false, revision: 1, sensitivity: 1, pointerScale: 1, doubleClickInterval: 0.5)
         XCTAssertEqual(reconfigured.scrolls.last?.phase, "momentumEnded")
         XCTAssertFalse(third.hasMomentum)
+    }
+}
+
+// MARK: - Feel pass: the Mac runs the coast, and posted mouse events carry their motion
+
+final class HostMomentumDriverTests: XCTestCase {
+    private var posted: [(phase: String, x: Double, y: Double)] = []
+    private var mouse: [RemoteInputEventSink.MouseEvent] = []
+
+    private func driver(hostMomentum: Bool = true, refuseScroll: Bool = false) -> RemoteInputDriver {
+        let sink = RemoteInputEventSink(
+            pointerLocation: { CGPoint(x: 50, y: 50) },
+            mouseSequence: { [weak self] events in self?.mouse.append(contentsOf: events); return true },
+            scroll: { _, _, _ in true },
+            scrollDetailed: { [weak self] _, x, y, phase in
+                guard !refuseScroll || !phase.hasPrefix("momentum") else { return false }
+                self?.posted.append((phase, x, y)); return true
+            },
+            text: { _ in true },
+            key: { _, _ in true })
+        let driver = RemoteInputDriver(eventSink: sink, isTrusted: { true })
+        driver.enabled = true
+        driver.hostMomentum = hostMomentum
+        driver.configure(bounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+        return driver
+    }
+
+    private func scroll(_ phase: String, _ stream: String = "s", x: Double = 0, y: Double = 0) -> RemoteAction {
+        RemoteAction(action: "scroll", x: x, y: y, interaction: NativeInteraction(token: "t", phase: phase, stream: stream))
+    }
+
+    @discardableResult
+    private func flick(_ input: RemoteInputDriver, _ stream: String = "s", velocity: Double = 1_200, at base: TimeInterval = 1) -> Bool {
+        XCTAssertTrue(input.handle(scroll("began", stream, y: 10), upgraded: true, now: base).accepted)
+        XCTAssertTrue(input.handle(scroll("ended", stream), upgraded: true, now: base + 0.05).accepted)
+        return input.handle(scroll("momentumBegan", stream, y: velocity), upgraded: true, now: base + 0.06).accepted
+    }
+
+    func testALiftVelocityStartsAMacRunCoastThatPostsDecayingStepsThenEnds() {
+        let input = driver()
+        XCTAssertTrue(flick(input))
+        XCTAssertTrue(input.isCoasting)
+        XCTAssertEqual(posted.last?.phase, "momentumBegan")
+        XCTAssertEqual(posted.last?.y, 0, "The begin event carries no travel; the velocity is not a delta")
+        var time = 1.06, steps = 0
+        while input.stepHostMomentum(now: time), time < 6 { time += RemoteInputDriver.hostMomentumInterval; steps += 1 }
+        let changed = posted.filter { $0.phase == "momentumChanged" }.map(\.y)
+        XCTAssertEqual(posted.last?.phase, "momentumEnded")
+        XCTAssertFalse(input.isCoasting)
+        XCTAssertNil(input.momentum.active, "The gate closes with the coast")
+        XCTAssertGreaterThan(changed.count, 60, "A 1 200 pt/s flick coasts for well over half a second at 120 Hz")
+        XCTAssertGreaterThan(changed.first ?? 0, changed.last ?? 0, "The steps decay")
+        XCTAssertTrue(changed.allSatisfy { $0 > 0 }, "Travel keeps the flick's direction")
+        XCTAssertLessThanOrEqual(time - 1.06, ScrollMomentum.maximumDuration + 0.05)
+        XCTAssertFalse(input.stepHostMomentum(now: time + 1), "Nothing to step once ended")
+    }
+
+    func testTheCoastRunsOnTheMacsClockNotTheGatesIdleLimit() {
+        let input = driver()
+        flick(input)
+        var time = 1.06
+        for _ in 0..<120 { time += RemoteInputDriver.hostMomentumInterval; _ = input.stepHostMomentum(now: time) }
+        input.expireMomentum(now: time + 0.1)
+        XCTAssertTrue(input.isCoasting, "Each Mac step renews the gate, so a silent phone does not end it")
+        XCTAssertNotEqual(posted.last?.phase, "momentumEnded")
+    }
+
+    func testAnyNewInputOrThePhonesEndCatchesTheCoast() {
+        let input = driver()
+        flick(input)
+        _ = input.stepHostMomentum(now: 1.1)
+        XCTAssertTrue(input.handle(RemoteAction(action: "click", interaction: NativeInteraction(token: "t", clickCount: 1)),
+                                   upgraded: true, now: 1.2).accepted)
+        XCTAssertFalse(input.isCoasting)
+        XCTAssertEqual(posted.last?.phase, "momentumEnded", "A click ends the coast before it posts")
+        XCTAssertFalse(input.stepHostMomentum(now: 1.3))
+
+        posted.removeAll()
+        XCTAssertTrue(flick(input, "s2", at: 2))
+        _ = input.stepHostMomentum(now: 2.1)
+        XCTAssertTrue(input.handle(scroll("momentumEnded", "s2"), upgraded: true, now: 2.2).accepted,
+                      "The phone's touch-down end is honoured for the coasting stream")
+        XCTAssertFalse(input.isCoasting)
+        XCTAssertEqual(posted.last?.phase, "momentumEnded")
+        XCTAssertEqual(posted.filter { $0.phase == "momentumEnded" }.count, 1)
+    }
+
+    func testRevokedControlEndsTheCoastInsteadOfScrollingOn() {
+        let input = driver()
+        XCTAssertTrue(flick(input))
+        _ = input.stepHostMomentum(now: 1.1)
+        input.enabled = false
+        XCTAssertFalse(input.stepHostMomentum(now: 1.12), "A disabled driver posts no further step")
+        XCTAssertFalse(input.isCoasting)
+        XCTAssertEqual(posted.last?.phase, "momentumEnded", "The Mac is left with a finished scroll, not a dangling one")
+        XCTAssertNil(input.momentum.active)
+
+        let trusted = driver()
+        XCTAssertTrue(flick(trusted, "t", at: 2))
+        trusted.resetNativeSequence()
+        XCTAssertFalse(trusted.isCoasting, "A new session or geometry ends the coast")
+        XCTAssertFalse(trusted.stepHostMomentum(now: 2.2))
+    }
+
+    func testTheExecutorStopsTheCoastWhenControlIsTurnedOff() {
+        let lock = NSLock()
+        var phases: [String] = []
+        let ended = expectation(description: "the end event is posted after revocation")
+        ended.assertForOverFulfill = false
+        let sink = RemoteInputEventSink(
+            pointerLocation: { CGPoint(x: 50, y: 50) },
+            mouseSequence: { _ in true }, scroll: { _, _, _ in true },
+            scrollDetailed: { _, _, _, phase in
+                lock.lock(); phases.append(phase); lock.unlock()
+                if phase == "momentumEnded" { ended.fulfill() }
+                return true
+            },
+            text: { _ in true }, key: { _, _ in true })
+        let driver = RemoteInputDriver(eventSink: sink, isTrusted: { true })
+        driver.hostMomentum = true
+        let executor = HostInputExecutor(driver: driver, clock: { ProcessInfo.processInfo.systemUptime })
+        executor.configure(bounds: CGRect(x: 0, y: 0, width: 100, height: 100)); executor.enabled = true
+        let now = ProcessInfo.processInfo.systemUptime
+        XCTAssertTrue(executor.handle(scroll("began", y: 10), upgraded: true, now: now).accepted)
+        XCTAssertTrue(executor.handle(scroll("ended"), upgraded: true, now: now + 0.01).accepted)
+        XCTAssertTrue(executor.handle(scroll("momentumBegan", y: 1_500), upgraded: true, now: now + 0.02).accepted)
+        let settled = expectation(description: "a few steps posted")
+        settled.isInverted = true
+        wait(for: [settled], timeout: 0.1)
+        executor.enabled = false
+        wait(for: [ended], timeout: 2)
+        lock.lock(); let atRevoke = phases; lock.unlock()
+        XCTAssertFalse(executor.isCoasting)
+        XCTAssertEqual(atRevoke.last, "momentumEnded", "Control off ends the coast with its end event")
+        let quiet = expectation(description: "nothing more is posted")
+        quiet.isInverted = true
+        wait(for: [quiet], timeout: 0.1)
+        lock.lock(); let later = phases; lock.unlock()
+        XCTAssertEqual(later, atRevoke, "No momentumChanged after control was revoked")
+    }
+
+    func testTooSlowALiftOrASwitchedOffHostLeavesThePhonePath() {
+        let slow = driver()
+        XCTAssertFalse(flick(slow, velocity: 50), "A velocity below the lift threshold is not a coast")
+        XCTAssertFalse(slow.isCoasting)
+        XCTAssertNil(slow.momentum.active, "A rejected coast does not leave the gate open")
+        XCTAssertEqual(posted.filter { $0.phase == "momentumBegan" }.count, 0, "Nothing posted for a flick too slow to coast")
+
+        posted.removeAll()
+        let off = driver(hostMomentum: false)
+        XCTAssertTrue(flick(off, velocity: 1_200))
+        XCTAssertFalse(off.isCoasting)
+        XCTAssertEqual(posted.last?.phase, "momentumBegan")
+        XCTAssertEqual(posted.last?.y, 1_200, "With the switch off the host posts what the phone sent, as before")
+        XCTAssertTrue(off.handle(scroll("momentumChanged", y: 8), upgraded: true, now: 1.08).accepted)
+    }
+
+    func testTheExecutorStepsTheCoastFromItsOwnTimerUntilItEnds() {
+        let lock = NSLock()
+        var phases: [String] = []
+        let ended = expectation(description: "coast ends on its own")
+        ended.assertForOverFulfill = false
+        let sink = RemoteInputEventSink(
+            pointerLocation: { CGPoint(x: 50, y: 50) },
+            mouseSequence: { _ in true }, scroll: { _, _, _ in true },
+            scrollDetailed: { _, _, _, phase in
+                lock.lock(); phases.append(phase); lock.unlock()
+                if phase == "momentumEnded" { ended.fulfill() }
+                return true
+            },
+            text: { _ in true }, key: { _, _ in true })
+        let driver = RemoteInputDriver(eventSink: sink, isTrusted: { true })
+        driver.hostMomentum = true
+        let executor = HostInputExecutor(driver: driver, clock: { ProcessInfo.processInfo.systemUptime })
+        executor.configure(bounds: CGRect(x: 0, y: 0, width: 100, height: 100)); executor.enabled = true
+        let now = ProcessInfo.processInfo.systemUptime
+        XCTAssertTrue(executor.handle(scroll("began", y: 10), upgraded: true, now: now).accepted)
+        XCTAssertTrue(executor.handle(scroll("ended"), upgraded: true, now: now + 0.01).accepted)
+        XCTAssertTrue(executor.handle(scroll("momentumBegan", y: 600), upgraded: true, now: now + 0.02).accepted)
+        XCTAssertTrue(executor.isCoasting)
+        wait(for: [ended], timeout: ScrollMomentum.maximumDuration + 2)
+        lock.lock(); let seen = phases; lock.unlock()
+        XCTAssertFalse(executor.isCoasting)
+        XCTAssertEqual(seen.last, "momentumEnded")
+        XCTAssertGreaterThan(seen.filter { $0 == "momentumChanged" }.count, 30,
+                             "A 600 pt/s flick yields dozens of 120 Hz steps with no phone message")
+    }
+}
+
+final class MouseEventFieldTests: XCTestCase {
+    private var posted: [RemoteInputEventSink.MouseEvent] = []
+
+    private func driver() -> RemoteInputDriver {
+        let sink = RemoteInputEventSink(pointerLocation: { CGPoint(x: 20, y: 30) },
+                                        mouseSequence: { [weak self] in self?.posted.append(contentsOf: $0); return true },
+                                        scroll: { _, _, _ in true }, text: { _ in true }, key: { _, _ in true })
+        let driver = RemoteInputDriver(eventSink: sink, isTrusted: { true })
+        driver.enabled = true
+        driver.eventDeltas = true
+        driver.configure(bounds: CGRect(x: 0, y: 0, width: 100, height: 100))
+        return driver
+    }
+
+    func testMovesAndDragsCarryTheirMotionAndClicksCarryNone() {
+        let input = driver()
+        XCTAssertTrue(input.handle(RemoteAction(action: "move", x: 5, y: -7), upgraded: false, now: 1).accepted)
+        XCTAssertEqual(posted.last?.type, .mouseMoved)
+        XCTAssertEqual(posted.last?.count, 0, "A moving mouse has no click state")
+        XCTAssertEqual(posted.last?.delta, CGSize(width: 5, height: -7))
+
+        XCTAssertTrue(input.handle(RemoteAction(action: "moveTo", x: 60, y: 40), upgraded: false, now: 1.01).accepted)
+        XCTAssertEqual(posted.last?.delta, CGSize(width: 35, height: 17), "An absolute placement reports the distance it covered")
+
+        XCTAssertTrue(input.handle(RemoteAction(action: "move", x: 200, y: 0), upgraded: false, now: 1.02).accepted)
+        XCTAssertEqual(posted.last?.point.x, CGFloat(100).nextDown)
+        XCTAssertEqual(posted.last?.delta.width ?? -1, CGFloat(100).nextDown - 60, accuracy: 0.001, "Clamping shortens the reported motion too")
+
+        posted.removeAll()
+        XCTAssertTrue(input.handle(RemoteAction(action: "click"), upgraded: false, now: 2).accepted)
+        XCTAssertEqual(posted.map(\.delta), [.zero, .zero])
+        XCTAssertEqual(posted.map(\.count), [1, 1])
+
+        posted.removeAll()
+        XCTAssertTrue(input.handle(RemoteAction(action: "dragDown"), upgraded: false, now: 3).accepted)
+        XCTAssertTrue(input.handle(RemoteAction(action: "move", x: -3, y: 4), upgraded: false, now: 3.01).accepted)
+        XCTAssertEqual(posted.last?.type, .leftMouseDragged)
+        XCTAssertEqual(posted.last?.count, 1, "A drag carries the press that started it")
+        XCTAssertEqual(posted.last?.delta, CGSize(width: -3, height: 4))
+        XCTAssertTrue(input.handle(RemoteAction(action: "dragUp"), upgraded: false, now: 3.02).accepted)
+        XCTAssertEqual(posted.last?.delta, .zero)
+    }
+
+    func testTheRealEventGetsTheDeltaFieldsUnlessTheSwitchIsOff() throws {
+        let description = RemoteInputEventSink.MouseEvent(type: .mouseMoved, point: CGPoint(x: 10, y: 10), button: .left,
+                                                          count: 0, delta: CGSize(width: 12.6, height: -3.4))
+        let event = try XCTUnwrap(RemoteInputEventSink.makeMouseEvent(description, deltas: true))
+        XCTAssertEqual(event.getIntegerValueField(.mouseEventDeltaX), 13)
+        XCTAssertEqual(event.getIntegerValueField(.mouseEventDeltaY), -3)
+        XCTAssertEqual(event.getIntegerValueField(.mouseEventClickState), 0)
+        let plain = try XCTUnwrap(RemoteInputEventSink.makeMouseEvent(description, deltas: false))
+        XCTAssertEqual(plain.getIntegerValueField(.mouseEventDeltaX), 0)
+        XCTAssertEqual(plain.getIntegerValueField(.mouseEventDeltaY), 0)
+        XCTAssertEqual(RemoteInputEventSink.deltaFieldsKey, "input.eventDeltas")
+        XCTAssertEqual(RemoteInputDriver.hostMomentumKey, "input.hostMomentum")
+        XCTAssertTrue(SessionFeature.host.contains(SessionFeature.hostMomentum))
     }
 }
 

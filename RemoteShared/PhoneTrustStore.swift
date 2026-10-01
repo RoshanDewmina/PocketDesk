@@ -70,14 +70,30 @@ final class PhoneTrustStore {
     private static let lock = NSRecursiveLock()
     private let records: any PairPersistence
     private let legacy: any PairPersistence
+    /// Phone user default; absent means on. `defaults write com.roshan.PocketDesk.Remote trust.cacheSnapshot -bool NO`
+    /// reads the Keychain on every `snapshot()` again. The session reads the selected host many times
+    /// per tick on the main thread, and each uncached read is a `SecItemCopyMatching` round trip.
+    /// Only this process writes the item, so a copy refreshed on every commit is exact. Deliberate:
+    /// while the app runs with the device locked, the copy still answers although the item itself
+    /// (`WhenUnlockedThisDeviceOnly`) would not; the item stays protected at rest.
+    static let cacheKey = "trust.cacheSnapshot"
+    private let cachesSnapshot: Bool
+    private var cached: PhoneTrustSnapshot?
 
     init(records: any PairPersistence = PairStore(account: "phone.hosts.v2"),
-         legacy: any PairPersistence = PairStore(account: "phone")) {
-        self.records = records; self.legacy = legacy
+         legacy: any PairPersistence = PairStore(account: "phone"),
+         cachesSnapshot: Bool = UserDefaults.standard.object(forKey: PhoneTrustStore.cacheKey) == nil
+            || UserDefaults.standard.bool(forKey: PhoneTrustStore.cacheKey)) {
+        self.records = records; self.legacy = legacy; self.cachesSnapshot = cachesSnapshot
     }
 
     func snapshot() throws -> PhoneTrustSnapshot {
-        try locked { try load() }
+        try locked {
+            if cachesSnapshot, let cached { return cached }
+            let loaded = try load()
+            if cachesSnapshot { cached = loaded }
+            return loaded
+        }
     }
 
     func select(hostID: String) throws {
@@ -188,9 +204,12 @@ final class PhoneTrustStore {
     }
 
     private func commit(_ snapshot: PhoneTrustSnapshot) throws {
+        // A failed write leaves the Keychain unknown: the next read goes to it, never to a stale copy.
+        cached = nil
         try snapshot.validate()
         try records.save(snapshot)
         guard try records.read(PhoneTrustSnapshot.self) == snapshot else { throw RemoteError.invalidPairing }
+        if cachesSnapshot { cached = snapshot }
     }
 
     private static func existingIndex(for invitation: PairInvitation, in snapshot: PhoneTrustSnapshot) -> Int? {

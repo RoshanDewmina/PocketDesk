@@ -8,35 +8,6 @@ final class PointerOverlayUITests: XCTestCase {
     }
 
     @MainActor
-    func testPointerSizeSettingIsReachableAndPersists() {
-        let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-pointer-preview"]
-        launch(app)
-        attach("Pointer preview - Fit - default size")
-        openControls(app)
-        openPointerSettings(app)
-        let picker = app.buttons["remote.pointerSize"].exists ? app.buttons["remote.pointerSize"]
-                                                             : app.descendants(matching: .any)["remote.pointerSize"].firstMatch
-        XCTAssertTrue(picker.waitForExistence(timeout: 3) && picker.isHittable, "Pointer size must be on Controls › Settings › Pointer")
-        picker.tap()
-        let extraLarge = app.buttons["Extra Large"]
-        XCTAssertTrue(extraLarge.waitForExistence(timeout: 3))
-        extraLarge.tap()
-        app.buttons["Done"].firstMatch.tap()
-        attach("Pointer preview - Fit - Extra Large")
-
-        app.terminate()
-        launch(app)
-        openControls(app)
-        openPointerSettings(app)
-        XCTAssertTrue(picker.waitForExistence(timeout: 3))
-        XCTAssertTrue(picker.label.contains("Extra Large") || (picker.value as? String)?.contains("Extra Large") == true,
-                      "The chosen size survives relaunch")
-        picker.tap()
-        app.buttons["Medium"].tap()
-    }
-
-    @MainActor
     func testGlyphGalleryRendersEveryShape() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-pointer-gallery"]

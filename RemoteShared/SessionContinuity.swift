@@ -37,6 +37,9 @@ enum SessionFeature {
     static let ladder = "ladder.1"
     /// Momentum phases after a scroll gesture's `ended` (`ScrollMomentumPhase`).
     static let momentumScroll = "scroll.momentum.1"
+    /// The Mac runs the coast itself: `momentumBegan` carries the lift velocity in `x`/`y` (points per
+    /// second) and the phone sends no `momentumChanged`. Requires `momentumScroll`.
+    static let hostMomentum = "scroll.momentum.2"
     /// `auxClick`: a mouse's Back and Forward side buttons.
     static let auxiliaryButtons = "pointer.aux.1"
     /// `textFocusSecure` on a focus reply: the focused field takes a password.
@@ -51,7 +54,7 @@ enum SessionFeature {
   static let legacyHost = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
                        momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]
-    static let host = [causalInput, liveViewOnly, captureScope, inputReceipt, pencilInput, videoLTR, videoRefinement, exactVideoTiming] + legacyHost
+    static let host = [causalInput, liveViewOnly, captureScope, inputReceipt, pencilInput, videoLTR, videoRefinement, exactVideoTiming, hostMomentum] + legacyHost
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as

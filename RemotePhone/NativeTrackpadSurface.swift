@@ -14,6 +14,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
     var doubleClickInterval: TimeInterval
     var middleClickAvailable: Bool = false
     var momentumScroll: Bool = false
+    var hostMomentum: Bool = false
     /// Physical key presses go to the Mac.
     var hardwareKeys: Bool = false
     /// A mouse or trackpad on iPad places the Mac pointer and clicks.
@@ -49,6 +50,7 @@ struct NativeTrackpadSurface: UIViewRepresentable {
         view.engine.onCommand = onCommand
         view.engine.onPointerMotionEnded = onPointerMotionEnded
         view.engine.momentumEnabled = momentumScroll
+        view.engine.hostMomentumEnabled = hostMomentum
         view.pointer.onCommand = onCommand
         view.pointer.setEnabled(hardwarePointer)
         view.hardwareKeys = hardwareKeys

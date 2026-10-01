@@ -84,10 +84,16 @@ final class NativeGestureEngine {
     var onPointerMotionEnded: () -> Void = {}
     /// The Mac posts momentum phases (`SessionFeature.momentumScroll`): a flicked scroll coasts.
     var momentumEnabled = false
+    /// The Mac runs the coast from the lift velocity (`SessionFeature.hostMomentum`): one message
+    /// starts it, the next touch ends it, and nothing in between crosses the link.
+    var hostMomentumEnabled = false
     private var momentum = ScrollMomentum()
     private var momentumStream: String?
+    private var hostCoasting = false
+    /// After this the Mac has certainly finished on its own; a touch then has nothing to end.
+    private var hostCoastUntil: TimeInterval = 0
     /// Keep calling `tick` while true, even with no touches down.
-    var hasMomentum: Bool { momentumStream != nil }
+    var hasMomentum: Bool { momentumStream != nil && !hostCoasting }
     private var pointerMotionActive = false
 
     private enum Mode { case candidate, pointer, multiCandidate, scroll, zoom, pan, drag, precision, workspaceCandidate, workspaceFired, blocked }
@@ -613,7 +619,21 @@ final class NativeGestureEngine {
 
     /// After the fingers lift, continue the same stream with momentum phases until it coasts out.
     private func beginMomentum(stream: String) {
-        guard momentumEnabled, enabled, !panMode, momentum.start(at: lastUpdateTime) else {
+        guard momentumEnabled, enabled, !panMode else {
+            momentum.resetSamples()
+            return
+        }
+        if hostMomentumEnabled {
+            defer { momentum.resetSamples() }
+            guard let lift = momentum.liftVelocity(at: lastUpdateTime) else { return }
+            guard onCommand(.scroll(delta: CGSize(width: lift.dx, height: lift.dy),
+                                    phase: ScrollMomentumPhase.began.rawValue, stream: stream)) else { return }
+            momentumStream = stream
+            hostCoasting = true
+            hostCoastUntil = lastUpdateTime + ScrollMomentum.maximumDuration + ScrollMomentum.hostCoastSlack
+            return
+        }
+        guard momentum.start(at: lastUpdateTime) else {
             momentum.resetSamples()
             return
         }
@@ -625,6 +645,7 @@ final class NativeGestureEngine {
     }
 
     private func stepMomentum(_ stream: String, at time: TimeInterval) {
+        guard !hostCoasting else { return }
         switch momentum.step(at: time) {
         case .changed(let delta)?:
             guard delta != .zero else { return }
@@ -643,6 +664,13 @@ final class NativeGestureEngine {
         let wasRunning = momentum.cancel()
         guard let id = momentumStream else { return }
         momentumStream = nil
+        if hostCoasting {
+            hostCoasting = false
+            // The Mac may still be coasting: its end event follows this message at once.
+            guard lastUpdateTime < hostCoastUntil else { return }
+            _ = onCommand(.scroll(delta: .zero, phase: ScrollMomentumPhase.ended.rawValue, stream: id))
+            return
+        }
         if wasRunning { _ = onCommand(.scroll(delta: .zero, phase: ScrollMomentumPhase.ended.rawValue, stream: id)) }
     }
 

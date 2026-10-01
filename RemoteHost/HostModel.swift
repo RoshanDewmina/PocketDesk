@@ -2921,6 +2921,7 @@ final class RemoteHostModel: ObservableObject {
         let base = SessionFeature.host.filter {
             if ($0 == SessionFeature.videoLTR || $0 == SessionFeature.exactVideoTiming) && !connection.peerFeatures.contains($0) { return false }
             if $0 == SessionFeature.videoRefinement && !refinementNegotiated { return false }
+            if $0 == SessionFeature.hostMomentum && !RemoteInputDriver.hostMomentumEnabled { return false }
             if $0 == SessionFeature.pencilInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.pencilInput) || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             if $0 == SessionFeature.causalInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             return ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)

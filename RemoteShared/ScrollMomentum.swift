@@ -25,6 +25,8 @@ struct ScrollMomentum {
     /// Momentum ends below this speed, in points per second.
     static let stopSpeed: CGFloat = 18
     static let maximumDuration: TimeInterval = 2.5
+    /// Slack after `maximumDuration` before the phone assumes a Mac-run coast has ended on its own.
+    static let hostCoastSlack: TimeInterval = 0.5
     /// UIScrollView's normal deceleration: the speed kept per millisecond.
     static let decelerationPerMs: CGFloat = 0.998
 
@@ -72,7 +74,21 @@ struct ScrollMomentum {
     mutating func start(at time: TimeInterval) -> Bool {
         defer { resetSamples() }
         guard let lift = liftVelocity(at: time) else { return false }
-        velocity = lift
+        return start(velocity: lift, at: time)
+    }
+
+    /// Starts coasting from a velocity measured elsewhere (the phone's lift velocity, in Mac points
+    /// per second, when the Mac runs the coast). Too slow or malformed means no coast.
+    mutating func start(velocity: CGVector, at time: TimeInterval) -> Bool {
+        resetSamples()
+        guard time.isFinite, velocity.dx.isFinite, velocity.dy.isFinite else { return false }
+        let speed = hypot(velocity.dx, velocity.dy)
+        guard speed.isFinite, speed >= Self.minimumLiftSpeed else { return false }
+        var lift = velocity
+        if speed > Self.maximumSpeed {
+            lift = CGVector(dx: lift.dx * Self.maximumSpeed / speed, dy: lift.dy * Self.maximumSpeed / speed)
+        }
+        self.velocity = lift
         startedAt = time
         lastStep = time
         residual = .zero

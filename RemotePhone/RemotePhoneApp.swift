@@ -797,6 +797,7 @@ final class PhoneRemoteModel: ObservableObject {
         }
         #endif
         if let mode = LaunchOptions.viewportOverride { ViewportPreference.store(mode) }
+        HiddenSettingsMigration.run()
         if let mode = LaunchOptions.touchModeOverride { UserDefaults.standard.set(mode.rawValue, forKey: TouchInputMode.key) }
         if LaunchOptions.has("--ui-minimap-reset") {
             UserDefaults.standard.removeObject(forKey: "miniMap.phoneLandscape")
@@ -1040,6 +1041,7 @@ final class PhoneRemoteModel: ObservableObject {
     var absolutePointerSupported: Bool { supports(SessionFeature.absolutePointer) }
     var middleButtonSupported: Bool { supports(SessionFeature.middleButton) }
     var momentumScrollSupported: Bool { supports(SessionFeature.momentumScroll) }
+    var hostMomentumSupported: Bool { nativeInteractionSupported && momentumScrollSupported && supports(SessionFeature.hostMomentum) }
     var focusGeometrySupported: Bool { supports(SessionFeature.focusGeometry) }
     var extendedKeysSupported: Bool { supports(SessionFeature.extendedKeys) }
 

@@ -5,6 +5,7 @@ import XCTest
 
 private final class TrustFixturePersistence: PairPersistence {
     var data: Data?
+    var reads = 0
     var refuseRead = false
     var refuseWrite = false
     var refuseDelete = false
@@ -14,6 +15,7 @@ private final class TrustFixturePersistence: PairPersistence {
         data = try JSONEncoder().encode(value)
     }
     func read<T: Decodable>(_ type: T.Type) throws -> T? {
+        reads += 1
         if refuseRead { throw RemoteError.keychain(-25308) }
         return try data.map { try JSONDecoder().decode(type, from: $0) }
     }
@@ -45,6 +47,44 @@ final class PhoneTrustStoreTests: XCTestCase {
         XCTAssertEqual(first.selected?.legacyAliases, [PhoneTrustStore.legacyAlias(room: old.room)])
         XCTAssertEqual(legacy.data, backup)
         XCTAssertEqual(try PhoneTrustStore(records: records, legacy: legacy).snapshot(), first)
+    }
+    func testSnapshotIsReadFromTheKeychainOnceAndRefreshedByEveryCommit() throws {
+        let legacy = TrustFixturePersistence(), records = TrustFixturePersistence()
+        let trust = PhoneTrustStore(records: records, legacy: legacy, cachesSnapshot: true)
+        try trust.saveApproved(pair(identified: true))
+        let first = try trust.snapshot()
+        let reads = records.reads
+        for _ in 0..<60 { XCTAssertEqual(try trust.snapshot(), first) }
+        XCTAssertEqual(records.reads, reads, "Sixty reads on the main thread cost no Keychain round trip")
+        XCTAssertEqual(legacy.reads, 1, "The legacy backup is consulted once, on the first load")
+
+        let second = try pair(identified: true)
+        try trust.saveApproved(second)
+        XCTAssertEqual(try trust.snapshot().selected?.invitation, second, "A commit refreshes what readers see")
+        let afterCommit = records.reads
+        XCTAssertEqual(try trust.snapshot().selected?.invitation, second)
+        XCTAssertEqual(records.reads, afterCommit)
+
+        records.refuseWrite = true
+        XCTAssertThrowsError(try trust.select(hostID: XCTUnwrap(first.selectedHostID)))
+        records.refuseWrite = false
+        let beforeReread = records.reads
+        XCTAssertEqual(try trust.snapshot().selected?.invitation, second)
+        XCTAssertEqual(records.reads, beforeReread + 1, "A failed commit sends the next read back to the Keychain")
+
+        try trust.forget(hostID: XCTUnwrap(first.selectedHostID))
+        XCTAssertEqual(try trust.snapshot().hosts.count, 1, "Forgetting refreshes the copy")
+        let adapter = PhonePairPersistence(trust: trust)
+        XCTAssertEqual(try adapter.read(PairInvitation.self), second)
+        try adapter.delete()
+        XCTAssertEqual(try trust.snapshot().hosts.count, 0, "The adapter's delete refreshes the copy")
+        XCTAssertNil(try adapter.read(PairInvitation.self))
+
+        let uncached = PhoneTrustStore(records: records, legacy: legacy, cachesSnapshot: false)
+        let start = records.reads
+        _ = try uncached.snapshot(); _ = try uncached.snapshot()
+        XCTAssertEqual(records.reads, start + 2, "The kill switch reads every time, as before")
+        XCTAssertEqual(PhoneTrustStore.cacheKey, "trust.cacheSnapshot")
     }
     func testMigrationWriteFailurePreservesLegacyAndCanRetry() throws {
         let legacy = TrustFixturePersistence(), records = TrustFixturePersistence(), old = try pair()

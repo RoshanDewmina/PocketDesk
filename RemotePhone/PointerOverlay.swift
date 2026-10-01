@@ -9,6 +9,12 @@ enum PointerSizePreference: String, CaseIterable, Identifiable {
     static let key = "pointerSize"
     var id: String { rawValue }
 
+    /// The size in use: an explicit `defaults write … pointerSize` wins, otherwise Medium, or Large
+    /// when the person uses an accessibility (Larger Text) size.
+    static func resolved(stored: PointerSizePreference?, largerText: Bool) -> PointerSizePreference {
+        stored ?? (largerText ? .large : .medium)
+    }
+
     var title: String {
         switch self {
         case .small: "Small"
