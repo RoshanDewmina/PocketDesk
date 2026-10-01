@@ -38,7 +38,7 @@ final class HostWatchdogReporter {
                                executablePath: executablePath, startedAt: now,
                                heartbeatUptime: uptime(), heartbeatAt: now,
                                safeMode: assessment.safeMode,
-                               crashLoopResetAt: previous?.crashLoopResetAt)
+                               crashLoopResetAt: previous?.crashLoopResetAt, awayCoverUp: assessment.lockFirst ? true : nil)
     }
 
     static func live(bundle: Bundle = .main) -> HostWatchdogReporter? {
@@ -62,6 +62,24 @@ final class HostWatchdogReporter {
         scheduleHeartbeat()
     }
 
+    /// A new cover must not appear unless the exact current-run marker is atomically durable.
+    @discardableResult
+    func setAwayCoverUp(_ up: Bool) -> Bool {
+        var snapshot = record
+        snapshot.awayCoverUp = up
+        snapshot.heartbeatUptime = uptime()
+        snapshot.heartbeatAt = Date()
+        let url = files.hostRecord
+        guard writer.sync(execute: { WatchdogStore.write(snapshot, to: url) }) else { return false }
+        record = snapshot
+        scheduleHeartbeat()
+        return true
+    }
+
+    var currentHeartbeatInterval: TimeInterval {
+        record.curtainUp || record.awayCoverUp == true ? Self.curtainHeartbeatInterval : Self.heartbeatInterval
+    }
+
     /// The person resumed sharing after a crash-loop stop; the helper supervises normally again.
     func requestCrashLoopReset() {
         record.crashLoopResetAt = Date()
@@ -75,24 +93,42 @@ final class HostWatchdogReporter {
         timer = nil
         record.cleanExit = true
         record.curtainUp = false
+        record.awayCoverUp = record.awayCoverUp == true
         let snapshot = record, url = files.hostRecord
         writer.sync { _ = WatchdogStore.write(snapshot, to: url) }
     }
 
     var ledger: WatchdogLedger? { WatchdogStore.read(WatchdogLedger.self, from: files.ledger) }
 
-    /// Runs on the hang watchdog's thread while the main thread is stuck: record why, then end.
-    nonisolated static func hangHandler(files: WatchdogFiles, launchID: String) -> @Sendable (TimeInterval) -> Void {
+    /// Covered runs retain their windows if a bounded lock request cannot be confirmed.
+    /// Public lock notifications are hints; the injected verifier must supply positive proof.
+    nonisolated static func hangHandler(files: WatchdogFiles, launchID: String,
+                                       bootSession: String = HostProcessInfo.bootSession(),
+                                       requestLock: @escaping @Sendable () -> Bool = { HostLockShortcut.post() },
+                                       isLocked: @escaping @Sendable () -> Bool = { HostScreenLock.isLocked() },
+                                       wait: @escaping @Sendable (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+                                       terminate: @escaping @Sendable () -> Void = { _exit(3) }) -> @Sendable (TimeInterval) -> Bool {
         { stall in
-            _ = WatchdogStore.write(HostHangNote(launchID: launchID, at: Date(), stalledSeconds: stall),
-                                    to: files.hangNote)
-            _exit(3)
+            guard let record = WatchdogStore.read(HostRunRecord.self, from: files.hostRecord),
+                  record.launchID == launchID, record.bootSession == bootSession else { return false }
+            if record.awayCoverUp == true {
+                _ = requestLock()
+                // Twenty bounded checks; neither client clocks nor an unbounded waiter control exit.
+                var confirmed = isLocked()
+                for _ in 0..<20 where !confirmed { wait(0.1); confirmed = isLocked() }
+                guard confirmed else { return false }
+            }
+            guard let current = WatchdogStore.read(HostRunRecord.self, from: files.hostRecord),
+                  current.launchID == launchID, current.bootSession == bootSession else { return false }
+            _ = WatchdogStore.write(HostHangNote(launchID: launchID, at: Date(), stalledSeconds: stall), to: files.hangNote)
+            terminate()
+            return true
         }
     }
 
     private func scheduleHeartbeat() {
         timer?.invalidate()
-        let interval = record.curtainUp ? Self.curtainHeartbeatInterval : Self.heartbeatInterval
+        let interval = currentHeartbeatInterval
         let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.beat() }
         }

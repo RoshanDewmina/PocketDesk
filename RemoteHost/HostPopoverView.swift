@@ -38,6 +38,20 @@ struct HostPopoverView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .padding(.top, 12)
                 }
+                if let warning = state.lockWarning {
+                    HostLockWarningBlock(warning: warning, awayAvailable: state.away.available,
+                                         identifierPrefix: "farside.popover",
+                                         openLockScreenSettings: {
+                                             dismiss()
+                                             actions.openLockScreenSettings()
+                                         },
+                                         dismiss: actions.dismissLockWarning)
+                        .padding(.top, 12)
+                }
+                if state.away.available && state.awayMode {
+                    awayStatus
+                        .padding(.top, 12)
+                }
                 if presentation.showsSessionToggles {
                     sessionToggles
                         .padding(.top, 12)
@@ -90,6 +104,40 @@ struct HostPopoverView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel([presentation.title, presentation.spokenCaption ?? presentation.caption]
             .compactMap { $0 }.joined(separator: ". "))
+    }
+
+    private var awayStatus: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                if let line = HostAwayCopy.statusLine(state.away, now: now ?? context.date) {
+                    Text(line)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Farside.Palette.bone)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("farside.popover.awayStatus")
+                }
+            }
+            HStack(spacing: 8) {
+                if state.away.phase == .armed {
+                    Button(HostAwayCopy.coverNowTitle, action: actions.coverNow)
+                        .accessibilityIdentifier("farside.popover.awayCoverNow")
+                    Button(HostAwayCopy.turnOffTitle) { actions.setAwayMode(false) }
+                        .accessibilityIdentifier("farside.popover.awayTurnOff")
+                }
+            }
+            .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                if let warning = HostAwayCopy.warningLine(state.away, now: now ?? context.date) {
+                    Text(warning)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Farside.Palette.ash)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("farside.popover.awayWarning")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
     }
 
     private var sessionToggles: some View {
@@ -224,3 +272,49 @@ struct HostPopoverView: View {
 }
 
 // HostPopoverStrip (the live strip, D39) lives in HostLiveStrip.swift.
+/// Tells the person the Mac locked while sharing, in Settings and the popover, whether or not
+/// Away mode is available.
+struct HostLockWarningBlock: View {
+    let warning: HostLockWarning
+    let awayAvailable: Bool
+    let identifierPrefix: String
+    let openLockScreenSettings: () -> Void
+    let dismiss: () -> Void
+
+    private var isScreenSaver: Bool {
+        if case .screenSaverLocked = warning { return true }
+        return false
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: "lock.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Farside.Palette.ash)
+                    .padding(.top, 2)
+                    .accessibilityHidden(true)
+                Text(HostAwayCopy.lockWarningText(warning, awayAvailable: awayAvailable))
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Farside.Palette.bone)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("\(identifierPrefix).lockWarning")
+            }
+            HStack(spacing: 8) {
+                if isScreenSaver {
+                    Button(HostAwayCopy.lockScreenSettingsTitle, action: openLockScreenSettings)
+                        .accessibilityIdentifier("\(identifierPrefix).lockScreenSettings")
+                }
+                Button(HostAwayCopy.dismissTitle, action: dismiss)
+                    .accessibilityIdentifier("\(identifierPrefix).dismissLockWarning")
+            }
+            .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Farside.Palette.panel, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .strokeBorder(Farside.Palette.line2, lineWidth: 1))
+        .accessibilityElement(children: .contain)
+    }
+}

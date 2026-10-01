@@ -8,12 +8,19 @@ struct HostSettingsView: View {
     @State private var showingNotices = false
     @State private var confirmingStop = false
     @State private var showingWakeRegistration = false
+    @State private var confirmingAwayMode = false
 
     var body: some View {
         let presentation = HostPopoverPresentation.make(for: state)
         VStack(alignment: .leading, spacing: 18) {
             header(presentation)
             statusPanel(presentation)
+            if let warning = state.lockWarning {
+                HostLockWarningBlock(warning: warning, awayAvailable: state.away.available,
+                                     identifierPrefix: "farside.settings",
+                                     openLockScreenSettings: actions.openLockScreenSettings,
+                                     dismiss: actions.dismissLockWarning)
+            }
 
             ScrollView {
                 HStack(alignment: .top, spacing: 24) {
@@ -47,6 +54,13 @@ struct HostSettingsView: View {
             if let helper = state.wakeHelperHostID, let grant = state.wakeOwnerPairID {
                 WakeTargetRegistrationView(helperHostID: helper, ownerPairID: grant, store: HostWakeTargetStore())
             }
+        }
+        .confirmationDialog(HostAwayCopy.introTitle, isPresented: $confirmingAwayMode) {
+            Button(HostAwayCopy.introConfirm) { actions.setAwayMode(true) }
+                .accessibilityIdentifier("farside.settings.awayModeConfirm")
+            Button(HostAwayCopy.introCancel, role: .cancel) {}
+        } message: {
+            Text(HostAwayCopy.introBody.joined(separator: "\n\n"))
         }
         .confirmationDialog("Remove this Mac’s server room?", isPresented: $confirmingServerRemoval) {
             Button("Remove Server Room", role: .destructive, action: actions.removeServerRoom)
@@ -105,6 +119,9 @@ struct HostSettingsView: View {
                 HostSwitch(label: "Keep this Mac awake", isOn: state.keepAwake, set: actions.setKeepAwake)
                     .accessibilityIdentifier("farside.settings.keepAwake")
             }
+            if state.away.available {
+                awayModeRow
+            }
             HostSettingsRow("Chime when a phone connects", subtitle: "So you always know") {
                 HostSwitch(label: "Chime when a phone connects", isOn: state.chimeOnConnect,
                            set: actions.setChimeOnConnect)
@@ -143,6 +160,43 @@ struct HostSettingsView: View {
                     .fixedSize()
                 }
             }
+        }
+    }
+
+    private var awayModeRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HostSettingsRow(HostAwayCopy.settingTitle, subtitle: HostAwayCopy.settingSubtitle) {
+                HostSwitch(label: HostAwayCopy.settingTitle, isOn: state.awayMode, set: setAwayMode)
+                    .accessibilityIdentifier("farside.settings.awayMode")
+            }
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                if let warning = HostAwayCopy.warningLine(state.away, now: context.date) {
+                    HStack(spacing: 12) {
+                        Text(warning)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Farside.Palette.ash)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("farside.settings.awayWarning")
+                        Spacer(minLength: 12)
+                        if state.away.unavailable == .needsAccessibility {
+                            Button("Open Settings") { actions.openSystemSettings(.accessibility) }
+                                .buttonStyle(HostArrowButtonStyle())
+                                .accessibilityLabel("Open System Settings for Accessibility")
+                                .accessibilityIdentifier("farside.settings.awayAccessibility")
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 11)
+                }
+            }
+        }
+    }
+
+    private func setAwayMode(_ isOn: Bool) {
+        if isOn && !state.awayIntroShown {
+            confirmingAwayMode = true
+        } else {
+            actions.setAwayMode(isOn)
         }
     }
 

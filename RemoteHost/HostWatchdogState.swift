@@ -69,6 +69,8 @@ struct HostRunRecord: Codable, Equatable {
     var safeMode = false
     /// Set when the person at the Mac resumes after a crash-loop stop.
     var crashLoopResetAt: Date?
+    /// Optional so records written by older hosts still decode.
+    var awayCoverUp: Bool?
 }
 
 enum WatchdogExitKind: String, Codable, Equatable {
@@ -157,6 +159,8 @@ struct WatchdogPolicy {
 
         if observation.recordProcessAlive {
             guard !record.cleanExit, !observation.recordProcessTraced, !observation.hangKillIssued else { return .idle }
+            // This helper cannot verify Lock Screen. It must not remove an Away cover by SIGKILL.
+            guard record.awayCoverUp != true else { return .idle }
             let timeout = record.curtainUp ? curtainHangTimeout : hangTimeout
             let silence = observation.uptime - record.heartbeatUptime
             return silence > timeout ? .terminateHung(pid: record.pid) : .idle
@@ -193,11 +197,16 @@ struct HostLaunchAssessment: Equatable {
     var previousExit: WatchdogExitKind?
     /// Start with sharing paused and explain that Farside stopped after repeated crashes.
     var safeMode = false
+    /// The previous run ended unexpectedly while Away mode covered the Mac: lock before anything else.
+    var lockFirst = false
 
     static func assess(previous: HostRunRecord?, ledger: WatchdogLedger?, hangNote: HostHangNote?,
                        bootSession: String, previousProcessAlive: Bool,
                        safeModeArgument: Bool) -> HostLaunchAssessment {
         var result = HostLaunchAssessment()
+        if let previous, previous.bootSession == bootSession, !previousProcessAlive {
+            result.lockFirst = previous.awayCoverUp == true
+        }
         if let previous, previous.bootSession == bootSession, !previous.cleanExit, !previousProcessAlive {
             result.recoveredFromUnexpectedExit = true
             result.previousExit = hangNote?.launchID == previous.launchID ? .hang : .crash

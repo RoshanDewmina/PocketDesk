@@ -32,8 +32,8 @@ struct HostKeepAwakeBackend {
 enum HostPowerPolicy {
     /// Idle system sleep is prevented while sharing so the paired phone can still reach the Mac;
     /// the display is held on only while a phone is connected, so an unattended screen can sleep.
-    static func assertions(keepAwake: Bool, sharing: Bool, phoneConnected: Bool) -> (system: Bool, display: Bool) {
-        (keepAwake && sharing, keepAwake && sharing && phoneConnected)
+    static func assertions(keepAwake: Bool, sharing: Bool, phoneConnected: Bool, awayArmed: Bool = false) -> (system: Bool, display: Bool) {
+        (sharing && (keepAwake || awayArmed), sharing && ((keepAwake && phoneConnected) || awayArmed))
     }
 }
 
