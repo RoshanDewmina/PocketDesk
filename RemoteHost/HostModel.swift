@@ -215,6 +215,7 @@ final class RemoteHostModel: ObservableObject {
     private var textFocusRevision: UInt64 = 0
     private var textFocusTask: Task<Void, Never>?
     private var axPrewarmEdge = HostAXPrewarmEdge()
+    private let axSessionGeneration = HostAXSessionGeneration()
     private var captureHealthy = false
     private var sessionState: HostSessionState = .picture
     private var couchHealthy = false
@@ -1065,6 +1066,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func phoneConnected() {
+        axSessionGeneration.advance()
         away.refresh()
         bigText.retryPendingRestore()
         switch connection.peerRequestedMode {
@@ -2296,7 +2298,12 @@ final class RemoteHostModel: ObservableObject {
     private func endCapture() {
         away.refresh()
         axPrewarmEdge = HostAXPrewarmEdge()
-        Task.detached(priority: .utility) { _ = await HostAXWebPrewarm().sessionEnded() }
+        let generation = axSessionGeneration, ended = generation.current
+        let voiceOver = NSWorkspace.shared.isVoiceOverEnabled
+        Task.detached(priority: .utility) {
+            _ = await HostAXWebPrewarm().sessionEnded(voiceOverOn: voiceOver,
+                                                      stillCurrent: { generation.current == ended })
+        }
         if diagnosticRecorder.samples > 0 {
             try? diagnosticStore.save(diagnosticRecorder.finish(at: ProcessInfo.processInfo.systemUptime, additional: [
                 .init(.hostScreenRecording, CGPreflightScreenCaptureAccess() ? 1 : 0),
