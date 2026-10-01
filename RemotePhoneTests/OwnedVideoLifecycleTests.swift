@@ -31,28 +31,14 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         for zoom in [1.0, 3.0, 10.0] {
             view.frame = CGRect(x: 0, y: 0, width: 402 * zoom, height: 874 * zoom)
             view.setNeedsLayout(); view.layoutIfNeeded()
+            offer(rotation: ._0, cropped: false) // A frame drawn after the layout is what could resize the backing.
             XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240), "pinch layout must not allocate view-sized backing pixels")
         }
         offer(rotation: ._90, cropped: true)
-        let rotated = OwnedMetalVideoView.drawablePixels(viewPoints: view.metal.bounds.size, scale: view.displayScale,
-                                                         picture: CGSize(width: 80, height: 120))
-        XCTAssertEqual(view.metal.drawableSize, rotated)
-        XCTAssertLessThanOrEqual(rotated.width, 80); XCTAssertLessThanOrEqual(rotated.height, 120)
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 80, height: 120))
         view.invalidate()
         offer(rotation: ._0, cropped: false)
-        XCTAssertEqual(view.metal.drawableSize, rotated, "retired source cannot reallocate a closed surface")
-    }
-    func testDrawableFollowsViewPixelsButNeverExceedsDecodedPicture() {
-        let picture = CGSize(width: 2560, height: 1600)
-        XCTAssertEqual(OwnedMetalVideoView.drawablePixels(viewPoints: CGSize(width: 402, height: 251), scale: 3, picture: picture),
-                       CGSize(width: 1206, height: 753), "unzoomed canvas keeps the 20260930.7 view-sized drawable")
-        for zoom in [3.0, 10.0, 40.0] {
-            let pixels = OwnedMetalVideoView.drawablePixels(viewPoints: CGSize(width: 402 * zoom, height: 251 * zoom), scale: 3, picture: picture)
-            XCTAssertLessThanOrEqual(pixels.width, picture.width); XCTAssertLessThanOrEqual(pixels.height, picture.height)
-            XCTAssertEqual(pixels.width, picture.width, "zoomed canvas is capped at the source, not the zoomed view")
-        }
-        XCTAssertEqual(OwnedMetalVideoView.drawablePixels(viewPoints: .zero, scale: 3, picture: CGSize(width: 1280, height: 800)),
-                       CGSize(width: 1280, height: 800))
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 80, height: 120), "retired source cannot reallocate a closed surface")
     }
     /// Core Animation calls presented handlers holding the layer lock that `addPresentedHandler`
     /// needs on main while main holds the fence (8BADF00D reports from build 20260930.8).
