@@ -27,8 +27,8 @@ final class OwnedVideoLifecycleTests: XCTestCase {
             view.draw(in: view.metal) // Production admission and drawable preparation, no GPU timing claim.
         }
         offer(rotation: ._0, cropped: false)
-        let landscape = OwnedMetalVideoView.backingSize(picture: CGSize(width: 320, height: 240), longSide: view.backingLongSide, current: nil)
-        XCTAssertEqual(view.metal.drawableSize, landscape, "the backing follows the stable box, not the decoded size")
+        let landscape = CGSize(width: 320, height: 240)
+        XCTAssertEqual(view.metal.drawableSize, landscape, "the first picture is drawn 1:1")
         XCTAssertEqual(view.metal.layer.contentsGravity, .resize, "Core Animation fills the picture placement")
         var pinched: [CGSize] = []
         for zoom in [0.25, 1.0, 3.0, 10.0] {
@@ -40,27 +40,25 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         XCTAssertEqual(pinched, Array(repeating: landscape, count: 4),
                        "pinch layout neither allocates view-sized backing pixels nor resizes per frame")
         offer(rotation: ._90, cropped: true)
-        let rotated = OwnedMetalVideoView.backingSize(picture: CGSize(width: 80, height: 120), longSide: view.backingLongSide, current: landscape)
-        XCTAssertNotEqual(rotated, landscape)
+        let rotated = CGSize(width: 80, height: 120)
         XCTAssertEqual(view.metal.drawableSize, rotated, "only an aspect change (rotation) resizes the backing")
         view.invalidate()
         offer(rotation: ._0, cropped: false)
         XCTAssertEqual(view.metal.drawableSize, rotated, "retired source cannot reallocate a closed surface")
     }
-    func testBackingSizeIgnoresLadderResolutionAndPinchButFollowsAspect() {
-        let box: CGFloat = 2622
-        let full = OwnedMetalVideoView.backingSize(picture: CGSize(width: 2560, height: 1600), longSide: box, current: nil)
-        XCTAssertEqual(full, CGSize(width: 2622, height: 1645), "2622 long side at the 51/32 quantum of 16:10")
-        for ladder in [CGSize(width: 1920, height: 1200), CGSize(width: 1680, height: 1050), CGSize(width: 1280, height: 800), CGSize(width: 2560, height: 1598)] {
-            XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: ladder, longSide: box, current: full), full, "\(ladder) keeps the drawable")
+    func testBackingSizeRatchetsToTheLargestPictureAndIgnoresStepsWobbleAndPinch() {
+        let full = OwnedMetalVideoView.backingSize(picture: CGSize(width: 2560, height: 1600), current: nil)
+        XCTAssertEqual(full, CGSize(width: 2560, height: 1600), "the top rung is drawn 1:1")
+        for smaller in [CGSize(width: 1920, height: 1200), CGSize(width: 1680, height: 1050), CGSize(width: 1280, height: 800),
+                        CGSize(width: 2560, height: 1598), CGSize(width: 2560, height: 1640), CGSize(width: 1448, height: 928), CGSize(width: 1456, height: 928)] {
+            XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: smaller, current: full), full, "\(smaller) keeps the drawable")
         }
-        let wobble = OwnedMetalVideoView.backingSize(picture: CGSize(width: 1448, height: 928), longSide: box, current: nil)
-        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 1456, height: 928), longSide: box, current: wobble), wobble,
-                       "a half-percent crop wobble never reallocates")
-        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 1600, height: 2560), longSide: box, current: full),
-                       CGSize(width: 1639, height: 2622), "a rotation is a real aspect change")
-        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 100, height: 50), longSide: 9000, current: nil).width, 4096)
-        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: .zero, longSide: box, current: full), full)
+        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 1600, height: 2560), current: full),
+                       CGSize(width: 1600, height: 2560), "a rotation is a real aspect change")
+        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 3000, height: 1875), current: full),
+                       CGSize(width: 3000, height: 1875), "a larger picture grows the drawable once, at its exact aspect")
+        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 8000, height: 4000), current: nil), CGSize(width: 4096, height: 2048))
+        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: .zero, current: full), full)
     }
     @MainActor
     func testLadderResolutionStepsNeverReallocateTheDrawableAndEveryDrawPresents() throws {
@@ -78,7 +76,7 @@ final class OwnedVideoLifecycleTests: XCTestCase {
                 RunLoop.current.run(until: Date().addingTimeInterval(0.005))
             }
         }
-        for (width, height) in [(256, 160), (128, 80), (192, 120), (256, 160)] {
+        for (width, height) in [(256, 160), (128, 80), (192, 120), (256, 164), (256, 160)] { // 256×164 is 2.5 % off
             var pixels: CVPixelBuffer?
             XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
                 [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
@@ -92,7 +90,7 @@ final class OwnedVideoLifecycleTests: XCTestCase {
             sizes.append(view.metal.drawableSize); presented.append(view.drawsPresented)
         }
         XCTAssertEqual(Set(sizes).count, 1, "2560→1280→1920 style steps share one drawable: \(sizes)")
-        XCTAssertEqual(presented, [1, 2, 3, 4], "every draw presented the latest frame; no blank pass")
+        XCTAssertEqual(presented, [1, 2, 3, 4, 5], "every draw presented the latest frame; no blank pass")
         XCTAssertFalse(view.subviews.contains { $0 is RTCMTLVideoView }, "no black fallback view was ever shown")
         view.invalidate()
     }
@@ -165,8 +163,7 @@ final class OwnedVideoLifecycleTests: XCTestCase {
             frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1),
             arrivalMs: 1, marker: nil, originalSource: true))
         view.draw(in: view.metal)
-        XCTAssertEqual(view.metal.drawableSize, OwnedMetalVideoView.backingSize(picture: CGSize(width: 320, height: 240), longSide: view.backingLongSide, current: nil),
-                       "the placement never resizes the backing pixels")
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240), "the placement never resizes the backing pixels")
         for fills in [false, true] {
             view.fillsFrame = fills
             XCTAssertEqual(view.metal.layer.contentsGravity, .resize)

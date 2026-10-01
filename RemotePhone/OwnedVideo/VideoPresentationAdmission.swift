@@ -125,6 +125,14 @@ final class NewestFrameMailbox<Frame>: @unchecked Sendable {
     func completed(_ id: UInt64) {
         lock.lock(); flights.remove(id); lock.unlock()
     }
+    /// A taken frame that could not be drawn (no drawable this tick) goes back as pending unless a
+    /// newer frame arrived, so its receipt and newness survive the retry.
+    func requeue(_ id: UInt64, frame: Frame, wasNew: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        flights.remove(id)
+        guard !closed, wasNew, pending == nil else { return }
+        pending = frame
+    }
     var hasPending: Bool { lock.lock(); defer { lock.unlock() }; return pending != nil }
     var retainedSlots: Int {
         lock.lock(); defer { lock.unlock() }

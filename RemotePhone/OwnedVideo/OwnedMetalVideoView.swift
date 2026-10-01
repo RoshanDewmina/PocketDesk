@@ -72,23 +72,26 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     override func layoutSubviews() {
         super.layoutSubviews(); metal.frame = bounds; fallback?.frame = bounds; redraw = true
     }
-    /// Backing pixels come from a stable box (the phone's native long side, at most 4096) fitted to the
-    /// picture's aspect quantised to 1/32. A ladder resolution step or a pinch therefore never reallocates
-    /// the drawable (each reallocation showed a blank pass on 20260930.11); only an aspect change does.
-    static func backingSize(picture: CGSize, longSide: CGFloat, current: CGSize?) -> CGSize {
+    /// Backing pixels ratchet: the drawable keeps its size while the picture aspect stays within 5 % of
+    /// its own and it is at least as large as the picture, so a ladder step down, a crop wobble and a
+    /// pinch never reallocate it (each reallocation showed a blank pass on 20260930.11). It grows only
+    /// to a new largest picture, at the picture's exact aspect so the top rung draws 1:1, and a
+    /// rotation or scope change reallocates once.
+    static let backingCeiling: CGFloat = 4096
+    static func backingSize(picture: CGSize, current: CGSize?) -> CGSize {
         guard picture.width > 0, picture.height > 0, picture.width.isFinite, picture.height.isFinite else { return current ?? picture }
-        let aspect = (picture.width / picture.height * 32).rounded() / 32
-        // Real crops wobble by about half a percent; keep the drawable while the picture stays within one
-        // quantum of its aspect, so only a rotation or a scope change reallocates.
-        if let current, current.width > 0, current.height > 0, abs(current.width / current.height - picture.width / picture.height) < 1.0 / 32 { return current }
-        let long = max(1, min(4096, longSide.isFinite ? longSide.rounded() : 4096))
+        let aspect = picture.width / picture.height
+        let pictureLong = max(picture.width, picture.height)
+        var currentLong: CGFloat = 0
+        if let current, current.width > 0, current.height > 0 {
+            currentLong = max(current.width, current.height)
+            if abs(log((current.width / current.height) / aspect)) <= log(1.05), currentLong >= pictureLong { return current }
+        }
+        let long = min(Self.backingCeiling, max(pictureLong, currentLong))
         return aspect >= 1 ? CGSize(width: long, height: max(1, (long / aspect).rounded()))
                            : CGSize(width: max(1, (long * aspect).rounded()), height: long)
     }
-    var backingLongSide: CGFloat {
-        let native = (metal.window?.screen ?? UIScreen.main).nativeBounds.size
-        return max(native.width, native.height)
-    }
+    private var missingDrawableSince: TimeInterval?
     private(set) var drawsPresented = 0
     var pictureRect: CGRect {
         let drawable = metal.drawableSize, area = metal.bounds
@@ -149,7 +152,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         guard let submission = mailbox.take(redraw: redraw) else { return }
         let envelope = submission.frame
         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
-        let backing = Self.backingSize(picture: geometry.displaySize, longSide: backingLongSide,
+        let backing = Self.backingSize(picture: geometry.displaySize,
                                        current: view.drawableSize == CGSize(width: 1, height: 1) ? nil : view.drawableSize)
         if view.drawableSize != backing { view.drawableSize = backing }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
@@ -161,11 +164,17 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         }
         guard let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else {
             // Both drawables in flight, or a resize in progress: keep the last picture on screen and
-            // retry on the next tick rather than covering it with the black fallback view.
-            mailbox.completed(submission.id)
+            // retry the same frame next tick rather than covering it with the black fallback view.
+            let now = ProcessInfo.processInfo.systemUptime
+            if let since = missingDrawableSince, now - since > 1 {
+                mailbox.completed(submission.id); showFallback(envelope); redraw = false; return
+            }
+            missingDrawableSince = missingDrawableSince ?? now
+            mailbox.requeue(submission.id, frame: envelope, wasNew: submission.isNew)
             redraw = true
             return
         }
+        missingDrawableSince = nil
         let buffer = pixels.buffer
         var wrappers: [CVMetalTexture] = []
         func texture(_ format: MTLPixelFormat, plane: Int, width: Int, height: Int) -> MTLTexture? {
@@ -188,11 +197,9 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         #else
         timingAvailable = true
         #endif
-        let size = CGSize(width: Int(envelope.frame.width), height: Int(envelope.frame.height))
-        let rotated = envelope.frame.rotation.rawValue % 180 != 0
-        let picture = rotated ? CGSize(width: size.height, height: size.width) : size
-        let scale = min(view.drawableSize.width / max(1, picture.width), view.drawableSize.height / max(1, picture.height))
-        let extent = fillsFrame ? SIMD2<Float>(1, 1) : SIMD2<Float>(Float(picture.width * scale / max(1, view.drawableSize.width)), Float(picture.height * scale / max(1, view.drawableSize.height)))
+        // The drawable is stretched edge to edge onto the placement (`.resize`), so the picture always
+        // covers the whole drawable; a fitted extent here would letterbox into the drawable's aspect.
+        let extent = SIMD2<Float>(1, 1)
         let crop = pixels.crop
         var uniforms = Uniforms(extent: extent, rotation: Int32(envelope.frame.rotation.rawValue / 90), bgra: pixels.bgra ? 1 : 0,
             crop: SIMD4(Float(crop.minX / CGFloat(CVPixelBufferGetWidth(buffer))), Float(crop.minY / CGFloat(CVPixelBufferGetHeight(buffer))),
