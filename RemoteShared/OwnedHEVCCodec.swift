@@ -26,7 +26,8 @@ extension OwnedVTConfiguration: OwnedVideoConfiguration {
     }
 }
 
-/// Main profile, negotiated tier and level ceiling up to 5.1. No 4:4:4/RExt or HDR claim.
+/// Main1 by default, or explicitly negotiated Main444-eight-bit with the same tier/level ceiling.
+/// No HDR, cadence or physical-device claim follows from format admission.
 struct OwnedHEVCConfiguration: OwnedVideoConfiguration {
     static var codecInfo: RTCVideoCodecInfo { RTCVideoCodecInfo(name: "H265", parameters: ["profile-id": "1", "tier-flag": "1", "level-id": "153", "tx-mode": "SRST"]) }
     static var fullColorCodecInfo: RTCVideoCodecInfo { RTCVideoCodecInfo(name: "H265", parameters: ["profile-id": "4", "tier-flag": "1", "level-id": "153", "tx-mode": "SRST"]) }
@@ -222,6 +223,6 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
             lock.unlock()
         }
     }
-    func implementationName() -> String { "Farside public VideoToolbox HEVC Main" }
+    func implementationName() -> String { configuration.fullColor444 ? "Farside public VideoToolbox HEVC Main444" : "Farside public VideoToolbox HEVC Main" }
     deinit { if let session { VTDecompressionSessionInvalidate(session) } }
 }
