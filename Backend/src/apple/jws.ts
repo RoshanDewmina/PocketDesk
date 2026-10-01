@@ -8,7 +8,8 @@ export const APPLE_LEAF_OID = "1.2.840.113635.100.6.11.1";
 export const APPLE_INTERMEDIATE_OID = "1.2.840.113635.100.6.2.1";
 const MAX_JWS_CHARS = 16 * 1024;
 const MAX_CERT_B64_CHARS = 8 * 1024;
-const SKEW_MS = 60_000;
+export const APPLE_JWS_CLOCK_SKEW_MS = 60_000;
+const SKEW_MS = APPLE_JWS_CLOCK_SKEW_MS;
 
 export type JwsFailure = "malformed" | "algorithm" | "chain" | "certificate_expired" | "signature";
 

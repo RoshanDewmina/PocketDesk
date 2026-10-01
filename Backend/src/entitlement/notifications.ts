@@ -1,4 +1,4 @@
-import { JwsVerificationError, verifyAppleJws } from "../apple/jws";
+import { APPLE_JWS_CLOCK_SKEW_MS, JwsVerificationError, verifyAppleJws } from "../apple/jws";
 import type { Config } from "../config";
 import { fingerprint, log, logError } from "../log";
 import { addressKey, allow } from "../ratelimit";
@@ -106,7 +106,7 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
     // Renewal/grace/expiry events never redefine a non-consumable. Only signed refund/revoke/reversal apply.
     if (!["REFUND", "REVOKE", "REFUND_REVERSED", "ONE_TIME_CHARGE"].includes(notificationType)) return finish("recorded");
     // Missing/invalid signed order cannot safely clear or overwrite a permanent tombstone.
-    if (typeof decoded.signedDate !== "number" || !Number.isFinite(decoded.signedDate) || decoded.signedDate <= 0 || decoded.signedDate > now) return finish("recorded");
+    if (typeof decoded.signedDate !== "number" || !Number.isFinite(decoded.signedDate) || decoded.signedDate <= 0 || decoded.signedDate > now + APPLE_JWS_CLOCK_SKEW_MS) return finish("recorded");
     const revoked = notificationType === "REFUND" || notificationType === "REVOKE";
     const applied = await upsertEntitlement(env.DB, { ...base, status: revoked ? "revoked" : statusFor("active"),
       graceUntil: null, revokedAt: revoked ? tx.revocationDate ?? now : revokedAt }, now);

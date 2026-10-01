@@ -6,7 +6,7 @@ import { oneTimeCatalog, ONE_TIME_VERIFICATION_MS } from "../src/entitlement/one
 import { checkTransactionPolicy, handleVerify, parseTransactionPayload } from "../src/entitlement/verify";
 import { accessEndMs, entitlementIdFor, getEntitlement, hasAccess, linkDevice, purgeRetention, upsertEntitlement } from "../src/entitlement/store";
 import { mintEntitlementToken } from "../src/entitlement/token";
-import { applyNotification } from "../src/entitlement/notifications";
+import { applyNotification, handleNotification } from "../src/entitlement/notifications";
 import { parseChain, signCompactJws, transactionPayload, type TestChain } from "./helpers/apple-chain";
 import { connectHost, connectClient, pairing, testEnv } from "./helpers/client";
 import { randomHex } from "../src/util";
@@ -106,6 +106,18 @@ describe("disabled one-time catalog and typed rights", () => {
       mock.mockResolvedValue({status:200,body:{signedTransactionInfo:await signCompactJws({...tx,revocationDate:Date.now()},chain)}});
       expect((await verify(signed,keys)).body).toMatchObject({entitled:false,reason:"revoked"});
     } finally {mock.mockRestore();}
+  });
+  it("actual signed endpoint applies an accepted future-skew refund before deduplicating its retry", async () => {
+    const now=Date.now(),tx=payload(),id=await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY,String(tx.originalTransactionId));
+    await upsertEntitlement(testEnv.DB,{id,kind:"lifetime",productId:lifetime,environment:"Production",expiresAt:0,status:"active",purchaseAt:Number(tx.purchaseDate),source:"verify"},now);
+    const compact=await signCompactJws({notificationType:"REFUND",notificationUUID:randomHex(16),version:"2.0",signedDate:now+30_000,
+      data:{bundleId:config().bundleId,environment:"Production",appAppleId:config().appAppleId,
+        signedTransactionInfo:await signCompactJws({...tx,revocationDate:now+1},chain)}},chain);
+    const request=()=>new Request("https://farside.test/v1/apple/notifications",{method:"POST",headers:{"content-type":"application/json","cf-connecting-ip":"198.51.100.249"},body:JSON.stringify({signedPayload:compact})});
+    expect((await handleNotification(request(),testEnv,config())).status).toBe(200);
+    expect((await getEntitlement(testEnv.DB,id))?.status).toBe("revoked");
+    expect((await handleNotification(request(),testEnv,config())).status).toBe(200);
+    expect((await getEntitlement(testEnv.DB,id))?.status).toBe("revoked");
   });
   it("distinct delayed reversal cannot clear a newer refund after row reload; valid newer reversal can", async () => {
     const now=Date.now(),tx=payload(),id=await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY,String(tx.originalTransactionId));
