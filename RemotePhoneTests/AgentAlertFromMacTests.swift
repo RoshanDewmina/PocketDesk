@@ -153,28 +153,51 @@ final class AgentAlertFromMacTests: XCTestCase {
 
     // MARK: Through the model
 
+    // Downstream model gate fixture: the existing connection seam supplies connected state.
+    // Native current-peer/session/sequence producer admission is covered separately in Core.
     func testACaptureStatusFromTheMacReachesTheAlertCenter() throws {
         let shared = AgentAlertCenter.shared
         let original = (center: shared.center, preferences: shared.preferences, isForeground: shared.isForeground)
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        shared.dismissBanner()
         shared.center = fake
         shared.preferences = AgentAlertPreferences(defaults: defaults)
         shared.preferences.alertsEnabled = true
         shared.isForeground = { true }
         defer {
+            model.connection.stop()
             shared.dismissBanner()
             shared.center = original.center
             shared.preferences = original.preferences
             shared.isForeground = original.isForeground
         }
 
-        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        let deliver = try XCTUnwrap(model.connection.onControl)
         let id = "h_" + String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(12))
         let action = RemoteAction(action: "capture", x: 1, epoch: 1, features: SessionFeature.host,
                                   agentAlert: frame(id, kind: .cursor))
-        model.connection.onControl?(try JSONEncoder().encode(action))
+        let data = try JSONEncoder().encode(action)
+        XCTAssertFalse(model.connection.connected)
+        deliver(data)
+        XCTAssertNil(shared.banner, "A capture-shaped callback without a connected session cannot announce an alert")
+        XCTAssertTrue(fake.added.isEmpty)
 
+        model.connection.startInputFixtureForTesting(session: "agent-alert-model")
+        XCTAssertTrue(model.connection.connected)
+        deliver(data)
         XCTAssertEqual(shared.banner?.id, id)
         XCTAssertEqual(shared.banner?.payload.kind, .cursor)
+        XCTAssertTrue(fake.added.isEmpty, "The foreground alert remains a quiet banner")
+
+        model.connection.stop()
+        XCTAssertFalse(model.connection.connected)
+        shared.dismissBanner()
+        let lateID = "h_" + String(UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased().prefix(12))
+        let late = RemoteAction(action: "capture", x: 1, epoch: 1, features: SessionFeature.host,
+                                agentAlert: frame(lateID, kind: .cursor))
+        deliver(try JSONEncoder().encode(late))
+        XCTAssertNil(shared.banner, "A retained downstream callback cannot announce a fresh alert after End")
+        XCTAssertTrue(fake.added.isEmpty)
     }
 
     func testAStatusWithoutAnAlertLeavesTheBannerAlone() throws {

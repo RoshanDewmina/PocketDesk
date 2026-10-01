@@ -222,14 +222,33 @@ final class AnywhereStoreKitTests: XCTestCase {
 
     /// Stands in for the iOS 27 offer-code sheet, which hands back the same `VerificationResult<Transaction>`.
     func testARedeemedTransactionIsFinishedAndReadyForTheServiceAtOnce() async throws {
+        print("STOREKIT REDEMPTION: initial refresh")
         await store.refresh()
         XCTAssertFalse(store.entitlement.hasAccess)
-        guard case .success(let verification) = try await monthly.purchase() else { return XCTFail("no transaction") }
+        // An offer-code sheet supplies a verified external transaction, rather than starting
+        // an in-app purchase. Keep the real SDK transaction and prove this store finishes it.
+        print("STOREKIT REDEMPTION: external test purchase")
+        let external = try await session.buyProduct(identifier: AnywherePlan.monthlyID, options: [])
+        print("STOREKIT REDEMPTION: latest verification")
+        let latest = await Transaction.latest(for: AnywherePlan.monthlyID)
+        let verification = try XCTUnwrap(latest)
+        guard case .verified(let transaction) = verification else { return XCTFail("unverified external transaction") }
+        XCTAssertEqual(transaction.id, external.id)
+        XCTAssertEqual(transaction.productID, AnywherePlan.monthlyID)
+        print("STOREKIT REDEMPTION: pre-finish ownership")
+        var externallyUnfinished = false
+        for await result in Transaction.unfinished {
+            if case .verified(let pending) = result, pending.id == external.id { externallyUnfinished = true }
+        }
+        XCTAssertTrue(externallyUnfinished, "The exact external transaction must still be unfinished before redemption")
+        print("STOREKIT REDEMPTION: redeem verified external transaction")
         await store.redeemed(verification)
         XCTAssertTrue(store.entitlement.hasAccess)
         XCTAssertEqual(store.entitlement.productID, AnywherePlan.monthlyID)
+        print("STOREKIT REDEMPTION: signed transaction")
         let signed = await store.signedTransaction()
         XCTAssertEqual(signed?.split(separator: ".").count, 3, "A compact JWS for the service")
+        print("STOREKIT REDEMPTION: verify finished")
         var unfinished = 0
         for await result in Transaction.unfinished {
             if case .verified(let transaction) = result, transaction.productID == AnywherePlan.monthlyID { unfinished += 1 }
