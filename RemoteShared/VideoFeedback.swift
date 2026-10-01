@@ -159,12 +159,14 @@ final class VideoFeedbackContext: @unchecked Sendable {
     }
     func received(_ tag: VideoFrameTag?, wire: UInt32, at now: Double = ProcessInfo.processInfo.systemUptime) {
         lock.lock(); defer { lock.unlock() }
-        guard allowed, !ended, let tag, (try? tag.validate()) != nil, tag.geometryEpoch == geometry,
-              tag.scopeEpoch == scope, now.isFinite else { return }
+        guard allowed, !ended, now.isFinite else { return }
         pending = pending.filter { now >= $0.value.1 && now - $0.value.1 <= 5 }
         retired = retired.filter { now >= $0.value && now - $0.value <= 5 }
-        if retired[wire] != nil || retired.count >= 128 { return }
         if pending[wire] != nil { pending.removeValue(forKey: wire); if retired.count < 128 { retired[wire] = now }; return } // Ambiguous input never proves a reference.
+        if retired[wire] != nil || retired.count >= 128 { return }
+        // Even an unmarked, malformed or stale AU can collide with an outstanding native decode.
+        // Retire that association before accepting any metadata from the second submission.
+        guard let tag, (try? tag.validate()) != nil, tag.geometryEpoch == geometry, tag.scopeEpoch == scope else { return }
         if pending.count < 128 { pending[wire] = (tag, now, decoderGeneration) }
     }
     func requestRefresh(_ tag: VideoFrameTag?) {

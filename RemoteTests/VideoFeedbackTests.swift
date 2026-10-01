@@ -170,6 +170,40 @@ final class VideoFeedbackTests: XCTestCase {
         receiver.decoded(try frame(42))
         receiver.received(tag, wire: 43); receiver.rejected(wire: 43); receiver.decoded(try frame(43))
     }
+    func testProductionDecoderUnmarkedMalformedAndStaleDuplicateCannotInheritPendingReference() throws {
+        let base = Data([0, 0, 0, 1, 0x65, 0x80])
+        for replacement in 0..<3 {
+            let context = VideoFeedbackContext(); context.configure(allowed: true, geometry: 7, scope: 3)
+            let inner = ControlledFeedbackDecoder(), decoder = VideoFeedbackDecoder(inner: inner, context: context)
+            XCTAssertEqual(decoder.startDecode(withNumberOfCores: 1), 0)
+            defer { _ = decoder.release() }
+            let tag = try XCTUnwrap(context.encoded(token: 912)), marked = try XCTUnwrap(H26xVideoMarker.append(tag, to: base))
+            let duplicate: Data
+            if replacement == 0 { duplicate = base }
+            else if replacement == 1 { duplicate = Data(marked.prefix(24)) + base }
+            else {
+                duplicate = try XCTUnwrap(H26xVideoMarker.append(VideoFrameTag(generation: tag.generation, nonce: tag.nonce,
+                    geometryEpoch: 8, scopeEpoch: 3, ltrToken: 912), to: base))
+            }
+            var acknowledgements = 0, outputs = 0
+            context.setFeedback { _, _ in acknowledgements += 1 }
+            decoder.setCallback { _ in outputs += 1 }
+            let first = RTCEncodedImage(); first.buffer = marked; first.timeStamp = 42
+            let second = RTCEncodedImage(); second.buffer = duplicate; second.timeStamp = 42
+            XCTAssertEqual(decoder.decode(first, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0)
+            XCTAssertEqual(decoder.decode(second, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0)
+            XCTAssertEqual(inner.submissions, [42, 42])
+            let nativeOutput = try frame(42); inner.emit(nativeOutput)
+            XCTAssertEqual(outputs, 1, "Production wrapper forwards the controlled successful native output")
+            XCTAssertEqual(acknowledgements, 0, "Duplicate AU cannot acknowledge a preceding token")
+            XCTAssertNil(context.tag(for: nativeOutput), "Duplicate output cannot inherit the preceding refinement tag")
+            let independent = RTCEncodedImage(); independent.buffer = marked; independent.timeStamp = 43
+            XCTAssertEqual(decoder.decode(independent, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0)
+            let independentOutput = try frame(43); inner.emit(independentOutput)
+            XCTAssertEqual(acknowledgements, 1, "An unrelated current wire still completes normally")
+            XCTAssertEqual(context.tag(for: independentOutput), tag)
+        }
+    }
     func testRevokeEpochDecoderRestartAndForgedAckCannotReuseTokens() throws {
         let context = VideoFeedbackContext(); context.configure(allowed: true, geometry: 7, scope: 3)
         let tag = try XCTUnwrap(context.encoded(token: 2))
@@ -194,6 +228,21 @@ final class VideoFeedbackTests: XCTestCase {
         let result = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixel)), rotation: ._0, timeStampNs: 1_000_000)
         result.timeStamp = Int32(bitPattern: timestamp); return result
     }
+}
+
+/// Holds submissions until the test emits the second input's successful callback.
+/// This exercises the real production wrapper; it does not simulate hardware-decoder evidence.
+private final class ControlledFeedbackDecoder: NSObject, RTCVideoDecoder {
+    private var callback: RTCVideoDecoderCallback?
+    private(set) var submissions: [UInt32] = []
+    func setCallback(_ callback: @escaping RTCVideoDecoderCallback) { self.callback = callback }
+    func startDecode(withNumberOfCores cores: Int32) -> Int { 0 }
+    func release() -> Int { callback = nil; return 0 }
+    func decode(_ image: RTCEncodedImage, missingFrames: Bool, codecSpecificInfo info: (any RTCCodecSpecificInfo)?, renderTimeMs: Int64) -> Int {
+        submissions.append(image.timeStamp); return 0
+    }
+    func emit(_ frame: RTCVideoFrame) { callback?(frame) }
+    func implementationName() -> String { "ControlledFeedbackDecoder" }
 }
 
 private final class FeedbackNativeRenderer: NSObject, RTCVideoRenderer {
