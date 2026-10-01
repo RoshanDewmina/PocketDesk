@@ -236,6 +236,8 @@ final class RemoteCoordinator: ObservableObject {
     /// The host can drop a checkpoint batch without an ACK or anchor (its executor generation
     /// moved mid-batch). The ledger makes a resent prefix idempotent, so resend instead of stalling.
     static let reliableCheckpointRetransmitNanoseconds: UInt64 = 250_000_000
+    /// About 6.75 s without any ACK: stop resending and ask the host to rebase instead.
+    static let maximumReliableCheckpointRetransmits = 8
     private var inputRecoveryPending = false
     private var inputRecoveryTimeout: Task<Void, Never>?
     private static let maximumDeferredActions = 512
@@ -474,9 +476,9 @@ final class RemoteCoordinator: ObservableObject {
             // immutable on-wire prefix stays intact; only its unsent tail merges.
             if reliableMotionOrdinal != nil { return true }
             reliableMotionOrdinal = envelope.applied
-            let sent = transmit(RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope)
+            guard transmit(RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope) else { return false }
             armReliableCheckpointRetransmit(ordinal: envelope.applied, context: envelope)
-            return sent
+            return true
         }
         motionSequence &+= 1
         let packet = ControlPacket(session: session, sequence: motionSequence,
@@ -491,12 +493,19 @@ final class RemoteCoordinator: ObservableObject {
         let delay = Self.reliableCheckpointRetransmitNanoseconds << UInt64(min(reliableCheckpointRetransmits, 2))
         reliableCheckpointRetransmit = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: delay)
-            guard !Task.isCancelled, let self, self.connected, !self.inputRecoveryPending,
+            // A pending offer replaces this context; an old-nonce barrier would only be refused.
+            guard !Task.isCancelled, let self, self.connected, !self.inputRecoveryPending, self.offeredInputNonce == nil,
                   self.reliableMotionOrdinal == ordinal, let current = self.causalContext,
-                  current.nonce == context.nonce, current.anchor == context.anchor, current.epoch == context.epoch else { return }
+                  current.nonce == context.nonce, current.anchor == context.anchor, current.epoch == context.epoch,
+                  let envelope = self.envelope(kind: "barrier"), !envelope.segments.isEmpty else { return }
             self.reliableCheckpointRetransmits += 1
-            self.reliableMotionOrdinal = nil
-            _ = self.sendMotionPrefix(reliable: true)
+            guard self.reliableCheckpointRetransmits <= Self.maximumReliableCheckpointRetransmits else {
+                _ = self.requestInputRecovery(); return
+            }
+            // Resend the current superset prefix but keep the original gate, so a late ACK
+            // for the first checkpoint still releases deferred work on a slow link.
+            guard self.transmit(RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope) else { return }
+            self.armReliableCheckpointRetransmit(ordinal: ordinal, context: context)
         }
     }
     private func clearReliableCheckpoint() {

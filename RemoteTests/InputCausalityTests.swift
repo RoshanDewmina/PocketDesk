@@ -214,7 +214,8 @@ final class InputCoordinatorTests: XCTestCase {
             if let semantic { keys.append(semantic.key) }
             host.acknowledgeCausalInput(context, applied: ledger.applied)
         }
-        // Fill the 24-segment prefix so later work is deferred behind the one reliable checkpoint.
+        // No pointer channel in the fixture: the first move sends the one reliable checkpoint (ordinal 1);
+        // the rest fill the 24-segment prefix so the 25th move and the key are deferred behind it.
         for _ in 0..<25 { XCTAssertTrue(phone.sendInputMoves([RemoteAction(action: "move", x: 1, epoch: 7)])) }
         XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "a", epoch: 7)))
         XCTAssertEqual(upstream.count, 1)
@@ -240,6 +241,66 @@ final class InputCoordinatorTests: XCTestCase {
         XCTAssertTrue(upstream.isEmpty, "An acknowledged checkpoint is never resent")
         XCTAssertTrue(phone.connected); XCTAssertTrue(phone.isRunning)
         XCTAssertTrue(host.connected); XCTAssertTrue(host.isRunning)
+    }
+
+    func testLateOriginalAckAfterResendStillReleasesDeferredWorkExactlyOnce() async throws {
+        let (host, phone) = rig(); defer { host.stop(); phone.stop() }
+        var upstream: [ControlPacket] = [], downstream: [ControlPacket] = []
+        host.inputPacketSenderForTesting = { downstream.append($0); return true }
+        phone.inputPacketSenderForTesting = { upstream.append($0); return true }
+        phone.requestCausalInput(epoch: 7)
+        try host.receiveInputFixtureForTesting(upstream.removeFirst())
+        try phone.receiveInputFixtureForTesting(downstream.removeFirst())
+        var ledger = InputAppliedLedger(), displacement = 0.0, keys: [String] = []
+        host.onCausalInput = { context, semantic in
+            for segment in try! ledger.missing(from: context) {
+                displacement += segment.action.x; try! ledger.recordPosted(segment.ordinal)
+            }
+            if let semantic { keys.append(semantic.key) }
+            host.acknowledgeCausalInput(context, applied: ledger.applied)
+        }
+        for _ in 0..<25 { XCTAssertTrue(phone.sendInputMoves([RemoteAction(action: "move", x: 1, epoch: 7)])) }
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "a", epoch: 7)))
+        let original = upstream.removeFirst()
+        XCTAssertEqual(original.input?.segments.map(\.ordinal), [1])
+        let deadline = Date().addingTimeInterval(3)
+        while upstream.isEmpty && Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
+        let resent = try XCTUnwrap(upstream.first)
+        XCTAssertEqual(resent.input?.segments.map(\.ordinal), Array(1...24))
+        // RTT above the retransmit interval: the original's ACK arrives first and must release the queue.
+        try host.receiveInputFixtureForTesting(original)
+        try phone.receiveInputFixtureForTesting(downstream.removeFirst())
+        XCTAssertTrue(upstream.contains { $0.action.action == "key" }, "The late ACK for the first checkpoint drains deferred work")
+        var rounds = 0
+        while !upstream.isEmpty || !downstream.isEmpty {
+            rounds += 1; XCTAssertLessThan(rounds, 100); if rounds >= 100 { break }
+            while !upstream.isEmpty { try host.receiveInputFixtureForTesting(upstream.removeFirst()) }
+            while !downstream.isEmpty { try phone.receiveInputFixtureForTesting(downstream.removeFirst()) }
+        }
+        XCTAssertEqual(displacement, 25); XCTAssertEqual(keys, ["a"])
+        XCTAssertTrue(phone.connected); XCTAssertTrue(host.connected)
+    }
+
+    func testUnansweredCheckpointResendsAreBoundedThenRequestOneRebase() async throws {
+        let (host, phone) = rig(); defer { host.stop(); phone.stop() }
+        var upstream: [ControlPacket] = [], downstream: [ControlPacket] = []
+        host.inputPacketSenderForTesting = { downstream.append($0); return true }
+        phone.inputPacketSenderForTesting = { upstream.append($0); return true }
+        phone.requestCausalInput(epoch: 7)
+        try host.receiveInputFixtureForTesting(upstream.removeFirst())
+        try phone.receiveInputFixtureForTesting(downstream.removeFirst())
+        upstream.removeAll()
+        XCTAssertTrue(phone.sendInputMoves([RemoteAction(action: "move", x: 1, epoch: 7)]))
+        let deadline = Date().addingTimeInterval(15)
+        while !upstream.contains(where: { $0.input?.kind == "rebase" }) && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        let barriers = upstream.filter { $0.input?.kind == "barrier" }.count
+        XCTAssertEqual(barriers, 1 + RemoteCoordinator.maximumReliableCheckpointRetransmits)
+        XCTAssertEqual(upstream.filter { $0.input?.kind == "rebase" }.count, 1)
+        try await Task.sleep(nanoseconds: 1_200_000_000)
+        XCTAssertEqual(upstream.filter { $0.input?.kind == "barrier" }.count, barriers, "No resends while recovery is pending")
+        XCTAssertTrue(phone.connected); XCTAssertTrue(host.connected); XCTAssertTrue(host.isRunning)
     }
 
     func testOneSecond240HzPencilPressureStallRetainsEverySampleAndEndOrder() throws {
