@@ -49,6 +49,7 @@ extension HostPowerSnapshot {
 final class HostBatteryWatch {
     private let power: HostPowerSourceReading
     private(set) var onBattery: Bool
+    /// Called when a power-source notification changes `onBattery`.
     var onChange: (() -> Void)?
     private var source: CFRunLoopSource?
     private var retainedSelf: Unmanaged<HostBatteryWatch>?
@@ -58,27 +59,32 @@ final class HostBatteryWatch {
         onBattery = power.snapshot().onBatteryPower
     }
 
-    func refresh() {
+    /// Rereads the power source; true when `onBattery` changed.
+    @discardableResult
+    func refresh() -> Bool {
         let now = power.snapshot().onBatteryPower
-        guard now != onBattery else { return }
+        guard now != onBattery else { return false }
         onBattery = now
-        onChange?()
+        return true
     }
 
-    func start() {
-        guard retainedSelf == nil else { return }
+    /// False when macOS gave no notification source; callers then rely on `refresh()` alone.
+    @discardableResult
+    func start() -> Bool {
+        guard retainedSelf == nil else { return source != nil }
         let retained = Unmanaged.passRetained(self)
         retainedSelf = retained
         let callback: IOPowerSourceCallbackType = { context in
             guard let context else { return }
             let watch = Unmanaged<HostBatteryWatch>.fromOpaque(context).takeUnretainedValue()
-            MainActor.assumeIsolated { watch.refresh() }
+            MainActor.assumeIsolated { if watch.refresh() { watch.onChange?() } }
         }
         if let created = IOPSNotificationCreateRunLoopSource(callback, retained.toOpaque())?.takeRetainedValue() {
             CFRunLoopAddSource(CFRunLoopGetMain(), created, .commonModes)
             source = created
         }
         refresh()
+        return source != nil
     }
 
     func stop() {
@@ -87,6 +93,41 @@ final class HostBatteryWatch {
         source = nil
         retainedSelf = nil
         retained.release()
+    }
+}
+
+/// The idle-sleep and display assertions together, rechecking the power source on every apply.
+@MainActor
+final class HostPowerAssertions {
+    private let system: HostKeepAwake
+    private let display: HostKeepAwake
+    let battery: HostBatteryWatch
+
+    init(system: HostKeepAwake = HostKeepAwake(backend: .idleSystem), display: HostKeepAwake = HostKeepAwake(),
+         battery: HostBatteryWatch? = nil) {
+        self.system = system
+        self.display = display
+        self.battery = battery ?? HostBatteryWatch()
+    }
+
+    var systemHeld: Bool { system.isActive }
+    var displayHeld: Bool { display.isActive }
+
+    /// False when idle-sleep prevention was wanted but macOS refused the assertion.
+    @discardableResult
+    func apply(keepAwake: Bool, sharing: Bool, phoneConnected: Bool, awayArmed: Bool) -> Bool {
+        battery.refresh()
+        let wanted = HostPowerPolicy.assertions(keepAwake: keepAwake, sharing: sharing, phoneConnected: phoneConnected,
+                                                awayArmed: awayArmed, onBattery: battery.onBattery)
+        var acquired = true
+        if wanted.system { acquired = system.start() } else { _ = system.stop() }
+        if wanted.display { _ = display.start() } else { _ = display.stop() }
+        return acquired
+    }
+
+    func releaseAll() {
+        _ = display.stop()
+        _ = system.stop()
     }
 }
 

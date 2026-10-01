@@ -657,8 +657,8 @@ struct HostReadyPage: View {
             .modifier(HostPlate())
         }
         .sheet(isPresented: $choosing) {
-            HostConsentView(state: state, confirm: { openAtLogin, keepAwake in
-                actions.confirmBackgroundChoices(openAtLogin, keepAwake)
+            HostConsentView(state: state, confirm: { choices in
+                actions.confirmBackgroundChoices(choices.openAtLogin, choices.keepAwake)
                 choosing = false
             }, cancel: state.consentPending ? nil : { choosing = false })
             .interactiveDismissDisabled(state.consentPending)
@@ -741,6 +741,11 @@ struct HostCheckRow: View {
             Button(state.consentPending ? "Choose…" : "Change…", action: reviewChoices)
                 .buttonStyle(HostButtonStyle(kind: .plate, height: 28))
                 .accessibilityIdentifier("farside.setup.reviewChoices")
+        case .openLoginItems:
+            Button("Allow…", action: actions.openLoginItems)
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 28))
+                .accessibilityLabel("Open Login Items in System Settings")
+                .accessibilityIdentifier("farside.setup.allowLoginItem")
         case .resumeSharing:
             Button("Resume", action: actions.resumeSharing)
                 .buttonStyle(HostButtonStyle(kind: .plate, height: 28))

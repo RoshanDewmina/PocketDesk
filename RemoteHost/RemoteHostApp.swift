@@ -20,13 +20,16 @@ struct RemoteHostApp: App {
         appDelegate.onLaunch = { launchedAsLoginItem in
             HostAppActivation.shared.start()
             if model.presentsSetupAtLaunch && !Self.e2eActive { HostAppActivation.shared.bringForward() }
+            else if model.presentsConsentAtLaunch(launchedAsLoginItem: launchedAsLoginItem) && !Self.e2eActive {
+                DispatchQueue.main.async { HostAppActivation.shared.showSetupOrSettings(needsSetup: true) }
+            }
             // With the icon hidden, a launch from Finder or Spotlight would otherwise show nothing.
             else if !model.menuBarIconShown && !launchedAsLoginItem && !Self.e2eActive {
                 DispatchQueue.main.async { HostAppActivation.shared.showSetupOrSettings(needsSetup: false) }
             }
         }
         appDelegate.onReopen = {
-            let destination = HostMenuBarIconPolicy.reopenDestination(needsSetup: model.needsSetup,
+            let destination = HostMenuBarIconPolicy.reopenDestination(needsSetup: model.needsSetup || model.consentPending,
                                                                       iconShown: model.menuBarIconShown)
             HostAppActivation.shared.showSetupOrSettings(needsSetup: destination == .setup)
         }

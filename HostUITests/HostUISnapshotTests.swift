@@ -229,20 +229,25 @@ final class HostUISnapshotTests: XCTestCase {
     }
 
     func testConsentChoices() throws {
-        var confirmed: (Bool, Bool)?
         let fresh = ready(.ready) {
             $0.consentPending = true
             $0.openAtLogin = false
             $0.keepAwake = false
         }
-        try render("setup-5-consent-new", HostConsentView(state: fresh, confirm: { confirmed = ($0, $1) }))
-        XCTAssertNil(confirmed, "Nothing is applied until Continue")
-        try render("setup-5b-consent-prior-choices", HostConsentView(state: ready(.ready) {
-            $0.consentPending = true
-            $0.openAtLogin = true
-            $0.keepAwake = true
-        }, confirm: { _, _ in }))
-        try render("setup-5c-consent-change", HostConsentView(state: ready(.ready), confirm: { _, _ in }, cancel: {}))
+        let sheetLimit = HostTheme.setupSize.height
+        for (name, state, cancel) in [
+            ("setup-5-consent-new", fresh, false),
+            ("setup-5b-consent-prior-choices", ready(.ready) {
+                $0.consentPending = true
+                $0.openAtLogin = true
+                $0.keepAwake = true
+            }, false),
+            ("setup-5c-consent-change", ready(.ready), true)
+        ] {
+            let bitmap = try render(name, HostConsentView(state: state, confirm: { _ in }, cancel: cancel ? {} : nil))
+            let height = CGFloat(bitmap.pixelsHigh) / (CGFloat(bitmap.pixelsWide) / 640)
+            XCTAssertLessThanOrEqual(height, sheetLimit - 40, "\(name) fits over the \(sheetLimit) pt setup window")
+        }
         try render("settings-keep-awake-on-battery", HostSettingsView(state: ready(.ready) {
             $0.keepAwake = true
             $0.keepAwakePausedOnBattery = true

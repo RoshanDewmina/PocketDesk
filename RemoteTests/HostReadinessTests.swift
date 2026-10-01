@@ -150,6 +150,25 @@ final class HostReadinessTests: XCTestCase {
         XCTAssertTrue(existing.consentPending())
     }
 
+    func testConsentOpensAtLaunchOnlyWhenTheLaunchCannotBeALoginItemLaunch() {
+        typealias P = HostLaunchPolicy
+        XCTAssertTrue(P.presentsConsent(step: .done, consentPending: true, launchedAsLoginItem: false,
+                                        loginItemRegistered: false))
+        XCTAssertFalse(P.presentsConsent(step: .done, consentPending: true, launchedAsLoginItem: true,
+                                         loginItemRegistered: false), "Never a modal at login")
+        XCTAssertFalse(P.presentsConsent(step: .done, consentPending: true, launchedAsLoginItem: false,
+                                         loginItemRegistered: true),
+                       "A registered login item may have launched without the Apple event")
+        XCTAssertFalse(P.presentsConsent(step: .done, consentPending: false, launchedAsLoginItem: false,
+                                         loginItemRegistered: false))
+        XCTAssertFalse(P.presentsConsent(step: .pairPhone, consentPending: true, launchedAsLoginItem: false,
+                                         loginItemRegistered: false), "Unfinished setup asks on its own Ready page")
+
+        XCTAssertTrue(P.presentsSetup(step: .screenRecording, pairingDeferred: false))
+        XCTAssertFalse(P.presentsSetup(step: .pairPhone, pairingDeferred: true))
+        XCTAssertFalse(P.presentsSetup(step: .done, pairingDeferred: false), "Pending consent alone doesn't open setup")
+    }
+
     func testNewPairingUsesSelectedServiceWithoutChangingCurrentConnection() {
         let saved = "wss://saved.example/signal"
         let staging = "wss://signal-staging.getfarside.com/signal"

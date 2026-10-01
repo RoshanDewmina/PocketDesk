@@ -191,9 +191,7 @@ final class RemoteHostModel: ObservableObject {
     private lazy var lanWake = HostLANWakeService(resolve: { [weak self] id in
         try? self?.wakeTargets.read().first { $0.id == id }
     }, send: { LANMagicPacketSender().send($0) })
-    private let keepAwake = HostKeepAwake()
-    private let remoteAccessAwake = HostKeepAwake(backend: .idleSystem)
-    private let batteryWatch = HostBatteryWatch()
+    private let powerAssertions = HostPowerAssertions()
     private let displayWake = HostDisplayWake()
     private var screenLocked = false
     private var unavailabilityTeardown: Task<Void, Never>?
@@ -352,8 +350,13 @@ final class RemoteHostModel: ObservableObject {
         )
     }
     var needsSetup: Bool { setupStep != .done }
-    /// Setup opens by itself at launch unless only pairing is left and the person chose to do it later.
-    var presentsSetupAtLaunch: Bool { (needsSetup && !(setupStep == .pairPhone && pairingDeferred)) || consentPending }
+    var presentsSetupAtLaunch: Bool { HostLaunchPolicy.presentsSetup(step: setupStep, pairingDeferred: pairingDeferred) }
+
+    func presentsConsentAtLaunch(launchedAsLoginItem: Bool) -> Bool {
+        HostLaunchPolicy.presentsConsent(step: setupStep, consentPending: consentPending,
+                                         launchedAsLoginItem: launchedAsLoginItem,
+                                         loginItemRegistered: loginItemState.isRegistered)
+    }
 
     var setupStep: HostSetupStep {
         .current(
@@ -512,13 +515,11 @@ final class RemoteHostModel: ObservableObject {
         loadPendingServerRemoval()
         refreshBackgroundStates()
         background.onChange = { [weak self] in self?.refreshBackgroundStates() }
-        onBattery = batteryWatch.onBattery
-        batteryWatch.onChange = { [weak self] in
-            guard let self else { return }
-            self.onBattery = self.batteryWatch.onBattery
-            self.updatePowerAssertions()
+        onBattery = powerAssertions.battery.onBattery
+        powerAssertions.battery.onChange = { [weak self] in self?.updatePowerAssertions() }
+        if !powerAssertions.battery.start() {
+            events.record(.error, "Power source notifications unavailable; battery state rechecked on wake and sharing changes")
         }
-        batteryWatch.start()
         NativeCodecCapability.warmUp()
         NativeHEVCCapability.warmUp()
         NativeHEVC444Capability.warmUp()
@@ -678,6 +679,7 @@ final class RemoteHostModel: ObservableObject {
                 guard let self else { return }
                 self.captureApproval.checkSoon(at: ProcessInfo.processInfo.systemUptime)
                 self.pollPermissions()
+                self.refreshBackgroundStates()
             }
         })
         bigText.host = self
@@ -1147,7 +1149,11 @@ final class RemoteHostModel: ObservableObject {
     /// The one-time choice from setup. Automatic recovery is a separate choice and stays as it was.
     func confirmBackgroundChoices(openAtLogin wanted: Bool, keepAwake: Bool) {
         setKeepAwake(keepAwake)
-        if wanted != background.loginWanted || wanted != loginItemState.isRegistered { setOpenAtLogin(wanted) }
+        if let problem = background.applyLoginChoice(wanted) {
+            detail = problem
+            events.record(.error, problem)
+        }
+        refreshBackgroundStates()
         preferences.acceptedConsentVersion = HostPreferences.consentVersion
         consentPending = false
         events.record(.settings, "Background choices confirmed: open at login \(wanted ? "on" : "off"), "
@@ -3176,6 +3182,7 @@ final class RemoteHostModel: ObservableObject {
             }
             tearDownForUnavailability(presence)
         case .recover:
+            if event == .systemDidWake { updatePowerAssertions() }
             if event == .screenUnlocked {
                 guard screenLocked else { return }
                 screenLocked = false
@@ -3236,16 +3243,13 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func updatePowerAssertions() {
-        let wanted = HostPowerPolicy.assertions(keepAwake: keepAwakeEnabled && !awayLockFailed, sharing: active,
-                                                phoneConnected: connection.connected && !phonePause.isPaused,
-                                                awayArmed: away.holdsDisplayAwake, onBattery: onBattery)
-        if wanted.system {
-            if !remoteAccessAwake.start() { detail = "Farside couldn’t keep this Mac awake. Normal sleep settings still apply." }
-        } else {
-            _ = remoteAccessAwake.stop()
+        if !powerAssertions.apply(keepAwake: keepAwakeEnabled && !awayLockFailed, sharing: active,
+                                  phoneConnected: connection.connected && !phonePause.isPaused,
+                                  awayArmed: away.holdsDisplayAwake) {
+            detail = "Farside couldn’t keep this Mac awake. Normal sleep settings still apply."
         }
-        if wanted.display { _ = keepAwake.start() } else { _ = keepAwake.stop() }
-        keepAwakeActive = remoteAccessAwake.isActive
+        if onBattery != powerAssertions.battery.onBattery { onBattery = powerAssertions.battery.onBattery }
+        keepAwakeActive = powerAssertions.systemHeld
     }
 
     private func sendTextResult(for requestID: String, accepted: Bool) {
@@ -3343,9 +3347,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func releaseKeepAwake() {
-        _ = keepAwake.stop()
-        _ = remoteAccessAwake.stop()
-        keepAwakeActive = remoteAccessAwake.isActive
+        powerAssertions.releaseAll()
+        keepAwakeActive = powerAssertions.systemHeld
     }
 
     private func reconcileStartResult() {

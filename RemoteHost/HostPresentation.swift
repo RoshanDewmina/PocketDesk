@@ -416,7 +416,7 @@ struct HostReadyCheck: Equatable, Identifiable {
     enum Result: Equatable { case pass, waiting, optional, fail }
     enum Fix: Equatable {
         case openSettings(HostSystemSettingsPane)
-        case allowControl, resumeSharing, tryAgain, pairPhone, reviewChoices
+        case allowControl, resumeSharing, tryAgain, pairPhone, reviewChoices, openLoginItems
     }
 
     let id: ID
@@ -505,19 +505,28 @@ struct HostReadyCheck: Equatable, Identifiable {
             : Self(id: .phone, title: "iPhone paired", detail: "No phone paired yet", result: .fail, fix: .pairPhone)
     }
 
-    /// Choosing is required, even choosing off; either choice being off is fine.
+    /// Choosing is required, even choosing off. Once chosen, the row says what macOS is doing now.
     private static func backgroundChoices(_ state: HostViewState) -> Self {
         let title = "Login and keep awake"
         if state.consentPending {
             return Self(id: .backgroundChoices, title: title, detail: "Choose both before you head out",
                         result: .fail, fix: .reviewChoices)
         }
-        if state.openAtLogin && state.loginItem == .needsApproval {
-            return Self(id: .backgroundChoices, title: title, detail: "Open at login needs approval in Login Items",
-                        result: .optional, fix: .reviewChoices)
+        if state.openAtLogin {
+            switch state.loginItem {
+            case .needsApproval:
+                return Self(id: .backgroundChoices, title: title, detail: "Open at login needs approval in System Settings",
+                            result: .optional, fix: .openLoginItems)
+            case .off, .unavailable:
+                return Self(id: .backgroundChoices, title: title, detail: "Open at login isn’t registered",
+                            result: .optional, fix: .reviewChoices)
+            case .on:
+                break
+            }
         }
         return Self(id: .backgroundChoices, title: title,
-                    detail: HostConsentCopy.summary(openAtLogin: state.openAtLogin, keepAwake: state.keepAwake),
+                    detail: HostConsentCopy.summary(opensAtLogin: state.loginItem == .on, keepAwake: state.keepAwake,
+                                                    pausedOnBattery: state.keepAwakePausedOnBattery),
                     result: .pass, fix: .reviewChoices)
     }
 }
@@ -534,7 +543,7 @@ enum HostBackgroundItemCopy {
         case (true, .needsApproval): "On · needs approval in System Settings"
         case (true, .off): "On · not registered yet. Switch off and on to retry"
         case (true, .unavailable): "On · move Farside to Applications first"
-        case (false, .on), (false, .needsApproval): "Off · still listed in Login Items"
+        case (false, .on), (false, .needsApproval): "Off · still listed in System Settings"
         case (false, _): "Off"
         }
     }
@@ -543,7 +552,7 @@ enum HostBackgroundItemCopy {
         switch state {
         case .on: "Reopens after a crash or freeze; your deliberate Quit stays closed"
         case .off: "Farside stays closed if it crashes"
-        case .needsApproval: "Waiting for approval in Login Items"
+        case .needsApproval: "Waiting for approval in System Settings"
         case .unavailable: "Move Farside to Applications first"
         }
     }
@@ -551,31 +560,48 @@ enum HostBackgroundItemCopy {
 
 /// The one-time explanation of open at login and keep-awake, asked again when its version rises.
 enum HostConsentCopy {
-    static let intro = "Nothing here turns on unless you switch it on. You can change both later in Settings."
+    static let intro = "Your current settings are filled in. Nothing changes until Continue."
     static let loginTitle = "Open at login"
-    static let loginBody = "Farside opens by itself when you log in to this Mac, so your iPhone can reach it without "
-        + "you opening Farside first. When this turns on, macOS may show a Login Items notification. "
-        + "Change it any time in Farside Settings › General."
+    static let loginBody = "Farside opens by itself when you log in, so your iPhone can reach this Mac without you "
+        + "opening Farside first. macOS may show a notification that a login item was added. "
+        + "Change it later in Farside’s Settings or in System Settings."
     static let keepAwakeTitle = "Keep this Mac awake while sharing"
     static let keepAwakeBody = "While sharing is on and no phone is connected, Farside stops this Mac from going to "
         + "sleep when it’s idle, so your iPhone can still reach it. The screen still turns off as usual. "
         + "On battery this pauses until you plug in."
-    static let alwaysTrue = "Either way, while your iPhone is connected Farside keeps the screen on. Farside never "
-        + "unlocks this Mac: if it locks, sharing stops until someone unlocks it here. Closing the lid or "
-        + "choosing Sleep still sleeps it."
+    static let alwaysTrue = "Either way, while your iPhone is connected and not paused, Farside keeps the screen on. "
+        + "Farside never unlocks this Mac: if it locks, sharing stops until someone unlocks it here. "
+        + "Closing the lid or choosing Sleep still sleeps it."
     static let confirm = "Continue"
+    static let keepCurrent = "Keep current settings"
 
-    static func summary(openAtLogin: Bool, keepAwake: Bool) -> String {
-        (openAtLogin ? "Opens at login" : "Opens when you open it") + " · "
-            + (keepAwake ? "stays awake while sharing" : "sleeps as usual")
+    static func summary(opensAtLogin: Bool, keepAwake: Bool, pausedOnBattery: Bool = false) -> String {
+        let login = opensAtLogin ? "Opens at login" : "Opens when you open it"
+        let awake = !keepAwake ? "sleeps as usual" : pausedOnBattery ? "keep-awake paused on battery" : "stays awake while sharing"
+        return login + " · " + awake
+    }
+}
+
+/// The consent sheet's switches: the person's current choices, so confirming changes nothing unasked.
+struct HostConsentChoices: Equatable {
+    var openAtLogin: Bool
+    var keepAwake: Bool
+
+    init(openAtLogin: Bool, keepAwake: Bool) {
+        self.openAtLogin = openAtLogin
+        self.keepAwake = keepAwake
+    }
+
+    init(_ state: HostViewState) {
+        self.init(openAtLogin: state.openAtLogin, keepAwake: state.keepAwake)
     }
 }
 
 enum HostKeepAwakeCopy {
     static func subtitle(pausedOnBattery: Bool) -> String {
         pausedOnBattery
-            ? "Paused on battery · resumes on power. A connected iPhone still keeps the screen on. Lid close, lock and Sleep still apply."
-            : "Stops idle sleep while sharing with no phone connected; the screen still sleeps. A connected iPhone always keeps the screen on. Pauses on battery. Lid close, lock and Sleep still apply."
+            ? "Paused on battery · resumes on power. While your iPhone is connected and not paused, the screen still stays on. Lid close, lock and Sleep still apply."
+            : "Stops idle sleep while sharing with no phone connected; the screen still sleeps. While your iPhone is connected and not paused, the screen always stays on. Pauses on battery. Lid close, lock and Sleep still apply."
     }
 }
 
