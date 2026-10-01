@@ -1408,6 +1408,7 @@ main {
 }
 /* The band the dotted wordmark is drawn into. Without script the text wordmark stands in. */
 .foot-mark {
+  position: relative;
   flex: 1 1 auto;
   min-height: 96px;
   display: grid;
@@ -1467,6 +1468,172 @@ main {
   }
   .foot-fine {
     font-size: 12px;
+  }
+}
+
+/* ---------- footer games (src/games/arcade.ts) ----------
+   A play button in the wordmark band; while a game runs (.arc-on) the band is its stage. The stage only takes
+   pointers and holds scrolling while playing, so the footer scrolls and clicks as usual otherwise. */
+.arc,
+.arc-stage {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.arc[hidden],
+.arc [hidden] {
+  display: none !important;
+}
+.arc-play,
+.arc-pick {
+  pointer-events: auto;
+}
+.arc-stage {
+  border-radius: 18px;
+  outline: none;
+  visibility: hidden;
+}
+.arc-on .arc-stage {
+  visibility: visible;
+  pointer-events: auto;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.arc-on .arc-stage:focus-visible {
+  outline: 2px solid var(--bone);
+  outline-offset: 3px;
+}
+.arc-play {
+  position: absolute;
+  left: 50%;
+  bottom: 4px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 16px 0 14px;
+  white-space: nowrap;
+  font: 500 14px/1 var(--mono);
+  color: var(--bone);
+  cursor: pointer;
+}
+.arc-play:hover,
+.arc-pk:hover {
+  border-color: var(--bone);
+}
+.arc-play:focus-visible,
+.arc-pk:focus-visible {
+  outline: 2px solid var(--bone);
+  outline-offset: 2px;
+}
+.arc-led {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ember);
+  box-shadow: 0 0 10px var(--ember);
+}
+.arc-gn {
+  color: var(--ash);
+}
+.arc-pick {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 100%;
+}
+.arc-pk {
+  min-height: 32px;
+  padding: 0 12px;
+  font: 500 12px/1 var(--mono);
+  color: var(--bone-2);
+  cursor: pointer;
+}
+.arc-pk[aria-pressed="true"] {
+  background: var(--bone);
+  color: var(--ink);
+  border-color: var(--bone);
+}
+.arc-on .arc-pick {
+  display: none;
+}
+.arc-top {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 6px;
+}
+.arc-hud,
+.arc-cap {
+  padding: 6px 12px;
+  border-radius: 12px;
+  font: 500 12px/1.35 var(--mono);
+  color: var(--bone-2);
+}
+.arc-cap {
+  max-width: 34em;
+}
+.arc-msg {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 16px);
+  padding: 8px 16px;
+  border-radius: 14px;
+  font: 400 15px/1.4 var(--ui);
+  text-align: center;
+  color: var(--bone);
+}
+/* Breakout's bar lives at the bottom of the band: its prompts sit between the word and the bar. */
+.arc-stage[data-game="breakout"] .arc-msg {
+  bottom: auto;
+  top: 60%;
+}
+.arc-stage[data-game="lander"] .arc-msg {
+  bottom: auto;
+  top: 34%;
+}
+.arc-big {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 18px;
+  border-radius: 18px;
+  background: rgba(5, 5, 5, 0.82);
+  font: 800 clamp(56px, 11vw, 132px)/1 var(--dot);
+  color: var(--bone);
+}
+.arc-unit {
+  font: 500 15px/1 var(--mono);
+  color: var(--bone-2);
+}
+@media (max-width: 639px) {
+  .arc-msg {
+    font-size: 14px;
+    padding: 7px 12px;
+  }
+  .arc-hud,
+  .arc-cap {
+    font-size: 11px;
+    padding: 5px 10px;
   }
 }
 
