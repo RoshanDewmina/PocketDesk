@@ -95,7 +95,17 @@ struct RemoteInputEventSink {
         /// Modifier keys held on the phone's hardware keyboard (⌘-click, ⇧-click, ⌥-drag).
         var flags: CGEventFlags = []
         var pencil: PencilFrame? = nil
+        /// How far the pointer moved since the last posted pointer event; zero for buttons.
+        var delta: CGSize = .zero
     }
+
+    /// Host user default; absent means on. `defaults write com.roshan.PocketDesk.RemoteHost input.eventDeltas -bool NO`
+    /// posts moves and drags without `mouseEventDeltaX/Y`, as before the feel pass.
+    static let deltaFieldsKey = "input.eventDeltas"
+    static let deltaFieldsEnabled: Bool = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: deltaFieldsKey) == nil || defaults.bool(forKey: deltaFieldsKey)
+    }()
 
     var pointerLocation: () -> CGPoint
     var mouseSequence: ([MouseEvent]) -> Bool
@@ -104,10 +114,16 @@ struct RemoteInputEventSink {
     var text: ([UniChar]) -> Bool
     var key: (CGKeyCode, CGEventFlags) -> Bool
 
-    static func makeMouseEvent(_ description: MouseEvent) -> CGEvent? {
+    static func makeMouseEvent(_ description: MouseEvent, deltas: Bool = deltaFieldsEnabled) -> CGEvent? {
         guard let event = CGEvent(mouseEventSource: RemoteInputEventSource.shared,
             mouseType: description.type, mouseCursorPosition: description.point, mouseButton: description.button) else { return nil }
         event.setIntegerValueField(.mouseEventClickState, value: description.count)
+        if deltas {
+            // A real mouse reports its motion here; pointer-lock games, 3D viewports and some drag
+            // handlers read it instead of the absolute location.
+            event.setIntegerValueField(.mouseEventDeltaX, value: Int64(description.delta.width.rounded()))
+            event.setIntegerValueField(.mouseEventDeltaY, value: Int64(description.delta.height.rounded()))
+        }
         if !description.flags.isEmpty { event.flags = description.flags }
         if let pen = description.pencil {
             event.setIntegerValueField(.mouseEventSubtype, value: Int64(CGEventMouseSubtype.tabletPoint.rawValue))
@@ -231,6 +247,20 @@ final class RemoteInputDriver {
     private var retiredScrollOrder: [String] = []
     private var scrollDeadline: TimeInterval = 0
     private(set) var momentum = ScrollMomentumGate()
+    /// Host user default; absent means on. `defaults write com.roshan.PocketDesk.RemoteHost input.hostMomentum -bool NO`
+    /// stops advertising `SessionFeature.hostMomentum`, so the phone paces the coast itself as before.
+    static let hostMomentumKey = "input.hostMomentum"
+    static let hostMomentumEnabled: Bool = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: hostMomentumKey) == nil || defaults.bool(forKey: hostMomentumKey)
+    }()
+    /// The coast the Mac runs itself from the phone's lift velocity (`SessionFeature.hostMomentum`).
+    /// It is stepped from the executor's timer, never from a network message, so it runs at the
+    /// rate of a real trackpad whatever the link is doing.
+    static let hostMomentumInterval: TimeInterval = 1.0 / 120
+    var hostMomentum = RemoteInputDriver.hostMomentumEnabled
+    private var coast = ScrollMomentum()
+    var isCoasting: Bool { coast.isRunning }
     private let eventSink: RemoteInputEventSink
     private var activePencil: PencilFrame?
     private let isTrusted: () -> Bool
@@ -340,22 +370,27 @@ final class RemoteInputDriver {
             if upgraded && held && (input.interaction?.hold != externalHoldID || input.interaction?.clickCount != Int(heldClickCount)) { break }
             guard let bounds = validBounds else { break }
             let target: CGPoint
+            // An absolute placement needs the base only for its delta, so it reads without recording.
+            let current = input.action == "moveTo"
+                ? (pointerSnapshot.map { clamped($0, to: bounds) } ?? resolvedBase(now: now, in: bounds).point)
+                : eventPoint(in: bounds)
             if input.action == "moveTo" {
                 // Display-local logical points, exactly as `geometry` described the display.
                 guard input.x >= 0, input.y >= 0 else { break }
                 target = CGPoint(x: bounds.minX + input.x, y: bounds.minY + input.y)
             } else {
-                let current = eventPoint(in: bounds)
                 target = CGPoint(x: current.x + input.x, y: current.y + input.y)
             }
             let point = clamped(target, to: bounds)
             let wasHeld = held
+            // A moving mouse has no click state; a drag carries the press that started it.
             let event = RemoteInputEventSink.MouseEvent(
                 type: wasHeld ? .leftMouseDragged : .mouseMoved,
                 point: point,
                 button: .left,
-                count: wasHeld ? heldClickCount : 1,
-                flags: flags, pencil: input.pencil
+                count: wasHeld ? heldClickCount : 0,
+                flags: flags, pencil: input.pencil,
+                delta: CGSize(width: point.x - current.x, height: point.y - current.y)
             )
             guard eventSink.mouseSequence([event]) else { break }
             if input.pencil?.phase == .moved { activePencil = input.pencil }
@@ -482,11 +517,23 @@ final class RemoteInputDriver {
 
         case "scroll":
             guard let bounds = validBounds else { break }
+            var dx = input.x, dy = input.y
             if upgraded {
                 guard let stream = input.interaction?.stream,
                       let phase = input.interaction?.phase else { break }
                 if let momentumPhase = ScrollMomentumPhase(rawValue: phase) {
                     guard momentum.admit(momentumPhase, stream: stream, at: now) == .post else { break }
+                    if momentumPhase == .began, hostMomentum, dx != 0 || dy != 0 {
+                        // The phone sent its lift velocity: the Mac coasts from here, posting the
+                        // begin event with no travel of its own.
+                        dx = 0; dy = 0
+                        guard coast.start(velocity: CGVector(dx: input.x, dy: input.y), at: now) else {
+                            _ = momentum.interrupt()
+                            break
+                        }
+                    } else if momentumPhase == .ended {
+                        _ = coast.cancel()
+                    }
                 } else {
                     if let activeScroll, now >= scrollDeadline {
                         retireScroll(activeScroll)
@@ -514,9 +561,10 @@ final class RemoteInputDriver {
             let point = eventPoint(in: bounds)
             lastPoint = point
             if upgraded, let detailed = eventSink.scrollDetailed {
-                outcome.accepted = detailed(point, input.x, input.y, input.interaction!.phase!)
+                outcome.accepted = detailed(point, dx, dy, input.interaction!.phase!)
+                if !outcome.accepted, coast.isRunning { _ = coast.cancel(); _ = momentum.interrupt() }
             } else {
-                outcome.accepted = eventSink.scroll(point, input.x, input.y)
+                outcome.accepted = eventSink.scroll(point, dx, dy)
             }
 
         case "text":
@@ -588,10 +636,35 @@ final class RemoteInputDriver {
 
     /// Ends a momentum the phone stopped sending, from the host's periodic timer.
     func expireMomentum(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
-        if momentum.expire(at: now) { postMomentumEnd() }
+        if momentum.expire(at: now) { _ = coast.cancel(); postMomentumEnd() }
+    }
+
+    /// One step of the Mac-run coast. Returns false once there is nothing left to post, so the
+    /// caller's timer can stop. Each step renews the gate, like a phone-sent `momentumChanged` would.
+    @discardableResult
+    func stepHostMomentum(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard coast.isRunning, let stream = momentum.active else { _ = coast.cancel(); return false }
+        switch coast.step(at: now) {
+        case .changed(let delta)?:
+            guard momentum.admit(.changed, stream: stream, at: now) == .post else { _ = coast.cancel(); return false }
+            guard delta != .zero else { return true }
+            if eventSink.scrollDetailed?(lastPoint, delta.width, delta.height, ScrollMomentumPhase.changed.rawValue) != true {
+                _ = coast.cancel()
+                _ = momentum.interrupt()
+                return false
+            }
+            return true
+        case .ended?:
+            _ = momentum.admit(.ended, stream: stream, at: now)
+            postMomentumEnd()
+            return false
+        case nil:
+            return true
+        }
     }
 
     private func endMomentum() {
+        _ = coast.cancel()
         if momentum.interrupt() { postMomentumEnd() }
     }
 

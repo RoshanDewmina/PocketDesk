@@ -1035,6 +1035,7 @@ final class PhoneRemoteModel: ObservableObject {
     var absolutePointerSupported: Bool { supports(SessionFeature.absolutePointer) }
     var middleButtonSupported: Bool { supports(SessionFeature.middleButton) }
     var momentumScrollSupported: Bool { supports(SessionFeature.momentumScroll) }
+    var hostMomentumSupported: Bool { momentumScrollSupported && supports(SessionFeature.hostMomentum) }
     var focusGeometrySupported: Bool { supports(SessionFeature.focusGeometry) }
     var extendedKeysSupported: Bool { supports(SessionFeature.extendedKeys) }
 

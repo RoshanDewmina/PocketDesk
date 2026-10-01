@@ -406,6 +406,7 @@ struct NativeSessionView: View {
                                   pointerScale: couch ? 1 : viewport.scale, doubleClickInterval: model.doubleClickInterval,
                                   middleClickAvailable: model.middleButtonSupported,
                                   momentumScroll: model.momentumScrollSupported,
+                                  hostMomentum: model.hostMomentumSupported,
                                   hardwareKeys: model.canControl && !showControls && !showVoiceInput && !keyboardOpen,
                                   // Couch has no picture to place an absolute pointer on: relative motion only.
                                   hardwarePointer: !couch && model.canControl && model.absolutePointerSupported

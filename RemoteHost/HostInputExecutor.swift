@@ -101,13 +101,14 @@ final class HostInputExecutor: @unchecked Sendable {
         return true
     }
     private func post(_ admitted: Admitted, ticket: UInt64,
-                      routeAuthority: (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome) -> Receipt {
+                      routeAuthority: @escaping (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome) -> Receipt {
         let start = MachClock.nowMs(), now = clock()
         var outcome = RemoteInputOutcome(textRequestID: admitted.action.action == "text" ? admitted.action.key : nil)
         if ticket == generation, now < admitted.expires, driver.enabled, !lease.isExpired(at: now) {
             outcome = routeAuthority { [self] in driver.handle(admitted.action, upgraded: admitted.upgraded, now: now) }
             lease.record(action: admitted.action.action, accepted: outcome.accepted, at: now)
             if outcome.holdEvent == .ended { lease.cancel() }
+            coastIfStarted(routeAuthority)
         }
         return Receipt(outcome: outcome, generation: ticket, point: driver.lastPoint,
                        externalHold: driver.externalHoldID, enabled: driver.enabled,
@@ -143,6 +144,33 @@ final class HostInputExecutor: @unchecked Sendable {
     private var lease = RemoteInputLease()
     static let maximumQueued = 128
     static let maximumQueuedBytes = 256 * 1024
+
+    /// The Mac-run scroll coast: a 120 Hz timer on the posting queue, under the same lock as every
+    /// other post. The route authority is the one the `momentumBegan` arrived with; the driver stops
+    /// the coast itself the moment any other input lands or the peer goes away.
+    private var coastTimer: DispatchSourceTimer?
+    private func coastIfStarted(_ routeAuthority: @escaping (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome) {
+        guard driver.isCoasting, coastTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + RemoteInputDriver.hostMomentumInterval,
+                       repeating: RemoteInputDriver.hostMomentumInterval, leeway: .milliseconds(1))
+        timer.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.withAuthority {
+                let running = routeAuthority { [self] in
+                    RemoteInputOutcome(accepted: self.driver.stepHostMomentum(now: self.clock()))
+                }.accepted
+                if !running { self.stopCoast() }
+            }
+        }
+        coastTimer = timer
+        timer.resume()
+    }
+    private func stopCoast() {
+        coastTimer?.cancel()
+        coastTimer = nil
+    }
+    var isCoasting: Bool { withAuthority { driver.isCoasting } }
 
     init(driver: RemoteInputDriver = RemoteInputDriver(),
          queue: DispatchQueue = DispatchQueue(label: "farside.input.post", qos: .userInteractive),
@@ -204,6 +232,7 @@ final class HostInputExecutor: @unchecked Sendable {
                     outcome = routeAuthority { [self] in driver.handle(action, upgraded: upgraded, now: now) }
                     lease.record(action: action.action, accepted: outcome.accepted, at: now)
                     if outcome.holdEvent == .ended { lease.cancel() }
+                    coastIfStarted(routeAuthority)
                 }
                 return Receipt(outcome: outcome, generation: ticket, point: driver.lastPoint,
                                externalHold: driver.externalHoldID, enabled: driver.enabled,
@@ -221,6 +250,7 @@ final class HostInputExecutor: @unchecked Sendable {
             let outcome = driver.handle(action, upgraded: upgraded, now: now, pointerSnapshot: pointerSnapshot)
             lease.record(action: action.action, accepted: outcome.accepted, at: now)
             if outcome.holdEvent == .ended { lease.cancel() }
+            coastIfStarted { $0() }
             return outcome
         }
     }

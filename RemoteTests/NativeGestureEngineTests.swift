@@ -126,6 +126,29 @@ final class NativeGestureEngineTests: XCTestCase {
         }
     }
 
+    func testAThreeFingerSwipeFiresOnceHoweverLongOrFarTheFingersKeepGoing() {
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 100, 100), touch(2, 130, 100), touch(3, 160, 100)], at: 1)
+        input.update([touch(1, 20, 100), touch(2, 50, 100), touch(3, 80, 100)], at: 1.15)
+        XCTAssertEqual(log.workspaceSwipes, [.left])
+        // Keep sliding, reverse past the origin, pause well past the gesture window, slide again.
+        input.update([touch(1, -60, 100), touch(2, -30, 100), touch(3, 0, 100)], at: 1.3)
+        input.update([touch(1, 200, 100), touch(2, 230, 100), touch(3, 260, 100)], at: 1.5)
+        input.update([touch(1, 200, 100), touch(2, 230, 100), touch(3, 260, 100)], at: 2.6)
+        input.update([touch(1, 300, 100), touch(2, 330, 100), touch(3, 360, 100)], at: 2.8)
+        input.update([touch(1, 300, 100), touch(2, 330, 100)], at: 2.9)
+        input.update([touch(1, 300, 100)], at: 2.95)
+        input.update([], at: 3)
+        XCTAssertEqual(log.workspaceSwipes, [.left], "One gesture, one shortcut")
+        XCTAssertEqual(log.middle, 0)
+        XCTAssertTrue(log.clicks.isEmpty && log.moves.isEmpty && log.scrollPhases.isEmpty)
+        // The next gesture is a new one.
+        input.update([touch(4, 100, 100), touch(5, 130, 100), touch(6, 160, 100)], at: 4)
+        input.update([touch(4, 180, 100), touch(5, 210, 100), touch(6, 240, 100)], at: 4.15)
+        input.update([], at: 4.3)
+        XCTAssertEqual(log.workspaceSwipes, [.left, .right])
+    }
+
     func testThreeFingerGestureRequiresControlAndRejectsIncoherentMovement() {
         for (enabled, pan) in [(false,false), (true,true)] {
             let log = CommandLog(); let input = engine(log, enabled: enabled, panMode: pan)
