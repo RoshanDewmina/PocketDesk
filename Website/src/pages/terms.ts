@@ -7,8 +7,6 @@ import { docBody, ownerComment, pageHero, type Section } from "./doc";
 import { detail, email, ogUrl, page, type Assets } from "./layout";
 import { breadcrumbs, graph, webPage } from "./schema";
 
-const P = config.pricing;
-
 const OPEN_ITEMS = [
   "DRAFT: counsel must review everything on this page before launch. Remove the draft banner only after sign-off.",
   "Contracting party: the legal name, with email contact only (owner decision 30 Sep 2026: no postal address published).",
@@ -22,12 +20,12 @@ const S: Section[] = [
   {
     id: "agreement",
     title: "Who these terms are between",
-    body: html`<p>These terms are between you and ${detail(config.contact.legalName, "legal name")} (“we”, “us”). They cover the Farside iPhone and iPad app, Farside for Mac, our connection and relay service, and this website. By using any of them, you agree to these terms.</p>`,
+    body: html`<p>These terms are between you and ${detail(config.contact.legalName, "legal name")} (“we”, “us”). They cover the Farside iPhone app, Farside for Mac, our connection and relay service, and this website. By using any of them, you agree to these terms.</p>`,
   },
   {
     id: "what",
     title: "What Farside is",
-    body: html`<p>Farside lets you see and control your own Mac from your iPhone or iPad. It is free when your devices are on the same local network. The optional Farside Anywhere plan adds access over the internet.</p>`,
+    body: html`<p>Farside lets you see and control your own Mac from your iPhone. It is free when your devices are on the same local network. The optional Farside Anywhere plan, when it is available, adds access over the internet.</p>`,
   },
   {
     id: "your-mac",
@@ -41,13 +39,13 @@ const S: Section[] = [
   {
     id: "apple",
     title: "The app, Apple and these terms",
-    body: html`<p>The iPhone and iPad app is licensed to you under Apple’s standard Licensed Application End User License Agreement, and these terms add to it. Apple is not responsible for the app or these terms. Farside for Mac is a free download from this website; you may install and use it with Farside, but please don’t sell it, modify and redistribute it, or use it to build a competing service.</p>`,
+    body: html`<p>The iPhone app is licensed to you under Apple’s standard Licensed Application End User License Agreement, and these terms add to it. Apple is not responsible for the app or these terms. Farside for Mac is a free download from this website; you may install and use it with Farside, but please don’t sell it, modify and redistribute it, or use it to build a competing service.</p>`,
   },
   {
     id: "anywhere",
     title: "The Anywhere plan",
     body: html`<ul>
-  <li>Anywhere is an auto-renewing subscription sold inside the app through Apple, monthly or yearly. New subscribers get a ${P.trialDays}-day free trial.</li>
+  <li>Anywhere is an auto-renewing subscription sold inside the app through Apple, monthly or yearly. Any free trial is shown before you subscribe.</li>
   <li>The price is shown before you subscribe. Payment is charged to your Apple Account when you confirm the purchase, and the subscription renews unless you cancel at least 24 hours before the end of the current period.</li>
   <li>Manage or cancel any time in Settings › your name › Subscriptions. Refunds are handled by Apple under its policies.</li>
   <li>One subscription works on up to 3 of your devices.</li>
@@ -67,7 +65,7 @@ const S: Section[] = [
   {
     id: "privacy",
     title: "Privacy",
-    body: html`<p>The <a href="/privacy">privacy policy</a> explains what we collect and why. In short: no account, no ads, no tracking, and we never see your screen.</p>`,
+    body: html`<p>The <a href="/privacy">privacy policy</a> explains what we collect and why. In short: no account, no ads, no tracking.</p>`,
   },
   {
     id: "open-source",

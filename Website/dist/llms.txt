@@ -1,13 +1,13 @@
 # Farside
 
-> Farside lets you see and control your own Mac from your iPhone or iPad. The whole screen is a trackpad with click haptics, a big sharp pointer drawn by the phone, zoom that follows the pointer, voice dictation into the Mac and a clipboard that goes both ways. Pairing is a QR code approved on the Mac, with no account, and everything is encrypted end to end. Farside is in beta and coming soon to the App Store; anyone can join the beta at https://getfarside.com/#beta.
+> Farside lets you see and control your own Mac from your iPhone. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the phone keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. Farside is heading into a TestFlight beta, with the App Store to follow; anyone can join the beta at https://getfarside.com/#beta.
 
 Key facts:
 
 - Free on the same local network as the Mac, with no account and no ads.
-- The Anywhere plan adds access over the internet through an encrypted relay: CA$7.99 a month or CA$59.99 a year, with a 7-day free trial, sold only inside the iPhone and iPad app through Apple.
-- Farside for Mac (the companion that runs on the Mac) will be a free download from this website, signed with an Apple Developer ID and notarized by Apple. Farside for iPhone and iPad will be on the App Store.
-- Planned requirements: macOS 26 or later on a Mac with Apple silicon (M1 or later); iOS 26 or later; iPadOS 26 or later.
+- Farside Anywhere, a paid plan for using the Mac away from home, is coming after launch. It will be sold only inside the iPhone app through Apple.
+- Farside for Mac (the companion that runs on the Mac) will be a free download from this website, signed with an Apple Developer ID and notarized by Apple. Farside for iPhone will be on the App Store.
+- Planned requirements: macOS 26 or later on a Mac with Apple silicon (M1 or later); iOS 26 or later. iPhone only at launch.
 - "Agent needs you" alerts for AI coding agents running on the Mac arrive as a beta; alerts carry no prompts, file names or screen content.
 - Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; no audio; the Mac must be awake and logged in; no pressure gestures.
 - The website sets no cookies and runs no analytics.
@@ -17,13 +17,6 @@ Key facts:
 
 - [Home](https://getfarside.com/): what Farside does, how it works, features, pricing, FAQ, beta sign-up
 - [About](https://getfarside.com/about): who makes Farside, what it is, how to get in touch
-
-## Guides
-
-- [Control your Mac from your iPhone](https://getfarside.com/control-mac-from-iphone): requirements, setup step by step, gestures, typing and voice, away from home, FAQ
-- [Use your iPhone as a Mac trackpad](https://getfarside.com/iphone-as-mac-trackpad): every gesture, click haptics, the pointer, zoom, keyboard and voice, FAQ
-- [Remote desktop for Mac](https://getfarside.com/remote-desktop-for-mac): free on your own network, the Anywhere plan over the internet, how the encrypted connection works, limits, FAQ
-- [Farside compared](https://getfarside.com/compare): feature table against Astropad Workbench, Jump Desktop, Screens 5 and Remote Mac Desktop Control, as of 28 September 2026, with sources
 
 ## Help
 

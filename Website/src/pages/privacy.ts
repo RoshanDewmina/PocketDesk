@@ -28,7 +28,7 @@ const S: Section[] = [
     id: "short",
     title: "The short version",
     body: html`<ul class="short">
-  <li>Farside lets you see and control your own Mac from your iPhone or iPad. There is no Farside account, and the apps never ask for your name, email address or phone number. If you join the beta waitlist on this website, we keep the email address you give us (see <a href="#waitlist">Beta waitlist</a>).</li>
+  <li>Farside lets you see and control your own Mac from your iPhone. There is no Farside account, and the apps never ask for your name, email address or phone number. If you join the beta waitlist on this website, we keep the email address you give us (see <a href="#waitlist">Beta waitlist</a>).</li>
   <li>What is on your Mac’s screen, what you type and what you say travel between your own devices, encrypted. We do not record, store or look at your screen, keystrokes, clipboard or voice.</li>
   <li>Our servers introduce your devices to each other and, if you subscribe to the Farside Anywhere plan, pass encrypted traffic along when your devices cannot connect directly. To do that they see technical details such as IP addresses, timing and data volume, and a random identifier for each paired Mac.</li>
   <li>We check your subscription with Apple. Apple handles your payment; we never see your card or Apple Account details.</li>
@@ -83,7 +83,7 @@ const S: Section[] = [
     title: "Beta waitlist",
     body: html`<p>If you join the beta waitlist on this website, we store your email address, the page you signed up from, the version of the sign-up wording you agreed to and the time you signed up. We use them only to send you the beta invite and news about the launch.</p>
 <p>We also store a random code that lets you unsubscribe. The invite and launch news are sent by us.</p>
-<p>We keep your sign-up until 12 months after Farside launches, then delete it. Every email we send has an unsubscribe link. If you unsubscribe, we stop emailing you and keep only your address and the date you unsubscribed, so that we don’t contact you again, until that same deletion date.</p>
+<p>We keep your sign-up until 12 months after Farside launches, then delete it. Every email we send has an unsubscribe link. If you unsubscribe, we stop emailing you and keep your sign-up marked as unsubscribed, so that we don’t contact you again, until that same deletion date. To be taken off the list at any time, use that link or email ${email("privacy")} from the address you signed up with, and we will delete your sign-up.</p>
 <p>To stop abuse of the sign-up form, we also keep a salted one-way hash of your IP address. It is usually deleted within an hour, and at the latest the next time anyone signs up after that hour. We cannot turn the hash back into your IP address. The waitlist is stored with Cloudflare (Cloudflare D1).</p>`,
   },
   {
@@ -135,7 +135,7 @@ const S: Section[] = [
     <tr><td>Security audit records (no IP addresses or content)</td><td>30 days</td></tr>
     <tr><td>Service logs (event names and shortened identifiers, no IP addresses or content)</td><td>Up to 7 days</td></tr>
     <tr><td>Support emails</td><td>${tbc("24 months")}</td></tr>
-    <tr><td>Beta waitlist email address and sign-up details</td><td>Until 12 months after launch. If you unsubscribe, only your address and the unsubscribe date are kept until then.</td></tr>
+    <tr><td>Beta waitlist email address and sign-up details</td><td>Until 12 months after launch, or sooner if you ask us to delete it. If you unsubscribe, your sign-up stays marked as unsubscribed until then.</td></tr>
     <tr><td>Hashed IP address used to limit sign-up abuse</td><td>Usually one hour; at the latest until the next sign-up after that</td></tr>
     <tr><td>Data on your devices</td><td>Until you remove the pairing or delete the app</td></tr>
   </tbody>
@@ -189,7 +189,7 @@ ${pageHero({
   crumbs,
   cap: "Privacy policy",
   title: html`Your screen is <em>yours.</em>`,
-  lead: html`How Farside handles information across Farside for iPhone and iPad, Farside for Mac, our connection service and this website. The short version: <b>no account, no ads, no tracking</b>, and we never see your screen.`,
+  lead: html`How Farside handles information across Farside for iPhone, Farside for Mac, our connection service and this website. The short version: <b>no account, no ads, no tracking</b>.`,
   extra: html`<p class="meta-row"><span class="cap">Last updated · <b>${config.legalUpdated}</b></span><span class="cap">Effective · <b>to be confirmed</b></span></p>`,
 })}
 ${docBody(S)}`;

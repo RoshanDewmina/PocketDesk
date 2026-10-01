@@ -12,7 +12,7 @@ import { breadcrumbs, faqPage, graph, howTo, webPage, type QA } from "./schema";
 const R = config.requirements;
 const PATH = "/support";
 const DESC =
-  "Set up Farside, learn the gestures and fix a connection. Plain-language answers for every message in the app, billing help for Anywhere, and how to reach a person.";
+  "Set up Farside, learn the gestures and fix a connection. Plain-language answers for every message in the app, and how to reach a person.";
 
 type Msg = { says: string; means: string; fix: Html };
 
@@ -104,8 +104,8 @@ const MESSAGES: Msg[] = [
   },
   {
     says: "Your Mac isn’t on this network.",
-    means: "Free use works when your phone and Mac share a network. Reaching it over the internet needs the Anywhere plan.",
-    fix: html`Join the same Wi-Fi as your Mac, or try Anywhere free for ${String(config.pricing.trialDays)} days.`,
+    means: "Free use works when your phone and Mac share a network. Using your Mac over the internet (Farside Anywhere) is coming after launch.",
+    fix: html`Join the same Wi-Fi as your Mac.`,
   },
 ];
 
@@ -121,9 +121,9 @@ const SETUP: { name: string; text: string; body: Html }[] = [
     body: html`Screen Recording, so your iPhone can see the screen, and Accessibility, so taps become clicks and typing becomes typing. Farside opens the right settings page; flip the switch and the setup window notices by itself. macOS may ask you to quit and reopen Farside once.`,
   },
   {
-    name: "Get the app on your iPhone or iPad",
-    text: `Get Farside from the App Store. You need ${R.iphone} or ${R.ipad}.`,
-    body: html`${config.launch.appStoreUrl ? html`<a href="${config.launch.appStoreUrl}">Get Farside from the App Store</a>` : html`Get Farside from the App Store <span class="placeholder">(coming soon)</span>`}. You need ${R.iphone} or ${R.ipad}.`,
+    name: "Get the app on your iPhone",
+    text: `Get Farside from the App Store. You need ${R.iphone}.`,
+    body: html`${config.launch.appStoreUrl ? html`<a href="${config.launch.appStoreUrl}">Get Farside from the App Store</a>` : html`Get Farside from the App Store <span class="placeholder">(coming soon)</span>`}. You need ${R.iphone}.`,
   },
   {
     name: "Pair",
@@ -152,7 +152,7 @@ const OPEN_ITEMS = [
 const cantConnect = html`<ol>
   <li>Is the Mac awake and logged in? Farside can’t wake a sleeping Mac or get past the login screen.</li>
   <li>Is the Farside icon in the Mac’s menu bar, with sharing on?</li>
-  <li>Are your phone and Mac on the same network? Or, away from home, is Anywhere active?</li>
+  <li>Are your phone and Mac on the same network?</li>
   <li>Is Local Network allowed for Farside on the phone? Check <b>Settings › Privacy &amp; Security › Local Network</b>.</li>
   <li>Still stuck? Quit Farside on the Mac, open it again, and reconnect. Then write to us.</li>
 </ol>`;
@@ -167,8 +167,9 @@ const permissions = html`<p>If you flipped the switch but Farside still says it 
 <p>macOS sometimes asks again, every so often, whether Farside may keep recording the screen. Say yes on the Mac and sharing picks up where it left off.</p>`;
 
 const billing = html`<ul>
-  <li><b>Try it:</b> Anywhere starts with a ${config.pricing.trialDays}-day free trial, then ${config.pricing.monthly} a month or ${config.pricing.yearly} a year (${config.pricing.final ? "" : "planned pricing, "}Canadian dollars).</li>
-  <li><b>Cancel or change plan:</b> Settings › your name › Subscriptions on your iPhone or iPad. Cancel at least 24 hours before the renewal date to avoid the next charge.</li>
+  <li><b>Free at home:</b> Farside is free when your iPhone and Mac are on the same network. No account, no ads.</li>
+  <li><b>Farside Anywhere:</b> the plan for using your Mac away from home is coming after launch. It will be sold in the app through Apple, and the price will be shown before you subscribe.</li>
+  <li><b>Cancel or change a subscription:</b> Settings › your name › Subscriptions on your iPhone. Cancel at least 24 hours before the renewal date to avoid the next charge.</li>
   <li><b>Refunds:</b> Apple handles them. Request one at <a href="https://reportaproblem.apple.com" rel="noopener">reportaproblem.apple.com</a>.</li>
   <li><b>New phone?</b> Use <b>Restore Purchases</b> in the app’s settings.</li>
   <li>This website never asks for payment details.</li>
@@ -184,7 +185,7 @@ function contact(): Html {
     <div><dt>Security reports</dt><dd>${email("security")}</dd></div>
   </dl>
 </div>
-<p>To help us help you, include what you tried, what the message said, your Mac and iPhone or iPad models, their macOS and iOS versions, and whether both were on the same network. Please don’t send passwords or screenshots of private content.</p>
+<p>To help us help you, include what you tried, what the message said, your Mac and iPhone models, their macOS and iOS versions, and whether both were on the same network. Please don’t send passwords or screenshots of private content.</p>
 <p>Want to test new builds early? <a href="/#beta">Join the beta</a>.</p>`;
 }
 
@@ -203,8 +204,8 @@ export function supportPage(assets: Assets) {
     ["#steer", "How to steer", "Every gesture on one list"],
     ["#cant-connect", "Can’t connect?", "A five-line checklist"],
     ["#messages", "What a message means", "Every message, with the fix"],
-    ["#billing", "Anywhere and billing", "Trial, cancelling, refunds"],
-    ["#contact", "Talk to a human", "Email, phone and post"],
+    ["#billing", "Plans and billing", "Free at home, Anywhere, refunds"],
+    ["#contact", "Talk to a human", "Email, with a reply time"],
   ];
   const body = html`${ownerComment("Owner checklist for /support:", OPEN_ITEMS)}
 ${pageHero({
@@ -222,9 +223,8 @@ ${pageHero({
   <div class="prose">
     <h2 id="setup">Set up Farside</h2>
     <ol class="setup" role="list">${SETUP.map((s, i) => html`<li id="step-${i + 1}"><b>${s.name}.</b> ${s.body}</li>`)}</ol>
-    <p>The <a href="/control-mac-from-iphone">illustrated setup guide</a> walks through the same steps with pictures.</p>
     <h2 id="steer">How to steer</h2>
-    <p>Your finger doesn’t go to the button: the pointer is already on it, and a tap anywhere clicks right there. More in <a href="/iphone-as-mac-trackpad">using your iPhone as a Mac trackpad</a>.</p>
+    <p>Your finger doesn’t go to the button: the pointer is already on it, and a tap anywhere clicks right there.</p>
     ${gestureTable()}
     <p>Force Touch and pressure gestures can’t be done from a phone screen; use right-click or the app’s own buttons instead.</p>
     <h2 id="cant-connect">Can’t connect?</h2>
@@ -240,11 +240,11 @@ ${pageHero({
           html`<details><summary><q>${m.says}</q><span class="pm" aria-hidden="true">+</span></summary><div class="fix"><p>${m.means}</p><p class="do"><b>Fix:</b> ${m.fix}</p></div></details>`,
       )}
     </div>
-    <h2 id="billing">Anywhere and billing</h2>
+    <h2 id="billing">Plans and billing</h2>
     ${billing}
     <h2 id="contact">Talk to a human</h2>
     ${contact()}
-    <p><a href="/privacy">Privacy policy</a> · <a href="/terms">Terms of use (draft)</a> · <a href="/compare">How Farside compares</a></p>
+    <p><a href="/privacy">Privacy policy</a> · <a href="/terms">Terms of use (draft)</a></p>
   </div>
 </div>`;
   return page(
@@ -260,8 +260,8 @@ ${pageHero({
         breadcrumbs(PATH, crumbs),
         howTo(PATH, {
           name: "How to set up Farside",
-          description: "Set up Farside to see and control your Mac from your iPhone or iPad.",
-          tools: ["Mac with macOS 26 or later", "iPhone or iPad with iOS or iPadOS 26 or later"],
+          description: "Set up Farside to see and control your Mac from your iPhone.",
+          tools: ["Mac with macOS 26 or later", "iPhone with iOS 26 or later"],
           steps: SETUP.map((s) => ({ name: s.name, text: s.text })),
         }),
         faqPage(PATH, MSG_QAS),

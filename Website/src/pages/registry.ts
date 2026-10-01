@@ -2,10 +2,6 @@
 // checks all read this list, so adding a page here is enough to wire it everywhere.
 
 import { aboutPage } from "./about";
-import { comparePage } from "./compare";
-import { controlGuidePage } from "./guide-control";
-import { remoteGuidePage } from "./guide-remote";
-import { trackpadGuidePage } from "./guide-trackpad";
 import { homePage } from "./home";
 import type { Assets } from "./layout";
 import { notFoundPage } from "./notfound";
@@ -25,40 +21,11 @@ export type PageDef = {
 // Web pages never live under /help/: the phone app claims /help/* as universal links (AASA), so such a page
 // would open the app instead. Help goes under /support. scripts/build.ts enforces it.
 
+// Held back for the beta launch (1 Oct 2026): the three guides (src/pages/guide-*.ts) and /compare name
+// competitors and describe Anywhere, Away mode and encryption in ways the feature ledger says we can't claim yet.
+// To publish one again, add its entry back here (and its date in dates.ts is still there).
 export const PAGES: PageDef[] = [
   { slug: "home", path: "/", file: "index.html", render: homePage, sitemap: true },
-  {
-    slug: "control-mac-from-iphone",
-    path: "/control-mac-from-iphone",
-    file: "control-mac-from-iphone.html",
-    render: controlGuidePage,
-    sitemap: true,
-    llms: { section: "Guides", title: "Control your Mac from your iPhone", note: "requirements, setup step by step, gestures, typing and voice, away from home, FAQ" },
-  },
-  {
-    slug: "iphone-as-mac-trackpad",
-    path: "/iphone-as-mac-trackpad",
-    file: "iphone-as-mac-trackpad.html",
-    render: trackpadGuidePage,
-    sitemap: true,
-    llms: { section: "Guides", title: "Use your iPhone as a Mac trackpad", note: "every gesture, click haptics, the pointer, zoom, keyboard and voice, FAQ" },
-  },
-  {
-    slug: "remote-desktop-for-mac",
-    path: "/remote-desktop-for-mac",
-    file: "remote-desktop-for-mac.html",
-    render: remoteGuidePage,
-    sitemap: true,
-    llms: { section: "Guides", title: "Remote desktop for Mac", note: "free on your own network, the Anywhere plan over the internet, how the encrypted connection works, limits, FAQ" },
-  },
-  {
-    slug: "compare",
-    path: "/compare",
-    file: "compare.html",
-    render: comparePage,
-    sitemap: true,
-    llms: { section: "Guides", title: "Farside compared", note: "feature table against Astropad Workbench, Jump Desktop, Screens 5 and Remote Mac Desktop Control, as of 28 September 2026, with sources" },
-  },
   {
     slug: "support",
     path: "/support",

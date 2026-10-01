@@ -3,8 +3,9 @@
 //
 // Opt-in only: nothing plays until the button is pressed. Keys reach a game only while its stage has focus;
 // Escape, a press outside it or tabbing away leaves (the run waits, and the button offers Resume). Scrolling is
-// held only inside the stage while playing. ?game=breakout|reach|lander|snake picks the game; preview hosts
-// (*.pages.dev, localhost) also get a small switcher.
+// held only inside the stage while playing. Everyone gets the game the footer carries in data-game (site.config.ts
+// `look.footerGame`); on preview hosts (*.pages.dev, localhost) ?game=breakout|reach|lander|snake overrides it and
+// a small switcher appears.
 
 import type { Game, GameId, Ui } from "./base";
 import { Breakout } from "./breakout";
@@ -59,8 +60,9 @@ class Arcade {
   private helps: Partial<Record<GameId, Game>> = {};
 
   constructor(private host: Host, private mark: HTMLElement) {
-    const q = new URLSearchParams(location.search).get("game") as GameId | null;
-    this.id = q && ORDER.includes(q) ? q : "breakout";
+    const q = preview() ? (new URLSearchParams(location.search).get("game") as GameId | null) : null;
+    const set = host.foot.dataset.game as GameId | undefined;
+    this.id = q && ORDER.includes(q) ? q : set && ORDER.includes(set) ? set : "breakout";
 
     const root = (this.root = el("div", "arc", mark));
     if (preview()) {

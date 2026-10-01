@@ -96,7 +96,7 @@ export function storeButtons(opts: { mac?: boolean } = {}): Html {
     : html`<span class="store">${icon.mac}<span><small>Coming soon</small>Farside for Mac</span><span class="sr-only"> (not available yet)</span></span>`;
   const ios = live && appStoreUrl
     ? html`<a class="store-badge" href="${appStoreUrl}"><img src="/app-store-badge.svg" width="120" height="40" alt="Download on the App Store"></a>`
-    : html`<span class="store">${icon.phone}<span><small>Soon on the</small>App Store</span><span class="sr-only"> (iPhone and iPad app, not available yet)</span></span>`;
+    : html`<span class="store">${icon.phone}<span><small>Soon on the</small>App Store</span><span class="sr-only"> (iPhone app, not available yet)</span></span>`;
   return html`<div class="stores">${opts.mac === false ? "" : mac}${ios}</div>`;
 }
 
@@ -126,7 +126,7 @@ export function guideCards(except?: string): Html {
 
 const NAV: [string, string, PageMeta["current"]?][] = [
   ["/#how", "How it works"],
-  ["/#pricing", "Pricing"],
+  ["/#pricing", "Plans"],
   ["/#faq", "FAQ"],
   ["/support", "Support", "support"],
 ];
@@ -159,13 +159,6 @@ const SOCIAL: [keyof typeof config.social, string][] = [
   ["tiktok", "TikTok"],
 ];
 
-const FOOT_GUIDES: [string, string][] = [
-  ["/control-mac-from-iphone", "Control your Mac from iPhone"],
-  ["/iphone-as-mac-trackpad", "iPhone as a Mac trackpad"],
-  ["/remote-desktop-for-mac", "Remote desktop for Mac"],
-  ["/compare", "Compare"],
-];
-
 /**
  * The end of every page: a full-screen footer that sits under the page and is uncovered as the content lifts
  * away. Its canvas (src/scripts/footer.ts) turns into a giant dotted "farside" that reaches for the pointer;
@@ -177,7 +170,7 @@ function footer(assets: Assets): Html {
   const social = SOCIAL.filter(([key]) => config.social[key]);
   const support = config.contact.supportEmail;
   const link = (href: string, label: string) => html`<li><a class="plate" href="${href}">${label}</a></li>`;
-  return html`<footer class="site-footer" aria-labelledby="foot-title" data-arcade="${assets.games}">
+  return html`<footer class="site-footer" aria-labelledby="foot-title" data-arcade="${assets.games}" data-game="${config.look.footerGame}">
   <canvas class="foot-cv" aria-hidden="true"></canvas>
   <div class="foot-in w">
     <div class="foot-head">
@@ -193,10 +186,9 @@ function footer(assets: Assets): Html {
         ${link("/terms", "Terms")}
         ${support ? html`<li><a class="plate" href="mailto:${support}">${support}</a></li>` : ""}
       </ul>
-      <ul role="list" aria-label="Guides">
-        ${FOOT_GUIDES.map(([href, t]) => link(href, t))}
+      ${social.length ? html`<ul role="list" aria-label="Social">
         ${social.map(([key, label]) => html`<li><a class="plate" href="${config.social[key]!}" rel="me noopener">${label}</a></li>`)}
-      </ul>
+      </ul>` : ""}
     </nav>
     <div class="foot-fine plate">
       <p>© 2026 ${owner}. No cookies, no analytics, no ads.</p>

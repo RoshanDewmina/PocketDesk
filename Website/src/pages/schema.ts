@@ -42,13 +42,12 @@ export function website(): Node {
 
 export function softwareApplication(image: string): Node {
   const P = config.pricing;
-  const note = P.final ? "" : " Planned launch price (draft); the App Store shows the final price in your currency.";
   const offer = (name: string, price: string, description: string) => ({
     "@type": "Offer",
     name,
     price,
     priceCurrency: P.currency,
-    description: description + note,
+    description,
     url: url("/#pricing"),
   });
   return {
@@ -57,27 +56,29 @@ export function softwareApplication(image: string): Node {
     name: "Farside",
     alternateName: "Farside: Remote Desktop",
     description:
-      "See and control your own Mac from your iPhone or iPad, with Farside for Mac running on the Mac. The whole screen is a trackpad with click haptics, a big sharp pointer, zoom that follows you, voice dictation into the Mac and a clipboard that goes both ways. QR pairing with no account, encrypted end to end.",
+      "See and control your own Mac from your iPhone, with Farside for Mac running on the Mac. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the phone keyboard types into the Mac. QR pairing with no account; the Mac approves each phone.",
     url: url("/"),
     image: url(image),
     applicationCategory: "UtilitiesApplication",
     applicationSubCategory: "Remote desktop",
-    operatingSystem: "iOS 26, iPadOS 26, macOS 26",
+    operatingSystem: "iOS 26, macOS 26",
     isAccessibleForFree: true,
     publisher: { "@id": ids.org() },
     featureList: [
-      "The whole screen is a trackpad, with click haptics",
-      "Big, sharp pointer drawn by the phone",
-      "Zoom that follows the pointer",
-      "Voice dictation into the Mac",
-      "Clipboard both ways",
-      "QR pairing with no account",
-      "Encrypted end to end",
+      "The whole screen is a trackpad",
+      "Pinch to zoom in on any part of the Mac",
+      "Type into the Mac from the phone keyboard",
+      "QR pairing with no account; the Mac approves each phone",
     ],
+    // The Anywhere offers return here with their prices once config.pricing.final is true.
     offers: [
       offer("Free at home", "0", "Free on the same local network as your Mac."),
-      offer("Anywhere, monthly", P.monthlyAmount, `Access over the internet, after a ${P.trialDays}-day free trial.`),
-      offer("Anywhere, yearly", P.yearlyAmount, `Access over the internet, after a ${P.trialDays}-day free trial.`),
+      ...(P.final
+        ? [
+            offer("Anywhere, monthly", P.monthlyAmount, `Access over the internet, after a ${P.trialDays}-day free trial.`),
+            offer("Anywhere, yearly", P.yearlyAmount, `Access over the internet, after a ${P.trialDays}-day free trial.`),
+          ]
+        : []),
     ],
   };
 }

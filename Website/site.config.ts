@@ -84,10 +84,12 @@ export const config = {
     tiktok: null as string | null,
   },
 
-  /** Farside Anywhere pricing in Canadian dollars, locked by the owner on 30 Sep 2026. */
+  /**
+   * Farside Anywhere pricing in Canadian dollars. Being re-decided before 23 Oct 2026, so no page, JSON-LD offer
+   * or llms.txt line prints a price while `final` is false; the site says only that Anywhere is a paid plan.
+   */
   pricing: {
-    /** false = draft: offers carry a "planned price" note in JSON-LD and the pages say "planned". */
-    final: true,
+    final: false,
     monthly: "CA$7.99",
     yearly: "CA$59.99",
     yearlyPerMonth: "CA$5.00",
@@ -125,13 +127,22 @@ export const config = {
   requirements: {
     /** D35: Apple silicon only for 1.0. */
     mac: "macOS 26 or later on a Mac with Apple silicon (M1 or later)",
-    /** iPhone and iPad share one requirement line on the home page. */
+    /** 1.0 is iPhone-only (owner, 1 Oct 2026): no published page prints `ipad`; only the held-back guides read it. */
     iphone: "iOS 26 or later",
     ipad: "iPadOS 26 or later",
   },
 
+  /**
+   * The one hero background and the one footer game everyone gets. Preview hosts (*.pages.dev, localhost) can
+   * still compare the others with ?bg=reach|spectrum|aurora|bloom and ?game=breakout|reach|lander|snake.
+   */
+  look: {
+    heroBackground: "reach" as "reach" | "spectrum" | "aurora" | "bloom",
+    footerGame: "breakout" as "breakout" | "reach" | "lander" | "snake",
+  },
+
   /** Last content review of the legal pages. */
-  legalUpdated: "30 September 2026",
+  legalUpdated: "1 October 2026",
 };
 
 export const isPlaceholderSiteUrl = () => config.SITE_URL === PLACEHOLDER_SITE_URL;
@@ -152,6 +163,6 @@ export function pendingLaunch(): string[] {
     ...(config.launch.live ? [] : ["launch.live (App Store banner, badge and downloads off until launch day)"]),
     ...Object.entries(config.launch).filter(([, v]) => v === null).map(([k]) => `launch.${k}`),
     ...Object.entries(config.social).filter(([, v]) => v === null).map(([k]) => `social.${k}`),
-    ...(config.pricing.final ? [] : ["pricing.final (prices shown as planned)"]),
+    ...(config.pricing.final ? [] : ["pricing.final (no prices are shown until pricing is final)"]),
   ];
 }

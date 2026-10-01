@@ -1,5 +1,5 @@
-// The home hero's background, in one of four looks Roshan is choosing between (?bg=reach|spectrum|aurora|bloom
-// on the preview, reach by default). "reach" is concept 21's original halftone art (reach.ts, a 2D canvas in a
+// The home hero's background, in one of four looks (?bg=reach|spectrum|aurora|bloom on preview hosts only;
+// everyone else gets the look the page carries in data-bg, set from site.config.ts `look.heroBackground`). "reach" is concept 21's original halftone art (reach.ts, a 2D canvas in a
 // worker); the other three are one WebGL quad each, drawn here:
 //   spectrum  full-rainbow light curtains hanging from the top, swaying, some columns read as LED dots
 //   aurora    the same curtains in the Reach ember palette only
@@ -14,10 +14,13 @@ import { BLOOM, DOT_CELL, DOT_COLS, T0 } from "./pattern";
 export const LOOKS = ["reach", "spectrum", "aurora", "bloom"] as const;
 export type Look = (typeof LOOKS)[number];
 
-/** The look from ?bg= (preview comparison), else the default. Sets the poster straight away. */
+const preview = () => /(^|\.)pages\.dev$|^localhost$|^127\.0\.0\.1$/.test(location.hostname);
+
+/** The look from ?bg= on a preview host, else the page's data-bg (site.config.ts). Sets the poster straight away. */
 export function pickLook(el: HTMLElement): Look {
-  const q = new URLSearchParams(location.search).get("bg") as Look | null;
-  const look: Look = q && (LOOKS as readonly string[]).includes(q) ? q : "reach";
+  const q = preview() ? (new URLSearchParams(location.search).get("bg") as Look | null) : null;
+  const set = el.dataset.bg as Look | undefined;
+  const look: Look = q && (LOOKS as readonly string[]).includes(q) ? q : set && (LOOKS as readonly string[]).includes(set) ? set : "reach";
   el.dataset.bg = look;
   return look;
 }

@@ -7,7 +7,6 @@ import { faqPage, graph, softwareApplication, webPage, type QA } from "./schema"
 // The home page, kept short (owner, 30 Sep 2026): the hero with the pocket demo and the beta form, three
 // steps, four features, one pricing block, six questions. Guides are linked from the FAQ and the footer.
 
-const P = config.pricing;
 const R = config.requirements;
 const C = config.copy;
 
@@ -94,9 +93,9 @@ const joinNotes = html`<div class="join-notes">
 
 /**
  * The hero background (src/hero-bg/): a CSS poster from the first paint, then a WebGL shader of the same look.
- * Four looks on the preview, ?bg=reach|spectrum|aurora|bloom; the poster here is the default (reach).
+ * Four looks on preview hosts, ?bg=reach|spectrum|aurora|bloom; everyone else gets config.look.heroBackground.
  */
-const heroBg = html`<div class="hero-bg" data-bg="reach" aria-hidden="true"><canvas></canvas></div>`;
+const heroBg = html`<div class="hero-bg" data-bg="${config.look.heroBackground}" aria-hidden="true"><canvas></canvas></div>`;
 
 const hero = html`<section class="hero" id="top" aria-labelledby="hero-title">
   ${heroBg}
@@ -104,7 +103,7 @@ const hero = html`<section class="hero" id="top" aria-labelledby="hero-title">
   <div class="hero-c w">
     <p class="eyebrow"><i></i>Farside · remote desktop for your Mac<i></i></p>
     <h1 class="h1" id="hero-title"><span class="ln dw"><span>Your Mac is far${pd}</span></span> <span class="ln dw"><span>Your reach <em>isn’t.</em></span></span></h1>
-    <p class="sub">Use your Mac from your iPhone or iPad. Free on your own Wi‑Fi.</p>
+    <p class="sub">Use your Mac from your iPhone. Free on your own Wi‑Fi.</p>
     ${joinForm("beta")}
     ${joinNotes}
   </div>
@@ -127,7 +126,7 @@ const how = (assets: Assets) => html`<section class="sec" id="how" aria-labelled
       <li class="step">${art(assets, "art-step2")}<p class="n" aria-hidden="true">02</p><h3>Pair your iPhone</h3><p>Scan the code on your Mac, then approve your phone. No account.</p></li>
       <li class="step">${art(assets, "art-step3")}<p class="n" aria-hidden="true">03</p><h3>Tap Connect</h3><p>Your Mac’s screen appears. Your phone is now its trackpad.</p></li>
     </ol>
-    <p class="req" data-rv="self">You’ll need ${R.mac}, and an iPhone with ${R.iphone} or an iPad with ${R.ipad}.</p>
+    <p class="req" data-rv="self">You’ll need ${R.mac}, and an iPhone with ${R.iphone}.</p>
   </div>
 </section>`;
 
@@ -135,59 +134,54 @@ const features = (assets: Assets) => html`<section class="sec" id="features" ari
   <div class="w">
     ${sh("features-title", "What you get", html`Small screen${pd} <em>Whole</em> Mac${pd}`)}
     <ul class="feats" role="list" data-rv>
-      <li class="feat">${art(assets, "art-feat-pad")}<h3>The screen is a trackpad</h3><p>Slide to move the pointer. Tap to click. You feel each click.</p></li>
-      <li class="feat">${art(assets, "art-feat-zoom")}<h3>Zoom in on small text</h3><p>Pinch to zoom. The view follows the pointer.</p></li>
-      <li class="feat">${art(assets, "art-feat-voice")}<h3>Type or talk</h3><p>Use the keyboard or your voice. Copy and paste works both ways.</p></li>
-      <li class="feat">${art(assets, "art-feat-trust")}<h3>Only your devices</h3><p>It’s encrypted, and your Mac asks before a new iPhone or iPad can connect.</p></li>
+      <li class="feat">${art(assets, "art-feat-pad")}<h3>The screen is a trackpad</h3><p>Slide to move the pointer. Tap to click.</p></li>
+      <li class="feat">${art(assets, "art-feat-zoom")}<h3>Zoom in on small text</h3><p>Pinch to zoom in on any part of your Mac.</p></li>
+      <li class="feat">${art(assets, "art-feat-voice")}<h3>Type from your phone</h3><p>Open the keyboard and type into any field on your Mac.</p></li>
+      <li class="feat">${art(assets, "art-feat-trust")}<h3>Only your devices</h3><p>Your Mac asks before a new iPhone can connect, and pairs only with the phones you approve.</p></li>
     </ul>
   </div>
 </section>`;
 
-/** A price in Doto, with the decimal point set in the UI face (Doto draws "." like a plus). */
-const amount = (price: string) => {
-  const [whole, cents] = price.replace("CA$", "").split(".");
-  return html`<span class="cur">CA$</span>${whole}${cents ? html`${pd}${cents}` : ""}`;
-};
-
+/** No prices until config.pricing.final: Anywhere pricing is being re-decided before 23 Oct 2026. */
 const pricing = html`<section class="sec" id="pricing" aria-labelledby="pricing-title">
   <div class="w">
-    ${sh("pricing-title", "Pricing", html`Free at home${pd} <em>Anywhere</em> for away${pd}`)}
+    ${sh("pricing-title", "Plans", html`Free at home${pd} <em>Anywhere</em> for away${pd}`)}
     <div class="price" data-rv>
       <div class="price-col">
         <h3 class="cap">Free at home</h3>
-        <p class="amt">${amount("CA$0")}</p>
-        <p>When your iPhone or iPad and your Mac are on the same Wi‑Fi. No account, no ads.</p>
+        <p class="amt">Free</p>
+        <p>When your iPhone and your Mac are on the same Wi‑Fi. No account, no ads.</p>
       </div>
       <div class="price-col any">
-        <h3 class="cap">Anywhere</h3>
-        <p class="amt">${amount(P.monthly)}<small>a month</small></p>
-        <p>Or ${P.yearly} a year. Use your Mac when you’re away from home. Starts with a ${P.trialDays}‑day free trial.</p>
+        <h3 class="cap">Farside Anywhere</h3>
+        <p class="amt">Soon</p>
+        <p>Use your Mac when you’re away from home. A paid plan, sold in the app through Apple, coming after launch.</p>
       </div>
     </div>
-    <p class="fine" data-rv="self">Prices in Canadian dollars. Anywhere is sold in the iPhone and iPad app through Apple, which shows your local price first.</p>
+    <p class="fine" data-rv="self">Anywhere pricing will be announced before it goes on sale.</p>
   </div>
 </section>`;
 
 const QAS: QA[] = [
   {
     q: "Is it really free?",
-    a: html`<p>Yes, when your iPhone or iPad and your Mac are on the same Wi‑Fi. No account, no ads. To use your Mac away from home, there’s Anywhere: ${P.monthly} a month or ${P.yearly} a year, after a ${P.trialDays}-day free trial.</p>`,
+    a: html`<p>Yes, when your iPhone and your Mac are on the same Wi‑Fi. No account, no ads. Using your Mac away from home will be a paid plan, Farside Anywhere, coming after launch.</p>`,
   },
   {
     q: "What do I need?",
-    a: html`<p>${R.mac}, with Farside for Mac (free). And an iPhone with ${R.iphone}, or an iPad with ${R.ipad}. The <a href="/control-mac-from-iphone">setup guide</a> shows each step.</p>`,
+    a: html`<p>${R.mac}, with Farside for Mac (free). And an iPhone with ${R.iphone}. The <a href="/support#setup">support page</a> shows each step.</p>`,
   },
   {
     q: "Can anyone else see my screen?",
-    a: html`<p>No. Everything travels encrypted between your own devices. Your Mac asks before a new phone can connect, and you can stop sharing from its menu bar at any time. More in the <a href="/privacy">privacy policy</a>.</p>`,
+    a: html`<p>Only a phone your Mac has approved can connect, and you can stop sharing from the Mac’s menu bar at any time. More in the <a href="/privacy">privacy policy</a>.</p>`,
   },
   {
     q: "Does my Mac need to be awake?",
-    a: html`<p>Yes. Farside can’t wake a sleeping Mac or log in for you. While you’re connected, it keeps your Mac awake.</p>`,
+    a: html`<p>Yes. Farside can’t wake a sleeping Mac or log in for you.</p>`,
   },
   {
     q: "When can I get it?",
-    a: html`<p>Farside is in beta and coming soon to the App Store. <a href="#beta">Join the beta</a> and we’ll email you an invite.</p>`,
+    a: html`<p>Farside is heading into a TestFlight beta, with the App Store to follow. <a href="#beta">Join the beta</a> and we’ll email you an invite.</p>`,
   },
   {
     q: "Is Farside the same as farside.app?",
@@ -201,12 +195,12 @@ const faq = html`<section class="sec" id="faq" aria-labelledby="faq-title">
     <div class="faq" data-rv>
       ${QAS.map(({ q, a }) => html`<details><summary><span>${q}</span><span class="pm" aria-hidden="true"></span></summary><div class="a">${a}</div></details>`)}
     </div>
-    <p class="more" data-rv="self">More answers on the <a href="/support">support page</a>. Guides: <a href="/control-mac-from-iphone">control your Mac from your iPhone</a>, <a href="/iphone-as-mac-trackpad">use your iPhone as a trackpad</a>, <a href="/remote-desktop-for-mac">remote desktop for Mac</a> and <a href="/compare">how Farside compares</a>.</p>
+    <p class="more" data-rv="self">More answers on the <a href="/support">support page</a>.</p>
   </div>
 </section>`;
 
 const DESC =
-  "Control your Mac from your iPhone or iPad. See your Mac’s screen and use it with your finger. Free on the same Wi‑Fi, with no account.";
+  "Control your Mac from your iPhone. See your Mac’s screen and use it with your finger. Free on the same Wi‑Fi, with no account.";
 
 export function homePage(assets: Assets) {
   const image = ogUrl(assets, "home");

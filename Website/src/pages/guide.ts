@@ -64,7 +64,7 @@ export const GESTURES: [string, string][] = [
   ["Two-finger tap", "Right-click"],
   ["Two-finger drag", "Scroll, up and down or sideways"],
   ["Double-tap, hold, then slide", "Drag something"],
-  ["Pinch", "Zoom the view in or out; it follows your pointer"],
+  ["Pinch", "Zoom the view in or out"],
   ["Three-finger swipe", "Mission Control and switching Spaces"],
   ["Swipe up on the handle", "Show the controls: keys, mic, clipboard, fit and mode"],
   ["Double-tap the handle", "Open the keyboard"],
