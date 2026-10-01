@@ -23,7 +23,7 @@ Boundary: no backend deployment, production changes, App Store Connect changes, 
 
 - [ ] [MIRROR] Confirm installed phone/host build20260930.8 and ordinary host readiness, pairing and owner Keep awake preference; connected, unpaused display hold is automatic even with Keep awake off; do not regrant/reset permissions automatically.
 - [ ] [MIRROR] For a labelled older pairing, re-pair FIRST from a fresh owner-approved QR on the intended Mac; confirm the new pairing connects, then deliberately select and forget only its older labelled record; no name-based identity inference.
-- [ ] [MIRROR] Turn on Share Mac audio on the Mac once after installation (it is off by default); confirm it stays on after a host relaunch.
+- [ ] [MIRROR] Turn on Share Mac audio on the Mac once after installation (it is off by default); confirm it stays on after a host relaunch. Choosing shared content turns it off; turn it back on before the Listen checks.
 - [ ] [MIRROR] Run preflight and Test connection to my Mac from the current session; distinguish permission/unreachable/unknown routes from a successful connection and keep the resulting diagnostic receipt.
 - [ ] [MIRROR] Open the saved-Mac picker, select each available Mac and verify its identity; switching retires the old picture/input/files, and the next Mac never receives the previous draft automatically; forget the selected Mac and confirm the other saved Macs and Choose a Mac picker remain reachable.
 - [ ] [MIRROR] Enable Local-only on both clients and connect on LAN with a locally unreachable test configuration or verify no cloud transport is used (do not change any production service); after restoring the user's original mode, verify normal reconnect and no inferred WAN authorization.
