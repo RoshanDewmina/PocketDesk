@@ -49,6 +49,12 @@ Boundary: no backend deployment, no App Store Connect, no purchases, no messages
 - [ ] [HANDS] Background PiP with Mac audio: connect AirPods → PiP and audio continue; remove them → audio stops, PiP continues; dictation stops on either change.
 - [ ] [MIRROR] 300 ms / 1 s LAN disruption while typing: "Input catching up…" shows briefly, keys typed during it are refused (no haptic, nothing replayed late), typing resumes cleanly.
 
+## Keyboard in Chromium and Electron apps (ax-web-fields)
+
+- [ ] [MIRROR] With a controlled session, tap a text field in Chrome, Claude, Codex and Cursor's chat: the phone keyboard opens (the first tap in a freshly launched app may answer not-editable once; the second opens it).
+- [ ] [HANDS] Watch items: Cursor's code editor and integrated terminal may NOT open the keyboard (hidden text area beside the clicked line; known gap); Cursor may show or enter screen-reader-optimised mode after Farside sets AXManualAccessibility; Chrome keeps its full accessibility tree on for the process (CPU/memory); at session end Farside turns AXEnhancedUserInterface back off only where it set it (and never while VoiceOver is on).
+- [ ] [MIRROR] Password field in a web app: the phone shows the secure lock and never reveals typed text; a tap outside any field does not raise the lock.
+
 ## Timing (X06/X07) and prototypes
 
 - [ ] [MIRROR] Stream statistics show the two "exact tagged" lines with a clock uncertainty under 5 ms and "unique source/decoded fps" lines separate from presentation fps.
