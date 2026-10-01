@@ -15,6 +15,10 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
     private var epoch: UInt64 = 0
     private var initialized = false
     private var observers: [NSObjectProtocol] = []
+    private var startedOnBuiltInOutput = true
+    var outputIsBuiltIn: () -> Bool = {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .builtInSpeaker || $0.portType == .builtInReceiver }
+    }
 
     /// A new output (AirPods, headphones, CarPlay) can change the hardware format, and AVAudioEngine
     /// then stops itself. Restart on the new route. Removal is left to PhoneMediaSession, which mutes.
@@ -82,8 +86,13 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
         let delegate = lock.withLock { audioDelegate }
         delegate?.dispatchAsync { [weak self] in
             guard let self else { return }
-            let stalled = self.lock.withLock { self.consent && self.playbackRequested && self.initialized && self.engine?.isRunning != true }
-            if stalled { self.applyEngine() }
+            let (stalled, wasExternal) = self.lock.withLock {
+                (self.consent && self.playbackRequested && self.initialized && self.engine?.isRunning != true, !self.startedOnBuiltInOutput)
+            }
+            // The engine's own configuration change can beat the route change that mutes: never move Mac
+            // audio from headphones to the speaker by itself.
+            guard stalled, !(wasExternal && self.outputIsBuiltIn()) else { return }
+            self.applyEngine()
         }
     }
     #if DEBUG
@@ -147,8 +156,11 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
             self.engine = engine; self.source = source
             return true
         }) else { return }
-        do { try engine.start() }
-        catch {
+        do {
+            try engine.start()
+            let builtIn = outputIsBuiltIn()
+            lock.withLock { startedOnBuiltInOutput = builtIn }
+        } catch {
             lock.withLock { self.engine = nil; self.source = nil; consent = false; epoch &+= 1 }
             engine.stop()
             DispatchQueue.main.async { [weak self] in self?.onFailure?() }

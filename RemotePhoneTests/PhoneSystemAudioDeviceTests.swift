@@ -19,6 +19,8 @@ private final class InlineAudioDeviceDelegate: NSObject, RTCAudioDeviceDelegate 
     func dispatchSync(_ block: @escaping () -> Void) { block() }
 }
 
+private final class RouteProbe: @unchecked Sendable { var builtIn = false }
+
 final class PhoneSystemAudioDeviceTests: XCTestCase {
     func testNativeRecordingRequestsAreRefusedAcrossLifecycle() {
         let device = PhoneSystemAudioDevice()
@@ -37,8 +39,9 @@ final class PhoneSystemAudioDeviceTests: XCTestCase {
         XCTAssertFalse(device.isRecording)
     }
 
-    private func playingDevice() throws -> (PhoneSystemAudioDevice, InlineAudioDeviceDelegate) {
+    private func playingDevice(route: RouteProbe = RouteProbe()) throws -> (PhoneSystemAudioDevice, InlineAudioDeviceDelegate) {
         let device = PhoneSystemAudioDevice(), delegate = InlineAudioDeviceDelegate()
+        device.outputIsBuiltIn = { route.builtIn }
         XCTAssertTrue(device.initialize(with: delegate))
         device.setConsent(true)
         XCTAssertTrue(device.startPlayout())
@@ -72,5 +75,27 @@ final class PhoneSystemAudioDeviceTests: XCTestCase {
         _ = device.stopEngineForTesting()
         NotificationCenter.default.post(name: AVAudioSession.routeChangeNotification, object: nil, userInfo: added)
         XCTAssertFalse(device.isRenderingForTesting, "A muted session stays silent")
+    }
+
+    func testPulledHeadphonesNeverRestartOnTheSpeakerBeforeTheMuteLands() throws {
+        let route = RouteProbe()
+        let (device, _) = try playingDevice(route: route)
+        defer { _ = device.terminateDevice() }
+        route.builtIn = true
+        let stopped = device.stopEngineForTesting()
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: stopped)
+        XCTAssertFalse(device.isRenderingForTesting, "Headphones → speaker waits for PhoneMediaSession's mute")
+        route.builtIn = false
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: stopped)
+        XCTAssertTrue(device.isRenderingForTesting, "Headphones → other headphones resumes")
+    }
+
+    func testSpeakerPlaybackResumesOnTheSpeaker() throws {
+        let route = RouteProbe(); route.builtIn = true
+        let (device, _) = try playingDevice(route: route)
+        defer { _ = device.terminateDevice() }
+        let stopped = device.stopEngineForTesting()
+        NotificationCenter.default.post(name: .AVAudioEngineConfigurationChange, object: stopped)
+        XCTAssertTrue(device.isRenderingForTesting)
     }
 }
