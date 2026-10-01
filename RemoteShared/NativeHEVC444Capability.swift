@@ -11,7 +11,7 @@ enum NativeHEVC444Capability {
         #if targetEnvironment(simulator)
         return false
         #else
-        guard HEVC444Policy.enabled, !VideoEncoderCompatibility.isOn, !state.disabled else { return false }
+        guard StreamTuning.current.hevc, HEVC444Policy.enabled, !VideoEncoderCompatibility.isOn, !state.disabled else { return false }
         return HEVC444Policy.permits(preference: true, simulator: false, disabled: state.disabled,
             decoder: supportsDecode, encoder: isHost ? supportsEncode : false, isHost: isHost)
         #endif

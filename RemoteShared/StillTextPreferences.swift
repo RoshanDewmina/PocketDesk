@@ -19,7 +19,8 @@ enum StillTextPreferences {
             + (textClarity ? [SessionFeature.textClarity] : [])
     }
     static func requestedFeatures(_ defaults: UserDefaults = .standard) -> [String] {
-        requestedFeatures(sharpen: defaults.object(forKey: sharpenKey) as? Bool ?? true, textClarity: defaults.object(forKey: textClarityKey) as? Bool ?? true,
+        func on(_ key: String) -> Bool { defaults.object(forKey: key) == nil || defaults.bool(forKey: key) }
+        return requestedFeatures(sharpen: on(sharpenKey), textClarity: on(textClarityKey),
                           fullColor: defaults.bool(forKey: HEVC444Policy.preferenceKey))
     }
 }

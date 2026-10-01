@@ -79,6 +79,8 @@ final class VideoRefinementTests: XCTestCase {
         defaults.set(false, forKey: StillTextPreferences.textClarityKey)
         StillTextPreferences.retireSettingValues(defaults)
         XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [SessionFeature.videoRefinement], "A later override is kept")
+        defaults.set("NO", forKey: StillTextPreferences.sharpenKey)
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [], "A launch argument arrives as a string and still overrides")
     }
     func testAnEarlierPhoneThatAlwaysListsRefinementStillNegotiatesWithinTheBound() throws {
         let earlierBody = Data(#"{"features":["blocker.1","blocker.2","features.32","input.causal.1","input.pencil.1","video.ltr.1","video.refine.1"]}"#.utf8)

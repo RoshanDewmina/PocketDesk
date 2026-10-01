@@ -92,7 +92,7 @@ final class OwnedVTEncoderTests: XCTestCase {
     func testOwnedHardwareEncoderProducesDecodableAnnexBWithOriginalTimestamp() throws {
         let configuration = try XCTUnwrap(OwnedVTConfiguration(parameters: ["profile-level-id": "640034", "packetization-mode": "1"]))
         let counters = StreamCounters()
-        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters)
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, maximumQPCeiling: { StreamTuning.tuned.encoderMaximumQP })
         let decoder = RTCVideoDecoderH264()
         defer { _ = encoder.release(); _ = decoder.release() }
         let settings = RTCVideoEncoderSettings()

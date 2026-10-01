@@ -2909,7 +2909,7 @@ final class RemoteHostModel: ObservableObject {
         return targets.contains { $0.helperHostID == helper && $0.ownerPairID == grant && WakeLANInterface.current(named: $0.interfaceName) != nil }
     }
 
-    /// The phone asks for refinement only when its setting is on; full color on this Mac still wins.
+    /// The phone asks for refinement by default (an internal override can turn it off); full color on this Mac still wins.
     private var refinementNegotiated: Bool {
         HEVC444Policy.permitsRefinement(requested: connection.peerFeatures.contains(SessionFeature.videoRefinement),
                                         fullColor: connection.media?.fullColorCaptureEnabled == true)

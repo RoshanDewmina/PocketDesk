@@ -24,6 +24,7 @@ final class StillTextQPBenchTests: XCTestCase {
     private static let documentHeight = height + scrollStep * scrollFrames
     private static let frameCount = 240
     private static let sampled = [0, 59, 180, 239]
+    private static let rates = [25_000, 12_000, 5_000, 2_000]
 
     private struct Run {
         let codec: String, ceiling: Int, clarity: Bool, kbps: Int, nv12: Bool
@@ -44,7 +45,7 @@ final class StillTextQPBenchTests: XCTestCase {
         var lines = ["{\"run\":\"source\",\"cer\":\(Self.json(ceiling.cerBySize))}"]
 
         var runs: [Run] = []
-        for kbps in [25_000, 12_000, 5_000] {
+        for kbps in Self.rates {
             for codec in ["H264", "H265"] {
                 runs.append(Run(codec: codec, ceiling: 30, clarity: false, kbps: kbps, nv12: false))
                 runs.append(Run(codec: codec, ceiling: 26, clarity: true, kbps: kbps, nv12: false))
@@ -61,7 +62,7 @@ final class StillTextQPBenchTests: XCTestCase {
             print("CRISP", line); lines.append(line); decodedByRun[run.label] = decoded
             for (index, image) in decoded { try Self.writePNG(Self.chartCrop(image), to: directory.appendingPathComponent("\(run.label)-f\(index).png")) }
         }
-        for kbps in [25_000, 12_000, 5_000] {
+        for kbps in Self.rates {
             for codec in ["H264", "H265"] {
                 let before = Run(codec: codec, ceiling: 30, clarity: false, kbps: kbps, nv12: false).label
                 let after = Run(codec: codec, ceiling: 26, clarity: true, kbps: kbps, nv12: false).label
