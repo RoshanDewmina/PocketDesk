@@ -146,19 +146,29 @@ final class HostInputExecutor: @unchecked Sendable {
     static let maximumQueuedBytes = 256 * 1024
 
     /// The Mac-run scroll coast: a 120 Hz timer on the posting queue, under the same lock as every
-    /// other post. The route authority is the one the `momentumBegan` arrived with; the driver stops
-    /// the coast itself the moment any other input lands or the peer goes away.
+    /// other post. Each step is posted through the route authority the `momentumBegan` arrived with
+    /// and is subject to the same revocation as a queued post: a new generation (control off, new
+    /// geometry, release), a disabled driver or an expired lease ends the coast with its end event.
+    /// The driver itself ends it when any other input lands.
     private var coastTimer: DispatchSourceTimer?
+    private var coastGeneration: UInt64 = 0
     private func coastIfStarted(_ routeAuthority: @escaping (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome) {
         guard driver.isCoasting, coastTimer == nil else { return }
+        coastGeneration = generation
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + RemoteInputDriver.hostMomentumInterval,
                        repeating: RemoteInputDriver.hostMomentumInterval, leeway: .milliseconds(1))
         timer.setEventHandler { [weak self] in
             guard let self else { return }
             self.withAuthority {
+                let now = self.clock()
+                if self.generation != self.coastGeneration || !self.driver.enabled || self.lease.isExpired(at: now) {
+                    _ = routeAuthority { [self] in self.driver.endHostMomentum(); return RemoteInputOutcome() }
+                    self.stopCoast()
+                    return
+                }
                 let running = routeAuthority { [self] in
-                    RemoteInputOutcome(accepted: self.driver.stepHostMomentum(now: self.clock()))
+                    RemoteInputOutcome(accepted: self.driver.stepHostMomentum(now: now))
                 }.accepted
                 if !running { self.stopCoast() }
             }
@@ -166,6 +176,7 @@ final class HostInputExecutor: @unchecked Sendable {
         coastTimer = timer
         timer.resume()
     }
+    deinit { coastTimer?.cancel() }
     private func stopCoast() {
         coastTimer?.cancel()
         coastTimer = nil

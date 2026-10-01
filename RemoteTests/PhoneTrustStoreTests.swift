@@ -50,7 +50,7 @@ final class PhoneTrustStoreTests: XCTestCase {
     }
     func testSnapshotIsReadFromTheKeychainOnceAndRefreshedByEveryCommit() throws {
         let legacy = TrustFixturePersistence(), records = TrustFixturePersistence()
-        let trust = PhoneTrustStore(records: records, legacy: legacy)
+        let trust = PhoneTrustStore(records: records, legacy: legacy, cachesSnapshot: true)
         try trust.saveApproved(pair(identified: true))
         let first = try trust.snapshot()
         let reads = records.reads
@@ -71,6 +71,14 @@ final class PhoneTrustStoreTests: XCTestCase {
         let beforeReread = records.reads
         XCTAssertEqual(try trust.snapshot().selected?.invitation, second)
         XCTAssertEqual(records.reads, beforeReread + 1, "A failed commit sends the next read back to the Keychain")
+
+        try trust.forget(hostID: XCTUnwrap(first.selectedHostID))
+        XCTAssertEqual(try trust.snapshot().hosts.count, 1, "Forgetting refreshes the copy")
+        let adapter = PhonePairPersistence(trust: trust)
+        XCTAssertEqual(try adapter.read(PairInvitation.self), second)
+        try adapter.delete()
+        XCTAssertEqual(try trust.snapshot().hosts.count, 0, "The adapter's delete refreshes the copy")
+        XCTAssertNil(try adapter.read(PairInvitation.self))
 
         let uncached = PhoneTrustStore(records: records, legacy: legacy, cachesSnapshot: false)
         let start = records.reads

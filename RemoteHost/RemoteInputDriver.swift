@@ -259,6 +259,8 @@ final class RemoteInputDriver {
     /// rate of a real trackpad whatever the link is doing.
     static let hostMomentumInterval: TimeInterval = 1.0 / 120
     var hostMomentum = RemoteInputDriver.hostMomentumEnabled
+    /// Same switch as `RemoteInputEventSink.deltaFieldsKey`: off restores the pre-feel-pass events exactly.
+    var eventDeltas = RemoteInputEventSink.deltaFieldsEnabled
     private var coast = ScrollMomentum()
     var isCoasting: Bool { coast.isRunning }
     private let eventSink: RemoteInputEventSink
@@ -370,15 +372,15 @@ final class RemoteInputDriver {
             if upgraded && held && (input.interaction?.hold != externalHoldID || input.interaction?.clickCount != Int(heldClickCount)) { break }
             guard let bounds = validBounds else { break }
             let target: CGPoint
-            // An absolute placement needs the base only for its delta, so it reads without recording.
-            let current = input.action == "moveTo"
-                ? (pointerSnapshot.map { clamped($0, to: bounds) } ?? resolvedBase(now: now, in: bounds).point)
-                : eventPoint(in: bounds)
+            let current: CGPoint
             if input.action == "moveTo" {
                 // Display-local logical points, exactly as `geometry` described the display.
                 guard input.x >= 0, input.y >= 0 else { break }
                 target = CGPoint(x: bounds.minX + input.x, y: bounds.minY + input.y)
+                // An absolute placement needs the base only for its delta, so it reads without recording.
+                current = eventDeltas ? (pointerSnapshot.map { clamped($0, to: bounds) } ?? resolvedBase(now: now, in: bounds).point) : target
             } else {
+                current = eventPoint(in: bounds)
                 target = CGPoint(x: current.x + input.x, y: current.y + input.y)
             }
             let point = clamped(target, to: bounds)
@@ -388,9 +390,9 @@ final class RemoteInputDriver {
                 type: wasHeld ? .leftMouseDragged : .mouseMoved,
                 point: point,
                 button: .left,
-                count: wasHeld ? heldClickCount : 0,
+                count: wasHeld ? heldClickCount : (eventDeltas ? 0 : 1),
                 flags: flags, pencil: input.pencil,
-                delta: CGSize(width: point.x - current.x, height: point.y - current.y)
+                delta: eventDeltas ? CGSize(width: point.x - current.x, height: point.y - current.y) : .zero
             )
             guard eventSink.mouseSequence([event]) else { break }
             if input.pencil?.phase == .moved { activePencil = input.pencil }
@@ -644,6 +646,7 @@ final class RemoteInputDriver {
     @discardableResult
     func stepHostMomentum(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
         guard coast.isRunning, let stream = momentum.active else { _ = coast.cancel(); return false }
+        guard enabled, isTrusted() else { endMomentum(); return false }
         switch coast.step(at: now) {
         case .changed(let delta)?:
             guard momentum.admit(.changed, stream: stream, at: now) == .post else { _ = coast.cancel(); return false }
@@ -661,6 +664,12 @@ final class RemoteInputDriver {
         case nil:
             return true
         }
+    }
+
+    /// Ends a Mac-run coast whose authority was revoked (control off, new generation, expired lease).
+    func endHostMomentum() {
+        guard coast.isRunning else { return }
+        endMomentum()
     }
 
     private func endMomentum() {

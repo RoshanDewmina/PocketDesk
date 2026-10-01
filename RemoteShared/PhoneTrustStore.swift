@@ -71,9 +71,11 @@ final class PhoneTrustStore {
     private let records: any PairPersistence
     private let legacy: any PairPersistence
     /// Phone user default; absent means on. `defaults write com.roshan.PocketDesk.Remote trust.cacheSnapshot -bool NO`
-    /// reads the Keychain on every `snapshot()` again. The session model asks for the selected host
-    /// about fifteen times per 4 Hz tick on the main thread, and each uncached read is a `SecItemCopyMatching`
-    /// round trip (40–70 ms per tick on the phone syslog of 1 Oct); only this process writes the item.
+    /// reads the Keychain on every `snapshot()` again. The session reads the selected host many times
+    /// per tick on the main thread, and each uncached read is a `SecItemCopyMatching` round trip.
+    /// Only this process writes the item, so a copy refreshed on every commit is exact. Deliberate:
+    /// while the app runs with the device locked, the copy still answers although the item itself
+    /// (`WhenUnlockedThisDeviceOnly`) would not; the item stays protected at rest.
     static let cacheKey = "trust.cacheSnapshot"
     private let cachesSnapshot: Bool
     private var cached: PhoneTrustSnapshot?

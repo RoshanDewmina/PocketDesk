@@ -190,6 +190,19 @@ final class DirectTouchModelTests: XCTestCase {
         XCTAssertFalse(model.selectDisplay(2))
     }
 
+    func testHiddenSettingsLandOnTheirDefaultsOnceAndLaterWritesStick() {
+        let defaults = UserDefaults(suiteName: "hidden-surface-\(UUID().uuidString)")!
+        defaults.set("direct", forKey: TouchInputMode.key)
+        defaults.set("extraLarge", forKey: PointerSizePreference.key)
+        defaults.set("off", forKey: PointerFollowStyle.key)
+        HiddenSettingsMigration.run(defaults)
+        for key in HiddenSettingsMigration.hiddenKeys { XCTAssertNil(defaults.object(forKey: key), key) }
+        XCTAssertTrue(defaults.bool(forKey: HiddenSettingsMigration.key))
+        defaults.set("direct", forKey: TouchInputMode.key)
+        HiddenSettingsMigration.run(defaults)
+        XCTAssertEqual(defaults.string(forKey: TouchInputMode.key), "direct", "A later `defaults write` is kept")
+    }
+
     func testTouchModeDefaultsToTrackpad() {
         UserDefaults.standard.removeObject(forKey: TouchInputMode.key)
         XCTAssertEqual(TouchInputMode(rawValue: UserDefaults.standard.string(forKey: TouchInputMode.key) ?? "trackpad"), .trackpad)
