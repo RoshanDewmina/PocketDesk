@@ -131,7 +131,7 @@ const features = (assets: Assets) => html`<section class="sec" id="features" ari
       <li class="feat">${art(assets, "art-feat-pad")}<h3>The screen is a trackpad</h3><p>Slide to move the pointer. Tap to click. You feel each click.</p></li>
       <li class="feat">${art(assets, "art-feat-zoom")}<h3>Zoom in on small text</h3><p>Pinch to zoom. The view follows the pointer.</p></li>
       <li class="feat">${art(assets, "art-feat-voice")}<h3>Type or talk</h3><p>Use the keyboard or your voice. Copy and paste works both ways.</p></li>
-      <li class="feat">${art(assets, "art-feat-trust")}<h3>Only your phones</h3><p>It’s encrypted, and your Mac asks before a new phone can connect.</p></li>
+      <li class="feat">${art(assets, "art-feat-trust")}<h3>Only your devices</h3><p>It’s encrypted, and your Mac asks before a new iPhone or iPad can connect.</p></li>
     </ul>
   </div>
 </section>`;
@@ -194,7 +194,7 @@ const faq = html`<section class="sec" id="faq" aria-labelledby="faq-title">
     <div class="faq" data-rv>
       ${QAS.map(({ q, a }) => html`<details><summary><span>${q}</span><span class="pm" aria-hidden="true"></span></summary><div class="a">${a}</div></details>`)}
     </div>
-    <p class="more" data-rv="self">More answers on the <a href="/support">support page</a>. Guides: <a href="/control-mac-from-iphone">control your Mac from your iPhone</a>, <a href="/iphone-as-mac-trackpad">use your iPhone as a trackpad</a> and <a href="/compare">how Farside compares</a>.</p>
+    <p class="more" data-rv="self">More answers on the <a href="/support">support page</a>. Guides: <a href="/control-mac-from-iphone">control your Mac from your iPhone</a>, <a href="/iphone-as-mac-trackpad">use your iPhone as a trackpad</a>, <a href="/remote-desktop-for-mac">remote desktop for Mac</a> and <a href="/compare">how Farside compares</a>.</p>
   </div>
 </section>`;
 

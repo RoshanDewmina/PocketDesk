@@ -74,7 +74,7 @@ The snap build of bun can't start the Playwright Chromium (its sandbox hides `li
 
 ## Lighthouse (13.5.0, local server, SITE_URL set to the test origin)
 
-See `reports/lighthouse/summary.md` after `bun run lighthouse` (git-ignored). Last run (30 Sep 2026, `website/launch-simple`): 100 / 100 / 100 / 100 (performance, accessibility, best practices, SEO) on mobile and desktop for every page except `/privacy` desktop (performance 98, CLS ≈ 0.08 from its short list reflowing on the font swap; 99 before this branch) and `/404` (SEO 66 by design: it is `noindex`, which Lighthouse scores as "not crawlable"). TBT 0 ms everywhere.
+See `reports/lighthouse/summary.md` after `bun run lighthouse` (git-ignored). Last run (30 Sep 2026, `website/launch-simple`): 100 / 100 / 100 / 100 (performance, accessibility, best practices, SEO) on mobile and desktop for every page except `/privacy` desktop (performance 99, CLS 0.075 from its short list reflowing on the font swap, unchanged from before this branch) and `/404` (SEO 66 by design: it is `noindex`, which Lighthouse scores as "not crawlable"). TBT 0 ms everywhere.
 
 ## Structured data
 

@@ -11,6 +11,12 @@ import { motionAllowed, onMotionChange } from "./motion";
 const BONE = [237, 232, 223];
 const EMBER = [255, 91, 31];
 const HEAT_LEVELS = 6;
+const MAX_WAVES = 4;
+/** Bone to ember in HEAT_LEVELS steps, worked out once. */
+const HEAT_COLORS = Array.from({ length: HEAT_LEVELS }, (_, l) => {
+  const t = l / (HEAT_LEVELS - 1);
+  return `rgb(${BONE.map((b, j) => Math.round(b + (EMBER[j]! - b) * t)).join(",")})`;
+});
 const TAU = Math.PI * 2;
 
 type Wave = { x: number; y: number; t0: number };
@@ -24,9 +30,29 @@ export function initFooter(fonts: Promise<void>) {
   const foot = document.querySelector<HTMLElement>(".site-footer");
   const main = document.getElementById("main");
   const cv = foot?.querySelector<HTMLCanvasElement>(".foot-cv");
-  if (!foot || !main || !cv || typeof cv.getContext !== "function") return;
+  const inner = foot?.querySelector<HTMLElement>(".foot-in");
+  if (!foot || !main || !cv || !inner || typeof cv.getContext !== "function") return;
 
   let field: Field | null = null;
+
+  // When the links don't fit one screen, the footer follows the page instead of waiting under it. Decided up
+  // front (and on resize), not when the field starts, so the page never changes height mid-scroll.
+  const fit = () => {
+    foot.classList.remove("foot-flow");
+    if (getComputedStyle(foot).position === "fixed" && inner.scrollHeight > foot.clientHeight + 1) foot.classList.add("foot-flow");
+  };
+  fit();
+  let fitRaf = 0;
+  window.addEventListener("resize", () => {
+    cancelAnimationFrame(fitRaf);
+    fitRaf = requestAnimationFrame(fit);
+  });
+
+  // Keyboard: the links sit under the page until the end, and a browser won't scroll to a fixed element, so
+  // tabbing into the footer scrolls to the end first (no focus lands on something hidden).
+  foot.addEventListener("focusin", () => {
+    if (reveal() < 0.99) window.scrollTo({ top: document.documentElement.scrollHeight, behavior: motionAllowed() ? "smooth" : "instant" });
+  });
   let starting = false;
 
   /** How much of the footer is showing, 0–1 (the page sheet covers the rest). */
@@ -40,8 +66,9 @@ export function initFooter(fonts: Promise<void>) {
 
   const check = () => {
     const r = reveal();
-    if (motionAllowed()) foot.style.setProperty("--rv", r.toFixed(3));
-    else foot.style.removeProperty("--rv");
+    foot.style.setProperty("--rv", r.toFixed(3));
+    if (motionAllowed()) foot.style.setProperty("--rv-move", r.toFixed(3));
+    else foot.style.removeProperty("--rv-move");
     if (field) return field.setReveal(r);
     if (starting || main.getBoundingClientRect().bottom > window.innerHeight * 2.2) return;
     starting = true;
@@ -102,10 +129,20 @@ class Field {
     }).observe(foot);
     onMotionChange(() => {
       this.still = !motionAllowed();
+      if (this.still) this.rest();
       this.sync();
       if (this.still) this.draw();
     });
     document.addEventListener("visibilitychange", () => this.sync());
+  }
+
+  /** Put every dot home and stop it (the still frame never shows a half-finished assembly). */
+  private rest() {
+    this.x.set(this.hx);
+    this.y.set(this.hy);
+    this.vx.fill(0);
+    this.vy.fill(0);
+    this.waves.length = 0;
   }
 
   setReveal(r: number) {
@@ -132,6 +169,12 @@ class Field {
       const r = this.cv.getBoundingClientRect();
       return { x: e.clientX - r.left, y: e.clientY - r.top };
     };
+    const wave = (p: { x: number; y: number }) => {
+      if (this.still) return;
+      if (this.waves.length >= MAX_WAVES) this.waves.shift();
+      this.waves.push({ ...p, t0: this.t });
+    };
+    let down: { x: number; y: number; t: number } | null = null;
     this.foot.addEventListener("pointermove", (e) => {
       const p = at(e);
       this.ptr = { ...p, until: this.t + (e.pointerType === "mouse" ? 2500 : 1500) };
@@ -140,8 +183,17 @@ class Field {
       if (!e.isPrimary || (e.target as Element).closest("a, button")) return;
       const p = at(e);
       this.ptr = { ...p, until: this.t + 1800 };
-      if (!this.still) this.waves.push({ ...p, t0: this.t });
+      // A mouse click sends the shockwave at once; a finger only on a tap, so swiping to scroll stays calm.
+      if (e.pointerType === "mouse") wave(p);
+      else down = { ...p, t: performance.now() };
     });
+    this.foot.addEventListener("pointerup", (e) => {
+      if (!down || e.pointerType === "mouse") return;
+      const p = at(e);
+      if (Math.hypot(p.x - down.x, p.y - down.y) < 12 && performance.now() - down.t < 450) wave(p);
+      down = null;
+    });
+    this.foot.addEventListener("pointercancel", () => (down = null));
     this.foot.addEventListener("pointerleave", () => (this.ptr.until = this.t + 300));
   }
 
@@ -149,9 +201,6 @@ class Field {
     const fr = this.foot.getBoundingClientRect();
     const W = Math.round(fr.width), H = Math.round(fr.height);
     if (!W || !H) return;
-    // Keep the field honest on its own: when the links don't fit the screen, let the footer follow the page.
-    const inner = this.foot.querySelector<HTMLElement>(".foot-in");
-    this.foot.classList.toggle("foot-flow", !!inner && inner.scrollHeight > window.innerHeight + 1);
     let dpr = Math.min(2, window.devicePixelRatio || 1);
     if (W * H * dpr * dpr > 3.6e6) dpr = Math.max(1, Math.sqrt(3.6e6 / (W * H)));
     this.W = W;
@@ -163,6 +212,7 @@ class Field {
     this.band = { x: mark.left - fr.left, y: mark.top - fr.top, w: mark.width, h: mark.height };
     this.step = W < 640 ? 7 : W < 1100 ? 9 : 11;
     this.build();
+    if (this.still) this.rest();
   }
 
   /** Lay the grid and work out how much of each cell the wordmark covers (supersampled text, 4 × 4 per cell). */
@@ -265,7 +315,7 @@ class Field {
     e.x += (tg.x - e.x) * f;
     e.y += (tg.y - e.y) * f;
     e.o += (this.shown - e.o) * (1 - Math.exp(-dtMs / 300));
-    this.waves = this.waves.filter((w) => this.t - w.t0 < 1400);
+    while (this.waves.length && this.t - this.waves[0]!.t0 >= 1400) this.waves.shift();
 
     const R = this.W < 640 ? 120 : 190;
     const w2 = 0.42, om2 = 260, damp = 2 * 0.5 * Math.sqrt(om2);
@@ -306,9 +356,10 @@ class Field {
   }
 
   draw() {
-    const { ctx, W, H, dpr, n, x, y, hx, hy, cov, step } = this;
+    const { ctx, W, H, dpr, n, hx, hy, cov, step } = this;
     if (!n) return;
     const still = this.still;
+    const x = still ? hx : this.x, y = still ? hy : this.y;
     const shown = still ? 1 : this.shown;
     const e = this.ember;
     const eo = still ? 0 : e.o;
@@ -345,9 +396,7 @@ class Field {
     }
     for (let l = 0; l < HEAT_LEVELS; l++) {
       if (!used[l]) continue;
-      const t = l / (HEAT_LEVELS - 1);
-      const col = BONE.map((b, j) => Math.round(b + (EMBER[j]! - b) * t));
-      ctx.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`;
+      ctx.fillStyle = HEAT_COLORS[l]!;
       ctx.fill(paths[l]!);
     }
 

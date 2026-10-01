@@ -33,7 +33,7 @@ export const PAGES: PageDef[] = [
     file: "control-mac-from-iphone.html",
     render: controlGuidePage,
     sitemap: true,
-    llms: { section: "Guides", title: "Control your Mac from your iPhone", note: "requirements, six setup steps, gestures, typing and voice, away from home, FAQ" },
+    llms: { section: "Guides", title: "Control your Mac from your iPhone", note: "requirements, setup step by step, gestures, typing and voice, away from home, FAQ" },
   },
   {
     slug: "iphone-as-mac-trackpad",

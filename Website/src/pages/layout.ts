@@ -107,7 +107,7 @@ export function breadcrumbNav(trail: [string, string][]): Html {
 
 /** Guide cards for the guide pages (the home page and the footer link to the guides too). */
 export const GUIDES: [string, string, string][] = [
-  ["/control-mac-from-iphone", "Control your Mac from your iPhone", "Set up in three steps, then steer with one thumb"],
+  ["/control-mac-from-iphone", "Control your Mac from your iPhone", "Set it up step by step, then steer with one thumb"],
   ["/iphone-as-mac-trackpad", "Use your iPhone as a Mac trackpad", "Every gesture, the haptics, the pointer and the zoom"],
   ["/remote-desktop-for-mac", "Remote desktop for Mac", "At home for free, over the internet with Anywhere"],
   ["/compare", "How Farside compares", "Workbench, Jump Desktop, Screens and more"],

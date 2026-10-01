@@ -23,7 +23,7 @@ export function aboutPage(assets: Assets) {
       <p>On the same Wi‑Fi it’s free, with no account and no ads. The Anywhere plan lets you reach your Mac from somewhere else: ${P.monthly} a month or ${P.yearly} a year, after a ${P.trialDays}-day free trial.</p>
     </section>
     <section aria-labelledby="who"><h2 id="who">Who makes it</h2>
-      <p>Farside is made by ${config.contact.legalName ?? "an independent developer"}, an independent developer in Canada.</p>
+      <p>${config.contact.legalName ? html`Farside is made by ${config.contact.legalName}, an independent developer in Canada.` : html`Farside is made by an independent developer in Canada.`}</p>
       <p>Farside at getfarside.com isn’t related to farside.app or to other products with a similar name.</p>
     </section>
     <section aria-labelledby="now"><h2 id="now">Where it stands</h2>

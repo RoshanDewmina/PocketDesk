@@ -371,11 +371,14 @@ a.store {
 }
 
 /* ---------- site header ---------- */
+/* Opaque: the footer waits fixed under the page, so nothing above it may be see-through. */
 .site-header {
   position: relative;
   z-index: 20;
+  background: var(--void);
 }
 .home .site-header {
+  background: none;
   position: absolute;
   left: 0;
   right: 0;
@@ -1375,7 +1378,10 @@ main {
   height: 100%;
   padding-top: max(24px, 5vh);
   padding-bottom: 18px;
-  transform: translateY(calc((1 - var(--rv, 1)) * 14%));
+  /* --rv (0–1, how much of the footer shows) is set by footer.ts; the content stays invisible while the page
+     covers it (no peeking through an overscroll), and rises a little as it is uncovered (--rv-move, motion only). */
+  opacity: clamp(0, calc(var(--rv, 1) * 8), 1);
+  transform: translateY(calc((1 - var(--rv-move, 1)) * 14%));
 }
 .foot-head {
   display: flex;

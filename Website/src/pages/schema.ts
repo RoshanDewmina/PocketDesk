@@ -117,6 +117,7 @@ const text = (h: Html) =>
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
     .replace(/\s+/g, " ")
+    .replace(/ ([.,;:!?])/g, "$1")
     .trim();
 
 export function faqPage(path: string, qas: QA[]): Node {
