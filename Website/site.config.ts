@@ -11,7 +11,10 @@ export type Contact = {
   securityEmail: string | null;
   /** Where "Join the beta" emails go. */
   betaEmail: string | null;
-  /** Apple's Support URL rules ask for a phone number and a postal address as well as email. */
+  /**
+   * Optional. The owner decided on 30 Sep 2026 to publish email-only contact (a Canadian site doesn't need a
+   * phone or postal address); the pages leave these rows out while they are null.
+   */
   phone: string | null;
   postalAddress: string | null;
   /** Legal entity or individual name (privacy policy "Who we are", terms, copyright line). */
@@ -23,6 +26,12 @@ export type Contact = {
 };
 
 export type Launch = {
+  /**
+   * Launch-day switch. false (now): no Smart App Banner, no App Store badge, no download links, even when the
+   * URLs below are filled in. true: they all appear (the badge needs static/app-store-badge.svg, Apple's
+   * official artwork from Apple Marketing Resources; the build refuses to go live without it).
+   */
+  live: boolean;
   /** URL of the notarized DMG (or the /download/mac/latest redirect target). null = "Coming soon". */
   macDownloadUrl: string | null;
   /** https://apps.apple.com/app/id<APP_ID>. null = "Coming soon". */
@@ -56,6 +65,7 @@ export const config = {
   } satisfies Contact as Contact,
 
   launch: {
+    live: false,
     macDownloadUrl: null,
     appStoreUrl: null,
     appStoreId: null,
@@ -122,22 +132,24 @@ export const config = {
 
   /** Last content review of the legal pages. */
   legalUpdated: "30 September 2026",
-  lastmod: "2026-09-30",
 };
 
 export const isPlaceholderSiteUrl = () => config.SITE_URL === PLACEHOLDER_SITE_URL;
 
 /** Values that must be real before a public deploy (`build:strict` fails while any is missing). */
+const OPTIONAL_CONTACT = new Set(["phone", "postalAddress"]);
+
 export function missingRequired(): string[] {
   const out: string[] = [];
   if (isPlaceholderSiteUrl()) out.push("SITE_URL");
-  for (const [k, v] of Object.entries(config.contact)) if (v === null) out.push(`contact.${k}`);
+  for (const [k, v] of Object.entries(config.contact)) if (v === null && !OPTIONAL_CONTACT.has(k)) out.push(`contact.${k}`);
   return out;
 }
 
 /** Launch links that are allowed to stay empty; the site shows "Coming soon" instead. */
 export function pendingLaunch(): string[] {
   return [
+    ...(config.launch.live ? [] : ["launch.live (App Store banner, badge and downloads off until launch day)"]),
     ...Object.entries(config.launch).filter(([, v]) => v === null).map(([k]) => `launch.${k}`),
     ...Object.entries(config.social).filter(([, v]) => v === null).map(([k]) => `social.${k}`),
     ...(config.pricing.final ? [] : ["pricing.final (prices shown as planned)"]),

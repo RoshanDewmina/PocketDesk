@@ -3,6 +3,7 @@
 
 import { config } from "../../site.config";
 import type { Html } from "../lib/html";
+import { updated } from "./dates";
 
 type Node = Record<string, unknown>;
 
@@ -17,22 +18,26 @@ export function socialLinks(): string[] {
   return Object.values(config.social).filter((v): v is string => !!v);
 }
 
+/** The publisher. sameAs stays out until the getfarside social profiles exist (config.social). */
 export function organization(): Node {
   const sameAs = socialLinks();
   const email = config.contact.supportEmail;
   return {
     "@type": "Organization",
     "@id": ids.org(),
-    name: config.contact.legalName ?? "Farside",
+    name: "Farside",
+    alternateName: "Farside: Remote Desktop",
+    ...(config.contact.legalName ? { legalName: config.contact.legalName } : {}),
     url: url("/"),
     logo: { "@type": "ImageObject", url: url("/icon-512.png"), width: 512, height: 512 },
+    ...(email ? { email } : {}),
     ...(sameAs.length ? { sameAs } : {}),
     ...(email ? { contactPoint: { "@type": "ContactPoint", contactType: "customer support", email, url: url("/support") } } : {}),
   };
 }
 
 export function website(): Node {
-  return { "@type": "WebSite", "@id": ids.site(), url: url("/"), name: "Farside", inLanguage: "en", publisher: { "@id": ids.org() } };
+  return { "@type": "WebSite", "@id": ids.site(), url: url("/"), name: "Farside", alternateName: "getfarside.com", inLanguage: "en", publisher: { "@id": ids.org() } };
 }
 
 export function softwareApplication(image: string): Node {
@@ -52,7 +57,7 @@ export function softwareApplication(image: string): Node {
     name: "Farside",
     alternateName: "Farside: Remote Desktop",
     description:
-      "See and control your own Mac from your iPhone or iPad. The whole screen is a trackpad with click haptics, a big sharp pointer, zoom that follows you, voice dictation into the Mac and a clipboard that goes both ways. QR pairing with no account, encrypted end to end.",
+      "See and control your own Mac from your iPhone or iPad, with Farside for Mac running on the Mac. The whole screen is a trackpad with click haptics, a big sharp pointer, zoom that follows you, voice dictation into the Mac and a clipboard that goes both ways. QR pairing with no account, encrypted end to end.",
     url: url("/"),
     image: url(image),
     applicationCategory: "UtilitiesApplication",
@@ -88,7 +93,7 @@ export function webPage(opts: { path: string; name: string; description: string;
     isPartOf: { "@id": ids.site() },
     about: { "@id": ids.app() },
     primaryImageOfPage: { "@type": "ImageObject", url: url(opts.image) },
-    dateModified: config.lastmod,
+    dateModified: updated(opts.path),
     ...(opts.breadcrumb ? { breadcrumb: { "@id": url(`${opts.path}#breadcrumb`) } } : {}),
   };
 }

@@ -1,6 +1,7 @@
 // Every page the site publishes. The build, sitemap.xml, llms.txt, screenshots, Lighthouse runs and link
 // checks all read this list, so adding a page here is enough to wire it everywhere.
 
+import { aboutPage } from "./about";
 import { comparePage } from "./compare";
 import { controlGuidePage } from "./guide-control";
 import { remoteGuidePage } from "./guide-remote";
@@ -20,6 +21,9 @@ export type PageDef = {
   sitemap: boolean;
   llms?: { section: "Guides" | "Help" | "Legal"; title: string; note: string };
 };
+
+// Web pages never live under /help/: the phone app claims /help/* as universal links (AASA), so such a page
+// would open the app instead. Help goes under /support. scripts/build.ts enforces it.
 
 export const PAGES: PageDef[] = [
   { slug: "home", path: "/", file: "index.html", render: homePage, sitemap: true },
@@ -79,5 +83,6 @@ export const PAGES: PageDef[] = [
     sitemap: true,
     llms: { section: "Legal", title: "Terms of use (draft)", note: "draft, not yet in effect" },
   },
+  { slug: "about", path: "/about", file: "about.html", render: aboutPage, sitemap: true },
   { slug: "404", path: "/404", file: "404.html", render: notFoundPage, sitemap: false },
 ];

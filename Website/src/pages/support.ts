@@ -79,7 +79,7 @@ const MESSAGES: Msg[] = [
   },
   {
     says: "Update Farside on your Mac to change picture quality.",
-    means: "Your phone is newer than the Mac helper.",
+    means: "Your phone is newer than Farside for Mac.",
     fix: html`Choose <b>Check for Updates…</b> in the Farside menu on your Mac.`,
   },
   {
@@ -111,7 +111,7 @@ const MESSAGES: Msg[] = [
 
 const SETUP: { name: string; text: string; body: Html }[] = [
   {
-    name: "Put the helper on your Mac",
+    name: "Put Farside for Mac on your Mac",
     text: `Download Farside for Mac, open it and move it to Applications if it asks. It lives in the menu bar and needs ${R.mac}.`,
     body: html`${config.launch.macDownloadUrl ? html`<a href="${config.launch.macDownloadUrl}">Download Farside for Mac</a>` : html`Download Farside for Mac from this website <span class="placeholder">(coming soon)</span>`}, open it, and move it to Applications if it asks. It lives in the menu bar. You need ${R.mac}.`,
   },
@@ -143,10 +143,10 @@ const SETUP: { name: string; text: string; body: Html }[] = [
 ];
 
 const OPEN_ITEMS = [
-  "Contact block: support email, phone, postal address and response time (config.contact). Apple requires real contact details on the Support URL.",
+  "Contact block: email only, by the owner's decision of 30 Sep 2026 (no phone or postal address on a Canadian site). Phone and post rows appear only if config.contact.phone / postalAddress are set.",
   "Check every message below against the app's shipping strings; they follow the UX-AUDIT.md rewrites with the PocketDesk name replaced by Farside.",
   "Gesture list follows Docs/research/2026-09-28/GESTURE-MAP.md; physical gesture acceptance is still pending.",
-  "Menu item names (Pair a Phone…, New Code, Allow control, Check for Updates…) must match the shipping Mac helper.",
+  "Menu item names (Pair a Phone…, New Code, Allow control, Check for Updates…) must match the shipping Farside for Mac.",
 ];
 
 const cantConnect = html`<ol>
@@ -178,8 +178,8 @@ function contact(): Html {
   return html`<div class="contact-card">
   <dl>
     <div><dt>Email</dt><dd>${email("support")}</dd></div>
-    <div><dt>Phone</dt><dd>${detail(config.contact.phone, "phone number")}</dd></div>
-    <div><dt>Post</dt><dd>${detail(config.contact.legalName, "legal name")}<br>${detail(config.contact.postalAddress, "postal address")}</dd></div>
+    ${config.contact.phone ? html`<div><dt>Phone</dt><dd>${config.contact.phone}</dd></div>` : ""}
+    ${config.contact.postalAddress ? html`<div><dt>Post</dt><dd>${detail(config.contact.legalName, "legal name")}<br>${config.contact.postalAddress}</dd></div>` : ""}
     <div><dt>First reply</dt><dd>${detail(config.contact.responseTime, "within two business days")}</dd></div>
     <div><dt>Security reports</dt><dd>${email("security")}</dd></div>
   </dl>
@@ -199,7 +199,7 @@ export function supportPage(assets: Assets) {
     ["Support", PATH],
   ];
   const quick: [string, string, string][] = [
-    ["#setup", "Set up Farside", "Mac helper, permissions, pairing"],
+    ["#setup", "Set up Farside", "Farside for Mac, permissions, pairing"],
     ["#steer", "How to steer", "Every gesture on one list"],
     ["#cant-connect", "Can’t connect?", "A five-line checklist"],
     ["#messages", "What a message means", "Every message, with the fix"],

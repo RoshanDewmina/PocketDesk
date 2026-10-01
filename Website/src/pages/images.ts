@@ -45,7 +45,7 @@ export const SHOTS: Shot[] = [
     selector: "#mac .setup",
     w: 800,
     h: 520,
-    alt: "The Mac helper's setup window: two permissions, Screen Recording granted and Accessibility with an Open Settings button.",
+    alt: "The setup window of Farside for Mac: two permissions, Screen Recording granted and Accessibility with an Open Settings button.",
   },
   {
     key: "mac-menu",

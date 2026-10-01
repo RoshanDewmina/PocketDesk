@@ -3,6 +3,7 @@
 import { config } from "../../site.config";
 import { html, raw, type Html } from "../lib/html";
 import { markSvg } from "../lib/mark";
+import { longDate, updated } from "./dates";
 import { shot } from "./images";
 import { breadcrumbNav, icon, type Assets } from "./layout";
 import type { QA } from "./schema";
@@ -24,7 +25,7 @@ export function guideHero(opts: { crumbs: [string, string][]; cap: string; title
     <p class="cap">${opts.cap}</p>
     <h1 class="h-page dw" id="page-title">${opts.title}</h1>
     <p class="lead">${opts.lead}</p>
-    <p class="meta-row"><span class="cap">Updated · <b>${config.legalUpdated}</b></span>${opts.meta ? html`<span class="cap">${opts.meta}</span>` : ""}<span class="cap">Status · <b>in beta, coming soon</b></span></p>
+    <p class="meta-row"><span class="cap">Updated · <b>${longDate(updated(opts.crumbs[opts.crumbs.length - 1]![1]))}</b></span>${opts.meta ? html`<span class="cap">${opts.meta}</span>` : ""}<span class="cap">Status · <b>in beta, coming soon</b></span></p>
   </div>
 </section>`;
 }

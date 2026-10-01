@@ -9,15 +9,15 @@ import { breadcrumbs, faqPage, graph, howTo, webPage, type QA } from "./schema";
 const PATH = "/control-mac-from-iphone";
 const TITLE = "How to control your Mac from your iPhone · Farside";
 const DESC =
-  "Control your Mac from your iPhone in a few steps: install the free Mac helper, allow two permissions, scan a QR code, tap Connect. No account; free on your own network.";
+  "Control your Mac from your iPhone in a few steps: install Farside for Mac, allow two permissions, scan a QR code, tap Connect. No account; free on your own network.";
 const R = config.requirements;
 const P = config.pricing;
 
 const STEP_DATA: { title: string; text: string; body: Html; img?: string; caption?: string }[] = [
   {
-    title: "Install the Farside helper on your Mac",
-    text: "Download the free Farside helper for Mac, open it and move it to Applications if it asks. It lives in the menu bar.",
-    body: html`<p>Download the free Farside helper for Mac from this website <span class="placeholder">(coming soon)</span>, open it, and move it to Applications if it asks. It lives quietly in the menu bar. It’s signed with an Apple Developer ID and notarized by Apple.</p>`,
+    title: "Install Farside for Mac",
+    text: "Download Farside for Mac (free), open it and move it to Applications if it asks. It lives in the menu bar.",
+    body: html`<p>Download Farside for Mac (free) from this website <span class="placeholder">(coming soon)</span>, open it, and move it to Applications if it asks. It lives quietly in the menu bar. It’s signed with an Apple Developer ID and notarized by Apple.</p>`,
   },
   {
     title: "Allow Screen Recording and Accessibility",
@@ -89,7 +89,7 @@ export function controlGuidePage(assets: Assets) {
   <div class="prose">
     <h2 id="need">What you need</h2>
     <ul>
-      <li>${R.mac}, with the free Farside helper.</li>
+      <li>${R.mac}, with Farside for Mac (free).</li>
       <li>An iPhone on ${R.iphone}, or an iPad on ${R.ipad}, with the Farside app.</li>
       <li>Both on the same network for free use. To reach your Mac over the internet, the Anywhere plan.</li>
     </ul>
@@ -139,7 +139,7 @@ ${ctaBand()}`;
         howTo(PATH, {
           name: "How to control your Mac from your iPhone with Farside",
           description: DESC,
-          tools: ["Mac with macOS 26 or later", "iPhone with iOS 26 or later", "Farside helper for Mac", "Farside app for iPhone"],
+          tools: ["Mac with macOS 26 or later", "iPhone with iOS 26 or later", "Farside for Mac", "Farside for iPhone"],
           steps: STEP_DATA.map((s) => ({ name: s.title, text: s.text, image: s.img ? assets.img[s.img]?.src : undefined })),
         }),
         faqPage(PATH, QAS),

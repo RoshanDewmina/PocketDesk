@@ -11,7 +11,7 @@ const P = config.pricing;
 
 const OPEN_ITEMS = [
   "DRAFT: counsel must review everything on this page before launch. Remove the draft banner only after sign-off.",
-  "[TO FILL] Contracting party: postal address (config.contact.postalAddress). The legal name is set.",
+  "Contracting party: the legal name, with email contact only (owner decision 30 Sep 2026: no postal address published).",
   "[TO FILL] Governing law and courts (config.contact.governingLaw).",
   "[DECIDE] Minimum age. None is set here; a minimum above the App Store age rating forces an age-rating override (PRIVACY-POLICY.md section 5).",
   "[DECIDE] Use Apple's standard Licensed Application EULA for the iOS app (assumed here) or a custom EULA with Apple's required clauses.",
@@ -22,7 +22,7 @@ const S: Section[] = [
   {
     id: "agreement",
     title: "Who these terms are between",
-    body: html`<p>These terms are between you and ${detail(config.contact.legalName, "legal name")} (“we”, “us”). They cover the Farside iPhone and iPad app, the Farside Mac helper, our connection and relay service, and this website. By using any of them, you agree to these terms.</p>`,
+    body: html`<p>These terms are between you and ${detail(config.contact.legalName, "legal name")} (“we”, “us”). They cover the Farside iPhone and iPad app, Farside for Mac, our connection and relay service, and this website. By using any of them, you agree to these terms.</p>`,
   },
   {
     id: "what",
@@ -41,7 +41,7 @@ const S: Section[] = [
   {
     id: "apple",
     title: "The app, Apple and these terms",
-    body: html`<p>The iPhone and iPad app is licensed to you under Apple’s standard Licensed Application End User License Agreement, and these terms add to it. Apple is not responsible for the app or these terms. The Mac helper is a free download from this website; you may install and use it with Farside, but please don’t sell it, modify and redistribute it, or use it to build a competing service.</p>`,
+    body: html`<p>The iPhone and iPad app is licensed to you under Apple’s standard Licensed Application End User License Agreement, and these terms add to it. Apple is not responsible for the app or these terms. Farside for Mac is a free download from this website; you may install and use it with Farside, but please don’t sell it, modify and redistribute it, or use it to build a competing service.</p>`,
   },
   {
     id: "anywhere",

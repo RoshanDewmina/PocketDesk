@@ -73,7 +73,7 @@ export function remoteGuidePage(assets: Assets) {
     ${figure(assets, "mac-menu", "The Mac always shows who is connected, with Stop Sharing one click away.")}
 
     <h2 id="setup">Set it up</h2>
-    <p>You need ${R.mac}, and an iPhone on ${R.iphone} or an iPad on ${R.ipad}. Install the free Farside helper on the Mac, allow Screen Recording and Accessibility, scan the pairing code with the Farside app, and tap Connect. The <a href="/control-mac-from-iphone">step-by-step guide</a> has the details.</p>
+    <p>You need ${R.mac}, and an iPhone on ${R.iphone} or an iPad on ${R.ipad}. Install Farside for Mac (free) on the Mac, allow Screen Recording and Accessibility, scan the pairing code with the Farside app, and tap Connect. The <a href="/control-mac-from-iphone">step-by-step guide</a> has the details.</p>
 
     <h2 id="limits">Good to know</h2>
     <ul>
@@ -109,9 +109,9 @@ ${ctaBand()}`;
         howTo(PATH, {
           name: "How to set up remote desktop for your Mac on iPhone or iPad",
           description: DESC,
-          tools: ["Mac with macOS 26 or later", "iPhone or iPad with iOS or iPadOS 26 or later", "Farside helper for Mac", "Farside app"],
+          tools: ["Mac with macOS 26 or later", "iPhone or iPad with iOS or iPadOS 26 or later", "Farside for Mac", "Farside for iPhone and iPad"],
           steps: [
-            { name: "Install the Mac helper", text: "Install the free Farside helper on your Mac. It lives in the menu bar." },
+            { name: "Install Farside for Mac", text: "Install Farside for Mac (free). It lives in the menu bar." },
             { name: "Allow two permissions", text: "Allow Screen Recording and Accessibility so the phone can see and control the Mac." },
             { name: "Pair", text: "Scan the QR code on your Mac with the Farside app and approve the phone on the Mac." },
             { name: "Connect", text: "Tap Connect. At home it's free; away from home, the Anywhere plan connects over the internet." },

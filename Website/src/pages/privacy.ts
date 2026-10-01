@@ -9,7 +9,7 @@ import { breadcrumbs, graph, webPage } from "./schema";
 
 const OPEN_ITEMS = [
   "[TO FILL] Effective date (rendered as 'to be confirmed').",
-  "[TO FILL] Who we are: postal address and country (config.contact.postalAddress). The legal name is set.",
+  "Who we are: legal name and country, email contact only (owner decision 30 Sep 2026: no postal address published). Set config.contact.postalAddress to show one.",
   "[TO FILL] privacy@ address on the real domain (config.contact.privacyEmail).",
   "[TO FILL] EU/UK representative or data protection officer, only if counsel says one is required. Not rendered.",
   "[TO FILL] Support email retention (rendered: 24 months, to be confirmed).",
@@ -34,15 +34,15 @@ const S: Section[] = [
   <li>We check your subscription with Apple. Apple handles your payment; we never see your card or Apple Account details.</li>
   <li>No ads. No tracking. No analytics or advertising SDKs. We do not sell your data.</li>
 </ul>
-<p><b>Who we are.</b> Farside is made by ${detail(config.contact.legalName, "legal name")}, ${detail(config.contact.postalAddress, "postal address")}. Privacy questions go to ${email("privacy")}.</p>`,
+<p><b>Who we are.</b> Farside is made by ${detail(config.contact.legalName, "legal name")}, ${config.contact.postalAddress ?? "in Canada"}. Privacy questions go to ${email("privacy")}.</p>`,
   },
   {
     id: "devices",
     title: "What stays on your devices",
     body: html`<ul>
-  <li><b>Screen.</b> After you allow Screen Recording in macOS, the Farside Mac app captures the display you choose and streams it to your paired phone using WebRTC with DTLS-SRTP encryption. The stream is not saved. It is not sent to us in readable form.</li>
+  <li><b>Screen.</b> After you allow Screen Recording in macOS, Farside for Mac captures the display you choose and streams it to your paired phone using WebRTC with DTLS-SRTP encryption. The stream is not saved. It is not sent to us in readable form.</li>
   <li><b>Control.</b> After you enable control and allow Accessibility in macOS, taps and keys on your phone become pointer and keyboard actions on your Mac. They are not logged.</li>
-  <li><b>Typing help.</b> When you click on your Mac, the Mac app can check whether the clicked item is a text field so your phone can open its keyboard. It checks only the type of item. It does not read what is in it.</li>
+  <li><b>Typing help.</b> When you click on your Mac, Farside for Mac can check whether the clicked item is a text field so your phone can open its keyboard. It checks only the type of item. It does not read what is in it.</li>
   <li><b>Voice input.</b> When you tap the microphone, your iPhone converts speech to text using Apple’s speech recognition on the device. Only the text is sent to your Mac, when you tap Done. We never receive audio. If on-device recognition is not available for your language, Farside turns voice input off; it does not send audio to a server instead.</li>
   <li><b>Camera.</b> Used only to scan the pairing code on your Mac. Pictures are not saved or sent.</li>
   <li><b>Local network.</b> Used to connect your phone to your Mac when they are on the same network.</li>
@@ -55,7 +55,7 @@ const S: Section[] = [
     title: "What our servers see to connect you",
     body: html`<p>When you pair a phone with a Mac, the Mac shows a code that contains a random room identifier, a one-time token, an encryption key and an expiry of about two minutes. The key stays on your two devices. Our connection service forwards connection-setup messages between them; those messages are encrypted with that key, so we cannot read them.</p>
 <p>Each time a device connects, our service receives its IP address (as any internet service does), the random room identifier, a random token and the time. It stores the connection state it needs, such as hashed tokens, connection times and the status of relay credentials, and deletes it after 30 days without a connection.</p>
-<p>It also keeps a registry of Mac room identifiers, stored as a one-way hash, so it can limit abuse and block misuse. A Mac is added the first time it connects; there is no approval step. The registry entry is deleted when you choose Remove This Mac’s Server Room in the Mac app’s Settings, or after 12 months without use. Entries blocked for abuse are kept to enforce the block.</p>
+<p>It also keeps a registry of Mac room identifiers, stored as a one-way hash, so it can limit abuse and block misuse. A Mac is added the first time it connects; there is no approval step. The registry entry is deleted when you choose Remove This Mac’s Server Room in the Settings of Farside for Mac, or after 12 months without use. Entries blocked for abuse are kept to enforce the block.</p>
 <p>Our service keeps security audit records (event names, shortened identifiers and a hashed subscription identifier) for 30 days, and service logs for up to 7 days. Neither contains IP addresses or the content of your messages.</p>
 <p>Our connection service runs on Cloudflare. If a direct connection is not possible and you have the Anywhere plan, your encrypted stream passes through a relay that Cloudflare also runs. Cloudflare can see IP addresses, port numbers, timing and how much data passed. It cannot decrypt the stream. Relay credentials are short-lived and tied to a random room identifier, not to you. To find network addresses, connection setup also contacts a STUN server operated by Cloudflare.</p>`,
   },
@@ -90,7 +90,7 @@ const S: Section[] = [
     id: "website",
     title: "This website and downloads",
     body: html`<p>This website is hosted by Cloudflare (Cloudflare Pages), which receives your IP address and the pages or files you request. The site uses no cookies, no analytics and no advertising. Your browser stores your animation preference and, for one visit, the page you pressed Join from; neither is sent to us, except the page name with a waitlist sign-up. The site’s fonts load from Google Fonts, so your browser also sends your IP address to Google when it fetches them.</p>
-<p>When you choose Check for Updates, the Mac app downloads a small update file from this website. The request includes your IP address, the app’s name and version, and the version of the Sparkle update library. It does not send a system profile, and the app does not check automatically.</p>`,
+<p>When you choose Check for Updates, Farside for Mac downloads a small update file from this website. The request includes your IP address, the app’s name and version, and the version of the Sparkle update library. It does not send a system profile, and the app does not check automatically.</p>`,
   },
   {
     id: "diagnostics",
@@ -173,7 +173,7 @@ const S: Section[] = [
     id: "contact",
     title: "Contact",
     body: html`<p>Privacy questions: ${email("privacy")}.<br>
-Who we are: ${detail(config.contact.legalName, "legal name")}, ${detail(config.contact.postalAddress, "postal address")}.</p>`,
+Who we are: ${detail(config.contact.legalName, "legal name")}, ${config.contact.postalAddress ?? "Canada"}.</p>`,
   },
 ];
 
@@ -189,7 +189,7 @@ ${pageHero({
   crumbs,
   cap: "Privacy policy",
   title: html`Your screen is <em>yours.</em>`,
-  lead: html`How Farside handles information across the iPhone and iPad app, the Mac helper, our connection service and this website. The short version: <b>no account, no ads, no tracking</b>, and we never see your screen.`,
+  lead: html`How Farside handles information across Farside for iPhone and iPad, Farside for Mac, our connection service and this website. The short version: <b>no account, no ads, no tracking</b>, and we never see your screen.`,
   extra: html`<p class="meta-row"><span class="cap">Last updated · <b>${config.legalUpdated}</b></span><span class="cap">Effective · <b>to be confirmed</b></span></p>`,
 })}
 ${docBody(S)}`;

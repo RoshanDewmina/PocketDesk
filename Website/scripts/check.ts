@@ -32,6 +32,7 @@ type Scan = {
   ld: string[];
   text: string;
   styles: string[];
+  robots: string;
 };
 
 const { server } = await startServer({ port: 0, quiet: true });
@@ -87,6 +88,7 @@ try {
         ld: [...document.querySelectorAll('script[type="application/ld+json"]')].map((s) => s.textContent ?? ""),
         text: document.body.innerText,
         styles: [...document.querySelectorAll("style")].map((s) => s.textContent ?? ""),
+        robots: meta('meta[name="robots"]'),
       };
     })) as Scan;
     scans.set(p.path, scan);
@@ -107,7 +109,11 @@ for (const [path, s] of scans) {
   if (s.h1 !== 1) fail(`${path}: ${s.h1} h1 elements`);
   for (let i = 1; i < s.h.length; i++) if (s.h[i]! > s.h[i - 1]! + 1) fail(`${path}: heading jumps from h${s.h[i - 1]} to h${s.h[i]}`);
   if (page.sitemap && !s.canonical) fail(`${path}: no canonical`);
-  for (const k of ["og:title", "og:description", "og:image", "og:url", "twitter:card", "twitter:image"]) if (!s.og[k]) fail(`${path}: missing ${k}`);
+  for (const k of ["og:title", "og:description", "og:image", "twitter:card", "twitter:image"]) if (!s.og[k]) fail(`${path}: missing ${k}`);
+  if (page.sitemap && !s.og["og:url"]) fail(`${path}: missing og:url`);
+  if (!page.sitemap && s.og["og:url"]) fail(`${path}: not in the sitemap but has og:url`);
+  if (!page.sitemap && !s.robots.includes("noindex")) fail(`${path}: not in the sitemap but not noindex`);
+  if (/\/help(\/|$)/.test(path)) fail(`${path}: web pages must not live under /help/ (the app claims it)`);
   if (s.og["og:image"] && !/^https?:\/\//.test(s.og["og:image"])) fail(`${path}: og:image is not absolute`);
   for (const img of s.imgs) {
     if (img.alt === null) fail(`${path}: image without alt ${img.src}`);
@@ -129,6 +135,7 @@ for (const [path, s] of scans) {
   if (/far side/i.test(s.text)) fail(`${path}: says "far side" (trademark caution)`);
   if (/\b\d+\s?(ms|fps)\b/i.test(s.text)) fail(`${path}: shows a latency or frame-rate figure`);
   if (/from anywhere/i.test(s.text)) fail(`${path}: says "from anywhere"`);
+  if (/Farside helper|Mac helper|Farside Mac app|the Mac app\b/i.test(s.text)) fail(`${path}: call the Mac companion "Farside for Mac"`);
   if (/\[(TO FILL|CONFIRM)/.test(s.text)) fail(`${path}: raw [TO FILL]/[CONFIRM] marker visible on the page`);
   if (/\b(launch(es|ing)? on|available on) (\d|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(s.text)) fail(`${path}: mentions a launch date`);
   // JSON-LD.
@@ -153,7 +160,8 @@ function validateNode(path: string, n: any) {
   const abs = (u: unknown) => typeof u === "string" && /^https?:\/\//.test(u);
   switch (n["@type"]) {
     case "Organization":
-      need(n.name, "name");
+      need(n.name === "Farside", "name Farside");
+      need(!n.sameAs || (Array.isArray(n.sameAs) && n.sameAs.length), "non-empty sameAs (or none)");
       need(abs(n.url), "absolute url");
       need(abs(n.logo?.url), "logo.url");
       break;
@@ -161,6 +169,7 @@ function validateNode(path: string, n: any) {
       need(n.name && abs(n.url), "name/url");
       break;
     case "WebPage":
+    case "AboutPage":
       need(n.name && abs(n.url), "name/url");
       break;
     case "SoftwareApplication":
