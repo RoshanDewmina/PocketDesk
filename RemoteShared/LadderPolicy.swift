@@ -33,7 +33,7 @@ enum LadderTrigger: CaseIterable {
     /// Three frames in VideoToolbox's queue already cost ~40 ms at 2560 px: step on the first sample.
     var isImmediate: Bool { self == .encodeBacklog }
 
-    func fires(_ inputs: LadderInputs, at rung: LadderState, warmupRules: Bool = LadderWarmupSwitch.isOn) -> Bool {
+    func fires(_ inputs: LadderInputs, at rung: LadderState, falseLoadRules: Bool = LadderFalseLoadSwitch.isOn) -> Bool {
         let fps = LadderPolicy.rungFPS(rung)
         let interval = LadderPolicy.frameIntervalMs(rung)
         switch self {
@@ -65,7 +65,7 @@ enum LadderTrigger: CaseIterable {
             // and the rate controller drops a few after a key frame. With the encoder well inside its
             // interval (1 Oct 2026: p90 12-18 ms at 30 fps) that is cadence jitter, not load: 17 % of
             // such samples dropped 2-5 frames, and two in a row stepped 1920 down to 1280.
-            if warmupRules, let latency = inputs.encodeLatencyP90Ms, latency <= interval { return false }
+            if falseLoadRules, let latency = inputs.encodeLatencyP90Ms, latency <= interval { return false }
             return Double(inputs.droppedBeforeEncode ?? 0) > 0.05 * fps
         case .cpuLimited:
             return inputs.qualityLimitation?.lowercased() == "cpu"
@@ -83,6 +83,14 @@ enum LadderTrigger: CaseIterable {
             // Network bunching alone supersedes frames too; it counts only with a second phone signal.
             guard let superseded = inputs.phoneSupersededPerSecond, superseded >= 3,
                   let delivered = LadderPolicy.phoneMeasurableFPS(inputs, at: rung) else { return false }
+            if falseLoadRules {
+                // Every decoded frame is presented or superseded (VideoPresentationProbe), so over 25 %
+                // superseded already means under 75 % presented: "few presented" is the same signal, and
+                // bunched Wi-Fi arrivals alone fired it, busy at 1280 px on an iPhone 17 (1 Oct, .3).
+                // The second signal is a decoder using over half the frame's budget.
+                let pressedDecode = inputs.phoneDecodeMs.map { $0 > 0.5 * 1000 / delivered } ?? false
+                return Double(superseded) > 0.25 * delivered && pressedDecode
+            }
             let slowDecode = inputs.phoneDecodeMs.map { $0 > 1000 / delivered } ?? false
             let fewPresented = inputs.phonePresentedFPS.map { $0 < 0.8 * delivered } ?? false
             return Double(superseded) > 0.25 * delivered && (slowDecode || fewPresented)
@@ -93,8 +101,8 @@ enum LadderTrigger: CaseIterable {
     }
 
     static func firing(_ inputs: LadderInputs, at rung: LadderState,
-                       warmupRules: Bool = LadderWarmupSwitch.isOn) -> [LadderTrigger] {
-        allCases.filter { $0.fires(inputs, at: rung, warmupRules: warmupRules) }
+                       falseLoadRules: Bool = LadderFalseLoadSwitch.isOn) -> [LadderTrigger] {
+        allCases.filter { $0.fires(inputs, at: rung, falseLoadRules: falseLoadRules) }
     }
 }
 
@@ -110,7 +118,7 @@ enum LadderTrigger: CaseIterable {
 ///   climb waits. A warm-up sample neither counts nor clears load, so load on both sides of a
 ///   restart still steps; one that lasts past `maxWarmupSeconds` (restarts in a loop) counts again.
 /// - Up one rung after `climbWait` clean seconds since the last bad or neutral sample or move, and
-///   30 s after a thermal move. A climb that steps down again within 10 s, or within its first 10
+///   30 s after a thermal move; never to a rung whose frame interval the encoder's p90 does not fit. A climb that steps down again within 10 s, or within its first 10
 ///   samples of a moving picture (a climb made on a still screen), failed: the wait doubles
 ///   (10, 20, 40, 60 s); it returns to 10 s after 120 s on one rung or a down step with another reason.
 /// - Low Power Mode caps the top at the first rung of 60 fps or less (reason `power`), in one move.
@@ -143,8 +151,8 @@ struct LadderPolicy: LadderEngine {
     private var thermalMoveAt: TimeInterval?
     private var backoffReason: LadderReason?
     private var warmingSince: TimeInterval?
-    /// `LadderWarmupSwitch` (read once per process; tests turn it off per policy).
-    var warmupRules = LadderWarmupSwitch.isOn
+    /// `LadderFalseLoadSwitch` (read once per process; tests turn it off per policy).
+    var falseLoadRules = LadderFalseLoadSwitch.isOn
 
     init(targetFPS: Int) {
         self.targetFPS = targetFPS
@@ -169,9 +177,9 @@ struct LadderPolicy: LadderEngine {
     mutating func evaluate(_ inputs: LadderInputs, at time: TimeInterval) -> LadderState? {
         let previous = state
         if inputs.targetFPS != targetFPS {
-            let rules = warmupRules
+            let rules = falseLoadRules
             self = LadderPolicy(targetFPS: inputs.targetFPS)
-            warmupRules = rules
+            falseLoadRules = rules
             calmSince = time
         }
         step(inputs, at: time)
@@ -188,7 +196,7 @@ struct LadderPolicy: LadderEngine {
         }
         if lastClimbAt != nil, !Self.isStill(inputs) { movingSinceClimb += 1 }
         let warming = warmingUp(inputs, at: time)
-        let raw = LadderTrigger.firing(inputs, at: state, warmupRules: warmupRules)
+        let raw = LadderTrigger.firing(inputs, at: state, falseLoadRules: falseLoadRules)
         let firing = raw.filter { !warming || $0.isThermal || $0.isImmediate }
         let thermal = firing.first { $0.isThermal }
         let load = firing.first { !$0.isThermal }
@@ -207,7 +215,11 @@ struct LadderPolicy: LadderEngine {
             stepDown(because: load.reason, at: time)
             return
         }
-        guard firing.isEmpty, !warming, Self.isClean(inputs, at: state) else {
+        // Headroom for a climb includes the rung above: 2560 px at a 17-19 ms p90 is clean at 30 fps but
+        // never holds 60, and climbing anyway flipped 30/60 fps about once a minute (1 Oct, .3).
+        let fitsAbove = !falseLoadRules || state.rung == 0
+            || inputs.encodeLatencyP90Ms.map { $0 < Self.frameIntervalMs(rungs[state.rung - 1]) } ?? true
+        guard firing.isEmpty, !warming, fitsAbove, Self.isClean(inputs, at: state) else {
             calmSince = time
             return
         }
@@ -223,8 +235,8 @@ struct LadderPolicy: LadderEngine {
     private mutating func warmingUp(_ inputs: LadderInputs, at time: TimeInterval) -> Bool {
         // No session age and nothing encoded yet: capture is spinning up before the first encoder. That
         // is warm-up too, but it does not use up the cap the encoder's own first seconds need.
-        if warmupRules, inputs.encoderSessionAgeS == nil, inputs.encodedFPS == 0 { return true }
-        guard warmupRules, let age = inputs.encoderSessionAgeS, age < Self.warmupSeconds else {
+        if falseLoadRules, inputs.encoderSessionAgeS == nil, inputs.encodedFPS == 0 { return true }
+        guard falseLoadRules, let age = inputs.encoderSessionAgeS, age < Self.warmupSeconds else {
             warmingSince = nil
             return false
         }
@@ -309,11 +321,12 @@ struct LadderPolicy: LadderEngine {
     }
 }
 
-/// Kill switch for the warm-up rules (`defaults write <bundle id> PocketDeskLadderWarmup -bool NO`, then
-/// relaunch the host): off, an encoder's first seconds and pre-encode drops inside the frame interval
-/// count as load again, in the ladder and the busy pill alike.
-enum LadderWarmupSwitch {
-    static let defaultsKey = "PocketDeskLadderWarmup"
+/// Kill switch for the false-load rules (`defaults write <bundle id> PocketDeskLadderFalseLoad -bool NO`,
+/// then relaunch the host). Off restores, in the ladder and the busy pill alike: an encoder's first
+/// seconds and pre-encode drops inside the frame interval count as load, superseded phone frames
+/// count with few presented, and encode latency runs to the owned encoder's queue, not VideoToolbox.
+enum LadderFalseLoadSwitch {
+    static let defaultsKey = "PocketDeskLadderFalseLoad"
     static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
 }
 

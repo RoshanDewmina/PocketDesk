@@ -107,8 +107,8 @@ final class LadderPolicyTests: XCTestCase {
                 trigger: .hostThermal, reason: "thermal"),
             Row(name: "Mac thermal critical", inputs: with { $0.hostThermalState = "critical" },
                 trigger: .hostThermal, reason: "thermal"),
-            Row(name: "superseded over 25 % with few presented",
-                inputs: with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 90 },
+            Row(name: "superseded over 25 % with the decoder over half the interval",
+                inputs: with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 90; $0.phoneDecodeMs = 5 },
                 trigger: .phoneSuperseded, reason: "phone"),
             Row(name: "phone decode over one frame interval", inputs: with { $0.phoneDecodeMs = 8.4 },
                 trigger: .phoneDecode, reason: "phone"),
@@ -181,17 +181,23 @@ final class LadderPolicyTests: XCTestCase {
     func testSupersededFramesNeedASecondPhoneSignal() {
         let slowDecode = with { $0.phoneSupersededPerSecond = 31; $0.phoneDecodeMs = 8.4 }
         XCTAssertEqual(LadderTrigger.firing(slowDecode, at: ladder120[0]), [.phoneSuperseded, .phoneDecode])
-        let fewPresented = with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 95 }
-        XCTAssertEqual(LadderTrigger.firing(fewPresented, at: ladder120[0]), [.phoneSuperseded])
-        let enoughPresented = with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 97 }
-        XCTAssertEqual(LadderTrigger.firing(enoughPresented, at: ladder120[0]), [])
-        let atThirty = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        let bunched = with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 89 }
+        XCTAssertEqual(LadderTrigger.firing(bunched, at: ladder120[0]), [],
+                       "superseded frames are the ones not presented; with a 3 ms decoder that is arrival bunching")
+        XCTAssertTrue(LadderTrigger.phoneSuperseded.fires(bunched, at: ladder120[0], falseLoadRules: false),
+                      "the kill switch restores few-presented as the second signal")
+        let pressed = with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 89; $0.phoneDecodeMs = 5 }
+        XCTAssertEqual(LadderTrigger.firing(pressed, at: ladder120[0]), [.phoneSuperseded])
+        let atThirty = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20; $0.phoneDecodeMs = 20 }
         XCTAssertTrue(LadderTrigger.phoneSuperseded.fires(atThirty, at: ladder120[3]), "8 of 30 is over 25 %")
-        let sevenAtThirty = with { $0.phoneSupersededPerSecond = 7; $0.phonePresentedFPS = 20 }
+        let sevenAtThirty = with { $0.phoneSupersededPerSecond = 7; $0.phonePresentedFPS = 20; $0.phoneDecodeMs = 20 }
         XCTAssertFalse(LadderTrigger.phoneSuperseded.fires(sevenAtThirty, at: ladder120[3]))
+        let busyAt1280 = with { $0.phoneSupersededPerSecond = 9; $0.phonePresentedFPS = 21; $0.phoneDecodeMs = 3 }
+        XCTAssertFalse(LadderTrigger.phoneSuperseded.fires(busyAt1280, at: ladder120[4]),
+                       "an iPhone 17 decoding 1280 px in 3 ms is not busy because frames arrived together")
         var policy = LadderPolicy(targetFPS: 120)
-        XCTAssertNil(policy.evaluate(fewPresented, at: 0), "two samples, like every load trigger")
-        XCTAssertEqual(policy.evaluate(fewPresented, at: 1), rung(1, "phone"))
+        XCTAssertNil(policy.evaluate(pressed, at: 0), "two samples, like every load trigger")
+        XCTAssertEqual(policy.evaluate(pressed, at: 1), rung(1, "phone"))
     }
 
     func testAStillScreenOrSlowContentIsNotLoad() {
@@ -637,7 +643,7 @@ final class LadderPolicyTests: XCTestCase {
     func testBusyAtTheFloorRequiresCurrentPressureAndClearsAfterBoundedCalm() {
         var busy = BusyPolicy()
         let floor = rung(4, "phone")
-        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20; $0.phoneDecodeMs = 20 }
         for second in 0...4 {
             XCTAssertNil(evaluate(&busy, floor, phonePressure, at: TimeInterval(second)),
                          "under five seconds of pressure is not yet persistent trouble")
@@ -727,7 +733,7 @@ final class LadderPolicyTests: XCTestCase {
 
     func testBusyRestartsWhenTheTargetChanges() {
         var busy = BusyPolicy()
-        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20; $0.phoneDecodeMs = 20 }
         for second in 0...4 { _ = evaluate(&busy, rung(4, "phone"), phonePressure, at: TimeInterval(second)) }
         XCTAssertEqual(evaluate(&busy, rung(4, "phone"), phonePressure, at: 5)?.level, .busy)
         XCTAssertEqual(evaluate(&busy, LadderPolicy.ladder(targetFPS: 60)[0], calm(targetFPS: 60), at: 6), .ok)
@@ -735,7 +741,7 @@ final class LadderPolicyTests: XCTestCase {
 
     func testTheProtocolEntryPointReportsNoSize() {
         var busy = BusyPolicy()
-        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20; $0.phoneDecodeMs = 20 }
         for second in 0...4 { _ = busy.evaluate(ladder: rung(4, "phone"), inputs: phonePressure, at: TimeInterval(second)) }
         XCTAssertEqual(busy.evaluate(ladder: rung(4, "phone"), inputs: phonePressure, at: 5),
                        BusyState(level: .busy, fps: 30, longEdge: 0, reason: "phone"))
@@ -843,7 +849,8 @@ final class LadderPolicyTests: XCTestCase {
         thin.sentFPS = 10
         thin.phonePresentedFPS = 5
         thin.phoneSupersededPerSecond = 3
-        XCTAssertEqual(LadderTrigger.firing(thin, at: top), [.phoneSuperseded], "3 of 10 replaced, 5 shown")
+        thin.phoneDecodeMs = 60
+        XCTAssertEqual(LadderTrigger.firing(thin, at: top), [.phoneSuperseded], "3 of 10 replaced, 60 of 100 ms decoding")
         thin.phoneSupersededPerSecond = 2
         XCTAssertEqual(LadderTrigger.firing(thin, at: top), [], "two replaced frames are noise")
 
@@ -904,6 +911,7 @@ final class LadderPolicyTests: XCTestCase {
         overload.sentFPS = 30
         overload.phonePresentedFPS = 15
         overload.phoneSupersededPerSecond = 15
+        overload.phoneDecodeMs = 20
         for second in 0...4 {
             XCTAssertNil(phoneBusy.evaluate(ladder: floor, inputs: overload, longEdge: 2560, at: TimeInterval(second)))
         }
@@ -970,6 +978,7 @@ final class LadderPolicyTests: XCTestCase {
             var inputs = calm(targetFPS: 30)
             inputs.phoneSupersededPerSecond = feedback.supersededPerSecond
             inputs.phonePresentedFPS = feedback.presentedFPS
+            inputs.phoneDecodeMs = 20
             XCTAssertEqual(LadderTrigger.phoneSuperseded.fires(inputs, at: LadderState.rungs(targetFPS: 30)[0]), fires)
         }
         // Equal physical replacement rates must stay equal as the reporting window varies.
@@ -1175,7 +1184,7 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertTrue((spinUp + firstEncoder).isEmpty, "5 s before the first encoder leave its warm-up whole")
 
         var old = LadderPolicy(targetFPS: 60)
-        old.warmupRules = false
+        old.falseLoadRules = false
         let oldMoves = run(&old, 0...3) { self.sessionStarts[$0] }
         XCTAssertEqual(oldMoves.first?.state.reason, "capture", "the kill switch restores the old rules")
     }
@@ -1241,8 +1250,21 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(moves.first?.time, 7, "the load at 3 s and 7 s steps across the warm-up between")
         XCTAssertEqual(moves.first?.state.reason, "encoding")
         let jitter = recorded(age: 30, capture: 44, captureP90: 3, encoded: 25, encodeP90: 22.9, dropped: 5)
-        XCTAssertTrue(LadderTrigger.droppedBeforeEncode.fires(jitter, at: LadderPolicy.ladder(targetFPS: 60)[2], warmupRules: false),
+        XCTAssertTrue(LadderTrigger.droppedBeforeEncode.fires(jitter, at: LadderPolicy.ladder(targetFPS: 60)[2], falseLoadRules: false),
                       "the kill switch restores the old drop rule")
+    }
+
+    func testAClimbToSixtyMustFitItsInterval() {
+        var policy = LadderPolicy(targetFPS: 60)
+        var slow = recorded(age: 30, capture: 57, captureP90: 4, encoded: 30, encodeP90: 18, dropped: 0)
+        slow.encodeInFlightMax = 3
+        _ = policy.evaluate(slow, at: 0)
+        XCTAssertEqual(policy.state.rung, 1)
+        slow.encodeInFlightMax = 1
+        XCTAssertTrue(run(&policy, 1...40) { _ in slow }.isEmpty,
+                      "2560 px at an 18 ms p90 is clean at 30 fps but does not fit 60: stay")
+        let fast = recorded(age: 30, capture: 57, captureP90: 4, encoded: 30, encodeP90: 11, dropped: 0)
+        XCTAssertEqual(run(&policy, 41...51) { _ in fast }.map(\.state.rung), [0], "11 ms fits 16.7 ms: climb")
     }
 
     func testAWarmUpThatNeverEndsCountsAgain() {

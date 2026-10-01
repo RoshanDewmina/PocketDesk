@@ -521,7 +521,10 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         let codec = configuration.codecSpecificInfo()
         if isKey { restart.lastKeyFrameBytes = data.count }
         gate.accepted(); counters?.encoderOutput()
-        counters?.encoded(latencyMs: max(0, now - entry.submittedMs), bytes: data.count, isKeyFrame: isKey, inFlight: gate.inFlight + 1)
+        // The ladder judges VideoToolbox's own time; `now` adds this queue's wait and the Annex B copy,
+        // which WebRTC's encodeMs (encodeStartMs to encodeFinishMs above) still reports.
+        let encoderDoneMs = LadderFalseLoadSwitch.isOn ? encodedAtMs : now
+        counters?.encoded(latencyMs: max(0, encoderDoneMs - entry.submittedMs), bytes: data.count, isKeyFrame: isKey, inFlight: gate.inFlight + 1)
         frameTiming?.encoded(key: entry.captureMs, localRtp: entry.timestamp, bytes: data.count, atMs: now)
         if callback?(image, codec) == true { counters?.encodedFrameAccepted() }
     }
