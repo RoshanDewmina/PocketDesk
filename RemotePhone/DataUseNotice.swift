@@ -79,34 +79,14 @@ struct DataWarningCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Farside.Palette.ash)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(content.title)
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Farside.Palette.bone)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(content.message)
-                        .font(Farside.Typeface.caption(.footnote))
-                        .foregroundStyle(Farside.Palette.ash)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityLabel(content.spoken)
-                }
+            // At the largest text sizes the message scrolls and the buttons stack, so both stay on screen.
+            ViewThatFits(in: .vertical) {
+                notice
+                ScrollView { notice }.scrollBounceBehavior(.basedOnSize)
             }
-            HStack(spacing: 10) {
-                if let lower = content.lessData {
-                    Button(CommerceLocalization.text("DATA_WARNING_LESS", "Use less data"), action: useLessData)
-                        .buttonStyle(FarsidePrimaryButtonStyle(height: 40))
-                        .accessibilityHint(CommerceLocalization.text("DATA_WARNING_LESS_HINT", "Switches the picture to %@.", lower.title))
-                        .accessibilityIdentifier("remote.dataWarning.less")
-                }
-                Button(CommerceLocalization.text("DATA_WARNING_KEEP", "Keep"), action: keep)
-                    .buttonStyle(FarsideSecondaryButtonStyle(height: 40))
-                    .accessibilityHint(CommerceLocalization.text("DATA_WARNING_KEEP_HINT", "Keeps the current picture quality. This notice won’t appear again."))
-                    .accessibilityIdentifier("remote.dataWarning.keep")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 10) { buttons }
+                VStack(spacing: 10) { buttons }
             }
         }
         .padding(16)
@@ -116,5 +96,38 @@ struct DataWarningCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.dataWarning")
         .onAppear { AccessibilityNotification.Announcement("\(content.title). \(content.spoken)").post() }
+    }
+
+    private var notice: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "antenna.radiowaves.left.and.right")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Farside.Palette.ash)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(content.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Farside.Palette.bone)
+                    .accessibilityAddTraits(.isHeader)
+                Text(content.message)
+                    .font(Farside.Typeface.caption(.footnote))
+                    .foregroundStyle(Farside.Palette.ash)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(content.spoken)
+            }
+        }
+    }
+
+    @ViewBuilder private var buttons: some View {
+        if let lower = content.lessData {
+            Button(CommerceLocalization.text("DATA_WARNING_LESS", "Use less data"), action: useLessData)
+                .buttonStyle(FarsidePrimaryButtonStyle(height: 40))
+                .accessibilityHint(CommerceLocalization.text("DATA_WARNING_LESS_HINT", "Switches the picture to %@.", lower.title))
+                .accessibilityIdentifier("remote.dataWarning.less")
+        }
+        Button(CommerceLocalization.text("DATA_WARNING_KEEP", "Keep"), action: keep)
+            .buttonStyle(FarsideSecondaryButtonStyle(height: 40))
+            .accessibilityHint(CommerceLocalization.text("DATA_WARNING_KEEP_HINT", "Keeps the current picture quality. This notice won’t appear again."))
+            .accessibilityIdentifier("remote.dataWarning.keep")
     }
 }
