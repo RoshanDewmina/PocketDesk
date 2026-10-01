@@ -104,13 +104,13 @@ struct EncoderInFlightCounts: Equatable {
 /// `limit` frames inside VideoToolbox, nil (or the switch off) for no limit. A requested key frame is
 /// never dropped; it supersedes what is in flight. An entry without a callback after `windowMs`
 /// retires with the rest of the pending chain, at most once per `retireSpacingMs`, so a lost callback
-/// cannot hold the gate shut. A superseded or retired output is discarded if it arrives later, so the
-/// caller makes the next frame independent whenever this decision discards anything.
+/// cannot hold the gate shut. A superseded or retired output is discarded if it arrives later. A
+/// superseding frame is already the requested key (an IDR or an LTR refresh, neither of which
+/// references the discarded delta); after a retirement the caller forces the next frame independent.
 struct EncoderInFlightGate<Entry> {
     enum Decision: Equatable {
         case drop
         case submit(retired: Int, superseded: Int)
-        var discards: Bool { if case let .submit(retired, superseded) = self { return retired + superseded > 0 }; return false }
     }
     static var windowMs: Double { DesktopH264Encoder.inFlightWindowMs }
     static var retireSpacingMs: Double { 1_000 }
@@ -349,15 +349,15 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                 guard createSession() == noErr else { return -1 }
             }
             let keyRequested = forceIDR || frameTypes.contains { $0.intValue == RTCFrameType.videoFrameKey.rawValue }
-            let decision = gate.admit(key: keyRequested, enabled: newestFrameWins(), now: clock())
-            switch decision {
+            switch gate.admit(key: keyRequested, enabled: newestFrameWins(), now: clock()) {
             case .drop:
                 counters?.droppedBeforeEncode(); return 0
             case let .submit(retired, superseded):
-                if retired > 0 { counters?.encoderRetired(retired) }
                 if superseded > 0 { counters?.encoderSuperseded(superseded) }
-                // A discarded output would leave a gap in the reference chain.
-                if decision.discards { forceIDR = true }
+                if retired > 0 {
+                    counters?.encoderRetired(retired)
+                    forceIDR = true // A discarded late output would leave a gap in the reference chain.
+                }
             }
             guard let session, let buffer = frame.buffer as? RTCCVPixelBuffer,
                   let sourcePixels = adaptedPixels(buffer), nextID < UInt64.max else { return -1 }
