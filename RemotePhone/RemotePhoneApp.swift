@@ -3002,7 +3002,8 @@ struct DecodedLuma {
     /// WebRTC's crop of the buffer, in luma pixels with a top-left origin.
     let visible: CGRect
 
-    static let formats: Set<OSType> = [kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+    static let formats: Set<OSType> = [kCVPixelFormatType_444YpCbCr8BiPlanarFullRange, kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange,
+        kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
                                        kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
 
     init?(_ buffer: RTCCVPixelBuffer) {

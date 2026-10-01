@@ -49,15 +49,19 @@ struct VideoFrameEnvelope {
         if format == kCVPixelFormatType_32BGRA {
             return Pixels(buffer: buffer, crop: crop, conversion: nil, bgra: true, transfer: transfer)
         }
-        guard format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
-              CVPixelBufferGetPlaneCount(buffer) == 2,
-              [width, height, Int(crop.minX), Int(crop.minY), Int(crop.width), Int(crop.height)].allSatisfy({ $0 % 2 == 0 }) else { return nil }
+        let fullColor = format == kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange || format == kCVPixelFormatType_444YpCbCr8BiPlanarFullRange
+        let subsampled = format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || format == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        guard (fullColor || subsampled), CVPixelBufferGetPlaneCount(buffer) == 2,
+              CVPixelBufferGetWidthOfPlane(buffer, 0) == width, CVPixelBufferGetHeightOfPlane(buffer, 0) == height,
+              CVPixelBufferGetWidthOfPlane(buffer, 1) == (fullColor ? width : width / 2),
+              CVPixelBufferGetHeightOfPlane(buffer, 1) == (fullColor ? height : height / 2),
+              fullColor || [width, height, Int(crop.minX), Int(crop.minY), Int(crop.width), Int(crop.height)].allSatisfy({ $0 % 2 == 0 }) else { return nil }
         let matrix: VideoColorMatrix
         let attachedMatrix = attachment(kCVImageBufferYCbCrMatrixKey)
         if attachedMatrix == (kCVImageBufferYCbCrMatrix_ITU_R_709_2 as String) { matrix = .bt709 }
         else if attachedMatrix == (kCVImageBufferYCbCrMatrix_ITU_R_601_4 as String) { matrix = .bt601 }
         else { return nil }
         return Pixels(buffer: buffer, crop: crop,
-                      conversion: VideoColorConversion(matrix: matrix, fullRange: format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange), bgra: false, transfer: transfer)
+                      conversion: VideoColorConversion(matrix: matrix, fullRange: format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || format == kCVPixelFormatType_444YpCbCr8BiPlanarFullRange), bgra: false, transfer: transfer)
     }
 }

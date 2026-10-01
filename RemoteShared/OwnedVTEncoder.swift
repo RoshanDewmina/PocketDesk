@@ -170,14 +170,28 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         var created: VTCompressionSession?
         storedLastStage = "create"
         var status = VTCompressionSessionCreate(allocator: nil, width: width, height: height, codecType: configuration.codecType,
-            encoderSpecification: specification as CFDictionary, imageBufferAttributes: nil,
+            encoderSpecification: specification as CFDictionary, imageBufferAttributes: configuration.fullColor444 ? [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange, kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary : nil,
             compressedDataAllocator: nil, outputCallback: nil, refcon: nil, compressionSessionOut: &created)
         guard status == noErr, let created else { storedLastStatus = status; return status }
         session = created
         videoFeedback?.beginEncoder()
+        var profileProperty = configuration.profileProperty
+        if configuration.fullColor444 {
+            var catalog: CFDictionary?
+            guard VTSessionCopySupportedPropertyDictionary(created, supportedPropertyDictionaryOut: &catalog) == noErr,
+                  let properties = catalog as? [String: Any],
+                  let profile = properties[kVTCompressionPropertyKey_ProfileLevel as String] as? [String: Any],
+                  let values = profile[kVTPropertySupportedValueListKey as String] as? [String],
+                  let actualProfile = HEVC444Policy.catalogProfile(values) else { invalidate(); storedLastStatus = kVTPropertyNotSupportedErr; return lastStatus }
+            profileProperty = actualProfile as CFString
+            for key in [kVTCompressionPropertyKey_ColorPrimaries, kVTCompressionPropertyKey_TransferFunction, kVTCompressionPropertyKey_YCbCrMatrix] {
+                let value = key == kVTCompressionPropertyKey_TransferFunction ? kCVImageBufferTransferFunction_ITU_R_709_2 : (key == kVTCompressionPropertyKey_ColorPrimaries ? kCVImageBufferColorPrimaries_ITU_R_709_2 : kCVImageBufferYCbCrMatrix_ITU_R_709_2)
+                guard VTSessionSetProperty(created, key: key, value: value) == noErr else { invalidate(); storedLastStatus = kVTPropertyNotSupportedErr; return lastStatus }
+            }
+        }
         for (key, value) in [(kVTCompressionPropertyKey_RealTime, kCFBooleanTrue as CFTypeRef),
                              (kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse as CFTypeRef),
-                             (kVTCompressionPropertyKey_ProfileLevel, configuration.profileProperty as CFTypeRef)] {
+                             (kVTCompressionPropertyKey_ProfileLevel, profileProperty as CFTypeRef)] {
             storedLastStage = key as String
             status = VTSessionSetProperty(created, key: key, value: value)
             if status != noErr { invalidate(); storedLastStatus = status; return status }
@@ -243,7 +257,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             }
             guard pending.count < 2 else { counters?.droppedBeforeEncode(); return 0 }
             guard let session, let buffer = frame.buffer as? RTCCVPixelBuffer,
-                  let pixels = adaptedPixels(buffer), nextID < UInt64.max else { return -1 }
+                  let sourcePixels = adaptedPixels(buffer), nextID < UInt64.max else { return -1 }
             nextID += 1
             let id = nextID, currentEpoch = epoch
             var videoTag = videoFeedback?.encoded(token: nil)
@@ -261,7 +275,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                 invalidate(); guard createSession() == noErr else { return -1 }
                 return encode(frame, codecSpecificInfo: info, frameTypes: [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)])
             }
-            if let tag = videoTag { videoTag = videoFeedback?.prepareRefinement(pixels, tag: tag) }
+            if let tag = videoTag { videoTag = videoFeedback?.prepareRefinement(sourcePixels, tag: tag) }
+            guard let pixels = configuration.fullColor444 ? HEVC444PixelTransfer.fullColor(sourcePixels) : sourcePixels else { return -1 }
             let entry = Pending(epoch: currentEpoch, videoTag: videoTag, timestamp: UInt32(bitPattern: frame.timeStamp),
                 captureMs: frame.timeStampNs / 1_000_000, rotation: frame.rotation, submittedMs: MachClock.nowMs(), width: width, height: height)
             pending[id] = entry
@@ -294,6 +309,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         }
     }
     private func adaptedPixels(_ buffer: RTCCVPixelBuffer) -> CVPixelBuffer? {
+        if configuration.fullColor444 { return HEVC444PixelTransfer.scaledBGRA(buffer, width: Int(width), height: Int(height)) }
         if !buffer.requiresCropping(), CVPixelBufferGetWidth(buffer.pixelBuffer) == Int(width),
            CVPixelBufferGetHeight(buffer.pixelBuffer) == Int(height) { return buffer.pixelBuffer }
         let format = CVPixelBufferGetPixelFormatType(buffer.pixelBuffer)

@@ -603,8 +603,9 @@ final class PeerMedia: NSObject {
         captureLock.lock(); defer { captureLock.unlock() }; frameTransform = transform
     }
 
+    private(set) var fullColorCaptureEnabled = false
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true,
-         localLink: ProvenLocalLink? = nil, fileChannel: Bool = false, hevc: Bool? = nil, videoLTR: Bool = false) {
+         localLink: ProvenLocalLink? = nil, fileChannel: Bool = false, hevc: Bool? = nil, hevc444: Bool? = nil, videoLTR: Bool = false) {
         self.isHost = isHost
         acceptsFileChannel = fileChannel
         self.forceRelay = forceRelay
@@ -647,6 +648,12 @@ final class PeerMedia: NSObject {
         // peer is created. Never publish a process-global 'next encoder' binding.
         _ = Self.codecRuntime
         let useHEVC = hevc ?? (nativeDesktopCodecs && NativeHEVCCapability.permits(isHost: isHost))
+        let useFullColor = nativeDesktopCodecs && (hevc444 ?? NativeHEVC444Capability.permits(isHost: isHost))
+        fullColorCaptureEnabled = isHost && useFullColor
+        let fullColorFailure: () -> Void = { [weak self] in
+            NativeHEVC444Capability.failed() // Fresh negotiation may use Main1 or H264, never active-byte relabeling.
+            DispatchQueue.main.async { [weak self] in guard let self, !self.closed else { return }; self.onState?("failed") }
+        }
         let codecFailure: () -> Void = { [weak self] in
             NativeHEVCCapability.failed() // Next session negotiates H264; never relabel active HEVC bytes.
             DispatchQueue.main.async { [weak self] in
@@ -654,8 +661,8 @@ final class PeerMedia: NSObject {
                 self.onState?("failed")
             }
         }
-        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, preferLTR: videoLTR)
-        let ownedDecoderFactory = PocketDeskVideoDecoderFactory(hevc: useHEVC, frameTiming: frameTimingReceiver?.log, onHEVCFailure: codecFailure, videoFeedback: videoFeedback)
+        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, preferLTR: videoLTR)
+        let ownedDecoderFactory = PocketDeskVideoDecoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, frameTiming: frameTimingReceiver?.log, onHEVCFailure: codecFailure, videoFeedback: videoFeedback)
         var configuredFactory: RTCPeerConnectionFactory?
         #if os(macOS)
         if isHost {
