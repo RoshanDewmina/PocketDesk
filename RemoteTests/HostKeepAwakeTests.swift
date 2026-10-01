@@ -1,5 +1,11 @@
 import XCTest
 
+private final class FakePowerSource: HostPowerSourceReading {
+    var value: HostPowerSnapshot
+    init(_ value: HostPowerSnapshot) { self.value = value }
+    func snapshot() -> HostPowerSnapshot { value }
+}
+
 final class HostKeepAwakeTests: XCTestCase {
     func testAssertionIsAcquiredOnceAndReleasedOnStop() {
         var acquireCount = 0
@@ -50,6 +56,45 @@ final class HostKeepAwakeTests: XCTestCase {
         XCTAssertFalse(keepAwake.stop())
         XCTAssertTrue(keepAwake.isActive)
         XCTAssertEqual(releaseCount, 3)
+    }
+
+    func testBatteryPausesIdleSleepPreventionButNeverTheConnectedPhoneDisplayHold() {
+        let onBattery = HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: false, onBattery: true)
+        XCTAssertFalse(onBattery.system, "Keep-awake pauses on battery")
+        XCTAssertFalse(onBattery.display)
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: true, onBattery: true)
+                      == (false, true), "A connected phone still holds the display on battery")
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: false, sharing: true, phoneConnected: true, onBattery: true)
+                      == (false, true))
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: false, onBattery: false)
+                      == (true, false), "Resumes on power")
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: false, awayArmed: true,
+                                                 onBattery: true) == (true, true),
+                      "Away mode keeps its own battery limit")
+    }
+
+    @MainActor
+    func testBatteryWatchFollowsAnInjectedPowerSource() {
+        let power = FakePowerSource(HostPowerSnapshot(onACPower: true, batteryPercent: 80))
+        let watch = HostBatteryWatch(power: power)
+        var changes = 0
+        watch.onChange = { changes += 1 }
+        XCTAssertFalse(watch.onBattery)
+
+        power.value = HostPowerSnapshot(onACPower: false, batteryPercent: 79)
+        watch.refresh()
+        XCTAssertTrue(watch.onBattery)
+        XCTAssertEqual(changes, 1)
+        watch.refresh()
+        XCTAssertEqual(changes, 1, "Only a change of source is reported")
+
+        power.value = HostPowerSnapshot(onACPower: true, batteryPercent: 79)
+        watch.refresh()
+        XCTAssertFalse(watch.onBattery)
+        XCTAssertEqual(changes, 2)
+
+        XCTAssertFalse(HostBatteryWatch(power: FakePowerSource(HostPowerSnapshot(onACPower: false, batteryPercent: nil)))
+            .onBattery, "A Mac without a battery reading is treated as on power")
     }
 
     func testOnlyLiveOrRecoveringCoordinatorStateKeepsAccessActive() {

@@ -1,5 +1,6 @@
 import Foundation
 import CoreGraphics
+import IOKit.ps
 import IOKit.pwr_mgt
 
 struct HostKeepAwakeBackend {
@@ -30,10 +31,62 @@ struct HostKeepAwakeBackend {
 }
 
 enum HostPowerPolicy {
-    /// Idle reachability follows the owner's preference. A live, unpaused phone
+    /// Idle reachability follows the owner's preference and pauses on battery. A live, unpaused phone
     /// automatically holds the display on, including idle view-only/audio sessions.
-    static func assertions(keepAwake: Bool, sharing: Bool, phoneConnected: Bool, awayArmed: Bool = false) -> (system: Bool, display: Bool) {
-        (sharing && (keepAwake || awayArmed), sharing && (phoneConnected || awayArmed))
+    static func assertions(keepAwake: Bool, sharing: Bool, phoneConnected: Bool, awayArmed: Bool = false,
+                           onBattery: Bool = false) -> (system: Bool, display: Bool) {
+        (sharing && ((keepAwake && !onBattery) || awayArmed), sharing && (phoneConnected || awayArmed))
+    }
+}
+
+extension HostPowerSnapshot {
+    /// Battery only with a battery reading behind it: a Mac without one, or a failed read, counts as on power.
+    var onBatteryPower: Bool { !onACPower && batteryPercent != nil }
+}
+
+/// Follows the power source so keep-awake can pause on battery and resume on power.
+@MainActor
+final class HostBatteryWatch {
+    private let power: HostPowerSourceReading
+    private(set) var onBattery: Bool
+    var onChange: (() -> Void)?
+    private var source: CFRunLoopSource?
+    private var retainedSelf: Unmanaged<HostBatteryWatch>?
+
+    init(power: HostPowerSourceReading = SystemPowerSource()) {
+        self.power = power
+        onBattery = power.snapshot().onBatteryPower
+    }
+
+    func refresh() {
+        let now = power.snapshot().onBatteryPower
+        guard now != onBattery else { return }
+        onBattery = now
+        onChange?()
+    }
+
+    func start() {
+        guard retainedSelf == nil else { return }
+        let retained = Unmanaged.passRetained(self)
+        retainedSelf = retained
+        let callback: IOPowerSourceCallbackType = { context in
+            guard let context else { return }
+            let watch = Unmanaged<HostBatteryWatch>.fromOpaque(context).takeUnretainedValue()
+            MainActor.assumeIsolated { watch.refresh() }
+        }
+        if let created = IOPSNotificationCreateRunLoopSource(callback, retained.toOpaque())?.takeRetainedValue() {
+            CFRunLoopAddSource(CFRunLoopGetMain(), created, .commonModes)
+            source = created
+        }
+        refresh()
+    }
+
+    func stop() {
+        guard let retained = retainedSelf else { return }
+        if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        source = nil
+        retainedSelf = nil
+        retained.release()
     }
 }
 
