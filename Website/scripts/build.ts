@@ -11,6 +11,7 @@ import { faviconSvg } from "../src/lib/mark";
 import { ARTS, PHOTOS, SHOTS } from "../src/pages/images";
 import type { Assets, ImgAsset } from "../src/pages/layout";
 import { OG, ogFile } from "../src/pages/og";
+import { posterCss } from "../src/hero-bg/poster";
 import { updated } from "../src/pages/dates";
 import { PAGES } from "../src/pages/registry";
 
@@ -253,7 +254,7 @@ async function bundle(out: string) {
     if (text.includes("</style")) throw new Error("CSS must not contain </style");
     return text;
   };
-  return { js: jsMap, cssText: await sheet("site.css"), homeCss: await sheet("home.css") };
+  return { js: jsMap, cssText: await sheet("site.css"), homeCss: `${await sheet("home.css")}\n${posterCss()}` };
 }
 
 /** Design-preview images: copied into /assets/img with content hashes, sizes from static/img/manifest.json. */

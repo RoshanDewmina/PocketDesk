@@ -64,10 +64,13 @@ export function initFooter(fonts: Promise<void>) {
     return clamp((bot - top) / Math.max(1, fr.height), 0, 1);
   };
 
+  // Cached, refreshed on onMotionChange: reading matchMedia().matches on every scroll could swallow the change
+  // event the rest of the page relies on.
+  let allowed = motionAllowed();
   const check = () => {
     const r = reveal();
     foot.style.setProperty("--rv", r.toFixed(3));
-    if (motionAllowed()) foot.style.setProperty("--rv-move", r.toFixed(3));
+    if (allowed) foot.style.setProperty("--rv-move", r.toFixed(3));
     else foot.style.removeProperty("--rv-move");
     if (field) return field.setReveal(r);
     if (starting || main.getBoundingClientRect().bottom > window.innerHeight * 2.2) return;
@@ -82,7 +85,10 @@ export function initFooter(fonts: Promise<void>) {
 
   window.addEventListener("scroll", check, { passive: true });
   window.addEventListener("resize", check);
-  onMotionChange(check);
+  onMotionChange(() => {
+    allowed = motionAllowed();
+    check();
+  });
   check();
 }
 
