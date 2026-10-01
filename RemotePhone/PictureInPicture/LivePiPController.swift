@@ -25,7 +25,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     /// Main-thread only; cannot retarget a live PiP window across host/grant/session/content epochs.
     func updateAdmission(_ next: VideoPresentationAdmission?) {
         precondition(Thread.isMainThread)
-        if let old = policy.admission, let next, old.identity != next.identity {
+        if let old = policy.admission, let next, (old.identity != next.identity || old.lifetime !== next.lifetime) {
             stop() // End the old view before authorizing a new inline preroll; never auto-start it.
         }
         if policy.update(next, at: ProcessInfo.processInfo.systemUptime) { stop(); return }

@@ -473,6 +473,8 @@ final class PhoneRemoteModel: ObservableObject {
         pendingText?.usefulContext = nil
         usefulSession.invalidate()
         usefulPicture.invalidate()
+        inlinePresentationAdmission?.lifetime.retire()
+        if !keepingPiP { pipAdmission?.lifetime.retire() }
         VideoPresentationSession.invalidateActive()
         if !keepingPiP { connection.media?.videoFeedback.configure(allowed: false, geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1) }
         inlinePresentationAdmission = nil
@@ -504,7 +506,8 @@ final class PhoneRemoteModel: ObservableObject {
         let proof = PresentationLeasePolicy.admission(identity: identity, routeDeadline: connection.presentationDeadline(at: now),
             captureHealthAt: lastCaptureHealth, healthy: captureHealthy, picture: sessionMode == .picture,
             trackPresent: connection.remoteVideo != nil, blocked: blocked, now: now)
-        let inline = sceneIsActive && !privacyShield && !contentConcealed ? proof : nil
+        let inline = VideoPresentationAdmission.renewed(sceneIsActive && !privacyShield && !contentConcealed ? proof : nil,
+            from: inlinePresentationAdmission)
         if let peer = connection.media {
             let supportsLTR = hostFeatures.contains(SessionFeature.videoLTR)
             peer.videoFeedback.configure(allowed: proof != nil && (supportsLTR || hostFeatures.contains(SessionFeature.videoRefinement)),
@@ -522,7 +525,10 @@ final class PhoneRemoteModel: ObservableObject {
         if inlinePresentationAdmission?.identity != inline?.identity { VideoPresentationSession.invalidateActive() }
         inlinePresentationAdmission = inline
         let mayPreroll = sceneIsActive && !privacyShield && !contentConcealed
-        let nextPiP = hostFeatures.contains(SessionFeature.liveViewOnly) && (mayPreroll || pipBackground && mayKeepLivePiP) ? proof : nil
+        // PiP and inline have separate terminal lifetimes: background retirement of inline cannot kill an approved PiP.
+        let pipProposal = proof.map { VideoPresentationAdmission(identity: $0.identity, validUntil: $0.validUntil) }
+        let nextPiP = VideoPresentationAdmission.renewed(hostFeatures.contains(SessionFeature.liveViewOnly) &&
+            (mayPreroll || pipBackground && mayKeepLivePiP) ? pipProposal : nil, from: pipAdmission)
         pipAdmission = nextPiP
         livePiP.updateAdmission(nextPiP)
         if nextPiP != nil, let track = connection.remoteVideo { livePiP.attachSourceTrack(track) }
@@ -2860,7 +2866,9 @@ struct RemoteVideoSurface: UIViewRepresentable {
         var session: VideoPresentationSession?
         func invalidate() { session?.invalidate(); session = nil }
         func ensureSession(track: RTCVideoTrack, admission: VideoPresentationAdmission, onFrame: @escaping () -> Void, primary: Bool) -> Bool {
-            guard session?.isTerminal != false || session?.track !== track || session?.admissionIdentity != admission.identity else { return false }
+            guard admission.permits(at: ProcessInfo.processInfo.systemUptime) else { invalidate(); return false }
+            guard session?.isTerminal != false || session?.track !== track || session?.admissionIdentity != admission.identity ||
+                  session?.admissionLifetime !== admission.lifetime else { return false }
             invalidate()
             session = VideoPresentationSession(track: track, admission: admission, onFrame: onFrame, primary: primary)
             return true

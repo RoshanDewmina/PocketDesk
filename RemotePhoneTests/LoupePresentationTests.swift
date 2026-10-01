@@ -23,6 +23,9 @@ final class LoupePresentationTests: XCTestCase {
         XCTAssertTrue(loupe.isTerminal); XCTAssertTrue(main.isTerminal)
         XCTAssertNil(loupe.fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { true })
         XCTAssertFalse(loupe.fence.renew(proof), "A stale view update cannot revive its retired session")
+        XCTAssertFalse(coordinator.ensureSession(track: track, admission: proof, onFrame: {}, primary: false))
+        let newCoordinator = RemoteVideoSurface.Coordinator()
+        XCTAssertFalse(newCoordinator.ensureSession(track: track, admission: proof, onFrame: {}, primary: false))
         coordinator.invalidate()
     }
 }

@@ -26,7 +26,7 @@ final class MiniMapVideoTests: XCTestCase {
         XCTAssertFalse(main.fence.renew(admission)); XCTAssertFalse(mini.fence.renew(admission))
     }
     @MainActor
-    func testSurfaceRecreatesTerminalSessionWithSameAdmissionWithoutIntermediateNilUpdate() throws {
+    func testRetiredAdmissionCannotRecreateAnyCoordinatorWithoutFreshModelIssuance() throws {
         let factory = RTCPeerConnectionFactory()
         let track = factory.videoTrack(with: factory.videoSource(), trackId: "same-admission")
         let identity = VideoPresentationIdentity(hostRecordID: "host", ownerPairID: "grant", sessionID: UUID(), trackID: UUID(), contentEpoch: 1, geometryEpoch: 2)
@@ -37,11 +37,17 @@ final class MiniMapVideoTests: XCTestCase {
         let old = try XCTUnwrap(coordinator.session)
         VideoPresentationSession.invalidateActive()
         XCTAssertTrue(old.isTerminal)
-        XCTAssertTrue(coordinator.ensureSession(track: track, admission: proof, onFrame: {}, primary: true))
+        XCTAssertFalse(coordinator.ensureSession(track: track, admission: proof, onFrame: {}, primary: true))
+        XCTAssertNil(coordinator.session)
+        let newCoordinator = RemoteVideoSurface.Coordinator()
+        XCTAssertFalse(newCoordinator.ensureSession(track: track, admission: proof, onFrame: {}, primary: true))
+        XCTAssertNil(newCoordinator.session)
+        let fresh = VideoPresentationAdmission(identity: identity, validUntil: ProcessInfo.processInfo.systemUptime + 10)
+        XCTAssertTrue(coordinator.ensureSession(track: track, admission: fresh, onFrame: {}, primary: true))
         XCTAssertFalse(coordinator.session === old)
         XCTAssertFalse(old.fence.renew(proof), "Retired authority remains terminal")
         XCTAssertFalse(try XCTUnwrap(coordinator.session).isTerminal)
-        XCTAssertFalse(coordinator.ensureSession(track: track, admission: proof, onFrame: {}, primary: true))
+        XCTAssertFalse(coordinator.ensureSession(track: track, admission: fresh, onFrame: {}, primary: true))
     }
 
 }

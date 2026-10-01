@@ -10,17 +10,47 @@ struct VideoPresentationIdentity: Equatable, Hashable, Sendable {
     let geometryEpoch: UInt64
 }
 
+/// Shared model-issued authority. Retirement is permanent and serializes with the final effect,
+/// including effects from a new coordinator that still holds a cached admission value.
+final class VideoPresentationLifetime: @unchecked Sendable, Equatable {
+    private let lock = NSRecursiveLock()
+    private var retired = false
+    static func == (lhs: VideoPresentationLifetime, rhs: VideoPresentationLifetime) -> Bool { lhs === rhs }
+    var isActive: Bool { lock.lock(); defer { lock.unlock() }; return !retired }
+    func retire() { lock.lock(); retired = true; lock.unlock() }
+    func withActive<T>(_ action: () -> T) -> T? {
+        lock.lock(); defer { lock.unlock() }
+        guard !retired else { return nil }
+        return action()
+    }
+}
+
 struct VideoPresentationAdmission: Equatable, Sendable {
     let identity: VideoPresentationIdentity
     /// Monotonic deadline. The model renews this only after current route/content authorization.
     let validUntil: TimeInterval
+    let lifetime: VideoPresentationLifetime
+    init(identity: VideoPresentationIdentity, validUntil: TimeInterval,
+         lifetime: VideoPresentationLifetime = VideoPresentationLifetime()) {
+        self.identity = identity; self.validUntil = validUntil; self.lifetime = lifetime
+    }
     func permits(at now: TimeInterval) -> Bool {
-        now.isFinite && validUntil.isFinite && now < validUntil &&
+        lifetime.isActive && now.isFinite && validUntil.isFinite && now < validUntil &&
         !identity.hostRecordID.isEmpty && !identity.ownerPairID.isEmpty
+    }
+    /// Only the authenticated model calls this after recomputing current route/content facts.
+    static func renewed(_ proposal: VideoPresentationAdmission?, from previous: VideoPresentationAdmission?) -> VideoPresentationAdmission? {
+        guard let proposal else { previous?.lifetime.retire(); return nil }
+        if let previous, previous.identity == proposal.identity, previous.lifetime.isActive {
+            return VideoPresentationAdmission(identity: proposal.identity, validUntil: proposal.validUntil, lifetime: previous.lifetime)
+        }
+        previous?.lifetime.retire()
+        return proposal
     }
 }
 
-/// Serialize invalidation with submissions/callbacks; callers must invalidate BEFORE flushing.
+/// Lock order: local fence then shared lifetime. Retirement releases the lifetime lock before
+/// local teardown, so neither a model retirement nor a renderer teardown inverts that order.
 final class VideoPresentationFence: @unchecked Sendable {
     private let lock = NSRecursiveLock()
     private var admission: VideoPresentationAdmission?
@@ -29,7 +59,8 @@ final class VideoPresentationFence: @unchecked Sendable {
     init(_ admission: VideoPresentationAdmission, clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) { self.admission = admission; self.clock = clock }
     func renew(_ next: VideoPresentationAdmission) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        guard !closed, next.identity == admission?.identity, next.permits(at: clock()) else { return false }
+        guard !closed, next.identity == admission?.identity, next.lifetime === admission?.lifetime,
+              next.permits(at: clock()) else { return false }
         admission = next
         return true
     }
@@ -37,12 +68,14 @@ final class VideoPresentationFence: @unchecked Sendable {
     func withAdmission<T>(_ identity: VideoPresentationIdentity, at now: TimeInterval,
                           _ action: () -> T) -> T? {
         lock.lock(); defer { lock.unlock() }
-        guard !closed, let admission, admission.identity == identity, admission.permits(at: max(now, clock())) else { return nil }
-        return action()
+        guard !closed, let admission, admission.identity == identity else { return nil }
+        return admission.lifetime.withActive {
+            guard admission.permits(at: max(now, clock())) else { return nil }
+            return action()
+        } ?? nil
     }
-    func invalidate() {
-        lock.lock(); closed = true; admission = nil; lock.unlock()
-    }
+    /// Local view removal closes this renderer only. The model retires shared authority separately.
+    func invalidate() { lock.lock(); closed = true; admission = nil; lock.unlock() }
 }
 
 /// Motion methods can synchronously deliver while holding their own presenter lock. NEVER

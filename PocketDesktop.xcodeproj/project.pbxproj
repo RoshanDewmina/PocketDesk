@@ -182,6 +182,7 @@
 		27271BEF3CD8B7A47E620033 /* BigTextProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67EED2B1DFE7DA4819F1461 /* BigTextProtocol.swift */; };
 		274119C8D79C44696F016432 /* AnywhereStoreKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E57A75F4FB698B857CC6F42 /* AnywhereStoreKitTests.swift */; };
 		274AB3019D901C3E379273DF /* NativeCodecCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7E6B1B2D48610494416341 /* NativeCodecCapability.swift */; };
+		27501DC95C4C5BB3FCD68ACA /* VideoAdmissionLifetimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A98D9D2E500C15E0408F846 /* VideoAdmissionLifetimeTests.swift */; };
 		27591B33CE73CC071150F456 /* RemotePhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FC077F3131B8830DBE715F /* RemotePhoneApp.swift */; };
 		27B9184CADFE50A02F9B8B22 /* PhoneClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D0946F7F5C7A6572E8C193F /* PhoneClipboard.swift */; };
 		27D57B10B0BF669C40D2A849 /* HostStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE3B05CE90F77B963214C3FC /* HostStream.swift */; };
@@ -473,6 +474,7 @@
 		647D0FD25F73AAE67602CCA9 /* PocketDeskStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E3A80162075BC6B8C142A82 /* PocketDeskStyle.swift */; };
 		649237EB105DFAF1BF0DCB44 /* PacketRepairPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7FB21B6BC9FD24A39B82907 /* PacketRepairPolicy.swift */; };
 		64DF4EAB1CE1DCCFF75BD178 /* ViewportCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E9E76F70F47C18AF8B49BD2 /* ViewportCaptureTests.swift */; };
+		64E50435574A1749825697BC /* VideoPresentationAdmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = 53F26F1ADF91A721763FC5D6 /* VideoPresentationAdmission.swift */; };
 		657DD397894AA64359793381 /* PocketDesktopApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 198B0BB374C240A740F9D1AE /* PocketDesktopApp.swift */; };
 		65A044AB0614AAF7B4E52802 /* HostCursorShape.swift in Sources */ = {isa = PBXBuildFile; fileRef = 41949CA17D55D44290A6D3B3 /* HostCursorShape.swift */; };
 		65C5F6AA13CD5EA1920C8E5B /* FileTransfer.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE1B4E4C6A4BC777773EE887 /* FileTransfer.swift */; };
@@ -1447,6 +1449,7 @@
 		486D352BCE76C418E1B02652 /* PhoneSystemAudioDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneSystemAudioDevice.swift; sourceTree = "<group>"; };
 		48B1DFCA242811635CC811D4 /* HostAXBrokerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HostAXBrokerTests.swift; sourceTree = "<group>"; };
 		4A5C9E326152AE8499CB924A /* ViewportPreference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewportPreference.swift; sourceTree = "<group>"; };
+		4A98D9D2E500C15E0408F846 /* VideoAdmissionLifetimeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoAdmissionLifetimeTests.swift; sourceTree = "<group>"; };
 		4AE353537C61E11F8DAF7D97 /* ConnectionHealthTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionHealthTests.swift; sourceTree = "<group>"; };
 		4C4C533570957787722CB71A /* TrustPackPhoneTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrustPackPhoneTests.swift; sourceTree = "<group>"; };
 		4E419ADD5C88487238F8D58A /* MacVitalsMemory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacVitalsMemory.swift; sourceTree = "<group>"; };
@@ -2397,6 +2400,7 @@
 				71890FE3490F7CC4D092A625 /* SystemAudioTransportTests.m */,
 				61685D397567FB54BA7A7F79 /* TabletInputTests.swift */,
 				0CD0BE648B34E063A1D05D52 /* TrustPackTests.swift */,
+				4A98D9D2E500C15E0408F846 /* VideoAdmissionLifetimeTests.swift */,
 				C812181590DE874E58758A35 /* VideoCodecPolicyTests.swift */,
 				028FD35F407A8DBAE590AC15 /* VideoFeedbackTests.swift */,
 				C012A93E898AB8F2AF6FBF88 /* VideoFrameCropTests.swift */,
@@ -4232,6 +4236,7 @@
 				2A2ECC7905077993B01B69DB /* TransferEffectLease.swift in Sources */,
 				C5BC09B13B41A3AD1D3783A1 /* TransportUsage.swift in Sources */,
 				4B6C0F8C3DA34420ECAFD313 /* TrustPackTests.swift in Sources */,
+				27501DC95C4C5BB3FCD68ACA /* VideoAdmissionLifetimeTests.swift in Sources */,
 				E0761F220535B9D5FFF4AD94 /* VideoCodecPolicy.swift in Sources */,
 				149509DDA6192FD5FAE05D6A /* VideoCodecPolicyTests.swift in Sources */,
 				38891120CB8769393279D30C /* VideoEncoderEvidence.swift in Sources */,
@@ -4240,6 +4245,7 @@
 				70E95361AE977B5EADC8C344 /* VideoFrameCrop.swift in Sources */,
 				927E1AAC82231E2DECA6878E /* VideoFrameCropTests.swift in Sources */,
 				1643A8AEC2B7CE036CA9C069 /* VideoFrameTimestampTests.swift in Sources */,
+				64E50435574A1749825697BC /* VideoPresentationAdmission.swift in Sources */,
 				95D3F4444BDD9C894A67A27D /* VideoRefinement.swift in Sources */,
 				7A3F6B8AF84BDA0719EAD0FF /* VideoRefinementChannel.swift in Sources */,
 				5C489E26611B7BB06877C790 /* VideoRefinementTests.swift in Sources */,

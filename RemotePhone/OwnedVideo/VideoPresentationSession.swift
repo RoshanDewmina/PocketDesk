@@ -4,6 +4,7 @@ import WebRTC
 final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     let track: RTCVideoTrack
     let admissionIdentity: VideoPresentationIdentity
+    let admissionLifetime: VideoPresentationLifetime
     let fence: VideoPresentationFence
     let view: OwnedMetalVideoView
     let smoothMotion = SmoothMotionController()
@@ -35,7 +36,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     static weak var active: VideoPresentationSession?
 
     init(track: RTCVideoTrack, admission: VideoPresentationAdmission, onFrame: @escaping () -> Void, primary: Bool = true) {
-        self.track = track; admissionIdentity = admission.identity
+        self.track = track; admissionIdentity = admission.identity; admissionLifetime = admission.lifetime
         fence = VideoPresentationFence(admission)
         view = OwnedMetalVideoView(admission: admission, fence: fence)
         self.onFrame = onFrame
@@ -129,6 +130,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         precondition(Thread.isMainThread)
         let sessions = registrations.compactMap(\.value)
         registrations.removeAll()
+        sessions.forEach { $0.admissionLifetime.retire() }
         sessions.forEach { $0.invalidate() }
     }
     static func noteUserActivity(at now: TimeInterval) { active?.view.noteActivity(at: now) }
