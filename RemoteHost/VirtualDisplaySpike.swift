@@ -16,11 +16,8 @@ import VideoToolbox
 enum VirtualDisplaySpike {
     nonisolated static let launchArgument = "--virtual-display-spike"
     nonisolated static let scenariosArgument = "--virtual-display-spike-scenarios"
-    /// Swaps every scenario's width and height (phone held upright).
     nonisolated static let portraitArgument = "--virtual-display-spike-portrait"
-    /// Comma list of extra steps after the gate: encode, rotate, mirror:panel, mirror:virtual, sleep, hold:<s>.
     nonisolated static let stepsArgument = "--virtual-display-spike-steps"
-    /// Overrides the descriptor's maxPixelsWide/High (OpenDisplay reserves 8192).
     nonisolated static let maxPixelsArgument = "--virtual-display-spike-max-pixels"
     nonisolated static let goMeanFPS = 110.0
     nonisolated static let goP90GapMs = 12.0
@@ -42,10 +39,17 @@ enum VirtualDisplaySpike {
         app.delegate = nil
         app.setActivationPolicy(.accessory)
         steps = SpikeSteps.parse(CommandLine.arguments)
+        let unknown = unknownScenarioNames(arguments: CommandLine.arguments) + steps.unknown
+        guard unknown.isEmpty else {
+            print("VIRTUAL-DISPLAY-SPIKE: ERROR reason=\"unknown scenario or step: \(unknown.joined(separator: ","))\"")
+            exit(2)
+        }
+        var scenarios = selectedScenarios(arguments: CommandLine.arguments)
+        if steps.rotate { scenarios = scenarios.map(\.reservingRotation) }
         installSignalHandlers()
-        armTimeout(seconds: timeoutSeconds + steps.extraSeconds)
+        armTimeout(seconds: timeoutSeconds + steps.extraSeconds * scenarios.count)
         Task { @MainActor in
-            await runScenarios(selectedScenarios(arguments: CommandLine.arguments))
+            await runScenarios(scenarios)
             app.stop(nil)
             let wake = NSEvent.otherEvent(with: .applicationDefined, location: .zero, modifierFlags: [], timestamp: 0,
                                           windowNumber: 0, context: nil, subtype: 0, data1: 0, data2: 0)
@@ -68,6 +72,12 @@ enum VirtualDisplaySpike {
         return arguments.contains(portraitArgument) ? chosen.map(\.rotated) : chosen
     }
 
+    static func unknownScenarioNames(arguments: [String]) -> [String] {
+        guard let index = arguments.firstIndex(of: scenariosArgument), arguments.indices.contains(index + 1) else { return [] }
+        let known = Set(VirtualDisplaySpikeScenario.all.map(\.name))
+        return arguments[index + 1].split(separator: ",").map(String.init).filter { !known.contains($0) }
+    }
+
     // MARK: Scenarios
 
     private static func runScenarios(_ scenarios: [VirtualDisplaySpikeScenario]) async {
@@ -88,6 +98,7 @@ enum VirtualDisplaySpike {
         let resources = SpikeResources()
         active = resources
         var result = SpikeScenarioResult(scenario: scenario)
+        let windowsBefore = windowSnapshot()
         do {
             try await measure(scenario, using: resources, into: &result)
         } catch {
@@ -95,6 +106,8 @@ enum VirtualDisplaySpike {
             print("\(scenario.tag) ERROR \(error)")
         }
         await release(resources, tag: scenario.tag)
+        try? await hold(1)
+        reportWindowChanges(before: windowsBefore, after: windowSnapshot(), tag: "\(scenario.tag) after release")
         active = nil
         return result
     }
@@ -170,10 +183,11 @@ enum VirtualDisplaySpike {
               + "(needs ≥ \(format(goMeanFPS, 0))), p90 gap \(format(moving.capture.p90GapMs, 2)) ms "
               + "(needs ≤ \(format(goP90GapMs, 0)))")
 
-        if steps.encode { try await encodeStep(scenario, resources: resources, tag: tag) }
-        if steps.rotate { try await rotateStep(scenario, resources: resources, tag: tag) }
-        if let mirror = steps.mirror { try await mirrorStep(mirror, resources: resources, tag: tag) }
-        if steps.sleep { try await sleepStep(resources: resources, tag: tag) }
+        // Mirror runs before rotate: with mirror:panel the rotated display would become main and squeeze every window.
+        if steps.encode { await step("encode", tag: tag) { try await encodeStep(scenario, resources: resources, tag: tag) } }
+        if let mirror = steps.mirror { await step("mirror", tag: tag) { try await mirrorStep(mirror, resources: resources, tag: tag) } }
+        if steps.rotate { await step("rotate", tag: tag) { try await rotateStep(scenario, resources: resources, tag: tag) } }
+        if steps.sleep { await step("sleep", tag: tag) { try await sleepStep(resources: resources, tag: tag) } }
         if steps.holdSeconds > 0 {
             print("\(tag) HOLD display \(id) pid \(getpid()) for \(steps.holdSeconds) s (kill -9 me now)")
             try await hold(Double(steps.holdSeconds))
@@ -181,6 +195,10 @@ enum VirtualDisplaySpike {
     }
 
     // MARK: Extra steps
+
+    private static func step(_ name: String, tag: String, _ body: () async throws -> Void) async {
+        do { try await body() } catch { print("\(tag) STEP \(name) ERROR \(error)") }
+    }
 
     /// Q2b: HEVC then H.264 service time per frame at the stream's pixel size, one frame in flight.
     private static func encodeStep(_ scenario: VirtualDisplaySpikeScenario, resources: SpikeResources,
@@ -190,16 +208,21 @@ enum VirtualDisplaySpike {
         view.startTicking(preferredHz: Float(scenario.refreshHz))
         try await hold(0.5)
         for codec in [kCMVideoCodecType_HEVC, kCMVideoCodecType_H264] {
-            let probe = try SpikeEncodeProbe(codec: codec, width: Int32(configuration.width),
-                                             height: Int32(configuration.height), fps: Int(scenario.refreshHz),
-                                             bitrateKbps: encodeBitrateKbps, maxFrames: encodeFrames)
-            let startMs = MachClock.nowMs()
-            counter.encodeSink = { buffer, time in probe.offer(buffer, presentationTime: time) }
-            let done = await waitUntil(seconds: 20, { probe.report.framesEncoded >= encodeFrames })
-            counter.encodeSink = nil
-            probe.finish()
-            print("\(tag) \(probe.report.line) wall=\(format(MachClock.nowMs() - startMs, 0))ms"
-                  + (done ? "" : " TIMEOUT"))
+            await step(codec == kCMVideoCodecType_HEVC ? "encode-hevc" : "encode-h264", tag: tag) {
+                let probe = try SpikeEncodeProbe(codec: codec, width: Int32(configuration.width),
+                                                 height: Int32(configuration.height), fps: Int(scenario.refreshHz),
+                                                 bitrateKbps: encodeBitrateKbps, maxFrames: encodeFrames)
+                let startMs = MachClock.nowMs()
+                counter.encodeSink = { buffer, time in probe.offer(buffer, presentationTime: time) }
+                let done = await waitUntil(seconds: 20, {
+                    let report = probe.report
+                    return report.framesEncoded + report.encoderErrors >= encodeFrames
+                })
+                counter.encodeSink = nil
+                probe.finish()
+                print("\(tag) \(probe.report.line) wall=\(format(MachClock.nowMs() - startMs, 0))ms"
+                      + (done ? "" : " TIMEOUT"))
+            }
         }
         view.stopTicking()
     }
@@ -217,33 +240,58 @@ enum VirtualDisplaySpike {
         let windowsBefore = windowSnapshot()
         print("\(tag) rotate: applySettings: \(rotated.summary) on display \(id) "
               + "(bounds \(format(Double(boundsBefore.width), 0))x\(format(Double(boundsBefore.height), 0)))")
+        let expectedPoints = CGSize(width: Int(rotated.modeWidth), height: Int(rotated.modeHeight))
+        func settled() -> Bool {
+            CGDisplayBounds(id).size == expectedPoints && CGDisplayPixelsWide(id) == Int(rotated.pixelWidth)
+                && screen(for: id)?.frame.size == expectedPoints
+        }
         view.startTicking(preferredHz: Float(scenario.refreshHz))
         let applyMs = MachClock.nowMs()
         try PrivateVirtualDisplay.apply(rotated, to: display)
         let appliedMs = MachClock.nowMs() - applyMs
-        let boundsChanged = await waitUntil(seconds: 5, { CGDisplayBounds(id).size != boundsBefore.size })
+        let boundsChanged = await waitUntil(seconds: 5, pollMs: 2, { CGDisplayBounds(id).size != boundsBefore.size })
         let boundsMs = MachClock.nowMs() - applyMs
         let sameID = PrivateVirtualDisplay.displayID(of: display) == id && onlineDisplayIDs().contains(id)
-        print("\(tag) rotate: applySettings returned after \(format(appliedMs, 1)) ms; CGDisplayBounds "
+        print("\(tag) rotate: applySettings returned after \(format(appliedMs, 1)) ms; CGDisplayBounds first "
               + (boundsChanged ? "changed" : "UNCHANGED") + " at \(format(boundsMs, 0)) ms: "
               + "\(describe(id)); same display ID \(sameID)")
-        if rotated.hiDPI { selectHiDPIMode(id, scenario: rotated, tag: tag) }
-        let screenChanged = await waitUntil(seconds: 5, { (screen(for: id)?.frame.size ?? .zero) != screenBefore.size })
+        let screenChanged = await waitUntil(seconds: 5, pollMs: 2, { (screen(for: id)?.frame.size ?? .zero) != screenBefore.size })
         let screenMs = MachClock.nowMs() - applyMs
+        print("\(tag) rotate: NSScreen frame first " + (screenChanged ? "changed" : "UNCHANGED") + " at \(format(screenMs, 0)) ms: "
+              + "\(screen(for: id).map { "\($0.frame) scale \(format(Double($0.backingScaleFactor), 1))" } ?? "no NSScreen")")
+        var modeSettled = await waitUntil(seconds: 2, pollMs: 2, settled)
+        if !modeSettled, rotated.hiDPI {
+            // macOS lands on the 1x mode first; select the 2x mode again, as after creation.
+            selectHiDPIMode(id, scenario: rotated, tag: tag)
+            modeSettled = await waitUntil(seconds: 5, pollMs: 2, settled)
+        }
+        let settledMs = MachClock.nowMs() - applyMs
         guard let virtualScreen = screen(for: id) else { throw SpikeFailure("no NSScreen after rotation") }
-        print("\(tag) rotate: NSScreen " + (screenChanged ? "changed" : "UNCHANGED") + " at \(format(screenMs, 0)) ms: "
-              + "frame \(virtualScreen.frame), scale \(format(Double(virtualScreen.backingScaleFactor), 1)); "
-              + "own window now \(window.frame) on \"\(window.screen?.localizedName ?? "none")\"")
+        print("\(tag) rotate: expected \(Int(expectedPoints.width))x\(Int(expectedPoints.height)) pt / "
+              + "\(rotated.pixelWidth)x\(rotated.pixelHeight) px " + (modeSettled ? "settled" : "NOT settled")
+              + " at \(format(settledMs, 0)) ms: \(describe(id)); NSScreen frame \(virtualScreen.frame); "
+              + "own window \(window.frame) on \"\(window.screen?.localizedName ?? "none")\"")
         window.setFrame(virtualScreen.frame, display: true)
         view.frame = NSRect(origin: .zero, size: virtualScreen.frame.size)
-        let scDisplay = try await shareableDisplay(id)
-        let filter = SCContentFilter(display: scDisplay, excludingWindows: [])
-        let configuration = captureConfiguration(for: filter)
+        // SCShareableContent can still report the old size for a moment after the mode change.
+        let sizeDeadline = MachClock.nowMs() + 3000
+        var filter: SCContentFilter
+        var configuration: SCStreamConfiguration
+        var sizeFresh: Bool
+        repeat {
+            filter = SCContentFilter(display: try await shareableDisplay(id), excludingWindows: [])
+            configuration = captureConfiguration(for: filter)
+            sizeFresh = configuration.width == Int(rotated.pixelWidth) && configuration.height == Int(rotated.pixelHeight)
+            if !sizeFresh { try await hold(0.1) }
+        } while !sizeFresh && MachClock.nowMs() < sizeDeadline
+        print("\(tag) rotate: ScreenCaptureKit size \(configuration.width)x\(configuration.height) "
+              + (sizeFresh ? "matches" : "DOES NOT MATCH the rotated pixels") + " at \(format(MachClock.nowMs() - applyMs, 0)) ms")
         counter.watch(width: configuration.width, height: configuration.height)
         try await stream.updateContentFilter(filter)
         try await stream.updateConfiguration(configuration)
+        print("\(tag) rotate: updateConfiguration returned at \(format(MachClock.nowMs() - applyMs, 0)) ms")
         resources.configuration = configuration
-        let frameSeen = await waitUntil(seconds: 5, { counter.firstWatchedFrameMs != nil })
+        let frameSeen = await waitUntil(seconds: 5, pollMs: 2, { counter.firstWatchedFrameMs != nil })
         let frameMs = (counter.firstWatchedFrameMs ?? MachClock.nowMs()) - applyMs
         print("\(tag) rotate: first complete \(configuration.width)x\(configuration.height) frame "
               + (frameSeen ? "at \(format(frameMs, 0)) ms" : "NOT SEEN in 5 s") + " after applySettings")
@@ -275,18 +323,28 @@ enum VirtualDisplaySpike {
             window.setFrame(virtualScreen.frame, display: true)
             view.frame = NSRect(origin: .zero, size: virtualScreen.frame.size)
         }
-        view.startTicking(preferredHz: Float(resources.refreshHz))
-        try await hold(1)
-        let moving = try await record(counter: counter, view: view, seconds: 5)
-        printPhase("mirrored moving 5 s", moving, tag: tag)
+        var measureError: Error?
+        do {
+            view.startTicking(preferredHz: Float(resources.refreshHz))
+            try await hold(1)
+            let moving = try await record(counter: counter, view: view, seconds: 5)
+            printPhase("mirrored moving 5 s", moving, tag: tag)
+        } catch { measureError = error }
         view.stopTicking()
         let undoMs = MachClock.nowMs()
-        try configure(tag: tag) { config in CGConfigureDisplayMirrorOfDisplay(config, mirrored, kCGNullDirectDisplay) }
-        let left = await waitUntil(seconds: 5, { CGDisplayIsInMirrorSet(panel) == 0 && CGDisplayIsInMirrorSet(id) == 0 })
+        do { try configure(tag: tag) { config in CGConfigureDisplayMirrorOfDisplay(config, mirrored, kCGNullDirectDisplay) } }
+        catch { print("\(tag) mirror: undo failed: \(error)") }
+        var left = await waitUntil(seconds: 5, { CGDisplayIsInMirrorSet(panel) == 0 && CGDisplayIsInMirrorSet(id) == 0 })
+        if !left {
+            CGRestorePermanentDisplayConfiguration()
+            print("\(tag) mirror: still mirrored; called CGRestorePermanentDisplayConfiguration")
+            left = await waitUntil(seconds: 5, { CGDisplayIsInMirrorSet(panel) == 0 })
+        }
         print("\(tag) mirror: " + (left ? "mirror set dissolved" : "STILL MIRRORED") + " after "
               + "\(format(MachClock.nowMs() - undoMs, 0)) ms; panel now \(describe(panel))")
         try await hold(1)
         reportWindowChanges(before: windowsBefore, after: windowSnapshot(), tag: "\(tag) mirror")
+        if let measureError { throw measureError }
     }
 
     /// Q5: display sleep for 15 s, wake, and check the virtual display, its NSScreen and the stream survive.
@@ -307,6 +365,9 @@ enum VirtualDisplaySpike {
         print("\(tag) sleep: main display " + (awake ? "awake" : "STILL ASLEEP") + " \(format(MachClock.nowMs() - sleepMs, 0)) ms "
               + "after displaysleepnow; virtual online \(onlineDisplayIDs().contains(id)), NSScreen \(screen(for: id) != nil), "
               + "mode now \(CGDisplayCopyDisplayMode(id).map(describe) ?? "nil")")
+        let locked = (CGSessionCopyCurrentDictionary() as? [String: Any])?["CGSSessionScreenIsLocked"] as? Bool ?? false
+        print("\(tag) sleep: screen locked after wake: \(locked)")
+        guard !locked else { throw SpikeFailure("the screen is locked after display wake; aborting the rest") }
         try await hold(2)
         view.startTicking(preferredHz: Float(resources.refreshHz))
         try await hold(0.5)
@@ -625,11 +686,11 @@ enum VirtualDisplaySpike {
         }
     }
 
-    private static func waitUntil(seconds: Double, _ condition: () -> Bool) async -> Bool {
+    private static func waitUntil(seconds: Double, pollMs: UInt64 = 50, _ condition: () -> Bool) async -> Bool {
         let deadline = MachClock.nowMs() + seconds * 1000
         while !condition() {
             guard MachClock.nowMs() < deadline else { return false }
-            try? await Task.sleep(nanoseconds: 50_000_000)
+            try? await Task.sleep(nanoseconds: pollMs * 1_000_000)
         }
         return true
     }
@@ -661,9 +722,9 @@ struct VirtualDisplaySpikeScenario {
     let hiDPI: Bool
     let productID: UInt32
     let serial: UInt32
-    /// Descriptor ceiling per axis; nil reserves the larger of the two pixel sides on both axes so the
-    /// rotated orientation fits the same display (the ceiling cannot change after creation).
     var maxPixelsOverride: UInt32? = nil
+    /// The descriptor ceiling cannot change after creation, so a rotating display reserves both orientations.
+    var reservesRotation = false
 
     // iPhone 17: 2622×1206 px at 3×, 874×402 pt. phone-2x = pixel-exact HiDPI; points-2x = points-match HiDPI.
     static let all = [
@@ -683,14 +744,21 @@ struct VirtualDisplaySpikeScenario {
 
     var pixelWidth: UInt32 { hiDPI ? modeWidth * 2 : modeWidth }
     var pixelHeight: UInt32 { hiDPI ? modeHeight * 2 : modeHeight }
-    var maxPixelsPerAxis: UInt32 { maxPixelsOverride ?? max(pixelWidth, pixelHeight) }
+    var maxPixelsWide: UInt32 { maxPixelsOverride ?? (reservesRotation ? max(pixelWidth, pixelHeight) : pixelWidth) }
+    var maxPixelsHigh: UInt32 { maxPixelsOverride ?? (reservesRotation ? max(pixelWidth, pixelHeight) : pixelHeight) }
     var tag: String { "[\(name)]" }
     var displayName: String { "Farside Spike \(name)" }
 
-    /// The same display identity with width and height swapped.
     var rotated: VirtualDisplaySpikeScenario {
         VirtualDisplaySpikeScenario(name: name, modeWidth: modeHeight, modeHeight: modeWidth, refreshHz: refreshHz,
-                                    hiDPI: hiDPI, productID: productID, serial: serial, maxPixelsOverride: maxPixelsOverride)
+                                    hiDPI: hiDPI, productID: productID, serial: serial,
+                                    maxPixelsOverride: maxPixelsOverride, reservesRotation: reservesRotation)
+    }
+
+    var reservingRotation: VirtualDisplaySpikeScenario {
+        var copy = self
+        copy.reservesRotation = true
+        return copy
     }
 
     func withMaxPixels(_ maxPixels: UInt32) -> VirtualDisplaySpikeScenario {
@@ -790,6 +858,7 @@ struct SpikeSteps {
     var mirror: Mirror?
     var sleep = false
     var holdSeconds = 0
+    var unknown: [String] = []
 
     static func parse(_ arguments: [String]) -> SpikeSteps {
         var steps = SpikeSteps()
@@ -803,7 +872,8 @@ struct SpikeSteps {
             case "mirror:panel": steps.mirror = .panel
             case "sleep": steps.sleep = true
             default:
-                if item.hasPrefix("hold:"), let seconds = Int(item.dropFirst(5)) { steps.holdSeconds = max(0, seconds) }
+                if item.hasPrefix("hold:"), let seconds = Int(item.dropFirst(5)), seconds > 0 { steps.holdSeconds = seconds }
+                else { steps.unknown.append(item) }
             }
         }
         return steps
@@ -866,8 +936,8 @@ private enum PrivateVirtualDisplay {
         let descriptor = try plainInstance("CGVirtualDisplayDescriptor")
         try set(descriptor, "queue", DispatchQueue.main)
         try set(descriptor, "name", scenario.displayName)
-        try set(descriptor, "maxPixelsWide", NSNumber(value: scenario.maxPixelsPerAxis))
-        try set(descriptor, "maxPixelsHigh", NSNumber(value: scenario.maxPixelsPerAxis))
+        try set(descriptor, "maxPixelsWide", NSNumber(value: scenario.maxPixelsWide))
+        try set(descriptor, "maxPixelsHigh", NSNumber(value: scenario.maxPixelsHigh))
         try set(descriptor, "sizeInMillimeters", NSValue(size: sizeInMillimeters))
         try set(descriptor, "vendorID", NSNumber(value: vendorID))
         try set(descriptor, "productID", NSNumber(value: scenario.productID))
@@ -979,7 +1049,6 @@ private final class SpikeFrameCounter: NSObject, SCStreamOutput, SCStreamDelegat
     private var stopError: String?
     private var watchedSize: (width: Int, height: Int)?
     private var watchedFirstMs: Double?
-    /// Every complete frame's pixels, for the encode probe; set and cleared from the main actor.
     private var sink: ((CVPixelBuffer, CMTime) -> Void)?
 
     override init() {
@@ -992,7 +1061,6 @@ private final class SpikeFrameCounter: NSObject, SCStreamOutput, SCStreamDelegat
         set { queue.sync { sink = newValue } }
     }
 
-    /// Arms a one-shot timestamp for the first complete frame whose buffer has exactly this size.
     func watch(width: Int, height: Int) {
         queue.sync {
             watchedSize = (width, height)
@@ -1180,22 +1248,22 @@ private final class SpikeEncodeProbe: @unchecked Sendable {
     private var unexpectedKeyFrames = 0
 
     init(codec: CMVideoCodecType, width: Int32, height: Int32, fps: Int, bitrateKbps: Int,
-         maxFrames: Int = 240, bt709: Bool = false) throws {
+         maxFrames: Int) throws {
         let isHEVC = codec == kCMVideoCodecType_HEVC
-        guard isHEVC || codec == kCMVideoCodecType_H264 else { throw SpikeFailure( "unsupported codec \(codec)") }
+        guard isHEVC || codec == kCMVideoCodecType_H264 else { throw SpikeFailure("unsupported codec \(codec)") }
         let specification = [kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true] as CFDictionary
         var created: VTCompressionSession?
         let status = VTCompressionSessionCreate(allocator: nil, width: width, height: height, codecType: codec,
                                                 encoderSpecification: specification, imageBufferAttributes: nil,
                                                 compressedDataAllocator: nil, outputCallback: nil, refcon: nil,
                                                 compressionSessionOut: &created)
-        guard status == noErr, let created else { throw SpikeFailure( "create failed \(status)") }
+        guard status == noErr, let created else { throw SpikeFailure("create failed \(status)") }
         session = created
         codecName = isHEVC ? "HEVC" : "H.264"
         self.width = width
         self.height = height
         self.maxFrames = maxFrames
-        var properties: [(String, CFString, CFTypeRef)] = [
+        let properties: [(String, CFString, CFTypeRef)] = [
             ("RealTime", kVTCompressionPropertyKey_RealTime, kCFBooleanTrue),
             ("AllowFrameReordering", kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse),
             ("ProfileLevel", kVTCompressionPropertyKey_ProfileLevel,
@@ -1205,13 +1273,6 @@ private final class SpikeEncodeProbe: @unchecked Sendable {
             ("MaxKeyFrameInterval", kVTCompressionPropertyKey_MaxKeyFrameInterval, 7200 as CFNumber),
             ("MaxKeyFrameIntervalDuration", kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, 240 as CFNumber)
         ]
-        if bt709 {
-            properties += [
-                ("ColorPrimaries", kVTCompressionPropertyKey_ColorPrimaries, kCVImageBufferColorPrimaries_ITU_R_709_2),
-                ("TransferFunction", kVTCompressionPropertyKey_TransferFunction, kCVImageBufferTransferFunction_ITU_R_709_2),
-                ("YCbCrMatrix", kVTCompressionPropertyKey_YCbCrMatrix, kCVImageBufferYCbCrMatrix_ITU_R_709_2)
-            ]
-        }
         for (name, key, value) in properties {
             let set = VTSessionSetProperty(created, key: key, value: value)
             if set != noErr { rejected.append("\(name)(\(set))") }
@@ -1219,7 +1280,7 @@ private final class SpikeEncodeProbe: @unchecked Sendable {
         let prepared = VTCompressionSessionPrepareToEncodeFrames(created)
         guard prepared == noErr else {
             VTCompressionSessionInvalidate(created)
-            throw SpikeFailure( "prepare failed \(prepared)")
+            throw SpikeFailure("prepare failed \(prepared)")
         }
         usingHardware = Self.copy(created, kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder) as? Bool
         encoderID = Self.copy(created, kVTCompressionPropertyKey_EncoderID) as? String

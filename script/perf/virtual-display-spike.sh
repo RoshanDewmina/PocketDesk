@@ -8,7 +8,8 @@
 # app's own Screen Recording grant; --direct executes the binary instead, which makes the terminal the
 # responsible process for that check. Nothing is built here.
 # --kill9 N: SIGKILLs the spike N seconds after its "HOLD display" line (pair with --steps hold:60) and
-# polls CGGetOnlineDisplayList for 15 s to see when the virtual display disappears (Q5 teardown).
+# polls CGGetOnlineDisplayList for 15 s to see when the virtual display disappears (Q5 teardown). Run it
+# on its own: the kill loses the scenario summary and the verdict line, so the exit status is 2.
 # Exit status: 0 GO, 1 NO-GO, 2 error or no verdict.
 set -euo pipefail
 
@@ -33,7 +34,7 @@ while (( $# )); do
     --portrait) portrait=1 ;;
     --steps) (( $# >= 2 )) || die "--steps needs a value"; steps=$2; shift ;;
     --max-pixels) (( $# >= 2 )) || die "--max-pixels needs a value"; max_pixels=$2; shift ;;
-    --kill9) (( $# >= 2 )) || die "--kill9 needs seconds"; kill9=$2; shift ;;
+    --kill9) (( $# >= 2 )) && [[ $2 == <0-9999> ]] || die "--kill9 needs whole seconds"; kill9=$2; shift ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     -*) die "unknown option $1" ;;
     *) positional+=("$1") ;;
@@ -108,10 +109,13 @@ SWIFT
   ONLINE_IDS=$dir/online-ids
 }
 kill9_watch() {
-  local line display pid t0 now
+  local line display pid t0 now seen=0 waited=0
   while ! line=$(/usr/bin/grep -m1 -E 'HOLD display [0-9]+ pid [0-9]+' "$LOG"); do
     sleep 0.5
-    [[ -z $(spike_pids) ]] && { print -- "virtual-display-spike: kill9: spike ended before HOLD"; return; }
+    (( waited += 1 ))
+    [[ -n $(spike_pids) ]] && seen=1
+    if (( seen )) && [[ -z $(spike_pids) ]]; then print -- "virtual-display-spike: kill9: spike ended before HOLD"; return; fi
+    (( waited > 1200 )) && { print -- "virtual-display-spike: kill9: no HOLD line after 600 s"; return; }
   done
   display=$(print -- "$line" | /usr/bin/sed -E 's/.*HOLD display ([0-9]+) pid ([0-9]+).*/\1/')
   pid=$(print -- "$line" | /usr/bin/sed -E 's/.*HOLD display ([0-9]+) pid ([0-9]+).*/\2/')
