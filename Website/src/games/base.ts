@@ -105,7 +105,7 @@ export abstract class Game implements Runner {
       }
       return isAction(k) || k.startsWith("Arrow");
     }
-    return this.onKey(k, down, e.repeat);
+    return this.onKey(k, down, e.repeat, e.timeStamp || performance.now());
   }
 
   pointer(kind: PointerKind, p: Pt, e: PointerEvent) {
@@ -140,6 +140,6 @@ export abstract class Game implements Runner {
   protected abstract paint(ctx: CanvasRenderingContext2D): void;
   protected abstract status(): string | null;
   protected abstract hudText(): string;
-  protected abstract onKey(k: string, down: boolean, repeat: boolean): boolean;
+  protected abstract onKey(k: string, down: boolean, repeat: boolean, at: number): boolean;
   protected abstract onPointer(kind: PointerKind, p: Pt, e: PointerEvent): void;
 }

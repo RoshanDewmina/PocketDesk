@@ -184,9 +184,9 @@ export class Reach extends Game {
     return `Round ${round} of ${ROUNDS}${this.best !== null ? ` · Best ${this.best} ms` : ""}`;
   }
 
-  protected onKey(k: string, down: boolean, repeat: boolean) {
+  protected onKey(k: string, down: boolean, repeat: boolean, at: number) {
     if (!isAction(k)) return k.startsWith("Arrow");
-    if (down && !repeat) this.press(performance.now());
+    if (down && !repeat) this.press(at);
     return true;
   }
 

@@ -56,6 +56,7 @@ class Arcade {
   private id: GameId;
   private game: Game | null = null;
   private playing = false;
+  private helps: Partial<Record<GameId, Game>> = {};
 
   constructor(private host: Host, private mark: HTMLElement) {
     const q = new URLSearchParams(location.search).get("game") as GameId | null;
@@ -123,11 +124,11 @@ class Arcade {
     this.play.addEventListener("click", () => this.enter());
     this.listen();
     host.onMotionChange(() => this.render());
-    let raf = 0;
-    window.addEventListener("resize", () => {
-      cancelAnimationFrame(raf);
-      raf = requestAnimationFrame(() => this.fit());
-    });
+    host.onLayout(() => this.fit());
+    // Scrolled away: leave, so Space and the arrows scroll the page again; the run waits behind Resume.
+    host.onAway(() => this.leave("out"));
+    // Another window took focus: key-ups won't arrive, so let go and pause.
+    window.addEventListener("blur", () => this.playing && this.game?.suspend());
     this.fit();
     this.render();
   }
@@ -144,7 +145,7 @@ class Arcade {
     const g = this.game;
     this.lbl.textContent = g && !g.over ? "Resume" : !this.host.motionAllowed() ? "Play anyway" : coarse() ? "Tap to play" : "Press to play";
     this.gn.textContent = NAMES[this.id];
-    this.help.textContent = (g ?? new GAMES[this.id](this.host, this.ui)).help;
+    this.help.textContent = (g ?? (this.helps[this.id] ??= new GAMES[this.id](this.host, this.ui))).help;
     this.picks.forEach((b, i) => b.setAttribute("aria-pressed", String(ORDER[i] === this.id)));
   }
 
@@ -166,7 +167,9 @@ class Arcade {
     this.stage.setAttribute("aria-label", g!.name);
     this.stage.dataset.game = g!.id;
     // A footer that follows the page (no room to wait under it) may have the band partly off screen.
+    // The fixed footer shows whole at the page end (and a band scrolled out of view leaves the game).
     if (getComputedStyle(this.host.foot).position !== "fixed") this.mark.scrollIntoView({ block: "nearest", behavior: "instant" });
+    else window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "instant" });
     if (fresh) g!.start();
     else {
       g!.layout();

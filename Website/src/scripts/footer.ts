@@ -126,6 +126,8 @@ class Field {
   private still: boolean;
   private resizeRaf = 0;
   private game: Runner | null = null;
+  private layoutFns: (() => void)[] = [];
+  private awayFns: (() => void)[] = [];
 
   constructor(private cv: HTMLCanvasElement, readonly foot: HTMLElement) {
     this.ctx = cv.getContext("2d")!;
@@ -161,7 +163,10 @@ class Field {
     this.target = r;
     if (this.still) this.shown = 1;
     // A game only plays with its band (nearly) all showing; scrolling back up to the page pauses it.
-    if (this.game && this.bandShown() < 0.85) this.game.suspend();
+    if (this.game && this.bandShown() < 0.85) {
+      this.game.suspend();
+      this.awayFns.forEach((f) => f());
+    }
     this.sync();
     if (!this.raf && r > 0) this.draw();
   }
@@ -203,6 +208,8 @@ class Field {
         this.draw();
       },
       grain: (ctx) => this.grain(ctx),
+      onLayout: (fn) => this.layoutFns.push(fn),
+      onAway: (fn) => this.awayFns.push(fn),
     };
   }
 
@@ -272,6 +279,7 @@ class Field {
     this.build();
     if (this.still) this.rest();
     this.game?.layout();
+    this.layoutFns.forEach((f) => f());
   }
 
   /** Lay the grid and work out how much of each cell the wordmark covers (supersampled text, 4 × 4 per cell). */

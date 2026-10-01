@@ -71,8 +71,12 @@ export class Lander extends Game {
     for (let i = i0; i <= i1; i++) gr[i] = py;
     this.ground = gr;
     this.pad = { x0: i0 * c, x1: i1 * c, y: py };
-    this.x = right ? rand(w * 0.1, w * 0.3) : rand(w * 0.6, w * 0.85);
-    this.y = this.u * 24 + h * 0.06;
+    // Start within reach of the pad: the push sideways and the fuel scale with the band's height, so on a wide
+    // band a start at the far end would be out of range.
+    const pc = (this.pad.x0 + this.pad.x1) / 2, reach = Math.min(w * 0.32, h * 1.3);
+    const side = pc - reach * 0.55 < w * 0.05 ? 1 : pc + reach * 0.55 > w * 0.9 ? -1 : Math.random() < 0.5 ? -1 : 1;
+    this.x = clamp(pc + side * rand(0.5, 1) * reach, w * 0.04, w * 0.9);
+    this.y = this.u * 20 + 44 + h * 0.04;
     this.vx = rand(-1, 1) * h * 0.05;
     this.vy = 0;
     this.keys = { up: false, l: false, r: false };
@@ -120,7 +124,8 @@ export class Lander extends Game {
     this.y += this.vy * dt;
     if (this.x < 0) (this.x = 0), (this.vx = 0);
     if (this.x > this.w - 12 * u) (this.x = this.w - 12 * u), (this.vx = 0);
-    if (this.y < 20 * u) (this.y = 20 * u), (this.vy = Math.max(0, this.vy));
+    // The ceiling sits under the score line.
+    if (this.y < 20 * u + 36) (this.y = 20 * u + 36), (this.vy = Math.max(0, this.vy));
 
     const tipDown = this.y >= this.groundAt(this.x);
     const bodyDown = ARROW.some(([ax2, ay2]) => this.y + ay2 * u >= this.groundAt(this.x + ax2 * u) + 0.5 && ay2 !== 0);

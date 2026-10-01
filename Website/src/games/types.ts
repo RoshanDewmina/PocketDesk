@@ -31,6 +31,10 @@ export interface Host {
   onMotionChange(fn: () => void): void;
   /** Route the loop to a game (or back to the wordmark with null). */
   setRunner(r: Runner | null): void;
+  /** After the field relays out (resize, rotation), with the new band. */
+  onLayout(fn: () => void): void;
+  /** The band scrolled out of view while a game was running. */
+  onAway(fn: () => void): void;
   /** Draw the field's background grain (the faint dots) across the canvas. */
   grain(ctx: CanvasRenderingContext2D): void;
 }

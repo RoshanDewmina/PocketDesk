@@ -61,10 +61,14 @@ export class Snake extends Game {
   }
 
   private turn(d: Dir) {
+    if (this.state === "ready") {
+      if ((d + 2) % 4 === this.dir) return;
+      this.state = "play";
+      if (d === this.dir) return;
+    }
     const last = this.queue.length ? this.queue[this.queue.length - 1]! : this.dir;
     if (d === last || (d + 2) % 4 === last || this.queue.length >= 2) return;
     this.queue.push(d);
-    if (this.state === "ready") this.state = "play";
   }
 
   protected tick(dt: number) {
