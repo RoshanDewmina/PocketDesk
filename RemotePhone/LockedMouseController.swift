@@ -86,6 +86,7 @@ final class LockedMousePresentationAnchor: UIViewController {
 }
 
 final class LockedMouseController: UIViewController {
+    override var editingInteractionConfiguration: UIEditingInteractionConfiguration { .none }
     let revision: UInt64
     var gain: Double
     var remapShortcuts: Bool

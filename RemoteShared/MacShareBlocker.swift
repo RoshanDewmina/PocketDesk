@@ -32,15 +32,16 @@ enum MacShareBlocker: String, Codable, Equatable {
         var options: [String]? = nil
         static let maximumOptions = 4
         /// Only known opt-ins; an option can never stand in for a feature such as causal input.
-        static let knownOptions: Set<String> = [SessionFeature.textClarity]
+        static let knownOptions: Set<String> = [SessionFeature.textClarity, SessionFeature.clipboardSync]
 
         static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature, SessionFeature.extendedFeatureList, SessionFeature.causalInput, SessionFeature.pencilInput, SessionFeature.videoLTR, SessionFeature.exactVideoTiming])
         /// Refinement rides in `features` so a Mac that predates `options` still honours it; text
         /// clarity only exists on Macs that read `options`.
-        static func phoneRequest(_ optional: [String], mode: String? = nil) -> Handshake {
-            let options = optional.contains(SessionFeature.textClarity) ? [SessionFeature.textClarity] : nil
+        static func phoneRequest(_ optional: [String], mode: String? = nil, defaults: UserDefaults = .standard) -> Handshake {
+            let options = (optional.contains(SessionFeature.textClarity) ? [SessionFeature.textClarity] : [])
+                + (!defaults.bool(forKey: "clipboardAutoSyncDisabled") ? [SessionFeature.clipboardSync] : [])
             return Handshake(features: phone.features + (optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement] : []),
-                             mode: mode, options: options)
+                             mode: mode, options: options.isEmpty ? nil : options)
         }
         var requested: Set<String> { Set(features + (options ?? [])) }
 

@@ -50,6 +50,146 @@ final class PhoneClipboardTests: XCTestCase {
         XCTAssertEqual(sent.count, count)
     }
 
+    func testSessionInputRespondersDisableSystemThreeFingerEditing() {
+        XCTAssertEqual(NativeTrackpadInputView().editingInteractionConfiguration, .none)
+        XCTAssertEqual(CommittedTextField.InitialFocusTextView().editingInteractionConfiguration, .none)
+    }
+
+    func testAutomaticMacTransferWritesWithoutRequestOrToast() throws {
+        let clipboard = makeClipboard()
+        let frames = try ClipboardChunker.frames(for: ClipboardPayload(text: "new Mac copy"), operation: "data", transfer: "automaticcopy0001")
+        for frame in frames {
+            var object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(frame)) as? [String: Any])
+            object["automatic"] = true
+            clipboard.receive(try JSONDecoder().decode(ClipboardFrame.self, from: JSONSerialization.data(withJSONObject: object)))
+        }
+        XCTAssertEqual(written, [ClipboardPayload(text: "new Mac copy")])
+        XCTAssertNil(clipboard.notice, "Automatic copy should be quiet")
+        XCTAssertFalse(clipboard.isBusy)
+        XCTAssertEqual(pasteShortcutPresses, 0)
+    }
+
+    func testPasteChipUsesOnlyMetadataAndSuppressesOwnWritesAndSentGeneration() throws {
+        let clipboard = makeClipboard()
+        var count = 10
+        var hasStrings = true
+        clipboard.pasteboardMetadata = { (count, hasStrings) }
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertTrue(clipboard.showsPasteChip)
+        clipboard.send("phone text", pasteAfter: true)
+        waitForFrames(1)
+        count = 11 // Another phone copy while the send is in flight must stay discoverable.
+        clipboard.receive(.result(sent[0].transfer, .stored))
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertTrue(clipboard.showsPasteChip)
+        clipboard.send("next phone text", pasteAfter: true)
+        waitForFrames(2)
+        clipboard.receive(.result(sent[1].transfer, .stored))
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertFalse(clipboard.showsPasteChip)
+        count = 12; hasStrings = false
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertFalse(clipboard.showsPasteChip)
+        hasStrings = true
+        clipboard.refreshPasteChip(available: false)
+        XCTAssertFalse(clipboard.showsPasteChip)
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertTrue(clipboard.showsPasteChip)
+        clipboard.writeToPasteboard = { [unowned self] payload in count += 1; self.written.append(payload) }
+        var frame = try ClipboardChunker.frames(for: ClipboardPayload(text: "Mac text"), operation: "data", transfer: "automaticcopy0002")[0]
+        frame.automatic = true
+        clipboard.receive(frame)
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertFalse(clipboard.showsPasteChip, "Mac writes must not offer an echo Paste")
+    }
+
+    func testAutomaticTransferCannotMixWithExplicitDataOrSurviveCancellation() throws {
+        let clipboard = makeClipboard()
+        var frames = try ClipboardChunker.frames(for: ClipboardPayload(text: String(repeating: "x", count: 5000)), operation: "data", transfer: "automaticcopy0003")
+        frames = frames.map { var frame = $0; frame.automatic = true; return frame }
+        clipboard.receive(frames[0])
+        clipboard.cancel()
+        clipboard.receive(frames[1])
+        XCTAssertTrue(written.isEmpty)
+        clipboard.receive(frames[0])
+        var unmarked = frames[1]; unmarked.automatic = nil
+        clipboard.receive(unmarked)
+        XCTAssertTrue(written.isEmpty)
+        clipboard.cancel()
+        defaults.set(true, forKey: PhoneClipboard.automaticDisabledKey)
+        frames.forEach(clipboard.receive)
+        XCTAssertTrue(written.isEmpty)
+    }
+
+    func testSendAcknowledgmentDoesNotOfferEchoOfNewerAutomaticCopy() throws {
+        let clipboard = makeClipboard()
+        var count = 10
+        clipboard.pasteboardMetadata = { (count, true) }
+        clipboard.writeToPasteboard = { [unowned self] payload in count += 1; self.written.append(payload) }
+        clipboard.send("phone copy")
+        waitForFrames(1)
+        var frame = try ClipboardChunker.frames(for: ClipboardPayload(text: "newer Mac copy"), operation: "data", transfer: "automaticcopy0004")[0]
+        frame.automatic = true
+        clipboard.receive(frame)
+        clipboard.receive(.result(sent[0].transfer, .stored))
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertFalse(clipboard.showsPasteChip, "A late phone-send ack cannot downgrade the newer Mac-write generation")
+    }
+
+    func testExplicitSendCompletionDoesNotDiscardIndependentAutomaticReassembly() throws {
+        let clipboard = makeClipboard()
+        clipboard.send("phone copy")
+        waitForFrames(1)
+        var frames = try ClipboardChunker.frames(for: ClipboardPayload(text: String(repeating: "x", count: 5000)), operation: "data", transfer: "automaticcopy0005")
+        frames = frames.map { var frame = $0; frame.automatic = true; return frame }
+        clipboard.receive(frames[0])
+        clipboard.receive(.result(sent[0].transfer, .stored))
+        clipboard.receive(frames[1])
+        XCTAssertEqual(written.count, 1)
+    }
+
+    func testPasteChipKillSwitchDoesNotConsumePhoneContent() {
+        let clipboard = makeClipboard()
+        clipboard.pasteboardMetadata = { (10, true) }
+        defaults.set(true, forKey: PhoneClipboard.pasteChipDisabledKey)
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertFalse(clipboard.showsPasteChip)
+        defaults.set(false, forKey: PhoneClipboard.pasteChipDisabledKey)
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertTrue(clipboard.showsPasteChip)
+    }
+
+    func testDelayedPasteAndShareTextCannotConsumeNewPhoneCopy() {
+        let clipboard = makeClipboard()
+        var count = 10
+        clipboard.pasteboardMetadata = { (count, true) }
+        clipboard.refreshPasteChip(available: true)
+        let offered = clipboard.pasteChipChangeCount
+        count = 11
+        clipboard.send("older pasted value", sourceChangeCount: offered)
+        waitForFrames(1)
+        clipboard.receive(.result(sent[0].transfer, .stored))
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertTrue(clipboard.showsPasteChip)
+        XCTAssertEqual(clipboard.pasteChipChangeCount, 11)
+        clipboard.send("share-sheet text", pasteAfter: false, usesPhonePasteboard: false)
+        waitForFrames(2)
+        clipboard.receive(.result(sent[1].transfer, .stored))
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertTrue(clipboard.showsPasteChip)
+    }
+
+    func testFailedSendKeepsPasteChipAvailable() {
+        let clipboard = makeClipboard()
+        clipboard.pasteboardMetadata = { (10, true) }
+        clipboard.refreshPasteChip(available: true)
+        clipboard.send("phone text")
+        waitForFrames(1)
+        clipboard.receive(.result(sent[0].transfer, .notAllowed))
+        clipboard.refreshPasteChip(available: true)
+        XCTAssertTrue(clipboard.showsPasteChip)
+    }
+
     func testPasteToMacSendsPacedChunksThenPressesCommandVOnlyAfterTheMacStoresIt() throws {
         let clipboard = makeClipboard()
         XCTAssertTrue(clipboard.pasteAfterSending, "Pasting right away is the default")

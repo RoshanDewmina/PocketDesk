@@ -123,7 +123,158 @@ final class NativeGestureEngineTests: XCTestCase {
             XCTAssertTrue(log.clicks.isEmpty)
             XCTAssertTrue(log.scrollPhases.isEmpty)
             XCTAssertTrue(log.moves.isEmpty)
+            XCTAssertEqual(log.clipboardCopies + log.clipboardPastes, 0)
         }
+    }
+
+    /// Symmetric radial motion around a fixed centroid; the identifiers keep their fingers.
+    private func clipboardTouches(scale: CGFloat = 1, offset: CGSize = .zero) -> [NativeGestureEngine.Touch] {
+        [touch(1, 140 - 50 * scale + offset.width, 140 - 30 * scale + offset.height),
+         touch(2, 140 + 50 * scale + offset.width, 140 - 30 * scale + offset.height),
+         touch(3, 140 + offset.width, 140 + 60 * scale + offset.height)]
+    }
+
+    func testThreeFingerPinchCopiesAndSpreadPastesWithoutZoomOrClick() {
+        for scale in [CGFloat(0.6), 1.4] {
+            for direct in [false, true] {
+                let log = CommandLog(); let input = engine(log)
+                input.configure(enabled: true, panMode: false, revision: 1, sensitivity: 1,
+                                pointerScale: 1, doubleClickInterval: 0.5, direct: direct)
+                input.update(Array(clipboardTouches().reversed()), at: 1)
+                input.update(clipboardTouches(scale: scale, offset: CGSize(width: 3, height: -2)), at: 1.2)
+                input.update([], at: 1.3)
+                XCTAssertEqual(log.trace, [scale < 1 ? "clipboardCopy" : "clipboardPaste"])
+                XCTAssertTrue(log.navigation.isEmpty && log.workspaceSwipes.isEmpty)
+                XCTAssertEqual(log.zoomEnds, 0)
+                XCTAssertEqual(log.middle, 0)
+            }
+        }
+    }
+
+    func testThreeFingerClipboardRequiresRadialTravelBeyondSettlingJitter() {
+        let log = CommandLog(); let input = engine(log)
+        input.update(clipboardTouches(), at: 1)
+        input.update(clipboardTouches(scale: 0.92), at: 1.1)
+        input.update([], at: 1.2)
+        XCTAssertEqual(log.clipboardCopies + log.clipboardPastes, 0)
+        XCTAssertEqual(log.middle, 1, "Small finger settling remains a three-finger tap")
+    }
+
+    func testThreeFingerClipboardDoesNotReinterpretUnequalParallelSwipeOrRotation() {
+        let samples = [
+            [touch(1, 170, 110), touch(2, 290, 110), touch(3, 260, 200)],
+            // Same shape rotated clockwise around its centroid: no radial scaling.
+            [touch(1, 170, 90), touch(2, 170, 190), touch(3, 80, 140)],
+            // One wandering finger cannot act for the other two.
+            [touch(1, 140, 140), touch(2, 190, 110), touch(3, 140, 200)]
+        ]
+        for (index, points) in samples.enumerated() {
+            let log = CommandLog(); let input = engine(log)
+            input.update(clipboardTouches(), at: 1)
+            input.update(points, at: 1.2)
+            input.update([], at: 1.3)
+            XCTAssertEqual(log.clipboardCopies + log.clipboardPastes, 0)
+            XCTAssertEqual(log.middle, 0)
+            XCTAssertEqual(log.workspaceSwipes, index == 0 ? [.right] : [])
+        }
+    }
+
+    func testThreeFingerClipboardFiresOnceEvenWhenRejectedReversedOrFingersReplaced() {
+        for accepted in [false, true] {
+            let log = CommandLog(); log.acceptClipboard = accepted
+            let input = engine(log)
+            input.update(clipboardTouches(), at: 1)
+            input.update(clipboardTouches(scale: 0.6), at: 1.1)
+            input.update(clipboardTouches(scale: 1.5), at: 1.2)
+            input.update(clipboardTouches(offset: CGSize(width: 90, height: 0)), at: 1.3)
+            input.update([touch(1, 140), touch(2, 150)], at: 1.35)
+            input.update([touch(1, 140), touch(2, 150), touch(4, 300)], at: 1.4)
+            input.update([touch(4, 350)], at: 1.45)
+            input.update([], at: 1.5)
+            XCTAssertEqual(log.trace, ["clipboardCopy"], "The same contact sequence never retries a rejected command")
+        }
+    }
+
+    func testThreeFingerClipboardResetsAfterEveryFingerLifts() {
+        let log = CommandLog(); let input = engine(log)
+        input.update(clipboardTouches(), at: 1)
+        input.update(clipboardTouches(scale: 0.6), at: 1.1)
+        input.update([], at: 1.2)
+        input.update(clipboardTouches(), at: 2)
+        input.update(clipboardTouches(scale: 1.4), at: 2.1)
+        input.update([], at: 2.2)
+        XCTAssertEqual(log.trace, ["clipboardCopy", "clipboardPaste"])
+    }
+
+    func testThreeFingerClipboardCancelAndRevisionBlockSurvivingContacts() {
+        for ending in 0..<3 {
+            let log = CommandLog(); let input = engine(log)
+            input.update(clipboardTouches(), at: 1)
+            if ending == 0 { input.cancel() }
+            else if ending == 1 { input.update(clipboardTouches(), at: 1.05, cancelled: true) }
+            else {
+                input.configure(enabled: true, panMode: false, revision: 2, sensitivity: 1,
+                                pointerScale: 1, doubleClickInterval: 0.5)
+            }
+            input.update(clipboardTouches(scale: 0.6), at: 1.1)
+            input.update([], at: 1.2)
+            XCTAssertTrue(log.trace.isEmpty)
+            input.update(clipboardTouches(), at: 2)
+            input.update(clipboardTouches(scale: 1.4), at: 2.1)
+            input.update([], at: 2.2)
+            XCTAssertEqual(log.trace, ["clipboardPaste"])
+        }
+    }
+
+    func testCancelledThreeFingerTapCannotMiddleClick() {
+        let log = CommandLog(); let input = engine(log)
+        input.update(clipboardTouches(), at: 1)
+        input.cancel()
+        input.update([], at: 1.1)
+        XCTAssertTrue(log.trace.isEmpty)
+    }
+
+    func testThreeFingerClipboardRequiresControlAndCannotTakeOverAnExistingPinch() {
+        for (enabled, pan) in [(false, false), (true, true)] {
+            let log = CommandLog(); let input = engine(log, enabled: enabled, panMode: pan)
+            input.update(clipboardTouches(), at: 1)
+            input.update(clipboardTouches(scale: 0.6), at: 1.1)
+            input.update([], at: 1.2)
+            XCTAssertTrue(log.trace.isEmpty)
+        }
+        let log = CommandLog(); let input = engine(log)
+        input.update([touch(1, 90, 110), touch(2, 190, 110)], at: 1)
+        input.update([touch(1, 70, 110), touch(2, 210, 110)], at: 1.1)
+        input.update(clipboardTouches(), at: 1.15)
+        input.update(clipboardTouches(scale: 0.6), at: 1.2)
+        input.update([], at: 1.3)
+        XCTAssertEqual(log.navigation.count, 1, "Two-finger zoom retains its original ownership")
+        XCTAssertEqual(log.zoomEnds, 1)
+        XCTAssertEqual(log.clipboardCopies + log.clipboardPastes, 0)
+    }
+
+    func testThreeFingerClipboardKillSwitchDefaultsEnabledAndKeepsSwipesAndMiddleTap() throws {
+        let suite = "NativeGestureClipboardTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let log = CommandLog(); let input = engine(log)
+        input.clipboardGesturesEnabled = { !defaults.bool(forKey: NativeGestureEngine.clipboardGesturesDisabledKey) }
+        input.update(clipboardTouches(), at: 1)
+        input.update(clipboardTouches(scale: 0.6), at: 1.1)
+        input.update([], at: 1.2)
+        XCTAssertEqual(log.clipboardCopies, 1, "Missing defaults key enables the gesture")
+        defaults.set(true, forKey: NativeGestureEngine.clipboardGesturesDisabledKey)
+        input.update(clipboardTouches(), at: 2)
+        input.update(clipboardTouches(scale: 1.4), at: 2.1)
+        input.update([], at: 2.2)
+        XCTAssertEqual(log.clipboardPastes, 0)
+        input.update(clipboardTouches(), at: 3)
+        input.update(clipboardTouches(offset: CGSize(width: 80, height: 0)), at: 3.1)
+        input.update([], at: 3.2)
+        input.update(clipboardTouches(), at: 4)
+        input.update([], at: 4.1)
+        XCTAssertEqual(log.workspaceSwipes, [.right])
+        XCTAssertEqual(log.middle, 1)
     }
 
     func testAThreeFingerSwipeFiresOnceHoweverLongOrFarTheFingersKeepGoing() {
@@ -505,10 +656,12 @@ final class NativeGestureEngineTests: XCTestCase {
 
     private func engine(_ commands: CommandLog, enabled: Bool = true,
                         panMode: Bool = false, scale: CGFloat = 1) -> NativeGestureEngine {
-        NativeGestureEngine(enabled: enabled, panMode: panMode, revision: 1,
+        let input = NativeGestureEngine(enabled: enabled, panMode: panMode, revision: 1,
                             sensitivity: 1, pointerScale: scale,
                             doubleClickInterval: 0.5,
                             onCommand: { commands.record($0) })
+        input.clipboardGesturesEnabled = { true }
+        return input
     }
 
     func testPointerMotionCannotBecomeClickAndHasNoClutchJump() {
@@ -703,6 +856,9 @@ final class CommandLog {
     var clicks: [Int] = []
     var secondary = 0
     var middle = 0
+    var clipboardCopies = 0
+    var clipboardPastes = 0
+    var acceptClipboard = true
     var moves: [CGSize] = []
     var points: [CGPoint] = []
     var scrollPhases: [String] = []
@@ -734,6 +890,8 @@ final class CommandLog {
         case .click(let count): clicks.append(count); trace.append("click\(count)")
         case .secondaryClick: secondary += 1; trace.append("right")
         case .middleClick: middle += 1; trace.append("middle")
+        case .clipboardCopy: clipboardCopies += 1; trace.append("clipboardCopy"); return acceptClipboard
+        case .clipboardPaste: clipboardPastes += 1; trace.append("clipboardPaste"); return acceptClipboard
         case .auxiliaryClick(let button): auxiliary.append(button); trace.append("aux-\(button.rawValue)")
         case .move(let delta): moves.append(delta); trace.append("move")
         case .pointTo(let point):

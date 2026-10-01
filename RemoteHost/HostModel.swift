@@ -45,6 +45,7 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var selected: CGDirectDisplayID = 0 {
         didSet {
             if selected != oldValue {
+                clipboard.stopAutomaticSync()
                 pointerLocator.reset()
                 releaseRemoteInput(notifyPhone: true)
                 input.invalidateQueued(); inputFreshness.expireTokens()
@@ -62,7 +63,9 @@ final class RemoteHostModel: ObservableObject {
     @Published private(set) var serverRemovalBusy = false
     @Published private(set) var serverRemovalPending = false
     @Published private(set) var serverRemovalMessage: String?
-    @Published private(set) var active = false
+    @Published private(set) var active = false {
+        didSet { reconcileAutomaticClipboard() }
+    }
     @Published private(set) var localPairRemovalMessage: String?
     @Published private(set) var wantsSharing: Bool
     @Published private(set) var screenRecordingPermission: HostPermissionStatus = .unchecked
@@ -193,7 +196,9 @@ final class RemoteHostModel: ObservableObject {
     }, send: { LANMagicPacketSender().send($0) })
     private let powerAssertions = HostPowerAssertions()
     private let displayWake = HostDisplayWake()
-    private var screenLocked = false
+    private var screenLocked = false {
+        didSet { reconcileAutomaticClipboard() }
+    }
     private var unavailabilityTeardown: Task<Void, Never>?
     private var timedPauseTask: Task<Void, Never>?
     private let clipboard = HostClipboardService()
@@ -216,8 +221,12 @@ final class RemoteHostModel: ObservableObject {
     private var textFocusTask: Task<Void, Never>?
     private var axPrewarmEdge = HostAXPrewarmEdge()
     private let axSessionGeneration = HostAXSessionGeneration()
-    private var captureHealthy = false
-    private var sessionState: HostSessionState = .picture
+    private var captureHealthy = false {
+        didSet { reconcileAutomaticClipboard() }
+    }
+    private var sessionState: HostSessionState = .picture {
+        didSet { reconcileAutomaticClipboard() }
+    }
     private var couchHealthy = false
     private var lastPhoneHeartbeatAt: TimeInterval?
     private var pendingModeReason: SessionModeRefusal?
@@ -244,9 +253,13 @@ final class RemoteHostModel: ObservableObject {
     private let pointerTelemetry = HostPointerTelemetry()
     private var displayRefreshTask: Task<Void, Never>?
     private var displayRefreshGeneration = HostPermissionRefreshGeneration()
-    private var terminating = false
+    private var terminating = false {
+        didSet { reconcileAutomaticClipboard() }
+    }
 
-  private var liveViewOnly = false
+  private var liveViewOnly = false {
+      didSet { reconcileAutomaticClipboard() }
+  }
     private var sessionControlAllowed: Bool { allowControl && !liveViewOnly && !away.isLocking && awayPictureClear }
     private let captureScopes = HostCaptureScope()
     private var captureScopeRefreshTask: Task<Void, Never>?
@@ -558,6 +571,7 @@ final class RemoteHostModel: ObservableObject {
             return self.connection.sendControl(RemoteAction(action: "clipboard", epoch: self.inputEpoch.value, clipboard: frame))
         }
         clipboard.bufferedAmount = { [weak self] in self?.connection.media?.controlBufferedAmount }
+        clipboard.automaticPolicy = { [weak self] in self?.automaticClipboardAllowed == true }
         wireFileTransfer()
         connectionObserver = connection.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
@@ -966,6 +980,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func connectionDidChange() {
+        reconcileAutomaticClipboard()
         recordServiceTransition()
         refreshAgentPushRelay()
         if hasPairedPhone { clearDeferredPairing() }
@@ -1554,6 +1569,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     func awayStateChanged() {
+        reconcileAutomaticClipboard()
         // Every new cover needs a fresh atomic write, even if an earlier marker clear failed.
         let isNewCover = away.wantsCover && !awayCoverWasWanted
         awayCoverWasWanted = away.wantsCover
@@ -2087,6 +2103,7 @@ final class RemoteHostModel: ObservableObject {
             releaseRemoteInput(notifyPhone: notifyPhone)
             clipboard.reset()
         }
+        reconcileAutomaticClipboard()
         if notifyPhone, connection.connected {
             _ = connection.sendControl(RemoteAction(action: "viewing", x: effective ? 1 : 0, epoch: inputEpoch.value))
         }
@@ -2209,6 +2226,7 @@ final class RemoteHostModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.reconcileAXPrewarm()
+                self.reconcileAutomaticClipboard()
                 if self.phonePause.isPaused {
                     if self.phonePause.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.expirePhonePause() }
                     return
@@ -2469,7 +2487,7 @@ final class RemoteHostModel: ObservableObject {
                                        expires: inputFreshness.postingDeadline(for: action, epoch: inputEpoch.value))
         }
         let preparation = semantic.map { $0.action == "key" && $0.key == "c" && $0.modifiers == ["command"] } == true && input.enabled
-            ? clipboard.prepareForCopyShortcut() : nil
+            ? clipboard.prepareForCopyShortcut(automatic: automaticClipboardAllowed) : nil
         let accepted = input.post(owner: self, peer: peer, isLive: { $0.connection.media === $1 }, submit: { [input] authority, completion in
             input.submitCausal(context, steps: steps, semantic: admittedSemantic, preparation: preparation,
                                routeAuthority: authority, completion: completion)
@@ -2632,7 +2650,7 @@ final class RemoteHostModel: ObservableObject {
         #endif
         guard let peer = connection.media else { return }
         let preparation = action.action == "key" && action.key == "c" && action.modifiers == ["command"] && input.enabled
-            ? clipboard.prepareForCopyShortcut() : nil
+            ? clipboard.prepareForCopyShortcut(automatic: automaticClipboardAllowed) : nil
         let submitted = input.post(owner: self, peer: peer, isLive: { $0.connection.media === $1 }, submit: { [input] authority, completion in
             input.submit(action, upgraded: admission == .upgraded, expires: expires, expectedGeneration: admittedGeneration,
                          preparation: preparation, routeAuthority: authority, completion: completion)
@@ -2739,6 +2757,21 @@ final class RemoteHostModel: ObservableObject {
             sessionControlAllowed && input.enabled && controlPermission.isGranted
     }
 
+    private var automaticClipboardAllowed: Bool {
+        active && !terminating && connection.connected && connection.media != nil &&
+            sessionState == .picture && sessionHealthy && input.enabled &&
+            controlPermission.isGranted && sessionControlAllowed && !screenLocked &&
+            !phonePause.isPaused && !liveViewOnly && !captureScopeViewOnly &&
+            !captureScopeNeedsSelection && !away.wantsCover && !away.isLocking &&
+            connection.peerFeatures.contains(SessionFeature.clipboardSync) &&
+            !UserDefaults.standard.bool(forKey: "clipboardAutoSyncDisabled")
+    }
+
+    private func reconcileAutomaticClipboard() {
+        clipboard.reconcileAutomaticSync(allowed: automaticClipboardAllowed,
+            peerSupports: connection.peerFeatures.contains(SessionFeature.clipboardSync))
+    }
+
     /// Checked on the 4 Hz lifecycle tick: when control becomes effective, ask the app already in front.
     private func reconcileAXPrewarm() {
         guard axPrewarmEdge.update(active: axPrewarmSessionActive) else { return }
@@ -2799,6 +2832,7 @@ final class RemoteHostModel: ObservableObject {
             captureHealthy: healthy,
             couchHealthy: couchHealthy
         )
+        reconcileAutomaticClipboard()
         sendCaptureHealth(healthy)
     }
 
@@ -2922,6 +2956,7 @@ final class RemoteHostModel: ObservableObject {
     private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
         let base = SessionFeature.host.filter {
+            if $0 == SessionFeature.clipboardSync && (!connection.peerFeatures.contains($0) || UserDefaults.standard.bool(forKey: "clipboardAutoSyncDisabled")) { return false }
             if ($0 == SessionFeature.videoLTR || $0 == SessionFeature.exactVideoTiming) && !connection.peerFeatures.contains($0) { return false }
             if $0 == SessionFeature.videoRefinement && !refinementNegotiated { return false }
             if $0 == SessionFeature.hostMomentum && !RemoteInputDriver.hostMomentumEnabled { return false }
@@ -3421,6 +3456,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func advanceEpoch() {
+        clipboard.stopAutomaticSync()
         guests.endAll()
         // Retire both posted and admitted holds before publishing the new scope.
         releaseRemoteInput(notifyPhone: true)
