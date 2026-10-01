@@ -23,6 +23,8 @@ final class PhoneFileTransfer: ObservableObject {
     var receipts: ((String, FileTransferSnapshot?, FileTransferFinish?) -> Void)?
     var onLinkResult: ((FileTransferStatus) -> Void)?
 
+    private let idleTimer: PhoneIdleTimer
+    private let idleOwner = PhoneIdleTimer.Owner.transfer(UUID())
     private let destination: () -> URL?
     private let staging: URL
     private let availableSpace: (URL) -> Int64?
@@ -33,7 +35,9 @@ final class PhoneFileTransfer: ObservableObject {
 
     init(destination: @escaping () -> URL? = { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first },
          staging: URL = FileManager.default.temporaryDirectory,
-         availableSpace: @escaping (URL) -> Int64? = PhoneFileTransfer.availableSpace) {
+         availableSpace: @escaping (URL) -> Int64? = PhoneFileTransfer.availableSpace,
+         idleTimer: PhoneIdleTimer = .shared) {
+        self.idleTimer = idleTimer
         self.destination = destination
         self.staging = staging
         self.availableSpace = availableSpace
@@ -85,6 +89,7 @@ final class PhoneFileTransfer: ObservableObject {
             return false
         }
         pendingLink = transfer
+        updateIdleTimer()
         return true
     }
 
@@ -109,13 +114,18 @@ final class PhoneFileTransfer: ObservableObject {
     func stopForBackground() {
         engine.cancelAll(status: .backgrounded)
         pendingLink = nil
+        updateIdleTimer()
     }
 
     func reset() {
         engine.reset()
         pendingLink = nil
         received = nil
+        updateIdleTimer()
     }
+
+    /// Reacquire only current engine ownership when an inactive foreground scene becomes active.
+    func refreshIdleTimer() { updateIdleTimer() }
 
     func clearNotice() { notice = nil }
 
@@ -139,9 +149,11 @@ final class PhoneFileTransfer: ObservableObject {
     private func engineChanged() {
         snapshot = engine.outgoing ?? engine.incoming
         waitingForMac = engine.pendingRequest != nil || engine.incoming?.phase == .waiting
-        UIApplication.shared.isIdleTimerDisabled = !engine.isIdle
+        updateIdleTimer()
         if let outgoing = engine.outgoing { receipts?(outgoing.transfer, outgoing, nil) }
     }
+
+    private func updateIdleTimer() { idleTimer.set(idleOwner, active: !engine.isIdle) }
 
     private func finished(_ finish: FileTransferFinish) {
         cleanup.removeValue(forKey: finish.transfer)?()
@@ -166,6 +178,7 @@ final class PhoneFileTransfer: ObservableObject {
     private func linkResult(_ transfer: String, _ status: FileTransferStatus) {
         guard pendingLink == transfer else { return }
         pendingLink = nil
+        updateIdleTimer()
         onLinkResult?(status)
         switch status {
         case .offered: post("Link sent. Click Open on your Mac to open it.", .success)

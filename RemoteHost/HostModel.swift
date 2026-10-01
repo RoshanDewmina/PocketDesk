@@ -3201,7 +3201,7 @@ final class RemoteHostModel: ObservableObject {
 
     private func updatePowerAssertions() {
         let wanted = HostPowerPolicy.assertions(keepAwake: keepAwakeEnabled && !awayLockFailed, sharing: active,
-                                                phoneConnected: connection.connected && !phonePause.isPaused && !liveViewOnly,
+                                                phoneConnected: connection.connected && !phonePause.isPaused,
                                                 awayArmed: away.holdsDisplayAwake)
         if wanted.system {
             if !remoteAccessAwake.start() { detail = "Farside couldn’t keep this Mac awake. Normal sleep settings still apply." }

@@ -18,6 +18,49 @@ final class PhoneFileTransferTests: XCTestCase {
         .offer(transfer, name: "photo.heic", bytes: bytes, type: nil)
     }
 
+    func testRealEngineCompletionAndResetReleaseOnlyTheirTransferOwnership() throws {
+        let idle = PhoneIdleTimer { _ in }
+        idle.setForeground(true)
+        idle.updateSession(authenticated: true, paused: false, concealed: false)
+        let files = PhoneFileTransfer(destination: { self.folder }, staging: folder,
+                                      availableSpace: { _ in nil }, idleTimer: idle)
+        files.engine.sendControl = { _ in true }
+        let id = try files.engine.request().get()
+        XCTAssertTrue(idle.isDisabled)
+        files.engine.receive(.result(id, .cancelled))
+        XCTAssertFalse(files.isBusy)
+        XCTAssertTrue(idle.isDisabled, "Completion cannot release the session owner")
+        _ = try files.engine.request().get()
+        idle.endSession()
+        XCTAssertTrue(idle.isDisabled)
+        files.reset()
+        XCTAssertFalse(idle.isDisabled)
+    }
+    func testBackgroundReleasesTransferAndShortLinkDoesNotOwnIdleTimer() throws {
+        let idle = PhoneIdleTimer { _ in }
+        idle.setForeground(true)
+        let files = PhoneFileTransfer(destination: { self.folder }, staging: folder,
+                                      availableSpace: { _ in nil }, idleTimer: idle)
+        var sent: [FileFrame] = []
+        files.engine.sendControl = { sent.append($0); return true }
+        XCTAssertTrue(files.sendLink(try XCTUnwrap(URL(string: "https://example.com"))))
+        XCTAssertFalse(idle.isDisabled, "An unanswered short link cannot hold the screen indefinitely")
+        files.engine.receive(.result(try XCTUnwrap(sent.last).transfer, .copied))
+        XCTAssertFalse(idle.isDisabled)
+        _ = try files.engine.request().get()
+        XCTAssertTrue(idle.isDisabled)
+        idle.setForeground(false)
+        XCTAssertFalse(idle.isDisabled)
+        idle.setForeground(true)
+        files.refreshIdleTimer()
+        XCTAssertTrue(idle.isDisabled, "Only a still-current engine may reacquire after temporary inactivity")
+        files.stopForBackground()
+        XCTAssertFalse(idle.isDisabled)
+        XCTAssertFalse(files.isBusy)
+        files.refreshIdleTimer()
+        XCTAssertFalse(idle.isDisabled)
+    }
+
     func testLowSpaceRefusesWithOnlyAStatusCode() throws {
         let files = PhoneFileTransfer(destination: { self.folder }, staging: folder, availableSpace: { _ in 10_000_000 })
         var sent: [FileFrame] = []
