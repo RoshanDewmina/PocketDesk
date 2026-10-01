@@ -60,7 +60,8 @@ struct BulkRateProbe: Equatable {
                          queueRefusedShare: Double, standingQueue: Bool = false) {
         guard let achievedKbps, achievedKbps.isFinite, achievedKbps >= 0 else { return }
         if queueRefusedShare > Self.queueRefusalShare || standingQueue {
-            kbps = min(kbps, max(floorKbps, achievedKbps * Self.queueBackoff))
+            // One halving at most: a window that straddled a transfer's start or end under-reports achieved.
+            kbps = min(kbps, max(floorKbps, kbps / 2, achievedKbps * Self.queueBackoff))
             return
         }
         if achievedKbps < kbps * Self.idleUtilization {
@@ -87,8 +88,8 @@ enum BulkAdmissionPolicy {
     static let spareShare = 0.5
     static let directCeilingKbps: Double = 16_000
     static let relayCeilingKbps: Double = 1_500
-    /// A fresh selected LAN pair with measured low RTT may use a bounded policy allowance. On the host
-    /// it applies only while the estimate is allocation-limited. NOT a measured capacity or a guarantee.
+    /// A fresh selected LAN pair with measured low RTT may use a bounded policy allowance. On the host it
+    /// applies only while the estimate is allocation- or app-limited and RTT is calm. NOT a measured capacity.
     static let lanBytesPerSecond: Double = 1_000_000
     static let allocationLimitedShare = 0.8
     static let maximumSenderQueueMs: Double = 100
@@ -131,10 +132,15 @@ enum BulkAdmissionPolicy {
         let measured = observation.videoKbps ?? 0
         let bulk = observation.bulkKbps ?? 0
         guard measured.isFinite, measured >= 0, bulk.isFinite, bulk >= 0 else { return nil }
-        // Only an estimate pinned near the encoder ceiling says nothing about the LAN link itself; a low
-        // estimate at the edge of Wi-Fi range is a real limit and keeps the measured formula.
-        let lanFloor = lan && observation.senderMaxKbps.map { $0.isFinite && $0 > 0 && capacity >= $0 * allocationLimitedShare } == true
-        let spareKbps = capacity - max(0, measured - bulk) - reservedKbps
+        let media = max(0, measured - bulk)
+        // GCC grows only to about 1.5x acknowledged throughput, so an estimate near the encoder ceiling or
+        // well above what video uses says nothing about the LAN link. At the edge of Wi-Fi range the
+        // estimate falls to what video needs (media near capacity) and the measured formula takes over.
+        let calm = observation.rttSampleMs.map { $0 <= 20 && !BulkRateProbe.inflated(rttMs: $0, baselineRTTMs: baselineRTT) } ?? true
+        let allocationLimited = observation.senderMaxKbps.map { $0.isFinite && $0 > 0 && capacity >= $0 * allocationLimitedShare } == true
+            || media <= capacity * allocationLimitedShare
+        let lanFloor = lan && calm && allocationLimited
+        let spareKbps = capacity - media - reservedKbps
         guard spareKbps > 0 else { return lanFloor ? lanBytesPerSecond : nil }
         let kbps = min(capacity * capacityShare, spareKbps * spareShare,
                        relay ? relayCeilingKbps : directCeilingKbps)

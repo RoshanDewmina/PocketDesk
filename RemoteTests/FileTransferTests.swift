@@ -617,8 +617,12 @@ final class FileChannelLoopbackTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: link.folder.appendingPathComponent("down.bin")), data)
         print("LOOPBACK-RECEIPT phone->mac \(Int(upRate)) B/s, mac->phone \(Int(downRate)) B/s; \(routeSummary())")
         // Deliberately loose on a shared, loaded machine: one RTT sample over 20 ms drops the LAN rule.
-        // Before the bucket and host LAN rule, phone->Mac measured ~0.9 MB/s and Mac->phone missed 40 s.
+        // Before the bucket and host LAN rule, phone->Mac measured ~0.9 MB/s and Mac->phone missed 40 s;
+        // the loopback host estimate (BWE ~6 Mbps vs a 12 Mbps encoder max, no video) is app-limited.
         XCTAssertGreaterThan(upRate, 200_000, routeSummary())
+        if hostStats?.routeDetail == "lan" {
+            XCTAssertGreaterThan(downRate, 400_000, "an app-limited host estimate keeps the LAN floor: \(routeSummary())")
+        }
         XCTAssertNotNil(link.host.controlBufferedAmount, "the control channel is untouched")
     }
 }

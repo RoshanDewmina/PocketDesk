@@ -89,11 +89,21 @@ final class MediaResourceBudgetTests: XCTestCase {
         host = lan; host.capacityKbps = 300; host.videoKbps = 0; host.senderMaxKbps = 350; host.rttMs = 80
         XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), "RTT inflation still pauses files")
         host.rttMs = 8; host.senderMaxKbps = 20_000
-        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 10_750, "a low estimate at the edge of Wi-Fi is a real limit")
+        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 1_000_000,
+                       "an estimate video is not using (GCC grows only ~1.5x acked throughput) does not hide the LAN")
         host.senderMaxKbps = nil
-        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 10_750, "unknown encoder ceiling keeps the formula")
-        host.videoKbps = 5_000
-        XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), "and video keeps the whole estimate")
+        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 1_000_000, "nor does an unknown encoder ceiling")
+        host.videoKbps = 290; host.senderMaxKbps = 20_000
+        XCTAssertNil(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), "edge of Wi-Fi: video needs the whole estimate")
+        host.capacityKbps = 2_000; host.videoKbps = 1_700
+        XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 10_750, "edge of Wi-Fi keeps the measured formula")
+        host.capacityKbps = 300; host.videoKbps = 0
+        for (sample, floor) in [(nil, true), (12.0, true), (19.0, false), (25.0, false)] as [(Double?, Bool)] {
+            host.rttSampleMs = sample
+            XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), floor ? 1_000_000 : 10_750,
+                           "LAN floor needs a calm window RTT sample: \(String(describing: sample)) ms")
+        }
+        host.rttSampleMs = nil
         host.routeDetail = "p2p"; host.senderMaxKbps = 350; host.videoKbps = 0
         XCTAssertEqual(BulkAdmissionPolicy.bytesPerSecond(host, at: 1, baselineRTT: 8), 10_750, "off-LAN host keeps the measured formula")
     }
@@ -252,6 +262,10 @@ final class MediaResourceBudgetTests: XCTestCase {
         probe.update(achievedKbps: 1_700, rttSampleMs: nil, baselineRTTMs: 40, queueRefusedShare: 0.5)
         XCTAssertEqual(probe.kbps, 1_700, "half the sends refused is not yet a standing queue")
         probe.update(achievedKbps: 100, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 0.9)
+        XCTAssertEqual(probe.kbps, 850, "one back-off halves at most: a window straddling a transfer's start under-reports achieved")
+        probe.update(achievedKbps: 0, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 0, standingQueue: true)
+        XCTAssertEqual(probe.kbps, 425, "a standing queue backs off the same way")
+        for _ in 0..<4 { probe.update(achievedKbps: 0, rttSampleMs: 40, baselineRTTMs: 40, queueRefusedShare: 1) }
         XCTAssertEqual(probe.kbps, 256, "never below the floor")
     }
 
