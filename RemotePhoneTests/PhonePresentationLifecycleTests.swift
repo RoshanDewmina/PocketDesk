@@ -1,5 +1,7 @@
 import XCTest
 import AVKit
+import SwiftUI
+import UIKit
 @testable import PocketDeskRemote
 
 private final class PresentationLifecyclePiPPlatform: LivePiPPlatformController {
@@ -122,5 +124,44 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         XCTAssertNoThrow(try RemoteAction(action: "viewOnly", liveViewOnly: true, liveViewOnlyRequestID: String(repeating: "a", count: 32), epoch: 7).validate())
         XCTAssertThrowsError(try RemoteAction(action: "viewOnly", epoch: 7).validate())
         XCTAssertThrowsError(try RemoteAction(action: "key", liveViewOnly: true, key: "a", epoch: 7).validate())
+    }
+}
+
+final class LiveCanvasHitTestTests: XCTestCase {
+    @MainActor
+    private func trackpad(in view: UIView) -> NativeTrackpadInputView? {
+        if let pad = view as? NativeTrackpadInputView { return pad }
+        for sub in view.subviews { if let pad = trackpad(in: sub) { return pad } }
+        return nil
+    }
+    @MainActor
+    private func describe(_ view: UIView?) -> String {
+        var chain: [String] = []; var current = view
+        while let v = current { chain.append("\(type(of: v)) ui=\(v.isUserInteractionEnabled) f=\(v.frame.integral)"); current = v.superview }
+        return chain.joined(separator: " <- ")
+    }
+    @MainActor
+    func testLiveSessionCanvasCenterHitsTrackpad() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "canvas-hit")
+        defer { model.connection.stop() }
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        func deliver(_ action: RemoteAction) throws { model.connection.onControl?(try JSONEncoder().encode(action)) }
+        try deliver(RemoteAction(action: "geometry", x: 1920, y: 1243, epoch: 7))
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 7, features: SessionFeature.host + [SessionFeature.away], mode: "picture"))
+        let host = UIHostingController(rootView: PhoneRemoteView(model: model, connection: model.connection))
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 402, height: 874))
+        window.windowScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        RunLoop.main.run(until: Date().addingTimeInterval(1.5))
+        host.view.layoutIfNeeded()
+        let pad = try XCTUnwrap(trackpad(in: host.view), "Session view never mounted the trackpad")
+        let center = pad.convert(CGPoint(x: pad.bounds.midX, y: pad.bounds.midY), to: window)
+        let hit = window.hitTest(center, with: nil)
+        print("CANVAS-HIT pad=\(pad.frame) hit=\(describe(hit))")
+        XCTAssertTrue(hit === pad, "Canvas center must reach the trackpad; got \(describe(hit))")
     }
 }
