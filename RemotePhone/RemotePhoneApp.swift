@@ -573,7 +573,10 @@ final class PhoneRemoteModel: ObservableObject {
             pipAdmission = nil
             pendingViewOnlyStart = false
             viewOnlyStartDeadline = nil
-            viewOnlyRequest.reset()
+            // Presentation retirement can repeat while the host applies our exit.
+            // Preserve that exact cleanup request until its ACK or timeout; terminal
+            // session teardown still retires its correlation synchronously.
+            if !awaitingViewOnlyExit || !requestHostExit { viewOnlyRequest.reset() }
             invalidatingPiP = true
             livePiP.stop()
             invalidatingPiP = false

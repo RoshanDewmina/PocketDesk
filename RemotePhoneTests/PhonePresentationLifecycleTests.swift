@@ -1,5 +1,16 @@
 import XCTest
+import AVKit
 @testable import PocketDeskRemote
+
+private final class PresentationLifecyclePiPPlatform: LivePiPPlatformController {
+    var nativeController: AVPictureInPictureController? { nil }
+    var isPossible: Bool { true }
+    private(set) var starts = 0
+    func start() { starts += 1 }
+    func stop() {}
+    func invalidatePlaybackState() {}
+    func detachDelegate() {}
+}
 
 final class PhonePresentationLifecycleTests: XCTestCase {
     private func identity(geometry: UInt64 = 7, content: UInt64 = 1, track: UUID = UUID(), grant: String = "grant") -> VideoPresentationIdentity {
@@ -8,7 +19,12 @@ final class PhonePresentationLifecycleTests: XCTestCase {
     }
     @MainActor
     func testRealModelExitTimeoutSurvivesGeometryRetirementAndRoutineStatus() throws {
-        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        // Actual downstream state machine, finite source proof and injected platform;
+        // this test neither constructs native AVKit nor proves a network producer.
+        let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+        let platform = PresentationLifecyclePiPPlatform()
+        let pip = LivePiPController(mediaSession: registry, supported: { true }, platformFactory: { _, _ in platform })
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip)
         model.prepareConnection(mode: .picture); model.sceneChanged(.active)
         model.connection.startInputFixtureForTesting(session: "pip-exit")
         defer { model.connection.stop() }
@@ -17,16 +33,31 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         func deliver(_ action: RemoteAction) throws { model.connection.onControl?(try JSONEncoder().encode(action)) }
         try deliver(RemoteAction(action: "geometry", x: 200, y: 200, epoch: 7))
         model.stopPictureInPicture()
-        let exit = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" })
+        XCTAssertFalse(packets.contains { $0.action.action == "viewOnly" }, "No exit is owed before any enter")
+        _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+        model.sendViewOnlyEntryForTesting()
+        let enter = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == true })
+        try deliver(RemoteAction(action: "capture", liveViewOnly: true, liveViewOnlyRequestID: enter.action.liveViewOnlyRequestID,
+                                x: 1, epoch: 7, features: [SessionFeature.liveViewOnly], mode: "picture"))
+        XCTAssertEqual(platform.starts, 1)
+        pip.confirmPlatformStartForTesting(platform)
+        XCTAssertEqual(model.pipState, .active)
+        XCTAssertTrue(model.viewOnlyConfirmedForTesting)
+        model.stopPictureInPicture()
+        let exit = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == false })
         XCTAssertFalse(exit.action.liveViewOnly ?? true)
         XCTAssertNotNil(exit.action.liveViewOnlyRequestID)
         let originalDeadline = try XCTUnwrap(model.viewOnlyExitDeadlineForTesting)
         model.stopPictureInPicture(); model.stopPictureInPicture()
         XCTAssertEqual(model.viewOnlyExitDeadlineForTesting, originalDeadline, "Repeated cleanup cannot extend the original bound")
-        // Host drops old-geometry exit; a new geometry retires the correlation request.
+        // Host drops old-geometry exit; a new geometry cannot reuse its cleanup ACK.
         try deliver(RemoteAction(action: "geometry", x: 210, y: 200, epoch: 8))
-        try deliver(RemoteAction(action: "capture", liveViewOnly: true, x: 1, epoch: 8, features: SessionFeature.host, mode: "picture"))
-        try deliver(RemoteAction(action: "capture", liveViewOnly: false, x: 1, epoch: 8, features: SessionFeature.host, mode: "picture"))
+        try deliver(RemoteAction(action: "capture", liveViewOnly: true, x: 1, epoch: 8, features: [SessionFeature.liveViewOnly], mode: "picture"))
+        try deliver(RemoteAction(action: "capture", liveViewOnly: false, x: 1, epoch: 8, features: [SessionFeature.liveViewOnly], mode: "picture"))
+        try deliver(RemoteAction(action: "capture", liveViewOnly: false, liveViewOnlyRequestID: exit.action.liveViewOnlyRequestID,
+                                x: 1, epoch: 8, features: [SessionFeature.liveViewOnly], mode: "picture"))
+        XCTAssertTrue(model.awaitingViewOnlyExitForTesting, "Even the exact old ID cannot satisfy a different geometry")
+        XCTAssertEqual(model.viewOnlyExitDeadlineForTesting, originalDeadline)
         XCTAssertTrue(model.connection.connected, "Routine state is not an applied exit acknowledgment")
         model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 3)
         XCTAssertFalse(model.connection.connected, "Retirement must never erase the bounded foreground exit timeout")

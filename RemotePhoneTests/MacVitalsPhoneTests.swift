@@ -24,6 +24,8 @@ final class MacVitalsPhoneTests: XCTestCase {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
         model.vitalsMemory = MacVitalsMemory(defaults: defaults)
         models.append(model)
+        // Keep the injected session bidirectional when capture requests displays.
+        model.connection.inputPacketSenderForTesting = { _ in true }
         if connected { model.connection.startInputFixtureForTesting(session: "vitals-status-fixture") }
         return model
     }

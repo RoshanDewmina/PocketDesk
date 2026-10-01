@@ -10,6 +10,8 @@ final class MacParityPhoneTests: XCTestCase {
 
     func testCurtainStateAndRecoveryNoticeFollowTheMacsStatus() throws {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        // Incoming status can legitimately cause outgoing display/release traffic.
+        model.connection.inputPacketSenderForTesting = { _ in true }
         model.connection.startInputFixtureForTesting(session: "curtain-status-fixture")
         defer { model.connection.stop() }
 
@@ -38,6 +40,8 @@ final class MacParityPhoneTests: XCTestCase {
 
     func testDisconnectedAndStoppedCallbacksCannotAdoptCurtainStatus() throws {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        // Incoming status can legitimately cause outgoing display/release traffic.
+        model.connection.inputPacketSenderForTesting = { _ in true }
         defer { model.connection.stop() }
         let receive = try XCTUnwrap(model.connection.onControl)
         let status = RemoteAction(action: "capture", x: 1, epoch: 1, features: SessionFeature.host,

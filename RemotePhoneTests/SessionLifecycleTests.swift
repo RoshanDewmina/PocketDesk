@@ -97,12 +97,43 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(restored, [true]); XCTAssertTrue(model.connection.connected)
         XCTAssertTrue(model.awaitingViewOnlyExitForTesting); XCTAssertTrue(model.viewOnlyConfirmedForTesting)
         let exit = try XCTUnwrap(packets().last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == false })
-        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: false, liveViewOnlyRequestID: "wrong-request",
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: false, liveViewOnlyRequestID: String(repeating: "b", count: 32),
             x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
         XCTAssertTrue(model.awaitingViewOnlyExitForTesting)
         model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: false, liveViewOnlyRequestID: exit.action.liveViewOnlyRequestID,
             x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
         XCTAssertFalse(model.awaitingViewOnlyExitForTesting); XCTAssertFalse(model.viewOnlyConfirmedForTesting)
+    }
+    func testPendingPiPExitSurvivesRepeatedUnhealthyRetirementAndRejectsDuplicateACK() throws {
+        let (model, _, _, packets) = try activePiPModel()
+        defer { model.disconnect() }
+        model.sceneChanged(.inactive); model.sceneChanged(.background)
+        var restored: [Bool] = []
+        model.livePiP.restoreForeground? { restored.append($0) }
+        model.livePiP.stop()
+        model.sceneChanged(.active)
+        XCTAssertEqual(restored, [true])
+        let exit = try XCTUnwrap(packets().last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == false })
+        let exitID = try XCTUnwrap(exit.action.liveViewOnlyRequestID)
+        // The real foreground path already clears capture readiness. Another unhealthy
+        // status must retire pixels without dropping the host cleanup correlation.
+        model.captureHealthy = false
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: false,
+            liveViewOnlyRequestID: String(repeating: "b", count: 32), x: 0, epoch: 1, features: [SessionFeature.liveViewOnly])))
+        XCTAssertTrue(model.awaitingViewOnlyExitForTesting)
+        XCTAssertTrue(model.viewOnlyConfirmedForTesting)
+        XCTAssertFalse(model.canControl)
+        XCTAssertEqual(packets().filter { $0.action.action == "viewOnly" && $0.action.liveViewOnly == false }.count, 1,
+            "Repeated retirement must not replace the pending exit with another request")
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: false,
+            liveViewOnlyRequestID: exitID, x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
+        XCTAssertFalse(model.awaitingViewOnlyExitForTesting)
+        XCTAssertFalse(model.viewOnlyConfirmedForTesting)
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: true,
+            liveViewOnlyRequestID: exitID, x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
+        XCTAssertFalse(model.viewOnlyConfirmedForTesting, "A duplicate old ACK cannot re-enter view-only or restart PiP")
+        XCTAssertNotEqual(model.pipState, .active)
+        XCTAssertTrue(model.connection.connected)
     }
     func testPiPRestoreTimeoutAndEndCannotResurrectRetiredSession() throws {
         for explicitEnd in [true, false] {

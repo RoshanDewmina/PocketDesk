@@ -19,6 +19,8 @@ final class ViewportCaptureTests: XCTestCase {
     private func connectedModel() -> PhoneRemoteModel {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
         models.append(model)
+        // Geometry retirement legitimately releases input through the transport.
+        model.connection.inputPacketSenderForTesting = { _ in true }
         model.connection.startInputFixtureForTesting(session: "viewport-status-fixture")
         return model
     }
@@ -195,6 +197,7 @@ final class ViewportCaptureTests: XCTestCase {
 
     func testDisconnectedAndStoppedCallbacksCannotEnablePointerOrAdoptCrop() throws {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.connection.inputPacketSenderForTesting = { _ in true }
         defer { model.connection.stop() }
         let receive = try XCTUnwrap(model.connection.onControl)
         let features = [SessionFeature.viewportCapture]
