@@ -254,7 +254,8 @@ final class ExactVideoTimingWireTests: XCTestCase {
         XCTAssertLessThanOrEqual(everyOptIn.features.count, 8, "Every opt-in on still leaves the feature list inside an earlier Mac's bound")
         XCTAssertTrue(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(everyOptIn)).isSuperset(of: handshake.features))
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(handshake)), Set(handshake.features))
-        let overflow = MacShareBlocker.Handshake(features: handshake.features + ["video.ninth.1"])
+        let overflow = MacShareBlocker.Handshake(features: everyOptIn.features + ["video.ninth.1"])
+        XCTAssertEqual(overflow.features.count, 9)
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(overflow)), [], "A ninth phone feature needs a post-handshake exchange, not this list")
         let modern = HostFeatureList.features(base: SessionFeature.host, allowBigText: true, accessibility: true,
             peerFeatures: Set(handshake.features), requestedMode: .picture)
