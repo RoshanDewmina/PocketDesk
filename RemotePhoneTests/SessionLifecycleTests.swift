@@ -61,7 +61,8 @@ final class SessionLifecycleTests: XCTestCase {
     /// Auto-PiP: armed only while a live picture session is in front; the OS start (simulated) keeps the session
     /// through `.inactive` and `.background` while the Mac's live-view-only confirmation is pending; a refusal ends it.
     func testLeavingALivePictureSessionStartsPiPAutomaticallyAndTheMacMustConfirmViewOnly() throws {
-        for refuse in [false, true] {
+        // (refuse, the Mac answers before AVKit finishes the start: the usual order on a LAN)
+        for (refuse, confirmFirst) in [(false, false), (true, false), (false, true)] {
             let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
             let platform = LifecyclePiPPlatform()
             let pip = LivePiPController(mediaSession: registry, supported: { true }, platformFactory: { _, _ in platform })
@@ -80,12 +81,25 @@ final class SessionLifecycleTests: XCTestCase {
             pip.automaticStartForTesting(platform)
             XCTAssertEqual(platform.starts, 0, "the OS starts it; the app never calls start in the background")
             let entry = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == true })
+            XCTAssertTrue(pip.automaticStartUnconfirmed, "only the last inline frame shows until the Mac confirms")
+            let reply = RemoteAction(action: "capture", liveViewOnly: !refuse, liveViewOnlyRequestID: entry.action.liveViewOnlyRequestID,
+                                     x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])
+            if confirmFirst {
+                model.connection.onControl?(try JSONEncoder().encode(reply))
+                XCTAssertFalse(pip.automaticStartUnconfirmed)
+                model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 0.3)
+                XCTAssertEqual(model.pipState, .starting, "a confirmed start still finishing in AVKit is kept")
+                model.sceneChanged(.background)
+                pip.confirmPlatformStartForTesting(platform)
+                XCTAssertEqual(model.pipState, .active); XCTAssertTrue(model.connection.connected)
+                XCTAssertTrue(model.pipBackgroundForTesting)
+                continue
+            }
             pip.confirmPlatformStartForTesting(platform)
             XCTAssertEqual(model.pipState, .active)
             model.sceneChanged(.background)
             XCTAssertTrue(model.pipBackgroundForTesting); XCTAssertTrue(model.connection.connected)
-            model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: !refuse,
-                liveViewOnlyRequestID: entry.action.liveViewOnlyRequestID, x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
+            model.connection.onControl?(try JSONEncoder().encode(reply))
             if refuse {
                 XCTAssertFalse(model.connection.connected, "a Mac that refuses live view only ends the background PiP")
             } else {

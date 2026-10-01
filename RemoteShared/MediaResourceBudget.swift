@@ -277,6 +277,11 @@ final class MediaResourceBudget: @unchecked Sendable {
         return BulkAdmissionPolicy.messageBytes(rate: admissionRate(at: now) ?? 0)
     }
 
+    func queueBytes(at now: TimeInterval) -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        return fastLane(at: now) ? BulkAdmissionPolicy.fastLaneBufferedBytes : BulkAdmissionPolicy.maximumBufferedBytes
+    }
+
     private func fastLane(at now: TimeInterval) -> Bool {
         guard fastLaneEnabled, !ladderSteppedDown, replicatedGuests.count == 0, let observation,
               admissionRate(at: now) != nil else { return false }

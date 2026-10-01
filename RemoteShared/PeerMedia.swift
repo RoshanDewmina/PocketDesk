@@ -1556,6 +1556,8 @@ extension PeerMedia: FileChannelLink {
     }
 
     func fileMessageBytes(at now: TimeInterval) -> Int { resourceBudget.messageBytes(at: now) }
+
+    func fileQueueBytes(at now: TimeInterval) -> UInt64 { resourceBudget.queueBytes(at: now) }
 }
 extension PeerMedia: RTCDataChannelDelegate {
     func dataChannel(_ dataChannel: RTCDataChannel, didChangeBufferedAmount amount: UInt64) {

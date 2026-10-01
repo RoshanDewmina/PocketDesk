@@ -2373,6 +2373,7 @@ struct NativeSessionView: View {
         Section {
             if model.pipAdmission != nil {
                 LivePiPPreview(layer: model.livePiP.displayLayer)
+                    .overlay { if model.privacyShield || model.contentConcealed { Farside.Palette.void } }
                     .frame(height: 120)
                     .accessibilityLabel("Live Mac preview for Picture in Picture")
                 Button(model.pipState == .active ? "Stop Picture in Picture" : "Start Picture in Picture") {

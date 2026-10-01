@@ -9,21 +9,27 @@ struct LivePiPPreview: UIViewRepresentable {
     var inline = false
     final class Preview: UIView {
         weak var sampleLayer: AVSampleBufferDisplayLayer?
+        var isInline = false
         static weak var inlineHost: Preview?
+        /// The sheet preview holding the layer; the inline host never takes it back while it is lent.
+        static weak var borrower: Preview?
         func attach(_ next: AVSampleBufferDisplayLayer?) {
             if let old = sampleLayer, old !== next, old.superlayer === layer {
                 old.removeFromSuperlayer()
-                if Self.inlineHost !== self, let host = Self.inlineHost, host.sampleLayer === old { host.layer.addSublayer(old); host.setNeedsLayout() }
+                if Self.borrower === self { Self.borrower = nil }
+                if !isInline, let host = Self.inlineHost, host.sampleLayer === old { host.layer.addSublayer(old); host.setNeedsLayout() }
             }
             sampleLayer = next
-            if let next, next.superlayer !== layer { layer.addSublayer(next) }
+            if !isInline, next != nil { Self.borrower = self }
+            let lent = isInline && Self.borrower.map { $0 !== self && $0.sampleLayer === next } == true
+            if let next, next.superlayer !== layer, !lent { layer.addSublayer(next) }
             setNeedsLayout()
         }
         override func layoutSubviews() { super.layoutSubviews(); if sampleLayer?.superlayer === layer { sampleLayer?.frame = bounds } }
     }
     func makeUIView(context: Context) -> Preview {
         let view = Preview(); view.backgroundColor = .black
-        if inline { Preview.inlineHost = view }
+        if inline { view.isInline = true; Preview.inlineHost = view }
         view.attach(layer); return view
     }
     func updateUIView(_ view: Preview, context: Context) { view.attach(layer) }

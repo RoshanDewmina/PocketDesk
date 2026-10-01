@@ -547,9 +547,10 @@ final class PhoneRemoteModel: ObservableObject {
         PresentationLeasePolicy.mayHoldBackground(state: pipState, admission: pipAdmission,
             viewOnlyConfirmed: viewOnlyConfirmed, now: ProcessInfo.processInfo.systemUptime) || autoPiPAwaitingConfirmation
     }
-    /// An OS-started PiP is held for at most the 2 s view-only confirmation window (`viewOnlyStartDeadline`).
+    /// An OS-started PiP is held while the Mac confirms live view only (at most the 2 s `viewOnlyStartDeadline`)
+    /// and after it confirms, including while AVKit is still finishing the start (`.starting`).
     private var autoPiPAwaitingConfirmation: Bool {
-        autoPiPStarted && pendingViewOnlyStart && [.starting, .active, .paused].contains(pipState)
+        autoPiPStarted && (pendingViewOnlyStart || viewOnlyConfirmed) && [.starting, .active, .paused].contains(pipState)
             && pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true
     }
     /// Armed while a live picture session is in the foreground: leaving the app may then start PiP.
@@ -736,6 +737,7 @@ final class PhoneRemoteModel: ObservableObject {
     func startPictureInPicture() {
         guard sceneIsActive, !privacyShield, !contentConcealed, !awaitingViewOnlyExit, pipState == .ready,
               hostFeatures.contains(SessionFeature.liveViewOnly), pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return }
+        livePiP.automaticStartAllowed = false // The button owns this start.
         requestViewOnlyEntry()
     }
     private func requestViewOnlyEntry() {
@@ -2173,6 +2175,8 @@ let now = ProcessInfo.processInfo.systemUptime
             sceneWasBackground = false
             returnToForeground()
             pipTransitional = false
+            // An OS start during `.inactive` (app switcher) that never reached the background was not asked for.
+            if autoPiPStarted && !pipBackground && pipRestoreRequest == nil { invalidatePresentation() }
             resumeMacAudioIfAllowed()
             completePiPRestoreIfCurrent()
         case .inactive:
@@ -2515,8 +2519,8 @@ let now = ProcessInfo.processInfo.systemUptime
                 if pendingViewOnlyStart && autoPiPStarted {
                     pendingViewOnlyStart = false
                     viewOnlyStartDeadline = nil
-                    autoPiPStarted = false
                     if !confirmed || ![.starting, .active, .paused].contains(pipState) { stopPictureInPicture() }
+                    else { livePiP.automaticStartConfirmed() }
                 } else if pendingViewOnlyStart {
                     pendingViewOnlyStart = false
                     viewOnlyStartDeadline = nil

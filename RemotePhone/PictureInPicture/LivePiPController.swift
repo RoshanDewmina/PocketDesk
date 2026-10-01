@@ -64,7 +64,8 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     private var sourceSink: LivePiPSampleBufferSink?
     private func synchronizeSource() {
         sourceLock.lock()
-        sourceSink = !mediaInterrupted && (policy.state == .ready || policy.state == .starting || policy.state == .active) ? sink : nil
+        sourceSink = !mediaInterrupted && !automaticStartUnconfirmed
+            && (policy.state == .ready || policy.state == .starting || policy.state == .active) ? sink : nil
         sink?.setEnabled(sourceSink != nil)
         sourceLock.unlock()
     }
@@ -75,6 +76,9 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     var automaticStartAllowed = false { didSet { applyAutomaticStart() } }
     var mayStartAutomatically: (() -> Bool)?
     var didStartAutomatically: (() -> Void)?
+    /// An OS start shows only the last inline frame until the Mac confirms live view only.
+    private(set) var automaticStartUnconfirmed = false
+    func automaticStartConfirmed() { automaticStartUnconfirmed = false; synchronizeSource() }
     private func applyAutomaticStart() { controller?.setAutomaticStart(automaticStartAllowed && policy.state == .ready) }
     var restoreForeground: ((@escaping (Bool) -> Void) -> Void)?
     var renderSizeChanged: ((CMVideoDimensions) -> Void)?
@@ -188,8 +192,9 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
             if self.controller === controller { stop() }
             return false
         }
-        if !automatic { controller.start() } // An automatic start is already under way in the OS.
-        applyAutomaticStart(); synchronizeSource(); didChangeState?(policy.state); return true
+        // An automatic start is already under way in the OS; leave its flag set until it finishes or stops.
+        if automatic { automaticStartUnconfirmed = true } else { controller.start(); applyAutomaticStart() }
+        synchronizeSource(); didChangeState?(policy.state); return true
     }
     private func startContextMatches(_ controller: any LivePiPPlatformController, admission: VideoPresentationAdmission,
                                      fence: VideoPresentationFence, state: LivePiPPolicy.State) -> Bool {
@@ -219,7 +224,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         fence?.invalidate() // BEFORE sample flush, OS stop, or any application callback.
         let oldSource = source, oldSink = sink, oldController = controller, oldOwner = mediaOwner
         source = nil; sink = nil; fence = nil; controller = nil; mediaOwner = nil
-        mediaInterrupted = false
+        mediaInterrupted = false; automaticStartUnconfirmed = false
         policy.stop(); expiryTimer?.invalidate(); expiryTimer = nil
         policy.didStop(); synchronizeSource()
         oldSource?.detach(); oldSink?.invalidate()
@@ -237,7 +242,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     }
     private func beginAutomaticStart(_ candidate: (any LivePiPPlatformController)?) {
         guard let candidate, candidate === controller, mayStartAutomatically?() == true,
-              candidate === controller, startFromUserAction(foreground: false, automatic: true) else { stop(); return }
+              startFromUserAction(foreground: false, automatic: true) else { stop(); return }
         didStartAutomatically?()
     }
     #if DEBUG
@@ -250,7 +255,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     private func confirmPlatformStart(controller candidate: (any LivePiPPlatformController)?) {
         guard let candidate, candidate === controller else { return }
         guard policy.didStart(at: ProcessInfo.processInfo.systemUptime) else { stop(); return }
-        synchronizeSource(); didChangeState?(policy.state)
+        applyAutomaticStart(); synchronizeSource(); didChangeState?(policy.state)
     }
     #if DEBUG
     /// Actual controller state boundary; injected fixtures do not manufacture or start native AVKit.

@@ -10,12 +10,15 @@ protocol FileChannelLink: AnyObject {
     func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool
     /// Whole message size, header included, for the next chunk.
     func fileMessageBytes(at now: TimeInterval) -> Int
+    /// The queue the link's lane allows now (2 MiB on the calm-LAN fast lane, else 32 KiB).
+    func fileQueueBytes(at now: TimeInterval) -> UInt64
 }
 
 extension FileChannelLink {
     // In-memory test links do not share a real association. PeerMedia overrides these.
     func permitsFileSend(bytes: Int, at now: TimeInterval) -> Bool { true }
     func fileMessageBytes(at now: TimeInterval) -> Int { FileTransferLimits.maximumOutgoingMessageBytes }
+    func fileQueueBytes(at now: TimeInterval) -> UInt64 { FileTransferLimits.directHighWater }
 }
 
 protocol FileByteSource: AnyObject {
@@ -626,8 +629,9 @@ final class FileTransferIO: @unchecked Sendable {
             let chunk = min(sending.chunk, max(1, sending.link.fileMessageBytes(at: now) - FileTransferLimits.chunkHeaderBytes))
             let size = Int(min(Int64(chunk), total - sending.sent))
             // Low-water refill: once full, wait until half the queue has drained so each wake sends a batch.
-            if buffered + UInt64(size + FileTransferLimits.chunkHeaderBytes) > sending.highWater
-                || (sending.awaitingDrain && buffered > sending.highWater / 2) {
+            let highWater = min(sending.highWater, sending.link.fileQueueBytes(at: now))
+            if buffered + UInt64(size + FileTransferLimits.chunkHeaderBytes) > highWater
+                || (sending.awaitingDrain && buffered > highWater / 2) {
                 sending.awaitingDrain = true; schedule(sending, after: Self.drainBackstop); return
             }
             sending.awaitingDrain = false

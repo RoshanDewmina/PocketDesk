@@ -161,11 +161,12 @@ final class MediaResourceBudgetTests: XCTestCase {
         XCTAssertEqual(budget.messageBytes(at: 0.1), 16_384, "64 KiB only once the peer's SDP allows it")
         budget.observePeerMaxMessageSize(262_144)
         XCTAssertEqual(budget.messageBytes(at: 0.1), 65_536)
+        XCTAssertEqual(budget.queueBytes(at: 0.1), 2 * 1024 * 1024)
         XCTAssertTrue(budget.permits(bytes: 65_536, at: 0.2, controlBuffered: 0, fileBuffered: 1_900_000), "MiB-scale queue")
         XCTAssertFalse(budget.permits(bytes: 65_536, at: 0.3, controlBuffered: 0, fileBuffered: 2_040_000), "bounded at 2 MiB")
         var admitted = 0
-        for tick in 1...100 where budget.permits(bytes: 65_536, at: 0.3 + Double(tick) / 100, controlBuffered: 0, fileBuffered: 0) {
-            admitted += 65_536
+        for tick in 1...100 {
+            while budget.permits(bytes: 65_536, at: 0.3 + Double(tick) / 100, controlBuffered: 0, fileBuffered: 0) { admitted += 65_536 }
         }
         XCTAssertGreaterThan(admitted, 20_000_000, "tens of MB/s, not the 1 MB/s floor")
         XCTAssertLessThanOrEqual(admitted, 26_000_000, "still a bounded allowance")
@@ -173,6 +174,7 @@ final class MediaResourceBudgetTests: XCTestCase {
 
         budget.observeLadder(steppedDown: true)
         XCTAssertEqual(budget.messageBytes(at: 1.5), 16_384, "a ladder step backs off to the conservative lane")
+        XCTAssertEqual(budget.queueBytes(at: 1.5), 32 * 1024)
         XCTAssertFalse(budget.permits(bytes: 65_536, at: 1.5, controlBuffered: 0, fileBuffered: 0))
         XCTAssertFalse(budget.permits(bytes: 16_384, at: 1.6, controlBuffered: 0, fileBuffered: 40_000), "32 KiB queue again")
         budget.observeLadder(steppedDown: false)
