@@ -51,10 +51,12 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         let box: CGFloat = 2622
         let full = OwnedMetalVideoView.backingSize(picture: CGSize(width: 2560, height: 1600), longSide: box, current: nil)
         XCTAssertEqual(full, CGSize(width: 2622, height: 1645), "2622 long side at the 51/32 quantum of 16:10")
-        for ladder in [CGSize(width: 1920, height: 1200), CGSize(width: 1680, height: 1050), CGSize(width: 1280, height: 800), CGSize(width: 2560, height: 1598),
-                       CGSize(width: 1448, height: 928), CGSize(width: 1456, height: 928)] {
+        for ladder in [CGSize(width: 1920, height: 1200), CGSize(width: 1680, height: 1050), CGSize(width: 1280, height: 800), CGSize(width: 2560, height: 1598)] {
             XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: ladder, longSide: box, current: full), full, "\(ladder) keeps the drawable")
         }
+        let wobble = OwnedMetalVideoView.backingSize(picture: CGSize(width: 1448, height: 928), longSide: box, current: nil)
+        XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 1456, height: 928), longSide: box, current: wobble), wobble,
+                       "a half-percent crop wobble never reallocates")
         XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 1600, height: 2560), longSide: box, current: full),
                        CGSize(width: 1639, height: 2622), "a rotation is a real aspect change")
         XCTAssertEqual(OwnedMetalVideoView.backingSize(picture: CGSize(width: 100, height: 50), longSide: 9000, current: nil).width, 4096)
