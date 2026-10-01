@@ -26,7 +26,7 @@ export function aboutPage(assets: Assets) {
       <p>Farside at getfarside.com isn’t related to farside.app or to other products with a similar name.</p>
     </section>
     <section aria-labelledby="now"><h2 id="now">Where it stands</h2>
-      <p>Farside is heading into a TestFlight beta, with the App Store to follow. ${ctaSentence()}</p>
+      <p>${ctaSentence()}</p>
     </section>
     <section aria-labelledby="contact"><h2 id="contact">Contact</h2>
       <p>Email ${email("support")}. We reply ${config.contact.responseTime ?? "as soon as we can"}. The <a href="/support">support page</a> has setup help and answers.</p>

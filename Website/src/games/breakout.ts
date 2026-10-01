@@ -48,6 +48,8 @@ export class Breakout extends Game {
   private wait = 0;
   private hint = 0;
   private hinted = false;
+  /** The visitor steered or launched during this run: only then does it count for the best score. */
+  private played = false;
 
   protected reset() {
     const { w, h, c } = this;
@@ -69,6 +71,7 @@ export class Breakout extends Game {
     }
     this.left = this.total = n;
     this.score = 0;
+    this.played = false;
     this.balls = BALLS;
     this.pw = clamp(w * 0.15, 64, 170);
     this.ph = Math.max(6, c * 0.75);
@@ -198,7 +201,7 @@ export class Breakout extends Game {
     this.over = true;
     this.wait = AGAIN;
     if (won) this.score += this.balls * 100;
-    const best = this.record(this.score);
+    const best = this.played && this.record(this.score);
     this.ui.say(`${won ? "Gap closed. You reached across. Every dot." : "Out of balls."} Score ${this.score}.${best ? " A new best." : ""}`);
   }
 
@@ -271,6 +274,7 @@ export class Breakout extends Game {
   }
 
   protected onKey(k: string, down: boolean, repeat: boolean) {
+    if (down) this.played = true;
     if (k === "ArrowLeft" || k === "a") return (this.keys.l = down), (this.aim = null), (this.hint = 0), true;
     if (k === "ArrowRight" || k === "d") return (this.keys.r = down), (this.aim = null), (this.hint = 0), true;
     if (isAction(k)) {
@@ -281,6 +285,7 @@ export class Breakout extends Game {
   }
 
   protected onPointer(kind: PointerKind, p: Pt, e: PointerEvent) {
+    if (kind !== "cancel") this.played = true;
     if (kind === "move") {
       if (e.pointerType === "mouse" || this.down) this.aim = p.x;
       if (this.down && Math.hypot(p.x - this.down.x, p.y - this.down.y) > 10) this.down.moved = true;

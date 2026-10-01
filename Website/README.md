@@ -34,14 +34,15 @@ bun run shots            # full-page screenshots → ~/Downloads/farside-site-<p
 bun run assets -- --concept ../design/farside-round1/21-reach.html   # re-render OG cards, icons, art, design previews
 bun run fonts            # re-measure the web fonts and regenerate src/styles/fallbacks.css
 bun run typecheck
-bun run build:strict     # refuses to build while required placeholders are empty; use for the real deploy
+bun run build:strict     # refuses to build while required placeholders are empty (preview deploys)
+bun run build:prod       # build:strict + the privacy effective date; use for the production deploy
 ```
 
 The preview server (`scripts/serve.ts`) behaves like Pages for this site: extensionless routes, `/page.html` → `/page`, `404.html` with a 404 status, `_headers`, `_redirects` and gzip.
 
 ## Build output: committed `dist/`
 
-`dist/` is committed, so Cloudflare Pages serves it with **no build step** (and `wrangler pages deploy` needs nothing but the folder). JS and images in `dist/assets/` carry content hashes and a one-year immutable cache; pages and the CSS (inlined into each page) are revalidated. After changing anything in `src/`, `site.config.ts` or `static/`, run `bun run build` and commit `dist/` with the change. If you prefer Pages to build it, point the project at this folder with build command `bun install && bun run build:strict` and output `dist` (set `BUN_VERSION` in the Pages environment).
+`dist/` is committed, so Cloudflare Pages serves it with **no build step** (and `wrangler pages deploy` needs nothing but the folder). JS and images in `dist/assets/` carry content hashes and a one-year immutable cache; pages and the CSS (inlined into each page) are revalidated. After changing anything in `src/`, `site.config.ts` or `static/`, run `bun run build` and commit `dist/` with the change. If you prefer Pages to build it, point the project at this folder with build command `bun install && bun run build:prod` and output `dist` (set `BUN_VERSION` in the Pages environment).
 
 ## The one URL placeholder: `SITE_URL`
 
@@ -50,7 +51,7 @@ Everything absolute (canonical links, Open Graph and Twitter images, JSON-LD, `s
 ## Deploy (after the domain is bought; nothing has been deployed)
 
 ```sh
-bun run build:strict                                   # fails until site.config.ts is filled in
+bun run build:prod                                     # fails until site.config.ts is filled in (incl. privacyEffective)
 bunx wrangler login
 bunx wrangler pages project create farside-site --production-branch main
 bunx wrangler pages deploy dist --project-name farside-site --branch main

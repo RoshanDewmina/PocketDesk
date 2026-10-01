@@ -6,7 +6,6 @@ Cloudflare Pages project `farside-site` serves `dist/` plus two Pages Functions 
 
 Since 1 Oct 2026 the site has no sign-up form and `WAITLIST_ENABLED` in `edge/flags.ts` is `false`, so `/api/waitlist` answers `410 {"ok":false,"error":"closed"}` to every request. The code, the D1 database and its rows stay. Before switching it back on: a mailing address in the consent wording (CASL), the form restored on the pages, and the privacy policy's waitlist sections restored. The contract below applies only when it is on.
 
-
 `POST /api/waitlist` with JSON `{"email", "source", "company": ""}` or a plain form post with the same field names. `company` is a honeypot and must stay empty and hidden.
 
 | Result | JSON (`Content-Type: application/json`) | Form post |
@@ -36,7 +35,7 @@ openssl rand -hex 32 | bunx wrangler@4 pages secret put RATE_SALT --project-name
 bun run build                                           # preview: placeholders allowed
 bunx wrangler@4 pages deploy dist --project-name farside-site --branch preview   # → https://preview.farside-site-dgk.pages.dev (noindex)
 
-bun run build:strict                                    # production: fails until site.config.ts contacts are filled
+bun run build:prod                                      # production: fails until site.config.ts (contacts, CTA URL, privacyEffective) is filled
 bunx wrangler@4 pages deploy dist --project-name farside-site --branch main
 ```
 

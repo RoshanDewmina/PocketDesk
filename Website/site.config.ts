@@ -152,8 +152,8 @@ export const config = {
   legalUpdated: "1 October 2026",
   /**
    * The privacy policy's effective date, e.g. "27 October 2026": set it to the production deploy date in the
-   * commit that goes live (GO-LIVE.md). `bun run build:prod` refuses to build while it is null; preview builds
-   * show the build date in its place.
+   * commit that goes live. `bun run build:prod` (the production build, DEPLOY.md) refuses to build while it is
+   * null; preview builds show the build date in its place.
    */
   privacyEffective: null as string | null,
 };

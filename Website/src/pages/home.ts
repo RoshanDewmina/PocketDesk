@@ -157,7 +157,7 @@ const QAS: QA[] = [
   },
   {
     q: "When can I get it?",
-    a: html`<p>${config.cta.stage !== "follow" ? "" : "Farside is heading into a TestFlight beta, with the App Store to follow. "}${ctaSentence()}</p>`,
+    a: html`<p>${ctaSentence()}</p>`,
   },
   {
     q: "Is Farside the same as farside.app?",

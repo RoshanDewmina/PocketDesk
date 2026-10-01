@@ -121,7 +121,9 @@ class Arcade {
         u.textContent = unit ?? "";
         big.replaceChildren(n, u);
       },
+      // Only to someone playing: a run left to itself would otherwise announce every game over.
       say: (t) => {
+        if (!this.engaged) return;
         clearTimeout(sayT);
         live.textContent = "";
         sayT = window.setTimeout(() => (live.textContent = t), 60);
@@ -136,6 +138,7 @@ class Arcade {
     host.onMotionChange(() => {
       // Reduce Motion turned on: a game that started by itself stops; one the visitor is playing carries on.
       if (!this.auto() && this.running && !this.engaged) this.stop();
+      if (this.game) this.game.auto = this.auto();
       this.render();
       this.wake();
     });
@@ -241,6 +244,9 @@ class Arcade {
     this.engaged = false;
     this.host.foot.classList.remove("arc-on");
     if (this.auto()) {
+      // Let go of held keys (their key-up may land elsewhere now); the run carries on.
+      this.game?.suspend();
+      this.game?.resume();
       if (document.activeElement === this.stage) this.stage.blur();
       return;
     }

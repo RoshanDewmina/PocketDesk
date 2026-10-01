@@ -40,4 +40,3 @@ export function ownerComment(title: string, items: string[]): Html {
   return raw(`<!--\n  ${safe(title)}\n${items.map((i) => `  - ${safe(i)}`).join("\n")}\n-->`);
 }
 
-export const tbc = (text: string) => html`<span class="tbd">${text}</span> <span class="placeholder">(to be confirmed)</span>`;

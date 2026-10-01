@@ -81,29 +81,37 @@ export function detail(value: string | null, fallback: string): Html {
 
 /**
  * The call to action for the current stage (site.config.ts `cta.stage`): the full label (hero, footer), a short
- * one for the header button, and the line that goes with it in the hero.
+ * one for the header button, the line that goes with it in the hero, and the link text for running copy.
  */
-export function cta(): { href: string; label: string; short: string; note: string } {
+export function cta(): { href: string; label: string; short: string; note: string; text: string } {
   const href = ctaUrl();
   switch (config.cta.stage) {
     case "follow": {
-      const handle = `@${href.replace(/^https:\/\/(www\.)?(x|twitter)\.com\//, "").replace(/\/.*$/, "")}`;
-      return { href, label: `Follow ${handle}`, short: "Follow on X", note: `Beta coming soon. Follow ${handle} for the link.` };
+      const handle = `@${href.replace(/^https:\/\/(www\.)?(x|twitter)\.com\//, "").replace(/[/?#].*$/, "")}`;
+      return { href, label: `Follow ${handle}`, short: "Follow on X", note: `Beta coming soon. Follow ${handle} for the link.`, text: handle };
     }
     case "testflight":
-      return { href, label: "Join the beta", short: "Join the beta", note: "The public beta is open on TestFlight." };
+      return { href, label: "Join the beta", short: "Join the beta", note: "The public beta is open on TestFlight.", text: "Join the beta" };
     case "preorder":
-      return { href, label: "Pre-order on the App Store", short: "Pre-order", note: "Pre-order Farside for iPhone on the App Store." };
+      return { href, label: "Pre-order on the App Store", short: "Pre-order", note: "Pre-order Farside for iPhone on the App Store.", text: "Pre-order on the App Store" };
   }
 }
 
-/** One sentence with the CTA as an inline link, for running text (FAQ, about, support). */
-export function ctaSentence(): Html {
+/**
+ * Where Farside stands, with the CTA as an inline link, for running copy (FAQ, about, support).
+ * `brief` leaves out the context sentence, and is empty once there is no beta to join (pre-order).
+ */
+export function ctaSentence(opts: { brief?: boolean } = {}): Html | "" {
   const c = cta();
-  const a = html`<a href="${c.href}" rel="noopener">${c.label}</a>`;
-  if (config.cta.stage === "follow") return html`The beta isn’t open yet: ${a} on X for the link.`;
-  if (config.cta.stage === "testflight") return html`The public beta is open: ${a} on TestFlight.`;
-  return html`Farside for iPhone is up for pre-order: ${a}.`;
+  const a = html`<a href="${c.href}" rel="noopener">${c.text}</a>`;
+  switch (config.cta.stage) {
+    case "follow":
+      return html`${opts.brief ? "" : "Farside is heading into a TestFlight beta, with the App Store to follow. "}The beta isn’t open yet: follow ${a} on X for the link.`;
+    case "testflight":
+      return html`${opts.brief ? "" : "The public beta is open on TestFlight, with the App Store to follow. "}${a} on TestFlight.`;
+    case "preorder":
+      return opts.brief ? "" : html`Farside for iPhone is up for pre-order: ${a}.`;
+  }
 }
 
 /** The CTA as a button that leaves the site. */
