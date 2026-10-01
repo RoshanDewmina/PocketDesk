@@ -242,7 +242,8 @@ enum VirtualDisplaySpike {
               + "(bounds \(format(Double(boundsBefore.width), 0))x\(format(Double(boundsBefore.height), 0)))")
         let expectedPoints = CGSize(width: Int(rotated.modeWidth), height: Int(rotated.modeHeight))
         func settled() -> Bool {
-            CGDisplayBounds(id).size == expectedPoints && CGDisplayPixelsWide(id) == Int(rotated.pixelWidth)
+            // CGDisplayPixelsWide reports points on a HiDPI display; the mode carries the backing size.
+            CGDisplayBounds(id).size == expectedPoints && CGDisplayCopyDisplayMode(id)?.pixelWidth == Int(rotated.pixelWidth)
                 && screen(for: id)?.frame.size == expectedPoints
         }
         view.startTicking(preferredHz: Float(scenario.refreshHz))
