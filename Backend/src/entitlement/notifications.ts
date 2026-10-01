@@ -98,12 +98,15 @@ export async function applyNotification(env: Env, config: Config, decoded: Recor
   const expiresAt = kind === "subscription" ? Math.max(tx.expiresDate ?? 0, existing?.expires_at ?? 0) : 0;
   const revokedAt = resolveRevokedAt(existing, tx, notificationType);
   const base = { kind, id: entitlementId, productId: tx.productId, environment: txEnvironment, expiresAt, revokedAt,
+    notificationSignedAt: typeof decoded.signedDate === "number" ? decoded.signedDate : undefined,
     purchaseAt: tx.purchaseDate, refundReversed: notificationType === "REFUND_REVERSED", source: "notification" as const };
   const statusFor = (fallback: EntitlementStatus): EntitlementStatus => revokedAt !== null ? "revoked" : fallback;
 
   if (kind !== "subscription") {
     // Renewal/grace/expiry events never redefine a non-consumable. Only signed refund/revoke/reversal apply.
     if (!["REFUND", "REVOKE", "REFUND_REVERSED", "ONE_TIME_CHARGE"].includes(notificationType)) return finish("recorded");
+    // Missing/invalid signed order cannot safely clear or overwrite a permanent tombstone.
+    if (typeof decoded.signedDate !== "number" || !Number.isFinite(decoded.signedDate) || decoded.signedDate <= 0 || decoded.signedDate > now) return finish("recorded");
     const revoked = notificationType === "REFUND" || notificationType === "REVOKE";
     const applied = await upsertEntitlement(env.DB, { ...base, status: revoked ? "revoked" : statusFor("active"),
       graceUntil: null, revokedAt: revoked ? tx.revocationDate ?? now : revokedAt }, now);

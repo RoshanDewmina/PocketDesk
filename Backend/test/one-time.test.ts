@@ -61,7 +61,7 @@ describe("disabled one-time catalog and typed rights", () => {
     const now=Date.now(), id=randomHex(), sub=randomHex();
     const base={id,kind:"lifetime" as const,productId:lifetime,environment:"Production",expiresAt:0,purchaseAt:now-10000,source:"verify" as const};
     await upsertEntitlement(testEnv.DB,{...base,status:"active"},now);
-    await upsertEntitlement(testEnv.DB,{...base,status:"revoked",revokedAt:now-1000,source:"notification"},now);
+    await upsertEntitlement(testEnv.DB,{...base,status:"revoked",revokedAt:now-1000,notificationSignedAt:now-500,source:"notification"},now);
     await upsertEntitlement(testEnv.DB,{...base,status:"active",revokedAt:null},now);
     expect((await getEntitlement(testEnv.DB,id))?.status).toBe("revoked");
     await upsertEntitlement(testEnv.DB,{id:sub,productId:"com.roshan.PocketDesk.remote.monthly",environment:"Production",expiresAt:now+100000,status:"active",source:"verify"},now);
@@ -69,7 +69,7 @@ describe("disabled one-time catalog and typed rights", () => {
     await purgeRetention(testEnv.DB,now+400*86400000);
     expect((await getEntitlement(testEnv.DB,id))?.status).toBe("revoked");
     // Only Apple's signed refund reversal (handler passes this flag) restores that same purchase.
-    await upsertEntitlement(testEnv.DB,{...base,status:"active",revokedAt:null,refundReversed:true,source:"notification"},now);
+    await upsertEntitlement(testEnv.DB,{...base,status:"active",revokedAt:null,refundReversed:true,notificationSignedAt:now+1,source:"notification"},now);
     expect((await getEntitlement(testEnv.DB,id))?.status).toBe("active");
   });
   it("a saved valid token cannot obtain relay after the catalog is absent on the actual Room", async () => {
@@ -107,11 +107,34 @@ describe("disabled one-time catalog and typed rights", () => {
       expect((await verify(signed,keys)).body).toMatchObject({entitled:false,reason:"revoked"});
     } finally {mock.mockRestore();}
   });
+  it("distinct delayed reversal cannot clear a newer refund after row reload; valid newer reversal can", async () => {
+    const now=Date.now(),tx=payload(),id=await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY,String(tx.originalTransactionId));
+    await upsertEntitlement(testEnv.DB,{id,kind:"lifetime",productId:lifetime,environment:"Production",expiresAt:0,status:"active",purchaseAt:Number(tx.purchaseDate),source:"verify"},now);
+    async function event(type:string,signedDate:number|undefined,revocationDate?:number) {
+      return applyNotification(testEnv,config(),{notificationType:type,notificationUUID:randomHex(16),signedDate,
+        data:{bundleId:config().bundleId,environment:"Production",appAppleId:config().appAppleId,
+          signedTransactionInfo:await signCompactJws({...tx,revocationDate},chain)}},now+1000);
+    }
+    expect(await event("REFUND",now+100,now+90)).toBe("applied");
+    expect(await event("REFUND_REVERSED",now+200)).toBe("applied");
+    expect(await event("REFUND",now+300,now+290)).toBe("applied");
+    expect(await event("REFUND_REVERSED",now+200)).toBe("recorded");
+    expect(await event("REFUND_REVERSED",undefined)).toBe("recorded");
+    expect(await event("REFUND_REVERSED",now+300)).toBe("recorded");
+    const persisted=(await getEntitlement(testEnv.DB,id))!;
+    expect(persisted.last_notification_signed_at).toBe(now+300);
+    expect(hasAccess(persisted,now+1000,config().oneTimeProducts)).toBe(false);
+    expect(await event("REFUND_REVERSED",now+400)).toBe("applied");
+    const restored=(await getEntitlement(testEnv.DB,id))!;
+    expect(hasAccess(restored,now+1000,config().oneTimeProducts)).toBe(true);
+    expect(restored.last_verified_at).toBe(now);
+  });
   it("nonconsumable renewal expiry cannot remove rights; refund/reversal applies without forging verification freshness", async () => {
     const now=Date.now(),tx=payload(),id=await entitlementIdFor(testEnv.ENTITLEMENT_HASH_KEY,String(tx.originalTransactionId));
     await upsertEntitlement(testEnv.DB,{id,kind:"lifetime",productId:lifetime,environment:"Production",expiresAt:0,status:"active",purchaseAt:Number(tx.purchaseDate),source:"verify"},now);
+    let order = 0;
     async function notify(type:string, extra:Record<string,unknown>={}) {
-      return applyNotification(testEnv,config(),{notificationType:type,notificationUUID:randomHex(16),data:{bundleId:config().bundleId,environment:"Production",appAppleId:config().appAppleId,
+      return applyNotification(testEnv,config(),{notificationType:type,notificationUUID:randomHex(16),signedDate:now+(++order),data:{bundleId:config().bundleId,environment:"Production",appAppleId:config().appAppleId,
         signedTransactionInfo:await signCompactJws({...tx,...extra},chain)}},now+1000);
     }
     expect(await notify("EXPIRED")).toBe("recorded"); expect((await getEntitlement(testEnv.DB,id))?.status).toBe("active");
