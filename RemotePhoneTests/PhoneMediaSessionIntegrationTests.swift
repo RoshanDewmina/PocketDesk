@@ -226,6 +226,26 @@ final class PhoneMediaSessionIntegrationTests: XCTestCase {
         registry.endInterruption(shouldResume: true)
         XCTAssertFalse(playback.isAdmitted); XCTAssertEqual(resumed, 1)
     }
+    func testHeadphoneRouteChangeMutesMacAudioWithoutEndingBackgroundPiPOrAutoResuming() throws {
+        var muted = 0, releases = 0, resumed = 0
+        let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: { releases += 1 }))
+        let mac = PhoneSystemAudioPlayback(session: registry)
+        mac.onMustMute = { muted += 1 }; mac.onResumed = { resumed += 1; return true }
+        let pip = fixtureController(mediaSession: registry)
+        XCTAssertTrue(mac.begin()); pip.updateAdmission(proof())
+        XCTAssertTrue(pip.startFromUserAction(foreground: true))
+        let platform = try XCTUnwrap(pip.controller)
+        pip.confirmPlatformStartForTesting(platform)
+        registry.routeChanged()
+        XCTAssertEqual(pip.policy.state, .active, "AirPods connecting during background PiP keeps PiP")
+        XCTAssertEqual((platform as? FixturePiPPlatformController)?.stops, 0)
+        XCTAssertEqual(muted, 1); XCTAssertFalse(mac.isAdmitted); XCTAssertEqual(releases, 0)
+        registry.beginInterruption(); registry.endInterruption(shouldResume: true)
+        XCTAssertEqual(resumed, 0, "a route change does not auto-resume Mac audio")
+        XCTAssertFalse(mac.isAdmitted)
+        pip.stop(); XCTAssertEqual(releases, 1)
+    }
+
     func testPiPInterruptionCannotResumeExpiredOrReplacementLifetime() throws {
         let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
         let pip = fixtureController(mediaSession: registry)

@@ -6,7 +6,7 @@ import AVFoundation
 /// One owner of the process-wide platform session. The injected backend never runs in fixtures.
 @MainActor
 final class PhoneMediaSession {
-    enum Kind: Equatable { case macAudio, pictureInPicture, recording }
+    enum Kind: Hashable { case macAudio, pictureInPicture, recording }
     enum Configuration: Equatable { case playback, recording }
     struct Backend {
         let configure: (Configuration) throws -> Void
@@ -65,6 +65,8 @@ final class PhoneMediaSession {
                             let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
                             guard reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue ||
                                   reason == AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue else { return }
+                            self?.routeChanged()
+                            return
                         }
                         self?.retireAll()
                     }
@@ -158,6 +160,24 @@ final class PhoneMediaSession {
         previous.forEach { $0.retired() }
         deactivate()
         retiring = false
+    }
+    /// Plugging or unplugging headphones must not end a background PiP (and with it the session).
+    /// Mac audio stays retired until the user opts in again; the microphone's input route changed.
+    func routeChanged() { retire(kinds: [.macAudio, .recording]) }
+
+    func retire(kinds: Set<Kind>) {
+        guard !acquiring else { retireAll(); return } // The pending owner's kind is unknown.
+        guard !retiring else { return }
+        let matching = owners.filter { kinds.contains($0.value.kind) }
+        guard !matching.isEmpty else { return }
+        retiring = true
+        matching.keys.forEach { owners.removeValue(forKey: $0) }
+        matching.values.forEach { $0.retired() }
+        retiring = false
+        guard owners.isEmpty else { return }
+        generation &+= 1
+        isInterrupted = false
+        deactivate()
     }
     private func deactivate() {
         guard !deactivating else { return }
