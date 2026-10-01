@@ -147,7 +147,7 @@ struct AwayModeMachine: Equatable {
         switch phase {
         case .locking(let reason):
             if let lockRequestedAt, elapsed(since: lockRequestedAt, now: now) >= AwayModeLimits.lockConfirmTimeout {
-                if lockCovers { phase = .lockFailed(reason) } else { release() }
+                if lockCovers || reason == .phoneRequest { phase = .lockFailed(reason) } else { release() }
             }
             return nil
         case .armedPresent, .armedCovered:

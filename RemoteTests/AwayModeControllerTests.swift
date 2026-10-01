@@ -53,18 +53,23 @@ final class AwayModeControllerTests: XCTestCase {
         rig.controller.refresh()
         XCTAssertFalse(rig.controller.lockRequestedByFarside, "Once the host has seen the lock, a later lock is not ours")
 
-        // A lock request that never landed stays ours until Away mode arms again.
+        // A failed phone lock remains a control barrier, even without a cover.
         let failed = AwayRig()
         failed.locker.postSucceeds = false
         failed.controller.refresh()
         failed.controller.end(.phoneRequest)
         failed.clock = 3; failed.controller.tick()
-        XCTAssertEqual(failed.controller.machine.phase, .off)
+        XCTAssertEqual(failed.controller.machine.phase, .lockFailed(.phoneRequest))
         failed.controller.turnOffAtMac()
         XCTAssertTrue(failed.controller.lockRequestedByFarside)
         failed.controller.refresh()
-        XCTAssertEqual(failed.controller.machine.phase, .armedPresent)
-        XCTAssertFalse(failed.controller.lockRequestedByFarside)
+        XCTAssertEqual(failed.controller.machine.phase, .lockFailed(.phoneRequest))
+        XCTAssertTrue(failed.controller.isLocking, "Host control/files/guest gates remain closed past the phone reply window")
+        XCTAssertFalse(failed.controller.wantsCover)
+        XCTAssertTrue(failed.controller.lockRequestedByFarside)
+        failed.locker.locked = true
+        failed.clock = 6; failed.controller.tick()
+        XCTAssertFalse(failed.controller.isLocking)
     }
 
     func testPhoneInputNeverLocksOrResetsIdle() {

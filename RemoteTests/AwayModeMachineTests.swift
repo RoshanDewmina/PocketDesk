@@ -131,12 +131,15 @@ final class AwayModeMachineTests: XCTestCase {
         }
     }
 
-    func testFailedUncoveredLockEndsAfterTheConfirmationWindow() {
+    func testFailedUncoveredPhoneLockRemainsFencedUntilPositiveConfirmation() {
         var m = AwayModeMachine()
         m.end(.phoneRequest, now: 0)
         m.tick(now: 1.9); XCTAssertEqual(m.phase, .locking(.phoneRequest))
-        m.tick(now: 2); XCTAssertEqual(m.phase, .off)
+        m.tick(now: 2); XCTAssertEqual(m.phase, .lockFailed(.phoneRequest))
         XCTAssertFalse(m.wantsCover); XCTAssertFalse(m.holdsDisplayAwake)
+        m.update(ready, now: 5); m.tick(now: 100)
+        XCTAssertEqual(m.phase, .lockFailed(.phoneRequest), "Fresh ordinary conditions cannot re-admit the session")
+        m.lockConfirmed(); XCTAssertEqual(m.phase, .off)
     }
 
     func testStopSharingIsSeenThroughConditions() {
