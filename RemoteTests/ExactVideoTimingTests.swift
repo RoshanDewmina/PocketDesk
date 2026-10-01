@@ -114,7 +114,12 @@ final class ExactVideoTimingWireTests: XCTestCase {
         log.pushed(value, buffer: buffer, atMs: 1_010); log.pushed(value, buffer: buffer, atMs: 1_011)
         XCTAssertNil(log.submitted(buffer: buffer, atMs: 1_012))
         log.pushed(value, buffer: buffer, atMs: 1_013)
-        XCTAssertNil(log.submitted(buffer: buffer, atMs: 1_014), "Queued reuse remains quarantined")
+        XCTAssertEqual(try XCTUnwrap(log.submitted(buffer: buffer, atMs: 1_014)).pushedMs, 1_013, "A consumed quarantine does not poison the next push")
+        let recycled = ExactVideoTiming(sourceID: String(repeating: "d", count: 32), displayMs: 1_020, capturedMs: 1_021,
+            pushedMs: 1_022, submittedMs: 1_022, encodedMs: 1_022, resend: false)
+        log.pushed(value, buffer: buffer, atMs: 1_030); log.pushed(recycled, buffer: buffer, atMs: 1_031)
+        XCTAssertEqual(try XCTUnwrap(log.submitted(buffer: buffer, atMs: 1_032)).sourceID, recycled.sourceID, "A recycled buffer carries its newer source")
+        XCTAssertNil(log.submitted(buffer: buffer, atMs: 1_033))
         log.reset(); log.pushed(value, buffer: buffer, atMs: 1_020)
         XCTAssertNil(log.submitted(buffer: buffer, atMs: 6_021))
         log.reset(); XCTAssertNil(log.submitted(buffer: buffer, atMs: 6_022))
@@ -246,6 +251,8 @@ final class ExactVideoTimingWireTests: XCTestCase {
         XCTAssertEqual(handshake.features.count, 8)
         XCTAssertTrue(handshake.features.contains(SessionFeature.exactVideoTiming))
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(handshake)), Set(handshake.features))
+        let overflow = MacShareBlocker.Handshake(features: handshake.features + ["video.ninth.1"])
+        XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(overflow)), [], "A ninth phone feature needs a post-handshake exchange, not this list")
         let modern = HostFeatureList.features(base: SessionFeature.host, allowBigText: true, accessibility: true,
             peerFeatures: Set(handshake.features), requestedMode: .picture)
         XCTAssertTrue(modern.contains(SessionFeature.exactVideoTiming)); XCTAssertLessThanOrEqual(modern.count, 32)

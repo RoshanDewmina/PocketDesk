@@ -433,7 +433,9 @@ final class HostExactVideoTimingLog {
     static let capacity = 16
     func pushed(_ timing: ExactVideoTiming?, buffer: CVPixelBuffer, atMs: Double = MachClock.nowMs()) {
         pushes.removeAll { $0.buffer == nil || atMs < $0.pushedAtMs || atMs - $0.pushedAtMs > 5_000 }
-        let collision = pushes.contains { $0.buffer === buffer }
+        // A second push of the same buffer for the same source is ambiguous; a different source means
+        // ScreenCaptureKit recycled the buffer, so the newer identity replaces the stale entry.
+        let collision = pushes.contains { $0.buffer === buffer && ($0.timing == nil || $0.timing?.sourceID == timing?.sourceID) }
         pushes.removeAll { $0.buffer === buffer }
         let stamped = timing.map { ExactVideoTiming(sourceID: $0.sourceID, displayMs: $0.displayMs,
             capturedMs: $0.capturedMs, pushedMs: atMs, submittedMs: atMs, encodedMs: atMs, resend: $0.resend) }
@@ -442,9 +444,7 @@ final class HostExactVideoTimingLog {
     }
     func submitted(buffer: CVPixelBuffer, atMs: Double) -> ExactVideoTiming? {
         guard let index = pushes.firstIndex(where: { $0.buffer === buffer }) else { return nil }
-        let entry = pushes[index]
-        guard entry.timing != nil else { return nil } // Quarantine survives later queued aliases until TTL/reset.
-        pushes.remove(at: index)
+        let entry = pushes.remove(at: index)
         guard let timing = entry.timing, atMs >= entry.pushedAtMs, atMs - entry.pushedAtMs <= 5_000 else { return nil }
         let result = ExactVideoTiming(sourceID: timing.sourceID, displayMs: timing.displayMs, capturedMs: timing.capturedMs,
             pushedMs: timing.pushedMs, submittedMs: atMs, encodedMs: atMs, resend: timing.resend)
