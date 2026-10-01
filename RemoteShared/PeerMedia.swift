@@ -334,10 +334,12 @@ final class PeerMedia: NSObject {
     private var requestedRefinementCapture = false
     var refinementCaptureEnabled: Bool { refinementLock.lock(); defer { refinementLock.unlock() }; return !refinementEnded && !refinementUnavailable && requestedRefinementCapture }
     func requestRefinementCapture(_ enabled: Bool) {
-        refinementLock.lock(); if !refinementEnded { requestedRefinementCapture = enabled && !refinementUnavailable && nativeDesktopCodecs }; refinementLock.unlock()
+        let admitted = HEVC444Policy.permitsRefinement(requested: enabled, fullColor: fullColorCaptureEnabled)
+        refinementLock.lock(); if !refinementEnded { requestedRefinementCapture = admitted && !refinementUnavailable && nativeDesktopCodecs }; refinementLock.unlock()
     }
     func configureVideoRefinement(enabled: Bool, geometry: UInt64, scope: UInt64) {
-        refinementLock.lock(); let admitted = enabled && !refinementEnded && !refinementUnavailable; refinementLock.unlock()
+        let requested = HEVC444Policy.permitsRefinement(requested: enabled, fullColor: fullColorCaptureEnabled)
+        refinementLock.lock(); let admitted = requested && !refinementEnded && !refinementUnavailable; refinementLock.unlock()
         if !admitted { videoFeedback.disableRefinement() }
         if admitted && isHost { openRefinementChannel() }
         let operation = { self.refinementPipe.configure(enabled: admitted, geometry: geometry, scope: scope) }
@@ -604,9 +606,13 @@ final class PeerMedia: NSObject {
     }
 
     private(set) var fullColorCaptureEnabled = false
+    let textClarity: TextClarityContext
+    func captureContentChanged() { textClarity.contentChanged() }
     init(isHost: Bool, servers: [ICEServerConfiguration], forceRelay: Bool = false, nativeDesktopCodecs: Bool = true,
-         localLink: ProvenLocalLink? = nil, fileChannel: Bool = false, hevc: Bool? = nil, hevc444: Bool? = nil, videoLTR: Bool = false) {
+         localLink: ProvenLocalLink? = nil, fileChannel: Bool = false, hevc: Bool? = nil, hevc444: Bool? = nil, videoLTR: Bool = false,
+         textClarity: Bool = false) {
         self.isHost = isHost
+        self.textClarity = TextClarityContext(enabled: isHost && nativeDesktopCodecs && textClarity)
         acceptsFileChannel = fileChannel
         self.forceRelay = forceRelay
         self.localLink = localLink
@@ -661,7 +667,7 @@ final class PeerMedia: NSObject {
                 self.onState?("failed")
             }
         }
-        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, preferLTR: videoLTR)
+        let ownedEncoderFactory = PocketDeskVideoEncoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, counters: counters, frameTiming: frameTimingLog, onHEVCFailure: codecFailure, videoFeedback: videoFeedback, preferLTR: videoLTR, textClarity: self.textClarity)
         let ownedDecoderFactory = PocketDeskVideoDecoderFactory(hevc: useHEVC, hevc444: useFullColor, onHEVC444Failure: fullColorFailure, frameTiming: frameTimingReceiver?.log, onHEVCFailure: codecFailure, videoFeedback: videoFeedback)
         var configuredFactory: RTCPeerConnectionFactory?
         #if os(macOS)

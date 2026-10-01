@@ -72,6 +72,8 @@ enum HEVC444Policy {
     static func permits(preference: Bool, simulator: Bool, disabled: Bool, decoder: Bool, encoder: Bool, isHost: Bool) -> Bool {
         preference && !simulator && !disabled && decoder && (!isHost || encoder)
     }
+    /// Full color wins: lossless still-text refinement never runs beside a 4:4:4 session.
+    static func permitsRefinement(requested: Bool, fullColor: Bool) -> Bool { requested && !fullColor }
     static func cacheKey(role: String, systemAndModel: String) -> String? {
         guard ["encode", "decode"].contains(role), !systemAndModel.isEmpty, !systemAndModel.contains("unknown") else { return nil }
         return "Farside.HEVC.Main444.8bit.probe.v1.RTC153." + role + "." + systemAndModel

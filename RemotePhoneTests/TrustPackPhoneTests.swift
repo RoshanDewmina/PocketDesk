@@ -27,10 +27,16 @@ final class ScreenRecordingApprovalPhoneTests: XCTestCase {
 
     func testThePhoneAsksForTheApprovalReasonAndTheWidgetShowsIt() throws {
         let expected: Set<String> = ["blocker.1", "blocker.2", "features.32", "input.causal.1",
-                                     "input.pencil.1", "video.ltr.1", "video.refine.1"]
+                                     "input.pencil.1", "video.ltr.1", "video.timing.1"]
         let modern = MacShareBlocker.Handshake.phone
         XCTAssertEqual(Set(modern.features), expected)
         XCTAssertEqual(modern.features.count, 7, "The exact advertised list contains no duplicate names")
+        let optIn = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(sharpen: true, textClarity: true, fullColor: false))
+        XCTAssertEqual(Set(optIn.features), expected.union(["video.refine.1"]))
+        XCTAssertLessThanOrEqual(optIn.features.count, 8, "Refinement stays inside the eight-name bound")
+        XCTAssertEqual(optIn.options, ["video.clarity.1"])
+        XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(optIn)), expected.union(["video.refine.1", "video.clarity.1"]))
+        XCTAssertEqual(MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(sharpen: false, textClarity: false, fullColor: false)), modern)
         let modernBody = try JSONEncoder().encode(modern)
         XCTAssertLessThanOrEqual(modernBody.count, 1024)
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: modernBody), expected)

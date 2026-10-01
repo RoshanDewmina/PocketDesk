@@ -979,6 +979,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         guard status == .complete,
               let buffer = CMSampleBufferGetImageBuffer(sampleBuffer),
               peer != nil else { return }
+        peer?.captureContentChanged()
         lastBuffer = buffer
         bufferVersion &+= 1
         lastBufferDisplayTime = displayTime

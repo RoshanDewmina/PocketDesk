@@ -2088,7 +2088,7 @@ final class RemoteHostModel: ObservableObject {
         if displaysStaleFromCouch { restartForDisplaysChangedInCouch(); return }
         guard let display = displays.first(where: { $0.displayID == selected }), let peer = connection.media else { stop(); return }
         if HostScreenLock.isLocked() { handleAvailability(.screenLocked); return }
-        peer.requestRefinementCapture(connection.peerFeatures.contains(SessionFeature.videoRefinement) && !away.isLocking)
+        peer.requestRefinementCapture(refinementNegotiated && !away.isLocking)
         peer.setSystemAudioEnabled(!captureScopeViewOnly && allowSystemAudio && !liveViewOnly && !away.isLocking)
         if sessionStartedAt == nil {
             sessionStartedAt = Date()
@@ -2822,11 +2822,18 @@ final class RemoteHostModel: ObservableObject {
         return targets.contains { $0.helperHostID == helper && $0.ownerPairID == grant && WakeLANInterface.current(named: $0.interfaceName) != nil }
     }
 
+    /// The phone asks for refinement only when its setting is on; full color on this Mac still wins.
+    private var refinementNegotiated: Bool {
+        HEVC444Policy.permitsRefinement(requested: connection.peerFeatures.contains(SessionFeature.videoRefinement),
+                                        fullColor: connection.media?.fullColorCaptureEnabled == true)
+    }
+
     /// A switched-off experiment is not advertised, so the phone never sends what the host would ignore.
     private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
         let base = SessionFeature.host.filter {
-            if ($0 == SessionFeature.videoLTR || $0 == SessionFeature.videoRefinement || $0 == SessionFeature.exactVideoTiming) && !connection.peerFeatures.contains($0) { return false }
+            if ($0 == SessionFeature.videoLTR || $0 == SessionFeature.exactVideoTiming) && !connection.peerFeatures.contains($0) { return false }
+            if $0 == SessionFeature.videoRefinement && !refinementNegotiated { return false }
             if $0 == SessionFeature.pencilInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.pencilInput) || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             if $0 == SessionFeature.causalInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             return ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
@@ -2842,11 +2849,11 @@ final class RemoteHostModel: ObservableObject {
         guard connection.connected else { return }
         // A caller's Couch flag can be up to one tick old; a token must reflect health at this moment.
         let healthy = sessionState == .couch ? requestedHealthy && refreshCouchHealth() : requestedHealthy && awayPictureClear
-        let features = connection.peerFeatures
+        let features = connection.peerFeatures, refines = refinementNegotiated
         connection.media?.videoFeedback.configure(allowed: healthy && !away.isLocking && sessionState == .picture && active && !phonePause.isPaused &&
-            (features.contains(SessionFeature.videoLTR) || features.contains(SessionFeature.videoRefinement) || features.contains(SessionFeature.exactVideoTiming)),
-            ltr: features.contains(SessionFeature.videoLTR), refinement: features.contains(SessionFeature.videoRefinement), timing: features.contains(SessionFeature.exactVideoTiming), geometry: inputEpoch.value, scope: captureScopeEpoch)
-        connection.media?.configureVideoRefinement(enabled: healthy && !away.isLocking && sessionState == .picture && active && !phonePause.isPaused && features.contains(SessionFeature.videoRefinement), geometry: inputEpoch.value, scope: captureScopeEpoch)
+            (features.contains(SessionFeature.videoLTR) || refines || features.contains(SessionFeature.exactVideoTiming)),
+            ltr: features.contains(SessionFeature.videoLTR), refinement: refines, timing: features.contains(SessionFeature.exactVideoTiming), geometry: inputEpoch.value, scope: captureScopeEpoch)
+        connection.media?.configureVideoRefinement(enabled: healthy && !away.isLocking && sessionState == .picture && active && !phonePause.isPaused && refines, geometry: inputEpoch.value, scope: captureScopeEpoch)
         let state = MacShareBlocker.sessionState(
             presence: presence ?? (displayAsleep ? .displayAsleep : nil),
             phoneUnderstands: features.contains(MacShareBlocker.feature) || features.contains(MacShareBlocker.approvalFeature),

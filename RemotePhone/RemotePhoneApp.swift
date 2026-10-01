@@ -610,9 +610,11 @@ final class PhoneRemoteModel: ObservableObject {
             from: inlinePresentationAdmission)
         if let peer = connection.media {
             let supportsLTR = hostFeatures.contains(SessionFeature.videoLTR)
-            peer.videoFeedback.configure(allowed: proof != nil && (supportsLTR || hostFeatures.contains(SessionFeature.videoRefinement) || hostFeatures.contains(SessionFeature.exactVideoTiming)),
-                ltr: supportsLTR, refinement: hostFeatures.contains(SessionFeature.videoRefinement), timing: hostFeatures.contains(SessionFeature.exactVideoTiming), geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
-            peer.configureVideoRefinement(enabled: proof != nil && hostFeatures.contains(SessionFeature.videoRefinement), geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
+            // Only a refinement this phone asked for at session start, whatever the Mac advertises.
+            let refines = hostFeatures.contains(SessionFeature.videoRefinement) && connection.requestedFeatures.contains(SessionFeature.videoRefinement)
+            peer.videoFeedback.configure(allowed: proof != nil && (supportsLTR || refines || hostFeatures.contains(SessionFeature.exactVideoTiming)),
+                ltr: supportsLTR, refinement: refines, timing: hostFeatures.contains(SessionFeature.exactVideoTiming), geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
+            peer.configureVideoRefinement(enabled: proof != nil && refines, geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
             peer.videoFeedback.setFeedback { [weak self, weak peer] packet, epoch in
                 DispatchQueue.main.async {
                     guard let self, let peer, self.connection.media === peer, self.geometryEpoch == epoch,

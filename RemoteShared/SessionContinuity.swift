@@ -13,6 +13,8 @@ enum SessionFeature {
     static let videoLTR = "video.ltr.1"
     static let videoRefinement = "video.refine.1"
     static let exactVideoTiming = "video.timing.1"
+    /// Phone request only: a still-picture QP floor on the Mac's owned encoder. Never advertised by the host.
+    static let textClarity = "video.clarity.1"
     static let pencilInput = "input.pencil.1"
     static let clipboardText = "clipboard.text.1"
     static let backgroundPause = "pause.1"

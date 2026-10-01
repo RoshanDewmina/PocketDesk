@@ -73,6 +73,8 @@ final class RemoteCoordinator: ObservableObject {
     var shareBlocker: (() -> MacShareBlocker?)?
     /// Host: what the current phone listed in its handshake request.
     private(set) var peerFeatures: Set<String> = []
+    /// What this phone asked for in the current session's handshake; a settings change waits for the next one.
+    private(set) var requestedFeatures: Set<String> = []
     /// Phone: the grant the Mac said it is missing when it refused this attempt.
     @Published private(set) var macBlocker: MacShareBlocker?
     /// Host: the paired phone's display name as it last reported it, if it ever did (D39).
@@ -921,6 +923,7 @@ final class RemoteCoordinator: ObservableObject {
         inputRecoveryTimeout?.cancel(); inputRecoveryTimeout = nil
         request = ""; session = ""; sequence = 0; guardState = nil; proofReceived = false
         peerFeatures = []
+        requestedFeatures = []
         peerRequestedMode = .picture
         onEnded?()
     }
@@ -983,7 +986,10 @@ final class RemoteCoordinator: ObservableObject {
                     }
                     if !isHost {
                         resetSession(); request = try SecureRandom.token()
-                        send(kind: "request", body: try? JSONEncoder().encode(MacShareBlocker.Handshake(features: MacShareBlocker.Handshake.phone.features, mode: sessionModeRequest == .couch ? SessionMode.couch.rawValue : nil)), handshake: true)
+                        let handshake = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(),
+                                                                               mode: sessionModeRequest == .couch ? SessionMode.couch.rawValue : nil)
+                        requestedFeatures = handshake.requested
+                        send(kind: "request", body: try? JSONEncoder().encode(handshake), handshake: true)
                         status = "Authenticating your Mac…"; setTimeout()
                     }
                 } else { peerDisconnected() }
@@ -1250,7 +1256,8 @@ final class RemoteCoordinator: ObservableObject {
             sessionFailed(serverRequired ? "The connection service requires a relay, but none was provided." : "Relay-only test requires a configured TURN service.")
             return
         }
-        let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink, fileChannel: true, videoLTR: isHost && peerFeatures.contains(SessionFeature.videoLTR))
+        let peer = PeerMedia(isHost: isHost, servers: servers, forceRelay: relayOnly, localLink: localLink, fileChannel: true, videoLTR: isHost && peerFeatures.contains(SessionFeature.videoLTR),
+                             textClarity: isHost && peerFeatures.contains(SessionFeature.textClarity))
         media = peer
         if let engine = fileTransfer {
             peer.onFileMessage = { [weak engine] data in engine?.receiveChunk(data) }
