@@ -85,6 +85,27 @@ struct StreamCounterSnapshot {
     var presentLatencyP90Ms: Double?
     var presentGapP90Ms: Double?
     var displayMaxFPS: Int?
+    // Phone-local stages; callback→presented and delivery→presented use actual Metal presentation.
+    var decodeVTP95Ms: Double?
+    var decodeVTSamples: Int?
+    var ownershipDelayP99Ms: Double?
+    var ownershipDelaySamples: Int?
+    var deliveryDelayP99Ms: Double?
+    var deliveryDelaySamples: Int?
+    var decodedToPresentedP95Ms: Double?
+    var decodedToPresentedSamples: Int?
+    var deliveryToPresentedP95Ms: Double?
+    var deliveryToPresentedSamples: Int?
+    var drawableAcquireP99Ms: Double?
+    var drawableAcquireSamples: Int?
+    var rendererFenceWaitP99Ms: Double?
+    var rendererFenceWaitSamples: Int?
+    var displayLinkIntervalP95Ms: Double?
+    var displayLinkIntervalSamples: Int?
+    var leadingMotionLatencyP95Ms: Double?
+    var leadingMotionLatencySamples: Int?
+    var displayLinkIntervalP50Ms: Double?
+    var displayLinkAt120Share: Double?
 
     // Bench marker (G28): per presented frame, Mac display time → phone display time.
     var markerFrames = 0
@@ -347,6 +368,27 @@ struct StreamStatsReport: Codable, Equatable {
     var presentLatencyP90Ms: Double?
     var presentGapP90Ms: Double?
     var displayMaxFPS: Int?
+    // Phone-local stages; callback→presented and delivery→presented use actual Metal presentation.
+    var decodeVTP95Ms: Double?
+    var decodeVTSamples: Int?
+    var ownershipDelayP99Ms: Double?
+    var ownershipDelaySamples: Int?
+    var deliveryDelayP99Ms: Double?
+    var deliveryDelaySamples: Int?
+    var decodedToPresentedP95Ms: Double?
+    var decodedToPresentedSamples: Int?
+    var deliveryToPresentedP95Ms: Double?
+    var deliveryToPresentedSamples: Int?
+    var drawableAcquireP99Ms: Double?
+    var drawableAcquireSamples: Int?
+    var rendererFenceWaitP99Ms: Double?
+    var rendererFenceWaitSamples: Int?
+    var displayLinkIntervalP95Ms: Double?
+    var displayLinkIntervalSamples: Int?
+    var leadingMotionLatencyP95Ms: Double?
+    var leadingMotionLatencySamples: Int?
+    var displayLinkIntervalP50Ms: Double?
+    var displayLinkAt120Share: Double?
     var host: HostStreamSummary?
     /// Age of `host` when this report was made: the summary rides the Mac's 1 s heartbeat.
     var hostSummaryAgeMs: Double?
@@ -549,6 +591,26 @@ struct StreamStatsReport: Codable, Equatable {
                 renderGapMaxMs = Self.round(counters.renderGapMaxMs)
                 coalescedMoves = counters.coalescedMoves
                 displayMaxFPS = counters.displayMaxFPS
+                decodeVTP95Ms = Self.round(counters.decodeVTP95Ms)
+                decodeVTSamples = counters.decodeVTSamples
+                ownershipDelayP99Ms = Self.round(counters.ownershipDelayP99Ms)
+                ownershipDelaySamples = counters.ownershipDelaySamples
+                deliveryDelayP99Ms = Self.round(counters.deliveryDelayP99Ms)
+                deliveryDelaySamples = counters.deliveryDelaySamples
+                decodedToPresentedP95Ms = Self.round(counters.decodedToPresentedP95Ms)
+                decodedToPresentedSamples = counters.decodedToPresentedSamples
+                deliveryToPresentedP95Ms = Self.round(counters.deliveryToPresentedP95Ms)
+                deliveryToPresentedSamples = counters.deliveryToPresentedSamples
+                drawableAcquireP99Ms = Self.round(counters.drawableAcquireP99Ms)
+                drawableAcquireSamples = counters.drawableAcquireSamples
+                rendererFenceWaitP99Ms = Self.round(counters.rendererFenceWaitP99Ms)
+                rendererFenceWaitSamples = counters.rendererFenceWaitSamples
+                displayLinkIntervalP95Ms = Self.round(counters.displayLinkIntervalP95Ms)
+                displayLinkIntervalSamples = counters.displayLinkIntervalSamples
+                leadingMotionLatencyP95Ms = Self.round(counters.leadingMotionLatencyP95Ms)
+                leadingMotionLatencySamples = counters.leadingMotionLatencySamples
+                displayLinkIntervalP50Ms = Self.round(counters.displayLinkIntervalP50Ms)
+                displayLinkAt120Share = counters.displayLinkAt120Share
                 if counters.presentedFrames > 0 || counters.supersededFrames > 0 {
                     presentedFPS = Self.round(Double(counters.presentedFrames) / seconds)
                     supersededFrames = counters.supersededFrames
@@ -975,9 +1037,43 @@ enum SenderQueueEstimate {
     }
 }
 
+/// A local observed duration. Decode stages are added once for a delivered trace; presentation
+/// stages belong only to original frames confirmed by the Metal drawable presented handler.
+enum PhoneRenderTimingMetric: CaseIterable, Hashable, Sendable {
+    case decodeVT, ownershipDelay, deliveryDelay, decodedToPresented, deliveryToPresented
+    case drawableAcquire, rendererFenceWait, displayLinkInterval, leadingMotionLatency
+}
+
 /// Thread-safe counters fed from capture, WebRTC and renderer threads.
 final class StreamCounters: @unchecked Sendable {
     private let lock = NSLock()
+    private let phoneRenderTimingEnabled: Bool
+    private var phoneRenderWindows: [PhoneRenderTimingMetric: LatencyWindow] = [:]
+    private var displayLinkAt120 = 0
+    private var displayLinkIntervals = 0
+
+    init(phoneRenderTimingEnabled: Bool = PhoneRenderTiming.enabled) {
+        self.phoneRenderTimingEnabled = phoneRenderTimingEnabled
+    }
+
+    func phoneDecodeTrace(_ trace: PhoneDecodeTrace) {
+        guard phoneRenderTimingEnabled, trace.isValid else { return }
+        lock.lock(); defer { lock.unlock() }
+        phoneRenderWindows[.decodeVT, default: LatencyWindow()].record(trace.callbackMs - trace.submitMs)
+        phoneRenderWindows[.ownershipDelay, default: LatencyWindow()].record(trace.ownershipMs - trace.callbackMs)
+        phoneRenderWindows[.deliveryDelay, default: LatencyWindow()].record(trace.deliveryMs - trace.callbackMs)
+    }
+
+    func phoneRenderTiming(_ metric: PhoneRenderTimingMetric, milliseconds: Double) {
+        guard phoneRenderTimingEnabled, milliseconds.isFinite, milliseconds >= 0 else { return }
+        lock.lock(); defer { lock.unlock() }
+        phoneRenderWindows[metric, default: LatencyWindow()].record(milliseconds)
+        if metric == .displayLinkInterval, displayLinkIntervals < LatencyWindow.capacity {
+            displayLinkIntervals += 1
+            if milliseconds <= 9 { displayLinkAt120 += 1 }
+        }
+    }
+
     private var startedAt = ProcessInfo.processInfo.systemUptime
     private var snapshot = StreamCounterSnapshot(interval: 0)
     private var cadence = FrameCadenceWindow()
@@ -1226,6 +1322,37 @@ final class StreamCounters: @unchecked Sendable {
         result.presentLatencyP90Ms = present.p90
         result.presentGapP90Ms = presentCadence.drain().p90GapMs
         result.displayMaxFPS = displayMaxFPS
+        let decodeVT = phoneRenderWindows[.decodeVT, default: LatencyWindow()].drainPercentiles()
+        result.decodeVTP95Ms = decodeVT.p95
+        result.decodeVTSamples = decodeVT.count > 0 ? decodeVT.count : nil
+        let ownershipDelay = phoneRenderWindows[.ownershipDelay, default: LatencyWindow()].drainPercentiles()
+        result.ownershipDelayP99Ms = ownershipDelay.p99
+        result.ownershipDelaySamples = ownershipDelay.count > 0 ? ownershipDelay.count : nil
+        let deliveryDelay = phoneRenderWindows[.deliveryDelay, default: LatencyWindow()].drainPercentiles()
+        result.deliveryDelayP99Ms = deliveryDelay.p99
+        result.deliveryDelaySamples = deliveryDelay.count > 0 ? deliveryDelay.count : nil
+        let decodedToPresented = phoneRenderWindows[.decodedToPresented, default: LatencyWindow()].drainPercentiles()
+        result.decodedToPresentedP95Ms = decodedToPresented.p95
+        result.decodedToPresentedSamples = decodedToPresented.count > 0 ? decodedToPresented.count : nil
+        let deliveryToPresented = phoneRenderWindows[.deliveryToPresented, default: LatencyWindow()].drainPercentiles()
+        result.deliveryToPresentedP95Ms = deliveryToPresented.p95
+        result.deliveryToPresentedSamples = deliveryToPresented.count > 0 ? deliveryToPresented.count : nil
+        let drawableAcquire = phoneRenderWindows[.drawableAcquire, default: LatencyWindow()].drainPercentiles()
+        result.drawableAcquireP99Ms = drawableAcquire.p99
+        result.drawableAcquireSamples = drawableAcquire.count > 0 ? drawableAcquire.count : nil
+        let rendererFenceWait = phoneRenderWindows[.rendererFenceWait, default: LatencyWindow()].drainPercentiles()
+        result.rendererFenceWaitP99Ms = rendererFenceWait.p99
+        result.rendererFenceWaitSamples = rendererFenceWait.count > 0 ? rendererFenceWait.count : nil
+        let displayLinkInterval = phoneRenderWindows[.displayLinkInterval, default: LatencyWindow()].drainPercentiles()
+        result.displayLinkIntervalP95Ms = displayLinkInterval.p95
+        result.displayLinkIntervalSamples = displayLinkInterval.count > 0 ? displayLinkInterval.count : nil
+        let leadingMotionLatency = phoneRenderWindows[.leadingMotionLatency, default: LatencyWindow()].drainPercentiles()
+        result.leadingMotionLatencyP95Ms = leadingMotionLatency.p95
+        result.leadingMotionLatencySamples = leadingMotionLatency.count > 0 ? leadingMotionLatency.count : nil
+        result.displayLinkIntervalP50Ms = displayLinkInterval.p50
+        result.displayLinkAt120Share = displayLinkIntervals > 0 ? Double(displayLinkAt120) / Double(displayLinkIntervals) : nil
+        displayLinkAt120 = 0
+        displayLinkIntervals = 0
         let glass = glassLatency.drainPercentiles()
         result.glassSamples = glass.count
         result.glassP50Ms = glass.p50

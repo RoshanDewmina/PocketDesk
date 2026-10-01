@@ -9,6 +9,9 @@ struct VideoFrameEnvelope {
     let arrivalMs: Double
     let marker: BenchMarker?
     let originalSource: Bool
+    /// A source handed straight through receive, rather than a paced interpolation output.
+    var promptDraw = false
+    var decodeTrace: PhoneDecodeTrace? = nil
     var videoTag: VideoFrameTag? = nil
 
     struct Pixels {

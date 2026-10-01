@@ -184,6 +184,26 @@ final class HostFrameTimingLog: @unchecked Sendable {
     }
 }
 
+/// Phone-local monotonic timestamps for one actual owned-decoder output. All four stages
+/// must be observed; an absent trace is never reconstructed from RTP or source clock estimates.
+struct PhoneDecodeTrace: Sendable, Equatable {
+    let submitMs: Double
+    let callbackMs: Double
+    let ownershipMs: Double
+    let deliveryMs: Double
+
+    var isValid: Bool {
+        submitMs.isFinite && callbackMs.isFinite && ownershipMs.isFinite && deliveryMs.isFinite
+            && submitMs >= 0 && submitMs <= callbackMs && callbackMs <= ownershipMs && ownershipMs <= deliveryMs
+    }
+}
+
+/// Internal instrumentation A/B switch; does not change admission or frame delivery.
+enum PhoneRenderTiming {
+    static let disabledKey = "phoneRenderTimingDisabled"
+    static var enabled: Bool { !UserDefaults.standard.bool(forKey: disabledKey) }
+}
+
 /// Phone ring of received frames, fed from the decoder thread.
 final class PhoneFrameTimingLog: @unchecked Sendable {
     static let capacity = 512
@@ -193,6 +213,37 @@ final class PhoneFrameTimingLog: @unchecked Sendable {
     private var ring: [PhoneFrameRecord] = []
     private var next = 0
     private var active = true
+    let renderTimingEnabled: Bool
+    private struct DecodeEntry {
+        let rtp: Int32
+        let timeStampNs: Int64
+        let trace: PhoneDecodeTrace
+    }
+    private var decodeTraces: [DecodeEntry] = []
+
+    init(renderTimingEnabled: Bool = PhoneRenderTiming.enabled) {
+        self.renderTimingEnabled = renderTimingEnabled
+    }
+
+    /// Stored immediately before the outward callback. Separate from heuristic host timing:
+    /// `isActive == false` must not disable a phone-local observation.
+    func decodedDelivery(rtp: Int32, timeStampNs: Int64, trace: PhoneDecodeTrace) {
+        guard renderTimingEnabled, trace.isValid else { return }
+        lock.lock(); defer { lock.unlock() }
+        decodeTraces.removeAll { $0.rtp == rtp && $0.timeStampNs == timeStampNs }
+        decodeTraces.append(DecodeEntry(rtp: rtp, timeStampNs: timeStampNs, trace: trace))
+        if decodeTraces.count > Self.capacity { decodeTraces.removeFirst() }
+    }
+
+    /// One outward delivery owns one trace. A repeated RTP with different source timestamp,
+    /// evicted entry or already-consumed trace supplies nil, rather than a nearest estimate.
+    func takeDecodeTrace(rtp: Int32, timeStampNs: Int64) -> PhoneDecodeTrace? {
+        guard renderTimingEnabled else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        guard let index = decodeTraces.lastIndex(where: { $0.rtp == rtp && $0.timeStampNs == timeStampNs }) else { return nil }
+        return decodeTraces.remove(at: index).trace
+    }
+
     private(set) var receivedFrames = 0
     private(set) var decodedFrames = 0
 

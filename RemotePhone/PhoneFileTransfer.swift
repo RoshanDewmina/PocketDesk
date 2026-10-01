@@ -69,6 +69,13 @@ final class PhoneFileTransfer: ObservableObject {
             post(Self.message(sending: status), .caution)
             return status
         }
+        return send(prepared: source, url: url, name: name, release: release)
+    }
+
+    /// The App Group inbox has already opened and inspected its payload off main. Ownership of
+    /// this source moves to the engine; its close implementation also stays off main on refusal.
+    func send(prepared source: FileByteSource, url: URL, name: String? = nil,
+              release: @escaping () -> Void = {}) -> FileTransferStatus? {
         let type = UTType(filenameExtension: url.pathExtension)?.identifier
         switch engine.send(source, name: name ?? url.lastPathComponent, type: type) {
         case .success(let transfer):

@@ -24,14 +24,29 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     private var fallback: RTCMTLVideoView?
     private let wakeLock = NSLock()
     private var wakeScheduled = false
+    // Internal A/B controls, read once for this immutable renderer registration.
+    private let unfencedPreparation: Bool
+    private let immediateSourceDraw: Bool
+    /// Test seam uses the same acquisition boundary as Metal's blocking lazy drawable access.
+    var drawableAcquirer: (MTKView) -> (MTLRenderPassDescriptor, CAMetalDrawable)? = { view in
+        guard let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else { return nil }
+        return (descriptor, drawable)
+    }
+    var drawRequester: (MTKView) -> Void = { $0.draw() }
     private var closed = false
     private var refresh: VideoRefreshPolicy
     private var redraw = false
+    private var drawingPromptSource = false // Main-thread coalesced wake only.
     private var stamp: Int64 = 0
     private(set) var timingAvailable = false
+    var renderOptimizations: (unfencedDrawable: Bool, promptSourceDraw: Bool) {
+        (unfencedPreparation, immediateSourceDraw)
+    }
 
-    init(admission: VideoPresentationAdmission, fence: VideoPresentationFence) {
+    init(admission: VideoPresentationAdmission, fence: VideoPresentationFence, defaults: UserDefaults = .standard) {
         self.fence = fence; identity = admission.identity
+        unfencedPreparation = !defaults.bool(forKey: "phoneUnfencedDrawableDisabled")
+        immediateSourceDraw = !defaults.bool(forKey: "phoneImmediateSourceDrawDisabled")
         let device = MTLCreateSystemDefaultDevice()
         metal = MTKView(frame: .zero, device: device)
         commandQueue = device?.makeCommandQueue()
@@ -119,7 +134,15 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             guard !closed else { return }
             let wake = self.refresh.signal(at: ProcessInfo.processInfo.systemUptime, newFrame: true)
             self.metal.preferredFramesPerSecond = self.refresh.framesPerSecond
-            if wake == .raiseAndDraw { self.metal.draw() }
+            // A tick may already have consumed the coalesced source. Do not redraw it twice.
+            let prompt = self.immediateSourceDraw && self.mailbox.hasPending(where: { $0.promptDraw })
+            if (wake == .raiseAndDraw || prompt), self.mailbox.hasPending {
+                // This wake consumes only the pass-through mailbox; interpolation still pumps
+                // on MTKView's ordinary ticks, with its existing deadlines and ordering.
+                self.drawingPromptSource = prompt
+                defer { self.drawingPromptSource = false }
+                self.drawRequester(self.metal)
+            }
         }
     }
     func noteActivity(at now: TimeInterval) {
@@ -142,17 +165,23 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) == true else { invalidate(); return }
         // Presenter holds its own lock while delivering to the presentation fence. Do not
         // invert that order by pumping the presenter under this fence.
-        beforeDraw?(view)
-        guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { () -> Void in
-            drawAdmitted(in: view)
-        }) != nil else { invalidate(); return }
+        if !drawingPromptSource { beforeDraw?(view) }
+        if unfencedPreparation {
+            drawAdmitted(in: view) // Preparation never holds the delivery/privacy fence.
+        } else {
+            guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { () -> Void in
+                drawAdmitted(in: view)
+            }) != nil else { invalidate(); return }
+        }
         if StreamTuning.current.idleVideoRefresh {
             refresh.drew(at: ProcessInfo.processInfo.systemUptime, framePending: mailbox.hasPending)
             view.preferredFramesPerSecond = refresh.framesPerSecond
         }
     }
     private func drawAdmitted(in view: MTKView) {
-        guard let submission = mailbox.take(redraw: redraw) else { return }
+        guard let submission = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {
+            mailbox.take(redraw: redraw, holdUntilPresented: unfencedPreparation)
+        }) ?? nil else { return }
         let envelope = submission.frame
         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
         let backing = Self.backingSize(picture: geometry.displaySize,
@@ -161,16 +190,19 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
               let command = commandQueue?.makeCommandBuffer() else {
             mailbox.completed(submission.id)
-            showFallback(envelope)
+            showFallbackIfAdmitted(envelope)
             redraw = false
             return
         }
-        guard let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else {
+        let acquisitionStartMs = MachClock.nowMs()
+        let acquired = drawableAcquirer(view)
+        counters?.phoneRenderTiming(.drawableAcquire, milliseconds: MachClock.nowMs() - acquisitionStartMs)
+        guard let (descriptor, drawable) = acquired else {
             // Both drawables in flight, or a resize in progress: keep the last picture on screen and
             // retry the same frame next tick rather than covering it with the black fallback view.
             let now = ProcessInfo.processInfo.systemUptime
             if let since = missingDrawableSince, now - since > 1 {
-                mailbox.completed(submission.id); showFallback(envelope); redraw = false; return
+                mailbox.completed(submission.id); showFallbackIfAdmitted(envelope); redraw = false; return
             }
             missingDrawableSince = missingDrawableSince ?? now
             mailbox.requeue(submission.id, frame: envelope, wasNew: submission.isNew)
@@ -192,7 +224,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         let second = pixels.bgra ? nil : texture(.rg8Unorm, plane: 1,
                             width: CVPixelBufferGetWidthOfPlane(buffer, 1), height: CVPixelBufferGetHeightOfPlane(buffer, 1))
         guard let first, pixels.bgra || second != nil, let encoder = command.makeRenderCommandEncoder(descriptor: descriptor) else {
-            mailbox.completed(submission.id); showFallback(envelope); return
+            mailbox.completed(submission.id); showFallbackIfAdmitted(envelope); return
         }
         fallback?.removeFromSuperview(); fallback = nil; redraw = false
         #if targetEnvironment(simulator)
@@ -231,18 +263,40 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         encoder.setFragmentBytes(&uniforms, length: MemoryLayout<Uniforms>.stride, index: 0)
         encoder.setFragmentTexture(first, index: 0); encoder.setFragmentTexture(second, index: 1)
         encoder.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4); encoder.endEncoding()
-        if submission.isNew && envelope.originalSource { counters?.presented(latencyMs: max(0, MachClock.nowMs() - envelope.arrivalMs)) }
         // Capture this drawable's exact envelope, not whichever frame is newest at callback time.
         #if !targetEnvironment(simulator)
-        if submission.isNew {
-            let receipt = presentedReceipt(envelope, callback: originalSourcePresented) // Snapshot under this draw's admission fence.
-            drawable.addPresentedHandler { shown in receipt(shown.presentedTime) }
+        if submission.isNew || unfencedPreparation {
+            let callback = onOriginalSourcePresented // Short admission snapshot, no layer access under it.
+            let receipt = submission.isNew ? presentedReceipt(envelope, callback: callback) : nil
+            let mailbox = mailbox, id = submission.id
+            drawable.addPresentedHandler { shown in
+                // Core Animation holds its private lock: enqueue before taking ANY local lock.
+                Self.presentedReceiptQueue.async { mailbox.presented(id) }
+                receipt?(shown.presentedTime)
+            }
         }
         #endif
-        command.addCompletedHandler { [mailbox, wrappers, envelope, refinementPixels] _ in
-            withExtendedLifetime((wrappers, envelope, refinementPixels)) { mailbox.completed(submission.id) }
+        let holdUntilPresented = unfencedPreparation
+        command.addCompletedHandler { [mailbox, wrappers, envelope, refinementPixels] completed in
+            withExtendedLifetime((wrappers, envelope, refinementPixels)) {
+                #if targetEnvironment(simulator)
+                mailbox.completed(submission.id) // No presented handlers in simulator SDK.
+                #else
+                if holdUntilPresented && completed.status != .error { mailbox.gpuCompleted(submission.id) }
+                else { mailbox.completed(submission.id) }
+                #endif
+            }
         }
-        command.present(drawable); command.commit(); drawsPresented += 1
+        // Retirement can run while acquisition/preparation blocks. Only this final, short
+        // effect is fenced; rejected preparation cannot publish or resurrect old pixels.
+        let submitted = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
+            command.present(drawable); command.commit(); drawsPresented += 1
+            if submission.isNew && envelope.originalSource {
+                counters?.presented(latencyMs: max(0, MachClock.nowMs() - envelope.arrivalMs))
+            }
+            return true
+        }
+        if submitted != true { mailbox.completed(submission.id); invalidate() }
     }
     /// Core Animation runs presented handlers while holding the layer's private lock, and this view
     /// calls `addPresentedHandler` on main while holding the fence. Waiting on the fence inside the
@@ -257,6 +311,10 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                 guard let self else { return }
                 _ = self.fence.withAdmission(envelope.identity, at: ProcessInfo.processInfo.systemUptime) {
                     self.counters?.presentedFrame(atMs: presentedTime * 1000, marker: envelope.marker)
+                    if envelope.originalSource, let trace = envelope.decodeTrace {
+                        self.counters?.phoneRenderTiming(.decodedToPresented, milliseconds: presentedTime * 1000 - trace.callbackMs)
+                        self.counters?.phoneRenderTiming(.deliveryToPresented, milliseconds: presentedTime * 1000 - trace.deliveryMs)
+                    }
                     let clock = self.counters?.clockObservation
                     self.videoFeedback?.presentedTiming(envelope.videoTag, originalSource: envelope.originalSource,
                         newSubmission: true, presentedTime: presentedTime,
@@ -265,6 +323,9 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                 }
             }
         }
+    }
+    private func showFallbackIfAdmitted(_ envelope: VideoFrameEnvelope) {
+        _ = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { showFallback(envelope) }
     }
     private func showFallback(_ envelope: VideoFrameEnvelope) {
         timingAvailable = false

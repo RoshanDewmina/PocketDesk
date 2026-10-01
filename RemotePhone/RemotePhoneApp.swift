@@ -128,6 +128,7 @@ final class PhoneRemoteModel: ObservableObject {
     private var shareLiveSessionID: String?
     private var shareDestination: SendToMacDestination?
     private var sendToMacBeaconAt: TimeInterval = 0
+    private let sendToMacBeaconIO = SendToMacFileIO()
     private var fileTransferWasAvailable = false
     @Published private(set) var awayState: AwayModeState?
     @Published private(set) var lockMacStatus: String?
@@ -1592,6 +1593,12 @@ final class PhoneRemoteModel: ObservableObject {
         #endif
         SmoothMotionController.noteOutgoing(action: action.action, dragging: dragging)
         displayTickInput.send = { [weak self] actions in self?.connection.sendInputMoves(actions) ?? false }
+        displayTickInput.onDisplayInterval = { [weak self] milliseconds in
+            self?.connection.media?.counters.phoneRenderTiming(.displayLinkInterval, milliseconds: milliseconds)
+        }
+        displayTickInput.onLeadingMotionLatency = { [weak self] milliseconds in
+            self?.connection.media?.counters.phoneRenderTiming(.leadingMotionLatency, milliseconds: milliseconds)
+        }
         displayTickInput.onFailure = { [weak self] in self?.displayTickInput.cancel() }
         if action.action == "release" { displayTickInput.cancel() }
         else if ["move", "moveTo"].contains(action.action) { return displayTickInput.offer(action) }
@@ -1729,6 +1736,13 @@ final class PhoneRemoteModel: ObservableObject {
             guard let self else { release(); return .connectionLost }
             return self.files.send(fileAt: url, name: name, release: release)
         }
+        sendToMac.sendPreparedFile = { [weak self] source, url, name, release in
+            guard let self else { source.close(); release(); return .connectionLost }
+            return self.files.send(prepared: source, url: url, name: name, release: release)
+        }
+        sendToMac.preparationFailed = { [weak self] status in
+            self?.files.postUnavailable(PhoneFileTransfer.message(sending: status))
+        }
         sendToMac.pendingTransfer = { [weak self] in self?.files.engine.outgoing?.transfer }
         sendToMac.sendText = { [weak self] text in
             guard let self, self.clipboardAvailable else { return false }
@@ -1777,19 +1791,13 @@ final class PhoneRemoteModel: ObservableObject {
         sendToMac.updateDestination(destination, name: invitation?.name, liveSessionID: shareLiveSessionID)
         guard force || changed || now - sendToMacBeaconAt >= 5 else { return }
         sendToMacBeaconAt = now
-        guard let name = invitation?.name, let destination else { SendToMacOutbox.storeBeacon(nil); return }
-        let old = SendToMacOutbox.loadBeacon()
-        var beacon = old.flatMap { $0.destination == destination ? $0 : nil }
-            ?? SendToMacBeacon(macName: name, filesSupported: false)
-        beacon.macName = name
-        beacon.destination = destination
-        beacon.liveSessionID = shareLiveSessionID
-        beacon.liveUntil = available ? Date().addingTimeInterval(15) : nil
-        if connection.connected {
-            beacon.lastConnected = Date()
-            beacon.filesSupported = fileTransferSupported
-        }
-        SendToMacOutbox.storeBeacon(beacon)
+        guard let name = invitation?.name, let destination else { sendToMacBeaconIO.updateBeacon(nil); return }
+        let date = Date()
+        let beacon = SendToMacBeacon(macName: name, liveUntil: available ? date.addingTimeInterval(15) : nil,
+                                    lastConnected: connection.connected ? date : nil,
+                                    filesSupported: connection.connected && fileTransferSupported,
+                                    destination: destination, liveSessionID: shareLiveSessionID)
+        sendToMacBeaconIO.updateBeacon(beacon)
         if available { sendToMac.check() }
     }
 
@@ -3127,6 +3135,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
     var onSourceFrame: ((VideoFrameEnvelope) -> Void)?
     var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
     var videoFeedback: VideoFeedbackContext?
+    var frameTiming: PhoneFrameTimingLog?
     var sourceCrop: CGRect?
     let onFrame: () -> Void
 
@@ -3161,7 +3170,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
         context.coordinator.session?.onOriginalSourcePresented = onOriginalSourcePresented
         context.coordinator.session?.configure(admission: admission, counters: counters, statistics: statistics,
             sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth, fillsFrame: fillsFrame,
-            mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame, videoFeedback: videoFeedback, sourceCrop: sourceCrop)
+            mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame, videoFeedback: videoFeedback, sourceCrop: sourceCrop, frameTiming: frameTiming)
     }
     static func dismantleUIView(_ view: UIView, coordinator: Coordinator) { coordinator.invalidate(); view.subviews.forEach { $0.removeFromSuperview() } }
 }
