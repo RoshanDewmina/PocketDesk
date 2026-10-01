@@ -100,6 +100,26 @@ final class SessionLifecycleTests: XCTestCase {
                                     supported: { true }, platformFactory: { _, _ in LifecyclePiPPlatform() })
         XCTAssertTrue(pip.playbackPaused, "nothing prepared reads as paused")
     }
+    /// Review P2: dictation after arming leaves the audio category at .record; leaving the app re-prepares .playback.
+    func testLeavingWhileArmedRestoresThePlaybackCategoryAfterDictation() throws {
+        var configured: [PhoneMediaSession.Configuration] = []
+        let registry = PhoneMediaSession(backend: .init(configure: { configured.append($0) }, activate: {}, deactivate: {}))
+        let pip = LivePiPController(mediaSession: registry, supported: { true }, platformFactory: { _, _ in LifecyclePiPPlatform() })
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip)
+        defer { model.disconnect() }
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "auto-pip-category")
+        model.geometryEpoch = 1
+        _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+        XCTAssertTrue(pip.automaticStartAllowed)
+        XCTAssertEqual(configured.last, .playback, "arming prepares the playback category")
+        let dictation = UUID()
+        XCTAssertTrue(registry.acquire(dictation, kind: .recording, onRetired: {}))
+        XCTAssertEqual(configured.last, .recording)
+        registry.release(dictation)
+        model.sceneChanged(.inactive)
+        XCTAssertEqual(configured.last, .playback, "leaving while armed restores it before the OS decides")
+    }
     func testLeavingALivePictureSessionStartsPiPAutomaticallyAndTheMacMustConfirmViewOnly() throws {
         // (refuse, the Mac answers before AVKit finishes the start: the usual order on a LAN)
         for (refuse, confirmFirst) in [(false, false), (true, false), (false, true)] {

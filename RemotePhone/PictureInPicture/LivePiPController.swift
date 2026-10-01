@@ -83,6 +83,11 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         }
     }
     static let log = Logger(subsystem: "com.roshan.PocketDesk.Remote", category: "pip")
+    /// Leaving the app while armed: dictation since arming may have left the category at .record.
+    func prepareForLeaving() {
+        guard automaticStartAllowed else { return }
+        MainActor.assumeIsolated { mediaSession.preparePlaybackCategory() }
+    }
     var mayStartAutomatically: (() -> Bool)?
     var didStartAutomatically: (() -> Void)?
     /// An OS start shows only the last inline frame until the Mac confirms live view only.

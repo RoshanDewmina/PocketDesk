@@ -2209,6 +2209,7 @@ let now = ProcessInfo.processInfo.systemUptime
         case .inactive:
             diagnostics.cancel()
             pipTransitional = mayKeepLivePiP || autoPiPMayStart
+            if autoPiPMayStart { livePiP.prepareForLeaving() }
             suspendMacAudio()
             sceneIsActive = false
             if hasBeenActive {
