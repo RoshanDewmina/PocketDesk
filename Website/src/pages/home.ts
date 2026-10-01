@@ -89,6 +89,7 @@ const joinNotes = html`<div class="join-notes">
   <p id="join-error-invalid_email">That email address doesn’t look right. Check it and try again.</p>
   <p id="join-error-rate_limited">Too many tries from your connection. Please try again in a few minutes.</p>
   <p id="join-error-forbidden">That sign-up was blocked. Reload this page and try again.</p>
+  <p id="join-error-too_large">That was too much to send. Enter just your email address and try again.</p>
 </div>`;
 
 /**

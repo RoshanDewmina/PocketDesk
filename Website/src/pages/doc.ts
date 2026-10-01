@@ -30,8 +30,12 @@ export function docBody(sections: Section[], tocLabel = "On this page"): Html {
 </div>`;
 }
 
-/** An HTML comment that lists open items for the owner. Never rendered on the page. */
+/**
+ * An HTML comment that lists open items for the owner. Never rendered on the page, and left out of strict
+ * (production) builds so view-source shows nothing internal.
+ */
 export function ownerComment(title: string, items: string[]): Html {
+  if (process.argv.includes("--strict")) return raw("");
   const safe = (s: string) => s.replace(/--/g, "–").replace(/<!|>/g, "");
   return raw(`<!--\n  ${safe(title)}\n${items.map((i) => `  - ${safe(i)}`).join("\n")}\n-->`);
 }

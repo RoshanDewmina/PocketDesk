@@ -120,7 +120,7 @@ export const config = {
      * unsubscribe. The backend stores a consent version (CONSENT in functions/api/waitlist.ts): bump it
      * whenever this wording changes.
      */
-    consent: "We’ll email you a beta invite and launch news. Unsubscribe anytime.",
+    consent: "Roshan Silva Pulle, who makes Farside, will email you a beta invite and launch news. Unsubscribe anytime.",
   },
 
   /** Planned minimum OS versions (STORE-LISTING.md). */

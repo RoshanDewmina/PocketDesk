@@ -7,7 +7,7 @@ interface Env {
 }
 
 /** Version of the sign-up wording shown beside the form. Bump it whenever that wording changes. */
-const CONSENT = "waitlist-v1-2026-09-29";
+const CONSENT = "waitlist-v2-2026-10-01";
 const MAX_BODY_BYTES = 4096;
 const WINDOW_SECONDS = 600;
 const MAX_PER_WINDOW = 5;

@@ -49,7 +49,7 @@ const MESSAGES: Msg[] = [
   },
   {
     says: "Reconnecting… (2 of 5)",
-    means: "The network blinked. Farside is retrying by itself and keeps your zoom and position.",
+    means: "The network blinked. Farside is retrying by itself.",
     fix: html`Give it a moment, or tap <b>Cancel</b> to stop trying.`,
   },
   {
@@ -84,7 +84,7 @@ const MESSAGES: Msg[] = [
   },
   {
     says: "That’s too long to send at once.",
-    means: "There’s a size limit on each piece of text you send or dictate.",
+    means: "There’s a size limit on each piece of text you send.",
     fix: html`Send it in two parts.`,
   },
   {
@@ -171,7 +171,6 @@ const billing = html`<ul>
   <li><b>Farside Anywhere:</b> the plan for using your Mac away from home is coming after launch. It will be sold in the app through Apple, and the price will be shown before you subscribe.</li>
   <li><b>Cancel or change a subscription:</b> Settings › your name › Subscriptions on your iPhone. Cancel at least 24 hours before the renewal date to avoid the next charge.</li>
   <li><b>Refunds:</b> Apple handles them. Request one at <a href="https://reportaproblem.apple.com" rel="noopener">reportaproblem.apple.com</a>.</li>
-  <li><b>New phone?</b> Use <b>Restore Purchases</b> in the app’s settings.</li>
   <li>This website never asks for payment details.</li>
 </ul>`;
 

@@ -116,6 +116,11 @@ function redirectsFile() {
 /contact               /support#contact            301
 /faq                   /#faq                       301
 /pricing               /#pricing                   301
+# Held back for the beta launch (src/pages/registry.ts); send old links home instead of 404.
+/compare               /                           301
+/control-mac-from-iphone /                         301
+/iphone-as-mac-trackpad /                          301
+/remote-desktop-for-mac /                          301
 /beta                  /#beta                      302
 /download              /#beta                      302
 /mac                   ${mac}  302
@@ -161,7 +166,6 @@ Key facts:
 - Farside Anywhere, a paid plan for using the Mac away from home, is coming after launch${P.final ? `: ${P.monthly} a month or ${P.yearly} a year` : ""}. It will be sold only inside the iPhone app through Apple.
 - Farside for Mac (the companion that runs on the Mac) will be a free download from this website, signed with an Apple Developer ID and notarized by Apple. Farside for iPhone will be on the App Store.
 - Planned requirements: ${R.mac}; ${R.iphone}. iPhone only at launch.
-- "Agent needs you" alerts for AI coding agents running on the Mac arrive as a beta; alerts carry no prompts, file names or screen content.
 - Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; no audio; the Mac must be awake and logged in; no pressure gestures.
 - The website sets no cookies and runs no analytics.
 - Farside (getfarside.com) is not related to farside.app or to other products with a similar name.

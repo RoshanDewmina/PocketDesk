@@ -9,6 +9,11 @@
 /contact               /support#contact            301
 /faq                   /#faq                       301
 /pricing               /#pricing                   301
+# Held back for the beta launch (src/pages/registry.ts); send old links home instead of 404.
+/compare               /                           301
+/control-mac-from-iphone /                         301
+/iphone-as-mac-trackpad /                          301
+/remote-desktop-for-mac /                          301
 /beta                  /#beta                      302
 /download              /#beta                      302
 /mac                   /#beta  302

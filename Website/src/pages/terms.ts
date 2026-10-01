@@ -20,7 +20,7 @@ const S: Section[] = [
   {
     id: "agreement",
     title: "Who these terms are between",
-    body: html`<p>These terms are between you and ${detail(config.contact.legalName, "legal name")} (“we”, “us”). They cover the Farside iPhone app, Farside for Mac, our connection and relay service, and this website. By using any of them, you agree to these terms.</p>`,
+    body: html`<p>These terms are between you and ${detail(config.contact.legalName, "legal name")} (“we”, “us”). They cover the Farside iPhone app, Farside for Mac, our connection and relay service, and this website. Once they take effect, using any of them means you agree to these terms.</p>`,
   },
   {
     id: "what",
