@@ -194,6 +194,19 @@ final class HostLifecycleTests: XCTestCase {
         XCTAssertTrue(healthy.allSatisfy { $0 }, "the window moved while frames flowed; the still screen stays live")
     }
 
+    func testOnlyAPointerMoveTheStreamMustDrawCountsAsAChange() {
+        func silent(after pointer: CGPoint?) -> Bool {
+            var health = CaptureHealthState()
+            health.observe(.idle, at: 0)
+            health.witnessStillLayout(1, pointer: CGPoint(x: 10, y: 10))
+            health.witnessStillLayout(1, pointer: pointer)
+            return health.isHealthy(at: 5, streamCapturing: true)
+        }
+        XCTAssertTrue(silent(after: CGPoint(x: 10.4, y: 10.6)), "a sub-pixel drift draws nothing new")
+        XCTAssertFalse(silent(after: CGPoint(x: 12, y: 10)), "a drawn pointer moved with no frame: stalled")
+        XCTAssertFalse(silent(after: nil), "the pointer left the captured rect with no frame: stalled")
+    }
+
     func testCaptureOwnershipMakesOldCleanupStale() {
         var ownership = ScopedCaptureOwner()
         let first = ownership.begin()
