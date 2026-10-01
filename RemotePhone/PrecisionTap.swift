@@ -144,83 +144,15 @@ final class PrecisionTapController: ObservableObject {
     #endif
 }
 
-/// Shows a crop of the live frames: the same decoded pixel buffers, never a second decode.
-final class LoupeCropRenderer: NSObject, RTCVideoRenderer {
-    weak var target: RTCMTLVideoView?
-    private let lock = NSLock()
-    private var crop: CGRect?
-    private var lastSize: CGSize = .zero
-    private var lastStampNs: Int64 = 0
-
-    func setCrop(_ crop: CGRect?) {
-        lock.lock(); self.crop = crop; lock.unlock()
-    }
-
-    func setSize(_ size: CGSize) {}
-
-    func renderFrame(_ frame: RTCVideoFrame?) {
-        guard let frame, let target, let buffer = frame.buffer as? RTCCVPixelBuffer else { return }
-        lock.lock()
-        let crop = self.crop
-        let stampNs = max(Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000), lastStampNs + 1)
-        lastStampNs = stampNs
-        lock.unlock()
-        guard let crop, let pixels = LoupeGeometry.pixelCrop(crop, baseX: Int(buffer.cropX), baseY: Int(buffer.cropY),
-                                                             baseWidth: Int(buffer.cropWidth),
-                                                             baseHeight: Int(buffer.cropHeight)) else { return }
-        let cropped = RTCCVPixelBuffer(pixelBuffer: buffer.pixelBuffer, adaptedWidth: Int32(pixels.width),
-                                       adaptedHeight: Int32(pixels.height), cropWidth: Int32(pixels.width),
-                                       cropHeight: Int32(pixels.height), cropX: Int32(pixels.x), cropY: Int32(pixels.y))
-        let size = CGSize(width: pixels.width, height: pixels.height)
-        lock.lock()
-        let resized = size != lastSize
-        lastSize = size
-        lock.unlock()
-        if resized { target.setSize(size) }
-        target.renderFrame(RTCVideoFrame(buffer: cropped, rotation: frame.rotation, timeStampNs: stampNs))
-    }
-}
-
-struct LoupeVideo: UIViewRepresentable {
+/// The loupe is an owned derivative with the same current authenticated admission,
+/// global terminal invalidation and expiry as the main surface. It never owns timing.
+struct LoupeVideo: View {
     let track: RTCVideoTrack
     let crop: CGRect
-
-    final class Coordinator {
-        var track: RTCVideoTrack?
-        let renderer = LoupeCropRenderer()
-
-        func connect(_ view: RTCMTLVideoView, to track: RTCVideoTrack, crop: CGRect) {
-            renderer.target = view
-            renderer.setCrop(crop)
-            guard self.track !== track else { return }
-            self.track?.remove(renderer)
-            track.add(renderer)
-            self.track = track
-        }
-
-        func disconnect() {
-            track?.remove(renderer)
-            track = nil
-            renderer.target = nil
-        }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    func makeUIView(context: Context) -> RTCMTLVideoView {
-        let view = RTCMTLVideoView(frame: .zero)
-        view.videoContentMode = .scaleToFill
-        view.isUserInteractionEnabled = false
-        context.coordinator.connect(view, to: track, crop: crop)
-        return view
-    }
-
-    func updateUIView(_ view: RTCMTLVideoView, context: Context) {
-        context.coordinator.connect(view, to: track, crop: crop)
-    }
-
-    static func dismantleUIView(_ view: RTCMTLVideoView, coordinator: Coordinator) {
-        coordinator.disconnect()
+    let admission: VideoPresentationAdmission
+    var body: some View {
+        RemoteVideoSurface(track: track, fillsFrame: true, smoothMotion: .off, primary: false,
+            admission: admission, sourceCrop: crop, onFrame: {})
     }
 }
 
@@ -266,8 +198,8 @@ struct PrecisionLoupeOverlay: View {
         let diameter = LoupeGeometry.diameter
         return ZStack(alignment: .topLeading) {
             Farside.Palette.void2
-            if let track, !model.contentConcealed {
-                LoupeVideo(track: track, crop: geometry.crop)
+            if let track, !model.contentConcealed, let admission = model.inlinePresentationAdmission {
+                LoupeVideo(track: track, crop: geometry.crop, admission: admission)
                     .frame(width: diameter, height: diameter)
             } else if offline {
                 let zoom = diameter / geometry.span

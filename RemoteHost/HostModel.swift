@@ -2814,7 +2814,7 @@ final class RemoteHostModel: ObservableObject {
         connection.media?.videoFeedback.configure(allowed: healthy && !away.isLocking && sessionState == .picture && active && !phonePause.isPaused &&
             (features.contains(SessionFeature.videoLTR) || features.contains(SessionFeature.videoRefinement)),
             ltr: features.contains(SessionFeature.videoLTR), refinement: features.contains(SessionFeature.videoRefinement), geometry: inputEpoch.value, scope: captureScopeEpoch)
-        connection.media?.configureVideoRefinement(enabled: healthy && sessionState == .picture && active && !phonePause.isPaused && features.contains(SessionFeature.videoRefinement), geometry: inputEpoch.value, scope: captureScopeEpoch)
+        connection.media?.configureVideoRefinement(enabled: healthy && !away.isLocking && sessionState == .picture && active && !phonePause.isPaused && features.contains(SessionFeature.videoRefinement), geometry: inputEpoch.value, scope: captureScopeEpoch)
         let state = MacShareBlocker.sessionState(
             presence: presence ?? (displayAsleep ? .displayAsleep : nil),
             phoneUnderstands: features.contains(MacShareBlocker.feature) || features.contains(MacShareBlocker.approvalFeature),
