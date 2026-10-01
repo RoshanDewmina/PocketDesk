@@ -106,6 +106,52 @@ final class PointerNegotiationTests: XCTestCase {
         XCTAssertFalse(host.wantsCursorHidden(at: 3.1), "A heartbeat without the envelope withdraws capability")
     }
 
+    func testOnlyARegularHeartbeatStatesPointerCapability() {
+        XCTAssertTrue(RemoteAction(action: "heartbeat", epoch: 1, pointerSync: PointerSync(overlay: true)).isRegularPhoneHeartbeat)
+        XCTAssertTrue(RemoteAction(action: "heartbeat", epoch: 1).isRegularPhoneHeartbeat,
+                      "A legacy phone's plain heartbeat still withdraws capability")
+        let feedback = RemoteAction(action: "heartbeat", epoch: 1,
+                                    videoFeedback: VideoFeedback(operation: .refresh, generation: "g", nonce: "n", token: nil, scopeEpoch: 1))
+        XCTAssertFalse(feedback.isRegularPhoneHeartbeat, "An LTR ack or refresh request says nothing about the pointer")
+        XCTAssertFalse(RemoteAction(action: "heartbeat", epoch: 1, pointerProbe: "p").isRegularPhoneHeartbeat)
+        XCTAssertFalse(RemoteAction(action: "heartbeat", epoch: 1, textFocusProbe: String(repeating: "a", count: 32)).isRegularPhoneHeartbeat)
+        XCTAssertFalse(RemoteAction(action: "move", epoch: 1).isRegularPhoneHeartbeat)
+        XCTAssertTrue(ViewportCapturePolicy.describesViewport(RemoteAction(action: "heartbeat", epoch: 1)))
+        XCTAssertFalse(ViewportCapturePolicy.describesViewport(feedback), "The viewport path shares the predicate")
+    }
+
+    func testFeedbackHeartbeatsNoLongerFlipTheCapturedCursor() {
+        // The 1 Oct loop: regular heartbeats every 0.25 s, an LTR ack or refresh every 2.25 s.
+        var host = HostPointerTelemetryPolicy()
+        let feedback = RemoteAction(action: "heartbeat", epoch: 1,
+                                    videoFeedback: VideoFeedback(operation: .refresh, generation: "g", nonce: "n", token: nil, scopeEpoch: 1))
+        let regular = RemoteAction(action: "heartbeat", epoch: 1, pointerSync: PointerSync(overlay: true))
+        var messages: [(TimeInterval, RemoteAction)] = stride(from: 0.0, through: 10, by: 0.25).map { ($0, regular) }
+        messages += stride(from: 0.3, through: 10, by: 2.25).map { ($0, feedback) }
+        messages.sort { $0.0 < $1.0 }
+        var hiddenSince: TimeInterval?
+        for (time, message) in messages {
+            if message.isRegularPhoneHeartbeat { host.phoneHeartbeat(message.pointerSync, at: time) }
+            _ = host.sample(observed: CGPoint(x: 1, y: 1), shape: .arrow, videoCursor: hiddenSince == nil, at: time)
+            let hidden = host.wantsCursorHidden(at: time + 0.01)
+            if hidden, hiddenSince == nil { hiddenSince = time }
+            if let since = hiddenSince { XCTAssertTrue(hidden, "The cursor came back at \(time) s after hiding at \(since) s") }
+        }
+        XCTAssertNotNil(hiddenSince)
+        XCTAssertLessThan(hiddenSince ?? 99, 0.5, "The cursor is hidden as soon as the first sample went out")
+    }
+
+    func testTheHostKeyKeepsTheCapturedCursorForTheWholeSession() {
+        var host = HostPointerTelemetryPolicy(hidesCapturedCursor: false)
+        host.phoneHeartbeat(PointerSync(overlay: true), at: 0)
+        XCTAssertNotNil(host.sample(observed: .zero, shape: .arrow, videoCursor: true, at: 0.01), "Telemetry still streams")
+        XCTAssertFalse(host.wantsCursorHidden(at: 0.1), "With the key off the video keeps the Mac's cursor, so the phone never draws one")
+        host.reset()
+        host.phoneHeartbeat(PointerSync(overlay: true), at: 1)
+        _ = host.sample(observed: .zero, shape: .arrow, videoCursor: true, at: 1.01)
+        XCTAssertFalse(host.wantsCursorHidden(at: 1.1), "A reset keeps the switch")
+    }
+
     func testFallbackCooldownPreventsCaptureChurn() {
         var host = HostPointerTelemetryPolicy()
         host.phoneHeartbeat(PointerSync(overlay: true), at: 0)

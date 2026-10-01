@@ -1,9 +1,16 @@
 import SwiftUI
 
-/// Decoration for the phone-drawn pointer: an ember contact dot and ripple when a click lands,
-/// and a halftone settle-halo when the pointer comes to rest (solid while a drag is held).
-/// It draws only where the pointer is known and never over or into the streamed picture's pixels.
+/// Decoration for the phone-drawn pointer: an ember contact dot and ripple when a click lands.
+/// The halftone settle-halo (a dotted ring when the pointer rests, solid while a drag is held) is off:
+/// the pointer is already large, and the held state has its own chip. It draws only where the pointer
+/// is known and never over or into the streamed picture's pixels.
 struct PointerAccentView: View {
+    /// Phone user default; absent means off. `defaults write com.roshan.PocketDesk.Remote pointer.settleHalo -bool YES`
+    /// brings the ring back.
+    static let settleHaloKey = "pointer.settleHalo"
+    static func settleHaloEnabled(_ defaults: UserDefaults = .standard) -> Bool { defaults.bool(forKey: settleHaloKey) }
+    static let settleHalo = settleHaloEnabled()
+
     @ObservedObject var model: PointerOverlayModel
     let viewport: ViewportTransform
     let size: PointerSizePreference
@@ -24,7 +31,7 @@ struct PointerAccentView: View {
                 // Picture-container coordinates, like the pointer glyph, so accents stay on the pointer
                 // while the camera eases; a pointer move never carries the camera's animation.
                 let tip = PointerOverlayView.picturePoint(render.point, scale: viewport.scale)
-                if haloVisible || holding || preview {
+                if Self.settleHalo && (haloVisible || holding || preview) {
                     SettleHalo(diameter: size.arrowHeight * 1.9, solid: holding)
                         .position(tip)
                         .transaction(value: render.point) { $0.disablesAnimations = true }
@@ -57,6 +64,7 @@ struct PointerAccentView: View {
     }
 
     private func pointerMoved() {
+        guard Self.settleHalo else { return }
         clock.lastMove = ProcessInfo.processInfo.systemUptime
         clock.generation &+= 1
         if haloVisible {

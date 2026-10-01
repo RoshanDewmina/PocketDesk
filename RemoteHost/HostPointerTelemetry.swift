@@ -12,8 +12,16 @@ final class HostPointerTelemetry {
     var send: ((RemoteAction) -> Bool)?
     var setCaptureShowsCursor: ((Bool) -> Void)?
     var captureShowsCursor: () -> Bool = { true }
+    /// Host user default; absent means on. `defaults write com.roshan.PocketDesk.RemoteHost pointer.hideCapturedCursor -bool NO`
+    /// keeps the Mac's own cursor in the video for the whole session; the phone then never draws its
+    /// pointer (it draws only while the video omits the cursor), so one cursor is visible either way.
+    static let hidesCapturedCursorKey = "pointer.hideCapturedCursor"
+    static let hidesCapturedCursorEnabled: Bool = {
+        let defaults = UserDefaults.standard
+        return defaults.object(forKey: hidesCapturedCursorKey) == nil || defaults.bool(forKey: hidesCapturedCursorKey)
+    }()
 
-    private var policy = HostPointerTelemetryPolicy()
+    private var policy = HostPointerTelemetryPolicy(hidesCapturedCursor: HostPointerTelemetry.hidesCapturedCursorEnabled)
     private let shapes = HostCursorShapeSampler()
     private var displayFrame: CGRect?
     private var epoch: UInt64 = 0

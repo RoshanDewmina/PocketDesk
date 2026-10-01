@@ -91,6 +91,8 @@ struct HostPointerTelemetryPolicy {
         var x: Double, y: Double, visible: Bool, shape: PointerShape, applied: UInt64, videoCursor: Bool
     }
 
+    /// Off keeps the Mac's cursor in the video for the whole session (host key `pointer.hideCapturedCursor`).
+    let hidesCapturedCursor: Bool
     private(set) var capableUntil: TimeInterval = -.infinity
     private(set) var overlayRequested = false
     private(set) var appliedMove: UInt64 = 0
@@ -101,9 +103,11 @@ struct HostPointerTelemetryPolicy {
     private var injection: (point: CGPoint, at: TimeInterval)?
     private var fallbackAt: TimeInterval = -.infinity
 
-    mutating func reset() { self = HostPointerTelemetryPolicy() }
+    mutating func reset() { self = HostPointerTelemetryPolicy(hidesCapturedCursor: hidesCapturedCursor) }
 
-    /// Call for every phone heartbeat. A heartbeat without the envelope withdraws capability.
+    init(hidesCapturedCursor: Bool = true) { self.hidesCapturedCursor = hidesCapturedCursor }
+
+    /// Call for every regular phone heartbeat. A heartbeat without the envelope withdraws capability.
     mutating func phoneHeartbeat(_ sync: PointerSync?, at now: TimeInterval) {
         guard let sync, sync.version == PointerSync.currentVersion else {
             capableUntil = -.infinity
@@ -128,7 +132,7 @@ struct HostPointerTelemetryPolicy {
     func streaming(at now: TimeInterval) -> Bool { now < capableUntil }
 
     func wantsCursorHidden(at now: TimeInterval) -> Bool {
-        streaming(at: now) && overlayRequested && samplesSent > 0 && now - fallbackAt >= Self.rehideCooldown
+        hidesCapturedCursor && streaming(at: now) && overlayRequested && samplesSent > 0 && now - fallbackAt >= Self.rehideCooldown
     }
 
     /// Record that video went from hidden back to a captured cursor.
