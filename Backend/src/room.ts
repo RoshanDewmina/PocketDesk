@@ -808,6 +808,7 @@ export class RoomDO extends DurableObject<Env> {
 
   /** The lease ended: the host goes with `room_lifetime_reached` and its client with `host_disconnected`, as before. */
   private expireRoom(host: WebSocket): void {
+    log("room_lease_expired", { room: fingerprint(this.state().room ?? undefined) });
     this.guestService?.endAll("owner_session_expired");
     this.queueActivityEnd("timeout");
     const client = this.peer("client");
@@ -1130,6 +1131,7 @@ export class RoomDO extends DurableObject<Env> {
         this.save(ws, refreshed);
         attachment = refreshed;
         this.rememberIce(attachment.role!, servers);
+        log("relay_refreshed", { room: fingerprint(state.room ?? undefined), role: attachment.role });
       }
     }
     if (ws.readyState !== WebSocket.OPEN) return;
@@ -1179,6 +1181,7 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   private terminate(reason: string): void {
+    log("room_terminated", { room: fingerprint(this.state().room ?? undefined), reason });
     this.guestService?.endAll(reason);
     this.queueActivityEnd(reason === "route_expired" ? "timeout" : "error");
     this.revokeAll();
