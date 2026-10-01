@@ -381,7 +381,7 @@ extension StreamStatsReport {
         let phone = frameJoinLocked == true
             ? "to phone p50 \(value(frameToPhoneP50Ms)) p95 \(value(frameToPhoneP95Ms)) (n \(frameTimedCount ?? 0), ±\(value(clockUncertaintyMs)))"
             : "to phone – (join pending)"
-        return "frame host p50 \(value(hostP50)) p95 \(value(hostP95)) · " + phone
+        return "heuristic RTP/size join · frame host p50 \(value(hostP50)) p95 \(value(hostP95)) · " + phone
     }
 }
 
@@ -389,5 +389,79 @@ enum FrameTimingFormat {
     static func round(_ value: Double?) -> Double? {
         guard let value, value.isFinite else { return nil }
         return (value * 10).rounded() / 10
+    }
+}
+
+
+/// Confined to the ScreenCaptureKit output queue. Repeated complete callbacks and idle sends
+/// retain one opaque source identity for the actual public displayTime, independent of AU nonce.
+struct CaptureSourceTiming {
+    static let capacity = 512
+    private var sources: [(ticks: UInt64, id: String)] = []
+    private var latest: ExactVideoTiming?
+    mutating func captured(displayTicks: UInt64, atMs: Double) -> ExactVideoTiming? {
+        let display = MachClock.milliseconds(fromMachTicks: displayTicks)
+        guard displayTicks > 0, atMs.isFinite, atMs >= display, atMs - display <= 10_000 else { latest = nil; return nil }
+        let id = sources.first { $0.ticks == displayTicks }?.id ?? VideoFeedbackContext.id()
+        if !sources.contains(where: { $0.ticks == displayTicks }) {
+            sources.append((displayTicks, id)); if sources.count > Self.capacity { sources.removeFirst() }
+        }
+        let timing = ExactVideoTiming(sourceID: id, displayMs: display, capturedMs: atMs,
+            pushedMs: atMs, submittedMs: atMs, encodedMs: atMs, resend: false)
+        latest = timing
+        return timing
+    }
+    func resent() -> ExactVideoTiming? {
+        latest.map { ExactVideoTiming(sourceID: $0.sourceID, displayMs: $0.displayMs, capturedMs: $0.capturedMs,
+            pushedMs: $0.pushedMs, submittedMs: $0.submittedMs, encodedMs: $0.encodedMs, resend: true) }
+    }
+    mutating func reset() { latest = nil; sources.removeAll() }
+}
+
+/// Exact borrowed CV identity only, never a guessed RTP/size join or a retained pixel cache.
+/// Reusing a buffer before submission is ambiguous, so both associations are quarantined.
+final class HostExactVideoTimingLog {
+    private final class Entry {
+        weak var buffer: CVPixelBuffer?
+        let timing: ExactVideoTiming?
+        let pushedAtMs: Double
+        init(_ buffer: CVPixelBuffer, _ timing: ExactVideoTiming?, atMs: Double) {
+            self.buffer = buffer; self.timing = timing; pushedAtMs = atMs
+        }
+    }
+    private var pushes: [Entry] = [] // Context's lock owns this bounded lane.
+    static let capacity = 16
+    func pushed(_ timing: ExactVideoTiming?, buffer: CVPixelBuffer, atMs: Double = MachClock.nowMs()) {
+        pushes.removeAll { $0.buffer == nil || atMs < $0.pushedAtMs || atMs - $0.pushedAtMs > 5_000 }
+        // A second push of the same buffer for the same source is ambiguous; a different source means
+        // ScreenCaptureKit recycled the buffer, so the newer identity replaces the stale entry.
+        let collision = pushes.contains { $0.buffer === buffer && ($0.timing == nil || $0.timing?.sourceID == timing?.sourceID) }
+        pushes.removeAll { $0.buffer === buffer }
+        let stamped = timing.map { ExactVideoTiming(sourceID: $0.sourceID, displayMs: $0.displayMs,
+            capturedMs: $0.capturedMs, pushedMs: atMs, submittedMs: atMs, encodedMs: atMs, resend: $0.resend) }
+        pushes.append(Entry(buffer, collision ? nil : stamped, atMs: atMs))
+        if pushes.count > Self.capacity { pushes.removeFirst() }
+    }
+    func submitted(buffer: CVPixelBuffer, atMs: Double) -> ExactVideoTiming? {
+        guard let index = pushes.firstIndex(where: { $0.buffer === buffer }) else { return nil }
+        let entry = pushes.remove(at: index)
+        guard let timing = entry.timing, atMs >= entry.pushedAtMs, atMs - entry.pushedAtMs <= 5_000 else { return nil }
+        let result = ExactVideoTiming(sourceID: timing.sourceID, displayMs: timing.displayMs, capturedMs: timing.capturedMs,
+            pushedMs: timing.pushedMs, submittedMs: atMs, encodedMs: atMs, resend: timing.resend)
+        return (try? result.validate()) != nil ? result : nil
+    }
+    func reset() { pushes.removeAll() }
+}
+
+
+extension StreamStatsReport {
+    mutating func applyExactVideoTiming(_ value: ExactVideoTimingReceiver.Drain) {
+        exactDecoded = value.decoded; exactPresented = value.presented; exactUniqueSources = value.uniqueSources
+        exactResends = value.resends; exactTimed = value.timed; exactMissingClock = value.missingClock
+        exactSourceToDecodeP50Ms = FrameTimingFormat.round(value.captureToDecodeP50Ms)
+        exactSourceToDecodeP95Ms = FrameTimingFormat.round(value.captureToDecodeP95Ms)
+        exactSourceToPresentP50Ms = FrameTimingFormat.round(value.captureToPresentP50Ms)
+        exactSourceToPresentP95Ms = FrameTimingFormat.round(value.captureToPresentP95Ms)
+        exactClockUncertaintyMs = FrameTimingFormat.round(value.maximumClockUncertaintyMs)
     }
 }
