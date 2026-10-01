@@ -124,3 +124,15 @@
 "ONE_TIME_TERMS" = "%@ once. No subscription renewals. Full Anywhere access; current service verification and Mac pairing are required. Refunded or revoked purchases lose this benefit. This does not cancel an existing subscription.";
 "ONE_TIME_BUY" = "Buy for %@ once";
 "ONE_TIME_ACTIVE" = "Your lifetime purchase has no subscription renewal. Farside’s service still verifies access; pairing and current route approval remain separate.";
+
+// Data use estimates (Picture page) and the one-time cellular notice
+"DATA_USE_PRESET" = "%@: about %@–%@ GB per hour";
+"DATA_USE_PRESET_SPOKEN" = "%@: about %@ to %@ gigabytes per hour";
+"DATA_USE_NOTE" = "Estimates run from a still screen to constant motion, with Mac audio while you listen. Files and guest viewers are counted separately. Experimental relay packet repair adds up to 20%%. Carrier billing adds network overhead.";
+"DATA_WARNING_TITLE" = "On cellular or metered data";
+"DATA_WARNING_RATE" = "%@ uses about %@–%@ GB per hour.";
+"DATA_WARNING_EXTRA" = "Files and guest viewers are extra. Your session keeps running.";
+"DATA_WARNING_LESS" = "Use less data";
+"DATA_WARNING_LESS_HINT" = "Switches the picture to %@.";
+"DATA_WARNING_KEEP" = "Keep";
+"DATA_WARNING_KEEP_HINT" = "Keeps the current picture quality. This notice won’t appear again.";

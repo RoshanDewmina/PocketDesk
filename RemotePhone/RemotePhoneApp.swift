@@ -30,10 +30,6 @@ struct RemotePhoneApp: App {
                     model.sceneChanged(phase)
                 }
                 .onChange(of: phase) { _, value in model.sceneChanged(value) }
-                .alert("Use cellular or metered data?", isPresented: $model.cellularConsentPending) {
-                    Button("Continue") { model.confirmMeteredUsage() }
-                    Button("Stop session", role: .destructive) { model.cancelMeteredUsage() }
-                } message: { Text("This network may charge for the picture, audio and files. The amount is unknown until measured; carrier billing can differ. Your authorized session continues unless you choose Stop.") }
         }
     }
 }
@@ -122,8 +118,9 @@ final class PhoneRemoteModel: ObservableObject {
     let linkHints = PhoneLinkHintMonitor()
     @Published private(set) var linkHint: NetworkLinkHint?
     let diagnostics = PhoneDiagnostics()
-    @Published var cellularConsentPending = false
-    private var warnedMeteredUsage = false
+    @Published private(set) var dataWarningShown = false
+    private let dataWarningGate: DataWarningGate
+    private let preferences: UserDefaults
     private var linkConsentObserver: AnyCancellable?
     let files = PhoneFileTransfer()
     let sendToMac = SendToMacInbox()
@@ -350,7 +347,9 @@ final class PhoneRemoteModel: ObservableObject {
     private var nativeScreenPixels: PixelSize?
     @Published var streamQuality: StreamQuality = .sharp {
         didSet {
-            if oldValue != streamQuality { qualityRequestedAt = ProcessInfo.processInfo.systemUptime }
+            guard oldValue != streamQuality else { return }
+            qualityRequestedAt = ProcessInfo.processInfo.systemUptime
+            StreamQualityPreference.store(streamQuality, in: preferences)
         }
     }
     private var qualityRequestedAt: TimeInterval?
@@ -749,7 +748,11 @@ final class PhoneRemoteModel: ObservableObject {
     private var resumeStartedAt: TimeInterval = 0
 
     init(background: BackgroundExecution? = nil, resumeStore: SessionResumeStore = SessionResumeStore(),
-         macAudioPlayback: PhoneSystemAudioPlayback? = nil, livePiP: LivePiPController? = nil) {
+         macAudioPlayback: PhoneSystemAudioPlayback? = nil, livePiP: LivePiPController? = nil,
+         preferences: UserDefaults = .standard) {
+        self.preferences = preferences
+        dataWarningGate = DataWarningGate(defaults: preferences)
+        streamQuality = StreamQualityPreference.stored(in: preferences)
         self.macAudioPlayback = macAudioPlayback ?? PhoneSystemAudioPlayback()
         self.livePiP = livePiP ?? LivePiPController()
         self.background = background ?? SystemBackgroundExecution()
@@ -763,6 +766,7 @@ final class PhoneRemoteModel: ObservableObject {
         connection.localDisplayName = UIDevice.current.name
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
+        dataWarningShown = LaunchOptions.has("--ui-data-warning")
         if LaunchOptions.demoMacName != nil || LaunchOptions.value("--ui-last-battery=") != nil {
             // UI tests get their own last-seen battery so they never read or overwrite the real one.
             let suite = "farside.ui-tests.vitals"
@@ -814,13 +818,7 @@ final class PhoneRemoteModel: ObservableObject {
         connection.onPresentationInvalidated = { [weak self] in self?.retireContentPresentation() }
         connection.restore()
         linkHints.start()
-        linkConsentObserver = linkHints.$hint.removeDuplicates().sink { [weak self] hint in
-            guard let self else { return }; self.linkHint = hint
-            let metered = hint?.metered == true
-            if metered && !self.warnedMeteredUsage {
-                self.warnedMeteredUsage = true; self.cellularConsentPending = true
-            }
-        }
+        linkConsentObserver = linkHints.$hint.removeDuplicates().sink { [weak self] hint in self?.observeLinkHint(hint) }
         connection.onAuthenticated = { [weak self] in
             guard let self else { return }
             self.invalidatePresentation()
@@ -861,7 +859,7 @@ final class PhoneRemoteModel: ObservableObject {
                         report.qualityMeasuredWindows = self.qualityMonitor.measuredWindows
                         report.qualityPoorEntries = self.qualityMonitor.poorEntries
                         report.rttStdDevMs = self.roundTripSpreadMs
-                        self.diagnostics.observe(report)
+                        self.diagnostics.observe(report, estimate: self.appliedStreamQuality.map(self.dataUseEstimate(for:)))
                         if StreamDebug.enabled { StreamDebug.record(report) }
                         let lines = report.summaryLines
                         if self.streamSummaryLines != lines { self.streamSummaryLines = lines }
@@ -1382,8 +1380,25 @@ final class PhoneRemoteModel: ObservableObject {
         sendBigText(display: id, width: saved)
     }
 
-    func confirmMeteredUsage() { cellularConsentPending = false }
-    func cancelMeteredUsage() { cellularConsentPending = false; disconnect() }
+    func observeLinkHint(_ hint: NetworkLinkHint?) {
+        linkHint = hint
+        guard !dataWarningShown, dataWarningGate.shouldOffer(metered: hint?.metered == true) else { return }
+        dataWarningShown = true
+    }
+    var dataWarning: DataWarningContent? {
+        guard dataWarningShown else { return nil }
+        return DataWarningContent.make(quality: streamQuality, tuning: StreamTuning.current, audio: !macAudioMuted,
+                                       canLower: appliedStreamQuality != nil)
+    }
+    func useLessData() {
+        if appliedStreamQuality != nil, let lower = streamQuality.lowerDataPreset { streamQuality = lower }
+        dismissDataWarning()
+    }
+    func keepDataQuality() { dismissDataWarning() }
+    private func dismissDataWarning() { dataWarningGate.markSeen(); dataWarningShown = false }
+    func dataUseEstimate(for quality: StreamQuality) -> DataUseEstimate {
+        DataUseEstimate(quality, tuning: StreamTuning.current, audio: !macAudioMuted, packetRepair: false)
+    }
     private var diagnosticAuthority: Bool {
         sceneIsActive && connection.connected && !privacyShield && !contentConcealed &&
         connection.presentationDeadline() != nil && geometryEpoch > 0 && hostPresence != .locked && hostPresence != .switchedUser

@@ -80,6 +80,25 @@ final class SessionLayoutTests: XCTestCase {
     }
 
     @MainActor
+    func testDataWarningLeavesEndSessionAndControlsReachable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "--ui-data-warning"]
+        launchOfflineFixture(app)
+        let card = app.descendants(matching: .any)["remote.dataWarning"].firstMatch
+        XCTAssertTrue(card.waitForExistence(timeout: 5), "The forced cellular notice must show over the session")
+        revealDock(app)
+        let end = app.buttons["End session"].firstMatch
+        XCTAssertTrue(end.waitForExistence(timeout: 3))
+        XCTAssertTrue(end.isHittable, "The notice must not cover End session")
+        XCTAssertTrue(app.buttons["Controls"].firstMatch.isHittable)
+        XCTAssertFalse(card.frame.intersects(end.frame))
+        XCTAssertFalse(app.buttons["remote.dataWarning.less"].exists, "No preset change before the Mac applies one")
+        attachScreenshot("Cellular data notice over the session dock")
+        app.buttons["remote.dataWarning.keep"].firstMatch.tap()
+        XCTAssertTrue(card.waitForNonExistence(timeout: 3))
+    }
+
+    @MainActor
     func testPictureQualityCanSwitchWithoutOpeningKeyboard() {
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill"]

@@ -16,10 +16,10 @@ final class PhoneDiagnostics: ObservableObject {
     private var testStarted = 0.0
     private var full = false
     init(store: SessionDiagnosticStore = SessionDiagnosticStore(), uptime: @escaping () -> Double = { ProcessInfo.processInfo.systemUptime }) { self.store = store; self.uptime = uptime; reports = store.load() }
-    func observe(_ report: StreamStatsReport) {
+    func observe(_ report: StreamStatsReport, estimate: DataUseEstimate? = nil) {
         let now = uptime()
-        recorder.observe(report, at: now)
-        if running { testRecorder?.observe(report, at: now) }
+        recorder.observe(report, at: now, estimate: estimate)
+        if running { testRecorder?.observe(report, at: now, estimate: estimate) }
     }
     func start(full: Bool, session: UUID, epoch: UInt64, authorized: @escaping () -> Bool,
                send: @escaping (ClockProbe) -> Bool, facts: @escaping () -> [DiagnosticFact]) {

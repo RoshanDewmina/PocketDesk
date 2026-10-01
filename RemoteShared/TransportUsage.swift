@@ -10,6 +10,46 @@ struct TransportUsage: Codable, Equatable, Sendable {
     let sentKbps: Double?
     let receivedKbps: Double?
     let coverage: Coverage
+    /// Per-stats-entry cumulative counters, kept in memory only so stats IDs never reach a log or report.
+    var mediaByEntry: [String: UInt64]? = nil
+    var fileByEntry: [String: UInt64]? = nil
+    private enum CodingKeys: String, CodingKey { case generation, sampledAt, bytesSent, bytesReceived, sentKbps, receivedKbps, coverage }
+}
+
+/// Cumulative bytes the selected transport's counters can attribute, both directions, per stats entry:
+/// RTP payload and headers of every audio and video stream, and messages on the one-off file channel.
+/// The rest of the transport (control, pointer, RTCP, DTLS/SCTP/ICE) is only known as the remainder.
+enum TransportByteSplit {
+    static func media(_ entries: [StreamStatsEntry]) -> [String: UInt64]? {
+        var counts: [String: UInt64] = [:]
+        for entry in entries where entry.type == "inbound-rtp" || entry.type == "outbound-rtp" {
+            let inbound = entry.type == "inbound-rtp"
+            guard let payload = entry.number(inbound ? "bytesReceived" : "bytesSent"),
+                  let total = count(payload + (entry.number(inbound ? "headerBytesReceived" : "headerBytesSent") ?? 0)) else { return nil }
+            counts[entry.id] = total
+        }
+        return counts
+    }
+    static func files(_ entries: [StreamStatsEntry], label: String) -> [String: UInt64]? {
+        var counts: [String: UInt64] = [:]
+        for entry in entries where entry.type == "data-channel" && entry.string("label") == label {
+            guard let sent = entry.number("bytesSent"), let received = entry.number("bytesReceived"),
+                  let total = count(sent + received) else { return nil }
+            counts[entry.id] = total
+        }
+        return counts
+    }
+    /// Growth of entries present in both readings. A new entry starts its own baseline; one that
+    /// vanished or restarted contributes nothing for that interval instead of voiding the whole split.
+    static func growth(from old: [String: UInt64], to new: [String: UInt64]) -> UInt64 {
+        new.reduce(0) { sum, item in
+            guard let prior = old[item.key], item.value >= prior else { return sum }
+            return sum &+ (item.value - prior)
+        }
+    }
+    private static func count(_ value: Double) -> UInt64? {
+        value.isFinite && value >= 0 && value <= 9_007_199_254_740_991 ? UInt64(value.rounded(.towardZero)) : nil
+    }
 }
 struct TransportUsageSampler {
     private var generation = UUID()
