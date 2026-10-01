@@ -4,6 +4,8 @@ Adopted 28 Sep 2026. Roshan chose concept **21 · Reach** (`design/farside-round
 
 Owner decisions (28 Sep): **dark only** for 1.0; **Apple system font** (SF Pro / SF Mono) for everyday app UI with Reach's display accents; the website is a **static site on Cloudflare Pages** using Geist; a Higgsfield hero video may later replace the canvas hero, keeping the ember contact beat.
 
+Owner decision (30 Sep): the home hero's art is variant 2, "From the pocket", from the hero lab (branch `website/hero-lab`): the phone rises on Farside's Home screen, Connect is tapped, and the view pulls back to the Mac it steers. It replaces the canvas halftone hero; the words and beta form stay. Code: `Website/src/hero-pocket/`.
+
 ## 1. The idea
 
 Two hands that can't quite touch is the oldest picture of distance. Farside closes it: your fingertip on the glass, your Mac's pointer on the far side, and **one ember dot where they meet**. That dot is the mark, the app icon's tip, the live indicator and the click ripple. Everything else is quiet: a black void, bone-white type, and halftone dots in the art.
