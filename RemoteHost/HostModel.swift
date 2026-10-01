@@ -2295,6 +2295,8 @@ final class RemoteHostModel: ObservableObject {
 
     private func endCapture() {
         away.refresh()
+        axPrewarmEdge = HostAXPrewarmEdge()
+        Task.detached(priority: .utility) { _ = await HostAXWebPrewarm().sessionEnded() }
         if diagnosticRecorder.samples > 0 {
             try? diagnosticStore.save(diagnosticRecorder.finish(at: ProcessInfo.processInfo.systemUptime, additional: [
                 .init(.hostScreenRecording, CGPreflightScreenCaptureAccess() ? 1 : 0),

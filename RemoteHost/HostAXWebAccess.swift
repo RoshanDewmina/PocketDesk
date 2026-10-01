@@ -35,7 +35,8 @@ enum HostAXWebAttribute: String, Sendable {
 }
 
 enum HostAXSetOutcome: String, Sendable {
-    case applied, unsupported, failed
+    /// `notAttempted`: the budget was spent or cancelled before the write was sent.
+    case applied, unsupported, failed, notAttempted
 
     init(_ error: AXError) {
         switch error {
@@ -44,6 +45,11 @@ enum HostAXSetOutcome: String, Sendable {
         default: self = .failed
         }
     }
+}
+
+/// A boolean attribute as read from an app; `notAttempted` means the budget ran out first.
+enum HostAXFlagRead: String, Sendable {
+    case on, off, unknown, notAttempted
 }
 
 /// A process instance: a pid alone can be reused by a later launch.
@@ -75,8 +81,13 @@ struct HostAXWebActivationPolicy {
         return true
     }
 
-    static func needsEnhancedFallback(after manual: HostAXSetOutcome, enhancedAlreadyOn: Bool?) -> Bool {
-        manual == .unsupported && enhancedAlreadyOn != true
+    /// A request that was never sent (cancelled or out of time) must not use up the process's one ask.
+    mutating func release(_ key: HostAXProcessKey) {
+        attempted.remove(key)
+    }
+
+    static func needsEnhancedFallback(after manual: HostAXSetOutcome, enhanced: HostAXFlagRead) -> Bool {
+        manual == .unsupported && enhanced != .on
     }
 }
 
@@ -91,6 +102,8 @@ final class HostAXWebActivator: @unchecked Sendable {
     private let lock = NSLock()
     private var policy = HostAXWebActivationPolicy()
     private var engines: [String: HostAppEngine] = [:]
+    /// Processes where Farside turned AXEnhancedUserInterface on, to turn it off again at session end.
+    private var enhancedByUs: Set<HostAXProcessKey> = []
     private let classify: (URL?) -> HostAppEngine
 
     init(classify: @escaping (URL?) -> HostAppEngine = { HostAppEngine.classify(bundleURL: $0) }) {
@@ -111,37 +124,89 @@ final class HostAXWebActivator: @unchecked Sendable {
         return engine
     }
 
-    /// Nil when this process was already asked or needs nothing. A failed request is not retried for the
-    /// same process: a hung app would otherwise pay for it on every tap.
+    /// Nil when this process was already asked, needs nothing, or the request could not be sent. A
+    /// request that was sent and failed is not repeated for the same process: a hung app would
+    /// otherwise pay for it on every tap. One that was never sent leaves the process askable.
     func activateIfNeeded(_ key: HostAXProcessKey, engine: HostAppEngine,
                           set: (HostAXWebAttribute) -> HostAXSetOutcome,
-                          isOn: (HostAXWebAttribute) -> Bool?) -> HostAXWebActivation? {
+                          isOn: (HostAXWebAttribute) -> HostAXFlagRead) -> HostAXWebActivation? {
         lock.lock()
         let claimed = policy.claim(key, engine: engine)
         lock.unlock()
         guard claimed else { return nil }
         let manual = set(.manual)
+        guard manual != .notAttempted else { return unclaim(key) }
         var result = HostAXWebActivation(attribute: .manual, outcome: manual)
-        if HostAXWebActivationPolicy.needsEnhancedFallback(after: manual, enhancedAlreadyOn: isOn(.enhanced)) {
-            result = HostAXWebActivation(attribute: .enhanced, outcome: set(.enhanced))
+        if manual == .unsupported {
+            let enhanced = isOn(.enhanced)
+            guard enhanced != .notAttempted else { return unclaim(key) }
+            if HostAXWebActivationPolicy.needsEnhancedFallback(after: manual, enhanced: enhanced) {
+                let outcome = set(.enhanced)
+                guard outcome != .notAttempted else { return unclaim(key) }
+                result = HostAXWebActivation(attribute: .enhanced, outcome: outcome)
+                // The Codex app reports notImplemented yet turns it on, so any sent write is remembered.
+                if outcome != .unsupported { lock.lock(); enhancedByUs.insert(key); lock.unlock() }
+            }
         }
         HostTextFocusLog.logger.info(
             "AX tree requested engine=\(engine.rawValue, privacy: .public) attribute=\(result.attribute.rawValue, privacy: .public) outcome=\(result.outcome.rawValue, privacy: .public)")
         return result
     }
 
-    /// Writes one boolean attribute on an application element. Never touches any element's value.
-    static func set(_ attribute: HostAXWebAttribute, on app: AXUIElement, budget: HostAXBudget) -> HostAXSetOutcome {
-        guard budget.arm(app) else { return .failed }
-        return HostAXSetOutcome(AXUIElementSetAttributeValue(app, attribute.rawValue as CFString, kCFBooleanTrue))
+    func isClaimed(_ key: HostAXProcessKey) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return policy.attempted.contains(key)
     }
 
-    static func isOn(_ attribute: HostAXWebAttribute, on app: AXUIElement, budget: HostAXBudget) -> Bool? {
-        guard budget.arm(app) else { return nil }
+    private func unclaim(_ key: HostAXProcessKey) -> HostAXWebActivation? {
+        lock.lock(); policy.release(key); lock.unlock()
+        HostTextFocusLog.logger.info("AX tree request not sent; process stays askable")
+        return nil
+    }
+
+    /// At session end, turns AXEnhancedUserInterface off where Farside turned it on and it is still on,
+    /// and forgets those processes so the next session can ask again. AXManualAccessibility stays on.
+    /// Processes the budget did not reach are kept for the next session end. Returns the processes
+    /// turned off.
+    func revertEnhanced(isOn: (HostAXProcessKey) -> HostAXFlagRead,
+                        turnOff: (HostAXProcessKey) -> HostAXSetOutcome) -> [HostAXProcessKey] {
+        lock.lock()
+        let keys = enhancedByUs.sorted { ($0.pid, $0.launched ?? 0) < ($1.pid, $1.launched ?? 0) }
+        enhancedByUs.removeAll()
+        lock.unlock()
+        var reverted: [HostAXProcessKey] = []
+        var kept: [HostAXProcessKey] = []
+        for key in keys {
+            let flag = isOn(key)
+            if flag == .notAttempted { kept.append(key); continue }
+            if flag == .on {
+                let outcome = turnOff(key)
+                if outcome == .notAttempted { kept.append(key); continue }
+                if outcome == .applied { reverted.append(key) }
+            }
+            lock.lock(); policy.release(key); lock.unlock()
+        }
+        if !kept.isEmpty { lock.lock(); enhancedByUs.formUnion(kept); lock.unlock() }
+        if !keys.isEmpty {
+            HostTextFocusLog.logger.info("AX enhanced UI reverted=\(reverted.count, privacy: .public) kept=\(kept.count, privacy: .public)")
+        }
+        return reverted
+    }
+
+    /// Writes one boolean attribute on an application element. Never touches any element's value.
+    static func set(_ attribute: HostAXWebAttribute, _ value: Bool = true, on app: AXUIElement,
+                    budget: HostAXBudget) -> HostAXSetOutcome {
+        guard budget.arm(app) else { return .notAttempted }
+        return HostAXSetOutcome(AXUIElementSetAttributeValue(app, attribute.rawValue as CFString,
+                                                             value ? kCFBooleanTrue : kCFBooleanFalse))
+    }
+
+    static func isOn(_ attribute: HostAXWebAttribute, on app: AXUIElement, budget: HostAXBudget) -> HostAXFlagRead {
+        guard budget.arm(app) else { return .notAttempted }
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app, attribute.rawValue as CFString, &value) == .success,
-              let value, CFGetTypeID(value) == CFBooleanGetTypeID() else { return nil }
-        return CFBooleanGetValue((value as! CFBoolean))
+              let value, CFGetTypeID(value) == CFBooleanGetTypeID() else { return .unknown }
+        return CFBooleanGetValue((value as! CFBoolean)) ? .on : .off
     }
 }
 
@@ -150,7 +215,7 @@ enum HostTextFocusLog {
 }
 
 enum HostAXPrewarmOutcome: Equatable, Sendable {
-    case noSession, native, alreadyAsked, laneBusy
+    case noSession, native, alreadyAsked, laneBusy, notSent
     case requested(HostAXWebActivation)
 
     var reason: String {
@@ -159,6 +224,7 @@ enum HostAXPrewarmOutcome: Equatable, Sendable {
         case .native: "native"
         case .alreadyAsked: "alreadyAsked"
         case .laneBusy: "laneBusy"
+        case .notSent: "notSent"
         case .requested: "requested"
         }
     }
@@ -169,13 +235,13 @@ enum HostAXPrewarmOutcome: Equatable, Sendable {
 /// Chromium-based app becomes frontmost instead, under the same once-per-process policy and on the
 /// same bounded AX lane; never outside a session and never for a native app.
 struct HostAXWebPrewarm: Sendable {
-    typealias SetAttribute = @Sendable (HostAXWebAttribute, pid_t, HostAXBudget) -> HostAXSetOutcome
-    typealias IsOn = @Sendable (HostAXWebAttribute, pid_t, HostAXBudget) -> Bool?
+    typealias SetAttribute = @Sendable (HostAXWebAttribute, Bool, pid_t, HostAXBudget) -> HostAXSetOutcome
+    typealias IsOn = @Sendable (HostAXWebAttribute, pid_t, HostAXBudget) -> HostAXFlagRead
 
     var activator: HostAXWebActivator = .shared
     var broker: HostAXBroker = .shared
-    var set: SetAttribute = { attribute, pid, budget in
-        HostAXWebActivator.set(attribute, on: AXUIElementCreateApplication(pid), budget: budget)
+    var set: SetAttribute = { attribute, value, pid, budget in
+        HostAXWebActivator.set(attribute, value, on: AXUIElementCreateApplication(pid), budget: budget)
     }
     var isOn: IsOn = { attribute, pid, budget in
         HostAXWebActivator.isOn(attribute, on: AXUIElementCreateApplication(pid), budget: budget)
@@ -199,10 +265,21 @@ struct HostAXWebPrewarm: Sendable {
             let engine = activator.engine(for: bundleURL)
             guard engine.isWeb else { return .native }
             guard let activation = activator.activateIfNeeded(key, engine: engine,
-                                                              set: { set($0, pid, budget) },
-                                                              isOn: { isOn($0, pid, budget) }) else { return .alreadyAsked }
+                                                              set: { set($0, true, pid, budget) },
+                                                              isOn: { isOn($0, pid, budget) }) else {
+                return activator.isClaimed(key) ? .alreadyAsked : .notSent
+            }
             return .requested(activation)
         } ?? .laneBusy
+    }
+
+    /// Session end: undo AXEnhancedUserInterface where Farside set it. A busy lane leaves it for the next end.
+    func sessionEnded() async -> [HostAXProcessKey] {
+        let (activator, set, isOn) = (activator, set, isOn)
+        return await broker.run(waitForLane: HostTextFocusProbe.lanePatience) { budget -> [HostAXProcessKey]? in
+            activator.revertEnhanced(isOn: { isOn(.enhanced, $0.pid, budget) },
+                                     turnOff: { set(.enhanced, false, $0.pid, budget) })
+        } ?? []
     }
 }
 

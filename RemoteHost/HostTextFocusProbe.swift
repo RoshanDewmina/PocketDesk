@@ -130,10 +130,10 @@ enum HostTextFocusProbe {
         let engine = activator.engine(for: running?.bundleURL)
         let owner = app ?? system
 
-        var candidate = focusedCandidate(owner, point: point, system: system, budget: budget)
+        var candidate = focusedCandidate(owner, point: point, system: system, web: engine.isWeb, budget: budget)
         var activation: HostAXWebActivation?
         var retried = false
-        if candidate?.editable != true, let app, let running, engine.isWeb {
+        if candidate?.editable != true, !budget.isExhausted, let app, let running, engine.isWeb {
             let key = HostAXProcessKey(pid: running.processIdentifier, launched: running.launchDate?.timeIntervalSince1970)
             activation = activator.activateIfNeeded(key, engine: engine,
                 set: { HostAXWebActivator.set($0, on: app, budget: budget) },
@@ -146,7 +146,7 @@ enum HostTextFocusProbe {
                 while candidate?.editable != true, !budget.isCancelled,
                       ProcessInfo.processInfo.systemUptime + 0.05 <= until {
                     Thread.sleep(forTimeInterval: 0.05)
-                    candidate = focusedCandidate(owner, point: point, system: system, budget: budget)
+                    candidate = focusedCandidate(owner, point: point, system: system, web: engine.isWeb, budget: budget)
                 }
             }
         }
@@ -164,13 +164,15 @@ enum HostTextFocusProbe {
         return result
     }
 
-    /// The owner's focused element, which a click must have landed on. When the app reports no focus,
-    /// the editable element under the click stands in for it.
+    /// The owner's focused element, which a click must have landed on. When a Chromium-based app
+    /// reports no focus, the editable element under the click stands in for it; a native app that
+    /// reports no focus has none.
     private static func focusedCandidate(_ owner: AXUIElement, point: CGPoint?, system: AXUIElement,
-                                         budget: HostAXBudget) -> Candidate? {
+                                         web: Bool, budget: HostAXBudget) -> Candidate? {
         guard budget.arm(owner) else { return nil }
         let focused = elementAttribute(owner, kAXFocusedUIElementAttribute)
         guard let point else { return focused.flatMap { classify($0, budget: budget) } }
+        guard focused != nil || web else { return nil }
 
         var hit: AXUIElement?
         guard budget.arm(system),

@@ -119,10 +119,10 @@ final class HostAXWebAccessTests: XCTestCase {
         var writes: [HostAXWebAttribute] = []
         let key = HostAXProcessKey(pid: 42, launched: 10)
         let first = activator.activateIfNeeded(key, engine: .electron,
-                                               set: { writes.append($0); return .applied }, isOn: { _ in false })
+                                               set: { writes.append($0); return .applied }, isOn: { _ in .off })
         XCTAssertEqual(first, HostAXWebActivation(attribute: .manual, outcome: .applied))
         let second = activator.activateIfNeeded(key, engine: .electron,
-                                                set: { writes.append($0); return .applied }, isOn: { _ in false })
+                                                set: { writes.append($0); return .applied }, isOn: { _ in .off })
         XCTAssertNil(second)
         XCTAssertEqual(writes, [.manual], "Enhanced UI is never written when manual accessibility works")
     }
@@ -131,13 +131,13 @@ final class HostAXWebAccessTests: XCTestCase {
         let activator = HostAXWebActivator(classify: { _ in .chromium })
         var writes: [HostAXWebAttribute] = []
         let result = activator.activateIfNeeded(HostAXProcessKey(pid: 7, launched: 1), engine: .chromium,
-            set: { writes.append($0); return $0 == .manual ? .unsupported : .applied }, isOn: { _ in false })
+            set: { writes.append($0); return $0 == .manual ? .unsupported : .applied }, isOn: { _ in .off })
         XCTAssertEqual(result, HostAXWebActivation(attribute: .enhanced, outcome: .applied))
         XCTAssertEqual(writes, [.manual, .enhanced])
 
         writes = []
         let alreadyOn = activator.activateIfNeeded(HostAXProcessKey(pid: 8, launched: 1), engine: .chromium,
-            set: { writes.append($0); return $0 == .manual ? .unsupported : .applied }, isOn: { $0 == .enhanced })
+            set: { writes.append($0); return $0 == .manual ? .unsupported : .applied }, isOn: { $0 == .enhanced ? .on : .off })
         XCTAssertEqual(alreadyOn, HostAXWebActivation(attribute: .manual, outcome: .unsupported))
         XCTAssertEqual(writes, [.manual], "An app that already has enhanced UI on is left alone")
     }
@@ -147,10 +147,10 @@ final class HostAXWebAccessTests: XCTestCase {
         var writes: [HostAXWebAttribute] = []
         let key = HostAXProcessKey(pid: 9, launched: 1)
         let result = activator.activateIfNeeded(key, engine: .electron,
-                                                set: { writes.append($0); return .failed }, isOn: { _ in false })
+                                                set: { writes.append($0); return .failed }, isOn: { _ in .off })
         XCTAssertEqual(result, HostAXWebActivation(attribute: .manual, outcome: .failed))
         XCTAssertNil(activator.activateIfNeeded(key, engine: .electron,
-                                                set: { writes.append($0); return .applied }, isOn: { _ in false }))
+                                                set: { writes.append($0); return .applied }, isOn: { _ in .off }))
         XCTAssertEqual(writes, [.manual], "A timed-out or hung app is not asked again on every tap")
     }
 
@@ -158,7 +158,7 @@ final class HostAXWebAccessTests: XCTestCase {
         let activator = HostAXWebActivator(classify: { _ in .native })
         var writes = 0
         XCTAssertNil(activator.activateIfNeeded(HostAXProcessKey(pid: 3, launched: 1), engine: .native,
-                                                set: { _ in writes += 1; return .applied }, isOn: { _ in false }))
+                                                set: { _ in writes += 1; return .applied }, isOn: { _ in .off }))
         XCTAssertEqual(writes, 0)
     }
 
@@ -182,8 +182,8 @@ final class HostAXWebAccessTests: XCTestCase {
     private func prewarm(engine: HostAppEngine, writes: Writes, manual: HostAXSetOutcome = .applied) -> HostAXWebPrewarm {
         HostAXWebPrewarm(activator: HostAXWebActivator(classify: { _ in engine }),
                          broker: HostAXBroker(label: "test.ax.prewarm.\(UUID().uuidString)"),
-                         set: { attribute, pid, _ in writes.add(attribute, pid); return attribute == .manual ? manual : .applied },
-                         isOn: { _, _, _ in false })
+                         set: { attribute, _, pid, _ in writes.add(attribute, pid); return attribute == .manual ? manual : .applied },
+                         isOn: { _, _, _ in .off })
     }
 
     private let app = URL(fileURLWithPath: "/Applications/Example.app")
@@ -230,11 +230,11 @@ final class HostAXWebAccessTests: XCTestCase {
         let writes = Writes()
         let activator = HostAXWebActivator(classify: { _ in .electron })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.prewarm.shared"),
-                                    set: { attribute, pid, _ in writes.add(attribute, pid); return .applied },
-                                    isOn: { _, _, _ in false })
+                                    set: { attribute, _, pid, _ in writes.add(attribute, pid); return .applied },
+                                    isOn: { _, _, _ in .off })
         _ = await warm.appActivated(pid: 4246, launched: 7, bundleURL: app, sessionActive: true)
         XCTAssertNil(activator.activateIfNeeded(HostAXProcessKey(pid: 4246, launched: 7), engine: .electron,
-                                                set: { _ in .applied }, isOn: { _ in false }),
+                                                set: { _ in .applied }, isOn: { _ in .off }),
                      "A probe in the prewarmed app does not ask again")
     }
 
@@ -245,13 +245,13 @@ final class HostAXWebAccessTests: XCTestCase {
         let hog = Task { await broker.run(budget: 0.05) { _ -> Int? in Thread.sleep(forTimeInterval: 0.6); return 1 } }
         _ = await hog.value
         let warm = HostAXWebPrewarm(activator: activator, broker: broker,
-                                    set: { attribute, pid, _ in writes.add(attribute, pid); return .applied },
-                                    isOn: { _, _, _ in false })
+                                    set: { attribute, _, pid, _ in writes.add(attribute, pid); return .applied },
+                                    isOn: { _, _, _ in .off })
         let outcome = await warm.appActivated(pid: 4247, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(outcome, .laneBusy)
         XCTAssertEqual(writes.attributes, [])
         XCTAssertNotNil(activator.activateIfNeeded(HostAXProcessKey(pid: 4247, launched: 1), engine: .electron,
-                                                   set: { _ in .applied }, isOn: { _ in false }))
+                                                   set: { _ in .applied }, isOn: { _ in .off }))
     }
 
     func testControlStartPrewarmsTheFrontmostChromiumAppOnce() async {
@@ -268,5 +268,95 @@ final class HostAXWebAccessTests: XCTestCase {
         XCTAssertEqual(writes.pids, [5150])
         let nobody = await warm.controlStarted(frontmost: nil)
         XCTAssertEqual(nobody, .native)
+    }
+
+    // MARK: Review fixes: unsent requests, session-end revert
+
+    func testUnsentManualRequestLeavesTheProcessAskable() {
+        let activator = HostAXWebActivator(classify: { _ in .electron })
+        let key = HostAXProcessKey(pid: 61, launched: 1)
+        XCTAssertNil(activator.activateIfNeeded(key, engine: .electron, set: { _ in .notAttempted }, isOn: { _ in .off }))
+        XCTAssertFalse(activator.isClaimed(key), "A cancelled or out-of-time probe must not use up the one request")
+        XCTAssertEqual(activator.activateIfNeeded(key, engine: .electron, set: { _ in .applied }, isOn: { _ in .off }),
+                       HostAXWebActivation(attribute: .manual, outcome: .applied))
+    }
+
+    func testUnsentEnhancedFallbackLeavesTheProcessAskable() {
+        let activator = HostAXWebActivator(classify: { _ in .chromium })
+        let read = HostAXProcessKey(pid: 62, launched: 1)
+        XCTAssertNil(activator.activateIfNeeded(read, engine: .chromium, set: { _ in .unsupported },
+                                                isOn: { _ in .notAttempted }))
+        XCTAssertFalse(activator.isClaimed(read))
+        let write = HostAXProcessKey(pid: 63, launched: 1)
+        XCTAssertNil(activator.activateIfNeeded(write, engine: .chromium,
+                                                set: { $0 == .manual ? .unsupported : .notAttempted }, isOn: { _ in .off }))
+        XCTAssertFalse(activator.isClaimed(write))
+    }
+
+    func testUnsentPrewarmLeavesTheProcessAskable() async {
+        let activator = HostAXWebActivator(classify: { _ in .electron })
+        let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.prewarm.unsent"),
+                                    set: { _, _, _, _ in .notAttempted }, isOn: { _, _, _ in .off })
+        let outcome = await warm.appActivated(pid: 64, launched: 1, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(outcome, .notSent)
+        XCTAssertFalse(activator.isClaimed(HostAXProcessKey(pid: 64, launched: 1)))
+    }
+
+    private final class Flags: @unchecked Sendable {
+        private let lock = NSLock()
+        private var enhanced: [pid_t: Bool] = [:]
+        private(set) var log: [(HostAXWebAttribute, Bool, pid_t)] = []
+        func set(_ attribute: HostAXWebAttribute, _ value: Bool, _ pid: pid_t) -> HostAXSetOutcome {
+            lock.lock(); defer { lock.unlock() }
+            log.append((attribute, value, pid))
+            if attribute == .manual { return .unsupported }
+            enhanced[pid] = value
+            return .applied
+        }
+        func read(_ pid: pid_t) -> HostAXFlagRead { lock.lock(); defer { lock.unlock() }; return enhanced[pid] == true ? .on : .off }
+        func force(_ pid: pid_t, _ value: Bool) { lock.lock(); enhanced[pid] = value; lock.unlock() }
+        var offWrites: [pid_t] { lock.lock(); defer { lock.unlock() }; return log.filter { $0.0 == .enhanced && !$0.1 }.map(\.2) }
+    }
+
+    func testSessionEndTurnsOffOnlyTheEnhancedUIFarsideTurnedOn() async {
+        let flags = Flags()
+        flags.force(71, true)
+        let activator = HostAXWebActivator(classify: { _ in .chromium })
+        let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.revert"),
+                                    set: { attribute, value, pid, _ in flags.set(attribute, value, pid) },
+                                    isOn: { _, pid, _ in flags.read(pid) })
+        let ours = await warm.appActivated(pid: 70, launched: 1, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(ours, .requested(HostAXWebActivation(attribute: .enhanced, outcome: .applied)))
+        let theirs = await warm.appActivated(pid: 71, launched: 1, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(theirs, .requested(HostAXWebActivation(attribute: .manual, outcome: .unsupported)),
+                       "Already on: Farside writes nothing, so it owns nothing to undo")
+        _ = await warm.appActivated(pid: 72, launched: 1, bundleURL: app, sessionActive: true)
+        flags.force(72, false) // Something else turned it off during the session.
+
+        let reverted = await warm.sessionEnded()
+        XCTAssertEqual(reverted, [HostAXProcessKey(pid: 70, launched: 1)])
+        XCTAssertEqual(flags.offWrites, [70], "Only a process Farside turned on and still on is turned off")
+        XCTAssertEqual(flags.read(71), .on)
+        XCTAssertFalse(activator.isClaimed(HostAXProcessKey(pid: 70, launched: 1)), "The next session may ask again")
+        XCTAssertFalse(activator.isClaimed(HostAXProcessKey(pid: 72, launched: 1)))
+        XCTAssertTrue(activator.isClaimed(HostAXProcessKey(pid: 71, launched: 1)))
+        let again = await warm.sessionEnded()
+        XCTAssertEqual(again, [])
+        XCTAssertEqual(flags.offWrites, [70])
+    }
+
+    func testSessionEndLeavesManualAccessibilityAndKeepsUnreachedProcesses() {
+        let activator = HostAXWebActivator(classify: { _ in .electron })
+        let electron = HostAXProcessKey(pid: 80, launched: 1)
+        _ = activator.activateIfNeeded(electron, engine: .electron, set: { _ in .applied }, isOn: { _ in .off })
+        let chrome = HostAXProcessKey(pid: 81, launched: 1)
+        _ = activator.activateIfNeeded(chrome, engine: .chromium, set: { $0 == .manual ? .unsupported : .applied },
+                                       isOn: { _ in .off })
+        var turnedOff: [HostAXProcessKey] = []
+        XCTAssertEqual(activator.revertEnhanced(isOn: { _ in .notAttempted }, turnOff: { turnedOff.append($0); return .applied }), [])
+        XCTAssertTrue(activator.isClaimed(chrome), "Out of budget: kept for the next session end")
+        XCTAssertEqual(activator.revertEnhanced(isOn: { _ in .on }, turnOff: { turnedOff.append($0); return .applied }), [chrome])
+        XCTAssertEqual(turnedOff, [chrome], "AXManualAccessibility on the Electron app is left on")
+        XCTAssertTrue(activator.isClaimed(electron))
     }
 }
