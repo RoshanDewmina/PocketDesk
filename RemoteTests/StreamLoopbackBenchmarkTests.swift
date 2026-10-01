@@ -75,7 +75,7 @@ final class StreamLoopbackBenchmarkTests: XCTestCase {
         if let bitrates = environment["POCKETDESK_BENCH_BITRATES"] { tuning.qualityBitrates = bitrates == "1" }
         if let refresh = environment["POCKETDESK_BENCH_REFRESH"] { tuning.encoderRestart = refresh == "1" }
         if let headroom = environment["POCKETDESK_BENCH_BWE_HEADROOM"].flatMap(Int.init) { tuning.bandwidthHeadroom = headroom }
-        if let headroom = environment["POCKETDESK_BENCH_LAN_HEADROOM"].flatMap(Int.init) { tuning.lanBandwidthHeadroom = headroom }
+        if let headroom = environment["POCKETDESK_BENCH_LAN_HEADROOM"].flatMap(Double.init) { tuning.lanBandwidthHeadroom = headroom }
         if let limit = environment["POCKETDESK_BENCH_MAX_IN_FLIGHT"].flatMap(Int.init) {
             tuning.encoderMaxInFlight = limit > 0 ? limit : nil
         }

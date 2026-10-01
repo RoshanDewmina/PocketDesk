@@ -113,12 +113,18 @@ struct StreamCounterSnapshot {
     var encodeLatencyMaxMs: Double?
     var encodeInFlightMax: Int?
     var encodeBytesP50: Int?
+    /// Bytes the encoder produced in this window (X17 sender-queue estimate).
+    var encodedBytes = 0
     var keyFrameBytesMax: Int?
     var rateUpdates: Int?
     var encoderSessionAgeS: Double?
     var encoderDropped: Int?
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
+    var encoderSubmitted: Int?
+    var encoderSuperseded: Int?
+    var encoderRetired: Int?
+    var encoderOutputs: Int?
     var encoderEvidence: VideoEncoderEvidence?
     // Host input (perf pack 1b): data-channel arrival → handled on the main queue, and CGEvent post time.
     var inputMainDelayP50Ms: Double?
@@ -164,6 +170,12 @@ struct HostStreamSummary: Codable, Equatable {
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
     var encoderEvidence: VideoEncoderEvidence?
+    /// Owned encoder (X04): frames handed to VideoToolbox, in-flight deltas a requested key frame
+    /// replaced, entries retired after the 100 ms window without a callback, and outputs with a sample.
+    var encoderSubmitted: Int?
+    var encoderSuperseded: Int?
+    var encoderRetired: Int?
+    var encoderOutputs: Int?
     /// Input messages: data-channel arrival → handled on the Mac's main queue, and CGEvent post time.
     var inputMainDelayP50Ms: Double?
     var inputMainDelayP95Ms: Double?
@@ -190,21 +202,38 @@ struct HostStreamSummary: Codable, Equatable {
     var macLink: String?
     var uniqueSourceFPS: Double?
     var resendFPS: Double?
+    /// X16: the DSCP/priority the Mac asked WebRTC for (`TransportPriorityRequest.summary`). Requested,
+    /// never measured on the wire.
+    var transportPriorityRequested: String?
+    /// X05: the estimate ceiling last applied, and whether the LAN multiplier is in it.
+    var bweCeilingKbps: Double?
+    var lanCeilingApplied: Bool?
+    /// X17 estimates (`SenderQueueEstimate`): the pacer's send-side wait (the governor's trigger), the
+    /// drain time of encoded-but-unsent bytes (overlay only), and the round trip above its baseline.
+    var senderQueueMs: Double?
+    var networkQueueMs: Double?
+    var backlogDrainMs: Double?
+    /// X17: the governor's mode and cap ("shadow, would cap: 30 fps", "LAN, inactive", "off").
+    var senderQueueGovernor: String?
 
     static let maximumFrameTotal = 1_000_000_000_000
     static let fpsRange = 1...240
     static let refreshRange = 0.0...1_000
     static let thermalRange = 0...3
     static let displayDescriptionBytes = 48
+    static let transportPriorityBytes = 40
+    static let governorStatusBytes = 40
 
     func validate() throws {
         let numbers = [captureFPS, captureLatencyMs, captureGapP90Ms, captureGapMaxMs, encodedFPS, encodeMs, pacerDelayMs,
                        sentFPS, sentKbps, targetKbps, maxKbps, qpAverage,
                        encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs,
                        inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs, inputPostP95Ms,
-                       uniqueSourceFPS, resendFPS].compactMap { $0 }
+                       uniqueSourceFPS, resendFPS,
+                       bweCeilingKbps, senderQueueMs, networkQueueMs, backlogDrainMs].compactMap { $0 }
         let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates,
-                        encoderDropped, encoderSilentDrops, encoderDeliveryDrops, inputEvents].compactMap { $0 }
+                        encoderDropped, encoderSilentDrops, encoderDeliveryDrops, inputEvents,
+                        encoderSubmitted, encoderSuperseded, encoderRetired, encoderOutputs].compactMap { $0 }
         let bytes = [encodeBytesP50, keyFrameBytesMax].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 10_000_000 }),
               integers.allSatisfy({ $0 >= 0 && $0 <= 100_000 }),
@@ -214,6 +243,8 @@ struct HostStreamSummary: Codable, Equatable {
               displayRefreshHz.map({ Self.refreshRange.contains($0) }) ?? true,
               thermalState.map({ Self.thermalRange.contains($0) }) ?? true,
               (captureDisplay?.utf8.count ?? 0) <= Self.displayDescriptionBytes,
+              (transportPriorityRequested?.utf8.count ?? 0) <= Self.transportPriorityBytes,
+              (senderQueueGovernor?.utf8.count ?? 0) <= Self.governorStatusBytes,
               framesEncodedTotal.map({ (0...Self.maximumFrameTotal).contains($0) }) ?? true,
               macLink.map({ $0.utf8.count <= MacNetworkLink.maximumBytes && MacNetworkLink(rawValue: $0) != nil }) ?? true else {
             throw RemoteError.invalidMessage
@@ -348,6 +379,10 @@ struct StreamStatsReport: Codable, Equatable {
     var encoderDropped: Int?
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
+    var encoderSubmitted: Int?
+    var encoderSuperseded: Int?
+    var encoderRetired: Int?
+    var encoderOutputs: Int?
     var encoderEvidence: VideoEncoderEvidence?
     var inputMainDelayP50Ms: Double?
     var inputMainDelayP95Ms: Double?
@@ -365,6 +400,13 @@ struct StreamStatsReport: Codable, Equatable {
     var ladder: LadderState?
     var busy: BusyState?
     var captureRegion: CaptureRegion?
+    var transportPriorityRequested: String?
+    var bweCeilingKbps: Double?
+    var lanCeilingApplied: Bool?
+    var senderQueueMs: Double?
+    var networkQueueMs: Double?
+    var backlogDrainMs: Double?
+    var senderQueueGovernor: String?
     // Per-frame timing (perf pack 4a). Host: display → encoded; phone: Mac display → decoded here.
     var frameHostP50Ms: Double?
     var frameHostP95Ms: Double?
@@ -414,6 +456,7 @@ struct StreamStatsReport: Codable, Equatable {
         }
         remoteLossPercent = Self.round(current.remoteInbound?.number("fractionLost").map { $0 * 100 })
 
+        var sentBytes: Double?
         if let previous, current.timestamp > previous.timestamp {
             let seconds = current.timestamp - previous.timestamp
             let out = Delta(previous.outbound, current.outbound)
@@ -429,6 +472,7 @@ struct StreamStatsReport: Codable, Equatable {
             encodeMs = Self.perItem(out["totalEncodeTime"], out["framesEncoded"], scale: 1000)
             qpAverage = Self.perItem(out["qpSum"], out["framesEncoded"])
             sentKbps = Self.rate(out["bytesSent"].map { $0 * 8 / 1000 }, seconds)
+            sentBytes = out["bytesSent"].flatMap { $0 >= 0 ? $0 : nil }
             keyFrames = out["keyFramesEncoded"].map { Int($0) }
             nackReceived = out["nackCount"].map { Int($0) }
             pliReceived = out["pliCount"].map { Int($0) }
@@ -478,6 +522,10 @@ struct StreamStatsReport: Codable, Equatable {
                 encoderDropped = counters.encoderDropped
                 encoderDeliveryDrops = counters.encoderDeliveryDrops
                 encoderSilentDrops = counters.encoderSilentDrops
+                encoderSubmitted = counters.encoderSubmitted
+                encoderSuperseded = counters.encoderSuperseded
+                encoderRetired = counters.encoderRetired
+                encoderOutputs = counters.encoderOutputs
                 encoderEvidence = counters.encoderEvidence
                 if let evidence = encoderEvidence { powerEfficientEncoder = evidence.hardwareReported }
                 inputMainDelayP50Ms = Self.round(counters.inputMainDelayP50Ms)
@@ -485,6 +533,9 @@ struct StreamStatsReport: Codable, Equatable {
                 inputMainDelayMaxMs = Self.round(counters.inputMainDelayMaxMs)
                 inputPostP95Ms = Self.round(counters.inputPostP95Ms)
                 inputEvents = counters.inputEvents
+                senderQueueMs = pacerDelayMs
+                backlogDrainMs = Self.round(SenderQueueEstimate.backlogDrainMs(encodedBytes: Double(counters.encodedBytes),
+                    sentBytes: sentBytes, availableKbps: availableOutgoingKbps))
             } else {
                 renderedFPS = Self.round(Double(counters.renderedFrames) / seconds)
                 uniqueDecodedFPS = Self.round(Double(counters.uniqueDecodedFrames) / seconds)
@@ -553,6 +604,10 @@ struct StreamStatsReport: Codable, Equatable {
                           encoderDeliveryDrops: encoderDeliveryDrops.map { min($0, 100_000) },
                           encoderSilentDrops: encoderSilentDrops.map { min($0, 100_000) },
                           encoderEvidence: encoderEvidence,
+                          encoderSubmitted: encoderSubmitted.map { min($0, 100_000) },
+                          encoderSuperseded: encoderSuperseded.map { min($0, 100_000) },
+                          encoderRetired: encoderRetired.map { min($0, 100_000) },
+                          encoderOutputs: encoderOutputs.map { min($0, 100_000) },
                           inputMainDelayP50Ms: inputMainDelayP50Ms.map { min($0, 10_000_000) },
                           inputMainDelayP95Ms: inputMainDelayP95Ms.map { min($0, 10_000_000) },
                           inputMainDelayMaxMs: inputMainDelayMaxMs.map { min($0, 10_000_000) },
@@ -572,7 +627,18 @@ struct StreamStatsReport: Codable, Equatable {
                           busy: busy.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           captureRegion: captureRegion.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           uniqueSourceFPS: uniqueSourceFPS.map { min($0, 10_000_000) },
-                          resendFPS: captureResendFPS.map { min($0, 10_000_000) })
+                          resendFPS: captureResendFPS.map { min($0, 10_000_000) },
+                          transportPriorityRequested: transportPriorityRequested.map {
+                              Self.truncated($0, bytes: HostStreamSummary.transportPriorityBytes)
+                          },
+                          bweCeilingKbps: bweCeilingKbps.flatMap { $0.isFinite ? min(max(0, $0), 10_000_000) : nil },
+                          lanCeilingApplied: lanCeilingApplied,
+                          senderQueueMs: senderQueueMs.flatMap { $0.isFinite ? min(max(0, $0), 10_000_000) : nil },
+                          networkQueueMs: networkQueueMs.flatMap { $0.isFinite ? min(max(0, $0), 10_000_000) : nil },
+                          backlogDrainMs: backlogDrainMs.flatMap { $0.isFinite ? min(max(0, $0), 10_000_000) : nil },
+                          senderQueueGovernor: senderQueueGovernor.map {
+                              Self.truncated($0, bytes: HostStreamSummary.governorStatusBytes)
+                          })
     }
 
     static func thermalName(_ state: Int?) -> String? {
@@ -622,6 +688,14 @@ struct StreamStatsReport: Codable, Equatable {
         }
         func dropped(_ count: Int?, _ silent: Int? = nil) -> String {
             (count.map { " · dropped \($0)/s" } ?? "") + (silent.map { " · VT lost \($0)" } ?? "")
+        }
+        func queueLine(_ pacer: Double?, _ backlog: Double?, _ network: Double?) -> String? {
+            guard pacer != nil || backlog != nil || network != nil else { return nil }
+            return "queue estimate: pacer \(value(pacer, "ms")) · unsent backlog ≈\(value(backlog, "ms")) · network ≈\(value(network, "ms"))"
+        }
+        func gate(_ submitted: Int?, _ outputs: Int?, _ superseded: Int?, _ retired: Int?) -> String? {
+            guard let submitted else { return nil }
+            return "VT in \(submitted) out \(outputs ?? 0) · superseded \(superseded ?? 0) · retired \(retired ?? 0)"
         }
         func rateLine(_ prefix: String, target: Int?, refresh: Double?, display: String?, gapMedian: Double?,
                       thermal: Int?, lowPower: Bool?) -> String? {
@@ -673,14 +747,19 @@ struct StreamStatsReport: Codable, Equatable {
             lines.append("unique source \(value(uniqueSourceFPS))fps · idle resends \(value(captureResendFPS))/s")
             lines.append("pushed \(value(pushedFPS)) · skipped \(pushSkipped ?? 0) · dropped pre-encode \(droppedBeforeEncode ?? 0)")
             lines.append("encode \(value(encodedFPS))fps \(value(encodeMs, "ms")) · pacer \(value(pacerDelayMs, "ms")) · sent \(value(sentFPS))fps \(sentWidth ?? 0)×\(sentHeight ?? 0)")
-            lines.append("\(value(sentKbps, "kbps")) · target \(value(targetKbps, "kbps")) · max \(value(maxKbps, "kbps")) · BWE \(value(availableOutgoingKbps, "kbps"))")
+            if let queue = queueLine(senderQueueMs, backlogDrainMs, networkQueueMs) { lines.append(queue) }
+            if let senderQueueGovernor { lines.append("governor: \(senderQueueGovernor)") }
+            lines.append("\(value(sentKbps, "kbps")) · target \(value(targetKbps, "kbps")) · max \(value(maxKbps, "kbps")) · BWE \(value(availableOutgoingKbps, "kbps"))"
+                         + (bweCeilingKbps.map { " · ceiling \(value($0, "kbps"))" + (lanCeilingApplied == true ? " (LAN raised)" : "") } ?? ""))
             lines.append("\(encoderImplementation ?? "encoder?") \(hardware(powerEfficientEncoder)) · limit \(qualityLimitation ?? "?") · QP \(value(qpAverage)) · rtx \(retransmittedPackets ?? 0)")
             if let encoderEvidence { lines.append(encoderEvidence.summary) }
             if encodeLatencyMs != nil || encoderDropped != nil {
                 lines.append("VT lat p50 \(value(encodeLatencyMs, "ms")) p90 \(value(encodeLatencyP90Ms, "ms")) max \(value(encodeLatencyMaxMs, "ms")) · in-flight ≤\(encodeInFlightMax ?? 0) · bytes p50 \(encodeBytesP50 ?? 0) · key ≤\((keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(rateUpdates ?? 0) · session \(value(encoderSessionAgeS, "s"))"
                              + dropped(encoderDropped, encoderSilentDrops))
             }
+            if let gate = gate(encoderSubmitted, encoderOutputs, encoderSuperseded, encoderRetired) { lines.append(gate) }
             if let load = loadLine("", ladder: ladder, busy: busy, region: captureRegion) { lines.append(load) }
+            if let transportPriorityRequested { lines.append("QoS requested (not measured): \(transportPriorityRequested)") }
             if let input = inputLine("", inputEvents, inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs,
                                      inputPostP95Ms) {
                 lines.append(input)
@@ -695,14 +774,22 @@ struct StreamStatsReport: Codable, Equatable {
                 lines.append("Mac capture \(value(host.captureFPS))fps lag \(value(host.captureLatencyMs, "ms")) gap90 \(value(host.captureGapP90Ms, "ms")) · lost \((host.pushSkipped ?? 0) + (host.droppedBeforeEncode ?? 0))")
                 // No QP here: skip-only screen frames report QP 51 whatever the visible quality.
                 lines.append("Mac encode \(value(host.encodedFPS))fps \(value(host.encodeMs, "ms")) · pacer \(value(host.pacerDelayMs, "ms")) · kbps sent \(value(host.sentKbps)) target \(value(host.targetKbps)) max \(value(host.maxKbps))")
+                if let queue = queueLine(host.senderQueueMs, host.backlogDrainMs, host.networkQueueMs) { lines.append("Mac " + queue) }
+                if let governor = host.senderQueueGovernor { lines.append("Mac governor: \(governor)") }
                 lines.append("Mac \(host.encoder ?? "encoder?") \(hardware(host.hardwareEncoder)) \(host.sentWidth ?? 0)×\(host.sentHeight ?? 0) · limit \(host.qualityLimitation ?? "?") · age \(value(hostSummaryAgeMs, "ms"))")
                 if let evidence = host.encoderEvidence { lines.append("Mac " + evidence.summary) }
                 if host.encodeLatencyMs != nil || host.encoderDropped != nil {
                     lines.append("Mac VT lat p50 \(value(host.encodeLatencyMs, "ms")) p90 \(value(host.encodeLatencyP90Ms, "ms")) · in-flight ≤\(host.encodeInFlightMax ?? 0) · bytes p50 \(host.encodeBytesP50 ?? 0) · key ≤\((host.keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(host.rateUpdates ?? 0) · session \(value(host.encoderSessionAgeS, "s"))"
                                  + dropped(host.encoderDropped, host.encoderSilentDrops))
                 }
+                if let gate = gate(host.encoderSubmitted, host.encoderOutputs, host.encoderSuperseded, host.encoderRetired) {
+                    lines.append("Mac " + gate)
+                }
                 if let load = loadLine("Mac ", ladder: host.ladder, busy: host.busy, region: host.captureRegion) {
                     lines.append(load)
+                }
+                if let requested = host.transportPriorityRequested {
+                    lines.append("Mac QoS requested (not measured): \(requested)")
                 }
                 if let input = inputLine("Mac ", host.inputEvents, host.inputMainDelayP50Ms, host.inputMainDelayP95Ms,
                                          host.inputMainDelayMaxMs, host.inputPostP95Ms) {
@@ -863,6 +950,26 @@ struct LatencyWindow {
     }
 }
 
+/// X17: sender-queue estimates from per-window statistics. None is a wire measurement.
+/// - `senderQueueMs` (the governor's trigger) = the pacer's mean per-packet send delay this window.
+/// - `backlogDrainMs` (overlay only) = max(0, bytes the encoder produced this window − outbound-rtp
+///   `bytesSent` this window) × 8 / `availableOutgoingBitrate` (kbps, so bits per ms). A key frame that
+///   straddles two windows or misaligned counter/stats windows inflate it, so nothing acts on it.
+/// - `networkQueueMs` = current RTT − the lowest RTT seen on this transport (floored at 0): queueing
+///   beyond the Mac, the delay-based signal congestion control also reads.
+enum SenderQueueEstimate {
+    static func backlogDrainMs(encodedBytes: Double?, sentBytes: Double?, availableKbps: Double?) -> Double? {
+        guard let encodedBytes, let sentBytes, let availableKbps, availableKbps > 0,
+              encodedBytes.isFinite, sentBytes.isFinite, availableKbps.isFinite else { return nil }
+        return max(0, encodedBytes - sentBytes) * 8 / availableKbps
+    }
+
+    static func networkQueueMs(rttMs: Double?, baselineRTTMs: Double?) -> Double? {
+        guard let rttMs, let baselineRTTMs, rttMs.isFinite, baselineRTTMs.isFinite else { return nil }
+        return max(0, rttMs - baselineRTTMs)
+    }
+}
+
 /// Thread-safe counters fed from capture, WebRTC and renderer threads.
 final class StreamCounters: @unchecked Sendable {
     private let lock = NSLock()
@@ -895,6 +1002,10 @@ final class StreamCounters: @unchecked Sendable {
     private var encoderDropped = 0
     private var encoderDeliveryDrops = 0
     private var encoderSilentDrops = 0
+    private var gateSubmitted = 0
+    private var gateSuperseded = 0
+    private var gateRetired = 0
+    private var gateOutputs = 0
     private var inputMainDelay = LatencyWindow()
     private var inputPost = LatencyWindow()
     private var encoderEvidence: VideoEncoderEvidence?
@@ -1041,6 +1152,7 @@ final class StreamCounters: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         encodeLatency.record(latencyMs)
         encodeBytes.record(Double(bytes))
+        snapshot.encodedBytes += max(0, bytes)
         encodeInFlightMax = max(encodeInFlightMax, inFlight)
         if isKeyFrame { keyFrameBytesMax = max(keyFrameBytesMax, bytes) }
     }
@@ -1068,6 +1180,11 @@ final class StreamCounters: @unchecked Sendable {
 
     /// Encoded outputs replaced in the bounded delivery mailbox, separate from VT drops.
     func encoderDeliveryDropped() { lock.lock(); encoderDeliveryDrops += 1; lock.unlock() }
+
+    func encoderSubmitted(_ count: Int = 1) { lock.lock(); gateSubmitted += max(0, count); lock.unlock() }
+    func encoderSuperseded(_ count: Int) { lock.lock(); gateSuperseded += max(0, count); lock.unlock() }
+    func encoderRetired(_ count: Int) { lock.lock(); gateRetired += max(0, count); lock.unlock() }
+    func encoderOutput() { lock.lock(); gateOutputs += 1; lock.unlock() }
 
     func recordEncoderEvidence(_ evidence: VideoEncoderEvidence?) {
         lock.lock(); encoderEvidence = evidence; lock.unlock()
@@ -1135,6 +1252,11 @@ final class StreamCounters: @unchecked Sendable {
         result.encoderDropped = encode.count > 0 || encoderDropped > 0 ? encoderDropped : nil
         result.encoderDeliveryDrops = encoderDeliveryDrops > 0 ? encoderDeliveryDrops : nil
         result.encoderSilentDrops = encode.count > 0 || encoderSilentDrops > 0 ? encoderSilentDrops : nil
+        let gateActive = gateSubmitted > 0 || gateSuperseded > 0 || gateRetired > 0 || gateOutputs > 0
+        result.encoderSubmitted = gateActive ? gateSubmitted : nil
+        result.encoderSuperseded = gateActive ? gateSuperseded : nil
+        result.encoderRetired = gateActive ? gateRetired : nil
+        result.encoderOutputs = gateActive ? gateOutputs : nil
         let mainDelay = inputMainDelay.drainPercentiles()
         let post = inputPost.drainPercentiles()
         result.inputMainDelayP50Ms = mainDelay.p50
@@ -1148,6 +1270,10 @@ final class StreamCounters: @unchecked Sendable {
         encoderDropped = 0
         encoderDeliveryDrops = 0
         encoderSilentDrops = 0
+        gateSubmitted = 0
+        gateSuperseded = 0
+        gateRetired = 0
+        gateOutputs = 0
         snapshot = StreamCounterSnapshot(interval: 0)
         startedAt = time
         return result

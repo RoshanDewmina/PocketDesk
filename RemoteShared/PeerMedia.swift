@@ -109,6 +109,34 @@ enum LocalMediaRoute {
     }
 }
 
+/// X16: what the native host asks WebRTC for on the transport. DSCP marking (`enableDscp`, fixed at
+/// peer creation) and a high `networkPriority` (which the DSCP value is derived from) are requested only
+/// on a proven one-hop local link; relay and internet-direct routes stay unmarked at medium. A request,
+/// not an effect: the OS, Wi-Fi and routers may strip or ignore the marking, and nothing here measures it.
+struct TransportPriorityRequest: Equatable {
+    var dscp: Bool
+    var networkPriority: RTCPriority
+
+    var summary: String {
+        let priority: String
+        switch networkPriority {
+        case .veryLow: priority = "very-low"
+        case .low: priority = "low"
+        case .medium: priority = "medium"
+        case .high: priority = "high"
+        @unknown default: priority = "unknown"
+        }
+        return "DSCP \(dscp ? "on" : "off") · priority \(priority)"
+    }
+}
+
+enum TransportPriorityPolicy {
+    static func request(nativeDesktopCodecs: Bool, provenLocalLink: Bool) -> TransportPriorityRequest {
+        let local = nativeDesktopCodecs && provenLocalLink
+        return TransportPriorityRequest(dscp: local, networkPriority: local ? .high : .medium)
+    }
+}
+
 /// The video sender's rate settings (G5). `maxFramerate` follows the session rate, lowered by the
 /// ladder's rung; above 60 fps `highRefreshNoAdaptation` turns WebRTC's own degradation off
 /// (`maintainFramerateAndResolution`, the header's successor to `disabled`) so the app's ladder
@@ -208,6 +236,7 @@ final class PeerMedia: NSObject {
     private var appliedBweMaxBps: Int?
     private let isHost: Bool
     private let nativeDesktopCodecs: Bool
+    let transportPriority: TransportPriorityRequest
     private var previousSample: StreamStatsSample?
     private var cadenceRenderer: StreamCadenceRenderer?
     private var observedTrack: RTCVideoTrack?
@@ -617,6 +646,7 @@ final class PeerMedia: NSObject {
         self.forceRelay = forceRelay
         self.localLink = localLink
         self.nativeDesktopCodecs = nativeDesktopCodecs
+        transportPriority = TransportPriorityPolicy.request(nativeDesktopCodecs: nativeDesktopCodecs, provenLocalLink: localLink != nil)
         tuning = nativeDesktopCodecs ? StreamTuning.current : .legacy
         frameTimingLog = isHost && nativeDesktopCodecs && (FrameTimingSwitch.override ?? tuning.frameTiming)
             ? HostFrameTimingLog() : nil
@@ -646,7 +676,7 @@ final class PeerMedia: NSObject {
         refinementTimer = timer; timer.resume()
         let configuration = RTCConfiguration()
         configuration.sdpSemantics = .unifiedPlan
-        configuration.enableDscp = nativeDesktopCodecs && localLink != nil // Request only; wire/network behavior unmeasured.
+        configuration.enableDscp = transportPriority.dscp
         configuration.iceTransportPolicy = forceRelay ? .relay : .all
         configuration.continualGatheringPolicy = .gatherContinually
         configuration.iceServers = servers.map { RTCIceServer(urlStrings: $0.urls, username: $0.username ?? "", credential: $0.credential ?? "") }
@@ -910,7 +940,7 @@ final class PeerMedia: NSObject {
         let ceiling = tuning.maximumBitrateBps(for: streamQuality)
         let rate = currentSenderRate
         for encoding in parameters.encodings {
-            encoding.networkPriority = localLink != nil ? .high : .medium
+            encoding.networkPriority = transportPriority.networkPriority
             encoding.maxFramerate = NSNumber(value: rate.maxFramerate)
             encoding.maxBitrateBps = NSNumber(value: tuning.qualityBitrates ? ceiling : 12_000_000)
         }
@@ -931,14 +961,22 @@ final class PeerMedia: NSObject {
     /// The estimate ceiling for the current picture mode and route class (`BandwidthCeilingPolicy`).
     private var bandwidthCeilingBps: Int {
         BandwidthCeilingPolicy.maxBitrateBps(ceiling: tuning.maximumBitrateBps(for: streamQuality),
-                                             route: ceilingRoute.route, tuning: tuning)
+                                             route: ceilingRoute.route, provenLocal: ceilingRoute.provenLocal, tuning: tuning)
     }
 
-    /// Re-applies the ceiling when the route class changed (LAN headroom on, or back off after an ICE
-    /// restart onto relay). The current estimate is left alone, so nothing is re-seeded.
+    /// X05: whether the LAN ceiling multiplier is what the estimate ceiling carries right now.
+    private var lanCeilingApplied: Bool {
+        BandwidthCeilingPolicy.lanMultiplier(route: ceilingRoute.route, provenLocal: ceilingRoute.provenLocal, tuning: tuning) > 1
+            && appliedBweMaxBps == bandwidthCeilingBps
+    }
+
+    /// Re-applies the ceiling when the route class or the local proof changed (LAN multiplier on, or back
+    /// off after an ICE restart onto relay or a cut local path). The current estimate is left alone, so
+    /// nothing is re-seeded.
     private func followCeilingRoute(detail: String?, rttMs: Double?) {
         guard isHost, nativeDesktopCodecs, tuning.qualityBitrates,
-              ceilingRoute.observe(detail: detail, rttMs: rttMs), !closed, remoteDescriptionReady else { return }
+              ceilingRoute.observe(detail: detail, rttMs: rttMs, provenLocal: provenLocalLinkActive),
+              !closed, remoteDescriptionReady else { return }
         let maximum = bandwidthCeilingBps
         guard maximum != appliedBweMaxBps else { return }
         _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: nil, maxBitrateBps: NSNumber(value: maximum))
@@ -954,6 +992,8 @@ final class PeerMedia: NSObject {
     private(set) var ladderState: LadderState?
     /// Host: what the Mac reports on `capture` status, copied into every statistics sample.
     var busyState: BusyState?
+    /// Host: the X17 governor's status from the load monitor, copied into every statistics sample.
+    var senderQueueGovernorStatus: String?
     var captureRegion: CaptureRegion?
 
     private var currentSenderRate: SenderRateParameters {
@@ -1037,6 +1077,12 @@ final class PeerMedia: NSObject {
     var appliedSenderMaxFramerate: Int? {
         guard isHost, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return nil }
         return sender.parameters.encodings.first?.maxFramerate?.intValue
+    }
+
+    /// Host: the network priority actually set on the video sender's encodings.
+    var appliedNetworkPriority: RTCPriority? {
+        guard isHost, let sender = connection?.senders.first(where: { $0.track?.kind == "video" }) else { return nil }
+        return sender.parameters.encodings.first?.networkPriority
     }
 
     /// Host: the degradation preference actually applied to the video sender.
@@ -1227,10 +1273,18 @@ final class PeerMedia: NSObject {
                 stats.ladder = ladderState
                 stats.busy = busyState
                 stats.captureRegion = captureRegion
+                stats.senderQueueGovernor = senderQueueGovernorStatus
             }
             stats.maxKbps = appliedSenderMaxKbps
+            if nativeDesktopCodecs { stats.transportPriorityRequested = transportPriority.summary }
             followCeilingRoute(detail: sample.routeDetail, rttMs: stats.rttMs)
             seedBandwidthEstimate(stats, route: sample.route, detail: sample.routeDetail)
+            stats.networkQueueMs = SenderQueueEstimate.networkQueueMs(rttMs: stats.rttMs, baselineRTTMs: transportRate.baselineRTT)
+                .map { ($0 * 10).rounded() / 10 }
+            if nativeDesktopCodecs && tuning.qualityBitrates {
+                stats.bweCeilingKbps = appliedBweMaxBps.map { Double($0) / 1000 }
+                stats.lanCeilingApplied = lanCeilingApplied
+            }
             let frameTiming = frameTimingLog?.drain()
             if let frameTiming { stats.applyHostFrameTiming(frameTiming) }
             latestHostSummary = stats.hostSummary

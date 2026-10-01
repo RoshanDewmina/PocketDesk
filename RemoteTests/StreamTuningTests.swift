@@ -209,5 +209,54 @@ final class NativeSenderTuningTests: XCTestCase {
             XCTAssertEqual(host.appliedSenderMaxKbps, Double(StreamQuality.sharp.maximumBitrateBps) / 1000)
         }
         XCTAssertNil(phone.appliedSenderMaxKbps, "the phone does not send video")
+        XCTAssertEqual(host.transportPriority, TransportPriorityRequest(dscp: false, networkPriority: .medium))
+        XCTAssertEqual(host.appliedNetworkPriority, .medium, "a loopback pair without a local proof is not marked")
+    }
+}
+
+final class TransportPriorityPolicyTests: XCTestCase {
+    func testProvenLocalLinkRequestsDSCPAndHighPriority() {
+        XCTAssertEqual(TransportPriorityPolicy.request(nativeDesktopCodecs: true, provenLocalLink: true),
+                       TransportPriorityRequest(dscp: true, networkPriority: .high))
+    }
+
+    func testRelayOrInternetDirectRequestsNoMarkingAtMediumPriority() {
+        XCTAssertEqual(TransportPriorityPolicy.request(nativeDesktopCodecs: true, provenLocalLink: false),
+                       TransportPriorityRequest(dscp: false, networkPriority: .medium))
+    }
+
+    func testBrowserOrCompatibilityPeersAreNeverMarked() {
+        for local in [false, true] {
+            XCTAssertFalse(TransportPriorityPolicy.request(nativeDesktopCodecs: false, provenLocalLink: local).dscp)
+            XCTAssertEqual(TransportPriorityPolicy.request(nativeDesktopCodecs: false, provenLocalLink: local).networkPriority, .medium)
+        }
+    }
+
+    func testPeerUsesThePolicyAndDiagnosticsSayRequestedNotMeasured() throws {
+        let local = PeerMedia(isHost: true, servers: [], localLink: ProvenLocalLink(localAddress: "192.168.1.10", peerAddress: "192.168.1.20"), hevc: false)
+        let remote = PeerMedia(isHost: true, servers: [], hevc: false)
+        let browser = PeerMedia(isHost: true, servers: [], nativeDesktopCodecs: false,
+                                localLink: ProvenLocalLink(localAddress: "192.168.1.10", peerAddress: "192.168.1.20"))
+        defer { local.close(); remote.close(); browser.close() }
+        XCTAssertEqual(local.transportPriority, TransportPriorityRequest(dscp: true, networkPriority: .high))
+        XCTAssertEqual(remote.transportPriority, TransportPriorityRequest(dscp: false, networkPriority: .medium))
+        XCTAssertFalse(browser.transportPriority.dscp)
+
+        var summary = HostStreamSummary()
+        summary.transportPriorityRequested = local.transportPriority.summary
+        XCTAssertEqual(summary.transportPriorityRequested, "DSCP on · priority high")
+        XCTAssertNoThrow(try summary.validate())
+        XCTAssertEqual(try JSONDecoder().decode(HostStreamSummary.self, from: JSONEncoder().encode(summary)), summary)
+        let sample = StreamStatsSample(entries: [])
+        var phone = StreamStatsReport(role: "phone", previous: nil, current: sample, counters: nil)
+        phone.host = summary
+        XCTAssertTrue(phone.summaryLines.contains("Mac QoS requested (not measured): DSCP on · priority high"),
+                      phone.summaryLines.joined(separator: "\n"))
+        var host = StreamStatsReport(role: "host", previous: nil, current: sample, counters: nil)
+        host.transportPriorityRequested = remote.transportPriority.summary
+        XCTAssertEqual(host.hostSummary.transportPriorityRequested, "DSCP off · priority medium")
+        XCTAssertTrue(host.summaryLines.contains("QoS requested (not measured): DSCP off · priority medium"))
+        summary.transportPriorityRequested = String(repeating: "x", count: 41)
+        XCTAssertThrowsError(try summary.validate())
     }
 }

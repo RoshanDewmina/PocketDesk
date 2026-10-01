@@ -233,6 +233,170 @@ struct LadderPolicy: LadderEngine {
     }
 }
 
+/// X17: a send-path cap layered over the G12 ladder. Once per statistics window it reads the pacer
+/// delay, the network queue estimate (`SenderQueueEstimate`) and the available outgoing rate, and caps
+/// the stream rate first, then size: 30 fps, 15 fps, then 15 fps at 0.75 and 0.5 of the picture. The
+/// host runs it in shadow (reported, not applied) unless `StreamTuning.senderQueueGovernorApply`.
+/// - A bad window is a saturated link under `capacityKbps` (sending at ≥ 80 % of an estimate below 5 Mb/s
+///   that has stopped rising, outside `idleGraceWindows` after an app-limited window) or a queue over
+///   `queueLimitMs`. The queue is the pacer delay plus the network term, which is capped at
+///   `networkCapMs` unless the pacer itself waits over `networkUncappedPacerMs`, so a stale RTT spike
+///   alone never steps. The unsent-backlog estimate is never a trigger.
+///   Low capacity alone stops at 15 fps full size, so text stays readable; only a queue that persists
+///   at 15 fps costs resolution.
+/// - Inactive on a proven local link: no level, reported as "LAN, inactive".
+/// - Down one level after `downWindows` bad windows in a row; up one level after `climbWindows` clean
+///   windows (estimate ≥ `clearCapacityKbps` or app-limited, and queue under `clearQueueMs`). A climb
+///   that is undone within `failedClimbWindows` doubles the wait, up to `maxClimbWindows`.
+/// - A size level costs one key frame (the encoder restarts at the new size); size levels are at least
+///   `sizeStepSpacing` windows apart, so a move is never a key-frame storm. The governor never asks
+///   for a key frame itself.
+/// - A route change resets it, and nothing moves in the first `warmupWindows` of a route (the estimate
+///   is still ramping). A window with the route still pending keeps the last one.
+struct SenderQueueGovernor: Equatable {
+    struct Window: Equatable {
+        var route: String?
+        var availableKbps: Double?
+        var sentKbps: Double?
+        var senderQueueMs: Double?
+        var networkQueueMs: Double?
+        var provenLocalLink = false
+    }
+    struct Level: Equatable {
+        var fps: Int?
+        var sizeFraction: Double
+    }
+
+    static let capacityKbps = 5_000.0
+    static let clearCapacityKbps = 6_000.0
+    static let saturation = 0.8
+    static let queueLimitMs = 100.0
+    static let clearQueueMs = 50.0
+    static let downWindows = 2
+    static let climbWindows = 10
+    static let maxClimbWindows = 60
+    static let failedClimbWindows = 10
+    static let warmupWindows = 3
+    static let sizeStepSpacing = 4
+    static let levels = [Level(fps: nil, sizeFraction: 1), Level(fps: 30, sizeFraction: 1), Level(fps: 15, sizeFraction: 1),
+                         Level(fps: 15, sizeFraction: 0.75), Level(fps: 15, sizeFraction: 0.5)]
+    static let capacityFloor = 2
+    static let networkCapMs = 50.0
+    static let networkUncappedPacerMs = 30.0
+    static let plateauRise = 1.05
+    static let idleShare = 0.5
+    static let idleGraceWindows = 3
+
+    private(set) var level = 0
+    /// Level moves that changed the picture size, each one encoder restart and so one key frame.
+    private(set) var keyFrameSteps = 0
+    private(set) var climbWait = SenderQueueGovernor.climbWindows
+    private var route: String?
+    private var windows = 0
+    private var badWindows = 0
+    private var cleanWindows = 0
+    private var windowsSinceSizeStep = SenderQueueGovernor.sizeStepSpacing
+    private var windowsSinceClimb: Int?
+    private var lastAvailableKbps: Double?
+    private var windowsSinceIdle: Int?
+    private(set) var inactiveOnLocalLink = false
+
+    var cap: Level { Self.levels[level] }
+
+    func status(applied: Bool) -> String {
+        if inactiveOnLocalLink { return "LAN, inactive" }
+        let mode = applied ? "applied" : "shadow, would cap"
+        guard level > 0 else { return applied ? "applied, no cap" : "shadow, no cap" }
+        let fps = cap.fps.map { "\($0) fps" } ?? "full rate"
+        return "\(mode): \(fps)" + (cap.sizeFraction < 1 ? " ×\(String(format: "%g", cap.sizeFraction))" : "")
+    }
+
+    /// True when `level` changed.
+    mutating func observe(_ window: Window) -> Bool {
+        let before = level
+        if window.provenLocalLink {
+            self = SenderQueueGovernor()
+            inactiveOnLocalLink = true
+            return level != before
+        }
+        if inactiveOnLocalLink { self = SenderQueueGovernor() }
+        if let next = window.route, next != route {
+            if route != nil { self = SenderQueueGovernor() }
+            route = next
+        }
+        windows += 1
+        windowsSinceSizeStep += 1
+        windowsSinceClimb = windowsSinceClimb.map { $0 + 1 }
+        let previousAvailable = lastAvailableKbps
+        lastAvailableKbps = window.availableKbps
+        let appLimited = window.availableKbps.flatMap { available in
+            window.sentKbps.map { available > 0 && $0 < Self.idleShare * available }
+        } ?? false
+        windowsSinceIdle = appLimited ? 0 : windowsSinceIdle.map { $0 + 1 }
+        guard windows > Self.warmupWindows else { return level != before }
+        let pacer = max(0, window.senderQueueMs ?? 0)
+        let network = min(max(0, window.networkQueueMs ?? 0), pacer > Self.networkUncappedPacerMs ? .infinity : Self.networkCapMs)
+        let queue = pacer + network
+        let saturated = window.availableKbps.flatMap { available in
+            window.sentKbps.map { available > 0 && $0 >= Self.saturation * available }
+        } ?? false
+        let plateau = window.availableKbps.flatMap { available in
+            previousAvailable.map { available <= $0 * Self.plateauRise }
+        } ?? false
+        let idleGrace = windowsSinceIdle.map { $0 < Self.idleGraceWindows } ?? false
+        let lowCapacity = saturated && plateau && !idleGrace && (window.availableKbps ?? .infinity) < Self.capacityKbps
+        let queueHigh = queue > Self.queueLimitMs
+        if lowCapacity || queueHigh {
+            cleanWindows = 0
+            badWindows += 1
+            let floor = queueHigh ? Self.levels.count - 1 : Self.capacityFloor
+            if badWindows >= Self.downWindows, level < floor, move(to: level + 1) {
+                if windowsSinceClimb.map({ $0 <= Self.failedClimbWindows }) ?? false {
+                    climbWait = min(climbWait * 2, Self.maxClimbWindows)
+                }
+                windowsSinceClimb = nil
+                badWindows = 0
+            }
+            return level != before
+        }
+        badWindows = 0
+        let roomy = window.availableKbps.map { available in
+            available >= Self.clearCapacityKbps || !saturated
+        } ?? true
+        guard roomy, queue < Self.clearQueueMs else { cleanWindows = 0; return level != before }
+        cleanWindows += 1
+        if level > 0, cleanWindows >= climbWait, move(to: level - 1) {
+            cleanWindows = 0
+            windowsSinceClimb = 0
+        }
+        if let windowsSinceClimb, windowsSinceClimb > Self.failedClimbWindows, level == 0 { climbWait = Self.climbWindows }
+        return level != before
+    }
+
+    /// The ladder rung with this cap applied: never a higher rate or a larger picture than the ladder's.
+    func apply(to state: LadderState) -> LadderState {
+        guard level > 0 else { return state }
+        var result = state
+        result.fps = min(state.fps, cap.fps ?? state.fps)
+        result.sizeFraction = min(state.sizeFraction, cap.sizeFraction)
+        guard result.fps < state.fps || result.sizeFraction < state.sizeFraction else { return state }
+        result.rung = min(16, state.rung + level)
+        result.reason = LadderReason.network.rawValue
+        return result
+    }
+
+    private mutating func move(to next: Int) -> Bool {
+        let resizes = Self.levels[next].sizeFraction != Self.levels[level].sizeFraction
+        if resizes {
+            guard windowsSinceSizeStep >= Self.sizeStepSpacing else { return false }
+            windowsSinceSizeStep = 0
+            keyFrameSteps += 1
+        }
+        level = next
+        return true
+    }
+}
+
 /// The honest load pill (BusyState.swift states the contract). `busy` while current pressure keeps
 /// firing at the floor, or capture is behind or encoder latency is over two frame intervals for
 /// 5 s, and through 10 continuous seconds without a current trigger so intermittent samples do not
