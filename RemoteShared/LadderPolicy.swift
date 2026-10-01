@@ -221,9 +221,10 @@ struct LadderPolicy: LadderEngine {
     }
 
     private mutating func warmingUp(_ inputs: LadderInputs, at time: TimeInterval) -> Bool {
-        // No session age and nothing encoded yet: capture is spinning up before the first encoder.
-        let age = inputs.encoderSessionAgeS ?? (inputs.encodedFPS == 0 ? 0 : nil)
-        guard warmupRules, let age, age < Self.warmupSeconds else {
+        // No session age and nothing encoded yet: capture is spinning up before the first encoder. That
+        // is warm-up too, but it does not use up the cap the encoder's own first seconds need.
+        if warmupRules, inputs.encoderSessionAgeS == nil, inputs.encodedFPS == 0 { return true }
+        guard warmupRules, let age = inputs.encoderSessionAgeS, age < Self.warmupSeconds else {
             warmingSince = nil
             return false
         }

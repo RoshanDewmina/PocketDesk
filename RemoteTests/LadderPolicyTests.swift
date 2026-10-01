@@ -1169,6 +1169,11 @@ final class LadderPolicyTests: XCTestCase {
             XCTAssertTrue(moves.isEmpty, "a session start's key frame and spin-up step nothing: \(moves)")
         }
 
+        var slowConnect = LadderPolicy(targetFPS: 60)
+        let spinUp = run(&slowConnect, 0...4) { _ in self.sessionStarts[4] }
+        let firstEncoder = run(&slowConnect, 5...8) { self.sessionStarts[$0 - 1] }
+        XCTAssertTrue((spinUp + firstEncoder).isEmpty, "5 s before the first encoder leave its warm-up whole")
+
         var old = LadderPolicy(targetFPS: 60)
         old.warmupRules = false
         let oldMoves = run(&old, 0...3) { self.sessionStarts[$0] }
