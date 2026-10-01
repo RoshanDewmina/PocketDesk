@@ -65,6 +65,9 @@ enum LadderTrigger: CaseIterable {
         case .cpuLimited:
             return inputs.qualityLimitation?.lowercased() == "cpu"
         case .pacerDelay:
+            // A still screen sends a refresh frame or two, often one key frame after a resize; the
+            // window's packet wait is that one frame's, not a queue. `isClean` holds the climb instead.
+            guard !LadderPolicy.isStill(inputs) else { return false }
             return (inputs.pacerDelayMs ?? 0) > 50
         case .lowEstimate:
             guard let available = inputs.availableKbps, let target = inputs.targetKbps, target > 0 else { return false }
@@ -73,12 +76,14 @@ enum LadderTrigger: CaseIterable {
             return inputs.qualityLimitation?.lowercased() == "bandwidth"
         case .phoneSuperseded:
             // Network bunching alone supersedes frames too; it counts only with a second phone signal.
-            guard let superseded = inputs.phoneSupersededPerSecond else { return false }
-            let slowDecode = inputs.phoneDecodeMs.map { $0 > interval } ?? false
-            let fewPresented = inputs.phonePresentedFPS.map { $0 < 0.8 * fps } ?? false
-            return Double(superseded) > 0.25 * fps && (slowDecode || fewPresented)
+            guard let superseded = inputs.phoneSupersededPerSecond, superseded >= 3,
+                  let delivered = LadderPolicy.phoneMeasurableFPS(inputs, at: rung) else { return false }
+            let slowDecode = inputs.phoneDecodeMs.map { $0 > 1000 / delivered } ?? false
+            let fewPresented = inputs.phonePresentedFPS.map { $0 < 0.8 * delivered } ?? false
+            return Double(superseded) > 0.25 * delivered && (slowDecode || fewPresented)
         case .phoneDecode:
-            return (inputs.phoneDecodeMs ?? 0) > interval
+            guard let delivered = LadderPolicy.phoneMeasurableFPS(inputs, at: rung) else { return false }
+            return (inputs.phoneDecodeMs ?? 0) > 1000 / delivered
         }
     }
 
@@ -91,8 +96,11 @@ enum LadderTrigger: CaseIterable {
 /// statistics sample with a monotonic time, no timers.
 /// - Down one rung on the second sample in a row with a load trigger, on the first sample with three
 ///   frames in flight, or on the first thermal sample but at most one thermal step per 10 s.
+/// - A still screen (`isStill`) and a window that sent under half the rung's frames are not load:
+///   the pacer wait of one key frame and the phone counters of a 1 fps refresh step nothing.
 /// - Up one rung after `climbWait` clean seconds since the last bad or neutral sample or move, and
-///   30 s after a thermal move. A climb that steps down again within 10 s failed: the wait doubles
+///   30 s after a thermal move. A climb that steps down again within 10 s, or within its first 10
+///   samples of a moving picture (a climb made on a still screen), failed: the wait doubles
 ///   (10, 20, 40, 60 s); it returns to 10 s after 120 s on one rung or a down step with another reason.
 /// - Low Power Mode caps the top at the first rung of 60 fps or less (reason `power`), in one move.
 /// - A target change restarts at the top of the new ladder.
@@ -101,6 +109,7 @@ struct LadderPolicy: LadderEngine {
     static let upAfter: TimeInterval = 10
     static let maxClimbWait: TimeInterval = 60
     static let failedClimbWindow: TimeInterval = 10
+    static let failedClimbSamples = 10
     static let stableReset: TimeInterval = 120
     static let thermalStepEvery: TimeInterval = 10
     static let thermalUpAfter: TimeInterval = 30
@@ -116,6 +125,8 @@ struct LadderPolicy: LadderEngine {
     private var calmSince: TimeInterval?
     private var lastMoveAt: TimeInterval?
     private var lastClimbAt: TimeInterval?
+    /// Samples since the last climb in which the picture moved (`!isStill`).
+    private var movingSinceClimb = 0
     private var thermalMoveAt: TimeInterval?
     private var backoffReason: LadderReason?
 
@@ -157,6 +168,7 @@ struct LadderPolicy: LadderEngine {
             move(to: lowPowerRung, reason: powerReason.rawValue, at: time)
             return
         }
+        if lastClimbAt != nil, !Self.isStill(inputs) { movingSinceClimb += 1 }
         let firing = LadderTrigger.firing(inputs, at: state)
         let thermal = firing.first { $0.isThermal }
         let load = firing.first { !$0.isThermal }
@@ -181,6 +193,7 @@ struct LadderPolicy: LadderEngine {
         let next = state.rung - 1
         move(to: next, reason: lowPower && next == lowPowerRung ? powerReason.rawValue : state.reason, at: time)
         lastClimbAt = time
+        movingSinceClimb = 0
     }
 
     private mutating func stepDown(because reason: LadderReason, at time: TimeInterval) {
@@ -188,7 +201,10 @@ struct LadderPolicy: LadderEngine {
             climbWait = Self.upAfter
             backoffReason = reason
         }
-        if let lastClimbAt, time - lastClimbAt < Self.failedClimbWindow {
+        // A climb made on a still screen is tested only once the picture moves: it failed if the step
+        // comes within 10 s of it or within its first 10 moving samples, inside the 120 s reset.
+        if let lastClimbAt, time - lastClimbAt < Self.failedClimbWindow
+            || (movingSinceClimb < Self.failedClimbSamples && time - lastClimbAt < Self.stableReset) {
             climbWait = min(climbWait * 2, Self.maxClimbWait)
         }
         lastClimbAt = nil
@@ -212,6 +228,7 @@ struct LadderPolicy: LadderEngine {
         guard let encoded = inputs.encodedFPS, encoded >= 0,
               encoded + 1 >= 0.95 * demandFPS(inputs, at: rung) else { return false }
         if let latency = inputs.encodeLatencyP90Ms, latency >= frameIntervalMs(rung) { return false }
+        if isStill(inputs), (inputs.pacerDelayMs ?? 0) > 50 { return false }
         return true
     }
 
@@ -220,6 +237,24 @@ struct LadderPolicy: LadderEngine {
     static func demandFPS(_ inputs: LadderInputs, at rung: LadderState) -> Double {
         max(0, min(rungFPS(rung), inputs.captureFPS ?? rungFPS(rung)))
     }
+
+    /// The source changed at most once in the window: what went out was the idle refresh, or the one
+    /// new-size frame (a key frame) of a ladder move.
+    static func isStill(_ inputs: LadderInputs) -> Bool {
+        inputs.captureFPS.map { $0 <= 1 } ?? false
+    }
+
+    /// The frames the phone had to decode and show: the rung's rate, or fewer when the Mac sent fewer
+    /// (24 fps video on a 60 rung leaves 41.7 ms a frame). nil under `phoneMinimumFPS`: a still
+    /// screen's refresh is about 1 fps, so the phone's per-window counters are one or two frames,
+    /// often a key frame at a new size, and a low presented rate is the Mac's choice. Such a window
+    /// is neither phone load nor evidence against a climb.
+    static func phoneMeasurableFPS(_ inputs: LadderInputs, at rung: LadderState) -> Double? {
+        let delivered = max(0, min(rungFPS(rung), inputs.sentFPS ?? rungFPS(rung)))
+        return delivered >= min(phoneMinimumFPS, 0.5 * rungFPS(rung)) ? delivered : nil
+    }
+
+    static let phoneMinimumFPS = 10.0
 
     static func rungFPS(_ rung: LadderState) -> Double { Double(max(1, rung.fps)) }
 
@@ -406,15 +441,20 @@ struct SenderQueueGovernor: Equatable {
     }
 }
 
-/// The honest load pill (BusyState.swift states the contract). `busy` while current pressure keeps
-/// firing at the floor, or capture is behind or encoder latency is over two frame intervals for
-/// 5 s, and through 10 continuous seconds without a current trigger so intermittent samples do not
-/// flicker the warning. `strained` is the bounded record of a recent downward step. The size shown
-/// is `longEdge × sizeFraction`, `longEdge` being the rung-0 picture's.
+/// The honest load pill (BusyState.swift states the contract). `busy` only for persistent trouble:
+/// one cause firing at the floor for 5 s (a thermal one at once), or capture behind or encoder
+/// latency over two frame intervals for 5 s. It holds through 10 continuous seconds without its
+/// cause so intermittent samples do not flicker the warning. A step for load (encoding, capture,
+/// network, phone) shows nothing: the ladder heals it within seconds. `strained` is the bounded
+/// record of a step for a condition that does not heal by itself, a hot Mac or Low Power Mode.
+/// The reason is the cause that persisted, never a different trigger that fired once since. The
+/// size shown is `longEdge × sizeFraction`, `longEdge` being the rung-0 picture's.
 struct BusyPolicy {
     static let holdSeconds: TimeInterval = 5
     static let clearSeconds: TimeInterval = 10
     static let strainedSeconds: TimeInterval = 8
+    static let conditionReasons: Set<String> = [LadderReason.thermal.rawValue, LadderReason.power.rawValue,
+                                                LadderReason.phonePower.rawValue]
 
     private(set) var state = BusyState.ok
     private var targetFPS: Int?
@@ -422,7 +462,7 @@ struct BusyPolicy {
     private var steppedDownAt: TimeInterval?
     private var captureBehindSince: TimeInterval?
     private var encodeSlowSince: TimeInterval?
-    private var floorLoadSamples = 0
+    private var floorSince: [LadderReason: TimeInterval] = [:]
     private var busyAt: TimeInterval?
     private var busyReason: LadderReason?
 
@@ -442,48 +482,39 @@ struct BusyPolicy {
         lastRung = ladder.rung
         let floor = LadderPolicy.ladder(targetFPS: inputs.targetFPS).count - 1
         let firing = LadderTrigger.firing(inputs, at: ladder)
-        let liveTrigger = firing.first
         let atFloor = ladder.rung >= floor
-        floorLoadSamples = atFloor && liveTrigger != nil ? floorLoadSamples + 1 : 0
+        let floorReasons = atFloor ? Set(firing.map(\.reason)) : []
+        floorSince = floorSince.filter { floorReasons.contains($0.key) }
+        for reason in floorReasons where floorSince[reason] == nil { floorSince[reason] = time }
         let captureLate = LadderTrigger.captureBehind.fires(inputs, at: ladder)
         let encodeSlow = LadderTrigger.encodeLatency.fires(inputs, at: ladder)
         captureBehindSince = captureLate ? captureBehindSince ?? time : nil
         encodeSlowSince = encodeSlow ? encodeSlowSince ?? time : nil
 
-        let captureHeld = Self.held(captureBehindSince, at: time)
-        let encodeHeld = Self.held(encodeSlowSince, at: time)
-        let floorBusy = atFloor && liveTrigger.map {
-            $0.isImmediate || $0.isThermal || floorLoadSamples >= LadderPolicy.downSamples
-        } == true
-        let liveReason: LadderReason? = floorBusy ? liveTrigger?.reason
-            : captureHeld ? .capture
-            : encodeHeld ? .encoding
-            : nil
-        let rawBusy = floorBusy || captureHeld || encodeHeld
-        if let currentReason = liveTrigger?.reason ?? liveReason {
+        let floorHeld = firing.first { trigger in
+            atFloor && (trigger.isThermal || Self.held(floorSince[trigger.reason], at: time))
+        }
+        let liveReason: LadderReason? = floorHeld?.reason
+            ?? (Self.held(captureBehindSince, at: time) ? .capture : nil)
+            ?? (Self.held(encodeSlowSince, at: time) ? .encoding : nil)
+        if let liveReason {
             busyAt = time
-            busyReason = currentReason
+            busyReason = liveReason
+        } else if state.level == .busy, let busyReason, firing.contains(where: { $0.reason == busyReason }) {
+            busyAt = time
         }
 
-        let level: BusyState.Level
-        if rawBusy || (state.level == .busy && busyAt.map({ time - $0 < Self.clearSeconds }) ?? false) {
-            level = .busy
-        } else if ladder.rung > 0, let steppedDownAt, time - steppedDownAt < Self.strainedSeconds {
-            level = .strained
-        } else {
-            level = .ok
-        }
-
+        let holding = state.level == .busy && busyAt.map({ time - $0 < Self.clearSeconds }) ?? false
+        let edge = min(16_384, Int((Double(max(0, longEdge)) * ladder.sizeFraction).rounded()))
+        let fps = min(240, max(0, ladder.fps))
         let next: BusyState
-        if level == .ok {
-            next = .ok
+        if let reason = liveReason ?? (holding ? busyReason : nil) {
+            next = BusyState(level: .busy, fps: fps, longEdge: edge, reason: reason.rawValue)
+        } else if ladder.rung > 0, let reason = ladder.reason, Self.conditionReasons.contains(reason),
+                  let steppedDownAt, time - steppedDownAt < Self.strainedSeconds {
+            next = BusyState(level: .strained, fps: fps, longEdge: edge, reason: reason)
         } else {
-            let reason = (level == .busy ? (liveReason ?? busyReason)?.rawValue : nil)
-                ?? (ladder.rung > 0 ? ladder.reason : nil)
-                ?? state.reason
-            let edge = Int((Double(max(0, longEdge)) * ladder.sizeFraction).rounded())
-            next = BusyState(level: level, fps: min(240, max(0, ladder.fps)), longEdge: min(16_384, edge),
-                             reason: reason)
+            next = .ok
         }
         guard next != state else { return nil }
         state = next
