@@ -409,7 +409,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     }
     func release() -> Int { serialized { invalidate(); return 0 } }
     deinit { if let session { VTCompressionSessionInvalidate(session) } }
-    func implementationName() -> String { configuration.codecType == kCMVideoCodecType_HEVC ? "Farside public VideoToolbox HEVC Main" : "Farside public VideoToolbox H264" }
+    func implementationName() -> String { configuration.fullColor444 ? "Farside public VideoToolbox HEVC Main444" : (configuration.codecType == kCMVideoCodecType_HEVC ? "Farside public VideoToolbox HEVC Main" : "Farside public VideoToolbox H264") }
     func scalingSettings() -> RTCVideoEncoderQpThresholds? { nil }
     var resolutionAlignment: Int { 2 }
     var applyAlignmentToAllSimulcastLayers: Bool { true }

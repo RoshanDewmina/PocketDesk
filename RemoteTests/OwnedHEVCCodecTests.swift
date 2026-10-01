@@ -40,7 +40,8 @@ final class OwnedHEVCCodecTests: XCTestCase {
             let snapshot = sink.snapshot
             XCTAssertGreaterThanOrEqual(snapshot.count, 2, "Genuine native RTP decoding, no toI420 probe conversion")
             XCTAssertEqual(snapshot.fullColor, receiver == "444", "Only mutually negotiated profile4 produces actual full-size chroma")
-            print("CHROMA RTP receiver=\(receiver) payload=\(payload) decoded=\(snapshot.count) actual444=\(snapshot.fullColor)")
+            if receiver == "444" { XCTAssertTrue(snapshot.declared709, "Actual owned renderer needs explicit decoded primaries/transfer/matrix, not guessed color") }
+            print("CHROMA RTP receiver=\(receiver) payload=\(payload) decoded=\(snapshot.count) actual444=\(snapshot.fullColor) declared709=\(snapshot.declared709)")
         }
     }
     func testMain444PublicHardwareProbeAndFactoryFallbackAreHonest() {
@@ -267,11 +268,15 @@ private final class HEVCRenderSink: NSObject, RTCVideoRenderer, @unchecked Senda
 
 private final class HEVC444NativeSink: NSObject, RTCVideoRenderer {
     private let lock = NSLock()
-    private var count = 0, fullColor = false
-    var snapshot: (count: Int, fullColor: Bool) { lock.lock(); defer { lock.unlock() }; return (count, fullColor) }
+    private var count = 0, fullColor = false, declared709 = false
+    var snapshot: (count: Int, fullColor: Bool, declared709: Bool) { lock.lock(); defer { lock.unlock() }; return (count, fullColor, declared709) }
     func setSize(_ size: CGSize) {}
     func renderFrame(_ frame: RTCVideoFrame?) {
         guard let frame, let pixels = (frame.buffer as? RTCCVPixelBuffer)?.pixelBuffer else { return }
-        lock.lock(); count += 1; fullColor = HEVC444PixelTransfer.isFullColor(pixels); lock.unlock()
+        lock.lock(); count += 1; fullColor = HEVC444PixelTransfer.isFullColor(pixels)
+        declared709 = CVBufferCopyAttachment(pixels, kCVImageBufferColorPrimariesKey, nil) as? String == kCVImageBufferColorPrimaries_ITU_R_709_2 as String &&
+            CVBufferCopyAttachment(pixels, kCVImageBufferTransferFunctionKey, nil) as? String == kCVImageBufferTransferFunction_ITU_R_709_2 as String &&
+            CVBufferCopyAttachment(pixels, kCVImageBufferYCbCrMatrixKey, nil) as? String == kCVImageBufferYCbCrMatrix_ITU_R_709_2 as String
+        lock.unlock()
     }
 }
