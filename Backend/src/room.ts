@@ -33,6 +33,8 @@ type Attachment = {
   deviceId?: string;
   entitlementUntil?: number;
   issuedAt?: number;
+  /** Last frame from this authenticated peer (registration counts). */
+  lastSeenAt?: number;
 };
 
 type RoomState = {
@@ -281,9 +283,34 @@ export class RoomDO extends DurableObject<Env> {
 
   /** Sends `ice` and remembers it verbatim, so a keepalive can repeat exactly what the peer already accepted. */
   private sendIce(ws: WebSocket, role: PeerRole, servers: IceServer[]): void {
+    this.sendText(ws, this.rememberIce(role, servers));
+  }
+
+  /** A keepalive must repeat the servers the peer holds now, never ones a renewal already replaced. */
+  private rememberIce(role: PeerRole, servers: IceServer[]): string {
     const message = JSON.stringify({ type: "ice", servers, ...(this.config.testForceRelay ? { policy: "relay" } : {}) });
     this.update(role === "host" ? { ice_host: message } : { ice_client: message });
-    this.sendText(ws, message);
+    return message;
+  }
+
+  /**
+   * Frees `role` for `ws`, whose registration already proved that role's credentials. A phone that changed
+   * networks leaves a socket the edge still reports open; once that peer has sent nothing for
+   * `replaceQuietMs` it is dropped exactly as if it had closed. A live loser is told `replaced` (apps treat an
+   * unknown service error as final), so two live copies of one pairing cannot keep evicting each other.
+   */
+  private takeSlot(role: PeerRole, ws: WebSocket, now: number): boolean {
+    if (!this.slotTaken(role, ws)) return true;
+    const incumbent = this.peer(role);
+    if (this.config.replaceQuietMs === 0 || !incumbent || incumbent === ws) return false;
+    const pendingOther = this.openSockets().some(other => other !== ws && other !== incumbent &&
+      this.attachment(other).role === role && this.attachment(other).pending);
+    const seen = this.attachment(incumbent);
+    const quietMs = now - (seen.lastSeenAt ?? seen.connectedAt);
+    if (pendingOther || quietMs < this.config.replaceQuietMs) return false;
+    log("stale_peer_replaced", { room: fingerprint(this.state().room ?? undefined), role, quietMs });
+    this.error(incumbent, "replaced");
+    return !this.slotTaken(role, ws);
   }
 
   /** Server-originated policy only; it is never accepted as a peer frame or relayed. */
@@ -694,6 +721,10 @@ export class RoomDO extends DurableObject<Env> {
     if (!msg) { this.error(ws, "invalid_message"); return; }
     const attachment = this.attachment(ws);
     if (attachment.guest) { await this.guestMessage(ws, msg); return; }
+    if (attachment.authenticated) {
+      attachment.lastSeenAt = now;
+      this.save(ws, attachment);
+    }
     if (msg.type === "guest") {
       if (attachment.authenticated && attachment.role === "host" && attachment.guestAware && msg.version === 1) await this.guests().ownerMessage(ws, msg.guest);
       await this.scheduleAlarm(); return; // Guests never occupy/evict a native owner slot.
@@ -773,6 +804,7 @@ export class RoomDO extends DurableObject<Env> {
 
   /** The lease ended: the host goes with `room_lifetime_reached` and its client with `host_disconnected`, as before. */
   private expireRoom(host: WebSocket): void {
+    log("room_lease_expired", { room: fingerprint(this.state().room ?? undefined) });
     this.guestService?.endAll("owner_session_expired");
     this.queueActivityEnd("timeout");
     const client = this.peer("client");
@@ -831,7 +863,7 @@ export class RoomDO extends DurableObject<Env> {
       // Authenticate before revealing anything about the room, including whether a host is present.
       if (!msg.clientTokenHash || !(await secureEqual(await sha256Hex(msg.token), room))) { this.error(ws, "unauthorized"); return; }
       if (state.blocked) { this.error(ws, "room_not_approved"); return; }
-      if (this.slotTaken("host", ws)) { this.error(ws, "already_connected"); return; }
+      if (!this.takeSlot("host", ws, now)) { this.error(ws, "already_connected"); return; }
       if (!state.room) {
         // A brand-new room: bound how many rooms one address can create, closing bare so the app simply retries later.
         if (!(await allow(this.env.RL_ROOM_CREATE, addressKey(attachment.ip), "RL_ROOM_CREATE"))) {
@@ -874,7 +906,7 @@ export class RoomDO extends DurableObject<Env> {
       const leaseEndsAt = now + this.config.leaseMs;
       this.update({ room, client_token_hash: msg.clientTokenHash, lease_ends_at: leaseEndsAt, entitlement_id: null, entitled_device: null, recheck_at: null, last_activity: now,
         route_epoch: randomHex(16), route_revision: 0, route_expires_at: null });
-      const next: Attachment = { ...attachment, role: "host", authenticated: true, pending: false, renewable, remoteAware, routeAware, guestAware: msg.features.has(GUEST_FEATURE), entitled: false, servedRelay: false };
+      const next: Attachment = { ...attachment, role: "host", authenticated: true, pending: false, renewable, remoteAware, routeAware, guestAware: msg.features.has(GUEST_FEATURE), entitled: false, servedRelay: false, lastSeenAt: now };
       this.save(ws, next);
       this.send(ws, {
         type: "registered",
@@ -896,10 +928,13 @@ export class RoomDO extends DurableObject<Env> {
       this.error(ws, "host_unavailable_or_unauthorized");
       return;
     }
-    if (this.slotTaken("client", ws)) { this.error(ws, "already_connected"); return; }
     if (isPublicEnvironment(this.config.environmentName) && !this.attachment(host).routeAware) {
       this.error(ws, "upgrade_required"); return;
     }
+    if (this.peer("host") !== host || this.state().client_token_hash !== clientTokenHash) {
+      this.error(ws, "host_unavailable_or_unauthorized"); return;
+    }
+    if (!this.takeSlot("client", ws, now)) { this.error(ws, "already_connected"); return; }
 
     let entitlement = await this.checkEntitlement(msg.entitlement, remoteAware);
     if (entitlement.entitled && entitlement.entitlementId && entitlement.deviceId) {
@@ -978,7 +1013,7 @@ export class RoomDO extends DurableObject<Env> {
     const next: Attachment = {
       ...attachment, role: "client", authenticated: true, pending: false, renewable, remoteAware, routeAware,
       entitled: entitlement.entitled, entitlementId: entitlement.entitlementId, deviceId: entitlement.deviceId,
-      entitlementUntil: entitlement.until, issuedAt: entitlement.entitled ? issuedAt : undefined,
+      entitlementUntil: entitlement.until, issuedAt: entitlement.entitled ? issuedAt : undefined, lastSeenAt: issuedAt,
     };
     this.save(ws, next);
     this.update({
@@ -1094,6 +1129,8 @@ export class RoomDO extends DurableObject<Env> {
         const refreshed = { ...this.attachment(ws), issuedAt: Date.now() };
         this.save(ws, refreshed);
         attachment = refreshed;
+        this.rememberIce(attachment.role!, servers);
+        log("relay_refreshed", { room: fingerprint(state.room ?? undefined), role: attachment.role });
       }
     }
     if (ws.readyState !== WebSocket.OPEN) return;
@@ -1143,6 +1180,7 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   private terminate(reason: string): void {
+    log("room_terminated", { room: fingerprint(this.state().room ?? undefined), reason });
     this.guestService?.endAll(reason);
     this.queueActivityEnd(reason === "route_expired" ? "timeout" : "error");
     this.revokeAll();

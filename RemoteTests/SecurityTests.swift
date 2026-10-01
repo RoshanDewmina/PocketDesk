@@ -43,3 +43,52 @@ final class SecurityTests: XCTestCase {
         XCTAssertNoThrow(try RemoteAction(action: "text", text: "Bonjour 👋 中文").validate())
     }
 }
+
+/// A peer whose DTLS certificate does not match the fingerprint in the sealed description is refused
+/// promptly with a reason, instead of hanging until the handshake timer.
+@MainActor
+final class DTLSFingerprintTests: XCTestCase {
+    private static func forged(_ signal: MediaSignal) -> MediaSignal {
+        guard let sdp = signal.sdp else { return signal }
+        var copy = signal
+        copy.sdp = sdp.replacingOccurrences(of: "a=fingerprint:sha-256 [0-9A-Fa-f:]+",
+                                            with: "a=fingerprint:sha-256 " + Array(repeating: "AB", count: 32).joined(separator: ":"),
+                                            options: .regularExpression)
+        return copy
+    }
+
+    /// Forges the fingerprint the detecting side receives; returns its states and whether DTLS was blamed.
+    private func connect(forgedFor detectorIsHost: Bool) async throws -> (states: [String], rejected: Bool, seconds: TimeInterval) {
+        let host = PeerMedia(isHost: true, servers: [])
+        let phone = PeerMedia(isHost: false, servers: [])
+        defer { host.close(); phone.close() }
+        host.onSignal = { [weak phone] in phone?.receive(!detectorIsHost && $0.kind == "offer" ? Self.forged($0) : $0) }
+        phone.onSignal = { [weak host] in host?.receive(detectorIsHost && $0.kind == "answer" ? Self.forged($0) : $0) }
+        let detector = detectorIsHost ? host : phone
+        var states: [String] = []
+        detector.onState = { states.append($0) }
+        let started = Date()
+        host.offer()
+        let deadline = started.addingTimeInterval(10)
+        while !states.contains("failed"), !states.contains("connected"), Date() < deadline {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        return (states, detector.dtlsRejected, Date().timeIntervalSince(started))
+    }
+
+    func testPhoneRefusesAMacCertificateThatDoesNotMatchTheSealedOffer() async throws {
+        let result = try await connect(forgedFor: false)
+        XCTAssertEqual(result.states.first, "failed")
+        XCTAssertFalse(result.states.contains("connected"), "fails closed, never connected")
+        XCTAssertTrue(result.rejected, "reported as a DTLS refusal, not a generic drop")
+        XCTAssertLessThan(result.seconds, 10)
+    }
+
+    func testMacRefusesAPhoneCertificateThatDoesNotMatchTheSealedAnswer() async throws {
+        let result = try await connect(forgedFor: true)
+        XCTAssertEqual(result.states.first, "failed")
+        XCTAssertFalse(result.states.contains("connected"), "fails closed, never connected")
+        XCTAssertTrue(result.rejected, "reported as a DTLS refusal, not a generic drop")
+        XCTAssertLessThan(result.seconds, 10)
+    }
+}
