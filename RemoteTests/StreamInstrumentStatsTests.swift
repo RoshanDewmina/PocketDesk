@@ -275,8 +275,8 @@ final class StreamInstrumentStatsTests: XCTestCase {
         counters.encoderSessionStarted(atMs: MachClock.nowMs() - 2_500)
         counters.encoderRateUpdated()
         counters.encoderRateUpdated()
-        counters.encoded(latencyMs: 14.7, bytes: 12_000, isKeyFrame: false, inFlight: 1)
-        counters.encoded(latencyMs: 29.4, bytes: 300_000, isKeyFrame: true, inFlight: 2)
+        counters.encoded(latencyMs: 14.7, vtLatencyMs: 6, bytes: 12_000, isKeyFrame: false, inFlight: 1)
+        counters.encoded(latencyMs: 29.4, vtLatencyMs: 9, bytes: 300_000, isKeyFrame: true, inFlight: 2)
         counters.encoded(latencyMs: 42.1, bytes: 8_000, isKeyFrame: false, inFlight: 3)
         let snapshot = counters.drain(inputBufferedBytes: nil)
         XCTAssertEqual(snapshot.encodeLatencyP50Ms, 29.4)
@@ -292,6 +292,7 @@ final class StreamInstrumentStatsTests: XCTestCase {
         let sample = StreamStatsSample(entries: [])
         let report = StreamStatsReport(role: "host", previous: sample, current: sample, counters: withInterval)
         XCTAssertEqual(report.encodeLatencyMs, 29.4)
+        XCTAssertEqual(report.encodeVTP90Ms, 9, "VideoToolbox's own share is logged beside the full time")
         XCTAssertEqual(report.keyFrameBytesMax, 300_000)
         let summary = report.hostSummary
         XCTAssertEqual(summary.encodeInFlightMax, 3)

@@ -324,7 +324,7 @@ struct LadderPolicy: LadderEngine {
 /// Kill switch for the false-load rules (`defaults write <bundle id> PocketDeskLadderFalseLoad -bool NO`,
 /// then relaunch the host). Off restores, in the ladder and the busy pill alike: an encoder's first
 /// seconds and pre-encode drops inside the frame interval count as load, superseded phone frames
-/// count with few presented, and encode latency runs to the owned encoder's queue, not VideoToolbox.
+/// count with few presented, and a climb no longer needs to fit the faster rung's interval.
 enum LadderFalseLoadSwitch {
     static let defaultsKey = "PocketDeskLadderFalseLoad"
     static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
