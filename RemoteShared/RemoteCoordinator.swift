@@ -231,6 +231,11 @@ final class RemoteCoordinator: ObservableObject {
     private var deferredInputSizes: [Int] = []
     private var deferredInputBytes = 0
     private var reliableMotionOrdinal: UInt64?
+    private var reliableCheckpointRetransmit: Task<Void, Never>?
+    private var reliableCheckpointRetransmits = 0
+    /// The host can drop a checkpoint batch without an ACK or anchor (its executor generation
+    /// moved mid-batch). The ledger makes a resent prefix idempotent, so resend instead of stalling.
+    static let reliableCheckpointRetransmitNanoseconds: UInt64 = 250_000_000
     private var inputRecoveryPending = false
     private var inputRecoveryTimeout: Task<Void, Never>?
     private static let maximumDeferredActions = 512
@@ -393,7 +398,7 @@ final class RemoteCoordinator: ObservableObject {
     private func requestInputRecovery() -> Bool {
         guard !isHost, connected, var context = causalContext else { return false }
         if inputRecoveryPending { return false }
-        inputRecoveryPending = true; clearDeferredInput(); reliableMotionOrdinal = nil
+        inputRecoveryPending = true; clearDeferredInput(); clearReliableCheckpoint()
         context.kind = "rebase"; context.applied = 0; context.segments = []
         guard transmit(RemoteAction(action: "heartbeat", epoch: context.epoch), input: context) else { return false }
         inputRecoveryTimeout?.cancel()
@@ -469,7 +474,9 @@ final class RemoteCoordinator: ObservableObject {
             // immutable on-wire prefix stays intact; only its unsent tail merges.
             if reliableMotionOrdinal != nil { return true }
             reliableMotionOrdinal = envelope.applied
-            return transmit(RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope)
+            let sent = transmit(RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope)
+            armReliableCheckpointRetransmit(ordinal: envelope.applied, context: envelope)
+            return sent
         }
         motionSequence &+= 1
         let packet = ControlPacket(session: session, sequence: motionSequence,
@@ -478,6 +485,23 @@ final class RemoteCoordinator: ObservableObject {
         if media?.sendPointer(data) == true { return true }
         // Opening/congestion/channel loss falls back to the same checkpoint on reliable control.
         return sendMotionPrefix(reliable: true)
+    }
+    private func armReliableCheckpointRetransmit(ordinal: UInt64, context: InputCausalEnvelope) {
+        reliableCheckpointRetransmit?.cancel()
+        let delay = Self.reliableCheckpointRetransmitNanoseconds << UInt64(min(reliableCheckpointRetransmits, 2))
+        reliableCheckpointRetransmit = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled, let self, self.connected, !self.inputRecoveryPending,
+                  self.reliableMotionOrdinal == ordinal, let current = self.causalContext,
+                  current.nonce == context.nonce, current.anchor == context.anchor, current.epoch == context.epoch else { return }
+            self.reliableCheckpointRetransmits += 1
+            self.reliableMotionOrdinal = nil
+            _ = self.sendMotionPrefix(reliable: true)
+        }
+    }
+    private func clearReliableCheckpoint() {
+        reliableMotionOrdinal = nil; reliableCheckpointRetransmits = 0
+        reliableCheckpointRetransmit?.cancel(); reliableCheckpointRetransmit = nil
     }
     func acknowledgeCausalInput(_ context: InputCausalEnvelope, applied: UInt64) {
         guard isHost, let current = causalContext, context.nonce == current.nonce,
@@ -526,7 +550,7 @@ final class RemoteCoordinator: ObservableObject {
             guard input.nonce == offeredInputNonce else { return } // A newer correlated offer supersedes this response.
             let changedGeometry = input.epoch != offeredInputEpoch
             inputNegotiationTimeout?.cancel(); inputNegotiationTimeout = nil
-            offeredInputNonce = nil; causalContext = input; motionPrefix = InputMotionPrefix(); reliableMotionOrdinal = nil
+            offeredInputNonce = nil; causalContext = input; motionPrefix = InputMotionPrefix(); clearReliableCheckpoint()
             if changedGeometry { clearDeferredInput(); onCausalContext?(input) }
             try drainDeferredInput()
         case "anchor":
@@ -534,7 +558,7 @@ final class RemoteCoordinator: ObservableObject {
             guard let current = causalContext, input.nonce == current.nonce else { return }
             guard input.anchor != current.anchor || input.epoch != current.epoch else { return }
             causalContext = input; motionPrefix = InputMotionPrefix(); clearDeferredInput()
-            reliableMotionOrdinal = nil; inputRecoveryPending = false
+            clearReliableCheckpoint(); inputRecoveryPending = false
             inputRecoveryTimeout?.cancel(); inputRecoveryTimeout = nil
             onCausalContext?(input)
         case "ack":
@@ -543,7 +567,7 @@ final class RemoteCoordinator: ObservableObject {
                   packet.action.action == "heartbeat" else { return }
             guard !inputRecoveryPending else { return }
             try motionPrefix.acknowledge(input.applied)
-            if let ordinal = reliableMotionOrdinal, input.applied >= ordinal { reliableMotionOrdinal = nil }
+            if let ordinal = reliableMotionOrdinal, input.applied >= ordinal { clearReliableCheckpoint() }
             try drainDeferredInput()
         case "rebase":
             guard isHost, let current = causalContext, input.nonce == current.nonce,
@@ -879,7 +903,7 @@ final class RemoteCoordinator: ObservableObject {
         causalContext = nil; offeredInputNonce = nil; offeredInputEpoch = 0; hostInputEpoch = 0
         hostInputAnchor = InputCausalEnvelope.identity(); motionPrefix = InputMotionPrefix()
         motionSequence = 0; motionReplay = InputMotionReplay(); clearDeferredInput()
-        reliableMotionOrdinal = nil; inputRecoveryPending = false
+        clearReliableCheckpoint(); inputRecoveryPending = false
         inputRecoveryTimeout?.cancel(); inputRecoveryTimeout = nil
         request = ""; session = ""; sequence = 0; guardState = nil; proofReceived = false
         peerFeatures = []

@@ -196,6 +196,52 @@ final class InputCoordinatorTests: XCTestCase {
         }
     }
 
+    func testHostDroppedReliableCheckpointIsResentAndDeferredSemanticStillPosts() async throws {
+        let (host, phone) = rig(); defer { host.stop(); phone.stop() }
+        var upstream: [ControlPacket] = [], downstream: [ControlPacket] = []
+        host.inputPacketSenderForTesting = { downstream.append($0); return true }
+        phone.inputPacketSenderForTesting = { upstream.append($0); return true }
+        phone.requestCausalInput(epoch: 7)
+        try host.receiveInputFixtureForTesting(upstream.removeFirst())
+        try phone.receiveInputFixtureForTesting(downstream.removeFirst())
+        var ledger = InputAppliedLedger(), displacement = 0.0, keys: [String] = [], dropNext = true
+        host.onCausalInput = { context, semantic in
+            // Executor generation moved mid-batch: the host drops it with no ACK and no anchor.
+            if dropNext { dropNext = false; return }
+            for segment in try! ledger.missing(from: context) {
+                displacement += segment.action.x; try! ledger.recordPosted(segment.ordinal)
+            }
+            if let semantic { keys.append(semantic.key) }
+            host.acknowledgeCausalInput(context, applied: ledger.applied)
+        }
+        // Fill the 24-segment prefix so later work is deferred behind the one reliable checkpoint.
+        for _ in 0..<25 { XCTAssertTrue(phone.sendInputMoves([RemoteAction(action: "move", x: 1, epoch: 7)])) }
+        XCTAssertTrue(phone.sendControl(RemoteAction(action: "key", key: "a", epoch: 7)))
+        XCTAssertEqual(upstream.count, 1)
+        XCTAssertFalse(upstream.contains { $0.action.action == "key" }, "The key waits behind the full prefix")
+        try host.receiveInputFixtureForTesting(upstream.removeFirst())
+        XCTAssertTrue(downstream.isEmpty, "Fixture host dropped the checkpoint silently")
+        XCTAssertTrue(phone.sendInputMoves([RemoteAction(action: "move", x: 1, epoch: 7)]))
+        XCTAssertTrue(upstream.isEmpty, "Still one checkpoint in flight before the retransmit interval")
+
+        let deadline = Date().addingTimeInterval(3)
+        while upstream.isEmpty && Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
+        let resent = try XCTUnwrap(upstream.first, "A dropped reliable checkpoint must be resent, not wait for overflow")
+        XCTAssertEqual(resent.action.action, "heartbeat"); XCTAssertEqual(resent.input?.kind, "barrier")
+        XCTAssertEqual(resent.input?.segments.map(\.ordinal), Array(1...24))
+        var rounds = 0
+        while !upstream.isEmpty || !downstream.isEmpty {
+            rounds += 1; XCTAssertLessThan(rounds, 100); if rounds >= 100 { break }
+            while !upstream.isEmpty { try host.receiveInputFixtureForTesting(upstream.removeFirst()) }
+            while !downstream.isEmpty { try phone.receiveInputFixtureForTesting(downstream.removeFirst()) }
+        }
+        XCTAssertEqual(displacement, 26); XCTAssertEqual(keys, ["a"])
+        try await Task.sleep(nanoseconds: 600_000_000)
+        XCTAssertTrue(upstream.isEmpty, "An acknowledged checkpoint is never resent")
+        XCTAssertTrue(phone.connected); XCTAssertTrue(phone.isRunning)
+        XCTAssertTrue(host.connected); XCTAssertTrue(host.isRunning)
+    }
+
     func testOneSecond240HzPencilPressureStallRetainsEverySampleAndEndOrder() throws {
         let (host, phone) = rig(); defer { host.stop(); phone.stop() }
         var upstream: [ControlPacket] = [], downstream: [ControlPacket] = []
