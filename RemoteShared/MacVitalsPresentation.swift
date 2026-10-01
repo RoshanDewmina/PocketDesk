@@ -20,8 +20,10 @@ struct MacVitalsPresentation: Equatable {
     init(_ vitals: MacVitals) {
         let percent = vitals.batteryPercent
         let spokenPercent = percent.map { "\($0) percent" }
-        // A nil caption is a Mac with no battery to speak of or one that did not report its power;
-        // with no suffix either, that reads as "running normally".
+        // Missing power/load/thermal evidence stays unknown, including future enum words.
+        let reportsNormalHealth = vitals.powerSource != nil &&
+            (vitals.thermalLevel == .nominal || vitals.thermalLevel == .fair) &&
+            vitals.lowPowerMode == false && vitals.loadLevel == .ok
         let base: (caption: String?, spoken: [String]) = switch vitals.powerSource {
         case .battery:
             (Self.join("on battery", percent), ["on battery", spokenPercent].compactMap { $0 })
@@ -31,7 +33,9 @@ struct MacVitalsPresentation: Equatable {
             ("plugged in", ["plugged in"])
         case .ups:
             (Self.join("on UPS", percent), ["on UPS power", spokenPercent].compactMap { $0 })
-        case .ac, nil:
+        case .ac:
+            reportsNormalHealth ? (nil, []) : ("plugged in", ["plugged in"])
+        case nil:
             (nil, [])
         }
 
@@ -44,7 +48,8 @@ struct MacVitalsPresentation: Equatable {
         if vitals.lowPowerMode == true { suffixes.append("Low Power Mode") }
         if vitals.loadLevel == .busy { suffixes.append("busy") }
 
-        let normal = base.caption == nil && suffixes.isEmpty ? ["running normally"] : []
+        let normal = base.caption == nil && suffixes.isEmpty
+            ? [reportsNormalHealth ? "running normally" : "status not reported"] : []
         caption = "Mac · " + ([base.caption].compactMap { $0 } + normal + suffixes).joined(separator: " · ")
         var captions = [caption]
         if normal.isEmpty {

@@ -14,8 +14,8 @@ final class MacVitalsPresentationTests: XCTestCase {
         XCTAssertEqual(caption(MacVitals(power: "ac", batteryPercent: 82, charging: true)), "Mac · charging 82%")
         XCTAssertEqual(caption(MacVitals(power: "ac", batteryPercent: 80, charging: false)), "Mac · plugged in")
         XCTAssertEqual(caption(MacVitals(power: "ac", batteryPercent: 100)), "Mac · plugged in")
-        XCTAssertEqual(caption(MacVitals(power: "ac")), "Mac · running normally")
-        XCTAssertEqual(caption(MacVitals()), "Mac · running normally")
+        XCTAssertEqual(caption(MacVitals(power: "ac")), "Mac · plugged in")
+        XCTAssertEqual(caption(MacVitals()), "Mac · status not reported")
         XCTAssertEqual(caption(MacVitals(power: "battery")), "Mac · on battery")
         XCTAssertEqual(caption(MacVitals(power: "ups", batteryPercent: 80)), "Mac · on UPS 80%")
         XCTAssertEqual(caption(MacVitals(power: "ups")), "Mac · on UPS")
@@ -62,7 +62,7 @@ final class MacVitalsPresentationTests: XCTestCase {
         XCTAssertEqual(spoken(heavy), "Your Mac: on battery, 12 percent, warm, Low Power Mode, busy.")
         XCTAssertEqual(spoken(MacVitals(power: "ac", batteryPercent: 82, charging: true)), "Your Mac: charging, 82 percent.")
         XCTAssertEqual(spoken(MacVitals(power: "ac", batteryPercent: 80)), "Your Mac: plugged in.")
-        XCTAssertEqual(spoken(MacVitals(power: "ac")), "Your Mac: running normally.")
+        XCTAssertEqual(spoken(MacVitals(power: "ac")), "Your Mac: plugged in.")
         XCTAssertEqual(spoken(MacVitals(power: "ups", batteryPercent: 80, thermal: 3)), "Your Mac: on UPS power, 80 percent, hot.")
     }
 
@@ -108,7 +108,7 @@ final class MacVitalsPresentationTests: XCTestCase {
 
     func testUnknownWordsReadAsNotReported() {
         let future = MacVitals(power: "solar", load: "melting", loadCause: "gpu")
-        XCTAssertEqual(caption(future), "Mac · running normally")
+        XCTAssertEqual(caption(future), "Mac · status not reported")
         XCTAssertEqual(MacVitalsPresentation(future).rows[0].value, "Not reported")
         XCTAssertEqual(MacVitalsPresentation(future).rows[3].value, "Not reported")
     }

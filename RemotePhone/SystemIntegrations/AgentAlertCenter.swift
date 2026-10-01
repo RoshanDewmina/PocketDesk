@@ -348,10 +348,10 @@ final class AgentAlertCenter: ObservableObject {
         presentation = AgentAlertPresentation(payload: payload, receivedAt: deliveredAt)
     }
 
-    /// From a link that names only the request.
+    /// An id-only link carries no authenticated producer or Mac identity. Inspection cannot
+    /// invent the currently selected pairing as its origin or authorize a report/connection.
     func open(linkedRequest id: String) {
-        open(AgentAlertPayload(helpRequestID: id, kind: .other,
-                               pairingIdentity: currentPairingIdentity?()), deliveredAt: now())
+        open(AgentAlertPayload(helpRequestID: id, kind: .other), deliveredAt: now())
     }
 
     /// An alert the Mac sent over the control channel, which only exists while a session is live. With the

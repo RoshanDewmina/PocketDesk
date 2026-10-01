@@ -243,6 +243,10 @@ final class AgentAlertCenterTests: XCTestCase {
         center.open(linkedRequest: "h_77")
         XCTAssertEqual(center.presentation?.id, "h_77")
         XCTAssertEqual(center.presentation?.payload.kind, .other, "A link carries no agent name")
+        XCTAssertNil(center.presentation?.payload.pairingIdentity, "Selected Mac is not evidence of this link’s origin")
+        XCTAssertFalse(center.isCurrentPairing(center.presentation!.payload))
+        center.currentPairingIdentity = { String(repeating: "b", count: 64) }
+        XCTAssertFalse(center.isCurrentPairing(center.presentation!.payload), "Switching Macs cannot bind an unknown origin")
     }
 
     func testAnswersAreRememberedInOrderAndCapped() async {

@@ -18,10 +18,12 @@ struct AgentAlertSheet: View {
     private var payload: AgentAlertPayload { item.payload }
     private var declined: Bool { center.wasDeclined(item.id) }
     private var old: Bool { item.freshness(at: center.now()) == .old }
+    private var originUnknown: Bool { !payload.isTest && payload.pairingIdentity == nil }
     private var pairingExpired: Bool { !payload.isTest && !center.isCurrentPairing(payload) }
 
     private var headline: String {
         if payload.isTest { return "Test alert received." }
+        if originUnknown { return "This link doesn’t identify its Mac." }
         if pairingExpired { return "This alert has expired." }
         return "A task on your Mac needs you."
     }
@@ -30,6 +32,7 @@ struct AgentAlertSheet: View {
 
     private var message: String {
         if payload.isTest { return "Notifications work. Nothing on your Mac is stuck." }
+        if originUnknown { return "Open Farside from the original notification, or choose your Mac from Home to inspect it." }
         if pairingExpired { return "This alert belongs to a different or removed Mac pairing. It can’t open your current Mac." }
         if declined { return "You said not now to this one. It may still be waiting." }
         if payload.isReminder { return "Still waiting on you." }
