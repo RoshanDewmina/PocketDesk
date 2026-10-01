@@ -82,6 +82,10 @@ struct StreamTuning: Equatable {
     /// Perf pack 4a: the host keeps per-frame display → encoded records and forwards the newest ones
     /// with its summary so the phone can time each frame to its decode. Off sends no records.
     var frameTiming = true
+    /// Crisp still text: the owned VideoToolbox encoder's MaxAllowedFrameQP ceiling. 26 keeps text edges
+    /// that 30 softened; VideoToolbox drops frames rather than exceed its rate limits, so motion pays in
+    /// frame rate, not blur. The key is an A/B override only (1…51).
+    var encoderMaximumQP = 26
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -110,6 +114,7 @@ struct StreamTuning: Equatable {
         tuning.idleVideoRefresh = false
         tuning.mergePointerMoves = false
         tuning.frameTiming = false
+        tuning.encoderMaximumQP = 30
         return tuning
     }()
 
@@ -133,12 +138,13 @@ struct StreamTuning: Equatable {
     static let mergePointerMovesKey = "PocketDeskMergePointerMoves"
     static let idleVideoRefreshKey = "PocketDeskIdleVideoRefresh"
     static let frameTimingKey = "PocketDeskFrameTiming"
+    static let encoderMaximumQPKey = "PocketDeskEncoderMaxQP"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
                                  viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
-                                 mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey]
+                                 mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -219,6 +225,10 @@ struct StreamTuning: Equatable {
         if defaults.object(forKey: frameTimingKey) != nil {
             tuning.frameTiming = defaults.bool(forKey: frameTimingKey)
         }
+        if defaults.object(forKey: encoderMaximumQPKey) != nil {
+            let qp = defaults.integer(forKey: encoderMaximumQPKey)
+            if (1...51).contains(qp) { tuning.encoderMaximumQP = qp }
+        }
         return tuning
     }
 
@@ -266,6 +276,7 @@ struct StreamTuning: Equatable {
         if !mergePointerMoves { parts.append("no move merge") }
         if presentAtDisplayMaximum && !idleVideoRefresh { parts.append("no idle refresh") }
         if !frameTiming { parts.append("no frame timing") }
+        if encoderMaximumQP != Self.tuned.encoderMaximumQP { parts.append("max QP \(encoderMaximumQP)") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
