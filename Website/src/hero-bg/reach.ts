@@ -4,7 +4,7 @@
 // button; Reduce Motion and Save-Data get one still frame.
 
 import type { Rect } from "../scripts/art/field";
-import { isPaused, motionAllowed, onMotionChange, prefersReduced } from "../scripts/motion";
+import { motionAllowed, onMotionChange, prefersReduced } from "../scripts/motion";
 import { reachWorkerURL } from "../scripts/tt";
 import { ReachCore, type ReachLayout } from "./reach-core";
 
@@ -61,7 +61,12 @@ export function startReach(bg: HTMLElement) {
 
   // ---- renderer: worker first, the page as the fallback ----
   let send: (m: Msg) => void = () => {};
-  const shown = () => bg.classList.add("bg-on");
+  let isShown = false;
+  const shown = () => {
+    if (isShown) return;
+    isShown = true;
+    bg.classList.add("bg-on");
+  };
 
   function onPage(canvas: HTMLCanvasElement) {
     const core = new ReachCore(canvas);
@@ -112,10 +117,11 @@ export function startReach(bg: HTMLElement) {
   if (worker) {
     const w = worker;
     const off = cv.transferControlToOffscreen();
-    let alive = false;
+    // ready: the worker answered at all; swapped: we already moved to drawing on the page.
+    let ready = false, swapped = false;
     const fallback = () => {
-      if (alive) return;
-      alive = true;
+      if (swapped) return;
+      swapped = true;
       w.terminate();
       // The transferred canvas can't be drawn from here any more: swap in a fresh one.
       const fresh = cv.cloneNode(false) as HTMLCanvasElement;
@@ -125,13 +131,17 @@ export function startReach(bg: HTMLElement) {
       update();
     };
     w.onmessage = (e: MessageEvent<{ type: string }>) => {
-      alive = true;
+      ready = true;
       if (e.data.type === "drawn") shown();
     };
+    // Any worker error, at start or later, moves the art to the page.
     w.onerror = fallback;
     w.postMessage({ type: "init", canvas: off, layout: measure(), still: !allowed, fps } satisfies Msg, [off]);
     send = (m) => w.postMessage(m);
-    setTimeout(fallback, 3000);
+    // No answer at all within 3 s: the worker never started.
+    setTimeout(() => {
+      if (!ready) fallback();
+    }, 3000);
   } else {
     onPage(cv);
     if (!allowed) send({ type: "still" });
@@ -141,14 +151,23 @@ export function startReach(bg: HTMLElement) {
   let onScreen = true;
   const update = () => send({ type: "run", on: allowed && onScreen && !document.hidden });
 
+  // Pointer moves are coalesced to one message per frame (fast mice send hundreds a second).
+  let pending: { x: number; y: number } | null = null;
   hero.addEventListener("pointermove", (e) => {
     const r = hero.getBoundingClientRect();
-    send({ type: "pointer", x: e.clientX - r.left, y: e.clientY - r.top, a: 1 });
+    const first = !pending;
+    pending = { x: e.clientX - r.left, y: e.clientY - r.top };
+    if (first)
+      requestAnimationFrame(() => {
+        if (pending) send({ type: "pointer", ...pending, a: 1 });
+        pending = null;
+      });
   });
   hero.addEventListener("pointerleave", () => send({ type: "pointer", x: -999, y: -999, a: 0 }));
   // A click or tap anywhere in the hero that isn't on a control sends an extra contact pulse.
   hero.addEventListener("click", (e) => {
     if (!allowed || (e.target as Element).closest("a, button, input, label, form, .hero-demo")) return;
+    if (window.getSelection()?.isCollapsed === false) return;
     const r = hero.getBoundingClientRect();
     send({ type: "pulse", x: e.clientX - r.left, y: e.clientY - r.top });
   });
@@ -172,7 +191,7 @@ export function startReach(bg: HTMLElement) {
   // Cached and refreshed here only: reading matchMedia().matches every frame would swallow its change event.
   onMotionChange(() => {
     allowed = motionAllowed();
-    if (prefersReduced() && !isPaused()) send({ type: "still" });
+    if (prefersReduced()) send({ type: "still" });
     update();
   });
   // The demo places the MacBook once it starts; measure again then, and after the entrance has settled.

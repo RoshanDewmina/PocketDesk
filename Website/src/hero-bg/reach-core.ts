@@ -51,7 +51,8 @@ export class ReachCore {
     for (const sp of this.sparks) {
       const k = (t - sp.t) / 0.75;
       if (k < 0 || k >= 1) continue;
-      const reach = (40 + 170 * S.hs) * sp.s * (1 - Math.pow(1 - k, 3));
+      // A tight ring: the ember stays close to the contact point.
+      const reach = (22 + 70 * S.hs) * sp.s * (1 - Math.pow(1 - k, 3));
       for (let i = 0; i < 13; i++) {
         const a = i * 0.483 + 0.3;
         const d = reach * (0.7 + 0.3 * ((i * 7) % 3));
@@ -87,11 +88,11 @@ export class ReachCore {
     this.sparks.push({ t, x: S.cx, y: S.cy, s });
   }
 
-  /** An extra pulse from a click or tap: a shockwave from that point and a flash at the contact. */
+  /** An extra pulse from a click or tap: a bone shockwave from that point and a flash at the contact (the ember
+   *  stays at the contact point). */
   pulse(x: number, y: number) {
     const t = this.clock;
     this.F.ripple(x, y, 0.9, t, 760);
-    this.sparks.push({ t, x, y, s: 0.5 });
     this.contactT = Math.max(this.contactT, t - 0.25);
   }
 

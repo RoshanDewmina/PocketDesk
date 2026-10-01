@@ -49,6 +49,8 @@ scope.onmessage = (e) => {
     core = new ReachCore(m.canvas);
     core.layout(m.layout);
     isStill = m.still;
+    // Tell the page the worker is alive straight away, whether or not it is allowed to draw yet.
+    scope.postMessage({ type: "ready" });
     if (isStill) {
       core.still();
       told();

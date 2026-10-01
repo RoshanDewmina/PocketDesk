@@ -16,6 +16,7 @@ export function pocketVariant(): Variant {
   let first = true;
   const INIT = { ...A };
 
+  // src/hero-bg/reach.ts reads these stage sizes and the Mac's position to place the reach art; keep in step.
   const layout = (tall: boolean): Layout =>
     tall
       ? { W: 600, H: 880, mac: { cx: 300, top: 40, sw: 470 }, phone: { p: { cx: 300, cy: 632, k: 0.44 }, l: { cx: 300, cy: 572, k: 0.5 } }, status: 846 }
