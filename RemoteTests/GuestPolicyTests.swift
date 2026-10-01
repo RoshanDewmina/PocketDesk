@@ -82,6 +82,19 @@ final class GuestPolicyTests: XCTestCase {
         budget.observeGuests(count: 0, kbps: 0, at: 4)
         XCTAssertTrue(budget.permits(bytes: 1, at: 5, controlBuffered: 0, fileBuffered: 0))
     }
+    func testGuestLaneNeverInheritsTheNoEstimateProbe() {
+        let budget = MediaResourceBudget()
+        for second in 0...6 {
+            let at = Double(second)
+            budget.observe(MediaCapacityObservation(at: at, route: "Direct", capacityKbps: nil, videoKbps: 1000,
+                totalTransportKbps: 1000, rttMs: 20, pacerDelayMs: 0, routeDetail: "p2p"))
+            budget.observeGuests(count: 0, kbps: 0, at: at)
+            _ = budget.permits(bytes: 16_384, at: at + 0.5, controlBuffered: 0, fileBuffered: 0)
+        }
+        XCTAssertTrue(budget.permits(bytes: 1, at: 6.9, controlBuffered: 0, fileBuffered: 0), "the owner alone may probe")
+        budget.observeGuests(count: 1, kbps: 100, at: 7)
+        XCTAssertFalse(budget.permits(bytes: 1, at: 7.5, controlBuffered: 0, fileBuffered: 0), "guests need a real capacity estimate")
+    }
     func testActualLeaseCloseWaitsForAdmittedCaptureRejectsQueuedOldCaptureAndReplacementIsIndependent() {
         let lease = GuestCaptureLease(grantID: a, ownerSessionID: b, scopeEpoch: "1", geometryEpoch: "1", expiresAt: 100, clock: { 1 })
         lease.permit(until: 10)
