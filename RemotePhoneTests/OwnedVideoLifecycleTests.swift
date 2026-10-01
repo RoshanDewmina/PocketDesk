@@ -40,7 +40,7 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         XCTAssertEqual(view.metal.drawableSize, CGSize(width: 80, height: 120), "retired source cannot reallocate a closed surface")
     }
     @MainActor
-    func testAViewWhoseAspectDiffersFromTheFrameLetterboxesInsteadOfStretching() throws {
+    func testThePictureFillsItsPlacementWhateverTheAspectSoOverlaysStayOnTarget() throws {
         let id = identity()
         let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
         let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
@@ -50,31 +50,18 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         let buffer = try XCTUnwrap(pixels)
         CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
         CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
-        view.frame = CGRect(x: 0, y: 0, width: 400, height: 400)
+        view.frame = CGRect(x: 0, y: 0, width: 400, height: 306) // 2 % off 4:3
         view.setNeedsLayout(); view.layoutIfNeeded()
         view.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
             frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1),
             arrivalMs: 1, marker: nil, originalSource: true))
         view.draw(in: view.metal)
-        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240), "letterboxing must not resize the backing pixels")
-        XCTAssertEqual(view.metal.layer.contentsGravity, .resizeAspect)
-        XCTAssertEqual(view.pictureRect, CGRect(x: 0, y: 50, width: 400, height: 300), "a 4:3 frame in a square view is inset, not stretched")
-        view.fillsFrame = true
-        XCTAssertEqual(view.metal.layer.contentsGravity, .resize, "a cropped region still fills its placement")
-        XCTAssertEqual(view.pictureRect, CGRect(x: 0, y: 0, width: 400, height: 400))
-        view.fillsFrame = false
-        view.frame = CGRect(x: 0, y: 0, width: 400 * 3, height: 400 * 3)
-        view.setNeedsLayout(); view.layoutIfNeeded()
-        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240))
-        XCTAssertEqual(view.pictureRect, CGRect(x: 0, y: 150, width: 1200, height: 900))
-        view.frame = CGRect(x: 0, y: 0, width: 400, height: 301) // 0.3 % off 4:3, e.g. encoder alignment
-        view.setNeedsLayout(); view.layoutIfNeeded()
-        XCTAssertEqual(view.metal.layer.contentsGravity, .resize, "a near match fills so the pointer overlay stays aligned")
-        XCTAssertEqual(view.pictureRect, CGRect(x: 0, y: 0, width: 400, height: 301))
-        view.frame = CGRect(x: 0, y: 0, width: 400, height: 306) // 2 % off
-        view.setNeedsLayout(); view.layoutIfNeeded()
-        XCTAssertEqual(view.metal.layer.contentsGravity, .resizeAspect)
-        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240))
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240), "the placement never resizes the backing pixels")
+        for fills in [false, true] {
+            view.fillsFrame = fills
+            XCTAssertEqual(view.metal.layer.contentsGravity, .resize)
+            XCTAssertEqual(view.pictureRect, CGRect(x: 0, y: 0, width: 400, height: 306))
+        }
         view.invalidate()
     }
     private func identity(_ epoch: UInt64 = 1) -> VideoPresentationIdentity {
