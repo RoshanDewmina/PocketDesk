@@ -150,6 +150,10 @@ final class PhoneRemoteModel: ObservableObject {
             session: connection.presentationSessionID, epoch: geometryEpoch, sentAt: ProcessInfo.processInfo.systemUptime)
         cancelInput(); setMacAudioMuted(true)
         guard connection.sendControl(RemoteAction(action: "lockMac", epoch: geometryEpoch)) else { return false }
+        // End is already the explicit local intent; waiting for a status must never seed resume.
+        sessionEndReason = .user
+        resumeTiming.cancel(.userEnded)
+        discardResume(); clearContinuity()
         pendingLockMac = request
         lockMacStatus = "Lock requested. Waiting for this Mac’s status…"
         invalidatePresentation()
@@ -1971,7 +1975,7 @@ let now = ProcessInfo.processInfo.systemUptime
                 if sceneWasBackground {
                     sceneWasBackground = false
                     if !pipBackground { returnToForeground() }
-                } else if connection.connected && !mayKeepLivePiP {
+                } else if connection.connected && pendingLockMac == nil && !mayKeepLivePiP {
                     background.begin { [weak self] in self?.endBackgroundHold(immediately: true) }
                 }
             }
@@ -2155,6 +2159,7 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     private func sessionEnded() {
+        let waitingForLock = pendingLockMac != nil
         diagnostics.ended()
         pipBackground = false
         invalidatePresentation()
@@ -2164,6 +2169,12 @@ let now = ProcessInfo.processInfo.systemUptime
         viewOnlyExitDeadline = nil
         setMacAudioMuted(true)
         end()
+        if waitingForLock {
+            let notice = "The session ended before a lock status arrived. Check your Mac in person."
+            lockMacStatus = notice; macNotice = notice
+            Task { @MainActor [weak self] in self?.connection.stop() }
+            return
+        }
         if sessionEndReason != .user { persistResume() }
         guard continuity.isHolding else { return }
         // Lost while backgrounded: stop the coordinator's retries until the app returns.
