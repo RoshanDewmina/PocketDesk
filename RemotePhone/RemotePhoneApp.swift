@@ -448,7 +448,7 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var textStatus = ""
     @Published private(set) var voiceDeliveryStatus: VoiceDeliveryStatus = .idle
     @Published private(set) var voiceRetryTranscript = ""
-    @Published private(set) var contentConcealed = false { willSet { if newValue { invalidatePresentation(keepingPiP: pipBackground && mayKeepLivePiP) } } }
+    @Published private(set) var contentConcealed = false { willSet { if newValue { invalidatePresentation(keepingPiP: pipBackground && mayHoldBackgroundPiP) } } }
 
     @Published var sourceSize = CGSize(width: 1440, height: 900)
     @Published private(set) var inputRevision: UInt64 = 0
@@ -536,6 +536,10 @@ final class PhoneRemoteModel: ObservableObject {
 
     private var mayKeepLivePiP: Bool {
         PresentationLeasePolicy.mayContinueBackground(state: pipState, admission: pipAdmission,
+            viewOnlyConfirmed: viewOnlyConfirmed, now: ProcessInfo.processInfo.systemUptime)
+    }
+    private var mayHoldBackgroundPiP: Bool {
+        PresentationLeasePolicy.mayHoldBackground(state: pipState, admission: pipAdmission,
             viewOnlyConfirmed: viewOnlyConfirmed, now: ProcessInfo.processInfo.systemUptime)
     }
     private func cachePresentationHost() {
@@ -632,7 +636,7 @@ final class PhoneRemoteModel: ObservableObject {
         // PiP and inline have separate terminal lifetimes: background retirement of inline cannot kill an approved PiP.
         let pipProposal = proof.map { VideoPresentationAdmission(identity: $0.identity, validUntil: $0.validUntil) }
         let nextPiP = VideoPresentationAdmission.renewed(hostFeatures.contains(SessionFeature.liveViewOnly) &&
-            (mayPreroll || (pipBackground || pipTransitional) && mayKeepLivePiP) ? pipProposal : nil, from: pipAdmission)
+            (mayPreroll || pipTransitional && mayKeepLivePiP || pipBackground && mayHoldBackgroundPiP) ? pipProposal : nil, from: pipAdmission)
         pipAdmission = nextPiP
         livePiP.updateAdmission(nextPiP)
         if nextPiP != nil, let track = connection.remoteVideo { livePiP.attachSourceTrack(track) }
@@ -810,7 +814,7 @@ final class PhoneRemoteModel: ObservableObject {
         self.livePiP.didChangeState = { [weak self] state in
             guard let self else { return }
             self.pipState = state
-            if self.pipBackground && state != .active && self.pipRestoreRequest == nil { self.disconnect(explicitEnd: false) }
+            if self.pipBackground && state != .active && state != .paused && self.pipRestoreRequest == nil { self.disconnect(explicitEnd: false) }
             else if state == .ineligible && !self.invalidatingPiP && self.viewOnlyConfirmed && !self.awaitingViewOnlyExit && self.pipRestoreRequest == nil {
                 self.requestViewOnlyExit()
             }

@@ -72,6 +72,24 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(model.pipState, .active)
         XCTAssertFalse(packets().contains { $0.action.action == "pause" || $0.action.liveViewOnly == false })
     }
+    func testBackgroundPiPPauseHoldsTheSessionAndResumeContinues() throws {
+        let (model, _, platform, packets) = try activePiPModel()
+        defer { model.disconnect() }
+        let lifetime = try XCTUnwrap(model.pipAdmission).lifetime
+        model.sceneChanged(.inactive); model.sceneChanged(.background)
+        XCTAssertTrue(model.pipBackgroundForTesting)
+        model.livePiP.setPlayingForTesting(false, on: platform)
+        XCTAssertEqual(model.pipState, .paused)
+        XCTAssertTrue(model.connection.connected, "The PiP pause button holds the session")
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 0.3)
+        XCTAssertEqual(model.pipState, .paused, "The heartbeat keeps a paused background PiP admitted")
+        XCTAssertTrue(model.pipAdmission?.lifetime === lifetime)
+        XCTAssertTrue(model.connection.connected)
+        model.livePiP.setPlayingForTesting(true, on: platform)
+        XCTAssertEqual(model.pipState, .active)
+        XCTAssertTrue(model.connection.connected); XCTAssertTrue(model.pipBackgroundForTesting)
+        XCTAssertFalse(packets().contains { $0.action.action == "pause" || $0.action.liveViewOnly == false })
+    }
     func testControlCenterReturnKeepsSamePiPConsentAndLifetime() throws {
         let (model, _, _, packets) = try activePiPModel()
         defer { model.disconnect() }
