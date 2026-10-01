@@ -112,6 +112,10 @@ struct StreamCounterSnapshot {
     var encoderDropped: Int?
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
+    var encoderSubmitted: Int?
+    var encoderSuperseded: Int?
+    var encoderRetired: Int?
+    var encoderOutputs: Int?
     var encoderEvidence: VideoEncoderEvidence?
     // Host input (perf pack 1b): data-channel arrival → handled on the main queue, and CGEvent post time.
     var inputMainDelayP50Ms: Double?
@@ -157,6 +161,12 @@ struct HostStreamSummary: Codable, Equatable {
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
     var encoderEvidence: VideoEncoderEvidence?
+    /// Owned encoder (X04): frames handed to VideoToolbox, in-flight deltas a requested key frame
+    /// replaced, entries retired after the 100 ms window without a callback, and outputs with a sample.
+    var encoderSubmitted: Int?
+    var encoderSuperseded: Int?
+    var encoderRetired: Int?
+    var encoderOutputs: Int?
     /// Input messages: data-channel arrival → handled on the Mac's main queue, and CGEvent post time.
     var inputMainDelayP50Ms: Double?
     var inputMainDelayP95Ms: Double?
@@ -194,7 +204,8 @@ struct HostStreamSummary: Codable, Equatable {
                        encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs,
                        inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs, inputPostP95Ms].compactMap { $0 }
         let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates,
-                        encoderDropped, encoderSilentDrops, encoderDeliveryDrops, inputEvents].compactMap { $0 }
+                        encoderDropped, encoderSilentDrops, encoderDeliveryDrops, inputEvents,
+                        encoderSubmitted, encoderSuperseded, encoderRetired, encoderOutputs].compactMap { $0 }
         let bytes = [encodeBytesP50, keyFrameBytesMax].compactMap { $0 }
         guard numbers.allSatisfy({ $0.isFinite && $0 >= 0 && $0 <= 10_000_000 }),
               integers.allSatisfy({ $0 >= 0 && $0 <= 100_000 }),
@@ -335,6 +346,10 @@ struct StreamStatsReport: Codable, Equatable {
     var encoderDropped: Int?
     var encoderDeliveryDrops: Int?
     var encoderSilentDrops: Int?
+    var encoderSubmitted: Int?
+    var encoderSuperseded: Int?
+    var encoderRetired: Int?
+    var encoderOutputs: Int?
     var encoderEvidence: VideoEncoderEvidence?
     var inputMainDelayP50Ms: Double?
     var inputMainDelayP95Ms: Double?
@@ -451,6 +466,10 @@ struct StreamStatsReport: Codable, Equatable {
                 encoderDropped = counters.encoderDropped
                 encoderDeliveryDrops = counters.encoderDeliveryDrops
                 encoderSilentDrops = counters.encoderSilentDrops
+                encoderSubmitted = counters.encoderSubmitted
+                encoderSuperseded = counters.encoderSuperseded
+                encoderRetired = counters.encoderRetired
+                encoderOutputs = counters.encoderOutputs
                 encoderEvidence = counters.encoderEvidence
                 if let evidence = encoderEvidence { powerEfficientEncoder = evidence.hardwareReported }
                 inputMainDelayP50Ms = Self.round(counters.inputMainDelayP50Ms)
@@ -525,6 +544,10 @@ struct StreamStatsReport: Codable, Equatable {
                           encoderDeliveryDrops: encoderDeliveryDrops.map { min($0, 100_000) },
                           encoderSilentDrops: encoderSilentDrops.map { min($0, 100_000) },
                           encoderEvidence: encoderEvidence,
+                          encoderSubmitted: encoderSubmitted.map { min($0, 100_000) },
+                          encoderSuperseded: encoderSuperseded.map { min($0, 100_000) },
+                          encoderRetired: encoderRetired.map { min($0, 100_000) },
+                          encoderOutputs: encoderOutputs.map { min($0, 100_000) },
                           inputMainDelayP50Ms: inputMainDelayP50Ms.map { min($0, 10_000_000) },
                           inputMainDelayP95Ms: inputMainDelayP95Ms.map { min($0, 10_000_000) },
                           inputMainDelayMaxMs: inputMainDelayMaxMs.map { min($0, 10_000_000) },
@@ -593,6 +616,10 @@ struct StreamStatsReport: Codable, Equatable {
         func dropped(_ count: Int?, _ silent: Int? = nil) -> String {
             (count.map { " · dropped \($0)/s" } ?? "") + (silent.map { " · VT lost \($0)" } ?? "")
         }
+        func gate(_ submitted: Int?, _ outputs: Int?, _ superseded: Int?, _ retired: Int?) -> String? {
+            guard let submitted else { return nil }
+            return "VT in \(submitted) out \(outputs ?? 0) · superseded \(superseded ?? 0) · retired \(retired ?? 0)"
+        }
         func rateLine(_ prefix: String, target: Int?, refresh: Double?, display: String?, gapMedian: Double?,
                       thermal: Int?, lowPower: Bool?) -> String? {
             var parts: [String] = []
@@ -649,6 +676,7 @@ struct StreamStatsReport: Codable, Equatable {
                 lines.append("VT lat p50 \(value(encodeLatencyMs, "ms")) p90 \(value(encodeLatencyP90Ms, "ms")) max \(value(encodeLatencyMaxMs, "ms")) · in-flight ≤\(encodeInFlightMax ?? 0) · bytes p50 \(encodeBytesP50 ?? 0) · key ≤\((keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(rateUpdates ?? 0) · session \(value(encoderSessionAgeS, "s"))"
                              + dropped(encoderDropped, encoderSilentDrops))
             }
+            if let gate = gate(encoderSubmitted, encoderOutputs, encoderSuperseded, encoderRetired) { lines.append(gate) }
             if let load = loadLine("", ladder: ladder, busy: busy, region: captureRegion) { lines.append(load) }
             if let input = inputLine("", inputEvents, inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs,
                                      inputPostP95Ms) {
@@ -669,6 +697,9 @@ struct StreamStatsReport: Codable, Equatable {
                 if host.encodeLatencyMs != nil || host.encoderDropped != nil {
                     lines.append("Mac VT lat p50 \(value(host.encodeLatencyMs, "ms")) p90 \(value(host.encodeLatencyP90Ms, "ms")) · in-flight ≤\(host.encodeInFlightMax ?? 0) · bytes p50 \(host.encodeBytesP50 ?? 0) · key ≤\((host.keyFrameBytesMax ?? 0) / 1024)KB · rate upd \(host.rateUpdates ?? 0) · session \(value(host.encoderSessionAgeS, "s"))"
                                  + dropped(host.encoderDropped, host.encoderSilentDrops))
+                }
+                if let gate = gate(host.encoderSubmitted, host.encoderOutputs, host.encoderSuperseded, host.encoderRetired) {
+                    lines.append("Mac " + gate)
                 }
                 if let load = loadLine("Mac ", ladder: host.ladder, busy: host.busy, region: host.captureRegion) {
                     lines.append(load)
@@ -858,6 +889,10 @@ final class StreamCounters: @unchecked Sendable {
     private var encoderDropped = 0
     private var encoderDeliveryDrops = 0
     private var encoderSilentDrops = 0
+    private var gateSubmitted = 0
+    private var gateSuperseded = 0
+    private var gateRetired = 0
+    private var gateOutputs = 0
     private var inputMainDelay = LatencyWindow()
     private var inputPost = LatencyWindow()
     private var encoderEvidence: VideoEncoderEvidence?
@@ -1014,6 +1049,11 @@ final class StreamCounters: @unchecked Sendable {
     /// Encoded outputs replaced in the bounded delivery mailbox, separate from VT drops.
     func encoderDeliveryDropped() { lock.lock(); encoderDeliveryDrops += 1; lock.unlock() }
 
+    func encoderSubmitted(_ count: Int = 1) { lock.lock(); gateSubmitted += max(0, count); lock.unlock() }
+    func encoderSuperseded(_ count: Int) { lock.lock(); gateSuperseded += max(0, count); lock.unlock() }
+    func encoderRetired(_ count: Int) { lock.lock(); gateRetired += max(0, count); lock.unlock() }
+    func encoderOutput() { lock.lock(); gateOutputs += 1; lock.unlock() }
+
     func recordEncoderEvidence(_ evidence: VideoEncoderEvidence?) {
         lock.lock(); encoderEvidence = evidence; lock.unlock()
     }
@@ -1080,6 +1120,11 @@ final class StreamCounters: @unchecked Sendable {
         result.encoderDropped = encode.count > 0 || encoderDropped > 0 ? encoderDropped : nil
         result.encoderDeliveryDrops = encoderDeliveryDrops > 0 ? encoderDeliveryDrops : nil
         result.encoderSilentDrops = encode.count > 0 || encoderSilentDrops > 0 ? encoderSilentDrops : nil
+        let gateActive = gateSubmitted > 0 || gateSuperseded > 0 || gateRetired > 0 || gateOutputs > 0
+        result.encoderSubmitted = gateActive ? gateSubmitted : nil
+        result.encoderSuperseded = gateActive ? gateSuperseded : nil
+        result.encoderRetired = gateActive ? gateRetired : nil
+        result.encoderOutputs = gateActive ? gateOutputs : nil
         let mainDelay = inputMainDelay.drainPercentiles()
         let post = inputPost.drainPercentiles()
         result.inputMainDelayP50Ms = mainDelay.p50
@@ -1093,6 +1138,10 @@ final class StreamCounters: @unchecked Sendable {
         encoderDropped = 0
         encoderDeliveryDrops = 0
         encoderSilentDrops = 0
+        gateSubmitted = 0
+        gateSuperseded = 0
+        gateRetired = 0
+        gateOutputs = 0
         snapshot = StreamCounterSnapshot(interval: 0)
         startedAt = time
         return result
