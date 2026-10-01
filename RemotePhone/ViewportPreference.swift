@@ -21,7 +21,8 @@ enum ViewportPreference {
 /// 15:26:33 on 1 Oct, where the picture's scale jumped back and forth while the zoom readout fell
 /// steadily from 4.8x to 3.1x). So while a gesture runs, a change the stream still covers waits until the
 /// gesture settles or rests for `quietInterval`; a change it no longer covers leaves at most every
-/// `minimumInterval`, asking for twice the visible area, so a pinch out re-crops once per halving.
+/// `minimumInterval`. While a pinch out keeps going and the view no longer fits in the crop at all, it
+/// asks for twice the visible area, so the crop changes about once per halving, not every 100 ms.
 struct ViewportReporter {
     static let minimumInterval: TimeInterval = 0.1
     static let quietInterval: TimeInterval = 0.3
@@ -37,11 +38,12 @@ struct ViewportReporter {
     private var sent: ViewportCaptureRequest?
     private var lastSentAt = -TimeInterval.infinity
     private var changedAt = -TimeInterval.infinity
+    private var previousChangeAt = -TimeInterval.infinity
 
     var hasUnsentChange: Bool { request != nil && request != sent }
 
     mutating func update(_ request: ViewportCaptureRequest?, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
-        if request != self.request { changedAt = now }
+        if request != self.request { previousChangeAt = changedAt; changedAt = now }
         self.request = request
     }
 
@@ -49,7 +51,7 @@ struct ViewportReporter {
     /// stream shows now (the echoed crop, or the whole display); nil leaves every change as it comes.
     func nextSend(settled: Bool, coverage: CGRect? = nil, at now: TimeInterval) -> Send {
         guard hasUnsentChange, let request else { return .none }
-        if settled || sent == nil { return .now }
+        if settled || sent?.displaySize != request.displaySize { return .now }
         // A region sent but not yet echoed also counts: the Mac is about to stream it.
         if let coverage, let sent, Self.covers(coverage, request.rect)
             || sent.displaySize == request.displaySize && Self.covers(sent.rect, request.rect) {
@@ -87,8 +89,11 @@ struct ViewportReporter {
 
     private func outgoing(settled: Bool, coverage: CGRect?, at now: TimeInterval) -> ViewportCaptureRequest? {
         guard let request else { return nil }
+        // Only a continuing pinch out: a pan or a one-off layout change gets exactly what it shows.
         guard !settled, sent != nil, now < changedAt + Self.quietInterval,
-              let coverage, !Self.covers(coverage, request.rect) else { return request }
+              changedAt - previousChangeAt < Self.quietInterval, let coverage,
+              request.rect.width > coverage.width + 0.5 || request.rect.height > coverage.height + 0.5
+        else { return request }
         return request.widened(by: 2)
     }
 

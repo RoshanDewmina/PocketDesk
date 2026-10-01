@@ -448,17 +448,15 @@ struct ViewportCaptureRequest: Equatable {
                        height: Double(rect.height), pixelWidth: pixelWidth, pixelHeight: pixelHeight, zoom: zoom)
     }
 
-    /// The same centre showing `factor` times the width and height, kept on the display, at the zoom that
-    /// shows it on the same screen pixels.
+    /// The same centre showing `factor` times the width and height, kept on the display. Zoom and pixels
+    /// stay as they are: the Mac reads them only to tell a magnified view from a reduced one.
     func widened(by factor: CGFloat) -> ViewportCaptureRequest {
         let display = CGRect(origin: .zero, size: displaySize)
         let width = min(rect.width * factor, display.width), height = min(rect.height * factor, display.height)
         let x = min(max(rect.midX - width / 2, 0), display.maxX - width)
         let y = min(max(rect.midY - height / 2, 0), display.maxY - height)
-        let range = ViewportRegion.zoomRange
         return ViewportCaptureRequest(rect: CGRect(x: x, y: y, width: width, height: height),
-                                      pixelWidth: pixelWidth, pixelHeight: pixelHeight,
-                                      zoom: min(max(zoom / Double(factor), range.lowerBound), range.upperBound),
+                                      pixelWidth: pixelWidth, pixelHeight: pixelHeight, zoom: zoom,
                                       displaySize: displaySize)
     }
 }

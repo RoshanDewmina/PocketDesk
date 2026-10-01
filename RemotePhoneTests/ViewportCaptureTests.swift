@@ -132,14 +132,19 @@ final class ViewportCaptureTests: XCTestCase {
 
     // MARK: Crop changes during a gesture (recording 15:26:33, 1 Oct)
 
+    private func viewing(_ rect: CGRect, zoom: Double = 3.5673) -> ViewportCaptureRequest {
+        ViewportCaptureRequest(rect: rect, pixelWidth: 2622, pixelHeight: 1206, zoom: zoom, displaySize: display)
+    }
+
     func testAPinchInsideTheStreamedAreaWaitsForTheSettle() throws {
         var reporter = ViewportReporter()
         let whole = CGRect(origin: .zero, size: display)
-        reporter.update(request(x: 100), at: 1)
+        reporter.update(viewing(CGRect(x: 300, y: 200, width: 870, height: 400), zoom: 3), at: 1)
         XCTAssertNotNil(send(&reporter, coverage: whole, at: 1))
         for step in 1...6 {
-            let now = 1 + Double(step) * 0.05
-            reporter.update(request(x: 100 + CGFloat(step)), at: now)
+            let now = 1 + Double(step) * 0.05, shrink = CGFloat(step) * 40
+            reporter.update(viewing(CGRect(x: 300 + shrink / 2, y: 200 + shrink / 4, width: 870 - shrink,
+                                           height: 400 - shrink / 2), zoom: 3 + Double(step) * 0.2), at: now)
             XCTAssertEqual(reporter.nextSend(settled: false, coverage: whole, at: now),
                            .at(now + ViewportReporter.quietInterval), "the stream still shows every point asked for")
         }
@@ -147,7 +152,7 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertEqual(reporter.nextSend(settled: true, coverage: whole, at: 1.31), .now)
         let settled = try XCTUnwrap(send(&reporter, settled: true, coverage: whole, at: 1.31))
         XCTAssertEqual(settled.epoch, 2, "one crop change for the whole pinch")
-        XCTAssertEqual(settled.x, 106)
+        XCTAssertEqual(settled.rect, CGRect(x: 420, y: 260, width: 630, height: 280))
     }
 
     func testAPinchThatRestsGetsItsCropWithoutLiftingAFinger() {
@@ -161,23 +166,50 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertEqual(send(&reporter, coverage: whole, at: 2.31)?.x, 140)
     }
 
-    func testAPinchOutPastTheCropAsksForTwiceTheVisibleAreaOnce() throws {
+    func testAContinuingPinchOutPastTheCropAsksForTwiceTheVisibleAreaOnce() throws {
         var reporter = ViewportReporter()
         let crop = CGRect(x: 300, y: 200, width: 800, height: 420)
-        reporter.update(request(x: 367.5), at: 1)
+        reporter.update(viewing(CGRect(x: 360, y: 230, width: 700, height: 340)), at: 1)
         _ = send(&reporter, settled: true, coverage: crop, at: 1)
-        let outward = ViewportCaptureRequest(rect: CGRect(x: 300, y: 180, width: 880, height: 405), pixelWidth: 2622,
-                                             pixelHeight: 1206, zoom: 2.98, displaySize: display)
+        reporter.update(viewing(CGRect(x: 330, y: 205, width: 780, height: 380), zoom: 3.2), at: 1.95)
+        let outward = viewing(CGRect(x: 300, y: 180, width: 880, height: 405), zoom: 2.98)
         reporter.update(outward, at: 2)
         XCTAssertEqual(reporter.nextSend(settled: false, coverage: crop, at: 2), .now, "missing edges cannot wait")
         let widened = try XCTUnwrap(send(&reporter, coverage: crop, at: 2))
         XCTAssertEqual(widened.rect, CGRect(x: 0, y: 0, width: 1470, height: 810))
-        XCTAssertEqual(widened.zoom, 1.49, accuracy: 0.000_001)
+        XCTAssertEqual(widened.zoom, 2.98, "the Mac reads zoom only as magnified or not")
+        XCTAssertNoThrow(try widened.validate())
         XCTAssertEqual(reporter.nextSend(settled: false, coverage: crop, at: 2.15), .at(2 + ViewportReporter.quietInterval),
-                       "until the Mac echoes the wider crop, the same request is not sent again")
+                       "until the Mac echoes the wider crop, the request it covers waits")
         XCTAssertEqual(reporter.nextSend(settled: false, coverage: widened.rect, at: 2.15), .at(2 + ViewportReporter.quietInterval))
         XCTAssertEqual(send(&reporter, settled: true, coverage: widened.rect, at: 2.2)?.rect, outward.rect,
                        "the settle asks for exactly what is shown")
+    }
+
+    func testAPanOrAOneOffChangePastTheCropGetsExactlyWhatItShows() throws {
+        var reporter = ViewportReporter()
+        let crop = CGRect(x: 300, y: 200, width: 800, height: 420)
+        reporter.update(viewing(CGRect(x: 360, y: 230, width: 700, height: 340)), at: 1)
+        _ = send(&reporter, settled: true, coverage: crop, at: 1)
+        reporter.update(viewing(CGRect(x: 420, y: 230, width: 700, height: 340)), at: 1.95)
+        let panned = viewing(CGRect(x: 450, y: 230, width: 700, height: 340))
+        reporter.update(panned, at: 2)
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: crop, at: 2), .now)
+        XCTAssertEqual(send(&reporter, coverage: crop, at: 2)?.rect, panned.rect, "a view that fits the crop size is not widened")
+        let rotated = viewing(CGRect(x: 300, y: 100, width: 400, height: 860))
+        reporter.update(rotated, at: 5)
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: crop, at: 5), .now)
+        XCTAssertEqual(send(&reporter, coverage: crop, at: 5)?.rect, rotated.rect, "a single layout change crops once")
+    }
+
+    func testAnotherDisplaysViewportLeavesAtOnce() {
+        var reporter = ViewportReporter()
+        let external = CGSize(width: 1920, height: 1080)
+        reporter.update(request(), at: 1)
+        _ = send(&reporter, at: 1)
+        reporter.update(request(display: external), at: 2)
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: CGRect(origin: .zero, size: external), at: 2), .now)
+        XCTAssertTrue(reporter.commit(settled: false, coverage: CGRect(origin: .zero, size: external), forDisplay: external, at: 2))
     }
 
     // MARK: What a heartbeat carries
