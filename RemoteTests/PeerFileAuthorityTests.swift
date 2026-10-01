@@ -3,8 +3,8 @@ import XCTest
 #if DEBUG && AUDIO_LIFETIME_TESTS
 final class PeerFileAuthorityTests: XCTestCase {
     func testOffMainRouteRetirementWaitsForEnteredSubmissionAndDeniesEveryLaterSubmission() {
-        let peer = PeerMedia(isHost: true, servers: [], fileChannel: true,
-            localLink: ProvenLocalLink(localAddress: "192.168.1.10", peerAddress: "192.168.1.20"))
+        let peer = PeerMedia(isHost: true, servers: [],
+            localLink: ProvenLocalLink(localAddress: "192.168.1.10", peerAddress: "192.168.1.20"), fileChannel: true)
         defer { peer.close() }
         peer.authorizeAudioPathForLifetimeTesting()
         let entered = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0)
