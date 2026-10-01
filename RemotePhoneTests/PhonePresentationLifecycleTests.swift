@@ -102,6 +102,19 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         XCTAssertNil(admission(identity(geometry: 0))); XCTAssertNil(admission(identity(), picture: false))
         XCTAssertNil(admission(identity(), track: false)); XCTAssertNil(admission(identity(), blocked: true))
     }
+    /// Frozen PiP 1 Oct: iOS refuses a background app's GPU work, so the GPU CIContext conversion stopped producing
+    /// frames once Farside left the screen. The sink renders on the CPU while backgrounded and back on the GPU after.
+    func testBackgroundPiPFramesRenderOnTheCPU() {
+        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 10)
+        let center = NotificationCenter()
+        let sink = LivePiPSampleBufferSink(admission: admission, fence: VideoPresentationFence(admission), center: center)
+        defer { sink.invalidate() }
+        sink.setBackground(false)
+        center.post(name: UIApplication.didEnterBackgroundNotification, object: nil)
+        XCTAssertTrue(sink.rendersInSoftware)
+        center.post(name: UIApplication.willEnterForegroundNotification, object: nil)
+        XCTAssertFalse(sink.rendersInSoftware)
+    }
     func testBackgroundRequiresActualActivePiPAndHostAppliedConfirmation() {
         let proof = VideoPresentationAdmission(identity: identity(), validUntil: 12)
         for state in [LivePiPPolicy.State.ready, .starting, .paused, .stopping, .ineligible] {

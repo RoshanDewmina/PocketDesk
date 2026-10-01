@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreImage
 import ImageIO
+import UIKit
 
 /// One conversion plus one newest pending source. Pool threshold bounds retained output buffers to three.
 final class LivePiPSampleBufferSink: @unchecked Sendable {
@@ -10,6 +11,13 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
     private let lock = NSLock()
     private let queue = DispatchQueue(label: "Farside.pip.samples", qos: .userInitiated)
     private let context = CIContext(options: [.cacheIntermediates: false])
+    /// iOS refuses a background app's GPU work (Metal "notPermitted"), so a GPU CIContext render in background
+    /// PiP silently leaves the output unchanged and the window freezes (1 Oct 15:3x). Render on the CPU there.
+    private lazy var softwareContext = CIContext(options: [.cacheIntermediates: false, .useSoftwareRenderer: true])
+    private var background = false
+    private var observers: [NSObjectProtocol] = []
+    var rendersInSoftware: Bool { lock.lock(); defer { lock.unlock() }; return background }
+    func setBackground(_ value: Bool) { lock.lock(); background = value; lock.unlock() }
     private var pending: VideoFrameEnvelope?
     private var working = false
     private var closed = false
@@ -21,10 +29,18 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
     private var poolSize: CGSize = .zero
     private var enqueueCount = 0
     var enqueued: Int { lock.lock(); defer { lock.unlock() }; return enqueueCount } // never presented FPS
-    init(admission: VideoPresentationAdmission, fence: VideoPresentationFence) {
+    private let center: NotificationCenter
+    init(admission: VideoPresentationAdmission, fence: VideoPresentationFence, center: NotificationCenter = .default) {
+        self.center = center
         identity = admission.identity; self.fence = fence
         layer.videoGravity = .resizeAspect
+        if Thread.isMainThread { background = MainActor.assumeIsolated { UIApplication.shared.applicationState == .background } }
+        observers = [
+            center.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: nil) { [weak self] _ in self?.setBackground(true) },
+            center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: nil) { [weak self] _ in self?.setBackground(false) }
+        ]
     }
+    deinit { observers.forEach(center.removeObserver) }
     func offer(_ frame: VideoFrameEnvelope) {
         guard frame.originalSource, frame.identity == identity,
               fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, {}) != nil else { return }
@@ -84,7 +100,8 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
         let limits = [kCVPixelBufferPoolAllocationThresholdKey: 3] as CFDictionary
         guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pool, limits, &output) == kCVReturnSuccess,
               let output else { return nil }
-        context.render(image, to: output, bounds: CGRect(origin: .zero, size: size), colorSpace: colorSpace)
+        lock.lock(); let software = background; lock.unlock()
+        (software ? softwareContext : context).render(image, to: output, bounds: CGRect(origin: .zero, size: size), colorSpace: colorSpace)
         CVBufferSetAttachment(output, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
         CVBufferSetAttachment(output, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
         var format: CMVideoFormatDescription?
