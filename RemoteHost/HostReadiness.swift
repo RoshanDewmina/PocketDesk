@@ -193,6 +193,22 @@ enum HostPairingRefresh {
     }
 }
 
+enum HostLaunchPolicy {
+    /// Setup opens by itself at launch unless only pairing is left and the person chose to do it later.
+    static func presentsSetup(step: HostSetupStep, pairingDeferred: Bool) -> Bool {
+        step != .done && !(step == .pairPhone && pairingDeferred)
+    }
+
+    /// After setup, the one-time login and keep-awake question opens at launch only when this
+    /// launch can't be a login-item launch: macOS didn't report one, and Farside isn't registered to
+    /// open at login (an SMAppService launch may not carry the login-item Apple event). Otherwise it
+    /// waits for the person to open Farside's setup, Settings or menu.
+    static func presentsConsent(step: HostSetupStep, consentPending: Bool, launchedAsLoginItem: Bool,
+                                loginItemRegistered: Bool) -> Bool {
+        step == .done && consentPending && !launchedAsLoginItem && !loginItemRegistered
+    }
+}
+
 struct HostAutoStartGate: Equatable {
     private(set) var suppressed = false
 
@@ -231,7 +247,11 @@ struct HostPreferences {
         static let allowBigText = "allowBigTextFromPhone"
         static let awayMode = "awayModeWhileSharing"
         static let awayIntroShown = "awayModeIntroShown"
+        static let consentVersion = "farsideConsentVersion"
     }
+
+    /// Raise when the open-at-login or keep-awake explanation changes enough to ask again.
+    static let consentVersion = 1
 
     let defaults: UserDefaults
 
@@ -324,6 +344,16 @@ struct HostPreferences {
     var awayIntroShown: Bool {
         get { defaults.bool(forKey: Key.awayIntroShown) }
         nonmutating set { defaults.set(newValue, forKey: Key.awayIntroShown) }
+    }
+
+    /// The open-at-login and keep-awake explanation the person last confirmed; 0 before any.
+    var acceptedConsentVersion: Int {
+        get { defaults.integer(forKey: Key.consentVersion) }
+        nonmutating set { defaults.set(newValue, forKey: Key.consentVersion) }
+    }
+
+    func consentPending(currentVersion: Int = HostPreferences.consentVersion) -> Bool {
+        acceptedConsentVersion < currentVersion
     }
 
     var allowBigText: Bool {

@@ -228,18 +228,25 @@ final class HostPresentationTests: XCTestCase {
     // MARK: Ready check
 
     func testReadyCheckPassesOnlyWhatIsTrueNow() {
-        var ready = state(.ready) { $0.openAtLogin = true }
+        var ready = state(.ready) {
+            $0.openAtLogin = true
+            $0.loginItem = .on
+        }
         var checks = HostReadyCheck.checks(for: ready)
         XCTAssertEqual(checks.map(\.id), HostReadyCheck.ID.allCases)
         XCTAssertTrue(checks.allSatisfy { $0.result == .pass }, "\(checks)")
         XCTAssertTrue(HostReadyCheck.isReady(checks))
         XCTAssertEqual(checks.first { $0.id == .display }?.detail, "Sharing Built-in Retina Display")
 
+        XCTAssertEqual(checks.map(\.id).last, .backgroundChoices)
+
         ready.openAtLogin = false
+        ready.loginItem = .off
         checks = HostReadyCheck.checks(for: ready)
-        XCTAssertEqual(checks.first { $0.id == .openAtLogin }?.result, .optional)
-        XCTAssertEqual(checks.first { $0.id == .openAtLogin }?.fix, .openAtLogin)
-        XCTAssertTrue(HostReadyCheck.isReady(checks), "Open at login is recommended, not required")
+        XCTAssertEqual(checks.first { $0.id == .backgroundChoices }?.result, .pass)
+        XCTAssertEqual(checks.first { $0.id == .backgroundChoices }?.detail, "Opens when you open it · sleeps as usual")
+        XCTAssertEqual(checks.first { $0.id == .backgroundChoices }?.fix, .reviewChoices)
+        XCTAssertTrue(HostReadyCheck.isReady(checks), "Choosing off is a valid choice")
 
         let starting = HostReadyCheck.checks(for: state(.starting))
         XCTAssertEqual(starting.first { $0.id == .connection }?.result, .waiting)
@@ -257,6 +264,81 @@ final class HostPresentationTests: XCTestCase {
         let unavailable = HostReadyCheck.checks(for: state(.unavailable) { $0.detail = "The relay didn’t answer." })
         XCTAssertEqual(unavailable.first { $0.id == .connection }?.detail, "The relay didn’t answer.")
         XCTAssertEqual(unavailable.first { $0.id == .connection }?.fix, .tryAgain)
+    }
+
+    func testReadyCheckAsksForLoginAndKeepAwakeChoicesUntilConfirmed() {
+        let pending = HostReadyCheck.checks(for: state(.ready) { $0.consentPending = true })
+        let row = pending.first { $0.id == .backgroundChoices }
+        XCTAssertEqual(row?.result, .fail)
+        XCTAssertEqual(row?.fix, .reviewChoices)
+        XCTAssertFalse(HostReadyCheck.isReady(pending), "Setup is not finished until both are chosen")
+        XCTAssertLessThanOrEqual(HostSetupFlow.progressDots(page: .ready, state: state(.ready) { $0.consentPending = true }),
+                                 HostSetupFlow.progressDots(page: .ready, state: state(.ready)))
+
+        let chosen = HostReadyCheck.checks(for: state(.ready) {
+            $0.openAtLogin = true
+            $0.keepAwake = true
+            $0.loginItem = .on
+        }).first { $0.id == .backgroundChoices }
+        XCTAssertEqual(chosen?.result, .pass)
+        XCTAssertEqual(chosen?.detail, "Opens at login · stays awake while sharing")
+
+        let unapproved = HostReadyCheck.checks(for: state(.ready) {
+            $0.openAtLogin = true
+            $0.loginItem = .needsApproval
+        }).first { $0.id == .backgroundChoices }
+        XCTAssertEqual(unapproved?.result, .optional)
+        XCTAssertEqual(unapproved?.detail, "Open at login needs approval in System Settings")
+        XCTAssertEqual(unapproved?.fix, .openLoginItems, "Approval happens in System Settings, not in the sheet")
+
+        for system in [HostBackgroundItemState.off, .unavailable] {
+            let unregistered = HostReadyCheck.checks(for: state(.ready) {
+                $0.openAtLogin = true
+                $0.keepAwake = true
+                $0.loginItem = system
+            }).first { $0.id == .backgroundChoices }
+            XCTAssertEqual(unregistered?.result, .optional, "\(system)")
+            XCTAssertEqual(unregistered?.detail, "Open at login isn’t registered", "A wish is never shown as fact")
+        }
+
+        let pausedOnBattery = HostReadyCheck.checks(for: state(.ready) {
+            $0.keepAwake = true
+            $0.keepAwakePausedOnBattery = true
+        }).first { $0.id == .backgroundChoices }
+        XCTAssertEqual(pausedOnBattery?.detail, "Opens when you open it · keep-awake paused on battery")
+    }
+
+    func testConsentSheetStartsFromTheCurrentChoices() {
+        XCTAssertEqual(HostConsentChoices(state(.ready)), HostConsentChoices(openAtLogin: false, keepAwake: false),
+                       "A new install starts with both off")
+        XCTAssertEqual(HostConsentChoices(state(.ready) {
+            $0.openAtLogin = true
+            $0.keepAwake = true
+            $0.loginItem = .needsApproval
+        }), HostConsentChoices(openAtLogin: true, keepAwake: true), "Prior choices are filled in")
+    }
+
+    func testLoginAndKeepAwakeSettingsShowTheChoiceAndWhatMacOSDid() {
+        typealias C = HostBackgroundItemCopy
+        XCTAssertEqual(C.loginSubtitle(wanted: true, state: .on), "On · registered")
+        XCTAssertEqual(C.loginSubtitle(wanted: true, state: .needsApproval), "On · needs approval in System Settings")
+        XCTAssertEqual(C.loginSubtitle(wanted: false, state: .off), "Off")
+        XCTAssertEqual(C.loginSubtitle(wanted: false, state: .on), "Off · still listed in System Settings")
+        XCTAssertTrue(C.loginSubtitle(wanted: true, state: .off).hasPrefix("On · not registered"))
+
+        let normal = HostKeepAwakeCopy.subtitle(pausedOnBattery: false)
+        XCTAssertTrue(normal.contains("While your iPhone is connected and not paused, the screen always stays on"),
+                      "States the automatic display hold")
+        XCTAssertTrue(normal.contains("Pauses on battery"))
+        XCTAssertTrue(HostKeepAwakeCopy.subtitle(pausedOnBattery: true).hasPrefix("Paused on battery"))
+
+        XCTAssertTrue(HostConsentCopy.intro.contains("Nothing changes until Continue"))
+        XCTAssertTrue(HostConsentCopy.loginBody.contains("notification that a login item was added"))
+        XCTAssertTrue(HostConsentCopy.loginBody.contains("System Settings"))
+        XCTAssertTrue(HostConsentCopy.keepAwakeBody.contains("no phone is connected"))
+        XCTAssertTrue(HostConsentCopy.keepAwakeBody.contains("battery"))
+        XCTAssertTrue(HostConsentCopy.alwaysTrue.contains("connected and not paused, Farside keeps the screen on"))
+        XCTAssertTrue(HostConsentCopy.alwaysTrue.contains("never unlocks"))
     }
 
     func testReadyCheckTreatsViewOnlyAsAChoice() {

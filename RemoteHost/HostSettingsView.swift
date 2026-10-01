@@ -9,6 +9,7 @@ struct HostSettingsView: View {
     @State private var confirmingStop = false
     @State private var showingWakeRegistration = false
     @State private var confirmingAwayMode = false
+    @State private var choosingBackground = false
 
     var body: some View {
         let presentation = HostPopoverPresentation.make(for: state)
@@ -50,6 +51,16 @@ struct HostSettingsView: View {
         .preferredColorScheme(.dark)
         .onAppear(perform: actions.refreshCaptureScopes)
         .sheet(isPresented: $showingNotices) { LegalNoticesView() }
+        .sheet(isPresented: $choosingBackground) {
+            HostConsentView(state: state) { choices in
+                actions.confirmBackgroundChoices(choices.openAtLogin, choices.keepAwake)
+                choosingBackground = false
+            }
+            .interactiveDismissDisabled()
+        }
+        .onChange(of: state.consentPending, initial: true) { _, pending in
+            if pending && state.setupStep == .done { choosingBackground = true }
+        }
         .sheet(isPresented: $showingWakeRegistration) {
             if let helper = state.wakeHelperHostID, let grant = state.wakeOwnerPairID {
                 WakeTargetRegistrationView(helperHostID: helper, ownerPairID: grant, store: HostWakeTargetStore())
@@ -114,10 +125,6 @@ struct HostSettingsView: View {
                 HostSwitch(label: "Allow control", isOn: state.allowControl, set: actions.setAllowControl)
                     .accessibilityIdentifier("farside.settings.allowControl")
                     .disabled(state.captureScopeViewOnly)
-            }
-            HostSettingsRow("Keep this Mac awake", subtitle: "Prevents idle system sleep while sharing. Does not override lid close, lock or manual Sleep.") {
-                HostSwitch(label: "Keep this Mac awake", isOn: state.keepAwake, set: actions.setKeepAwake)
-                    .accessibilityIdentifier("farside.settings.keepAwake")
             }
             if state.away.available {
                 awayModeRow
@@ -213,6 +220,11 @@ struct HostSettingsView: View {
 
     private var availabilitySection: some View {
         HostSettingsSection("Availability", footer: "Start at login and recovery apply after you log in. Farside never stores your Mac password or unlocks FileVault. Virtual workspace is unavailable in this build.") {
+            HostSettingsRow("Keep this Mac awake",
+                            subtitle: HostKeepAwakeCopy.subtitle(pausedOnBattery: state.keepAwakePausedOnBattery)) {
+                HostSwitch(label: "Keep this Mac awake", isOn: state.keepAwake, set: actions.setKeepAwake)
+                    .accessibilityIdentifier("farside.settings.keepAwake")
+            }
             if let hostID = state.wakeHelperHostID, state.wakeOwnerPairID != nil {
                 HostSettingsRow("This Mac’s durable host ID", subtitle: "Copy locally to an owner-configured powered helper. This ID is not permission to connect.") {
                     Text(hostID).font(.caption.monospaced()).textSelection(.enabled)
@@ -243,7 +255,8 @@ struct HostSettingsView: View {
                 HostSwitch(label: "Show in menu bar", isOn: state.menuBarIconShown, set: actions.setMenuBarIconShown)
                     .accessibilityIdentifier("farside.settings.showInMenuBar")
             }
-            HostSettingsRow("Open at login", subtitle: HostBackgroundItemCopy.loginSubtitle(state.loginItem)) {
+            HostSettingsRow("Open at login",
+                            subtitle: HostBackgroundItemCopy.loginSubtitle(wanted: state.openAtLogin, state: state.loginItem)) {
                 backgroundItemAccessory(state.loginItem) {
                     HostSwitch(label: "Open at login", isOn: state.openAtLogin, set: actions.setOpenAtLogin)
                         .accessibilityIdentifier("farside.settings.openAtLogin")

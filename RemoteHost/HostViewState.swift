@@ -62,7 +62,12 @@ struct HostViewState: Equatable {
     var canBeginPairing = false
     var allowControl = true
     var keepAwake = false
+    /// Keep-awake is on but paused because this Mac is running on battery.
+    var keepAwakePausedOnBattery = false
+    /// The person's saved choice; `loginItem` is what macOS has registered.
     var openAtLogin = false
+    /// Open at login and keep-awake still need the person's confirmation of the current explanation.
+    var consentPending = false
     var chimeOnConnect = true
     var allowFileTransfer = true
     var wakeHelperHostID: String? = nil
@@ -154,6 +159,7 @@ struct HostActions {
     var setAllowSystemAudio: (Bool) -> Void = { _ in }
     var setAllowFileTransfer: (Bool) -> Void = { _ in }
     var setOpenAtLogin: (Bool) -> Void = { _ in }
+    var confirmBackgroundChoices: (_ openAtLogin: Bool, _ keepAwake: Bool) -> Void = { _, _ in }
     var setAutomaticRecovery: (Bool) -> Void = { _ in }
     var openLoginItems: () -> Void = {}
     var setPrivacyCurtain: (Bool) -> Void = { _ in }

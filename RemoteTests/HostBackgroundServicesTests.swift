@@ -174,6 +174,92 @@ final class HostBackgroundServicesTests: XCTestCase {
         XCTAssertTrue(HostPreferences(defaults: defaults).keepAwake)
     }
 
+    func testLoginWishStartsFromWhatMacOSHasAndThenFollowsThePerson() {
+        XCTAssertFalse(services().loginWanted, "A new install wants nothing until the person chooses")
+
+        defaults.removeObject(forKey: "openAtLoginWanted")
+        let login = FakeBackgroundService(.requiresApproval)
+        let existing = services(login: login)
+        XCTAssertTrue(existing.loginWanted, "An existing registration is kept as the prior choice")
+        XCTAssertEqual(existing.loginState, .needsApproval, "The wish and the system status stay separate")
+        XCTAssertEqual(login.registrations, 0)
+
+        existing.setLoginItem(false)
+        XCTAssertFalse(services(login: login).loginWanted, "An explicit off survives relaunch")
+    }
+
+    func testConfirmingNewConsentCopyNeverResetsPriorRecoveryOrKeepAwakeChoices() {
+        defaults.set(true, forKey: "launchAtLoginDefaultApplied")
+        let agent = FakeBackgroundService(.enabled)
+        XCTAssertTrue(services(agent: agent).recoveryWanted)
+        let preferences = HostPreferences(defaults: defaults)
+        XCTAssertTrue(preferences.keepAwake)
+        XCTAssertTrue(preferences.consentPending(), "New copy is still shown once to an existing install")
+
+        preferences.acceptedConsentVersion = HostPreferences.consentVersion
+        let relaunched = services(agent: agent)
+        XCTAssertTrue(relaunched.recoveryWanted)
+        XCTAssertEqual(agent.unregistrations, 0)
+        XCTAssertTrue(HostPreferences(defaults: defaults).keepAwake)
+        XCTAssertFalse(HostPreferences(defaults: defaults).consentPending())
+    }
+
+    func testConfirmingLoginChoiceMatrix() {
+        typealias P = HostBackgroundPolicy
+        XCTAssertFalse(P.shouldApplyLogin(wanted: true, saved: true, state: .needsApproval),
+                       "No re-register while approval is pending")
+        XCTAssertFalse(P.shouldApplyLogin(wanted: true, saved: true, state: .on))
+        XCTAssertFalse(P.shouldApplyLogin(wanted: false, saved: false, state: .off))
+        XCTAssertTrue(P.shouldApplyLogin(wanted: false, saved: true, state: .on), "Switching off unregisters")
+        XCTAssertTrue(P.shouldApplyLogin(wanted: false, saved: false, state: .needsApproval),
+                      "Off removes a leftover registration")
+        XCTAssertTrue(P.shouldApplyLogin(wanted: true, saved: false, state: .off))
+        XCTAssertTrue(P.shouldApplyLogin(wanted: true, saved: true, state: .off), "A failed registration is retried")
+    }
+
+    func testApplyingLoginChoiceTouchesOnlyTheLoginItem() async {
+        defaults.set(true, forKey: "automaticRecoveryEnabled")
+        defaults.set(true, forKey: "backgroundChoicePolicyV2")
+        let login = FakeBackgroundService(.requiresApproval)
+        let agent = FakeBackgroundService(.enabled)
+        let subject = services(login: login, agent: agent)
+        XCTAssertTrue(subject.loginWanted)
+
+        XCTAssertNil(subject.applyLoginChoice(true))
+        XCTAssertEqual(login.registrations, 0, "Pending approval is not registered again")
+
+        subject.applyLoginChoice(false)
+        for _ in 0..<50 where login.unregistrations == 0 { await Task.yield() }
+        XCTAssertEqual(login.unregistrations, 1)
+        XCTAssertFalse(subject.loginWanted)
+
+        subject.applyLoginChoice(true)
+        XCTAssertEqual(login.registrations, 1)
+        XCTAssertEqual(agent.registrations, 0)
+        XCTAssertEqual(agent.unregistrations, 0)
+        XCTAssertTrue(subject.recoveryWanted, "Recovery is untouched by the login choice")
+    }
+
+    func testSavedWishFollowsLoginItemsChangedInSystemSettings() {
+        let login = FakeBackgroundService(.enabled)
+        let subject = services(login: login)
+        XCTAssertTrue(subject.loginWanted)
+
+        login.status = .requiresApproval
+        subject.refresh()
+        XCTAssertFalse(subject.loginWanted, "Switched off in System Settings")
+
+        login.status = .enabled
+        subject.refresh()
+        XCTAssertTrue(subject.loginWanted, "Switched back on in System Settings")
+
+        let own = FakeBackgroundService()
+        own.onRegister = .requiresApproval
+        let fresh = services(login: own)
+        fresh.setLoginItem(true)
+        XCTAssertTrue(fresh.loginWanted, "Farside's own registration waiting for approval keeps the wish")
+    }
+
     func testRecoveryPolicy() {
         typealias P = HostBackgroundPolicy
         XCTAssertEqual(P.recoveryAction(wanted: true, setupComplete: false, installed: true, state: .off,

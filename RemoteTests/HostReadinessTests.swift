@@ -125,6 +125,50 @@ final class HostReadinessTests: XCTestCase {
                        "Stop Sharing must survive quitting and reopening the host")
     }
 
+    func testLoginAndKeepAwakeConsentIsAskedOnceAndAgainOnlyWhenItsVersionRises() throws {
+        let suite = "HostReadinessTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let fresh = HostPreferences(defaults: defaults)
+        XCTAssertTrue(fresh.consentPending(), "First launch asks")
+        XCTAssertFalse(fresh.keepAwake, "Nothing is on before the person chooses")
+        fresh.acceptedConsentVersion = HostPreferences.consentVersion
+        XCTAssertFalse(HostPreferences(defaults: defaults).consentPending(), "Asked once")
+        XCTAssertTrue(HostPreferences(defaults: defaults).consentPending(currentVersion: HostPreferences.consentVersion + 1),
+                      "A new explanation asks again")
+    }
+
+    func testExistingKeepAwakeChoiceIsPreservedWhileConsentIsStillAsked() throws {
+        let suite = "HostReadinessTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "keepAwakeWhileSharing")
+
+        let existing = HostPreferences(defaults: defaults)
+        XCTAssertTrue(existing.keepAwake, "Pre-filled from the prior choice")
+        XCTAssertTrue(existing.consentPending())
+    }
+
+    func testConsentOpensAtLaunchOnlyWhenTheLaunchCannotBeALoginItemLaunch() {
+        typealias P = HostLaunchPolicy
+        XCTAssertTrue(P.presentsConsent(step: .done, consentPending: true, launchedAsLoginItem: false,
+                                        loginItemRegistered: false))
+        XCTAssertFalse(P.presentsConsent(step: .done, consentPending: true, launchedAsLoginItem: true,
+                                         loginItemRegistered: false), "Never a modal at login")
+        XCTAssertFalse(P.presentsConsent(step: .done, consentPending: true, launchedAsLoginItem: false,
+                                         loginItemRegistered: true),
+                       "A registered login item may have launched without the Apple event")
+        XCTAssertFalse(P.presentsConsent(step: .done, consentPending: false, launchedAsLoginItem: false,
+                                         loginItemRegistered: false))
+        XCTAssertFalse(P.presentsConsent(step: .pairPhone, consentPending: true, launchedAsLoginItem: false,
+                                         loginItemRegistered: false), "Unfinished setup asks on its own Ready page")
+
+        XCTAssertTrue(P.presentsSetup(step: .screenRecording, pairingDeferred: false))
+        XCTAssertFalse(P.presentsSetup(step: .pairPhone, pairingDeferred: true))
+        XCTAssertFalse(P.presentsSetup(step: .done, pairingDeferred: false), "Pending consent alone doesn't open setup")
+    }
+
     func testNewPairingUsesSelectedServiceWithoutChangingCurrentConnection() {
         let saved = "wss://saved.example/signal"
         let staging = "wss://signal-staging.getfarside.com/signal"

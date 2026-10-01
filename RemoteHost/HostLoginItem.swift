@@ -46,6 +46,24 @@ enum HostBackgroundPolicy {
         false
     }
 
+    /// Whether confirming a login choice must touch the login item. A registration still waiting
+    /// for approval is left alone: registering again would only repeat the macOS prompt.
+    static func shouldApplyLogin(wanted: Bool, saved: Bool, state: HostBackgroundItemState) -> Bool {
+        wanted != saved || wanted != state.isRegistered
+    }
+
+    /// The saved wish after macOS changed the login item without Farside asking (System Settings
+    /// › General › Login Items). Nil keeps the wish.
+    static func followedLoginWish(from old: HostBackgroundItemState, to new: HostBackgroundItemState) -> Bool? {
+        guard old != new else { return nil }
+        switch new {
+        case .on: return true
+        case .off: return false
+        case .needsApproval: return old == .on ? false : nil
+        case .unavailable: return nil
+        }
+    }
+
     /// Automatic recovery follows the saved choice. An updated helper is re-registered, as
     /// ServiceManagement requires when a LaunchAgent's executable changes.
     static func recoveryAction(wanted: Bool, setupComplete: Bool, installed: Bool,
@@ -71,6 +89,7 @@ final class HostBackgroundServices {
         static let recoveryWanted = "automaticRecoveryEnabled"
         static let registeredHelper = "automaticRecoveryHelperFingerprint"
         static let explicitChoicePolicy = "backgroundChoicePolicyV2"
+        static let loginWanted = "openAtLoginWanted"
     }
 
     let loginItem: HostBackgroundService
@@ -81,6 +100,8 @@ final class HostBackgroundServices {
     private(set) var loginState: HostBackgroundItemState = .off
     private(set) var recoveryState: HostBackgroundItemState = .off
     private var recoveryOperation: Task<Void, Never>?
+    private var loginOperationPending = false
+    private var refreshedOnce = false
 
     init(loginItem: HostBackgroundService, recoveryAgent: HostBackgroundService,
          defaults: UserDefaults, installed: Bool, helperFingerprint: String?) {
@@ -98,6 +119,10 @@ final class HostBackgroundServices {
                 defaults.set(legacyEnabled, forKey: Key.recoveryWanted)
             }
             defaults.set(true, forKey: Key.explicitChoicePolicy)
+        }
+        // An install from before the saved wish keeps whatever macOS already has registered.
+        if defaults.object(forKey: Key.loginWanted) == nil {
+            defaults.set(loginState.isRegistered, forKey: Key.loginWanted)
         }
     }
 
@@ -123,10 +148,18 @@ final class HostBackgroundServices {
     }
 
     var recoveryWanted: Bool { defaults.bool(forKey: Key.recoveryWanted) }
+    /// The person's own open-at-login choice; `loginState` is what macOS has registered.
+    var loginWanted: Bool { defaults.bool(forKey: Key.loginWanted) }
 
     func refresh() {
+        let previous = loginState
         loginState = HostBackgroundItemState(loginItem.status)
         recoveryState = HostBackgroundItemState(recoveryAgent.status)
+        if refreshedOnce, !loginOperationPending,
+           let followed = HostBackgroundPolicy.followedLoginWish(from: previous, to: loginState) {
+            defaults.set(followed, forKey: Key.loginWanted)
+        }
+        refreshedOnce = true
     }
 
     /// Runs when setup is complete (and at each later launch). Returns a problem to report, if any.
@@ -152,20 +185,33 @@ final class HostBackgroundServices {
     @discardableResult
     func setLoginItem(_ enabled: Bool) -> String? {
         defaults.set(true, forKey: Key.loginDefaultApplied)
+        defaults.set(enabled, forKey: Key.loginWanted)
+        loginOperationPending = true
         let problem: String?
         if enabled {
             problem = register(loginItem, what: "open at login")
+            refresh()
+            loginOperationPending = false
         } else {
             problem = nil
+            refresh()
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 try? await self.loginItem.unregisterAndWait()
                 self.refresh()
+                self.loginOperationPending = false
                 self.onChange?()
             }
         }
-        refresh()
         return problem
+    }
+
+    /// Setup's one-time choice. Only the login item can change; automatic recovery never does.
+    @discardableResult
+    func applyLoginChoice(_ wanted: Bool) -> String? {
+        refresh()
+        guard HostBackgroundPolicy.shouldApplyLogin(wanted: wanted, saved: loginWanted, state: loginState) else { return nil }
+        return setLoginItem(wanted)
     }
 
     @discardableResult

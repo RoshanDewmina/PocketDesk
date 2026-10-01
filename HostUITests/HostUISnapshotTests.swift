@@ -222,6 +222,37 @@ final class HostUISnapshotTests: XCTestCase {
             $0.detail = "Couldn’t reach the connection."
             $0.accessibility = .denied
         }, actions: .preview))
+        try render("setup-4d-ready-choices-pending", HostSetupView(state: ready(.ready) {
+            $0.consentPending = true
+            $0.openAtLogin = false
+        }, actions: .preview))
+    }
+
+    func testConsentChoices() throws {
+        let fresh = ready(.ready) {
+            $0.consentPending = true
+            $0.openAtLogin = false
+            $0.keepAwake = false
+        }
+        let sheetLimit = HostTheme.setupSize.height
+        for (name, state, cancel) in [
+            ("setup-5-consent-new", fresh, false),
+            ("setup-5b-consent-prior-choices", ready(.ready) {
+                $0.consentPending = true
+                $0.openAtLogin = true
+                $0.keepAwake = true
+            }, false),
+            ("setup-5c-consent-change", ready(.ready), true)
+        ] {
+            let bitmap = try render(name, HostConsentView(state: state, confirm: { _ in }, cancel: cancel ? {} : nil))
+            let height = CGFloat(bitmap.pixelsHigh) / (CGFloat(bitmap.pixelsWide) / 640)
+            XCTAssertLessThanOrEqual(height, sheetLimit - 40, "\(name) fits over the \(sheetLimit) pt setup window")
+        }
+        try render("settings-keep-awake-on-battery", HostSettingsView(state: ready(.ready) {
+            $0.keepAwake = true
+            $0.keepAwakePausedOnBattery = true
+            $0.loginItem = .needsApproval
+        }, actions: .preview))
     }
 
     func testSettings() throws {
@@ -265,7 +296,8 @@ final class HostUISnapshotTests: XCTestCase {
         let stopped = HostPopoverPresentation.make(for: ready(.unavailable) { $0.crashLoopStopped = true })
         XCTAssertEqual(stopped.headline, "Stopped after repeated crashes")
         XCTAssertEqual(stopped.actions, [.tryAgain], "Try Again resumes sharing and clears the crash-loop stop")
-        XCTAssertEqual(HostBackgroundItemCopy.loginSubtitle(.needsApproval), "Waiting for approval in Login Items")
+        XCTAssertEqual(HostBackgroundItemCopy.loginSubtitle(wanted: true, state: .needsApproval),
+                       "On · needs approval in System Settings")
         XCTAssertEqual(HostCurtainCopy.subtitle(for: ready(.controlling) {
             $0.privacyCurtain = true
             $0.focusAccessibility = .denied

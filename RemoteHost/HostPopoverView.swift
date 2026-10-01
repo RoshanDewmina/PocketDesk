@@ -166,11 +166,20 @@ struct HostPopoverView: View {
                 bigTextRow(status)
             }
             VStack(alignment: .leading, spacing: 6) {
-                HostToggleRow(title: "Open at login", subtitle: HostBackgroundItemCopy.loginSubtitle(state.loginItem),
+                HostToggleRow(title: "Open at login",
+                              subtitle: HostBackgroundItemCopy.loginSubtitle(wanted: state.openAtLogin, state: state.loginItem),
                               isOn: state.openAtLogin, set: actions.setOpenAtLogin)
                     .accessibilityIdentifier("farside.popover.openAtLogin")
+                if state.consentPending && state.setupStep == .done {
+                    Button("Review open at login and keep awake…") {
+                        dismiss()
+                        actions.openSetup()
+                    }
+                    .buttonStyle(HostButtonStyle(kind: .inline))
+                    .accessibilityIdentifier("farside.popover.reviewBackgroundChoices")
+                }
                 if state.loginItem == .needsApproval {
-                    Button("Allow in Login Items…") {
+                    Button("Allow in System Settings…") {
                         dismiss()
                         actions.openLoginItems()
                     }

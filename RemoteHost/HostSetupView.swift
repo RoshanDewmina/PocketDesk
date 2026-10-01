@@ -222,7 +222,7 @@ private enum HostSetupText {
     }
 }
 
-private struct HostPlate: ViewModifier {
+struct HostPlate: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(Farside.Palette.panel, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -635,6 +635,7 @@ struct HostPairingPage: View {
 struct HostReadyPage: View {
     let state: HostViewState
     let actions: HostActions
+    @State private var choosing = false
 
     var body: some View {
         let checks = HostReadyCheck.checks(for: state)
@@ -650,10 +651,20 @@ struct HostReadyPage: View {
                     if index > 0 {
                         Rectangle().fill(Farside.Palette.line).frame(height: 1).padding(.leading, 44)
                     }
-                    HostCheckRow(check: check, state: state, actions: actions)
+                    HostCheckRow(check: check, state: state, actions: actions, reviewChoices: { choosing = true })
                 }
             }
             .modifier(HostPlate())
+        }
+        .sheet(isPresented: $choosing) {
+            HostConsentView(state: state, confirm: { choices in
+                actions.confirmBackgroundChoices(choices.openAtLogin, choices.keepAwake)
+                choosing = false
+            }, cancel: state.consentPending ? nil : { choosing = false })
+            .interactiveDismissDisabled(state.consentPending)
+        }
+        .onChange(of: state.consentPending, initial: true) { _, pending in
+            if pending { choosing = true }
         }
     }
 }
@@ -662,6 +673,7 @@ struct HostCheckRow: View {
     let check: HostReadyCheck
     let state: HostViewState
     let actions: HostActions
+    var reviewChoices: () -> Void = {}
 
     var body: some View {
         HStack(spacing: 12) {
@@ -725,8 +737,15 @@ struct HostCheckRow: View {
                 .buttonStyle(HostButtonStyle(kind: .plate, height: 28))
         case .allowControl:
             HostSwitch(label: "Allow control", isOn: state.allowControl, set: actions.setAllowControl)
-        case .openAtLogin:
-            HostSwitch(label: "Open at login", isOn: state.openAtLogin, set: actions.setOpenAtLogin)
+        case .reviewChoices:
+            Button(state.consentPending ? "Choose…" : "Change…", action: reviewChoices)
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 28))
+                .accessibilityIdentifier("farside.setup.reviewChoices")
+        case .openLoginItems:
+            Button("Allow…", action: actions.openLoginItems)
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 28))
+                .accessibilityLabel("Open Login Items in System Settings")
+                .accessibilityIdentifier("farside.setup.allowLoginItem")
         case .resumeSharing:
             Button("Resume", action: actions.resumeSharing)
                 .buttonStyle(HostButtonStyle(kind: .plate, height: 28))
