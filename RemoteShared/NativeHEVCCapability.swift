@@ -12,7 +12,7 @@ enum NativeHEVCCapability {
     static func failed(_ run: HEVCRun) { if run.markFailed() { state.failed(at: now) } }
     static func ended(_ run: HEVCRun) { if let failed = run.markEnded() { state.ended(failed: failed, startedAt: run.startedAt, at: now) } }
     static func permits(isHost: Bool) -> Bool {
-        !VideoEncoderCompatibility.isOn && state.permits(at: now) && supportsDecode && (!isHost || supportsEncode)
+        StreamTuning.current.hevc && !VideoEncoderCompatibility.isOn && state.permits(at: now) && supportsDecode && (!isHost || supportsEncode)
     }
     static func warmUp() {
         DispatchQueue.global(qos: .utility).async {

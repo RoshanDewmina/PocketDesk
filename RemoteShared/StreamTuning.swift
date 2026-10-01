@@ -86,6 +86,9 @@ struct StreamTuning: Equatable {
     /// that 30 softened; VideoToolbox drops frames rather than exceed its rate limits, so motion pays in
     /// frame rate, not blur. The key is an A/B override only (1…51).
     var encoderMaximumQP = 26
+    /// HEVC is offered whenever both ends' hardware probes pass. Off (internal A/B or kill switch only)
+    /// makes this side offer H.264 alone, so the session negotiates H.264 with the owned encoder.
+    var hevc = true
 
     func maximumBitrateBps(for quality: StreamQuality) -> Int {
         encoderCeilingKbps.map { $0 * 1000 } ?? quality.maximumBitrateBps
@@ -139,12 +142,13 @@ struct StreamTuning: Equatable {
     static let idleVideoRefreshKey = "PocketDeskIdleVideoRefresh"
     static let frameTimingKey = "PocketDeskFrameTiming"
     static let encoderMaximumQPKey = "PocketDeskEncoderMaxQP"
+    static let hevcKey = "PocketDeskHEVC"
     /// Every experiment key, for the session protocol's cleanup step.
     static let experimentKeys = [legacyDefaultsKey, captureNativeRateKey, routeAwareSeedKey, restartFloorKey,
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
                                  viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
-                                 mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey]
+                                 mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey, senderQueueGovernorApplyKey, encoderMaximumQPKey, hevcKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -229,6 +233,9 @@ struct StreamTuning: Equatable {
             let qp = defaults.integer(forKey: encoderMaximumQPKey)
             if (1...51).contains(qp) { tuning.encoderMaximumQP = qp }
         }
+        if defaults.object(forKey: hevcKey) != nil {
+            tuning.hevc = defaults.bool(forKey: hevcKey)
+        }
         return tuning
     }
 
@@ -277,6 +284,7 @@ struct StreamTuning: Equatable {
         if presentAtDisplayMaximum && !idleVideoRefresh { parts.append("no idle refresh") }
         if !frameTiming { parts.append("no frame timing") }
         if encoderMaximumQP != Self.tuned.encoderMaximumQP { parts.append("max QP \(encoderMaximumQP)") }
+        if !hevc { parts.append("no HEVC") }
         if ladder { parts.append("governor " + (!senderQueueGovernor ? "off" : senderQueueGovernorApply ? "apply" : "shadow")) }
         return parts.isEmpty ? "legacy" : parts.joined(separator: " · ")
     }
