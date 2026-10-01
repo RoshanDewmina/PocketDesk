@@ -226,3 +226,28 @@ final class HostInputExecutor: @unchecked Sendable {
     }
     func drain() { queue.sync {} }
 }
+
+extension HostInputExecutor {
+    /// Submits through `peer`'s posting authority while `peer` is still `owner`'s live route, and hands
+    /// the receipt to `deliver` on main only if it still is. False only when the queue refused the input.
+    ///
+    /// Keep this straight-line. Swift 6.4 (swiftlang-6.4.0.34.1) deallocates the second weak capture of
+    /// `let post = { [weak a, weak b] in … }; post()` before the call; the 20260930.8 host then loaded that
+    /// dead `PeerMedia` slot (objc poison 0x0fad…) and crashed in `objc_retain`.
+    @MainActor
+    func post<Owner: AnyObject, R>(
+        owner: Owner, peer: PeerMedia, isLive: @escaping @MainActor (Owner, PeerMedia) -> Bool,
+        submit: (_ routeAuthority: @escaping (@escaping () -> RemoteInputOutcome) -> RemoteInputOutcome,
+                 _ completion: @escaping (R) -> Void) -> Bool,
+        deliver: @escaping @MainActor (Owner, R) -> Void
+    ) -> Bool {
+        guard isLive(owner, peer) else { return true }
+        return submit({ operation in peer.withInputPostingAuthority(operation) ?? RemoteInputOutcome() },
+                      { [weak owner, weak peer] receipt in
+                          MainActor.assumeIsolated {
+                              guard let owner, let peer, isLive(owner, peer) else { return }
+                              deliver(owner, receipt)
+                          }
+                      })
+    }
+}

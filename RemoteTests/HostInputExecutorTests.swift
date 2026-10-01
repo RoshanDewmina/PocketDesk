@@ -47,6 +47,46 @@ final class HostInputExecutorTests: XCTestCase {
         wait(for: [duplicate], timeout: 2)
         XCTAssertEqual(sink.events.count, 4)
     }
+    private final class PeerRoute { var media: PeerMedia? }
+    /// 20260930.8 host crash: the control-channel post read a destroyed weak `PeerMedia` capture.
+    @MainActor
+    func testAdmittedInputOnTheLivePeerRouteIsSubmittedAndItsReceiptDelivered() {
+        let sink = ExecutorSink(), executor = sink.executor()
+        let peer = PeerMedia(isHost: true, servers: []), route = PeerRoute()
+        route.media = peer
+        var reachedExecutor = false
+        let delivered = expectation(description: "receipt delivered on the live route")
+        let submitted = executor.post(owner: route, peer: peer, isLive: { $0.media === $1 }, submit: { authority, completion in
+            reachedExecutor = true
+            return executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: .infinity,
+                                   routeAuthority: authority, completion: completion)
+        }, deliver: { (owner: PeerRoute, receipt: HostInputExecutor.Receipt) in
+            XCTAssertTrue(owner.media === peer)
+            XCTAssertTrue(executor.accepts(receipt))
+            XCTAssertFalse(receipt.outcome.accepted, "a peer without an open input channel must refuse the post")
+            delivered.fulfill()
+        })
+        XCTAssertTrue(submitted)
+        XCTAssertTrue(reachedExecutor)
+        wait(for: [delivered], timeout: 2)
+        XCTAssertTrue(sink.keys.isEmpty)
+    }
+    @MainActor
+    func testReceiptForAReplacedPeerRouteIsNotDelivered() {
+        let sink = ExecutorSink(), executor = sink.executor()
+        let peer = PeerMedia(isHost: true, servers: []), route = PeerRoute()
+        route.media = peer
+        let completed = expectation(description: "executor completed")
+        let delivered = expectation(description: "stale receipt delivered")
+        delivered.isInverted = true
+        XCTAssertTrue(executor.post(owner: route, peer: peer, isLive: { $0.media === $1 }, submit: { authority, completion in
+            executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: .infinity, routeAuthority: authority) { receipt in
+                completion(receipt); completed.fulfill()
+            }
+        }, deliver: { (_: PeerRoute, _: HostInputExecutor.Receipt) in delivered.fulfill() }))
+        route.media = PeerMedia(isHost: true, servers: [])
+        wait(for: [completed, delivered], timeout: 0.5)
+    }
     func testRevocationWhileQueuedPreventsPostingAndCompletionCannotRestoreAuthority() {
         let queue = DispatchQueue(label: "blocked-input"), sink = ExecutorSink(), executor = sink.executor(queue: queue)
         queue.suspend()
