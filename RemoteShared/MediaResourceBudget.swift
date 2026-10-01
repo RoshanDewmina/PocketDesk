@@ -103,6 +103,7 @@ enum BulkAdmissionPolicy {
     static let fastLaneBufferedBytes: UInt64 = 2 * 1024 * 1024
     static let fastLaneBytesPerSecond: Double = 25_000_000
     static let fastLaneMessageBytes = 64 * 1024
+    static let wireOverhead = 1.08
     /// Internal kill switch (no UI): `defaults write <bundle id> farsideFileFastLaneDisabled -bool YES`.
     static let fastLaneDisabledKey = "farsideFileFastLaneDisabled"
 
@@ -218,7 +219,9 @@ final class MediaResourceBudget: @unchecked Sendable {
             let standing = windowMinimumBuffered.map { $0 >= BulkAdmissionPolicy.maximumBufferedBytes / 2 } ?? false
             probe?.update(achievedKbps: achieved, rttSampleMs: next.rttSampleMs, baselineRTTMs: baselineRTT,
                           queueRefusedShare: refused, standingQueue: standing)
-            if next.totalTransportKbps != nil { next.bulkKbps = achieved }
+            // Transport bytes include each file packet's SCTP/DTLS/UDP/IP headers (~8% at full packets); without them
+            // a fast-lane transfer reads as video in `videoKbps - bulkKbps` and pauses itself on the host.
+            if next.totalTransportKbps != nil { next.bulkKbps = achieved.map { $0 * BulkAdmissionPolicy.wireOverhead } }
         } else {
             rttSamples = []; tokens = 0; lastCredit = next.at; lastBuffered = nil
             probe = BulkRateProbe(route: next.route)
