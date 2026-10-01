@@ -92,23 +92,23 @@ Conditions: macOS 27.0.1 (26A434), Mac16,13 (M4 Air), branch `claude/vdisplay-sp
 |---|---|---|---|---|
 | phone-2x-120 (1311×603 pt, 2× = 2622×1206 px) | yes, scale 2.0, 120 Hz | 90.3 (8.33 / 16.67); repeats 89.5, 89.0, 87.9, 85.5 | 60.0 | 0.4 |
 | phone-2x-60 | yes, 60 Hz | 59.8 (16.67 / 16.67) | 60.0 | 0.2 |
-| points-2x-120 (874×402 pt, 2× = 1748×804 px) | yes, 120 Hz | 89.6 (8.33 / 16.67) | 60.0 | 0.0 |
+| points-2x-120 (874×402 pt, 2× = 1748×804 px) | **no**: the 2× mode is listed but `CGCompleteDisplayConfiguration` returned 1001; measured at 1748×804 pt, scale 1.0, 120 Hz | 89.6 (8.33 / 16.67) | 60.0 | 0.0 |
 | phone-2x-120 portrait (603×1311 pt) | yes, 120 Hz | 89.0 | 60.0 | 0.2 |
 | 1x-120 (2560×1440) | 120 Hz | 88.9 (8.33 / 16.67) | 60.0 | 0.2 |
 | 1x-144 | 144 Hz | 97.9 (6.94 / 20.83) | 60.0 | 0.2 |
 | hidpi-120 (1280×720 pt) | yes, 120 Hz | 91.5 (8.33 / 16.67) | 60.0 | 0.2 |
 
-Every scenario is NO-GO on the ≥110 fps gate. The spike window's display link ticked at 60/s on every virtual display, so the drawn content changed 60 times a second; the extra distinct `displayTime`s are compositor presents.
+Every scenario is NO-GO on the ≥110 fps gate, but that gate is **unproven, not proven**: the spike window's display link ticked at 60/s on every virtual display (interval median 8.33 ms, tick gap median 16.67 ms), so no 120 fps content was ever drawn, and distinct `displayTime`s overcount (≈90/s against 60 content changes, 0.2/s when idle). A 120 fps content source plus a frame number painted into the pixels, and an ASUS-detached control, are needed before the question is settled.
 
 Encode at 2622×1206 (420v capture frames, one in flight, 240 frames, hardware, 25 Mb/s): HEVC p50 7.62 ms, p90 8.03, max 9.45, IDR 24.0 ms; H.264 p50 7.27 ms, p90 7.70, max 9.02, IDR 19.4 ms.
 
-Rotation by `applySettings:` on the same object (display ID kept): landscape→portrait: bounds, NSScreen and the 2× mode settled at 366–367 ms, ScreenCaptureKit size fresh at 412 ms, first full-size frame at 457 ms; no other window moved. Portrait→landscape: bounds at 381 ms but on the 1× mode; after re-selecting 2× it settled about 0.3 s later (0.7 s total without the spike's 2 s grace).
+Rotation by `applySettings:` on the same object (display ID kept): landscape→portrait: bounds, NSScreen and the 2× mode settled at 366–367 ms, ScreenCaptureKit size fresh at 412 ms, first full-size frame at 457 ms (upper bounds: the ScreenCaptureKit poll is 100 ms and `watch` is armed late); no other window moved. Portrait→landscape: bounds at 381 ms but on the 1× mode, the display jumped sides (x −927 → 1920), the 2× re-select settled ≈332 ms later (≈0.7 s derived, the spike's own 2 s grace excluded), the first full frame arrived at 2811 ms, and capture then ran at 59.7 fps against 90–93 after landscape→portrait.
 
-Teardown: normal release removed the display in every run; `kill -9` removed it 224 ms later (shell poller). Display sleep/wake, mirroring and the ASUS-detached condition were not run (not approved). Side effect seen on every release: the iPhone Mirroring window on the ASUS shrank by 11 px (restored by the lane tool).
+Teardown: normal release removed the display in every run; `kill -9` removed it 224 ms later (shell poller). Display sleep/wake, mirroring and the ASUS-detached condition were not run (not approved). Side effect on every run: the iPhone Mirroring window on the ASUS shrank by 12 px (899 → 887) when the display was created and was restored by the lane tool afterwards. The encode frames are mostly black (P-frames ≈3 KB), so the encode times are a best case.
 
 Final line (phone-2x-120, verbatim): `VIRTUAL-DISPLAY-SPIKE: NO-GO fps=90.3 p90gap=16.67ms median=8.33ms distinct=903 reported=120Hz link=59.9 idle=0.4 scenario=phone-2x-120`
 
-Decision: 2× phone-shaped display works and rotates in place; 120 fps does not (content runs at 60 Hz on a virtual display here).
+Decision: a 2× phone-shaped display works at the pixel-exact 1311×603 pt and rotates in place (landscape→portrait cleanly, portrait→landscape with caveats); 874×402 pt 2× failed; 120 fps is unproven.
 
 ## Caveats
 

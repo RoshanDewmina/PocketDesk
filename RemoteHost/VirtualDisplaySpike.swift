@@ -537,7 +537,10 @@ enum VirtualDisplaySpike {
         }
         // .forAppOnly: macOS restores the previous mode when this process exits.
         let completed = CGCompleteDisplayConfiguration(config, .forAppOnly)
-        print("\(tag) switched to \(describe(target)) for this process (result \(completed.rawValue))")
+        let now = CGDisplayCopyDisplayMode(id)
+        let reached = completed == .success && now?.width == width && now?.pixelWidth == pixelWidth
+        print("\(tag) " + (reached ? "switched to" : "FAILED to switch to") + " \(describe(target)) for this process "
+              + "(result \(completed.rawValue)); current \(now.map(describe) ?? "nil")")
     }
 
     private static func reportDisplay(_ id: CGDirectDisplayID, screen: NSScreen, tag: String) -> Double? {

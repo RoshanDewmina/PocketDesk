@@ -1,12 +1,14 @@
 #!/bin/zsh
 # Runs the Debug host's CGVirtualDisplay spike (Docs/perf/VIRTUAL-DISPLAY-SPIKE.md) and reports GO / NO-GO.
 #   script/perf/virtual-display-spike.sh [HOST_APP] [LOG] [--direct] [--scenarios 1x-120,1x-144,hidpi-120]
-#       [--portrait] [--steps encode,rotate,mirror:virtual,sleep,hold:60] [--max-pixels 8192] [--kill9 SECONDS]
+#       [--portrait] [--steps encode,rotate,mirror:virtual,sleep,hold:60] [--allow-screen-changes]
+#       [--max-pixels 8192] [--kill9 SECONDS]
 # HOST_APP: a built Debug PocketDeskRemoteHost.app (default: the FarsidePerf DerivedData product).
 # LOG: where the spike's output goes (default /tmp/farside-virtual-display-spike-<time>.log).
 # By default the app is started through LaunchServices (open -n, like script/e2e) so macOS checks the
 # app's own Screen Recording grant; --direct executes the binary instead, which makes the terminal the
 # responsible process for that check. Nothing is built here.
+# --allow-screen-changes: required for the sleep and mirror steps (they change what the user sees).
 # --kill9 N: SIGKILLs the spike N seconds after its "HOLD display" line (pair with --steps hold:60) and
 # polls CGGetOnlineDisplayList for 15 s to see when the virtual display disappears (Q5 teardown). Run it
 # on its own: the kill loses the scenario summary and the verdict line, so the exit status is 2.
@@ -22,6 +24,7 @@ die() { print -u2 -- "virtual-display-spike: $*"; exit 2 }
 
 direct=0
 scenarios=""
+allow_screen_changes=0
 portrait=0
 steps=""
 max_pixels=""
@@ -33,6 +36,7 @@ while (( $# )); do
     --scenarios) (( $# >= 2 )) || die "--scenarios needs a value"; scenarios=$2; shift ;;
     --portrait) portrait=1 ;;
     --steps) (( $# >= 2 )) || die "--steps needs a value"; steps=$2; shift ;;
+    --allow-screen-changes) allow_screen_changes=1 ;;
     --max-pixels) (( $# >= 2 )) || die "--max-pixels needs a value"; max_pixels=$2; shift ;;
     --kill9) (( $# >= 2 )) && [[ $2 == <0-9999> ]] || die "--kill9 needs whole seconds"; kill9=$2; shift ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
@@ -42,6 +46,12 @@ while (( $# )); do
   shift
 done
 (( ${#positional} <= 2 )) || die "expected at most HOST_APP and LOG"
+if [[ ,$steps, == *,sleep,* || ,$steps, == *,mirror* ]]; then
+  (( allow_screen_changes )) || die "steps 'sleep' (pmset displaysleepnow; the wake can land on the lock screen)" \
+    "and 'mirror' (puts the built-in panel in a mirror set) change what the user sees; pass --allow-screen-changes" \
+    "only with the user's explicit approval"
+  print -u2 -- "virtual-display-spike: WARNING: --steps $steps will change what the display shows (approved by flag)"
+fi
 APP=${positional[1]:-$DEFAULT_APP}
 LOG=${positional[2]:-/tmp/farside-virtual-display-spike-$(date +%Y%m%d-%H%M%S).log}
 
