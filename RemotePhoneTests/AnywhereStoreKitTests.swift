@@ -13,6 +13,27 @@ final class AnywhereStoreKitTests: XCTestCase {
     private let accountToken = UUID(uuidString: "6B1F2C3D-4E5F-4A6B-8C7D-9E0F1A2B3C4D")!
     private var syncCalls = 0
 
+    /// The StoreKit test daemon can take tens of seconds to answer its first request after the
+    /// simulator boots (6–50 s seen on 1 Oct), and every test's setUp waits for it on the main thread,
+    /// so the first test of a run could pass its time allowance. Wake the daemon once per class,
+    /// outside every test's allowance; later setUp calls answer in well under a second.
+    nonisolated override class func setUp() {
+        super.setUp()
+        guard let url = Bundle(for: AnywhereStoreKitTests.self).url(forResource: "FarsideAnywhere", withExtension: "storekit"),
+              let session = try? SKTestSession(contentsOf: url) else { return }
+        let done = DispatchGroup()
+        done.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            session.resetToDefaultState()
+            session.clearTransactions()
+            done.leave()
+        }
+        let deadline = Date().addingTimeInterval(180)
+        while done.wait(timeout: .now()) == .timedOut, Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+    }
+
     override func setUp() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "FarsideAnywhere", withExtension: "storekit"))
         session = try SKTestSession(contentsOf: url)
