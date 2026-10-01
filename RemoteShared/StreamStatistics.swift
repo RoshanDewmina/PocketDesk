@@ -111,6 +111,9 @@ struct StreamCounterSnapshot {
     var encodeLatencyP50Ms: Double?
     var encodeLatencyP90Ms: Double?
     var encodeLatencyMaxMs: Double?
+    /// The same frames, submit to VideoToolbox's own callback: the encode latency less the hop to the
+    /// encoder's queue and the Annex B copy (owned encoder only).
+    var encodeVTP90Ms: Double?
     var encodeInFlightMax: Int?
     var encodeBytesP50: Int?
     /// Bytes the encoder produced in this window (X17 sender-queue estimate).
@@ -371,6 +374,7 @@ struct StreamStatsReport: Codable, Equatable {
     var encodeLatencyMs: Double?
     var encodeLatencyP90Ms: Double?
     var encodeLatencyMaxMs: Double?
+    var encodeVTP90Ms: Double?
     var encodeInFlightMax: Int?
     var encodeBytesP50: Int?
     var keyFrameBytesMax: Int?
@@ -514,6 +518,7 @@ struct StreamStatsReport: Codable, Equatable {
                 encodeLatencyMs = Self.round(counters.encodeLatencyP50Ms)
                 encodeLatencyP90Ms = Self.round(counters.encodeLatencyP90Ms)
                 encodeLatencyMaxMs = Self.round(counters.encodeLatencyMaxMs)
+                encodeVTP90Ms = Self.round(counters.encodeVTP90Ms)
                 encodeInFlightMax = counters.encodeInFlightMax
                 encodeBytesP50 = counters.encodeBytesP50
                 keyFrameBytesMax = counters.keyFrameBytesMax
@@ -986,6 +991,7 @@ final class StreamCounters: @unchecked Sendable {
     private var presentedIntervals = LatencyWindow()
     private var inputToPhoton = LatencyWindow()
     private var encodeLatency = LatencyWindow()
+    private var encodeVTLatency = LatencyWindow()
     private var encodeBytes = LatencyWindow()
     private var lastPresentedMs: Double?
     private var lastMarkerTime: UInt32?
@@ -1148,9 +1154,10 @@ final class StreamCounters: @unchecked Sendable {
 
     // MARK: Encoder trace (host)
 
-    func encoded(latencyMs: Double, bytes: Int, isKeyFrame: Bool, inFlight: Int) {
+    func encoded(latencyMs: Double, vtLatencyMs: Double? = nil, bytes: Int, isKeyFrame: Bool, inFlight: Int) {
         lock.lock(); defer { lock.unlock() }
         encodeLatency.record(latencyMs)
+        if let vtLatencyMs { encodeVTLatency.record(vtLatencyMs) }
         encodeBytes.record(Double(bytes))
         snapshot.encodedBytes += max(0, bytes)
         encodeInFlightMax = max(encodeInFlightMax, inFlight)
@@ -1244,6 +1251,7 @@ final class StreamCounters: @unchecked Sendable {
         result.encodeLatencyP50Ms = encode.p50
         result.encodeLatencyP90Ms = encode.p90
         result.encodeLatencyMaxMs = encode.max
+        result.encodeVTP90Ms = encodeVTLatency.drainPercentiles().p90
         result.encodeInFlightMax = encode.count > 0 ? encodeInFlightMax : nil
         result.encodeBytesP50 = encodeBytes.drainPercentiles().p50.map { Int($0) }
         result.keyFrameBytesMax = keyFrameBytesMax > 0 ? keyFrameBytesMax : nil

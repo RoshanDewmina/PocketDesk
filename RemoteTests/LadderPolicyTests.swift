@@ -92,7 +92,8 @@ final class LadderPolicyTests: XCTestCase {
             Row(name: "two frames in flight, slower than the interval",
                 inputs: with { $0.encodeInFlightMax = 2; $0.encodeLatencyP90Ms = 9 },
                 trigger: .encodeQueue, reason: "encoding"),
-            Row(name: "dropped over 5 % of the rung rate", inputs: with { $0.droppedBeforeEncode = 7 },
+            Row(name: "dropped over 5 % of the rung rate, frames over the interval",
+                inputs: with { $0.droppedBeforeEncode = 7; $0.encodeLatencyP90Ms = 9 },
                 trigger: .droppedBeforeEncode, reason: "encoding"),
             Row(name: "WebRTC says cpu", inputs: with { $0.qualityLimitation = "cpu" },
                 trigger: .cpuLimited, reason: "encoding"),
@@ -106,8 +107,8 @@ final class LadderPolicyTests: XCTestCase {
                 trigger: .hostThermal, reason: "thermal"),
             Row(name: "Mac thermal critical", inputs: with { $0.hostThermalState = "critical" },
                 trigger: .hostThermal, reason: "thermal"),
-            Row(name: "superseded over 25 % with few presented",
-                inputs: with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 90 },
+            Row(name: "superseded over 25 % with the decoder over half the interval",
+                inputs: with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 90; $0.phoneDecodeMs = 5 },
                 trigger: .phoneSuperseded, reason: "phone"),
             Row(name: "phone decode over one frame interval", inputs: with { $0.phoneDecodeMs = 8.4 },
                 trigger: .phoneDecode, reason: "phone"),
@@ -180,17 +181,23 @@ final class LadderPolicyTests: XCTestCase {
     func testSupersededFramesNeedASecondPhoneSignal() {
         let slowDecode = with { $0.phoneSupersededPerSecond = 31; $0.phoneDecodeMs = 8.4 }
         XCTAssertEqual(LadderTrigger.firing(slowDecode, at: ladder120[0]), [.phoneSuperseded, .phoneDecode])
-        let fewPresented = with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 95 }
-        XCTAssertEqual(LadderTrigger.firing(fewPresented, at: ladder120[0]), [.phoneSuperseded])
-        let enoughPresented = with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 97 }
-        XCTAssertEqual(LadderTrigger.firing(enoughPresented, at: ladder120[0]), [])
-        let atThirty = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        let bunched = with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 89 }
+        XCTAssertEqual(LadderTrigger.firing(bunched, at: ladder120[0]), [],
+                       "superseded frames are the ones not presented; with a 3 ms decoder that is arrival bunching")
+        XCTAssertTrue(LadderTrigger.phoneSuperseded.fires(bunched, at: ladder120[0], falseLoadRules: false),
+                      "the kill switch restores few-presented as the second signal")
+        let pressed = with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 89; $0.phoneDecodeMs = 5 }
+        XCTAssertEqual(LadderTrigger.firing(pressed, at: ladder120[0]), [.phoneSuperseded])
+        let atThirty = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20; $0.phoneDecodeMs = 20 }
         XCTAssertTrue(LadderTrigger.phoneSuperseded.fires(atThirty, at: ladder120[3]), "8 of 30 is over 25 %")
-        let sevenAtThirty = with { $0.phoneSupersededPerSecond = 7; $0.phonePresentedFPS = 20 }
+        let sevenAtThirty = with { $0.phoneSupersededPerSecond = 7; $0.phonePresentedFPS = 20; $0.phoneDecodeMs = 20 }
         XCTAssertFalse(LadderTrigger.phoneSuperseded.fires(sevenAtThirty, at: ladder120[3]))
+        let busyAt1280 = with { $0.phoneSupersededPerSecond = 9; $0.phonePresentedFPS = 21; $0.phoneDecodeMs = 3 }
+        XCTAssertFalse(LadderTrigger.phoneSuperseded.fires(busyAt1280, at: ladder120[4]),
+                       "an iPhone 17 decoding 1280 px in 3 ms is not busy because frames arrived together")
         var policy = LadderPolicy(targetFPS: 120)
-        XCTAssertNil(policy.evaluate(fewPresented, at: 0), "two samples, like every load trigger")
-        XCTAssertEqual(policy.evaluate(fewPresented, at: 1), rung(1, "phone"))
+        XCTAssertNil(policy.evaluate(pressed, at: 0), "two samples, like every load trigger")
+        XCTAssertEqual(policy.evaluate(pressed, at: 1), rung(1, "phone"))
     }
 
     func testAStillScreenOrSlowContentIsNotLoad() {
@@ -229,7 +236,7 @@ final class LadderPolicyTests: XCTestCase {
         let slowDecode = with { $0.phoneDecodeMs = 10 }
         XCTAssertTrue(LadderTrigger.phoneDecode.fires(slowDecode, at: top))
         XCTAssertFalse(LadderTrigger.phoneDecode.fires(slowDecode, at: sixty))
-        let dropped = with { $0.droppedBeforeEncode = 4 }
+        let dropped = with { $0.droppedBeforeEncode = 4; $0.encodeLatencyP90Ms = 20 }
         XCTAssertFalse(LadderTrigger.droppedBeforeEncode.fires(dropped, at: top), "4 of 120 is 3 %")
         XCTAssertTrue(LadderTrigger.droppedBeforeEncode.fires(dropped, at: sixty), "4 of 60 is 7 %")
         let lateCapture = with { $0.captureFPS = 40; $0.encodedFPS = 40; $0.captureLatencyP90Ms = 12 }
@@ -636,7 +643,7 @@ final class LadderPolicyTests: XCTestCase {
     func testBusyAtTheFloorRequiresCurrentPressureAndClearsAfterBoundedCalm() {
         var busy = BusyPolicy()
         let floor = rung(4, "phone")
-        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20; $0.phoneDecodeMs = 20 }
         for second in 0...4 {
             XCTAssertNil(evaluate(&busy, floor, phonePressure, at: TimeInterval(second)),
                          "under five seconds of pressure is not yet persistent trouble")
@@ -726,7 +733,7 @@ final class LadderPolicyTests: XCTestCase {
 
     func testBusyRestartsWhenTheTargetChanges() {
         var busy = BusyPolicy()
-        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20; $0.phoneDecodeMs = 20 }
         for second in 0...4 { _ = evaluate(&busy, rung(4, "phone"), phonePressure, at: TimeInterval(second)) }
         XCTAssertEqual(evaluate(&busy, rung(4, "phone"), phonePressure, at: 5)?.level, .busy)
         XCTAssertEqual(evaluate(&busy, LadderPolicy.ladder(targetFPS: 60)[0], calm(targetFPS: 60), at: 6), .ok)
@@ -734,7 +741,7 @@ final class LadderPolicyTests: XCTestCase {
 
     func testTheProtocolEntryPointReportsNoSize() {
         var busy = BusyPolicy()
-        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
+        let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20; $0.phoneDecodeMs = 20 }
         for second in 0...4 { _ = busy.evaluate(ladder: rung(4, "phone"), inputs: phonePressure, at: TimeInterval(second)) }
         XCTAssertEqual(busy.evaluate(ladder: rung(4, "phone"), inputs: phonePressure, at: 5),
                        BusyState(level: .busy, fps: 30, longEdge: 0, reason: "phone"))
@@ -842,7 +849,8 @@ final class LadderPolicyTests: XCTestCase {
         thin.sentFPS = 10
         thin.phonePresentedFPS = 5
         thin.phoneSupersededPerSecond = 3
-        XCTAssertEqual(LadderTrigger.firing(thin, at: top), [.phoneSuperseded], "3 of 10 replaced, 5 shown")
+        thin.phoneDecodeMs = 60
+        XCTAssertEqual(LadderTrigger.firing(thin, at: top), [.phoneSuperseded], "3 of 10 replaced, 60 of 100 ms decoding")
         thin.phoneSupersededPerSecond = 2
         XCTAssertEqual(LadderTrigger.firing(thin, at: top), [], "two replaced frames are noise")
 
@@ -903,6 +911,7 @@ final class LadderPolicyTests: XCTestCase {
         overload.sentFPS = 30
         overload.phonePresentedFPS = 15
         overload.phoneSupersededPerSecond = 15
+        overload.phoneDecodeMs = 20
         for second in 0...4 {
             XCTAssertNil(phoneBusy.evaluate(ladder: floor, inputs: overload, longEdge: 2560, at: TimeInterval(second)))
         }
@@ -969,6 +978,7 @@ final class LadderPolicyTests: XCTestCase {
             var inputs = calm(targetFPS: 30)
             inputs.phoneSupersededPerSecond = feedback.supersededPerSecond
             inputs.phonePresentedFPS = feedback.presentedFPS
+            inputs.phoneDecodeMs = 20
             XCTAssertEqual(LadderTrigger.phoneSuperseded.fires(inputs, at: LadderState.rungs(targetFPS: 30)[0]), fires)
         }
         // Equal physical replacement rates must stay equal as the reporting window varies.
@@ -1134,6 +1144,135 @@ final class LadderPolicyTests: XCTestCase {
             assertTick(monitor.tick(sample: saving, at: TimeInterval(second)), ladder: nil, busy: nil)
         }
         assertTick(monitor.tick(sample: saving, at: 8), ladder: nil, busy: .ok, "8 s later the pill goes")
+    }
+
+    // MARK: Encoder warm-up (1 Oct 2026, build 20261001.3, PocketDeskStreamStats rows 2-7, 113-116, 386-394, 594-597)
+
+    /// One recorded host second on the M4 Air streaming a Claude window, 60 fps target; phone unknown.
+    private func recorded(age: Double?, capture: Double, captureP90: Double, encoded: Double, encodeP90: Double?,
+                          dropped: Int, pacer: Double? = 0, target: Double? = 20_000, available: Double? = 25_000) -> LadderInputs {
+        LadderInputs(targetFPS: 60, captureFPS: capture, captureLatencyP90Ms: captureP90, encodedFPS: encoded,
+                     encodeLatencyP90Ms: encodeP90, encodeInFlightMax: encodeP90 == nil ? nil : 1,
+                     droppedBeforeEncode: dropped, pacerDelayMs: pacer, targetKbps: target, availableKbps: available,
+                     qualityLimitation: "none", hostThermalState: "fair", hostLowPowerMode: false,
+                     sentFPS: encoded, encoderSessionAgeS: age)
+    }
+
+    /// The two session starts on .3 (rows 594-597, then rows 2-5): capture spinning up, the first key
+    /// frame at a 100-1300 kb/s estimate, a rate restart; the old rules stepped 2560 down within 4 s.
+    private var sessionStarts: [LadderInputs] {
+        [recorded(age: 0.4, capture: 14.9, captureP90: 13.1, encoded: 0, encodeP90: 250, dropped: 8, pacer: nil, target: 173, available: 300),
+         recorded(age: 0.5, capture: 39, captureP90: 36.1, encoded: 15.7, encodeP90: 30.2, dropped: 20, pacer: 703.6, target: 1304, available: 1779),
+         recorded(age: 1.4, capture: 45.3, captureP90: 79.4, encoded: 19.8, encodeP90: 51.9, dropped: 12, pacer: 144.9, target: 14_715, available: 23_661),
+         recorded(age: 0.7, capture: 39.3, captureP90: 88.6, encoded: 17.5, encodeP90: 51, dropped: 6, pacer: 22.1, target: 18_674, available: 24_100),
+         recorded(age: nil, capture: 5.2, captureP90: 42.6, encoded: 0, encodeP90: nil, dropped: 1, pacer: nil, target: nil, available: 6000),
+         recorded(age: 0, capture: 10, captureP90: 54.3, encoded: 0, encodeP90: nil, dropped: 10, pacer: nil, target: 4547, available: 6000),
+         recorded(age: 1, capture: 50.5, captureP90: 20.6, encoded: 9.1, encodeP90: 61.3, dropped: 21, pacer: 230, target: 101, available: nil),
+         recorded(age: 2, capture: 52.6, captureP90: 5.1, encoded: 4, encodeP90: 19.2, dropped: 26, pacer: 1602.8, target: 1248, available: 3284)]
+    }
+
+    func testAnEncoderWarmUpIsNotLoad() {
+        for start in [0, 4] {
+            var policy = LadderPolicy(targetFPS: 60)
+            let moves = run(&policy, 0...3) { self.sessionStarts[start + $0] }
+            XCTAssertTrue(moves.isEmpty, "a session start's key frame and spin-up step nothing: \(moves)")
+        }
+
+        var slowConnect = LadderPolicy(targetFPS: 60)
+        let spinUp = run(&slowConnect, 0...4) { _ in self.sessionStarts[4] }
+        let firstEncoder = run(&slowConnect, 5...8) { self.sessionStarts[$0 - 1] }
+        XCTAssertTrue((spinUp + firstEncoder).isEmpty, "5 s before the first encoder leave its warm-up whole")
+
+        var old = LadderPolicy(targetFPS: 60)
+        old.falseLoadRules = false
+        let oldMoves = run(&old, 0...3) { self.sessionStarts[$0] }
+        XCTAssertEqual(oldMoves.first?.state.reason, "capture", "the kill switch restores the old rules")
+    }
+
+    func testAClimbsOwnRestartAndCadenceDropsDoNotFailIt() {
+        var policy = LadderPolicy(targetFPS: 60)
+        var settled = recorded(age: 60, capture: 46, captureP90: 4, encoded: 30, encodeP90: 12, dropped: 0)
+        settled.encodeInFlightMax = 3
+        for second in 0...2 { _ = policy.evaluate(settled, at: TimeInterval(second)) }
+        XCTAssertEqual(policy.state.rung, 3)
+        settled.encodeInFlightMax = 1
+        let climb = run(&policy, 3...13) { _ in settled }
+        XCTAssertEqual(climb.map(\.state.rung), [2], "10 calm seconds: climb to 1920")
+        // The climb's size restart, a rate restart 2 s later, then 1920 at 30 fps with p90 15-23 ms.
+        let after = [recorded(age: 0.8, capture: 47, captureP90: 10.7, encoded: 27, encodeP90: 17.4, dropped: 3, pacer: 15.7),
+                     recorded(age: 1.8, capture: 44, captureP90: 4.2, encoded: 30, encodeP90: 15.7, dropped: 0),
+                     recorded(age: 0, capture: 48.1, captureP90: 5.3, encoded: 26.5, encodeP90: 14.5, dropped: 2),
+                     recorded(age: 1, capture: 42.5, captureP90: 20.7, encoded: 25.4, encodeP90: 24.1, dropped: 5, pacer: 25.8),
+                     recorded(age: 7.8, capture: 45.6, captureP90: 8, encoded: 28.8, encodeP90: 17.8, dropped: 1, pacer: 2.3),
+                     recorded(age: 8.8, capture: 43.9, captureP90: 2.8, encoded: 24.9, encodeP90: 22.9, dropped: 5, pacer: 40.3),
+                     recorded(age: 9.8, capture: 47.3, captureP90: 3.3, encoded: 29.3, encodeP90: 21, dropped: 3, pacer: 1)]
+        let held = run(&policy, 14...20) { after[$0 - 14] }
+        XCTAssertTrue(held.isEmpty, "the climb holds: \(held)")
+        XCTAssertEqual(policy.state.rung, 2)
+    }
+
+    func testDropsCountOnlyWhenFramesOverrunTheInterval() {
+        let ladder60 = LadderPolicy.ladder(targetFPS: 60)
+        let jitter = recorded(age: 30, capture: 44, captureP90: 3, encoded: 25, encodeP90: 22.9, dropped: 5)
+        XCTAssertFalse(LadderTrigger.droppedBeforeEncode.fires(jitter, at: ladder60[2]), "23 ms fits 33 ms at 30 fps")
+        var overrun = jitter
+        overrun.encodedFPS = 55
+        overrun.encodeLatencyP90Ms = 19
+        XCTAssertTrue(LadderTrigger.droppedBeforeEncode.fires(overrun, at: ladder60[0]), "19 ms overruns 16.7 ms at 60")
+        var unknown = jitter
+        unknown.encodeLatencyP90Ms = nil
+        XCTAssertTrue(LadderTrigger.droppedBeforeEncode.fires(unknown, at: ladder60[2]), "no latency trace: drops count")
+    }
+
+    func testAWarmUpStillStepsForHeatAndBacklogAndHoldsTheClimb() {
+        var policy = LadderPolicy(targetFPS: 60)
+        var hot = recorded(age: 1, capture: 46, captureP90: 4, encoded: 30, encodeP90: 12, dropped: 0)
+        hot.hostThermalState = "serious"
+        XCTAssertEqual(policy.evaluate(hot, at: 0)?.reason, "thermal")
+        var stuck = recorded(age: 1, capture: 46, captureP90: 4, encoded: 30, encodeP90: 12, dropped: 0)
+        stuck.encodeInFlightMax = 3
+        XCTAssertEqual(policy.evaluate(stuck, at: 1)?.reason, "encoding", "three frames in flight step at once")
+
+        var climbing = LadderPolicy(targetFPS: 60)
+        _ = climbing.evaluate(stuck, at: 0)
+        let warmCalm = recorded(age: 1, capture: 46, captureP90: 4, encoded: 30, encodeP90: 12, dropped: 0)
+        let settled = recorded(age: 30, capture: 46, captureP90: 4, encoded: 30, encodeP90: 12, dropped: 0)
+        let moves = run(&climbing, 1...15) { $0 <= 5 ? warmCalm : settled }
+        XCTAssertEqual(moves.map(\.time), [15], "a warm-up is not headroom: the climb waits 10 s after it")
+    }
+
+    func testOverloadAcrossRestartsStillSteps() {
+        var policy = LadderPolicy(targetFPS: 60)
+        // A real shortfall with the encoder restarting every 4 s: two load samples never sit side by side.
+        let moves = run(&policy, 0...11) { second in
+            recorded(age: Double(second % 4), capture: 50, captureP90: 4, encoded: 20, encodeP90: 25, dropped: 0)
+        }
+        XCTAssertEqual(moves.first?.time, 7, "the load at 3 s and 7 s steps across the warm-up between")
+        XCTAssertEqual(moves.first?.state.reason, "encoding")
+        let jitter = recorded(age: 30, capture: 44, captureP90: 3, encoded: 25, encodeP90: 22.9, dropped: 5)
+        XCTAssertTrue(LadderTrigger.droppedBeforeEncode.fires(jitter, at: LadderPolicy.ladder(targetFPS: 60)[2], falseLoadRules: false),
+                      "the kill switch restores the old drop rule")
+    }
+
+    func testAClimbToSixtyMustFitItsInterval() {
+        var policy = LadderPolicy(targetFPS: 60)
+        var slow = recorded(age: 30, capture: 57, captureP90: 4, encoded: 30, encodeP90: 18, dropped: 0)
+        slow.encodeInFlightMax = 3
+        _ = policy.evaluate(slow, at: 0)
+        XCTAssertEqual(policy.state.rung, 1)
+        slow.encodeInFlightMax = 1
+        XCTAssertTrue(run(&policy, 1...40) { _ in slow }.isEmpty,
+                      "2560 px at an 18 ms p90 is clean at 30 fps but does not fit 60: stay")
+        let fast = recorded(age: 30, capture: 57, captureP90: 4, encoded: 30, encodeP90: 11, dropped: 0)
+        XCTAssertEqual(run(&policy, 41...51) { _ in fast }.map(\.state.rung), [0], "11 ms fits 16.7 ms: climb")
+    }
+
+    func testAWarmUpThatNeverEndsCountsAgain() {
+        var policy = LadderPolicy(targetFPS: 60)
+        let restarting = recorded(age: 1, capture: 50, captureP90: 4, encoded: 20, encodeP90: 25, dropped: 0)
+        let moves = run(&policy, 0...10) { _ in restarting }
+        XCTAssertEqual(moves.first?.time, 7, "neutral for 6 s, then two shortfall samples step")
+        XCTAssertEqual(moves.first?.state.reason, "encoding")
     }
 }
 

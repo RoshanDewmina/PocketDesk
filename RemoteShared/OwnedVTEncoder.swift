@@ -526,7 +526,10 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         let codec = configuration.codecSpecificInfo()
         if isKey { restart.lastKeyFrameBytes = data.count }
         gate.accepted(); counters?.encoderOutput()
-        counters?.encoded(latencyMs: max(0, now - entry.submittedMs), bytes: data.count, isKeyFrame: isKey, inFlight: gate.inFlight + 1)
+        // The ladder keeps the full time: with one frame in flight the gate holds each frame until this
+        // queue runs `completed`. VideoToolbox's own share is logged beside it to split the two.
+        counters?.encoded(latencyMs: max(0, now - entry.submittedMs), vtLatencyMs: max(0, encodedAtMs - entry.submittedMs),
+                          bytes: data.count, isKeyFrame: isKey, inFlight: gate.inFlight + 1)
         frameTiming?.encoded(key: entry.captureMs, localRtp: entry.timestamp, bytes: data.count, atMs: now)
         if callback?(image, codec) == true { counters?.encodedFrameAccepted() }
     }
