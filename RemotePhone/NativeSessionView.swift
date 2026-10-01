@@ -184,6 +184,9 @@ struct NativeSessionView: View {
         .onChange(of: model.contentConcealed) { _, concealed in
             if concealed { cancelGesture(); cancelVoiceInput() }
         }
+        .onChange(of: connection.inputRecovering) { _, recovering in
+            if recovering { UIAccessibility.post(notification: .announcement, argument: "Input catching up") }
+        }
         .onChange(of: model.privacyShield) { _, shielded in
             if shielded { cancelGesture() }
             if shielded && voiceInput.phase != .requestingPermission { voiceInput.pauseForInterruption() }
@@ -1067,14 +1070,15 @@ struct NativeSessionView: View {
         if model.dragging {
             return model.explicitHoldDeadline != nil ? "Mouse button held · tap Drop to let go" : "Holding click · lift to drop"
         }
-        if connection.inputRecovering { return "Input catching up…" }
         if couch {
             if model.couchStalled { return CouchCopy.notAnswering }
+            if connection.inputRecovering { return "Input catching up…" }
             if model.canControl && clickAcknowledged { return "Click sent" }
             if model.canControl { return "Controlling your Mac · no picture" }
             return model.controlAllowed ? "Waiting for your Mac · controls paused" : "Mouse and keyboard are off on your Mac"
         }
         if !model.fresh || !model.captureHealthy { return "Reconnecting the picture · controls paused" }
+        if connection.inputRecovering { return "Input catching up…" }
         let health = sessionHealth
         if let health, !health.isSlowOnly { return health.sessionLine }
         if panMode { return "View · drag or pinch to look around" }
