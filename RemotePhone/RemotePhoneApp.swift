@@ -737,7 +737,7 @@ final class PhoneRemoteModel: ObservableObject {
     func startPictureInPicture() {
         guard sceneIsActive, !privacyShield, !contentConcealed, !awaitingViewOnlyExit, pipState == .ready,
               hostFeatures.contains(SessionFeature.liveViewOnly), pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return }
-        livePiP.automaticStartAllowed = false // The button owns this start.
+        livePiP.automaticStartAllowed = false; autoPiPStarted = false // The button owns this start.
         requestViewOnlyEntry()
     }
     private func requestViewOnlyEntry() {
@@ -846,6 +846,14 @@ final class PhoneRemoteModel: ObservableObject {
         self.livePiP.didChangeState = { [weak self] state in
             guard let self else { return }
             self.pipState = state
+            if (state == .ineligible || state == .stopping) && self.autoPiPStarted {
+                // An OS-started PiP ended on its own: drop its pending entry so no later answer can restart it.
+                self.autoPiPStarted = false
+                if self.pendingViewOnlyStart && !self.invalidatingPiP {
+                    self.pendingViewOnlyStart = false; self.viewOnlyStartDeadline = nil
+                    if self.connection.connected && !self.awaitingViewOnlyExit { self.requestViewOnlyExit() }
+                }
+            }
             if self.pipBackground && state != .active && state != .paused && !(state == .starting && self.autoPiPStarted)
                 && self.pipRestoreRequest == nil { self.disconnect(explicitEnd: false) }
             else if state == .ineligible && !self.invalidatingPiP && self.viewOnlyConfirmed && !self.awaitingViewOnlyExit && self.pipRestoreRequest == nil {

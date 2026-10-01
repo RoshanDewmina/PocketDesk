@@ -79,7 +79,12 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     /// An OS start shows only the last inline frame until the Mac confirms live view only.
     private(set) var automaticStartUnconfirmed = false
     func automaticStartConfirmed() { automaticStartUnconfirmed = false; synchronizeSource() }
-    private func applyAutomaticStart() { controller?.setAutomaticStart(automaticStartAllowed && policy.state == .ready) }
+    /// Between AVKit's willStart and didStart of an OS start: its flag must stay set, and the start is bounded.
+    private var automaticStartInFlight = false
+    private static let automaticStartLimit: TimeInterval = 3
+    private func applyAutomaticStart() {
+        controller?.setAutomaticStart(automaticStartAllowed && (policy.state == .ready || automaticStartInFlight))
+    }
     var restoreForeground: ((@escaping (Bool) -> Void) -> Void)?
     var renderSizeChanged: ((CMVideoDimensions) -> Void)?
 
@@ -193,7 +198,13 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
             return false
         }
         // An automatic start is already under way in the OS; leave its flag set until it finishes or stops.
-        if automatic { automaticStartUnconfirmed = true } else { controller.start(); applyAutomaticStart() }
+        if automatic {
+            automaticStartUnconfirmed = true; automaticStartInFlight = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.automaticStartLimit) { [weak self, weak controller] in
+                guard let self, let controller, self.controller === controller, self.policy.state == .starting else { return }
+                self.stop() // AVKit never reported the start finishing or failing.
+            }
+        } else { controller.start(); applyAutomaticStart() }
         synchronizeSource(); didChangeState?(policy.state); return true
     }
     private func startContextMatches(_ controller: any LivePiPPlatformController, admission: VideoPresentationAdmission,
@@ -224,7 +235,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         fence?.invalidate() // BEFORE sample flush, OS stop, or any application callback.
         let oldSource = source, oldSink = sink, oldController = controller, oldOwner = mediaOwner
         source = nil; sink = nil; fence = nil; controller = nil; mediaOwner = nil
-        mediaInterrupted = false; automaticStartUnconfirmed = false
+        mediaInterrupted = false; automaticStartUnconfirmed = false; automaticStartInFlight = false
         policy.stop(); expiryTimer?.invalidate(); expiryTimer = nil
         policy.didStop(); synchronizeSource()
         oldSource?.detach(); oldSink?.invalidate()
@@ -255,6 +266,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     private func confirmPlatformStart(controller candidate: (any LivePiPPlatformController)?) {
         guard let candidate, candidate === controller else { return }
         guard policy.didStart(at: ProcessInfo.processInfo.systemUptime) else { stop(); return }
+        automaticStartInFlight = false
         applyAutomaticStart(); synchronizeSource(); didChangeState?(policy.state)
     }
     #if DEBUG
