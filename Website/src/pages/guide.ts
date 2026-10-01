@@ -56,14 +56,13 @@ export function ctaBand(): Html {
 </section>`;
 }
 
-/** The standard gesture list, shared by the support page and the guides. */
+/**
+ * The gesture list on the support page: only what has been confirmed on a device (1 Oct 2026). Add the
+ * others (double-tap, two-finger tap and drag, double-tap-hold drag) back as each passes its bulk-test line.
+ */
 export const GESTURES: [string, string][] = [
   ["Slide one finger", "Move the pointer (it moves, it doesn’t jump to your finger)"],
   ["Tap", "Click where the pointer is"],
-  ["Double-tap", "Double-click"],
-  ["Two-finger tap", "Right-click"],
-  ["Two-finger drag", "Scroll, up and down or sideways"],
-  ["Double-tap, hold, then slide", "Drag something"],
   ["Pinch", "Zoom the view in or out"],
   ["Swipe up on the handle", "Show the controls, including the keyboard"],
 ];
