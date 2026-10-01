@@ -180,7 +180,8 @@ final class CoordinatorRenewalTests: XCTestCase {
         let rig = RenewalRig(isHost: false)
         try await rig.startPhone()
         XCTAssertNil(rig.signaling.connects[0].hostToken)
-        XCTAssertEqual(rig.signaling.connects[0].features, [SignalingFeature.renewal, SignalingFeature.route, "guest-v1"])
+        XCTAssertEqual(rig.signaling.connects[0].features, [SignalingFeature.renewal, SignalingFeature.route])
+        XCTAssertFalse(rig.signaling.connects[0].features.contains("guest-v1"), "Only the host offers guest creation")
         for minute in 1...125 {
             await rig.scheduler.advance(by: 60)
             let held = try XCTUnwrap(rig.heldRelayUsername)
