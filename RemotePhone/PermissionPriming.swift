@@ -14,8 +14,12 @@ enum PermissionPrimer {
         defaults.set(true, forKey: key(kind))
     }
 
-    /// True only before iOS has asked. Local Network has no status API, so it is asked once.
-    static func needsPriming(_ kind: PermissionKind, in defaults: UserDefaults = .standard) -> Bool {
+    /// Microphone priming is explained once, before either iOS prompt. Local Network has no status API.
+    static func needsPriming(_ kind: PermissionKind, in defaults: UserDefaults = .standard,
+                             microphoneNeedsAuthorization: () -> Bool = {
+                                 AVAudioApplication.shared.recordPermission == .undetermined
+                                     || SFSpeechRecognizer.authorizationStatus() == .notDetermined
+                             }) -> Bool {
         guard !LaunchOptions.suppressesOnboarding else { return false }
         switch kind {
         case .camera:
@@ -23,8 +27,8 @@ enum PermissionPrimer {
         case .localNetwork:
             return !wasPrimed(.localNetwork, in: defaults)
         case .microphone:
-            return AVAudioApplication.shared.recordPermission == .undetermined
-                || SFSpeechRecognizer.authorizationStatus() == .notDetermined
+            // Continue marks this before re-entering voice input; iOS has not asked yet.
+            return !wasPrimed(.microphone, in: defaults) && microphoneNeedsAuthorization()
         case .notifications:
             return !wasPrimed(.notifications, in: defaults)
         }
