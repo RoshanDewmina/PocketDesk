@@ -62,6 +62,9 @@ export const config = {
     macSha256: null,
   } satisfies Launch as Launch,
 
+  /** Optional operator-maintained live status destination; absent means availability is unknown. */
+  serviceStatus: { liveUrl: null as string | null },
+
   /**
    * Social profiles (footer links and Organization.sameAs in JSON-LD). Full https URLs.
    * null renders a "coming soon" placeholder and is left out of the structured data.

@@ -93,7 +93,7 @@ Risk scale: Low (design already fits), Medium (needs a deliberate fix or note), 
 
 **What could tip it into scope.** The product plan (PRODUCT sections 2, 4 and 12; `Docs/research/2026-09-28/AGENT-INTEGRATION.md`) positions Farside around "your existing Mac workspace from the AI chat you already use", chat links, an MCP viewer, agent takeover and possible app launchers or macros. If any of that shipped in v1 as a way to open or drive a particular product, App Review could reasonably say the app mirrors specific software or services and then hold it to (a), which would forbid off-LAN use. Rules for launch:
 
-1. Ship none of B16 to B19 (chat/MCP link, embedded viewer, agent frames, takeover) in v1. The routes are unmounted today; keep them off the iOS app.
+1. Reconcile the exact submission’s source disposition. Generic owner-bound agent notifications and the ID-only help route are mounted in the current app; the route now preserves an unknown origin and cannot invent the selected Mac as its producer. This does not establish that an embedded product-specific viewer, MCP transport, agent takeover or app launcher is exposed. Review and document every enabled entry point in the exact submitted artifact; do not reuse the older “routes unmounted” assertion. Expanded feature preparation does not itself resolve App Review acceptance.
 2. Metadata describes a generic tool: "your Mac", "your desktop", "check on long-running builds, renders and AI tasks". No named third-party services or their logos.
 3. No app launcher, app-aware shortcut strips or macros in v1 (PRODUCT section 11 already defers them).
 4. The client UI is a viewer and controller, not a store-like surface; there is no software catalogue.

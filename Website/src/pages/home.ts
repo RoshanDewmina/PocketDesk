@@ -177,10 +177,10 @@ const agents = html`<section class="sec" id="agents" aria-labelledby="agents-tit
     <div>
       <p class="beta-tag">Beta · arrives with the first release</p>
       <h2 class="h2" id="agents-title">When your agent needs <em>you</em>${pd}</h2>
-      <p class="lead">Leave an AI coding agent working on your Mac and walk away. If it stops to ask for permission, or needs you to sign in to something, Farside taps you on the shoulder. Tap the alert and you’re looking at your Mac, ready to answer.</p>
+      <p class="lead">Leave an AI coding agent working on your Mac and walk away. If it stops to ask for permission, or needs you to sign in to something, Farside taps you on the shoulder. Open the alert, inspect its originating Mac, then choose to connect.</p>
       <ul class="ticks" role="list">
         <li><span><b>Off until you turn it on,</b> on your Mac.</span></li>
-        <li><span><b>Says who, not what.</b> The alert names the agent that needs you. No prompts, file names or screen content ride along.</span></li>
+        <li><span><b>Private on the lock screen.</b> The alert says a task on your Mac needs you. No prompts, file names or screen content ride along.</span></li>
         <li><span><b>Same session as always:</b> your paired phone, encrypted end to end.</span></li>
         <li><span><b>It’s a beta.</b> Expect rough edges, and please tell us about them.</span></li>
       </ul>

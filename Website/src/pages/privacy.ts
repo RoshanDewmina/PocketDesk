@@ -71,7 +71,7 @@ const S: Section[] = [
   {
     id: "notifications",
     title: "Notifications (agent alerts, beta)",
-    body: html`<p>Farside only asks to send notifications if you turn on agent alerts. To deliver them, your phone’s Apple push notification token is sent to our server and stored with the random room identifier of the Mac it belongs to. Alerts say which agent needs you and contain no screen contents, prompts or file names. You can turn them off in iOS Settings or in the app, which deletes the token.</p>`,
+    body: html`<p>Farside only asks to send notifications if you turn on agent alerts. To deliver them, your phone’s Apple push notification token is sent to our server and stored with the random room identifier of the Mac it belongs to. Notifications say a task on your Mac needs you and contain no screen contents, prompts or file names. An alert’s opaque pairing identity keeps an explicit connection tied to its originating Mac. You can turn them off in iOS Settings or in the app, which deletes the token.</p>`,
   },
   {
     id: "subscription",

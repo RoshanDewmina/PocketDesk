@@ -170,6 +170,7 @@ function footer(): Html {
       </ul></div>
       <div><h2>Help</h2><ul role="list">
         <li><a href="/support">Support</a></li>
+        <li><a href="/status">Service status</a></li>
         <li><a href="/support#messages">What a message means</a></li>
         <li><a href="/#beta">Join the beta</a></li>
         <li><a href="/privacy">Privacy policy</a></li>

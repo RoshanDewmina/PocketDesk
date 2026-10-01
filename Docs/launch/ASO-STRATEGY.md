@@ -435,7 +435,9 @@ Industry consensus [I]: recent install velocity outweighs lifetime installs, and
 - **Rules:** no purchased installs, no bots or "ASO growth" services (5.6.3), no review solicitation (5.6.1), no fake reviews or vote rings on any platform.
 - **Apple Ads** are permitted and are the only paid source that also gives per-keyword data (5.4).
 
-### 5.4 Apple Ads (Advanced) with under CA$100 a month
+### 5.4 Apple Ads preparation within the cumulative CAD200 cash limit
+
+**30 September execution override:** the total acquisition cash budget is **CAD200 across all campaigns and channels**, not a renewing monthly allowance. Eligible Apple promotional credit is tracked separately and never assumed available. The daily allocations below are historical planning examples; no campaign, contact or spend is authorized by this document. Before any separately approved campaign, record cumulative cash paid, committed unbilled spend, tax/FX and verified credit in `ACQUISITION-SPEND-LEDGER.csv`. Pause before the remaining cash allowance reaches zero; daily/monthly platform budgets do not implement this cumulative stop. Any keyword increase must fit the remaining CAD200 allowance and receive the exact campaign approval.
 
 Apple facts [A]: Advanced is cost-per-tap with keyword, bid and placement control and no monthly cap; Basic is cost-per-install with no keyword or audience settings, search results only, and a US$10,000 monthly ceiling per app (Apple's own example shows US$500 a month). For each Advanced campaign the monthly spend will not exceed the daily budget times 30.4, and on some days spend can exceed the daily budget. Apple recommends separate brand, category, competitor and discovery campaigns, exact match with Search Match off for the non-discovery ones, and Search Match on in a discovery ad group to mine search terms. Canada is a supported country.
 
@@ -548,7 +550,7 @@ Impressions, page views, downloads by source type, conversion by source, paired-
 | 4 to 7 | Read the funnel: impressions to page views (tap-through) and page views to downloads, split Search versus Web referrer | If Search tap-through is low against your peer benchmark, the icon, title or first three screenshots are weak: queue an icon and screenshot test. If page-view conversion is low but tap-through is fine, the page is over-promising: fix screenshots 4 to 8, the description opening and the paywall messaging |
 | 8 to 14 | First metadata change (submit v1.0.1 about 24 Nov, live about 1 Dec) | Only one variable: move the subtitle from A to A2 if "control" and "iPhone" tokens are not helping, or add K2 tokens if agent traffic shows up. Do not change more than one field at a time |
 | 15 to 21 | Read ranks. Compare the 15 tracked phrases before and after; check en-CA versus en-US behaviour with the 3-token swap; review Apple Ads search terms and promote winners to exact | Keep, revert or extend. Add negatives for waste |
-| 22 to 30 | Custom pages and events. Compare `cpp-agents`, `cpp-work`, `cpp-home` conversion and retention; decide whether a second event or feature nomination is justified | Retire the weakest page; double the budget on the strongest keyword only if paid conversion supports it |
+| 22 to 30 | Custom pages and events. Compare `cpp-agents`, `cpp-work`, `cpp-home` conversion and retention; decide whether a second event or feature nomination is justified | Retire the weakest page; prepare a keyword reallocation only within the remaining cumulative CAD200 cash allowance, with exact campaign approval |
 
 Guard rails: one metadata change per storefront per 14 days so effects can be attributed; every change logged with date, field, old value, new value and the metric expected to move; a rank drop within 3 days of a change is treated as noise unless it persists past day 7.
 

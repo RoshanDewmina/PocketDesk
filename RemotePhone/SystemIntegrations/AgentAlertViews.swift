@@ -134,7 +134,7 @@ struct AgentAlertBanner: View {
                 Image(systemName: "xmark")
                     .font(.footnote.weight(.semibold))
                     .foregroundStyle(Farside.Palette.ash)
-                    .frame(width: 36, height: 36)
+                    .frame(width: 44, height: 44)
                     .contentShape(.rect)
             }
             .accessibilityLabel("Dismiss")

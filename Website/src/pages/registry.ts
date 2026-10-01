@@ -9,6 +9,7 @@ import { homePage } from "./home";
 import type { Assets } from "./layout";
 import { notFoundPage } from "./notfound";
 import { privacyPage } from "./privacy";
+import { statusPage } from "./status";
 import { supportPage } from "./support";
 import { termsPage } from "./terms";
 
@@ -63,6 +64,8 @@ export const PAGES: PageDef[] = [
     sitemap: true,
     llms: { section: "Help", title: "Support", note: "setup, gestures, a can't-connect checklist, what every app message means, billing, contact" },
   },
+  { slug: "status", path: "/status", file: "status.html", render: statusPage,
+    sitemap: true, llms: { section: "Help", title: "Service status", note: "current service updates or explicitly unverified availability, authorized connection test and help" } },
   {
     slug: "privacy",
     path: "/privacy",

@@ -29,7 +29,7 @@ final class MacVitalsPresentationTests: XCTestCase {
     }
 
     func testRunningNormallyGivesWayToASuffix() {
-        XCTAssertEqual(caption(MacVitals(power: "ac", thermal: 3, load: "busy")), "Mac · hot · busy")
+        XCTAssertEqual(caption(MacVitals(power: "ac", thermal: 3, load: "busy")), "Mac · plugged in · hot · busy")
         XCTAssertEqual(caption(MacVitals(lowPowerMode: true)), "Mac · Low Power Mode")
     }
 
@@ -47,7 +47,7 @@ final class MacVitalsPresentationTests: XCTestCase {
         XCTAssertEqual(MacVitalsPresentation(MacVitals(lowPowerMode: true)).captions,
                        ["Mac · Low Power Mode", "Low Power Mode"], "Running normally only when nothing is reported")
         XCTAssertEqual(MacVitalsPresentation(MacVitals(power: "ac", thermal: 2, lowPowerMode: false, load: "ok")).captions,
-                       ["Mac · warm", "warm"])
+                       ["Mac · plugged in · warm", "Mac · plugged in", "plugged in"])
         XCTAssertEqual(MacVitalsPresentation(MacVitals(thermal: 2, lowPowerMode: true)).captions,
                        ["Mac · warm · Low Power Mode", "Mac · warm", "warm"])
         for vitals in [heavy, MacVitals(), MacVitals(power: "battery", batteryPercent: 64, charging: false)] {

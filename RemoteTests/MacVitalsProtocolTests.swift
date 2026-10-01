@@ -87,6 +87,13 @@ final class MacVitalsProtocolTests: XCTestCase {
     func testFeatureIsAdvertised() {
         XCTAssertEqual(SessionFeature.macVitals, "vitals.1")
         XCTAssertTrue(SessionFeature.host.contains(SessionFeature.macVitals))
-        XCTAssertLessThanOrEqual(SessionFeature.host.count, 16, "The phone rejects more than 16 features")
+        let legacy = HostFeatureList.features(base: SessionFeature.host, allowBigText: false,
+                                             accessibility: true, peerFeatures: [])
+        XCTAssertLessThanOrEqual(legacy.count, 16, "Older phones retain their negotiated limit")
+        XCTAssertTrue(legacy.contains(SessionFeature.macVitals))
+        let modern = HostFeatureList.features(base: SessionFeature.host, allowBigText: false,
+            accessibility: true, peerFeatures: [SessionFeature.extendedFeatureList])
+        XCTAssertLessThanOrEqual(modern.count, 32)
+        XCTAssertTrue(modern.contains(SessionFeature.macVitals))
     }
 }

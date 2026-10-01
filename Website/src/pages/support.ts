@@ -203,6 +203,7 @@ export function supportPage(assets: Assets) {
     ["#setup", "Set up Farside", "Mac helper, permissions, pairing"],
     ["#steer", "How to steer", "Every gesture on one list"],
     ["#cant-connect", "Can’t connect?", "A five-line checklist"],
+    ["/status", "Service status", "Availability updates and help"],
     ["#messages", "What a message means", "Every message, with the fix"],
     ["#billing", "Anywhere and billing", "Trial, cancelling, refunds"],
     ["#contact", "Talk to a human", "Email, phone and post"],
