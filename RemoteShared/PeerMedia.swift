@@ -1004,6 +1004,7 @@ final class PeerMedia: NSObject {
     var senderQueueGovernorStatus: String?
     var senderQueueGovernorShedding = false
     var captureRegion: CaptureRegion?
+    var captureSharpness: Double?
 
     private var currentSenderRate: SenderRateParameters {
         SenderRateParameters.make(targetFPS: targetFPS, tuning: tuning, ladderFPS: ladderState?.fps)
@@ -1299,6 +1300,7 @@ final class PeerMedia: NSObject {
                 stats.ladder = ladderState
                 stats.busy = busyState
                 stats.captureRegion = captureRegion
+                stats.sharpness = captureSharpness
                 stats.senderQueueGovernor = senderQueueGovernorStatus
             }
             stats.maxKbps = appliedSenderMaxKbps
