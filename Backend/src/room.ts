@@ -67,12 +67,6 @@ const ENTITLEMENT_RECHECK_MS = 5 * 60 * 1000;
 const REVOKE_NOT_FOUND_GRACE_MS = 30_000;
 const REVOKE_BACKOFF_BASE_MS = 2000;
 const REVOKE_BACKOFF_MAX_MS = 60_000;
-/**
- * A peer silent this long may be replaced by a fresh registration that proves the same credentials:
- * a phone that changed networks leaves a socket the edge still reports open. A peer that just
- * registered cannot be replaced, so two live copies cannot evict each other in a tight loop.
- */
-const REPLACE_QUIET_MS = 10_000;
 
 const revokeBackoffMs = (attempts: number) => {
   const base = Math.min(REVOKE_BACKOFF_MAX_MS, REVOKE_BACKOFF_BASE_MS * 2 ** Math.min(attempts, 6));
@@ -300,20 +294,22 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   /**
-   * Frees `role` for `ws`, whose registration already proved that role's credentials. An authenticated
-   * peer silent for REPLACE_QUIET_MS is dropped exactly as if it had closed; anything else keeps the slot.
+   * Frees `role` for `ws`, whose registration already proved that role's credentials. A phone that changed
+   * networks leaves a socket the edge still reports open; once that peer has sent nothing for
+   * `replaceQuietMs` it is dropped exactly as if it had closed. A live loser is told `replaced` (apps treat an
+   * unknown service error as final), so two live copies of one pairing cannot keep evicting each other.
    */
   private takeSlot(role: PeerRole, ws: WebSocket, now: number): boolean {
     if (!this.slotTaken(role, ws)) return true;
     const incumbent = this.peer(role);
-    if (!incumbent || incumbent === ws) return false;
+    if (this.config.replaceQuietMs === 0 || !incumbent || incumbent === ws) return false;
     const pendingOther = this.openSockets().some(other => other !== ws && other !== incumbent &&
       this.attachment(other).role === role && this.attachment(other).pending);
     const seen = this.attachment(incumbent);
-    if (pendingOther || now - (seen.lastSeenAt ?? seen.connectedAt) < REPLACE_QUIET_MS) return false;
-    log("stale_peer_replaced", { room: fingerprint(this.state().room ?? undefined), role });
-    this.dropPeer(incumbent);
-    this.close(incumbent, 1001, "replaced");
+    const quietMs = now - (seen.lastSeenAt ?? seen.connectedAt);
+    if (pendingOther || quietMs < this.config.replaceQuietMs) return false;
+    log("stale_peer_replaced", { room: fingerprint(this.state().room ?? undefined), role, quietMs });
+    this.error(incumbent, "replaced");
     return !this.slotTaken(role, ws);
   }
 
@@ -932,10 +928,13 @@ export class RoomDO extends DurableObject<Env> {
       this.error(ws, "host_unavailable_or_unauthorized");
       return;
     }
-    if (!this.takeSlot("client", ws, now)) { this.error(ws, "already_connected"); return; }
     if (isPublicEnvironment(this.config.environmentName) && !this.attachment(host).routeAware) {
       this.error(ws, "upgrade_required"); return;
     }
+    if (this.peer("host") !== host || this.state().client_token_hash !== clientTokenHash) {
+      this.error(ws, "host_unavailable_or_unauthorized"); return;
+    }
+    if (!this.takeSlot("client", ws, now)) { this.error(ws, "already_connected"); return; }
 
     let entitlement = await this.checkEntitlement(msg.entitlement, remoteAware);
     if (entitlement.entitled && entitlement.entitlementId && entitlement.deviceId) {

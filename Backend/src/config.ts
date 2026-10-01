@@ -22,6 +22,8 @@ export type Config = {
   devRelayRooms: Set<string>;
   /** 0 disables; otherwise each peer's last `ice` message is re-sent unchanged every N seconds so quiet sockets stay open. */
   keepaliveMs: number;
+  /** 0 refuses every duplicate registration; otherwise a peer silent this long yields to one proving the same credentials. */
+  replaceQuietMs: number;
   roots: Uint8Array[];
   relayConfigured: boolean;
 };
@@ -51,6 +53,8 @@ export function loadConfig(env: Env): Config {
   }
   const keepaliveSeconds = parseIntegerVar(env.KEEPALIVE_SECONDS, 0, 0, 600);
   if (keepaliveSeconds !== 0 && keepaliveSeconds < 15) throw new Error("KEEPALIVE_SECONDS must be 0 or at least 15");
+  const replaceQuietSeconds = parseIntegerVar((env as { REPLACE_QUIET_SECONDS?: string }).REPLACE_QUIET_SECONDS, 0, 0, 600);
+  if (replaceQuietSeconds !== 0 && replaceQuietSeconds < 5) throw new Error("REPLACE_QUIET_SECONDS must be 0 or at least 5");
   const stunUrls = listVar(env.STUN_URLS);
   if (stunUrls.length > 8 || stunUrls.some(url => !/^(?:stun|stuns):[^\s]{1,500}$/.test(url))) throw new Error("STUN_URLS invalid");
   const turnTtlSeconds = parseIntegerVar(env.TURN_CREDENTIAL_TTL_SECONDS, 3600, 60, 86_400);
@@ -80,6 +84,7 @@ export function loadConfig(env: Env): Config {
     allowUnentitledRelay,
     devRelayRooms,
     keepaliveMs: keepaliveSeconds * 1000,
+    replaceQuietMs: replaceQuietSeconds * 1000,
     roots: parseRootPins(env.APPLE_ROOT_CERTS),
     relayConfigured,
   };

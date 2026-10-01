@@ -38,6 +38,7 @@ export type ErrorCode =
   | "invalid_registration"
   | "unauthorized"
   | "already_connected"
+  | "replaced"
   | "host_unavailable_or_unauthorized"
   | "room_not_approved"
   | "relay_unavailable"

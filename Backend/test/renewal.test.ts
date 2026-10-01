@@ -365,12 +365,21 @@ describe("NW24: keepalive and stale peer replacement", () => {
     tooSoon.send(registerMessage(p, "client"));
     expect((await tooSoon.next()).code).toBe("already_connected");
 
-    await advance(11_000);
+    await advance(8000);
+    first.send({ type: "signal", payload: payload64(2) });
+    expect((await host.next()).payload).toBe(payload64(2));
+    await advance(8000);
+    const stillLive = await open();
+    stillLive.send(registerMessage(p, "client"));
+    expect((await stillLive.next()).code).toBe("already_connected");
+
+    await advance(3000);
     const wrong = await open();
     wrong.send({ ...registerMessage(p, "client"), token: "c".repeat(64) });
     expect((await wrong.next()).code).toBe("host_unavailable_or_unauthorized");
     expect(first.ws.readyState).toBe(WebSocket.OPEN);
     const second = await connectClient(p);
+    expect(await first.next()).toEqual({ type: "error", code: "replaced" });
     expect((await first.closed).reason).toBe("replaced");
     expect(await host.next()).toEqual({ type: "peer", online: false });
     expect(await host.next()).toEqual({ type: "peer", online: true });
@@ -398,6 +407,7 @@ describe("NW24: keepalive and stale peer replacement", () => {
     await advance(3000);
     const replacement = await connectHost(p);
     expect(replacement.registered.role).toBe("host");
+    expect(await host.next()).toEqual({ type: "error", code: "replaced" });
     expect((await host.closed).reason).toBe("replaced");
     expect((await client.closed).reason).toBe("host_disconnected");
     const rejoined = await connectClient(p);
@@ -419,7 +429,7 @@ describe("NW24: keepalive and stale peer replacement", () => {
     });
 
     await advance(51_000);
-    await runDurableObjectAlarm(stub(p.room));
+    expect(await runDurableObjectAlarm(stub(p.room))).toBe(true);
     expect(await host.next()).toEqual(hostIce);
     expect(await client.next()).toEqual(client.ice);
 
@@ -429,7 +439,7 @@ describe("NW24: keepalive and stale peer replacement", () => {
     expect(refreshed.servers).toBeDefined();
     expect(refreshed.servers).not.toEqual(client.ice.servers);
     await advance(51_000);
-    await runDurableObjectAlarm(stub(p.room));
+    expect(await runDurableObjectAlarm(stub(p.room))).toBe(true);
     expect(await client.next()).toEqual({ type: "ice", servers: refreshed.servers });
     expect(await host.next()).toEqual(hostIce);
   });

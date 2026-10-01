@@ -123,6 +123,8 @@ describe("configuration guards", () => {
     expect(() => loadConfig({ ...base, ENVIRONMENT_NAME: "production", TEST_FORCE_RELAY: "1" } as unknown as Env)).toThrow("TEST_FORCE_RELAY");
     expect(() => loadConfig({ ...base, ENVIRONMENT_NAME: "production", ALLOW_UNENTITLED_RELAY: "1" } as unknown as Env)).toThrow("ALLOW_UNENTITLED_RELAY");
     expect(() => loadConfig({ ...base, KEEPALIVE_SECONDS: "5" } as unknown as Env)).toThrow("KEEPALIVE_SECONDS");
+    expect(() => loadConfig({ ...base, REPLACE_QUIET_SECONDS: "3" } as unknown as Env)).toThrow("REPLACE_QUIET_SECONDS");
+    expect(loadConfig({ ...base, REPLACE_QUIET_SECONDS: "0" } as unknown as Env)).toMatchObject({ replaceQuietMs: 0 });
     expect(() => loadConfig({ ...base, ENVIRONMENT_NAME: "staging", ALLOW_UNENTITLED_RELAY: "1" } as unknown as Env)).toThrow("ALLOW_UNENTITLED_RELAY");
     expect(loadConfig({ ...base, ENVIRONMENT_NAME: "dev", ALLOW_UNENTITLED_RELAY: "1", KEEPALIVE_SECONDS: "45" } as unknown as Env)).toMatchObject({ allowUnentitledRelay: true, keepaliveMs: 45_000 });
     expect(() => loadConfig({ ...base, ROOM_LEASE_SECONDS: "3600", TURN_CREDENTIAL_TTL_SECONDS: "3600" } as unknown as Env)).toThrow("ROOM_LEASE_SECONDS");
