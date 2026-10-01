@@ -382,6 +382,27 @@ final class SecureFocusTests: XCTestCase {
         _ = HostSecureFocus.secureEventInputEnabled()
     }
 
+    func testFrontmostAppAnswersWhenTheSystemWideQueryFails() {
+        var frontmostAsked = false
+        XCTAssertFalse(HostSecureFocusPolicy.resolve(secureEventInput: false, systemWide: { .unknown },
+                                                     frontmost: { frontmostAsked = true; return .known("AXSearchField") }))
+        XCTAssertTrue(frontmostAsked)
+        XCTAssertTrue(HostSecureFocusPolicy.resolve(secureEventInput: false, systemWide: { .unknown },
+                                                    frontmost: { .known(kAXSecureTextFieldSubrole) }))
+    }
+
+    func testSystemWideAnswerSkipsTheFallback() {
+        var frontmostAsked = false
+        XCTAssertFalse(HostSecureFocusPolicy.resolve(secureEventInput: false, systemWide: { .known(nil) },
+                                                     frontmost: { frontmostAsked = true; return .unknown }))
+        XCTAssertFalse(frontmostAsked, "Nothing focused is a known answer, not a failure")
+    }
+
+    func testUnknownSecureStateFailsClosed() {
+        XCTAssertTrue(HostSecureFocusPolicy.resolve(secureEventInput: false, systemWide: { .unknown }, frontmost: { .unknown }))
+        XCTAssertTrue(HostSecureFocusPolicy.resolve(secureEventInput: true, systemWide: { .known(nil) }, frontmost: { .known(nil) }))
+    }
+
     func testTheFlagTravelsOnlyOnAFocusReply() {
         let probe = String(repeating: "a", count: 32)
         XCTAssertNoThrow(try RemoteAction(action: "heartbeat", textFocusProbe: probe, textFocusEditable: true,

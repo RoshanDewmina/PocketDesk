@@ -4,6 +4,7 @@ import Combine
 import ScreenCaptureKit
 import ServiceManagement
 import SystemConfiguration
+import os
 
 /// Kept until both the server deletion and local Keychain cleanup have completed.
 private struct PendingHostRoomRemoval: Codable {
@@ -214,6 +215,7 @@ final class RemoteHostModel: ObservableObject {
     private var inputFreshness = NativeInputFreshness()
     private var textFocusRevision: UInt64 = 0
     private var textFocusTask: Task<Void, Never>?
+    private var axPrewarmEdge = HostAXPrewarmEdge()
     private var captureHealthy = false
     private var sessionState: HostSessionState = .picture
     private var couchHealthy = false
@@ -641,6 +643,15 @@ final class RemoteHostModel: ObservableObject {
                 Task { @MainActor in self?.handleAvailability(event) }
             })
         }
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            Task { @MainActor in
+                guard let self, let app else { return }
+                self.prewarmAXTree(for: app)
+            }
+        })
         for (name, event) in [(HostScreenLock.locked, HostSleepPolicy.Event.screenLocked),
                               (HostScreenLock.unlocked, HostSleepPolicy.Event.screenUnlocked)] {
             observers.append(DistributedNotificationCenter.default().addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -2185,6 +2196,7 @@ final class RemoteHostModel: ObservableObject {
         let lifecycleTimer = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
+                self.reconcileAXPrewarm()
                 if self.phonePause.isPaused {
                     if self.phonePause.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.expirePhonePause() }
                     return
@@ -2312,6 +2324,8 @@ final class RemoteHostModel: ObservableObject {
 
     private func endCapture() {
         away.refresh()
+        axPrewarmEdge = HostAXPrewarmEdge()
+        Task.detached(priority: .utility) { _ = await HostAXWebPrewarm().sessionEnded() }
         if diagnosticRecorder.samples > 0 {
             try? diagnosticStore.save(diagnosticRecorder.finish(at: ProcessInfo.processInfo.systemUptime, additional: [
                 .init(.hostScreenRecording, CGPreflightScreenCaptureAccess() ? 1 : 0),
@@ -2656,25 +2670,74 @@ final class RemoteHostModel: ObservableObject {
 
     /// `point` nil re-checks the focus after typed text; only geometry is ever measured or sent.
     private func scheduleTextFocusProbe(_ probe: String, point: CGPoint?, geometry: Bool, issuedAt: TimeInterval) {
-        guard let peer = connection.media else { return }
+        let log = HostTextFocusLog.logger
+        guard let peer = connection.media else {
+            log.info("probe dropped reason=noPeer")
+            return
+        }
         let ticket = HostTextFocusTicket(epoch: inputEpoch.value,
                                          revision: textFocusRevision, issuedAt: issuedAt)
         let displayFrame = geometry ? input.displayBounds : nil
+        log.info("probe scheduled click=\(point != nil, privacy: .public) geometry=\(displayFrame != nil, privacy: .public)")
         textFocusTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
-            guard let self, self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else { return }
+            do { try await Task.sleep(for: .milliseconds(100)) } catch {
+                log.info("probe dropped reason=cancelledBeforeQuery")
+                return
+            }
+            guard let self else { return }
+            guard self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else {
+                log.info("probe dropped reason=staleBeforeQuery")
+                return
+            }
             let focus = await HostTextFocusProbe.focus(at: point, geometry: displayFrame != nil)
             let secure = await HostSecureFocus.isSecureNow()
-            guard self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled,
-                  displayFrame == nil || self.input.displayBounds == displayFrame else { return }
+            guard !Task.isCancelled else {
+                log.info("probe dropped reason=cancelledDuringQuery")
+                return
+            }
+            guard self.textFocusIsCurrent(ticket, peer: peer) else {
+                log.info("probe dropped reason=staleAfterQuery")
+                return
+            }
+            guard displayFrame == nil || self.input.displayBounds == displayFrame else {
+                log.info("probe dropped reason=displayChanged")
+                return
+            }
             let rect = focus.editable ? focus.frame.flatMap { field in
                 displayFrame.flatMap { FocusGeometry.make(field: field, anchor: focus.anchor,
                                                           displayFrame: $0, geometrySize: $0.size) }
             } : nil
+            log.info("probe answered editable=\(focus.editable, privacy: .public) role=\(focus.role.rawValue, privacy: .public) engine=\(focus.engine.rawValue, privacy: .public) activated=\(focus.activation?.attribute.rawValue ?? "none", privacy: .public) retried=\(focus.retried, privacy: .public) axDropped=\(focus.dropped, privacy: .public) secure=\(secure, privacy: .public) rect=\(rect != nil, privacy: .public)")
             _ = self.connection.sendControl(RemoteAction(
                 action: "heartbeat", epoch: ticket.epoch,
                 textFocusProbe: probe, textFocusEditable: focus.editable, textFocusSecure: secure, textFocusRect: rect
             ))
+        }
+    }
+
+    /// A live session the phone controls: connected, not paused, not view-only, input enabled.
+    private var axPrewarmSessionActive: Bool {
+        active && !terminating && connection.connected && !phonePause.isPaused &&
+            sessionControlAllowed && input.enabled && controlPermission.isGranted
+    }
+
+    /// Checked on the 4 Hz lifecycle tick: when control becomes effective, ask the app already in front.
+    private func reconcileAXPrewarm() {
+        guard axPrewarmEdge.update(active: axPrewarmSessionActive) else { return }
+        let front = NSWorkspace.shared.frontmostApplication
+        Task.detached(priority: .utility) {
+            _ = await HostAXWebPrewarm().controlStarted(frontmost: front)
+        }
+    }
+
+    private func prewarmAXTree(for app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        let launched = app.launchDate?.timeIntervalSince1970
+        let bundleURL = app.bundleURL
+        let sessionActive = axPrewarmSessionActive
+        Task.detached(priority: .utility) {
+            _ = await HostAXWebPrewarm().appActivated(pid: pid, launched: launched, bundleURL: bundleURL,
+                                                      sessionActive: sessionActive)
         }
     }
 
