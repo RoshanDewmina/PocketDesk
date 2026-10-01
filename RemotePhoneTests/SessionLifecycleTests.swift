@@ -60,6 +60,46 @@ final class SessionLifecycleTests: XCTestCase {
     }
     /// Auto-PiP: armed only while a live picture session is in front; the OS start (simulated) keeps the session
     /// through `.inactive` and `.background` while the Mac's live-view-only confirmation is pending; a refusal ends it.
+    /// Device 1 Oct 18:16 (build .4): swiping Home never started PiP. AVKit only auto-starts playing content, and a
+    /// prepared live source reported paused; iOS can also report `.background` before AVKit's start.
+    func testArmedPiPReadsAsPlayingAndWaitsBrieflyInTheBackgroundForTheAutomaticStart() throws {
+        for startsInGrace in [true, false] {
+            let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+            let platform = LifecyclePiPPlatform()
+            let pip = LivePiPController(mediaSession: registry, supported: { true }, platformFactory: { _, _ in platform })
+            let model = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip)
+            defer { model.disconnect() }
+            model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+            model.connection.startInputFixtureForTesting(session: "auto-pip-grace")
+            model.geometryEpoch = 1
+            var packets: [ControlPacket] = []
+            model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+            _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+            XCTAssertEqual(model.pipState, .ready)
+            XCTAssertFalse(pip.playbackPaused, "an armed live source must read as playing or AVKit never auto-starts it")
+            model.sceneChanged(.inactive); model.sceneChanged(.background)
+            XCTAssertFalse(model.contentConcealed, "the prepared PiP gets a grace before the background teardown")
+            XCTAssertTrue(model.privacyShield, "the app-switcher snapshot stays shielded during the grace")
+            XCTAssertEqual(model.pipState, .ready)
+            if startsInGrace {
+                pip.automaticStartForTesting(platform)
+                pip.confirmPlatformStartForTesting(platform)
+                XCTAssertTrue(model.pipBackgroundForTesting); XCTAssertEqual(model.pipState, .active)
+                XCTAssertTrue(packets.contains { $0.action.action == "viewOnly" && $0.action.liveViewOnly == true })
+            }
+            let end = Date().addingTimeInterval(PhoneRemoteModel.autoPiPBackgroundGraceSeconds + 0.5)
+            while Date() < end { RunLoop.current.run(until: Date().addingTimeInterval(0.05)) }
+            if startsInGrace {
+                XCTAssertEqual(model.pipState, .active, "a PiP that started holds the session"); XCTAssertTrue(model.connection.connected)
+            } else {
+                XCTAssertTrue(model.contentConcealed, "no start: the normal background path follows")
+                XCTAssertNotEqual(model.pipState, .ready, "and the prepared PiP is retired")
+            }
+        }
+        let pip = LivePiPController(mediaSession: PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {})),
+                                    supported: { true }, platformFactory: { _, _ in LifecyclePiPPlatform() })
+        XCTAssertTrue(pip.playbackPaused, "nothing prepared reads as paused")
+    }
     func testLeavingALivePictureSessionStartsPiPAutomaticallyAndTheMacMustConfirmViewOnly() throws {
         // (refuse, the Mac answers before AVKit finishes the start: the usual order on a LAN)
         for (refuse, confirmFirst) in [(false, false), (true, false), (false, true)] {

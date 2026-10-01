@@ -490,6 +490,10 @@ final class PhoneRemoteModel: ObservableObject {
     private var pipTransitional = false
     /// The OS started PiP as the user left a live session; the Mac's live-view-only confirmation may still be pending.
     private var autoPiPStarted = false
+    /// iOS can deliver `.background` before AVKit's automatic start; a prepared PiP gets this one bounded wait.
+    private var autoPiPBackgroundGrace: Task<Void, Never>?
+    private var autoPiPGraceSpent = false
+    static let autoPiPBackgroundGraceSeconds: Double = 1
     /// Internal kill switch, no UI: `defaults write <bundle id> farsideAutoPiPDisabled -bool YES`.
     static let autoPiPDisabledKey = "farsideAutoPiPDisabled"
     private(set) var autoPiPEnabled = true
@@ -871,6 +875,8 @@ final class PhoneRemoteModel: ObservableObject {
             guard let self else { return }
             self.autoPiPStarted = true
             self.requestViewOnlyEntry() // The Mac must confirm live view only within 2 s, as for the button.
+            // Started inside the background grace: take the PiP background path now.
+            if self.autoPiPBackgroundGrace != nil, self.sceneWasBackground, !self.sceneIsActive, !self.pipBackground { self.enterBackground() }
         }
         self.livePiP.restoreForeground = { [weak self] completion in
             guard let self else { completion(false); return }
@@ -2192,6 +2198,7 @@ let now = ProcessInfo.processInfo.systemUptime
             privacyShield = false
             acceptResumeMeasurement(resumeTiming.sceneActive(at: ProcessInfo.processInfo.systemUptime))
             sceneWasBackground = false
+            autoPiPBackgroundGrace?.cancel(); autoPiPBackgroundGrace = nil; autoPiPGraceSpent = false
             returnToForeground()
             pipTransitional = false
             // An OS start during `.inactive` (app switcher) that never reached the background was not asked for.
@@ -2233,6 +2240,19 @@ let now = ProcessInfo.processInfo.systemUptime
         }
         displayTickInput.cancel()
         setMacAudioMuted(true) // Background is a terminal boundary for Mac-audio consent.
+        if !mayKeepLivePiP, autoPiPMayStart, !autoPiPGraceSpent, autoPiPBackgroundGrace == nil {
+            privacyShield = true // The app-switcher snapshot stays shielded while the prepared PiP waits.
+            pipTransitional = true
+            autoPiPBackgroundGrace = Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(Self.autoPiPBackgroundGraceSeconds * 1_000_000_000))
+                guard let self, !Task.isCancelled else { return }
+                self.autoPiPBackgroundGrace = nil
+                self.autoPiPGraceSpent = true
+                if self.sceneWasBackground && !self.sceneIsActive && !self.pipBackground { self.enterBackground() }
+            }
+            return
+        }
+        autoPiPBackgroundGrace?.cancel(); autoPiPBackgroundGrace = nil
         pipTransitional = false
         if mayKeepLivePiP {
             pipBackground = true

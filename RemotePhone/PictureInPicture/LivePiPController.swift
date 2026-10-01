@@ -84,6 +84,16 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     private static let automaticStartLimit: TimeInterval = 3
     private func applyAutomaticStart() {
         controller?.setAutomaticStart(automaticStartAllowed && (policy.state == .ready || automaticStartInFlight))
+        controller?.invalidatePlaybackState() // AVKit re-reads "paused": an armed inline source must read as playing.
+    }
+    /// AVKit only auto-starts content that is playing. A prepared (`.ready`) live source used to report paused, so
+    /// leaving the app never started PiP (device 1 Oct 18:16, build .4). It plays while armed or starting.
+    var playbackPaused: Bool {
+        switch policy.state {
+        case .active, .starting: false
+        case .ready: !automaticStartAllowed
+        case .paused, .stopping, .ineligible: true
+        }
     }
     var restoreForeground: ((@escaping (Bool) -> Void) -> Void)?
     var renderSizeChanged: ((CMVideoDimensions) -> Void)?
@@ -325,7 +335,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         guard matchesNative(controller), policy.admission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return .invalid }
         return CMTimeRange(start: .zero, duration: .positiveInfinity)
     }
-    func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool { !matchesNative(controller) || policy.state != .active }
+    func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool { !matchesNative(controller) || playbackPaused }
     func pictureInPictureController(_ controller: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
         if matchesNative(controller) { renderSizeChanged?(newRenderSize) }
     }
