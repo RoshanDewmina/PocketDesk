@@ -1,6 +1,6 @@
 # Farside — bulk test batch 1
 
-Candidate build: **20260930.8** on phone and Mac host. Final commit, installed receipts and automated results are filled in after validation; this draft is not a readiness notice. All13 source review findings have a mapped fix or explicit legacy re-pair path; runtime results remain pending.
+Candidate build: **20260930.8** on phone and Mac host. Installed code: `a8854ee` (Claude cut-8 on top of `35372ac`: reliable input checkpoint resend). Automated results, install receipts and known issues: `~/Documents/Codex/2026-09-30/re/BULK-TEST-1-READY.md`. All13 source review findings have a mapped fix or explicit legacy re-pair path; runtime results remain pending.
 
 Roshan chose everything close to done. Claude reviews and drives the bulk round; run all MIRROR checks together, then all HANDS checks in the grouped pass below. Record PASS / FAIL / BLOCKED and a short receipt next to each line. Automated fixtures, simulator/UI results, installed identity and physical behavior are separate evidence. Do not count a simulated success as a device success.
 
