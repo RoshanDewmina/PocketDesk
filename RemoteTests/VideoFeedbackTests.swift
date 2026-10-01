@@ -8,6 +8,11 @@ final class VideoFeedbackTests: XCTestCase {
         try await runNative(hevc: false)
         try await runNative(hevc: true)
     }
+    @MainActor
+    func testActualNativeRTPH264AndHEVCExactTimingArrivesWithoutPixelBenchMarker() async throws {
+        try await runNative(hevc: false, exactTiming: true)
+        try await runNative(hevc: true, exactTiming: true)
+    }
     #if DEBUG && AUDIO_LIFETIME_TESTS
     @MainActor
     func testActualNativeRefinementSendUnderFinalRouteFenceAndPausedCallbackCut() async throws {
@@ -15,7 +20,7 @@ final class VideoFeedbackTests: XCTestCase {
     }
     #endif
     @MainActor
-    private func runNative(hevc: Bool, fencedRoute: Bool = false) async throws {
+    private func runNative(hevc: Bool, fencedRoute: Bool = false, exactTiming: Bool = false) async throws {
         let previousLoopback = E2EMedia.loopbackOnly; E2EMedia.loopbackOnly = true
         let previousTiming = FrameTimingSwitch.override; FrameTimingSwitch.override = false
         let host = PeerMedia(isHost: true, servers: [], fileChannel: true, hevc: hevc, videoLTR: !hevc)
@@ -26,8 +31,8 @@ final class VideoFeedbackTests: XCTestCase {
         if fencedRoute { host.forceNativeRouteAuthorityForTesting() }
         #endif
         XCTAssertNil(host.frameTimingLog)
-        host.videoFeedback.configure(allowed: true, ltr: true, refinement: true, geometry: 7, scope: 3)
-        phone.videoFeedback.configure(allowed: true, ltr: true, refinement: true, geometry: 7, scope: 3)
+        host.videoFeedback.configure(allowed: true, ltr: true, refinement: true, timing: exactTiming, geometry: 7, scope: 3)
+        phone.videoFeedback.configure(allowed: true, ltr: true, refinement: true, timing: exactTiming, geometry: 7, scope: 3)
         host.configureVideoRefinement(enabled: true, geometry: 7, scope: 3)
         phone.configureVideoRefinement(enabled: true, geometry: 7, scope: 3)
         host.onSignal = { [weak phone] signal in phone?.receive(signal) }
@@ -64,10 +69,18 @@ final class VideoFeedbackTests: XCTestCase {
         let deadline = ProcessInfo.processInfo.systemUptime + 6
         while ProcessInfo.processInfo.systemUptime < deadline && !((hevc || host.videoFeedback.receiverAcknowledgements > 0) && renderer.refinedFrames > 0 && observedCodec?.lowercased().contains(hevc ? "h265" : "h264") == true) {
             let now = ProcessInfo.processInfo.systemUptime
-            host.pushFrame(pixels, timeStampNs: Int64(now * 1_000_000_000))
+            let ms = MachClock.nowMs()
+            let timing = exactTiming ? ExactVideoTiming(sourceID: String(repeating: "e", count: 32),
+                displayMs: ms - 2, capturedMs: ms - 1, pushedMs: ms, submittedMs: ms, encodedMs: ms, resend: true) : nil
+            host.pushFrame(pixels, timeStampNs: Int64(now * 1_000_000_000), exactTiming: timing)
             try await Task.sleep(for: .milliseconds(33))
         }
         XCTAssertGreaterThan(renderer.taggedFrames, 0, "SEI marker passed actual native RTP and successful output")
+        if exactTiming {
+            let timing = try XCTUnwrap(phone.videoFeedback.drainTiming())
+            XCTAssertGreaterThan(renderer.exactTaggedFrames, 0, "Exact successful native AU output survives RTP timestamp rewriting")
+            XCTAssertEqual(timing.presented, 0, "Native decode never invents a public drawable presentation")
+        }
         if !hevc { XCTAssertGreaterThan(host.videoFeedback.receiverAcknowledgements, 0, "Real receiver ACK returned on native control, independent of frame timing") }
         else { XCTAssertEqual(host.videoFeedback.receiverAcknowledgements, 0, "HEVC has no unproven LTR capability") }
         XCTAssertTrue(observedCodec?.lowercased().contains(hevc ? "h265" : "h264") == true, "Actual RTP codec observed: \(observedCodec ?? "unknown")")
@@ -117,7 +130,7 @@ final class VideoFeedbackTests: XCTestCase {
 
     func testPublicHardwareNativeDecodeAckReturnsExactVTAttachmentOnNextSubmission() throws {
         let sender = VideoFeedbackContext(), receiver = VideoFeedbackContext()
-        sender.configure(allowed: true, geometry: 7, scope: 3); receiver.configure(allowed: true, geometry: 7, scope: 3)
+        sender.configure(allowed: true, timing: true, geometry: 7, scope: 3); receiver.configure(allowed: true, timing: true, geometry: 7, scope: 3)
         let config = try XCTUnwrap(OwnedVTConfiguration(parameters: ["profile-level-id": "640034", "packetization-mode": "1"]))
         let encoder = OwnedVTEncoder(configuration: config, videoFeedback: sender)
         let decoder = VideoFeedbackDecoder(inner: RTCVideoDecoderH264(), context: receiver)
@@ -138,7 +151,17 @@ final class VideoFeedbackTests: XCTestCase {
         encoder.setCallback { image, info in
             let tag = H26xVideoMarker.read(image.buffer)
             XCTAssertNotNil(tag)
-            if image.timeStamp == 42 { lock.lock(); emittedToken = tag?.ltrToken; lock.unlock() }
+            if image.timeStamp == 42 {
+                let timing = try? XCTUnwrap(tag?.timing)
+                XCTAssertNotNil(timing, "Actual VT output carries the borrowed source's stages")
+                XCTAssertEqual(timing?.sourceID, String(repeating: "f", count: 32))
+                if let timing {
+                    do { try timing.validate() } catch { XCTFail("Invalid actual VT stage metadata: \(error)") }
+                    XCTAssertGreaterThanOrEqual(timing.submittedMs, Double(image.encodeStartMs))
+                    XCTAssertLessThanOrEqual(timing.encodedMs, Double(image.encodeFinishMs) + 1, "VT callback entry precedes owner post-processing")
+                }
+                lock.lock(); emittedToken = tag?.ltrToken; lock.unlock()
+            }
             if image.timeStamp == 43 { XCTAssertEqual(image.frameType, .videoFrameDelta, "Receiver-proven LTR refresh may predict instead of unconditional IDR"); refreshed.fulfill() }
             XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: info, renderTimeMs: 0), 0)
             return true
@@ -147,6 +170,9 @@ final class VideoFeedbackTests: XCTestCase {
         XCTAssertEqual(CVPixelBufferCreate(nil, 256, 128, kCVPixelFormatType_32BGRA, [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixel), kCVReturnSuccess)
         let pixels = try XCTUnwrap(pixel)
         CVPixelBufferLockBaseAddress(pixels, []); memset(CVPixelBufferGetBaseAddress(pixels), 255, CVPixelBufferGetDataSize(pixels)); CVPixelBufferUnlockBaseAddress(pixels, [])
+        let ms = MachClock.nowMs()
+        sender.pushedTiming(ExactVideoTiming(sourceID: String(repeating: "f", count: 32), displayMs: ms - 4,
+            capturedMs: ms - 3, pushedMs: ms - 2, submittedMs: ms - 1, encodedMs: ms, resend: false), buffer: pixels)
         let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: pixels), rotation: ._0, timeStampNs: 1_000_000_000); frame.timeStamp = 42
         XCTAssertEqual(encoder.encode(frame, codecSpecificInfo: nil, frameTypes: [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)]), 0)
         wait(for: [output], timeout: 5)
@@ -221,11 +247,15 @@ final class VideoFeedbackTests: XCTestCase {
     func testProductionDecoderUnmarkedMalformedAndStaleDuplicateCannotInheritPendingReference() throws {
         let base = Data([0, 0, 0, 1, 0x65, 0x80])
         for replacement in 0..<3 {
-            let context = VideoFeedbackContext(); context.configure(allowed: true, geometry: 7, scope: 3)
+            let context = VideoFeedbackContext(); context.configure(allowed: true, timing: true, geometry: 7, scope: 3)
             let inner = ControlledFeedbackDecoder(), decoder = VideoFeedbackDecoder(inner: inner, context: context)
             XCTAssertEqual(decoder.startDecode(withNumberOfCores: 1), 0)
             defer { _ = decoder.release() }
-            let tag = try XCTUnwrap(context.encoded(token: 912)), marked = try XCTUnwrap(H26xVideoMarker.append(tag, to: base))
+            let ms = MachClock.nowMs()
+            var tag = try XCTUnwrap(context.encoded(token: 912))
+            tag.timing = ExactVideoTiming(sourceID: String(repeating: "d", count: 32), displayMs: ms - 4,
+                capturedMs: ms - 3, pushedMs: ms - 2, submittedMs: ms - 1, encodedMs: ms, resend: false)
+            let marked = try XCTUnwrap(H26xVideoMarker.append(tag, to: base))
             let duplicate: Data
             if replacement == 0 { duplicate = base }
             else if replacement == 1 { duplicate = Data(marked.prefix(24)) + base }
@@ -245,11 +275,13 @@ final class VideoFeedbackTests: XCTestCase {
             XCTAssertEqual(outputs, 1, "Production wrapper forwards the controlled successful native output")
             XCTAssertEqual(acknowledgements, 0, "Duplicate AU cannot acknowledge a preceding token")
             XCTAssertNil(context.tag(for: nativeOutput), "Duplicate output cannot inherit the preceding refinement tag")
+            XCTAssertEqual(context.drainTiming()?.decoded, 0, "Invalid/unmarked duplicate cannot inherit exact timing")
             let independent = RTCEncodedImage(); independent.buffer = marked; independent.timeStamp = 43
             XCTAssertEqual(decoder.decode(independent, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0)
             let independentOutput = try frame(43); inner.emit(independentOutput)
             XCTAssertEqual(acknowledgements, 1, "An unrelated current wire still completes normally")
             XCTAssertEqual(context.tag(for: independentOutput), tag)
+            XCTAssertEqual(context.drainTiming()?.decoded, 1, "Current successful exact output contributes once")
         }
     }
     func testRevokeEpochDecoderRestartAndForgedAckCannotReuseTokens() throws {
@@ -271,6 +303,44 @@ final class VideoFeedbackTests: XCTestCase {
         XCTAssertTrue(capabilities.contains(SessionFeature.videoLTR)); XCTAssertFalse(capabilities.contains(SessionFeature.pencilInput))
     }
     #if DEBUG && AUDIO_LIFETIME_TESTS
+    func testControlledNativeCallbackEntryTimingExcludesBlockedAssociationLock() throws {
+        let context = VideoFeedbackContext()
+        context.configure(allowed: true, ltr: false, timing: true, geometry: 7, scope: 3)
+        let inner = ControlledFeedbackDecoder(), decoder = VideoFeedbackDecoder(inner: inner, context: context)
+        XCTAssertEqual(decoder.startDecode(withNumberOfCores: 1), 0)
+        defer { _ = decoder.release() }
+        let now = MachClock.nowMs()
+        var tag = try XCTUnwrap(context.encoded(token: nil))
+        tag.timing = ExactVideoTiming(sourceID: String(repeating: "e", count: 32), displayMs: now - 4,
+            capturedMs: now - 3, pushedMs: now - 2, submittedMs: now - 1, encodedMs: now, resend: false)
+        let image = RTCEncodedImage(); image.timeStamp = 42
+        image.buffer = try XCTUnwrap(H26xVideoMarker.append(tag, to: Data([0,0,0,1,0x65,0x80])))
+        let done = expectation(description: "Controlled successful native callback passed actual wrapper")
+        decoder.setCallback { _ in done.fulfill() }
+        XCTAssertEqual(decoder.decode(image, missingFrames: false, codecSpecificInfo: nil, renderTimeMs: 0), 0)
+        let held = DispatchSemaphore(value: 0), release = DispatchSemaphore(value: 0), entered = DispatchSemaphore(value: 0)
+        let stamp = DecodeEntryFixtureClock()
+        context.beforeDecodedAdmissionForTesting = { stamp.record(MachClock.nowMs()); entered.signal() }
+        DispatchQueue(label: "timing-fixture.association-holder").async {
+            context.withTimingAdmissionHeldForTesting { held.signal(); _ = release.wait(timeout: .now() + 2) }
+        }
+        XCTAssertEqual(held.wait(timeout: .now() + 2), .success)
+        let decoded = try frame(42)
+        DispatchQueue(label: "timing-fixture.native-callback").async { inner.emit(decoded) }
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.12) { release.signal() }
+        wait(for: [done], timeout: 2)
+        context.beforeDecodedAdmissionForTesting = nil
+        let shown = MachClock.nowMs() + 1
+        // Controlled cross-clock alignment isolates this boundary; it is not measured physical latency.
+        let offset = try XCTUnwrap(tag.timing).displayMs - stamp.value + 10
+        context.presentedTiming(tag, originalSource: true, newSubmission: true, presentedTime: shown / 1000,
+            clock: ClockSyncEstimate(offsetMs: offset, uncertaintyMs: 1, samples: 1), observedAtMs: shown - 1, nowMs: shown + 1)
+        let report = try XCTUnwrap(context.drainTiming())
+        XCTAssertEqual(report.timed, 1)
+        XCTAssertLessThan(try XCTUnwrap(report.captureToDecodeP50Ms), 30, "Native entry timestamp excludes held association lock")
+        XCTAssertGreaterThan(try XCTUnwrap(report.captureToPresentP50Ms), 100, "Later controlled presentation retains that wait")
+    }
     func testProductionFinalNativeRouteGateRefusesPausedSubmissionAfterCallbackCutReturns() {
         let peer = PeerMedia(isHost: true, servers: [], localLink: ProvenLocalLink(localAddress: "192.168.1.10", peerAddress: "192.168.1.20"), hevc: false)
         defer { peer.close() }
@@ -327,14 +397,22 @@ private final class ControlledFeedbackDecoder: NSObject, RTCVideoDecoder {
 private final class FeedbackNativeRenderer: NSObject, RTCVideoRenderer {
     private let context: VideoFeedbackContext
     private let lock = NSLock()
-    private var tagged = 0, refined = 0
+    private var tagged = 0, refined = 0, exact = 0
     var taggedFrames: Int { lock.lock(); defer { lock.unlock() }; return tagged }
     var refinedFrames: Int { lock.lock(); defer { lock.unlock() }; return refined }
+    var exactTaggedFrames: Int { lock.lock(); defer { lock.unlock() }; return exact }
     init(context: VideoFeedbackContext) { self.context = context; super.init() }
     func setSize(_ size: CGSize) {}
     func renderFrame(_ frame: RTCVideoFrame?) {
         guard let frame, let tag = context.tag(for: frame) else { return }
         let pixels = context.refinement(for: tag, at: ProcessInfo.processInfo.systemUptime)
-        lock.lock(); tagged += 1; if pixels != nil { refined += 1 }; lock.unlock()
+        lock.lock(); tagged += 1; if pixels != nil { refined += 1 }; if tag.timing != nil { exact += 1 }; lock.unlock()
     }
+}
+
+private final class DecodeEntryFixtureClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var ms = 0.0
+    func record(_ value: Double) { lock.lock(); ms = value; lock.unlock() }
+    var value: Double { lock.lock(); defer { lock.unlock() }; return ms }
 }

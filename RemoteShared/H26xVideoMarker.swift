@@ -3,8 +3,9 @@ import Foundation
 /// Bounded user_data_unregistered SEI. Tokens survive packetization with their exact access unit.
 enum H26xVideoMarker {
     private static let identifier: [UInt8] = [0x46,0x41,0x52,0x53,0x49,0x44,0x45,0x56,0x49,0x44,0x45,0x4f,0x30,0x30,0x30,0x31]
+    static let maximumJSONBytes = 1024
     static func append(_ tag: VideoFrameTag, to data: Data, hevc: Bool = false) -> Data? {
-        guard (try? tag.validate()) != nil, let encoded = try? JSONEncoder().encode(tag), encoded.count <= 1024,
+        guard (try? tag.validate()) != nil, let encoded = try? JSONEncoder().encode(tag), encoded.count <= maximumJSONBytes,
               data.count <= H264AnnexB.maximumBytes - 2048 else { return nil }
         var rbsp: [UInt8] = [5], size = encoded.count + identifier.count
         while size >= 255 { rbsp.append(255); size -= 255 }; rbsp.append(UInt8(size))
@@ -32,7 +33,7 @@ enum H26xVideoMarker {
                 guard size <= 2048, at + size <= bytes.count else { return nil }
                 defer { at += size }
                 if type == 5, size > identifier.count, Array(bytes[at..<(at + identifier.count)]) == identifier {
-                    guard found == nil, let tag = try? JSONDecoder().decode(VideoFrameTag.self, from: Data(bytes[(at + identifier.count)..<(at + size)])),
+                    guard size - identifier.count <= maximumJSONBytes, found == nil, let tag = try? JSONDecoder().decode(VideoFrameTag.self, from: Data(bytes[(at + identifier.count)..<(at + size)])),
                           (try? tag.validate()) != nil else { return nil }
                     found = tag
                 }

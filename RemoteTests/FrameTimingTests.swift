@@ -247,11 +247,11 @@ final class FrameTimingTests: XCTestCase {
         phoneReport.host = summary
         phoneReport.applyPhoneFrameTiming(FrameTimingReceiver.Drain(p50Ms: 41, p95Ms: 60, maxMs: 70, count: 50, locked: true))
         phoneReport.clockUncertaintyMs = 1.5
-        let lines = phoneReport.summaryLines.filter { $0.hasPrefix("frame host") }
-        XCTAssertEqual(lines, ["frame host p50 18.5ms p95 31.0ms · to phone p50 41.0ms p95 60.0ms (n 50, ±1.5ms)"])
+        let lines = phoneReport.summaryLines.filter { $0.hasPrefix("heuristic RTP/size join · frame host") }
+        XCTAssertEqual(lines, ["heuristic RTP/size join · frame host p50 18.5ms p95 31.0ms · to phone p50 41.0ms p95 60.0ms (n 50, ±1.5ms)"])
 
         phoneReport.frameJoinLocked = false
-        XCTAssertEqual(phoneReport.frameTimingLine, "frame host p50 18.5ms p95 31.0ms · to phone – (join pending)")
+        XCTAssertEqual(phoneReport.frameTimingLine, "heuristic RTP/size join · frame host p50 18.5ms p95 31.0ms · to phone – (join pending)")
 
         var hostReport = StreamStatsReport(role: "host", previous: nil, current: StreamStatsSample(entries: []), counters: nil)
         hostReport.applyHostFrameTiming(HostFrameTimingLog.Drain(p50Ms: 12, p95Ms: 20, maxMs: 25.04))

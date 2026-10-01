@@ -613,8 +613,8 @@ final class PhoneRemoteModel: ObservableObject {
             let supportsLTR = hostFeatures.contains(SessionFeature.videoLTR)
             // Only a refinement this phone asked for at session start, whatever the Mac advertises.
             let refines = hostFeatures.contains(SessionFeature.videoRefinement) && connection.requestedFeatures.contains(SessionFeature.videoRefinement)
-            peer.videoFeedback.configure(allowed: proof != nil && (supportsLTR || refines),
-                ltr: supportsLTR, refinement: refines, geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
+            peer.videoFeedback.configure(allowed: proof != nil && (supportsLTR || refines || hostFeatures.contains(SessionFeature.exactVideoTiming)),
+                ltr: supportsLTR, refinement: refines, timing: hostFeatures.contains(SessionFeature.exactVideoTiming), geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
             peer.configureVideoRefinement(enabled: proof != nil && refines, geometry: geometryEpoch, scope: sharedCaptureScope?.epoch ?? 1)
             peer.videoFeedback.setFeedback { [weak self, weak peer] packet, epoch in
                 DispatchQueue.main.async {
@@ -2657,15 +2657,17 @@ let now = ProcessInfo.processInfo.systemUptime
 
     /// Stream statistics: the Mac's echo of a clock probe from `tick()`.
     private func receiveClockEcho(_ echo: ClockProbe) {
-        guard echo.isEcho, StreamDebug.enabled else { return }
+        guard echo.isEcho, StreamDebug.enabled || hostFeatures.contains(SessionFeature.exactVideoTiming) else { return }
         let now = MachClock.nowMs()
         let arrived = connection.media?.controlArrivalMs ?? now
         guard clockSync.record(echo, receivedAtPhoneMs: min(now, arrived)) else { return }
-        connection.media?.counters.clockUpdated(clockSync.estimate(now: now))
+        let observation = clockSync.observation(now: now)
+        connection.media?.counters.clockUpdated(observation?.estimate, observedAtMs: observation?.atMs ?? now)
     }
 
     private func beginHeartbeat() {
         clockSync.reset()
+        connection.media?.counters.clockUpdated(nil)
         heartbeatsSent = 0
         pointerTimer?.invalidate()
         pointerLocator.clear()
@@ -2738,7 +2740,7 @@ let now = ProcessInfo.processInfo.systemUptime
         refreshUsefulSession(at: now)
         if connection.connected {
             heartbeatsSent &+= 1
-            let probesClock = heartbeatsSent % 2 == 0 && StreamDebug.enabled
+            let probesClock = heartbeatsSent % 2 == 0 && (StreamDebug.enabled || hostFeatures.contains(SessionFeature.exactVideoTiming))
             let probe = probesClock ? registerClockProbe() : nil
             _ = connection.sendControl(heartbeatAction(clock: probe, at: now))
         }
