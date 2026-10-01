@@ -824,8 +824,8 @@ final class PhoneRemoteModel: ObservableObject {
             self.requestPiPRestore(completion)
         }
         connection.onPresentationInvalidated = { [weak self] in self?.retireContentPresentation() }
-        connection.restore()
         if preferences.bool(forKey: Self.localOnlyKey) { connection.setLocalOnly(true) }
+        connection.restore()
         linkHints.start()
         linkConsentObserver = linkHints.$hint.removeDuplicates().sink { [weak self] hint in self?.observeLinkHint(hint) }
         connection.onAuthenticated = { [weak self] in

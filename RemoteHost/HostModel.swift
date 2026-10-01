@@ -531,8 +531,8 @@ final class RemoteHostModel: ObservableObject {
         startWatchdog()
         startAwayMode()
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.captureScopeViewOnly && !self.away.isLocking && !self.away.wantsCover && !self.active && !self.connection.connected }
-        connection.restore()
         if preferences.localOnly { connection.setLocalOnly(true) }
+        connection.restore()
         connection.startAllowed = { [weak self] in self?.serverRemovalPending == false && self?.captureScopeNeedsSelection == false }
         connection.shareBlocker = { [weak self] in
             MacShareBlocker.current(screenRecordingGranted: CGPreflightScreenCaptureAccess(),
