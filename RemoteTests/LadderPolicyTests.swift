@@ -193,6 +193,20 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(policy.evaluate(fewPresented, at: 1), rung(1, "phone"))
     }
 
+    func testARungHoldsTenSecondsBeforeTheNextLoadStepUnlessTheEncoderBacklogIsImmediate() {
+        let fewPresented = with { $0.phoneSupersededPerSecond = 31; $0.phonePresentedFPS = 95 }
+        var policy = LadderPolicy(targetFPS: 120)
+        XCTAssertNil(policy.evaluate(fewPresented, at: 0))
+        XCTAssertEqual(policy.evaluate(fewPresented, at: 1), rung(1, "phone"))
+        for second in 2...10 { XCTAssertNil(policy.evaluate(fewPresented, at: TimeInterval(second)), "second \(second): the rung dwells") }
+        XCTAssertEqual(policy.evaluate(fewPresented, at: 11), rung(2, "phone"), "after ten seconds the persistent signal steps again")
+        var backlog = LadderPolicy(targetFPS: 120)
+        let queued = with { $0.encodeInFlightMax = 4; $0.encodeLatencyP90Ms = 40 }
+        XCTAssertEqual(LadderTrigger.firing(queued, at: ladder120[0]).contains(.encodeBacklog), true)
+        XCTAssertNotNil(backlog.evaluate(queued, at: 0), "an encoder backlog is immediate")
+        XCTAssertNotNil(backlog.evaluate(queued, at: 1), "and is not held by the dwell")
+    }
+
     func testAStillScreenOrSlowContentIsNotLoad() {
         var still = calm(targetFPS: 60)
         still.captureFPS = 0
