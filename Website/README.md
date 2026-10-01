@@ -6,7 +6,7 @@ Static marketing site for Farside, built to `design/FARSIDE-DESIGN-SYSTEM.md` an
 
 | Path | What |
 |---|---|
-| `/` | Kept short (owner, 30 Sep 2026): hero with the "From the pocket" demo (`src/hero-pocket/`), a one-line promise and the beta form (`#beta`), three steps, four features, one pricing block, six questions with links to the guides |
+| `/` | Kept short (owner, 30 Sep 2026): hero with the "From the pocket" demo (`src/hero-pocket/`), a one-line promise and the call to action (`#beta`, one of three stages set by `cta.stage` in `site.config.ts`), three steps, four features, one pricing block, six questions with links to the guides |
 | `/about` | Who makes Farside, what it is, where it stands, contact |
 | `/control-mac-from-iphone` | Step-by-step guide (HowTo + FAQ structured data) |
 | `/iphone-as-mac-trackpad` | Gestures, haptics, pointer, zoom (HowTo + FAQ) |

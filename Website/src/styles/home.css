@@ -47,7 +47,7 @@
   background: linear-gradient(rgba(5, 5, 5, 0.75), rgba(5, 5, 5, 0.35) 70px, rgba(5, 5, 5, 0));
   pointer-events: none;
 }
-/* Behind the words: a soft dark ellipse, so the headline and the form never sit on bright light. */
+/* Behind the words: a soft dark ellipse, so the headline and the call to action never sit on bright light. */
 .hero-c::before {
   content: "";
   position: absolute;
@@ -57,13 +57,13 @@
   pointer-events: none;
 }
 @media (max-width: 639px) {
-  /* On phones the text block is tall and narrow: reach further down, past the consent line. */
+  /* On phones the text block is tall and narrow: reach further down, past the button. */
   .hero-c::before {
     inset: -48px -18% -120px;
     background: radial-gradient(closest-side, rgba(5, 5, 5, 0.92), rgba(5, 5, 5, 0.88) 66%, rgba(5, 5, 5, 0));
   }
 }
-/* A clear band between the sign-up and the MacBook, where the reach look's fingertip meets the pointer. Set for
+/* A clear band between the call to action and the MacBook, where the reach look's fingertip meets the pointer. Set for
    every look, so switching looks with ?bg= on the preview never moves the demo. */
 .hero-bg ~ .hero-demo {
   margin-top: clamp(28px, 4vh, 44px);
@@ -153,18 +153,15 @@
   width: 100%;
   max-width: 540px;
 }
-.hero .join {
+.hero .cta-note {
   margin: 18px auto 0;
+  font-size: 17px;
+  line-height: 1.45;
+  color: var(--bone);
+  text-wrap: balance;
 }
-.hero .consent {
-  margin-left: auto;
-  margin-right: auto;
-  text-align: center;
-}
-/* The status line only takes room once there is something to say (after a tap, so it can't count as a shift). */
-.hero .note:empty {
-  min-height: 0;
-  margin: 0;
+.hero .wl .cta {
+  margin-top: 14px;
 }
 /* The demo takes the rest of the first screen: about 60% of its height, no taller than the wide stage
    (1000 × 640) at this width. The script fits the stage inside (contain, top-aligned), so this box never waits
@@ -252,125 +249,6 @@
   from {
     transform: translateY(-8px);
   }
-}
-
-/* Beta sign-up: an inline field and button (hero and #beta), consent right under the button. */
-.join {
-  display: flex;
-  align-items: stretch;
-  gap: 6px;
-  max-width: 460px;
-  height: 58px;
-  padding: 5px;
-  border-radius: 999px;
-  background: var(--panel);
-  box-shadow: inset 0 0 0 1px rgba(237, 232, 223, 0.4);
-}
-.join:focus-within {
-  box-shadow: inset 0 0 0 2px var(--bone);
-}
-.join input[type="email"] {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  background: none;
-  color: var(--bone);
-  font: 16px var(--ui);
-  padding: 0 8px 0 16px;
-  outline: none;
-}
-.join input::placeholder {
-  color: #a19c93;
-}
-.join:has(input[aria-invalid="true"]) {
-  box-shadow: inset 0 0 0 2px var(--ember);
-}
-.join button {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  border: 0;
-  border-radius: 999px;
-  padding: 0 5px 0 18px;
-  background: var(--bone);
-  color: var(--ink);
-  font: 600 16px var(--ui);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: transform 0.14s var(--ease);
-}
-.join button .arr {
-  width: 38px;
-  height: 38px;
-}
-.join button .arr svg {
-  width: 16px;
-  height: 16px;
-}
-.join button:active {
-  transform: scale(0.97);
-}
-.join button:focus-visible {
-  outline: 2px solid var(--bone);
-  outline-offset: 3px;
-}
-.join button:disabled {
-  cursor: default;
-  opacity: 0.75;
-}
-.wl .consent {
-  margin-top: 10px;
-  max-width: 540px;
-  font-size: 15px;
-  line-height: 1.45;
-  color: var(--bone-2);
-}
-:where(.wl) .note {
-  min-height: 24px;
-  margin-top: 6px;
-  font-size: 16px;
-  line-height: 1.5;
-}
-.wl .note:focus {
-  outline: none;
-}
-.wl .note[data-kind="ok"] {
-  font-weight: 600;
-}
-.wl .note[data-kind="err"]::before {
-  content: "";
-  display: inline-block;
-  width: 8px;
-  height: 8px;
-  margin-right: 8px;
-  border-radius: 50%;
-  background: var(--ember);
-  vertical-align: 1px;
-}
-.hp {
-  display: none !important;
-}
-
-/* Results of a plain form post, shown with :target (no script needed). */
-.join-notes p {
-  margin-left: auto;
-  margin-right: auto;
-  text-align: left;
-}
-.join-notes p {
-  display: none;
-  max-width: 620px;
-  font-size: 17px;
-}
-.join-notes p:target {
-  display: block;
-  margin-top: 16px;
-  padding: 2px 0 2px 12px;
-  border-left: 3px solid var(--bone);
-}
-.join-notes p[id^="join-error"]:target {
-  border-left-color: var(--ember);
 }
 
 /* ---------- home: how it works ---------- */
@@ -522,15 +400,6 @@
     object-fit: cover;
   }
 }
-@media (max-width: 380px) {
-  .join button {
-    padding-left: 14px;
-    gap: 8px;
-  }
-  .join input[type="email"] {
-    padding-left: 12px;
-  }
-}
 @media (max-width: 520px) {
   .hero .eyebrow {
     padding: 5px 10px;
@@ -551,7 +420,7 @@
     letter-spacing: 0.02em;
   }
 }
-/* Short phones: keep the headline, the sign-up and the top of the demo on the first screen. */
+/* Short phones: keep the headline, the call to action and the top of the demo on the first screen. */
 @media (max-width: 520px) and (max-height: 760px) {
   .hero {
     padding-top: 62px;
@@ -563,11 +432,11 @@
     font-size: 16px;
     margin-top: 8px;
   }
-  .hero .join {
-    margin-top: 14px;
+  .hero .cta-note {
+    margin-top: 12px;
+    font-size: 16px;
   }
-  .wl .consent {
-    margin-top: 8px;
-    line-height: 1.35;
+  .hero .wl .cta {
+    margin-top: 10px;
   }
 }

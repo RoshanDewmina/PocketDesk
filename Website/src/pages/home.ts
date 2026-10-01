@@ -1,14 +1,13 @@
 import { config } from "../../site.config";
 import a2File from "../hero-a2/a2.html" with { type: "text" };
 import { html, pd, raw, type Html } from "../lib/html";
-import { icon, ogUrl, page, type Assets } from "./layout";
+import { cta, ctaButton, ctaSentence, ogUrl, page, type Assets } from "./layout";
 import { faqPage, graph, softwareApplication, webPage, type QA } from "./schema";
 
-// The home page, kept short (owner, 30 Sep 2026): the hero with the pocket demo and the beta form, three
+// The home page, kept short (owner, 30 Sep 2026): the hero with the pocket demo and the call to action, three
 // steps, four features, one pricing block, six questions. Guides are linked from the FAQ and the footer.
 
 const R = config.requirements;
-const C = config.copy;
 
 const a2Markup = a2File as unknown as string;
 
@@ -49,22 +48,11 @@ const pocketDemo = html`<figure class="hero-demo lx" role="img" aria-label="Demo
   </div>
 </figure>`;
 
-/**
- * Beta sign-up, used in the hero and in #beta. A plain form post works without JavaScript (the waitlist
- * function redirects to /?joined=1#joined or /?joined=0&error=<code>#join-error-<code>, shown in #beta);
- * src/scripts/waitlist.ts turns it into an in-page request. The consent line sits right under the button.
- */
-function joinForm(id: string): Html {
-  return html`<div class="wl" id="${id}">
-  <form class="join" method="post" action="${config.waitlist.action}" data-waitlist data-status="${id}-status">
-    <input type="hidden" name="source" value="home">
-    <div class="hp" hidden><label for="${id}-company">Leave this empty</label><input id="${id}-company" name="company" type="text" tabindex="-1" autocomplete="off"></div>
-    <label class="sr-only" for="${id}-email">Email address</label>
-    <input id="${id}-email" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" required maxlength="254" placeholder="Email address" aria-describedby="${id}-consent ${id}-status">
-    <button type="submit">${C.cta}<span class="arr" aria-hidden="true">${icon.arrow}</span></button>
-  </form>
-  <p class="consent" id="${id}-consent">${C.consent}</p>
-  <p class="note" id="${id}-status" role="status" aria-live="polite" tabindex="-1"></p>
+/** The call to action for the current stage (site.config.ts `cta`): its line, then its button. #beta is linked from old URLs. */
+function ctaBlock(): Html {
+  return html`<div class="wl" id="beta">
+  <p class="cta-note">${cta().note}</p>
+  ${ctaButton()}
 </div>`;
 }
 
@@ -81,18 +69,6 @@ const motionButton = html`<button class="motion" type="button" hidden>
 </button>`;
 
 /**
- * Results of a plain (no-script) form post land here through :target: /?joined=1#joined or
- * /?joined=0&error=<code>#join-error-<code> (functions/api/waitlist.ts).
- */
-const joinNotes = html`<div class="join-notes">
-  <p id="joined">You’re on the list. We’ll email you when your beta invite is ready.</p>
-  <p id="join-error-invalid_email">That email address doesn’t look right. Check it and try again.</p>
-  <p id="join-error-rate_limited">Too many tries from your connection. Please try again in a few minutes.</p>
-  <p id="join-error-forbidden">That sign-up was blocked. Reload this page and try again.</p>
-  <p id="join-error-too_large">That was too much to send. Enter just your email address and try again.</p>
-</div>`;
-
-/**
  * The hero background (src/hero-bg/): a CSS poster from the first paint, then a WebGL shader of the same look.
  * Four looks on preview hosts, ?bg=reach|spectrum|aurora|bloom; everyone else gets config.look.heroBackground.
  */
@@ -105,8 +81,7 @@ const hero = html`<section class="hero" id="top" aria-labelledby="hero-title">
     <p class="eyebrow"><i></i>Farside · remote desktop for your Mac<i></i></p>
     <h1 class="h1" id="hero-title"><span class="ln dw"><span>Your Mac is far${pd}</span></span> <span class="ln dw"><span>Your reach <em>isn’t.</em></span></span></h1>
     <p class="sub">Use your Mac from your iPhone. Free on your own Wi‑Fi.</p>
-    ${joinForm("beta")}
-    ${joinNotes}
+    ${ctaBlock()}
   </div>
   ${pocketDemo}
   <div class="hero-foot w">${motionButton}</div>
@@ -182,7 +157,7 @@ const QAS: QA[] = [
   },
   {
     q: "When can I get it?",
-    a: html`<p>Farside is heading into a TestFlight beta, with the App Store to follow. <a href="#beta">Join the beta</a> and we’ll email you an invite.</p>`,
+    a: html`<p>${config.cta.stage !== "follow" ? "" : "Farside is heading into a TestFlight beta, with the App Store to follow. "}${ctaSentence()}</p>`,
   },
   {
     q: "Is Farside the same as farside.app?",

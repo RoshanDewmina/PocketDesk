@@ -17,7 +17,7 @@ type Msg =
   | { type: "pulse"; x: number; y: number };
 
 /** Text and controls the dots stay out from behind (the old hero's "quiet" zones). */
-const QUIET = [".hero .eyebrow", ".hero .sub", ".hero .join", ".hero .consent", ".hero .note", ".hero .motion", ".site-header .brand", ".site-header .nav-desk", ".site-header .status", ".site-header .pill", ".site-header .nav-mob"];
+const QUIET = [".hero .eyebrow", ".hero .sub", ".hero .cta-note", ".hero .wl .cta", ".hero .motion", ".site-header .brand", ".site-header .nav-desk", ".site-header .status", ".site-header .pill", ".site-header .nav-mob"];
 
 export function startReach(bg: HTMLElement) {
   const hero = bg.closest<HTMLElement>(".hero");
@@ -38,7 +38,7 @@ export function startReach(bg: HTMLElement) {
       const text = (ln.firstElementChild as HTMLElement | null)?.getBoundingClientRect() ?? box;
       add({ left: text.left, top: box.top, width: text.width, height: box.height }, 12);
     });
-    // The fingertip meets the pointer just above the MacBook's top edge, between the sign-up and the demo. The Mac's place
+    // The fingertip meets the pointer just above the MacBook's top edge, between the call to action and the demo. The Mac's place
     // comes from the demo's fixed stage layout (src/hero-pocket/pocket.ts), not its live rect, which the demo's
     // camera moves around while it plays.
     const wl = hero!.querySelector<HTMLElement>(".hero .wl")?.getBoundingClientRect();

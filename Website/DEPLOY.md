@@ -2,7 +2,10 @@
 
 Cloudflare Pages project `farside-site` serves `dist/` plus two Pages Functions backed by the D1 database `farside-waitlist` (binding `WAITLIST`, see `wrangler.jsonc`). Run everything from `Website/` with `bunx wrangler@4`.
 
-## Waitlist API (contract for the `#beta` form)
+## Waitlist API (switched off)
+
+Since 1 Oct 2026 the site has no sign-up form and `WAITLIST_ENABLED` in `edge/flags.ts` is `false`, so `/api/waitlist` answers `410 {"ok":false,"error":"closed"}` to every request. The code, the D1 database and its rows stay. Before switching it back on: a mailing address in the consent wording (CASL), the form restored on the pages, and the privacy policy's waitlist sections restored. The contract below applies only when it is on.
+
 
 `POST /api/waitlist` with JSON `{"email", "source", "company": ""}` or a plain form post with the same field names. `company` is a honeypot and must stay empty and hidden.
 

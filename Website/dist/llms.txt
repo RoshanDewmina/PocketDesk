@@ -1,6 +1,6 @@
 # Farside
 
-> Farside lets you see and control your own Mac from your iPhone. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the phone keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. Farside is heading into a TestFlight beta, with the App Store to follow; anyone can join the beta at https://getfarside.com/#beta.
+> Farside lets you see and control your own Mac from your iPhone. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the phone keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. Farside is heading into a TestFlight beta, with the App Store to follow; the beta link will be posted at https://x.com/getfarside.
 
 Key facts:
 
@@ -14,7 +14,7 @@ Key facts:
 
 ## Main
 
-- [Home](https://getfarside.com/): what Farside does, how it works, features, pricing, FAQ, beta sign-up
+- [Home](https://getfarside.com/): what Farside does, how it works, features, pricing, FAQ, how to get the beta
 - [About](https://getfarside.com/about): who makes Farside, what it is, how to get in touch
 
 ## Help

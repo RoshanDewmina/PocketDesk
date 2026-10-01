@@ -2,9 +2,6 @@ import { webFonts } from "./site";
 import { pickLook, startHeroBg } from "../hero-bg/bg";
 import { startReach } from "../hero-bg/reach";
 import { startPocketHero } from "../hero-pocket/mount";
-import { initWaitlist } from "./waitlist";
-
-initWaitlist();
 
 const idle = (fn: () => void) => (typeof requestIdleCallback === "function" ? requestIdleCallback(fn, { timeout: 600 }) : setTimeout(fn, 60));
 

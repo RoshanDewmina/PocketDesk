@@ -2,11 +2,12 @@
 // Cloudflare Pages files into dist/.
 //   bun run build            → dist/ (placeholders allowed, listed at the end)
 //   bun run build:strict     → fails while any required placeholder in site.config.ts is unfilled
+//   bun run build:prod       → build:strict, and also fails while privacyEffective is unset (production deploys)
 //   SITE_URL=https://… bun run build   → one-off origin override
 
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { config, missingRequired, pendingLaunch } from "../site.config";
+import { config, ctaUrl, missingRequired, pendingLaunch } from "../site.config";
 import { faviconSvg } from "../src/lib/mark";
 import { ARTS, PHOTOS, SHOTS } from "../src/pages/images";
 import type { Assets, ImgAsset } from "../src/pages/layout";
@@ -148,6 +149,13 @@ Sitemap: ${config.SITE_URL}/sitemap.xml
 `;
 }
 
+/** Where Farside stands, for llms.txt (site.config.ts `cta.stage`). */
+function llmsAvailability() {
+  if (config.cta.stage === "follow") return `Farside is heading into a TestFlight beta, with the App Store to follow; the beta link will be posted at ${ctaUrl()}.`;
+  if (config.cta.stage === "testflight") return `The public TestFlight beta is open at ${ctaUrl()}, with the App Store to follow.`;
+  return `Farside for iPhone is available for pre-order on the App Store: ${ctaUrl()}.`;
+}
+
 /** llms.txt (llmstxt.org): a plain summary and link list for language models reading the site. */
 function llmsFile() {
   const P = config.pricing;
@@ -158,7 +166,7 @@ function llmsFile() {
       .join("\n");
   return `# Farside
 
-> Farside lets you see and control your own Mac from your iPhone. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the phone keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. Farside is heading into a TestFlight beta, with the App Store to follow; anyone can join the beta at ${config.SITE_URL}/#beta.
+> Farside lets you see and control your own Mac from your iPhone. The whole screen is a trackpad, a pinch zooms in on any part of the Mac, and the phone keyboard types into the Mac. Pairing is a QR code approved on the Mac, with no account. ${llmsAvailability()}
 
 Key facts:
 
@@ -172,7 +180,7 @@ Key facts:
 
 ## Main
 
-- [Home](${config.SITE_URL}/): what Farside does, how it works, features, pricing, FAQ, beta sign-up
+- [Home](${config.SITE_URL}/): what Farside does, how it works, features, pricing, FAQ, how to get the beta
 - [About](${config.SITE_URL}/about): who makes Farside, what it is, how to get in touch
 
 ## Help
@@ -389,7 +397,7 @@ export async function build(opts: { outDir?: string; quiet?: boolean } = {}) {
 
 if (import.meta.main) {
   if (process.argv.includes("--strict")) {
-    const missing = missingRequired();
+    const missing = missingRequired({ production: process.argv.includes("--production") });
     if (missing.length) {
       console.error(`build:strict refused: fill these in site.config.ts first → ${missing.join(", ")}`);
       process.exit(1);

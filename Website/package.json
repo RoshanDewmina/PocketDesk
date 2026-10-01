@@ -5,6 +5,7 @@
   "scripts": {
     "build": "bun scripts/build.ts",
     "build:strict": "bun scripts/build.ts --strict",
+    "build:prod": "bun scripts/build.ts --strict --production",
     "serve": "bun scripts/serve.ts",
     "dev": "bun scripts/serve.ts --watch",
     "assets": "bun scripts/render-assets.ts",

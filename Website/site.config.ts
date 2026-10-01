@@ -1,6 +1,8 @@
 // Everything the owner must fill in before the site goes public lives in this file.
 // `bun run build` prints what is still a placeholder; `bun run build:strict` refuses to build until nothing is.
 
+import { WAITLIST_ENABLED } from "./edge/flags";
+
 const PLACEHOLDER_SITE_URL = "https://farside.example";
 const PRODUCTION_SITE_URL = "https://getfarside.com";
 
@@ -9,7 +11,7 @@ export type Contact = {
   supportEmail: string | null;
   privacyEmail: string | null;
   securityEmail: string | null;
-  /** Where "Join the beta" emails go. */
+  /** Beta questions by email. */
   betaEmail: string | null;
   /**
    * Optional. The owner decided on 30 Sep 2026 to publish email-only contact (a Canadian site doesn't need a
@@ -42,6 +44,8 @@ export type Launch = {
   macVersion: string | null;
   macSha256: string | null;
 };
+
+export type CtaStage = "follow" | "testflight" | "preorder";
 
 export const config = {
   /**
@@ -101,26 +105,29 @@ export const config = {
   },
 
   /**
-   * The beta sign-up form (#beta on the home page). Every "Join the beta" button leads there.
-   * `action` is the Pages Function from the infra branch (Website/DEPLOY.md): JSON or plain form posts,
-   * fields email, source (page name) and company (honeypot, always empty).
+   * The call to action on every page (header button, hero, footer, FAQ), in three stages. Switching is this one
+   * line (`stage`), then rebuild and deploy:
+   *   follow      beta not out yet: "Beta coming soon. Follow @getfarside for the link." → followUrl
+   *   testflight  public beta open: "Join the beta" → testflightUrl (the TestFlight public link)
+   *   preorder    on the App Store: "Pre-order on the App Store" → appStoreUrl
+   * `bun run build:strict` refuses to build while the active stage's URL is empty.
    */
+  cta: {
+    stage: "follow" as CtaStage,
+    followUrl: "https://x.com/getfarside",
+    testflightUrl: "",
+    appStoreUrl: "",
+  },
+
+  /** The email waitlist is off (edge/flags.ts): no form on the site, and /api/waitlist answers 410. */
   waitlist: {
-    action: "/api/waitlist",
+    enabled: WAITLIST_ENABLED,
   },
 
   /** Short marketing lines that need the owner's sign-off before launch. */
   copy: {
-    /** Label of every beta button (header, hero, guides, form). */
-    cta: "Join the beta",
-    /** Under the hero button. No dates until the launch date is public (`bun run check` blocks them). */
+    /** No dates until the launch date is public (`bun run check` blocks them). */
     availability: "Coming soon to the App Store.",
-    /**
-     * Beside the sign-up button. Canada's anti-spam law (CASL) needs it: what people get and that they can
-     * unsubscribe. The backend stores a consent version (CONSENT in functions/api/waitlist.ts): bump it
-     * whenever this wording changes.
-     */
-    consent: "Roshan Silva Pulle, who makes Farside, will email you a beta invite and launch news. Unsubscribe anytime.",
   },
 
   /** Planned minimum OS versions (STORE-LISTING.md). */
@@ -143,17 +150,30 @@ export const config = {
 
   /** Last content review of the legal pages. */
   legalUpdated: "1 October 2026",
+  /**
+   * The privacy policy's effective date, e.g. "27 October 2026": set it to the production deploy date in the
+   * commit that goes live (GO-LIVE.md). `bun run build:prod` refuses to build while it is null; preview builds
+   * show the build date in its place.
+   */
+  privacyEffective: null as string | null,
 };
 
 export const isPlaceholderSiteUrl = () => config.SITE_URL === PLACEHOLDER_SITE_URL;
 
+const CTA_URL = { follow: "followUrl", testflight: "testflightUrl", preorder: "appStoreUrl" } as const;
+
+/** The URL the active CTA stage links to ("" while it isn't set). */
+export const ctaUrl = (): string => config.cta[CTA_URL[config.cta.stage]];
+
 /** Values that must be real before a public deploy (`build:strict` fails while any is missing). */
 const OPTIONAL_CONTACT = new Set(["phone", "postalAddress"]);
 
-export function missingRequired(): string[] {
+export function missingRequired(opts: { production?: boolean } = {}): string[] {
   const out: string[] = [];
   if (isPlaceholderSiteUrl()) out.push("SITE_URL");
   for (const [k, v] of Object.entries(config.contact)) if (v === null && !OPTIONAL_CONTACT.has(k)) out.push(`contact.${k}`);
+  if (!/^https:\/\/\S+$/.test(ctaUrl())) out.push(`cta.${CTA_URL[config.cta.stage]} (cta.stage is "${config.cta.stage}")`);
+  if (opts.production && !config.privacyEffective) out.push("privacyEffective (the production deploy date)");
   return out;
 }
 

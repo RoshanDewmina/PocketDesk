@@ -2,7 +2,7 @@ import { config } from "../../site.config";
 import { html } from "../lib/html";
 import { longDate, updated } from "./dates";
 import { pageHero } from "./doc";
-import { email, ogUrl, page, type Assets } from "./layout";
+import { ctaSentence, email, ogUrl, page, type Assets } from "./layout";
 import { graph, webPage } from "./schema";
 
 const PATH = "/about";
@@ -26,7 +26,7 @@ export function aboutPage(assets: Assets) {
       <p>Farside at getfarside.com isn’t related to farside.app or to other products with a similar name.</p>
     </section>
     <section aria-labelledby="now"><h2 id="now">Where it stands</h2>
-      <p>Farside is heading into a TestFlight beta, with the App Store to follow. <a href="/#beta">Join the beta</a> and we’ll email you an invite.</p>
+      <p>Farside is heading into a TestFlight beta, with the App Store to follow. ${ctaSentence()}</p>
     </section>
     <section aria-labelledby="contact"><h2 id="contact">Contact</h2>
       <p>Email ${email("support")}. We reply ${config.contact.responseTime ?? "as soon as we can"}. The <a href="/support">support page</a> has setup help and answers.</p>

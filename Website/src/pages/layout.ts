@@ -1,4 +1,4 @@
-import { config } from "../../site.config";
+import { config, ctaUrl } from "../../site.config";
 import { FONTS_URL } from "../lib/fonts";
 import { esc, html, raw, type Html } from "../lib/html";
 import { markSvg } from "../lib/mark";
@@ -79,6 +79,39 @@ export function detail(value: string | null, fallback: string): Html {
   return value ? html`${value}` : html`<span class="placeholder">${fallback} (to be confirmed)</span>`;
 }
 
+/**
+ * The call to action for the current stage (site.config.ts `cta.stage`): the full label (hero, footer), a short
+ * one for the header button, and the line that goes with it in the hero.
+ */
+export function cta(): { href: string; label: string; short: string; note: string } {
+  const href = ctaUrl();
+  switch (config.cta.stage) {
+    case "follow": {
+      const handle = `@${href.replace(/^https:\/\/(www\.)?(x|twitter)\.com\//, "").replace(/\/.*$/, "")}`;
+      return { href, label: `Follow ${handle}`, short: "Follow on X", note: `Beta coming soon. Follow ${handle} for the link.` };
+    }
+    case "testflight":
+      return { href, label: "Join the beta", short: "Join the beta", note: "The public beta is open on TestFlight." };
+    case "preorder":
+      return { href, label: "Pre-order on the App Store", short: "Pre-order", note: "Pre-order Farside for iPhone on the App Store." };
+  }
+}
+
+/** One sentence with the CTA as an inline link, for running text (FAQ, about, support). */
+export function ctaSentence(): Html {
+  const c = cta();
+  const a = html`<a href="${c.href}" rel="noopener">${c.label}</a>`;
+  if (config.cta.stage === "follow") return html`The beta isn’t open yet: ${a} on X for the link.`;
+  if (config.cta.stage === "testflight") return html`The public beta is open: ${a} on TestFlight.`;
+  return html`Farside for iPhone is up for pre-order: ${a}.`;
+}
+
+/** The CTA as a button that leaves the site. */
+export function ctaButton(cls = "cta"): Html {
+  const c = cta();
+  return html`<a class="${cls}" href="${c.href}" rel="noopener">${c.label}<span class="arr" aria-hidden="true">${icon.arrow}</span></a>`;
+}
+
 export function betaHref() {
   const addr = config.contact.betaEmail;
   return addr ? `mailto:${addr}?subject=${encodeURIComponent("Farside beta")}` : null;
@@ -142,7 +175,7 @@ function header(meta: PageMeta): Html {
     <nav class="nav-desk" aria-label="Main">${navLinks(meta.current)}</nav>
     <div class="bar-r">
       <p class="status" aria-hidden="true"><span>Your Mac</span><b><i class="live"></i><span class="st-t">Reaching</span></b></p>
-      <a class="pill" href="/#beta">${config.copy.cta}</a>
+      <a class="pill" href="${cta().href}" rel="noopener">${cta().short}</a>
       <details class="nav-mob">
         <summary aria-label="Menu">${icon.menu}</summary>
         <nav aria-label="Main menu">${navLinks(meta.current)}</nav>
@@ -175,7 +208,7 @@ function footer(assets: Assets): Html {
   <div class="foot-in w">
     <div class="foot-head">
       <h2 class="foot-tag plate" id="foot-title">Your Mac is far. Your reach <em>isn’t.</em></h2>
-      <a class="cta" href="/#beta">${config.copy.cta}<span class="arr" aria-hidden="true">${icon.arrow}</span></a>
+      ${ctaButton()}
     </div>
     <div class="foot-mark"><p class="foot-wm" aria-hidden="true">farside</p></div>
     <nav class="foot-nav" aria-label="Footer">
@@ -196,15 +229,6 @@ function footer(assets: Assets): Html {
     </div>
   </div>
 </footer>`;
-}
-
-/** Page name sent with a beta sign-up (the waitlist `source` field: [a-z0-9_-]). */
-const GUIDE_PATHS = new Set(["/control-mac-from-iphone", "/iphone-as-mac-trackpad", "/remote-desktop-for-mac"]);
-function sourceName(meta: PageMeta): string {
-  if (meta.path === "/") return "home";
-  if (GUIDE_PATHS.has(meta.path)) return "guide";
-  const name = meta.path.replace(/^\//, "").replace(/[^a-z0-9_-]/g, "");
-  return name || "site";
 }
 
 // ---------- document ----------
@@ -256,7 +280,7 @@ ${meta.noCanonical ? "" : html`<meta property="og:url" content="${url}">\n`}<met
 <meta name="twitter:image" content="${img}">
 <meta name="twitter:image:alt" content="${imgAlt}">${banner}${ld}
 </head>
-<body${raw(meta.bodyClass ? ` class="${esc(meta.bodyClass)}"` : "")} data-src="${sourceName(meta)}">
+<body${raw(meta.bodyClass ? ` class="${esc(meta.bodyClass)}"` : "")}>
 <a class="skip" href="#main">Skip to content</a>
 ${header(meta)}
 <main id="main" tabindex="-1">

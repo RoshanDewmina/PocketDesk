@@ -1,3 +1,4 @@
+import { WAITLIST_ENABLED } from "../../edge/flags";
 import { json, methodNotAllowed, redirect, sameOrigin, sha256Hex } from "../../edge/respond";
 
 interface Env {
@@ -16,7 +17,11 @@ const EMAIL = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[A-Za-z]{2,}$/;
 type Fields = { email: string; source: string; company: string };
 type Outcome = "joined" | "invalid_email" | "rate_limited" | "forbidden" | "too_large";
 
+/** The waitlist is off (edge/flags.ts): nothing can be posted, and the rows already stored stay untouched. */
+const closed = () => json(410, { ok: false, error: "closed" });
+
 export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
+  if (!WAITLIST_ENABLED) return closed();
   const type = request.headers.get("Content-Type") ?? "";
   const wantsJson = type.includes("application/json") || (request.headers.get("Accept") ?? "").includes("application/json");
   const reply = (outcome: Outcome) => respond(outcome, wantsJson);
@@ -44,7 +49,7 @@ export const onRequestPost: PagesFunction<Env> = async ({ request, env }) => {
   return reply("joined");
 };
 
-export const onRequest: PagesFunction<Env> = async () => methodNotAllowed("POST");
+export const onRequest: PagesFunction<Env> = async () => (WAITLIST_ENABLED ? methodNotAllowed("POST") : closed());
 
 async function readFields(request: Request, type: string): Promise<Fields | null> {
   try {

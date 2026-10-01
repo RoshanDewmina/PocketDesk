@@ -2,23 +2,23 @@
 // Anywhere plan used on this site. Every [TO FILL] / [CONFIRM] marker is kept in the HTML comment below.
 
 import { config } from "../../site.config";
-import { html, raw } from "../lib/html";
-import { docBody, ownerComment, pageHero, tbc, type Section } from "./doc";
+import { html } from "../lib/html";
+import { longDate } from "./dates";
+import { docBody, ownerComment, pageHero, type Section } from "./doc";
 import { detail, email, ogUrl, page, type Assets } from "./layout";
 import { breadcrumbs, graph, webPage } from "./schema";
 
 const OPEN_ITEMS = [
-  "[TO FILL] Effective date (rendered as 'to be confirmed').",
+  "Effective date: config.privacyEffective, set to the production deploy date (build:prod refuses to build without it; preview builds show the build date).",
   "Who we are: legal name and country, email contact only (owner decision 30 Sep 2026: no postal address published). Set config.contact.postalAddress to show one.",
   "[TO FILL] privacy@ address on the real domain (config.contact.privacyEmail).",
   "[TO FILL] EU/UK representative or data protection officer, only if counsel says one is required. Not rendered.",
-  "[TO FILL] Support email retention (rendered: 24 months, to be confirmed).",
+  "Support email retention: 24 months (owner, 1 Oct 2026).",
   "[TO FILL] If serving the EU or UK: legal bases (for example contract and legitimate interests) and international transfers. Not rendered.",
-  "[TO FILL] Waitlist and support email provider. No email-sending code exists yet, so the page says only that we send invites. Name the provider under 'Who receives information' once chosen.",
-  "[DECIDE] 12-month waitlist deletion. Nothing deletes waitlist rows automatically; the promise depends on the dated manual DELETE in Docs/launch/LAUNCH-CHECKLIST.md (task 8.5). Keep that task, or move the waitlist to a Worker with a cron.",
-  "[CONFIRM] RATE_SALT is set in Cloudflare Pages production. Without it the IP hash falls back to a public salt and 'we cannot turn the hash back' stops being true.",
-  "[TO FILL] Rights and complaint routes under the laws that apply (PIPEDA and Quebec Law 25, EU/UK GDPR, California). Rendered generically.",
-  "[TO FILL] Minimum age for 'not directed to children' (13 or 16, per counsel; rendered: 13, to be confirmed).",
+  "[TO FILL] Support email provider. Name it under 'Who receives information' once chosen.",
+  "No beta waitlist on the site since 1 Oct 2026 (edge/flags.ts), so the waitlist sections are gone. Bring them back (storage, IP-hash rate limit, 12-month deletion) before the waitlist is switched on again.",
+  "Complaints: the Office of the Privacy Commissioner of Canada (owner, 1 Oct 2026). [TO FILL] Other routes (Quebec Law 25, EU/UK GDPR, California) only if counsel says they apply.",
+  "Minimum age: 13 (owner, 1 Oct 2026).",
   "[TO FILL] Contact block: postal address.",
   "NEW, not in the draft: the website loads Google Fonts, which sends visitors' IP addresses to Google. Disclosed below; self-host the fonts to remove it.",
 ];
@@ -28,7 +28,7 @@ const S: Section[] = [
     id: "short",
     title: "The short version",
     body: html`<ul class="short">
-  <li>Farside lets you see and control your own Mac from your iPhone. There is no Farside account, and the apps never ask for your name, email address or phone number. If you join the beta waitlist on this website, we keep the email address you give us (see <a href="#waitlist">Beta waitlist</a>).</li>
+  <li>Farside lets you see and control your own Mac from your iPhone. There is no Farside account, and the apps never ask for your name, email address or phone number. This website has no sign-up form.</li>
   <li>What is on your Mac’s screen, what you type and what you say travel between your own devices, encrypted. We do not record, store or look at your screen, keystrokes, clipboard or voice.</li>
   <li>Our servers introduce your devices to each other and, if you subscribe to the Farside Anywhere plan, pass encrypted traffic along when your devices cannot connect directly. To do that they see technical details such as IP addresses, timing and data volume, and a random identifier for each paired Mac.</li>
   <li>We check your subscription with Apple. Apple handles your payment; we never see your card or Apple Account details.</li>
@@ -76,20 +76,12 @@ const S: Section[] = [
   {
     id: "support",
     title: "Support",
-    body: html`<p>If you email us we receive your email address and whatever you choose to send, and we use it to reply. We keep support emails for ${tbc("24 months")}. Please do not send passwords or screenshots of private content.</p>`,
-  },
-  {
-    id: "waitlist",
-    title: "Beta waitlist",
-    body: html`<p>If you join the beta waitlist on this website, we store your email address, the page you signed up from, the version of the sign-up wording you agreed to and the time you signed up. We use them only to send you the beta invite and news about the launch.</p>
-<p>We also store a random code that lets you unsubscribe. The invite and launch news are sent by us.</p>
-<p>We keep your sign-up until 12 months after Farside launches, then delete it. Every email we send has an unsubscribe link. If you unsubscribe, we stop emailing you and keep your sign-up marked as unsubscribed, so that we don’t contact you again, until that same deletion date. To be taken off the list at any time, use that link or email ${email("privacy")} from the address you signed up with, and we will delete your sign-up.</p>
-<p>To stop abuse of the sign-up form, we also keep a salted one-way hash of your IP address. It is usually deleted within an hour, and at the latest the next time anyone signs up after that hour. We cannot turn the hash back into your IP address. The waitlist is stored with Cloudflare (Cloudflare D1).</p>`,
+    body: html`<p>If you email us we receive your email address and whatever you choose to send, and we use it to reply. We keep support emails for 24 months. Please do not send passwords or screenshots of private content.</p>`,
   },
   {
     id: "website",
     title: "This website and downloads",
-    body: html`<p>This website is hosted by Cloudflare (Cloudflare Pages), which receives your IP address and the pages or files you request. The site uses no cookies, no analytics and no advertising. Your browser stores your animation preference and, for one visit, the page you pressed Join from; neither is sent to us, except the page name with a waitlist sign-up. The site’s fonts load from Google Fonts, so your browser also sends your IP address to Google when it fetches them.</p>
+    body: html`<p>This website is hosted by Cloudflare (Cloudflare Pages), which receives your IP address and the pages or files you request. The site uses no cookies, no analytics and no advertising. Your browser stores your animation preference and your best score in the footer game; neither is sent to us. The site’s fonts load from Google Fonts, so your browser also sends your IP address to Google when it fetches them.</p>
 <p>When you choose Check for Updates, Farside for Mac downloads a small update file from this website. The request includes your IP address, the app’s name and version, and the version of the Sparkle update library. It does not send a system profile, and the app does not check automatically.</p>`,
   },
   {
@@ -105,16 +97,16 @@ const S: Section[] = [
   {
     id: "use",
     title: "How we use information",
-    body: html`<p>To connect your devices; to verify your subscription and give you relay access; to deliver agent alerts you turned on; to send the beta invite and launch news to people on the waitlist; to keep the service secure and limit abuse; to answer your questions; and to meet legal obligations. We do not use it for advertising, profiling or sale.</p>`,
+    body: html`<p>To connect your devices; to verify your subscription and give you relay access; to deliver agent alerts you turned on; to keep the service secure and limit abuse; to answer your questions; and to meet legal obligations. We do not use it for advertising, profiling or sale.</p>`,
   },
   {
     id: "recipients",
     title: "Who receives information",
     body: html`<ul>
-  <li><b>Cloudflare</b>: runs our connection service and stores its records (room identifiers, subscription records and push tokens); provides the STUN and relay servers, DNS and network services; hosts this website; and stores the beta waitlist (Cloudflare D1).</li>
+  <li><b>Cloudflare</b>: runs our connection service and stores its records (room identifiers, subscription records and push tokens); provides the STUN and relay servers, DNS and network services; and hosts this website.</li>
   <li><b>Apple</b>: the App Store, purchases, push notifications and App Store server notifications. Apple’s own privacy policy applies to its services.</li>
   <li><b>Google</b>: fonts for this website only.</li>
-  <li><b>Our email provider</b>, to receive and answer support email and to send waitlist emails.</li>
+  <li><b>Our email provider</b>, to receive and answer support email.</li>
   <li>Professional advisers or authorities, when legally required.</li>
 </ul>
 <p>Each provider is bound to protect information at least as strongly as this policy states. We do not sell your information or share it for advertising.</p>`,
@@ -134,9 +126,7 @@ const S: Section[] = [
     <tr><td>Apple subscription notices</td><td>90 days</td></tr>
     <tr><td>Security audit records (no IP addresses or content)</td><td>30 days</td></tr>
     <tr><td>Service logs (event names and shortened identifiers, no IP addresses or content)</td><td>Up to 7 days</td></tr>
-    <tr><td>Support emails</td><td>${tbc("24 months")}</td></tr>
-    <tr><td>Beta waitlist email address and sign-up details</td><td>Until 12 months after launch, or sooner if you ask us to delete it. If you unsubscribe, your sign-up stays marked as unsubscribed until then.</td></tr>
-    <tr><td>Hashed IP address used to limit sign-up abuse</td><td>Usually one hour; at the latest until the next sign-up after that</td></tr>
+    <tr><td>Support emails</td><td>24 months</td></tr>
     <tr><td>Data on your devices</td><td>Until you remove the pairing or delete the app</td></tr>
   </tbody>
 </table>`,
@@ -156,13 +146,13 @@ const S: Section[] = [
   <li>You can also email ${email("privacy")}. With no account, we may ask you to prove ownership from the device.</li>
   <li>Change permissions (camera, microphone, speech, local network, notifications, screen recording, accessibility) in your device settings.</li>
   <li>Cancel your subscription in your Apple Account subscription settings. Refunds are handled by Apple.</li>
-  <li>You can ask what we hold about you, ask for correction or deletion, and object to processing. Depending on where you live, you may have further rights and can complain to your privacy regulator ${raw('<span class="placeholder">(details to be confirmed)</span>')}.</li>
+  <li>You can ask what we hold about you, ask for correction or deletion, and object to processing. Depending on where you live, you may have further rights. You can complain to the Office of the Privacy Commissioner of Canada (<a href="https://www.priv.gc.ca" rel="noopener">priv.gc.ca</a>).</li>
 </ul>`,
   },
   {
     id: "children",
     title: "Children",
-    body: html`<p>Farside is not directed to children under ${tbc("13")}. We do not knowingly collect personal information from children, and there is no account.</p>`,
+    body: html`<p>Farside is not directed to children under 13. We do not knowingly collect personal information from children, and there is no account.</p>`,
   },
   {
     id: "changes",
@@ -177,6 +167,11 @@ Who we are: ${detail(config.contact.legalName, "legal name")}, ${config.contact.
   },
 ];
 
+/** The production deploy date (site.config.ts); a preview build shows its build date instead (build:prod requires the real one). */
+function effective() {
+  return config.privacyEffective ?? longDate(new Date().toISOString().slice(0, 10));
+}
+
 const DESC = "How Farside handles information: no account, no ads, no tracking. Your screen, keystrokes and voice travel between your own devices, encrypted.";
 
 export function privacyPage(assets: Assets) {
@@ -190,7 +185,7 @@ ${pageHero({
   cap: "Privacy policy",
   title: html`Your screen is <em>yours.</em>`,
   lead: html`How Farside handles information across Farside for iPhone, Farside for Mac, our connection service and this website. The short version: <b>no account, no ads, no tracking</b>.`,
-  extra: html`<p class="meta-row"><span class="cap">Last updated · <b>${config.legalUpdated}</b></span><span class="cap">Effective · <b>to be confirmed</b></span></p>`,
+  extra: html`<p class="meta-row"><span class="cap">Last updated · <b>${config.legalUpdated}</b></span><span class="cap">Effective · <b>${effective()}</b></span></p>`,
 })}
 ${docBody(S)}`;
   return page(

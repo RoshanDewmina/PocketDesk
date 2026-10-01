@@ -6,7 +6,7 @@ import { config } from "../../site.config";
 import { html, type Html } from "../lib/html";
 import { ownerComment, pageHero } from "./doc";
 import { figure, gestureTable } from "./guide";
-import { detail, email, icon, ogUrl, page, type Assets } from "./layout";
+import { ctaSentence, detail, email, icon, ogUrl, page, type Assets } from "./layout";
 import { breadcrumbs, faqPage, graph, howTo, webPage, type QA } from "./schema";
 
 const R = config.requirements;
@@ -185,7 +185,7 @@ function contact(): Html {
   </dl>
 </div>
 <p>To help us help you, include what you tried, what the message said, your Mac and iPhone models, their macOS and iOS versions, and whether both were on the same network. Please don’t send passwords or screenshots of private content.</p>
-<p>Want to test new builds early? <a href="/#beta">Join the beta</a>.</p>`;
+<p>Want to test new builds early? ${ctaSentence()}</p>`;
 }
 
 const MSG_QAS: QA[] = MESSAGES.map((m) => ({

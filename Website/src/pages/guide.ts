@@ -1,11 +1,10 @@
 // Building blocks for the long-form guide and comparison pages.
 
-import { config } from "../../site.config";
 import { html, raw, type Html } from "../lib/html";
 import { markSvg } from "../lib/mark";
 import { longDate, updated } from "./dates";
 import { shot } from "./images";
-import { breadcrumbNav, icon, type Assets } from "./layout";
+import { breadcrumbNav, ctaButton, type Assets } from "./layout";
 import type { QA } from "./schema";
 
 /** A design-preview image from concept 21, lazy-loaded, with 1x/2x sources. */
@@ -44,14 +43,14 @@ export function faqList(qas: QA[]): Html {
   )}</div>`;
 }
 
-/** Closing call to action shared by the guides: the beta sign-up on the home page. */
+/** Closing call to action shared by the guides: the current CTA stage (site.config.ts `cta`). */
 export function ctaBand(): Html {
   return html`<section class="sec band band-sm" aria-labelledby="cta-title">
   <div class="w">
     <div class="band-mark" aria-hidden="true">${raw(markSvg(40))}</div>
     <h2 class="h2" id="cta-title">Try Farside first</h2>
     <p class="lead">Farside is in beta. It’s free when your iPhone and Mac are on the same Wi‑Fi, and there’s no account.</p>
-    <div class="row"><a class="cta" href="/#beta">${config.copy.cta}<span class="arr">${icon.arrow}</span></a></div>
+    <div class="row">${ctaButton()}</div>
   </div>
 </section>`;
 }
