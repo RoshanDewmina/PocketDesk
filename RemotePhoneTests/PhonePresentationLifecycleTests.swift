@@ -128,6 +128,9 @@ final class PhonePresentationLifecycleTests: XCTestCase {
             var pixels: CVPixelBuffer?
             XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
                                                [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+            let buffer = try XCTUnwrap(pixels)
+            CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+            CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
             sink.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
                 frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
                 arrivalMs: 1, marker: nil, originalSource: true))
