@@ -191,12 +191,16 @@ struct HostStreamSummary: Codable, Equatable {
     var frameRecords: FrameTimingRecords?
     var framesEncodedTotal: Int?
     var macLink: String?
+    /// X16: the DSCP/priority the Mac asked WebRTC for (`TransportPriorityRequest.summary`). Requested,
+    /// never measured on the wire.
+    var transportPriorityRequested: String?
 
     static let maximumFrameTotal = 1_000_000_000_000
     static let fpsRange = 1...240
     static let refreshRange = 0.0...1_000
     static let thermalRange = 0...3
     static let displayDescriptionBytes = 48
+    static let transportPriorityBytes = 40
 
     func validate() throws {
         let numbers = [captureFPS, captureLatencyMs, captureGapP90Ms, captureGapMaxMs, encodedFPS, encodeMs, pacerDelayMs,
@@ -215,6 +219,7 @@ struct HostStreamSummary: Codable, Equatable {
               displayRefreshHz.map({ Self.refreshRange.contains($0) }) ?? true,
               thermalState.map({ Self.thermalRange.contains($0) }) ?? true,
               (captureDisplay?.utf8.count ?? 0) <= Self.displayDescriptionBytes,
+              (transportPriorityRequested?.utf8.count ?? 0) <= Self.transportPriorityBytes,
               framesEncodedTotal.map({ (0...Self.maximumFrameTotal).contains($0) }) ?? true,
               macLink.map({ $0.utf8.count <= MacNetworkLink.maximumBytes && MacNetworkLink(rawValue: $0) != nil }) ?? true else {
             throw RemoteError.invalidMessage
@@ -367,6 +372,7 @@ struct StreamStatsReport: Codable, Equatable {
     var ladder: LadderState?
     var busy: BusyState?
     var captureRegion: CaptureRegion?
+    var transportPriorityRequested: String?
     // Per-frame timing (perf pack 4a). Host: display → encoded; phone: Mac display → decoded here.
     var frameHostP50Ms: Double?
     var frameHostP95Ms: Double?
@@ -565,7 +571,10 @@ struct StreamStatsReport: Codable, Equatable {
                           lowPowerMode: lowPowerMode,
                           ladder: ladder.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           busy: busy.flatMap { (try? $0.validate()) == nil ? nil : $0 },
-                          captureRegion: captureRegion.flatMap { (try? $0.validate()) == nil ? nil : $0 })
+                          captureRegion: captureRegion.flatMap { (try? $0.validate()) == nil ? nil : $0 },
+                          transportPriorityRequested: transportPriorityRequested.map {
+                              Self.truncated($0, bytes: HostStreamSummary.transportPriorityBytes)
+                          })
     }
 
     static func thermalName(_ state: Int?) -> String? {
@@ -678,6 +687,7 @@ struct StreamStatsReport: Codable, Equatable {
             }
             if let gate = gate(encoderSubmitted, encoderOutputs, encoderSuperseded, encoderRetired) { lines.append(gate) }
             if let load = loadLine("", ladder: ladder, busy: busy, region: captureRegion) { lines.append(load) }
+            if let transportPriorityRequested { lines.append("QoS requested (not measured): \(transportPriorityRequested)") }
             if let input = inputLine("", inputEvents, inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs,
                                      inputPostP95Ms) {
                 lines.append(input)
@@ -703,6 +713,9 @@ struct StreamStatsReport: Codable, Equatable {
                 }
                 if let load = loadLine("Mac ", ladder: host.ladder, busy: host.busy, region: host.captureRegion) {
                     lines.append(load)
+                }
+                if let requested = host.transportPriorityRequested {
+                    lines.append("Mac QoS requested (not measured): \(requested)")
                 }
                 if let input = inputLine("Mac ", host.inputEvents, host.inputMainDelayP50Ms, host.inputMainDelayP95Ms,
                                          host.inputMainDelayMaxMs, host.inputPostP95Ms) {
