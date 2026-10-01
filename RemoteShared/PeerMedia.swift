@@ -1267,6 +1267,8 @@ final class PeerMedia: NSObject {
             if nativeDesktopCodecs { stats.transportPriorityRequested = transportPriority.summary }
             followCeilingRoute(detail: sample.routeDetail, rttMs: stats.rttMs)
             seedBandwidthEstimate(stats, route: sample.route, detail: sample.routeDetail)
+            stats.networkQueueMs = SenderQueueEstimate.networkQueueMs(rttMs: stats.rttMs, baselineRTTMs: transportRate.baselineRTT)
+                .map { ($0 * 10).rounded() / 10 }
             if nativeDesktopCodecs && tuning.qualityBitrates {
                 stats.bweCeilingKbps = appliedBweMaxBps.map { Double($0) / 1000 }
                 stats.lanCeilingApplied = lanCeilingApplied

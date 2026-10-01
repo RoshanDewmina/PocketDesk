@@ -72,6 +72,8 @@ struct StreamTuning: Equatable {
     var viewportCapture = true
     /// G12: let the ladder step the rate and size down under load and report the busy state.
     var ladder = true
+    /// X17: cap the ladder when the send path is the bottleneck (`SenderQueueGovernor`); needs `ladder`.
+    var senderQueueGovernor = true
     /// Phone (efficiency audit P2): with `presentAtDisplayMaximum`, the video view drops to 30 Hz while
     /// no frame or touch has arrived for a moment and returns to its maximum on the next one.
     var idleVideoRefresh = true
@@ -101,6 +103,7 @@ struct StreamTuning: Equatable {
         tuning.capToClientPixels = false
         tuning.viewportCapture = false
         tuning.ladder = false
+        tuning.senderQueueGovernor = false
         tuning.idleVideoRefresh = false
         tuning.mergePointerMoves = false
         tuning.frameTiming = false
@@ -120,6 +123,7 @@ struct StreamTuning: Equatable {
     static let capToClientPixelsKey = "PocketDeskCapToClientPixels"
     static let viewportCaptureKey = "PocketDeskViewportCapture"
     static let ladderKey = "PocketDeskLadder"
+    static let senderQueueGovernorKey = "PocketDeskSenderQueueGovernor"
     static let encoderMaxInFlightKey = "PocketDeskEncoderMaxInFlight"
     static let lanHeadroomKey = "PocketDeskLANHeadroom"
     static let mergePointerMovesKey = "PocketDeskMergePointerMoves"
@@ -130,7 +134,7 @@ struct StreamTuning: Equatable {
                                  restartKeyFrameBudgetKey, encoderCeilingKey, level52ProbeCacheKey,
                                  highRefreshCaptureKey, targetFPSKey, highRefreshNoAdaptationKey, capToClientPixelsKey,
                                  viewportCaptureKey, ladderKey, encoderMaxInFlightKey, idleVideoRefreshKey, lanHeadroomKey,
-                                 mergePointerMovesKey, frameTimingKey]
+                                 mergePointerMovesKey, frameTimingKey, senderQueueGovernorKey]
 
     private static let lock = NSLock()
     private static var resolved: StreamTuning?
@@ -187,6 +191,9 @@ struct StreamTuning: Equatable {
         }
         if defaults.object(forKey: ladderKey) != nil {
             tuning.ladder = defaults.bool(forKey: ladderKey)
+        }
+        if defaults.object(forKey: senderQueueGovernorKey) != nil {
+            tuning.senderQueueGovernor = defaults.bool(forKey: senderQueueGovernorKey)
         }
         if defaults.object(forKey: mergePointerMovesKey) != nil {
             tuning.mergePointerMoves = defaults.bool(forKey: mergePointerMovesKey)
@@ -247,6 +254,7 @@ struct StreamTuning: Equatable {
         if !capToClientPixels { parts.append("no client cap") }
         if !viewportCapture { parts.append("whole-display capture") }
         if !ladder { parts.append("no ladder") }
+        if ladder && !senderQueueGovernor { parts.append("no queue governor") }
         if let encoderMaxInFlight { parts.append("max in-flight \(encoderMaxInFlight)") }
         if lanBandwidthHeadroom > 1 { parts.append("LAN ceiling ×\(String(format: "%g", lanBandwidthHeadroom))") }
         if !mergePointerMoves { parts.append("no move merge") }

@@ -848,8 +848,10 @@ final class LadderPolicyTests: XCTestCase {
         report.availableOutgoingKbps = 30_000
         report.qualityLimitation = "none"
         report.sentKbps = 9_000
+        var expected = sample
+        expected.sentKbps = 9_000
         XCTAssertEqual(HostLoadSample(report: report, targetFPS: 120, longEdge: 2560, hostThermalState: "fair",
-                                      lowPowerMode: false), sample)
+                                      lowPowerMode: false), expected)
     }
 
     func testTickRunsTheLadderThenTheBusyState() {
@@ -899,6 +901,182 @@ final class LadderPolicyTests: XCTestCase {
             assertTick(monitor.tick(sample: saving, at: TimeInterval(second)), ladder: nil, busy: nil)
         }
         assertTick(monitor.tick(sample: saving, at: 8), ladder: nil, busy: .ok, "8 s later the pill goes")
+    }
+}
+
+// X17: send-path cap over the ladder.
+final class SenderQueueGovernorTests: XCTestCase {
+    private func window(_ route: String? = "relay", available: Double? = 4_000, sent: Double? = 3_900,
+                        queue: Double? = 20, network: Double? = 0) -> SenderQueueGovernor.Window {
+        SenderQueueGovernor.Window(route: route, availableKbps: available, sentKbps: sent,
+                                   senderQueueMs: queue, networkQueueMs: network)
+    }
+
+    /// Feeds `count` windows and returns the level after each.
+    private func feed(_ governor: inout SenderQueueGovernor, _ window: SenderQueueGovernor.Window, _ count: Int) -> [Int] {
+        (0..<count).map { _ in _ = governor.observe(window); return governor.level }
+    }
+
+    func testStepsDownUnderTheCapRateFirstAndStopsAtFifteenFullSize() {
+        var governor = SenderQueueGovernor()
+        XCTAssertEqual(feed(&governor, window(), 3), [0, 0, 0], "warm-up: the estimate is still ramping")
+        XCTAssertEqual(feed(&governor, window(), 4), [0, 1, 1, 2], "down after two bad windows in a row")
+        XCTAssertEqual(governor.cap, SenderQueueGovernor.Level(fps: 15, sizeFraction: 1))
+        XCTAssertEqual(feed(&governor, window(), 20), Array(repeating: 2, count: 20),
+                       "low capacity alone never costs resolution")
+        XCTAssertEqual(governor.keyFrameSteps, 0, "rate steps need no key frame")
+    }
+
+    func testPersistentQueueCostsResolutionWithKeyFrameStepsSpacedApart() {
+        var governor = SenderQueueGovernor()
+        let queued = window(available: 20_000, sent: 8_000, queue: 90, network: 30)
+        let levels = feed(&governor, queued, 16)
+        XCTAssertEqual(levels, [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4])
+        XCTAssertEqual(governor.cap, SenderQueueGovernor.Level(fps: 15, sizeFraction: 0.5))
+        XCTAssertEqual(governor.keyFrameSteps, 2, "one key frame per size step and none for rate steps")
+        let sizeSteps = levels.indices.dropFirst().filter {
+            SenderQueueGovernor.levels[levels[$0]].sizeFraction != SenderQueueGovernor.levels[levels[$0 - 1]].sizeFraction
+        }
+        XCTAssertEqual(sizeSteps.count, 2)
+        XCTAssertGreaterThanOrEqual(sizeSteps[1] - sizeSteps[0], SenderQueueGovernor.sizeStepSpacing)
+        XCTAssertFalse(governor.observe(queued), "at the floor nothing moves")
+    }
+
+    func testHysteresisDownAfterTwoBadUpOnlyAfterTenCleanWindows() {
+        var governor = SenderQueueGovernor()
+        let bad = window(), clean = window(available: 20_000, sent: 8_000, queue: 10)
+        let neutral = window(available: 5_500, sent: 5_200, queue: 10)
+        _ = feed(&governor, clean, 3)
+        for _ in 0..<10 { _ = governor.observe(bad); _ = governor.observe(clean) }
+        XCTAssertEqual(governor.level, 0, "alternating windows never step")
+        _ = feed(&governor, bad, 2)
+        XCTAssertEqual(governor.level, 1)
+        XCTAssertEqual(feed(&governor, clean, 9), Array(repeating: 1, count: 9))
+        _ = governor.observe(neutral)
+        XCTAssertEqual(feed(&governor, clean, 9), Array(repeating: 1, count: 9),
+                       "a saturated link between 5 and 6 Mb/s is not clean and restarts the count")
+        XCTAssertEqual(feed(&governor, clean, 1), [0])
+    }
+
+    func testAFailedClimbDoublesTheWait() {
+        var governor = SenderQueueGovernor()
+        let bad = window(), clean = window(available: 20_000, sent: 8_000, queue: 10)
+        _ = feed(&governor, bad, 5)
+        XCTAssertEqual(governor.level, 1)
+        _ = feed(&governor, clean, 10)
+        XCTAssertEqual(governor.level, 0)
+        _ = feed(&governor, bad, 2)
+        XCTAssertEqual(governor.level, 1)
+        XCTAssertEqual(governor.climbWait, 20)
+        XCTAssertEqual(feed(&governor, clean, 20).last, 0)
+        XCTAssertEqual(feed(&governor, clean, 19).last, 0)
+        XCTAssertEqual(governor.climbWait, SenderQueueGovernor.climbWindows, "a climb that holds resets the wait")
+    }
+
+    func testAnAppLimitedLowEstimateIsNotABottleneck() {
+        var governor = SenderQueueGovernor()
+        XCTAssertEqual(feed(&governor, window(available: 3_000, sent: 400, queue: 5), 30).max(), 0,
+                       "a still screen leaves the estimate low without a queue")
+        XCTAssertEqual(feed(&governor, window(available: nil, sent: nil, queue: nil, network: nil), 10).max(), 0)
+    }
+
+    func testRouteChangeResetsTheCapAndWarmsUpAgain() {
+        var governor = SenderQueueGovernor()
+        _ = feed(&governor, window("relay"), 7)
+        XCTAssertEqual(governor.level, 2)
+        XCTAssertFalse(governor.observe(window(nil)), "a pending route keeps the last one")
+        XCTAssertEqual(governor.level, 2)
+        XCTAssertTrue(governor.observe(window("lan")))
+        XCTAssertEqual(governor.level, 0)
+        XCTAssertEqual(feed(&governor, window("lan"), 3), [0, 0, 0], "the new route warms up before any step")
+        XCTAssertEqual(feed(&governor, window("lan"), 2), [1, 1])
+    }
+
+    func testTheCapNeverRaisesTheLadderAndNamesTheNetwork() {
+        var governor = SenderQueueGovernor()
+        let top = LadderState(rung: 0, fps: 60, sizeFraction: 1, reason: nil)
+        XCTAssertEqual(governor.apply(to: top), top)
+        _ = feed(&governor, window(), 7)
+        XCTAssertEqual(governor.apply(to: top), LadderState(rung: 2, fps: 15, sizeFraction: 1, reason: "network"))
+        let lowRung = LadderState(rung: 3, fps: 12, sizeFraction: 0.5, reason: "thermal")
+        XCTAssertEqual(governor.apply(to: lowRung), lowRung, "a tighter ladder rung is left alone")
+        XCTAssertNoThrow(try governor.apply(to: LadderState(rung: 16, fps: 60, sizeFraction: 1, reason: nil)).validate())
+    }
+
+    func testTheMonitorAppliesTheCapOnlyWithTheGovernorOn() {
+        var sample = HostLoadSample(targetFPS: 60, longEdge: 2560, captureFPS: 60, captureLatencyP90Ms: 2,
+                                    encodedFPS: 60, encodeLatencyP90Ms: 5, encodeInFlightMax: 1, droppedBeforeEncode: 0,
+                                    pacerDelayMs: 5, targetKbps: 3_900, availableKbps: 4_000, qualityLimitation: "none",
+                                    hostThermalState: "nominal", lowPowerMode: false)
+        sample.sentKbps = 3_900
+        sample.senderQueueMs = 20
+        sample.routeDetail = "relay"
+        var governed = HostLoadMonitor(targetFPS: 60, senderQueueGovernor: true)
+        var plain = HostLoadMonitor(targetFPS: 60)
+        var changes: [LadderState] = []
+        for second in 0..<8 {
+            if let change = governed.tick(sample: sample, at: TimeInterval(second)).ladder { changes.append(change) }
+            XCTAssertNil(plain.tick(sample: sample, at: TimeInterval(second)).ladder)
+        }
+        XCTAssertEqual(changes, [LadderState(rung: 1, fps: 30, sizeFraction: 1, reason: "network"),
+                                 LadderState(rung: 2, fps: 15, sizeFraction: 1, reason: "network")])
+        XCTAssertEqual(governed.applied.fps, 15)
+        XCTAssertEqual(governed.ladder.state.rung, 0, "the ladder's own rung is unchanged underneath")
+    }
+
+    func testCappedRatesKeepTheSessionDegradationPreference() {
+        var tuning = StreamTuning.tuned
+        XCTAssertEqual(SenderRateParameters.make(targetFPS: 60, tuning: tuning, ladderFPS: 15),
+                       SenderRateParameters(maxFramerate: 15, degradationPreference: .maintainResolution),
+                       "frames are shed before resolution, as the cap does")
+        tuning.highRefreshNoAdaptation = true
+        XCTAssertEqual(SenderRateParameters.make(targetFPS: 120, tuning: tuning, ladderFPS: 15),
+                       SenderRateParameters(maxFramerate: 15, degradationPreference: .maintainFramerateAndResolution),
+                       "in 120 mode the app's ladder and cap stay the only adaptation")
+        XCTAssertTrue(StreamTuning.tuned.senderQueueGovernor)
+        XCTAssertFalse(StreamTuning.legacy.senderQueueGovernor)
+        XCTAssertTrue(StreamTuning.experimentKeys.contains(StreamTuning.senderQueueGovernorKey))
+    }
+
+    func testQueueEstimateFormula() throws {
+        XCTAssertEqual(SenderQueueEstimate.senderQueueMs(pacerDelayMs: 5, encodedBytes: 500_000, sentBytes: 250_000, availableKbps: 4_000), 500,
+                       "250 kB unsent at 4 Mb/s drains in 500 ms")
+        XCTAssertEqual(SenderQueueEstimate.senderQueueMs(pacerDelayMs: 40, encodedBytes: 100_000, sentBytes: 120_000, availableKbps: 4_000), 40)
+        XCTAssertEqual(SenderQueueEstimate.senderQueueMs(pacerDelayMs: 7, encodedBytes: nil, sentBytes: nil, availableKbps: nil), 7)
+        XCTAssertEqual(SenderQueueEstimate.senderQueueMs(pacerDelayMs: nil, encodedBytes: 10_000, sentBytes: 0, availableKbps: 8_000), 10)
+        XCTAssertNil(SenderQueueEstimate.senderQueueMs(pacerDelayMs: nil, encodedBytes: 10_000, sentBytes: 0, availableKbps: 0))
+        XCTAssertEqual(SenderQueueEstimate.networkQueueMs(rttMs: 80, baselineRTTMs: 30), 50)
+        XCTAssertEqual(SenderQueueEstimate.networkQueueMs(rttMs: 20, baselineRTTMs: 30), 0)
+        XCTAssertNil(SenderQueueEstimate.networkQueueMs(rttMs: 20, baselineRTTMs: nil))
+
+        func entries(at seconds: Double, bytes: Double) -> [StreamStatsEntry] {
+            [StreamStatsEntry(id: "O", type: "outbound-rtp", values: ["kind": "video" as NSString, "bytesSent": bytes as NSNumber,
+                                                                      "packetsSent": bytes / 1000 as NSNumber,
+                                                                      "totalPacketSendDelay": bytes / 1000 * 0.004 as NSNumber], timestamp: seconds),
+             StreamStatsEntry(id: "T", type: "transport", values: ["selectedCandidatePairId": "P" as NSString], timestamp: seconds),
+             StreamStatsEntry(id: "P", type: "candidate-pair", values: ["availableOutgoingBitrate": 4_000_000 as NSNumber], timestamp: seconds)]
+        }
+        let counters = StreamCounters()
+        counters.encoded(latencyMs: 5, bytes: 450_000, isKeyFrame: true, inFlight: 1)
+        counters.encoded(latencyMs: 5, bytes: 50_000, isKeyFrame: false, inFlight: 1)
+        var snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.encodedBytes, 500_000)
+        snapshot.interval = 1
+        var report = StreamStatsReport(role: "host", previous: StreamStatsSample(entries: entries(at: 1, bytes: 1_000_000)),
+                                       current: StreamStatsSample(entries: entries(at: 2, bytes: 1_250_000)), counters: snapshot)
+        XCTAssertEqual(report.pacerDelayMs, 4)
+        XCTAssertEqual(report.senderQueueMs, 500)
+        report.networkQueueMs = 12
+        let summary = report.hostSummary
+        XCTAssertEqual(summary.senderQueueMs, 500)
+        XCTAssertEqual(summary.networkQueueMs, 12)
+        XCTAssertNoThrow(try summary.validate())
+        XCTAssertEqual(try JSONDecoder().decode(HostStreamSummary.self, from: JSONEncoder().encode(summary)), summary)
+        XCTAssertTrue(report.summaryLines.contains("queue estimate: send 500ms · network 12.0ms"), report.summaryLines.joined(separator: "\n"))
+        XCTAssertEqual(counters.drain(inputBufferedBytes: nil).encodedBytes, 0, "each window counts its own bytes")
+        var invalid = summary
+        invalid.senderQueueMs = .nan
+        XCTAssertThrowsError(try invalid.validate())
     }
 }
 

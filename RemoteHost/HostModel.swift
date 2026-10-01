@@ -2752,7 +2752,8 @@ final class RemoteHostModel: ObservableObject {
         phoneLoadReceivedAt = nil
         ladderState = nil
         busyState = nil
-        loadMonitor = StreamTuning.current.ladder ? HostLoadMonitor(targetFPS: peer.targetFPS) : nil
+        let tuning = StreamTuning.current
+        loadMonitor = tuning.ladder ? HostLoadMonitor(targetFPS: peer.targetFPS, senderQueueGovernor: tuning.senderQueueGovernor) : nil
         vitalsMonitor?.stop()
         let vitals = MacVitalsMonitor(sources: LiveMacVitalsSources())
         vitals.start(now: ProcessInfo.processInfo.systemUptime)
