@@ -983,7 +983,7 @@ final class RemoteCoordinator: ObservableObject {
                         resetSession(); request = try SecureRandom.token()
                         let handshake = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(),
                                                                                mode: sessionModeRequest == .couch ? SessionMode.couch.rawValue : nil)
-                        requestedFeatures = Set(handshake.features)
+                        requestedFeatures = handshake.requested
                         send(kind: "request", body: try? JSONEncoder().encode(handshake), handshake: true)
                         status = "Authenticating your Mac…"; setTimeout()
                     }

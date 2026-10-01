@@ -181,8 +181,6 @@ struct HostStreamSummary: Codable, Equatable {
     var frameRecords: FrameTimingRecords?
     var framesEncodedTotal: Int?
     var macLink: String?
-    /// True while the Mac's still-picture QP floor is applied; nil when text clarity is off or unsupported.
-    var textClarityActive: Bool?
 
     static let maximumFrameTotal = 1_000_000_000_000
     static let fpsRange = 1...240
@@ -519,7 +517,7 @@ struct StreamStatsReport: Codable, Equatable {
     }
 
     var hostSummary: HostStreamSummary {
-        var summary = HostStreamSummary(captureFPS: captureFPS, captureLatencyMs: captureLatencyMs, captureGapP90Ms: captureGapP90Ms,
+        HostStreamSummary(captureFPS: captureFPS, captureLatencyMs: captureLatencyMs, captureGapP90Ms: captureGapP90Ms,
                           captureGapMaxMs: captureGapMaxMs.map { min($0, 10_000_000) },
                           pushSkipped: pushSkipped, droppedBeforeEncode: droppedBeforeEncode,
                           encodedFPS: encodedFPS, encodeMs: encodeMs, pacerDelayMs: pacerDelayMs,
@@ -557,8 +555,6 @@ struct StreamStatsReport: Codable, Equatable {
                           ladder: ladder.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           busy: busy.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           captureRegion: captureRegion.flatMap { (try? $0.validate()) == nil ? nil : $0 })
-        summary.textClarityActive = encoderEvidence?.textClarityActive
-        return summary
     }
 
     static func thermalName(_ state: Int?) -> String? {

@@ -70,10 +70,31 @@ final class VideoRefinementTests: XCTestCase {
         XCTAssertEqual(capturedFormat(host), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
     }
     func testAnEarlierPhoneThatAlwaysListsRefinementStillNegotiatesWithinTheBound() throws {
-        let earlier = MacShareBlocker.Handshake(features: MacShareBlocker.Handshake.phone.features + [SessionFeature.videoRefinement])
-        let heard = MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(earlier))
+        let earlierBody = Data(#"{"features":["blocker.1","blocker.2","features.32","input.causal.1","input.pencil.1","video.ltr.1","video.refine.1"]}"#.utf8)
+        let heard = MacShareBlocker.Handshake.features(in: earlierBody)
         XCTAssertEqual(heard.count, 7); XCTAssertTrue(heard.contains(SessionFeature.videoRefinement))
         XCTAssertFalse(heard.contains(SessionFeature.textClarity), "An earlier phone never asks for the QP floor")
+    }
+    func testOptInsNeverPushTheBaseFeaturesPastAnEarlierMacsBound() throws {
+        let base = MacShareBlocker.Handshake.phone.features
+        let everyOptIn = MacShareBlocker.Handshake.phoneRequest([SessionFeature.videoRefinement, SessionFeature.textClarity], mode: "couch")
+        XCTAssertLessThanOrEqual(everyOptIn.features.count, 8)
+        XCTAssertEqual(everyOptIn.features, base + [SessionFeature.videoRefinement]); XCTAssertEqual(everyOptIn.options, [SessionFeature.textClarity])
+        XCTAssertEqual(everyOptIn.requested, Set(base + [SessionFeature.videoRefinement, SessionFeature.textClarity]))
+        let body = try JSONEncoder().encode(everyOptIn)
+        XCTAssertEqual(MacShareBlocker.Handshake.requestedMode(in: body), .couch)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(MacShareBlocker.Handshake.phoneRequest([])), as: UTF8.self).contains("options"),
+                       "With every opt-in off the request is the earlier wire format")
+        // An earlier Mac decodes with a struct that has no `options`; its synthesized Codable ignores the key.
+        struct EarlierMacHandshake: Decodable { var features: [String]; var mode: String? }
+        let earlier = try JSONDecoder().decode(EarlierMacHandshake.self, from: body)
+        XCTAssertEqual(earlier.features, everyOptIn.features); XCTAssertLessThanOrEqual(earlier.features.count, 8)
+        let withoutOptions = Data(#"{"features":["blocker.1","blocker.2","features.32","input.causal.1","input.pencil.1","video.ltr.1","video.timing.1"]}"#.utf8)
+        XCTAssertEqual(MacShareBlocker.Handshake.features(in: withoutOptions), Set(base), "A request without options decodes to the full base set")
+        let flooded = MacShareBlocker.Handshake(features: base, options: (0...MacShareBlocker.Handshake.maximumOptions).map { "option.\($0)" })
+        XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(flooded)), Set(base), "Too many options drop only the options")
+        let bounded = MacShareBlocker.Handshake(features: base, options: [SessionFeature.textClarity, "", String(repeating: "x", count: 33)])
+        XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(bounded)), Set(base + [SessionFeature.textClarity]))
     }
     func testReliableChannelUsesEncodedSizeAndOneAckBoundaryAndRevokeRetiresQueuedImage() throws {
         let sender = VideoRefinementChannel(), receiver = VideoRefinementChannel()

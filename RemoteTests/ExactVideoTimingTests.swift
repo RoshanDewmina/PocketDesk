@@ -248,8 +248,11 @@ final class ExactVideoTimingWireTests: XCTestCase {
     }
     func testFullCaptureAndPhoneHandshakeNegotiateTimingWithinHistoricalBounds() throws {
         let handshake = MacShareBlocker.Handshake.phone
-        XCTAssertEqual(handshake.features.count, 8)
-        XCTAssertTrue(handshake.features.contains(SessionFeature.exactVideoTiming))
+        XCTAssertEqual(handshake.features, [MacShareBlocker.feature, MacShareBlocker.approvalFeature, SessionFeature.extendedFeatureList,
+                                            SessionFeature.causalInput, SessionFeature.pencilInput, SessionFeature.videoLTR, SessionFeature.exactVideoTiming])
+        let everyOptIn = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(sharpen: true, textClarity: true, fullColor: false))
+        XCTAssertLessThanOrEqual(everyOptIn.features.count, 8, "Every opt-in on still leaves the feature list inside an earlier Mac's bound")
+        XCTAssertTrue(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(everyOptIn)).isSuperset(of: handshake.features))
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(handshake)), Set(handshake.features))
         let overflow = MacShareBlocker.Handshake(features: handshake.features + ["video.ninth.1"])
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(overflow)), [], "A ninth phone feature needs a post-handshake exchange, not this list")

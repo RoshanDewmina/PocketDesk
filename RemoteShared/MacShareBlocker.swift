@@ -27,12 +27,20 @@ enum MacShareBlocker: String, Codable, Equatable {
     struct Handshake: Codable, Equatable {
         var features: [String]
         var mode: String? = nil
+        /// Opt-in requests outside the eight-name feature bound. Older Macs ignore the key, and too
+        /// many options are dropped on their own without touching `features`.
+        var options: [String]? = nil
+        static let maximumOptions = 4
 
         static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature, SessionFeature.extendedFeatureList, SessionFeature.causalInput, SessionFeature.pencilInput, SessionFeature.videoLTR, SessionFeature.exactVideoTiming])
-        /// The two opt-in picture requests fill the list to its eight-name bound at most.
+        /// Refinement rides in `features` so a Mac that predates `options` still honours it; text
+        /// clarity only exists on Macs that read `options`.
         static func phoneRequest(_ optional: [String], mode: String? = nil) -> Handshake {
-            Handshake(features: phone.features + optional.filter { [SessionFeature.videoRefinement, SessionFeature.textClarity].contains($0) }, mode: mode)
+            let options = optional.contains(SessionFeature.textClarity) ? [SessionFeature.textClarity] : nil
+            return Handshake(features: phone.features + (optional.contains(SessionFeature.videoRefinement) ? [SessionFeature.videoRefinement] : []),
+                             mode: mode, options: options)
         }
+        var requested: Set<String> { Set(features + (options ?? [])) }
 
         static func requestedMode(in body: Data?) -> SessionMode {
             guard let body, body.count <= 1024,
@@ -41,12 +49,14 @@ enum MacShareBlocker: String, Codable, Equatable {
             return decoded.mode.flatMap(SessionMode.init(rawValue:)) ?? .picture
         }
 
-        /// At most eight short names; anything else counts as no features.
+        /// At most eight short names, plus at most four short options; too many features counts as
+        /// no features, too many options as no options.
         static func features(in body: Data?) -> Set<String> {
             guard let body, body.count <= 1024,
                   let decoded = try? JSONDecoder().decode(Handshake.self, from: body),
                   decoded.features.count <= 8 else { return [] }
-            return Set(decoded.features.filter { (1...32).contains($0.utf8.count) })
+            let options = (decoded.options?.count ?? 0) <= maximumOptions ? decoded.options ?? [] : []
+            return Set((decoded.features + options).filter { (1...32).contains($0.utf8.count) })
         }
     }
 

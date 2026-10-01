@@ -134,6 +134,8 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private let propertyCatalog: (VTCompressionSession) -> [String: Any]?
     private var textClarityArmed = false
     private var textClarityApplied = false
+    private var textClarityRejected = false
+    private let setFrameQP: (VTCompressionSession, Int) -> OSStatus
     var textClarityAvailable: Bool { serialized { textClarityArmed } }
     var textClarityActive: Bool { serialized { textClarityApplied } }
     private var storedLowLatencyApplied: Bool = false
@@ -148,8 +150,9 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     var lastStage: String { serialized { storedLastStage } }
 
     init(configuration: any OwnedVideoConfiguration, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil, videoFeedback: VideoFeedbackContext? = nil,
-         textClarity: TextClarityContext? = nil, propertyCatalog: @escaping (VTCompressionSession) -> [String: Any]? = OwnedVTEncoder.supportedProperties) {
-        self.videoFeedback = videoFeedback; self.textClarity = textClarity; self.propertyCatalog = propertyCatalog
+         textClarity: TextClarityContext? = nil, propertyCatalog: @escaping (VTCompressionSession) -> [String: Any]? = OwnedVTEncoder.supportedProperties,
+         setFrameQP: @escaping (VTCompressionSession, Int) -> OSStatus = OwnedVTEncoder.setFrameQP) {
+        self.videoFeedback = videoFeedback; self.textClarity = textClarity; self.propertyCatalog = propertyCatalog; self.setFrameQP = setFrameQP
         self.configuration = configuration; self.counters = counters; self.frameTiming = frameTiming
         super.init(); queue.setSpecific(key: queueKey, value: 1)
     }
@@ -209,7 +212,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         storedMaximumQPApplied = VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxAllowedFrameQP,
                                                value: maximumQP as CFNumber) == noErr
         // Asked for only when the phone requested it; otherwise the session is exactly the default one.
-        textClarityArmed = textClarity?.enabled == true && storedMaximumQPApplied && TextClarityPolicy.supported(propertyCatalog(created))
+        textClarityArmed = textClarity?.enabled == true && !textClarityRejected && storedMaximumQPApplied && TextClarityPolicy.supported(propertyCatalog(created))
         textClarityApplied = false
         storedLastStage = "prepare"
         status = VTCompressionSessionPrepareToEncodeFrames(created)
@@ -244,20 +247,24 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         guard VTSessionCopySupportedPropertyDictionary(session, supportedPropertyDictionaryOut: &catalog) == noErr else { return nil }
         return catalog as? [String: Any]
     }
+    static func setFrameQP(_ session: VTCompressionSession, _ bound: Int) -> OSStatus {
+        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxAllowedFrameQP, value: bound as CFNumber)
+    }
     /// Tightens the frame-QP ceiling only while capture reports a still picture, and restores the
-    /// session's own bound on the first changed frame. A rejected setter disarms it for the session.
-    private func updateTextClarity(_ session: VTCompressionSession) {
-        guard textClarityArmed else { return }
-        let still = textClarity?.isStill == true
-        guard still != textClarityApplied else { return }
+    /// session's own bound on the first changed frame. A rejected tightening disarms it for the
+    /// session; a rejected restore returns false so the caller replaces the session.
+    private func updateTextClarity(_ session: VTCompressionSession, still: Bool) -> Bool {
+        guard textClarityArmed, still != textClarityApplied else { return true }
         let bound = still ? TextClarityPolicy.stillFrameQP(hevc: configuration.codecType == kCMVideoCodecType_HEVC, sessionBound: maximumQP) : maximumQP
-        if VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxAllowedFrameQP, value: bound as CFNumber) == noErr {
+        if setFrameQP(session, bound) == noErr {
             textClarityApplied = still
-        } else {
-            if textClarityApplied { _ = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxAllowedFrameQP, value: maximumQP as CFNumber) }
-            textClarityArmed = false; textClarityApplied = false
+            recordEvidence(); return true
         }
-        recordEvidence()
+        // A failed tightening leaves the session bound in place; a failed restore does not.
+        let restored = !textClarityApplied
+        textClarityArmed = false; textClarityApplied = false
+        if !restored { textClarityRejected = true; return false }
+        recordEvidence(); return true
     }
     private func applyRate(_ session: VTCompressionSession) -> OSStatus {
         let rate = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: Int(bitrate) * 1000 as CFNumber)
@@ -324,13 +331,18 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                 if !options.tokens.isEmpty { properties[kVTEncodeFrameOptionKey_AcknowledgedLTRTokens] = options.tokens.map { NSNumber(value: $0) } }
                 if options.refresh && !independentKey { properties[kVTEncodeFrameOptionKey_ForceLTRRefresh] = true }
             }
+            // A forced IDR or LTR refresh is never squeezed under the still-picture ceiling.
+            let recovery = properties[kVTEncodeFrameOptionKey_ForceKeyFrame] != nil || properties[kVTEncodeFrameOptionKey_ForceLTRRefresh] != nil
+            if !updateTextClarity(session, still: textClarity?.isStill == true && !recovery) {
+                invalidate(); guard createSession() == noErr else { return -1 }
+                return encode(frame, codecSpecificInfo: info, frameTypes: [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)])
+            }
             let submittedMs = MachClock.nowMs()
             videoTag?.timing = videoFeedback?.submittedTiming(buffer: buffer.pixelBuffer, atMs: submittedMs)
             let entry = Pending(epoch: currentEpoch, videoTag: videoTag, timestamp: UInt32(bitPattern: frame.timeStamp),
                 captureMs: frame.timeStampNs / 1_000_000, rotation: frame.rotation, submittedMs: submittedMs, width: width, height: height)
             pending[id] = entry
             frameTiming?.submitted(ObjectIdentifier(buffer.pixelBuffer), key: entry.captureMs)
-            updateTextClarity(session)
             let result = VTCompressionSessionEncodeFrame(session, imageBuffer: pixels,
                 presentationTimeStamp: CMTime(value: frame.timeStampNs, timescale: 1_000_000_000),
                 duration: CMTime(value: 1, timescale: Int32(fps)), frameProperties: properties as CFDictionary, infoFlagsOut: nil) {
