@@ -9,8 +9,9 @@ enum StillTextPreferences {
     static let sharpenKey = "farsideSharpenStillText"
     static let textClarityKey = "farsideTextClarity"
     static let settingValuesRetiredKey = "farsideStillTextSettingsRetired"
-    /// Once per install: forgets values the removed Settings toggles wrote, so an earlier "off" cannot
-    /// keep the new default away. Launch-argument overrides live in another domain and still apply.
+    /// Once per install: forgets both values the removed Settings toggles wrote, so text clarity returns to
+    /// on and refinement to off (no setting is left to change either). Launch-argument overrides live in
+    /// another domain and still apply.
     static func retireSettingValues(_ defaults: UserDefaults = .standard) {
         guard !defaults.bool(forKey: settingValuesRetiredKey) else { return }
         defaults.removeObject(forKey: sharpenKey); defaults.removeObject(forKey: textClarityKey)
