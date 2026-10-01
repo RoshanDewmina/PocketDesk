@@ -799,8 +799,8 @@ struct SpikeSteps {
             switch item {
             case "encode": steps.encode = true
             case "rotate": steps.rotate = true
-            case "mirror", "mirror:panel": steps.mirror = .panel
-            case "mirror:virtual": steps.mirror = .virtual
+            case "mirror", "mirror:virtual": steps.mirror = .virtual
+            case "mirror:panel": steps.mirror = .panel
             case "sleep": steps.sleep = true
             default:
                 if item.hasPrefix("hold:"), let seconds = Int(item.dropFirst(5)) { steps.holdSeconds = max(0, seconds) }

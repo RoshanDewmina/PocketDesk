@@ -107,6 +107,18 @@ Final line (verbatim): `pending`
 
 Decision: `pending` (GO: 120 fps sessions can be tested on the virtual display without the ASUS; NO-GO: 120 fps testing needs the ASUS, and the feature claim stays "120 fps on ProMotion and 120 Hz displays").
 
+## Phone-shaped display extension (1 Oct 2026)
+
+The spike grew three HiDPI scenarios shaped like an iPhone 17 (2622×1206 px at 3×, 874×402 pt): `phone-2x-60` and `phone-2x-120` (1311×603 pt, 2× = pixel-exact 2622×1206 px) and `points-2x-120` (874×402 pt, 2× = 1748×804 px). `--virtual-display-spike-portrait` swaps width and height. The descriptor's `maxPixelsWide/High` is now the larger pixel side on both axes (override: `--virtual-display-spike-max-pixels N`), and a HiDPI scenario advertises two modes, the 2× raster anchor then the logical size, as node-mac-virtual-display does; the HiDPI selection still asks for duplicate low-resolution modes, as OpenDisplay does. Optional steps after the gate, `--virtual-display-spike-steps a,b,…` (script: `--steps`):
+
+- `encode`: HEVC then H.264 `VTCompressionSession` (hardware required, RealTime, no reordering, 25 Mb/s, ExpectedFrameRate = the scenario's rate) fed from the capture callback at the stream's pixel size, one frame in flight, 240 frames; prints the IDR, p50, p90 and max submit→callback ms and the mean P-frame size (`SPIKE ENCODE …`).
+- `rotate`: re-applies settings with swapped width and height on the **same** `CGVirtualDisplay` object, then reports the ms until `CGDisplayBounds` changes, until the `NSScreen` frame changes, and until the first complete captured frame at the new size, whether the display ID survived, and every other app's window that moved or ended up off every display; then 3 s of moving capture in the new orientation.
+- `mirror:virtual` (default for `mirror`) / `mirror:panel`: `CGConfigureDisplayMirrorOfDisplay` (`.forAppOnly`) so the virtual display shows the panel (the panel stays main), or the built-in panel shows the virtual display, for 5 s of moving capture, then undone and verified with `CGDisplayIsInMirrorSet`. **Only with Roshan's OK** (it changes what his screen shows).
+- `sleep`: `pmset displaysleepnow`, 15 s of capture while dark, `caffeinate -u -t 2`, then checks the virtual display, its NSScreen, its mode and the stream, plus 3 s of moving capture. Never `pmset sleepnow`. **Only with Roshan's OK**: if the Mac requires a password after display sleep, the wake lands on the lock screen, which breaks iPhone Mirroring and any live host session.
+- `hold:<s>`: keeps the display alive after the measurements and prints `HOLD display <id> pid <pid>`; the script's `--kill9 N` SIGKILLs it N seconds later and polls `CGGetOnlineDisplayList` to time the teardown.
+
+Results: `~/Documents/Codex/2026-10-01/perf-push/vdisplay/NOTES.md` (run logs in `logs/`).
+
 ## Caveats
 
 - **Private API.** `CGVirtualDisplay` is undocumented SPI; any macOS update can rename or remove it. The selectors above were verified on 27.0 (26A428) only.

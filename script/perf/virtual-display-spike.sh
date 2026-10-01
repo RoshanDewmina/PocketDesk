@@ -1,7 +1,7 @@
 #!/bin/zsh
 # Runs the Debug host's CGVirtualDisplay spike (Docs/perf/VIRTUAL-DISPLAY-SPIKE.md) and reports GO / NO-GO.
 #   script/perf/virtual-display-spike.sh [HOST_APP] [LOG] [--direct] [--scenarios 1x-120,1x-144,hidpi-120]
-#       [--portrait] [--steps encode,rotate,mirror:panel,sleep,hold:60] [--max-pixels 8192] [--kill9 SECONDS]
+#       [--portrait] [--steps encode,rotate,mirror:virtual,sleep,hold:60] [--max-pixels 8192] [--kill9 SECONDS]
 # HOST_APP: a built Debug PocketDeskRemoteHost.app (default: the FarsidePerf DerivedData product).
 # LOG: where the spike's output goes (default /tmp/farside-virtual-display-spike-<time>.log).
 # By default the app is started through LaunchServices (open -n, like script/e2e) so macOS checks the
