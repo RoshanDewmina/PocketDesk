@@ -18,6 +18,15 @@ enum CaptureRatePolicy {
         return highFPS
     }
 
+    /// Picture copy: 120 is promised only when the Mac reports a source of 100 Hz or more and, when it
+    /// says so, a 120 fps capture target, and this phone presents at 100 Hz or more. Unknown reads as 60.
+    static func pictureRateDescription(hostDisplayRefreshHz: Double?, hostTargetFPS: Int?, phoneDisplayFPS: Int?) -> String {
+        guard let hostDisplayRefreshHz, hostDisplayRefreshHz.isFinite, hostDisplayRefreshHz >= highRefreshThresholdHz,
+              (hostTargetFPS ?? highFPS) >= highFPS,
+              let phoneDisplayFPS, Double(phoneDisplayFPS) >= highRefreshThresholdHz else { return "60 fps" }
+        return "up to 120 fps on a 120 Hz Mac display"
+    }
+
     /// ScreenCaptureKit's queue: five at 60 (the idle-refresh copy and the encoder each hold a
     /// surface), the header's maximum of eight above 60 so a burst does not drop frames.
     static func queueDepth(for fps: Int) -> Int {

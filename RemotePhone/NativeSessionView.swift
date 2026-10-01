@@ -2408,6 +2408,11 @@ struct NativeSessionView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("remote.dataUseEstimates")
             .listRowBackground(Farside.Palette.panel)
+            if !offlineLayoutCheck, let link = model.link {
+                Text("Frame rate · \(link.frameRate ?? "60 fps")").font(.footnote).foregroundStyle(Farside.Palette.ash)
+                    .accessibilityIdentifier("remote.pictureFrameRate")
+                    .listRowBackground(Farside.Palette.panel)
+            }
             if !offlineLayoutCheck, let status = model.streamQualityStatus {
                 Text(status).font(.footnote).foregroundStyle(Farside.Palette.bone)
                     .listRowBackground(Farside.Palette.panel)
@@ -2599,7 +2604,7 @@ struct NativeSessionView: View {
     /// Negotiated level, decoder and the level-5.2 capability probe, e.g.
     /// "H.264 5.2 · hardware decode · hardware level 5.2 (cached)".
     private var codecDiagnostics: String {
-        [model.link?.codecLevel, model.link?.decoder, NativeCodecCapability.outcomeDescription]
+        [model.link?.codecLevel, model.link?.frameRate, model.link?.decoder, NativeCodecCapability.outcomeDescription]
             .compactMap { $0 }
             .joined(separator: " · ")
     }

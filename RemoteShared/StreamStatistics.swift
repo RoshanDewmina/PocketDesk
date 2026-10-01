@@ -57,9 +57,16 @@ struct StreamCounterSnapshot {
     var interval: TimeInterval
     var captureFrames = 0
     var captureIdleFrames = 0
+    /// Complete captures with a ScreenCaptureKit display time later than every earlier one: new source pixels.
+    var uniqueSourceFrames = 0
+    /// Re-pushes of the last unchanged frame to keep a static desktop visible; never new source pixels.
+    var captureResends = 0
     var pushedFrames = 0
     var pushSkipped = 0
     var renderedFrames = 0
+    /// Decoded frames handed to the renderer with an RTP timestamp not seen recently: excludes repeats,
+    /// presentation redraws and Smooth motion frames, which never pass through the WebRTC renderer.
+    var uniqueDecodedFrames = 0
     var renderGapMedianMs: Double?
     var renderGapP90Ms: Double?
     var renderGapMaxMs: Double?
@@ -181,6 +188,8 @@ struct HostStreamSummary: Codable, Equatable {
     var frameRecords: FrameTimingRecords?
     var framesEncodedTotal: Int?
     var macLink: String?
+    var uniqueSourceFPS: Double?
+    var resendFPS: Double?
 
     static let maximumFrameTotal = 1_000_000_000_000
     static let fpsRange = 1...240
@@ -192,7 +201,8 @@ struct HostStreamSummary: Codable, Equatable {
         let numbers = [captureFPS, captureLatencyMs, captureGapP90Ms, captureGapMaxMs, encodedFPS, encodeMs, pacerDelayMs,
                        sentFPS, sentKbps, targetKbps, maxKbps, qpAverage,
                        encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs,
-                       inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs, inputPostP95Ms].compactMap { $0 }
+                       inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs, inputPostP95Ms,
+                       uniqueSourceFPS, resendFPS].compactMap { $0 }
         let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates,
                         encoderDropped, encoderSilentDrops, encoderDeliveryDrops, inputEvents].compactMap { $0 }
         let bytes = [encodeBytesP50, keyFrameBytesMax].compactMap { $0 }
@@ -226,6 +236,8 @@ struct StreamStatsReport: Codable, Equatable {
 
     var captureFPS: Double?
     var captureIdleFPS: Double?
+    var uniqueSourceFPS: Double?
+    var captureResendFPS: Double?
     var pushedFPS: Double?
     var pushSkipped: Int?
     var sourceFPS: Double?
@@ -249,6 +261,7 @@ struct StreamStatsReport: Codable, Equatable {
 
     var receivedFPS: Double?
     var decodedFPS: Double?
+    var uniqueDecodedFPS: Double?
     var framesDropped: Int?
     var receivedKbps: Double?
     var decodeMs: Double?
@@ -445,6 +458,8 @@ struct StreamStatsReport: Codable, Equatable {
             if role == "host" {
                 captureFPS = Self.round(Double(counters.captureFrames) / seconds)
                 captureIdleFPS = Self.round(Double(counters.captureIdleFrames) / seconds)
+                uniqueSourceFPS = Self.round(Double(counters.uniqueSourceFrames) / seconds)
+                captureResendFPS = Self.round(Double(counters.captureResends) / seconds)
                 pushedFPS = Self.round(Double(counters.pushedFrames) / seconds)
                 pushSkipped = counters.pushSkipped
                 captureLatencyMs = Self.round(counters.captureLatencyP50Ms)
@@ -472,6 +487,7 @@ struct StreamStatsReport: Codable, Equatable {
                 inputEvents = counters.inputEvents
             } else {
                 renderedFPS = Self.round(Double(counters.renderedFrames) / seconds)
+                uniqueDecodedFPS = Self.round(Double(counters.uniqueDecodedFrames) / seconds)
                 renderGapMedianMs = Self.round(counters.renderGapMedianMs)
                 renderGapP90Ms = Self.round(counters.renderGapP90Ms)
                 renderGapMaxMs = Self.round(counters.renderGapMaxMs)
@@ -554,7 +570,9 @@ struct StreamStatsReport: Codable, Equatable {
                           lowPowerMode: lowPowerMode,
                           ladder: ladder.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           busy: busy.flatMap { (try? $0.validate()) == nil ? nil : $0 },
-                          captureRegion: captureRegion.flatMap { (try? $0.validate()) == nil ? nil : $0 })
+                          captureRegion: captureRegion.flatMap { (try? $0.validate()) == nil ? nil : $0 },
+                          uniqueSourceFPS: uniqueSourceFPS.map { min($0, 10_000_000) },
+                          resendFPS: captureResendFPS.map { min($0, 10_000_000) })
     }
 
     static func thermalName(_ state: Int?) -> String? {
@@ -652,6 +670,7 @@ struct StreamStatsReport: Codable, Equatable {
                 lines.append(rate)
             }
             lines.append("capture \(value(captureFPS))fps lag \(value(captureLatencyMs, "ms")) p90 \(value(captureLatencyP90Ms, "ms")) · gap p90 \(value(captureGapP90Ms, "ms")) · cap \(captureMaximumDimension.map(String.init) ?? "–")")
+            lines.append("unique source \(value(uniqueSourceFPS))fps · idle resends \(value(captureResendFPS))/s")
             lines.append("pushed \(value(pushedFPS)) · skipped \(pushSkipped ?? 0) · dropped pre-encode \(droppedBeforeEncode ?? 0)")
             lines.append("encode \(value(encodedFPS))fps \(value(encodeMs, "ms")) · pacer \(value(pacerDelayMs, "ms")) · sent \(value(sentFPS))fps \(sentWidth ?? 0)×\(sentHeight ?? 0)")
             lines.append("\(value(sentKbps, "kbps")) · target \(value(targetKbps, "kbps")) · max \(value(maxKbps, "kbps")) · BWE \(value(availableOutgoingKbps, "kbps"))")
@@ -694,6 +713,7 @@ struct StreamStatsReport: Codable, Equatable {
                                   thermal: thermalState, lowPower: lowPowerMode) {
                 lines.append(own)
             }
+            lines.append("unique source \(value(host?.uniqueSourceFPS))fps (Mac) · unique decoded \(value(uniqueDecodedFPS))fps · Mac resends \(value(host?.resendFPS))/s")
             lines.append("recv \(value(receivedFPS)) · decoded \(value(decodedFPS)) · shown \(value(presentedFPS)) (replaced \(supersededFrames ?? 0)) · dropped \(framesDropped ?? 0)")
             lines.append("assemble \(value(assemblyMs, "ms")) · jitter \(value(jitterBufferMs, "ms")) · decode \(value(decodeMs, "ms")) · to-screen \(value(presentLatencyMs, "ms")) p90 \(value(presentLatencyP90Ms, "ms"))")
             lines.append("gap p50 \(value(renderGapMedianMs, "ms")) p90 \(value(renderGapP90Ms, "ms")) max \(value(renderGapMaxMs, "ms")) · shown gap p90 \(value(presentGapP90Ms, "ms"))")
@@ -882,6 +902,9 @@ final class StreamCounters: @unchecked Sendable {
     private var encodedFramesTotal = 0
     private var arrivedFramesTotal = 0
     private var resumeCaptureBeganAt: TimeInterval?
+    private var lastSourceDisplayMs: Double?
+    private var recentDecodedRtp: [UInt32] = []
+    static let decodedRtpMemory = 32
 
     func beginResumeCapture(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         lock.lock(); resumeCaptureBeganAt = time; lock.unlock()
@@ -915,16 +938,27 @@ final class StreamCounters: @unchecked Sendable {
         if let displayLatencyMs { captureLatency.record(displayLatencyMs) }
         if let displayTimeMs, displayTimeMs.isFinite, displayTimeMs > 0 {
             captureDisplayCadence.record(at: displayTimeMs / 1000)
+            if displayTimeMs > (lastSourceDisplayMs ?? 0) {
+                lastSourceDisplayMs = displayTimeMs
+                snapshot.uniqueSourceFrames += 1
+            }
         }
     }
+
+    func idleResent() { lock.lock(); snapshot.captureResends += 1; lock.unlock() }
 
     func pushed() { lock.lock(); snapshot.pushedFrames += 1; lock.unlock() }
     func pushSkipped() { lock.lock(); snapshot.pushSkipped += 1; lock.unlock() }
     func coalescedMove() { lock.lock(); snapshot.coalescedMoves += 1; lock.unlock() }
 
-    func rendered(at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+    func rendered(rtp: UInt32? = nil, at time: TimeInterval = ProcessInfo.processInfo.systemUptime) {
         lock.lock(); defer { lock.unlock() }
         snapshot.renderedFrames += 1
+        if let rtp, !recentDecodedRtp.contains(rtp) {
+            recentDecodedRtp.append(rtp)
+            if recentDecodedRtp.count > Self.decodedRtpMemory { recentDecodedRtp.removeFirst() }
+            snapshot.uniqueDecodedFrames += 1
+        }
         arrivedFramesTotal = min(HostStreamSummary.maximumFrameTotal, arrivedFramesTotal + 1)
         cadence.record(at: time)
     }

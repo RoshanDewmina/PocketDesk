@@ -41,6 +41,22 @@ final class CaptureRatePolicyTests: XCTestCase {
         XCTAssertEqual(target(60, tuning), 60)
     }
 
+    func testPictureCopyPromises120OnlyForAHighRefreshMacTargetOnAHighRefreshPhone() {
+        func copy(_ hz: Double?, _ target: Int?, phone: Int? = 120) -> String {
+            CaptureRatePolicy.pictureRateDescription(hostDisplayRefreshHz: hz, hostTargetFPS: target, phoneDisplayFPS: phone)
+        }
+        let high = "up to 120 fps on a 120 Hz Mac display"
+        XCTAssertEqual(copy(120, 120), high)
+        XCTAssertEqual(copy(100, nil, phone: 100), high)
+        XCTAssertEqual(copy(nil, nil), "60 fps")
+        XCTAssertEqual(copy(60, 120), "60 fps")
+        XCTAssertEqual(copy(99.9, nil), "60 fps")
+        XCTAssertEqual(copy(.nan, 120), "60 fps")
+        XCTAssertEqual(copy(120, 60), "60 fps", "a 120 Hz panel with the high-refresh switch off still captures at 60")
+        XCTAssertEqual(copy(120, 120, phone: 60), "60 fps", "a 60 Hz phone never shows 120")
+        XCTAssertEqual(copy(120, 120, phone: nil), "60 fps", "unknown phone presentation rate")
+    }
+
     func testQueueDepthDeepensAboveSixty() {
         XCTAssertEqual(CaptureRatePolicy.queueDepth(for: 30), 5)
         XCTAssertEqual(CaptureRatePolicy.queueDepth(for: 60), 5)

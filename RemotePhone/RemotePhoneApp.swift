@@ -840,6 +840,7 @@ final class PhoneRemoteModel: ObservableObject {
             self.resumeStartedAt = ProcessInfo.processInfo.systemUptime
             self.qualityMonitor = ConnectionQualityMonitor()
             self.resetQuality()
+            self.link = nil
             self.qualityRouteDetail = nil
             self.dismissedQualityBanners = []
             self.resumeCount = 0
@@ -863,7 +864,8 @@ final class PhoneRemoteModel: ObservableObject {
                         if StreamDebug.enabled { StreamDebug.record(report) }
                         let lines = report.summaryLines
                         if self.streamSummaryLines != lines { self.streamSummaryLines = lines }
-                        let link = LinkSummary(report)
+                        var link = LinkSummary(report)
+                        if link?.frameRate == nil { link?.frameRate = self.link?.frameRate }
                         if self.link != link { self.link = link }
                         self.acceptPhoneStats(report)
                         self.noticeReducedPicture()
@@ -2946,6 +2948,8 @@ struct LinkSummary: Equatable {
     var decoder: String?
     /// A physical iPhone negotiated an H.264 level below 5.2, which caps the picture the Mac sends.
     var reducedLevel = false
+    /// Nil while no fresh Mac report is at hand; the model then keeps this session's last known value.
+    var frameRate: String?
 
     /// H.264 level 5.2, the level the phone offers when its decoder passed the capability probe.
     static let fullLevel = 0x34
@@ -2970,6 +2974,10 @@ struct LinkSummary: Equatable {
         decoder = Self.decoderDescription(implementation: report.decoderImplementation,
                                           powerEfficient: report.powerEfficientDecoder)
         reducedLevel = physicalDevice && level.map { $0 < Self.fullLevel } == true
+        if (report.hostSummaryAgeMs ?? .infinity) <= 5_000, let host = report.host {
+            frameRate = CaptureRatePolicy.pictureRateDescription(hostDisplayRefreshHz: host.displayRefreshHz,
+                                                                 hostTargetFPS: host.targetFPS, phoneDisplayFPS: report.displayMaxFPS)
+        }
         guard route != nil || roundTripMs != nil || pictureSize != nil || codecLevel != nil else { return nil }
     }
 

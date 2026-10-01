@@ -112,3 +112,17 @@ final class NativePacketRepairColdReceiverTests: XCTestCase {
         XCTAssertFalse(factory.rtpSenderCapabilities(forKind: kRTCMediaStreamTrackKindVideo).codecs.contains { $0.name.lowercased() == "flexfec-03" })
     }
 }
+
+/// Pure policy only: never reads `activeThisLaunch`, so it cannot disturb the cold-process trial fixtures.
+final class PacketRepairReleaseGateTests: XCTestCase {
+    func testReleasePolicyNeverSendsRepairWhateverTheStoredPreference() {
+        XCTAssertFalse(PacketRepairPreferences.resolve(debugBuild: false, stored: true))
+        XCTAssertFalse(PacketRepairPreferences.resolve(debugBuild: false, stored: false))
+    }
+    func testDebugPolicyFollowsTheStoredPreferenceAndDefaultsOff() {
+        XCTAssertTrue(PrototypeGates.isDebugBuild, "core tests are a Debug build")
+        XCTAssertTrue(PacketRepairPreferences.resolve(debugBuild: true, stored: true))
+        XCTAssertFalse(PacketRepairPreferences.resolve(debugBuild: true, stored: false))
+        XCTAssertFalse(UserDefaults(suiteName: UUID().uuidString)!.bool(forKey: PacketRepairPreferences.key))
+    }
+}

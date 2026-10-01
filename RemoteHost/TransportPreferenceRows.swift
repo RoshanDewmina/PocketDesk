@@ -2,7 +2,9 @@ import SwiftUI
 
 struct TransportPreferenceRows: View {
     @AppStorage(HEVC444Policy.preferenceKey) private var fullColor = false
+    #if DEBUG
     @AppStorage("farsideRelayPacketRepair") private var repair = false
+    #endif
     var body: some View {
         HostSettingsSection("Experimental full color") {
             Toggle("Full color detail after restarting Farside", isOn: $fullColor)
@@ -10,11 +12,13 @@ struct TransportPreferenceRows: View {
             Text("Enable on both your Mac and iPhone, then quit and reopen both apps. Requires compatible hardware. Uses more bandwidth; picture quality and battery use are still being tested.")
                 .font(.footnote).foregroundStyle(.secondary)
         }
+        #if DEBUG
         HostSettingsSection("Packet loss testing") {
             Toggle("Relay packet repair after restarting Farside", isOn: $repair)
                 .accessibilityIdentifier("farside.settings.relayPacketRepair")
             Text("Experimental. Quit and reopen the Mac app after changing this setting. Video quality under packet loss is still being tested.")
                 .font(.footnote).foregroundStyle(.secondary)
         }
+        #endif
     }
 }
