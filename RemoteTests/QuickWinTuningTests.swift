@@ -134,22 +134,26 @@ final class QuickWinTuningTests: XCTestCase {
         XCTAssertFalse(stock.shouldRestart(at: 5), "the stock 5 Mb/s floor is unchanged when no switch is set")
     }
 
-    // Performance pack item 3: estimate ceiling headroom on LAN routes only.
-    func testLANHeadroomDefaultsOffAndResolvesFromDefaults() throws {
+    // Performance pack item 3 / X05: estimate ceiling multiplier on a proven local link only.
+    func testLANHeadroomDefaultsOffAndResolvesClampedFromDefaults() throws {
         XCTAssertEqual(StreamTuning.tuned.lanBandwidthHeadroom, 1)
         XCTAssertEqual(StreamTuning.legacy.lanBandwidthHeadroom, 1)
         XCTAssertTrue(StreamTuning.experimentKeys.contains(StreamTuning.lanHeadroomKey))
-        XCTAssertFalse(StreamTuning.tuned.summary.contains("LAN headroom"))
+        XCTAssertFalse(StreamTuning.tuned.summary.contains("LAN ceiling"))
         let (defaults, cleanup) = try defaults()
         defer { cleanup() }
         defaults.set(2, forKey: StreamTuning.lanHeadroomKey)
         let on = StreamTuning.resolve(defaults: defaults)
         XCTAssertEqual(on.lanBandwidthHeadroom, 2)
-        XCTAssertTrue(on.summary.contains("LAN headroom 2"), on.summary)
-        XCTAssertEqual(on.fieldTrials, StreamTuning.tuned.fieldTrials)
-        for value in [0, 3, -1] {
+        XCTAssertTrue(on.summary.contains("LAN ceiling ×2"), on.summary)
+        XCTAssertFalse(on.summary.contains("pacing"))
+        XCTAssertEqual(on.fieldTrials, StreamTuning.tuned.fieldTrials, "a ceiling, not a field trial")
+        defaults.set(1.5, forKey: StreamTuning.lanHeadroomKey)
+        XCTAssertEqual(StreamTuning.resolve(defaults: defaults).lanBandwidthHeadroom, 1.5)
+        XCTAssertTrue(StreamTuning.resolve(defaults: defaults).summary.contains("LAN ceiling ×1.5"))
+        for (value, expected) in [(0.0, 1.0), (-1, 1), (3, 2), (100, 2), (.nan, 1), (.infinity, 1)] {
             defaults.set(value, forKey: StreamTuning.lanHeadroomKey)
-            XCTAssertEqual(StreamTuning.resolve(defaults: defaults).lanBandwidthHeadroom, 1, "\(value) is out of range")
+            XCTAssertEqual(StreamTuning.resolve(defaults: defaults).lanBandwidthHeadroom, expected, "\(value) clamps")
         }
         defaults.set("x", forKey: StreamTuning.lanHeadroomKey)
         XCTAssertEqual(StreamTuning.resolve(defaults: defaults).lanBandwidthHeadroom, 1)
@@ -158,19 +162,71 @@ final class QuickWinTuningTests: XCTestCase {
         XCTAssertEqual(StreamTuning.resolve(defaults: defaults).lanBandwidthHeadroom, 1, "legacy wins")
     }
 
-    func testCeilingIsRaisedOnlyOnALANRoute() {
+    func testCeilingIsRaisedOnlyOnAProvenLocalLANLink() {
         var tuning = StreamTuning.tuned
         let ceiling = 25_000_000
         for route: SeedRoute? in [.lan, .p2p, .relay, nil] {
-            XCTAssertEqual(BandwidthCeilingPolicy.maxBitrateBps(ceiling: ceiling, route: route, tuning: tuning), ceiling,
-                           "off by default on \(String(describing: route))")
+            for proven in [false, true] {
+                XCTAssertEqual(BandwidthCeilingPolicy.maxBitrateBps(ceiling: ceiling, route: route, provenLocal: proven, tuning: tuning),
+                               ceiling, "off by default on \(String(describing: route)) proven=\(proven)")
+            }
         }
-        tuning.lanBandwidthHeadroom = 2
-        XCTAssertEqual(BandwidthCeilingPolicy.maxBitrateBps(ceiling: ceiling, route: .lan, tuning: tuning), 2 * ceiling)
+        tuning.lanBandwidthHeadroom = 1.5
+        XCTAssertEqual(BandwidthCeilingPolicy.maxBitrateBps(ceiling: ceiling, route: .lan, provenLocal: true, tuning: tuning),
+                       37_500_000)
+        XCTAssertEqual(BandwidthCeilingPolicy.lanMultiplier(route: .lan, provenLocal: true, tuning: tuning), 1.5)
+        XCTAssertEqual(BandwidthCeilingPolicy.maxBitrateBps(ceiling: ceiling, route: .lan, provenLocal: false, tuning: tuning),
+                       ceiling, "a LAN-looking host pair without the local proof is not raised")
         for route: SeedRoute? in [.p2p, .relay, nil] {
-            XCTAssertEqual(BandwidthCeilingPolicy.maxBitrateBps(ceiling: ceiling, route: route, tuning: tuning), ceiling,
-                           "never raised on \(String(describing: route))")
+            XCTAssertEqual(BandwidthCeilingPolicy.maxBitrateBps(ceiling: ceiling, route: route, provenLocal: true, tuning: tuning),
+                           ceiling, "never raised on \(String(describing: route))")
         }
+        tuning.lanBandwidthHeadroom = 5
+        XCTAssertEqual(BandwidthCeilingPolicy.maxBitrateBps(ceiling: ceiling, route: .lan, provenLocal: true, tuning: tuning),
+                       2 * ceiling, "an out-of-range value set in code is still clamped")
+    }
+
+    func testRouteOrProofChangeCollapsesTheLANCeiling() {
+        var tuning = StreamTuning.tuned
+        tuning.lanBandwidthHeadroom = 2
+        let ceiling = 12_000_000
+        var tracker = CeilingRouteTracker()
+        func current() -> Int {
+            BandwidthCeilingPolicy.maxBitrateBps(ceiling: ceiling, route: tracker.route, provenLocal: tracker.provenLocal, tuning: tuning)
+        }
+        XCTAssertTrue(tracker.observe(detail: "lan", rttMs: 4, provenLocal: true))
+        XCTAssertEqual(current(), 24_000_000)
+        XCTAssertFalse(tracker.observe(detail: "lan", rttMs: 5, provenLocal: true), "unchanged, nothing re-applied")
+        XCTAssertTrue(tracker.observe(detail: "relay", rttMs: 5, provenLocal: true))
+        XCTAssertEqual(current(), ceiling, "an ICE restart onto relay collapses the multiplier")
+        XCTAssertTrue(tracker.observe(detail: "lan", rttMs: 4, provenLocal: true))
+        XCTAssertEqual(current(), 24_000_000)
+        XCTAssertTrue(tracker.observe(detail: "p2p", rttMs: 4, provenLocal: true))
+        XCTAssertEqual(current(), ceiling, "internet-direct is never raised")
+        XCTAssertTrue(tracker.observe(detail: "lan", rttMs: 4, provenLocal: true))
+        XCTAssertTrue(tracker.observe(detail: "lan", rttMs: 4, provenLocal: false), "losing the proof is a change")
+        XCTAssertEqual(current(), ceiling)
+        XCTAssertTrue(tracker.observe(detail: "lan", rttMs: 40, provenLocal: true))
+        XCTAssertEqual(current(), ceiling, "a host pair with a tunnel round trip is not LAN")
+    }
+
+    func testHostSummaryShowsTheCeilingAndWhetherTheLANMultiplierIsIn() throws {
+        var report = StreamStatsReport(role: "host", previous: nil, current: StreamStatsSample(entries: []), counters: nil)
+        report.bweCeilingKbps = 24_000
+        report.lanCeilingApplied = true
+        let summary = report.hostSummary
+        XCTAssertEqual(summary.bweCeilingKbps, 24_000)
+        XCTAssertEqual(summary.lanCeilingApplied, true)
+        XCTAssertNoThrow(try summary.validate())
+        XCTAssertEqual(try JSONDecoder().decode(HostStreamSummary.self, from: JSONEncoder().encode(summary)), summary)
+        XCTAssertTrue(report.summaryLines.contains { $0.hasSuffix("ceiling 24000kbps (LAN raised)") }, report.summaryLines.joined(separator: "\n"))
+        report.lanCeilingApplied = false
+        XCTAssertTrue(report.summaryLines.contains { $0.hasSuffix("ceiling 24000kbps") })
+        var invalid = summary
+        invalid.bweCeilingKbps = -1
+        XCTAssertThrowsError(try invalid.validate())
+        let older = try JSONDecoder().decode(HostStreamSummary.self, from: Data("{}".utf8))
+        XCTAssertNil(older.lanCeilingApplied, "an older host leaves it unknown")
     }
 
     func testCeilingRouteHasHysteresisAndReportsEachChangeOnce() {

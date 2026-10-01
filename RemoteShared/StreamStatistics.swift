@@ -194,6 +194,9 @@ struct HostStreamSummary: Codable, Equatable {
     /// X16: the DSCP/priority the Mac asked WebRTC for (`TransportPriorityRequest.summary`). Requested,
     /// never measured on the wire.
     var transportPriorityRequested: String?
+    /// X05: the estimate ceiling last applied, and whether the LAN multiplier is in it.
+    var bweCeilingKbps: Double?
+    var lanCeilingApplied: Bool?
 
     static let maximumFrameTotal = 1_000_000_000_000
     static let fpsRange = 1...240
@@ -206,7 +209,8 @@ struct HostStreamSummary: Codable, Equatable {
         let numbers = [captureFPS, captureLatencyMs, captureGapP90Ms, captureGapMaxMs, encodedFPS, encodeMs, pacerDelayMs,
                        sentFPS, sentKbps, targetKbps, maxKbps, qpAverage,
                        encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs,
-                       inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs, inputPostP95Ms].compactMap { $0 }
+                       inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs, inputPostP95Ms,
+                       bweCeilingKbps].compactMap { $0 }
         let integers = [pushSkipped, droppedBeforeEncode, sentWidth, sentHeight, encodeInFlightMax, rateUpdates,
                         encoderDropped, encoderSilentDrops, encoderDeliveryDrops, inputEvents,
                         encoderSubmitted, encoderSuperseded, encoderRetired, encoderOutputs].compactMap { $0 }
@@ -373,6 +377,8 @@ struct StreamStatsReport: Codable, Equatable {
     var busy: BusyState?
     var captureRegion: CaptureRegion?
     var transportPriorityRequested: String?
+    var bweCeilingKbps: Double?
+    var lanCeilingApplied: Bool?
     // Per-frame timing (perf pack 4a). Host: display → encoded; phone: Mac display → decoded here.
     var frameHostP50Ms: Double?
     var frameHostP95Ms: Double?
@@ -574,7 +580,9 @@ struct StreamStatsReport: Codable, Equatable {
                           captureRegion: captureRegion.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           transportPriorityRequested: transportPriorityRequested.map {
                               Self.truncated($0, bytes: HostStreamSummary.transportPriorityBytes)
-                          })
+                          },
+                          bweCeilingKbps: bweCeilingKbps.flatMap { $0.isFinite ? min(max(0, $0), 10_000_000) : nil },
+                          lanCeilingApplied: lanCeilingApplied)
     }
 
     static func thermalName(_ state: Int?) -> String? {
@@ -678,7 +686,8 @@ struct StreamStatsReport: Codable, Equatable {
             lines.append("capture \(value(captureFPS))fps lag \(value(captureLatencyMs, "ms")) p90 \(value(captureLatencyP90Ms, "ms")) · gap p90 \(value(captureGapP90Ms, "ms")) · cap \(captureMaximumDimension.map(String.init) ?? "–")")
             lines.append("pushed \(value(pushedFPS)) · skipped \(pushSkipped ?? 0) · dropped pre-encode \(droppedBeforeEncode ?? 0)")
             lines.append("encode \(value(encodedFPS))fps \(value(encodeMs, "ms")) · pacer \(value(pacerDelayMs, "ms")) · sent \(value(sentFPS))fps \(sentWidth ?? 0)×\(sentHeight ?? 0)")
-            lines.append("\(value(sentKbps, "kbps")) · target \(value(targetKbps, "kbps")) · max \(value(maxKbps, "kbps")) · BWE \(value(availableOutgoingKbps, "kbps"))")
+            lines.append("\(value(sentKbps, "kbps")) · target \(value(targetKbps, "kbps")) · max \(value(maxKbps, "kbps")) · BWE \(value(availableOutgoingKbps, "kbps"))"
+                         + (bweCeilingKbps.map { " · ceiling \(value($0, "kbps"))" + (lanCeilingApplied == true ? " (LAN raised)" : "") } ?? ""))
             lines.append("\(encoderImplementation ?? "encoder?") \(hardware(powerEfficientEncoder)) · limit \(qualityLimitation ?? "?") · QP \(value(qpAverage)) · rtx \(retransmittedPackets ?? 0)")
             if let encoderEvidence { lines.append(encoderEvidence.summary) }
             if encodeLatencyMs != nil || encoderDropped != nil {

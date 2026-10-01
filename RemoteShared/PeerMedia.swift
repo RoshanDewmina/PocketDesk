@@ -955,14 +955,22 @@ final class PeerMedia: NSObject {
     /// The estimate ceiling for the current picture mode and route class (`BandwidthCeilingPolicy`).
     private var bandwidthCeilingBps: Int {
         BandwidthCeilingPolicy.maxBitrateBps(ceiling: tuning.maximumBitrateBps(for: streamQuality),
-                                             route: ceilingRoute.route, tuning: tuning)
+                                             route: ceilingRoute.route, provenLocal: ceilingRoute.provenLocal, tuning: tuning)
     }
 
-    /// Re-applies the ceiling when the route class changed (LAN headroom on, or back off after an ICE
-    /// restart onto relay). The current estimate is left alone, so nothing is re-seeded.
+    /// X05: whether the LAN ceiling multiplier is what the estimate ceiling carries right now.
+    private var lanCeilingApplied: Bool {
+        BandwidthCeilingPolicy.lanMultiplier(route: ceilingRoute.route, provenLocal: ceilingRoute.provenLocal, tuning: tuning) > 1
+            && appliedBweMaxBps == bandwidthCeilingBps
+    }
+
+    /// Re-applies the ceiling when the route class or the local proof changed (LAN multiplier on, or back
+    /// off after an ICE restart onto relay or a cut local path). The current estimate is left alone, so
+    /// nothing is re-seeded.
     private func followCeilingRoute(detail: String?, rttMs: Double?) {
         guard isHost, nativeDesktopCodecs, tuning.qualityBitrates,
-              ceilingRoute.observe(detail: detail, rttMs: rttMs), !closed, remoteDescriptionReady else { return }
+              ceilingRoute.observe(detail: detail, rttMs: rttMs, provenLocal: provenLocalLinkActive),
+              !closed, remoteDescriptionReady else { return }
         let maximum = bandwidthCeilingBps
         guard maximum != appliedBweMaxBps else { return }
         _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: nil, maxBitrateBps: NSNumber(value: maximum))
@@ -1259,6 +1267,10 @@ final class PeerMedia: NSObject {
             if nativeDesktopCodecs { stats.transportPriorityRequested = transportPriority.summary }
             followCeilingRoute(detail: sample.routeDetail, rttMs: stats.rttMs)
             seedBandwidthEstimate(stats, route: sample.route, detail: sample.routeDetail)
+            if nativeDesktopCodecs && tuning.qualityBitrates {
+                stats.bweCeilingKbps = appliedBweMaxBps.map { Double($0) / 1000 }
+                stats.lanCeilingApplied = lanCeilingApplied
+            }
             let frameTiming = frameTimingLog?.drain()
             if let frameTiming { stats.applyHostFrameTiming(frameTiming) }
             latestHostSummary = stats.hostSummary

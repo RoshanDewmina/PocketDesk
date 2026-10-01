@@ -25,9 +25,11 @@ struct StreamTuning: Equatable {
     /// with it the pacer (which sends at ~1.1x the estimate), exceed the encoder's average rate so a
     /// large key or full-screen frame drains faster. The estimate still only grows where the path allows.
     var bandwidthHeadroom: Int = 1
-    /// Perf pack item 3: `bandwidthHeadroom` for a LAN route only (`CeilingRouteTracker`), 1…2; probes
-    /// are capped at 2x the encoder maximum, so more has no effect. Off (1) until a physical A/B.
-    var lanBandwidthHeadroom: Int = 1
+    /// X05: estimate-ceiling multiplier on a proven local link only (`BandwidthCeilingPolicy`), clamped to
+    /// 1…2; probes are capped at 2x the encoder maximum, so more has no effect. It raises the ceiling the
+    /// estimate may reach; WebRTC 153 has no per-sender pacer setting, so no pacer effect is claimed.
+    /// Off (1) until a physical A/B.
+    var lanBandwidthHeadroom: Double = 1
     /// Perf pack item 1a (phone): merge pointer moves while the control channel is backed up
     /// (`PointerMoveCoalescer`); a healthy channel is unchanged.
     var mergePointerMoves = true
@@ -190,8 +192,7 @@ struct StreamTuning: Equatable {
             tuning.mergePointerMoves = defaults.bool(forKey: mergePointerMovesKey)
         }
         if defaults.object(forKey: lanHeadroomKey) != nil {
-            let headroom = defaults.integer(forKey: lanHeadroomKey)
-            tuning.lanBandwidthHeadroom = (1...2).contains(headroom) ? headroom : 1
+            tuning.lanBandwidthHeadroom = BandwidthCeilingPolicy.clampedLANHeadroom(defaults.double(forKey: lanHeadroomKey))
         }
         if defaults.object(forKey: encoderMaxInFlightKey) != nil {
             // 0 (or anything outside 1…8) lets frames queue, as before the default changed.
@@ -247,7 +248,7 @@ struct StreamTuning: Equatable {
         if !viewportCapture { parts.append("whole-display capture") }
         if !ladder { parts.append("no ladder") }
         if let encoderMaxInFlight { parts.append("max in-flight \(encoderMaxInFlight)") }
-        if lanBandwidthHeadroom > 1 { parts.append("LAN headroom \(lanBandwidthHeadroom)") }
+        if lanBandwidthHeadroom > 1 { parts.append("LAN ceiling ×\(String(format: "%g", lanBandwidthHeadroom))") }
         if !mergePointerMoves { parts.append("no move merge") }
         if presentAtDisplayMaximum && !idleVideoRefresh { parts.append("no idle refresh") }
         if !frameTiming { parts.append("no frame timing") }
@@ -338,28 +339,46 @@ enum SeedRoute: String, Equatable {
     }
 }
 
-/// The estimate ceiling for the route in use: the encoder ceiling times `bandwidthHeadroom`, and on a
-/// LAN route times `lanBandwidthHeadroom`, so a large key frame can drain faster where the link has room.
-/// Internet P2P, relay and unknown routes are never raised.
+/// The estimate ceiling for the route in use: the encoder ceiling times `bandwidthHeadroom`, and on a LAN
+/// host pair that is also the proven local link, times `lanBandwidthHeadroom`, so the estimate may climb
+/// past the encoder's average where the link has room. Internet P2P, relay, an unproven host pair and
+/// unknown routes never see the LAN multiplier.
 enum BandwidthCeilingPolicy {
-    static func maxBitrateBps(ceiling: Int, route: SeedRoute?, tuning: StreamTuning) -> Int {
-        let headroom = route == .lan ? max(tuning.bandwidthHeadroom, tuning.lanBandwidthHeadroom) : tuning.bandwidthHeadroom
-        return ceiling * max(1, headroom)
+    static let lanHeadroomRange = 1.0...2.0
+
+    static func clampedLANHeadroom(_ value: Double) -> Double {
+        value.isFinite ? min(lanHeadroomRange.upperBound, max(lanHeadroomRange.lowerBound, value)) : 1
+    }
+
+    /// The LAN multiplier in force: 1 unless the route is LAN on a proven local link.
+    static func lanMultiplier(route: SeedRoute?, provenLocal: Bool, tuning: StreamTuning) -> Double {
+        guard route == .lan, provenLocal else { return 1 }
+        return clampedLANHeadroom(tuning.lanBandwidthHeadroom)
+    }
+
+    static func maxBitrateBps(ceiling: Int, route: SeedRoute?, provenLocal: Bool, tuning: StreamTuning) -> Int {
+        let multiplier = max(Double(max(1, tuning.bandwidthHeadroom)),
+                             lanMultiplier(route: route, provenLocal: provenLocal, tuning: tuning))
+        return Int((Double(ceiling) * multiplier).rounded())
     }
 }
 
 /// The route class the estimate ceiling follows, with hysteresis so a busy LAN whose round trip
 /// wanders around `SeedRoute.lanRoundTripLimitMs` does not flip the ceiling every second.
+/// `provenLocal` is whether the selected pair is still the proven local link; losing it collapses the
+/// LAN multiplier even while the pair still looks like a LAN host pair.
 struct CeilingRouteTracker: Equatable {
     static let lanExitRoundTripMs = 25.0
     private(set) var route: SeedRoute?
+    private(set) var provenLocal = false
 
-    /// True when the class changed and the ceiling must be re-applied.
-    mutating func observe(detail: String?, rttMs: Double?) -> Bool {
+    /// True when the class or the proof changed and the ceiling must be re-applied.
+    mutating func observe(detail: String?, rttMs: Double?, provenLocal: Bool = false) -> Bool {
         var next = SeedRoute.classify(detail: detail, rttMs: rttMs)
         if route == .lan, detail == "lan", let rttMs, rttMs < Self.lanExitRoundTripMs { next = .lan }
-        guard next != route else { return false }
+        guard next != route || provenLocal != self.provenLocal else { return false }
         route = next
+        self.provenLocal = provenLocal
         return true
     }
 }
