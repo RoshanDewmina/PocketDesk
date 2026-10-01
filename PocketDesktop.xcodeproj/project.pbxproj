@@ -1269,10 +1269,10 @@
 		2E49EEF7069398A9DE44D8A4 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = "agent-hooks";
-			dstSubfolderSpec = 7;
+			dstPath = Contents/Library/LaunchAgents;
+			dstSubfolderSpec = 1;
 			files = (
-				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
+				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1302,10 +1302,10 @@
 		7921CB30C5158D00B1977963 /* CopyFiles */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
-			dstPath = Contents/Library/LaunchAgents;
-			dstSubfolderSpec = 1;
+			dstPath = "agent-hooks";
+			dstSubfolderSpec = 7;
 			files = (
-				E81B396DAA3635452B406D2F /* com.roshan.PocketDesk.RemoteHost.watchdog.plist in CopyFiles */,
+				C551EDE95EB763B682A3F73C /* farside-notify in CopyFiles */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
