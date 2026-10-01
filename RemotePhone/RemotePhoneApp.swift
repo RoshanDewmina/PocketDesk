@@ -334,7 +334,7 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var macVitals: MacVitals?
     private var macVitalsReceivedAt: TimeInterval = 0
     /// The session's last real reading for Home: the Mac's own sleep or lock status carries no vitals.
-    private var sessionVitals: (vitals: MacVitals, receivedAt: Date)?
+    private var sessionVitals: (vitals: MacVitals, receivedAt: Date, room: String?)?
     private var vitalsNotices = MacVitalsNoticePolicy()
     var vitalsMemory = MacVitalsMemory()
     static let macVitalsMaxAge: TimeInterval = 3
@@ -783,7 +783,7 @@ final class PhoneRemoteModel: ObservableObject {
                 vitalsMemory = MacVitalsMemory(defaults: defaults)
             }
             if let raw = LaunchOptions.value("--ui-last-battery="), let percent = Int(raw) {
-                vitalsMemory.record(MacVitals(power: "battery", batteryPercent: percent, charging: false), at: Date())
+                vitalsMemory.record(MacVitals(power: "battery", batteryPercent: percent, charging: false), at: Date(), room: connection.invitation?.room)
             }
         }
         if contentConcealed { resumeState = .needsChoice }
@@ -2553,7 +2553,7 @@ let now = ProcessInfo.processInfo.systemUptime
             if vitals != macVitals { macVitals = vitals }
             if let vitals {
                 macVitalsReceivedAt = now
-                sessionVitals = (vitals, Date())
+                sessionVitals = (vitals, Date(), connection.invitation?.room)
             }
             if let notice = vitalsNotices.observe(vitals, pill: busy, now: now) { announce(notice) }
             ladder = action.ladder
@@ -2848,7 +2848,7 @@ let now = ProcessInfo.processInfo.systemUptime
         displayTickInput.cancel()
         // Only a session that received vitals knows the battery, so a failed reconnect or an older Mac keeps
         // what Home shows; the reading's own time stops a long background hold from renewing an old one.
-        if let sessionVitals { vitalsMemory.record(sessionVitals.vitals, at: sessionVitals.receivedAt) }
+        if let sessionVitals { vitalsMemory.record(sessionVitals.vitals, at: sessionVitals.receivedAt, room: sessionVitals.room) }
         sessionVitals = nil
         textFocusProbe.invalidate()
         endSecureFocus()

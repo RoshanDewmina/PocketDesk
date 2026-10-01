@@ -119,7 +119,7 @@ final class FarsideSystemIntegrations {
         let key = "\(name ?? "")|\(observed?.rawValue ?? "")"
         guard force || key != lastWidgetObservation else { return }
         lastWidgetObservation = key
-        MacWidgetSync.shared.update(macName: name, observed: observed)
+        MacWidgetSync.shared.update(macName: name, room: connection.invitation?.room, observed: observed)
     }
 
     /// Siri and Shortcuts learn the Mac's name for spoken parameters, so tell them when it changes.

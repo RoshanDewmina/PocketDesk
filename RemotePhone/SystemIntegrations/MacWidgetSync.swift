@@ -13,7 +13,7 @@ final class MacWidgetSync {
     var defaults: UserDefaults? = MacWidgetSnapshot.sharedDefaults
     var reload: () -> Void = { WidgetCenter.shared.reloadTimelines(ofKind: ConnectWidgetLink.kind) }
     var now: () -> Date = { Date() }
-    var lastReached: () -> Date? = { LastReached.date() }
+    var lastReached: (String?) -> Date? = { LastReached.date(room: $0) }
 
     /// Only facts the app saw: a live session, the Mac's own departure report, or a failed attempt.
     static func observedPresence(connected: Bool, departure: HostPresence?,
@@ -56,9 +56,9 @@ final class MacWidgetSync {
         return MacWidgetSnapshot(macName: macName, presence: presence, presenceAt: presenceAt, lastReached: lastReached)
     }
 
-    func update(macName: String?, observed: MacWidgetSnapshot.Presence?) {
+    func update(macName: String?, room: String?, observed: MacWidgetSnapshot.Presence?) {
         let next = Self.next(previous: MacWidgetSnapshot.load(from: defaults), macName: macName, observed: observed,
-                             now: now(), lastReached: lastReached())
+                             now: now(), lastReached: lastReached(room))
         if MacWidgetSnapshot.store(next, in: defaults) { reload() }
     }
 }

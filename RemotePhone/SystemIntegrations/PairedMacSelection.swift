@@ -14,7 +14,6 @@ extension PhoneRemoteModel {
             disconnect()
             try trust.select(hostID: host.id)
             connection.restore()
-            vitalsMemory.forget()
             refreshSendToMac(force: true)
             return connection.invitation == host.invitation
         } catch {
