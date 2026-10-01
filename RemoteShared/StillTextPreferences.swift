@@ -1,8 +1,10 @@
 import Foundation
 
-/// Phone-owned still-text refinements, on by default with no setting. Each is asked for in the session
-/// handshake, so a Mac that is not asked keeps the proven path. The keys are internal A/B overrides only:
-/// an explicit false turns that refinement off from the next connection.
+/// Phone-owned still-text refinements, with no setting. Text clarity is asked for by default. The lossless
+/// refinement patch is not: it switches the whole session to BGRA capture and checks the centre of every
+/// frame on the encoder queue, about 2 ms + 7 ms a frame in a Debug build (perf-push/crisp NOTES). Each is
+/// asked for in the session handshake, so a Mac that is not asked keeps the proven path. The keys are
+/// internal A/B overrides only, applied from the next connection.
 enum StillTextPreferences {
     static let sharpenKey = "farsideSharpenStillText"
     static let textClarityKey = "farsideTextClarity"
@@ -20,7 +22,7 @@ enum StillTextPreferences {
     }
     static func requestedFeatures(_ defaults: UserDefaults = .standard) -> [String] {
         func on(_ key: String) -> Bool { defaults.object(forKey: key) == nil || defaults.bool(forKey: key) }
-        return requestedFeatures(sharpen: on(sharpenKey), textClarity: on(textClarityKey),
+        return requestedFeatures(sharpen: defaults.bool(forKey: sharpenKey), textClarity: on(textClarityKey),
                           fullColor: defaults.bool(forKey: HEVC444Policy.preferenceKey))
     }
 }
