@@ -1,25 +1,54 @@
 import AVKit
 import WebRTC
 
+/// Class identity is the platform operation identity; injected fixtures never manufacture AVKit objects.
+protocol LivePiPPlatformController: AnyObject {
+    var nativeController: AVPictureInPictureController? { get }
+    var isPossible: Bool { get }
+    func start()
+    func stop()
+    func invalidatePlaybackState()
+    func detachDelegate()
+}
+
+private final class NativePiPPlatformController: LivePiPPlatformController {
+    let nativeController: AVPictureInPictureController?
+    init?(layer: AVSampleBufferDisplayLayer, owner: LivePiPController) {
+        // ObjC documents nil on unsupported devices despite its nonnull imported initializer.
+        guard AVPictureInPictureController.isPictureInPictureSupported() else { return nil }
+        let source = AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer: layer, playbackDelegate: owner)
+        let candidate: AVPictureInPictureController? = AVPictureInPictureController(contentSource: source)
+        guard let candidate else { return nil }
+        nativeController = candidate
+        candidate.delegate = owner; candidate.requiresLinearPlayback = true
+        candidate.canStartPictureInPictureAutomaticallyFromInline = false
+    }
+    var isPossible: Bool { nativeController?.isPictureInPicturePossible == true }
+    func start() { nativeController?.startPictureInPicture() }
+    func stop() { nativeController?.stopPictureInPicture() }
+    func invalidatePlaybackState() { nativeController?.invalidatePlaybackState() }
+    func detachDelegate() { nativeController?.delegate = nil }
+}
+
 /// Root must supply current authorization and release ALL control before background live viewing.
 /// A legitimate PiP playback session is acquired only by explicit Start. No fake audio or network grant.
 final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate {
     private let mediaSession: PhoneMediaSession
     private var mediaOwner: UUID?
     private let supported: () -> Bool
-    private let possible: (AVPictureInPictureController) -> Bool
-    private let startPlatform: (AVPictureInPictureController) -> Void
+    typealias PlatformFactory = (AVSampleBufferDisplayLayer, LivePiPController) -> (any LivePiPPlatformController)?
+    private let platformFactory: PlatformFactory
+    private var preparationID = UUID()
     @MainActor
     init(mediaSession: PhoneMediaSession = .shared,
          supported: @escaping () -> Bool = { AVPictureInPictureController.isPictureInPictureSupported() },
-         possible: @escaping (AVPictureInPictureController) -> Bool = { $0.isPictureInPicturePossible },
-         startPlatform: @escaping (AVPictureInPictureController) -> Void = { $0.startPictureInPicture() }) {
-        self.mediaSession = mediaSession; self.supported = supported; self.possible = possible
-        self.startPlatform = startPlatform; super.init()
+         platformFactory: @escaping PlatformFactory = { NativePiPPlatformController(layer: $0, owner: $1) }) {
+        self.mediaSession = mediaSession; self.supported = supported
+        self.platformFactory = platformFactory; super.init()
     }
 
     private(set) var policy = LivePiPPolicy()
-    private(set) var controller: AVPictureInPictureController?
+    private(set) var controller: (any LivePiPPlatformController)?
     private(set) var sink: LivePiPSampleBufferSink?
     private var fence: VideoPresentationFence?
     private var source: LivePiPSource?
@@ -39,26 +68,43 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     /// Main-thread only; cannot retarget a live PiP window across host/grant/session/content epochs.
     func updateAdmission(_ next: VideoPresentationAdmission?) {
         precondition(Thread.isMainThread)
+        let preparation = UUID(); preparationID = preparation
         if let old = policy.admission, let next, (old.identity != next.identity || old.lifetime !== next.lifetime) {
-            stop() // End the old view before authorizing a new inline preroll; never auto-start it.
+            stopCurrent() // Retire old resources; a nested update must not be overwritten.
+            guard preparationID == preparation else { return }
         }
         if policy.update(next, at: ProcessInfo.processInfo.systemUptime) { stop(); return }
         guard let next, policy.admission != nil else { stop(); return }
+        let isSupported = supported()
+        guard preparationMatches(preparation, admission: next) else {
+            if preparationID == preparation { stop() }; return
+        }
+        guard isSupported else { stop(); return }
         if let fence { guard fence.renew(next) else { stop(); return } }
         else {
-            let fence = VideoPresentationFence(next); self.fence = fence
-            let sink = LivePiPSampleBufferSink(admission: next, fence: fence); self.sink = sink
-            let source = AVPictureInPictureController.ContentSource(sampleBufferDisplayLayer: sink.layer, playbackDelegate: self)
-            let controller = AVPictureInPictureController(contentSource: source)
-            controller.delegate = self; controller.requiresLinearPlayback = true
-            controller.canStartPictureInPictureAutomaticallyFromInline = false
-            self.controller = controller
+            let candidateFence = VideoPresentationFence(next)
+            let candidateSink = LivePiPSampleBufferSink(admission: next, fence: candidateFence)
+            let candidate = platformFactory(candidateSink.layer, self)
+            guard preparationMatches(preparation, admission: next) else {
+                candidateFence.invalidate(); candidateSink.invalidate()
+                if let candidate, candidate !== controller { candidate.stop(); candidate.detachDelegate() }
+                if preparationID == preparation { stop() }; return
+            }
+            guard let candidate else {
+                candidateFence.invalidate(); candidateSink.invalidate(); stop(); return
+            }
+            fence = candidateFence; sink = candidateSink; controller = candidate
         }
         expiryTimer?.invalidate()
         let timer = Timer(timeInterval: max(0.001, next.validUntil - ProcessInfo.processInfo.systemUptime), repeats: false) { [weak self] _ in self?.stop() }
         expiryTimer = timer; RunLoop.main.add(timer, forMode: .common)
         controller?.invalidatePlaybackState()
         synchronizeSource(); didChangeState?(policy.state)
+    }
+    private func preparationMatches(_ preparation: UUID, admission: VideoPresentationAdmission) -> Bool {
+        preparationID == preparation && policy.admission?.identity == admission.identity &&
+            policy.admission?.lifetime === admission.lifetime && admission.permits(at: ProcessInfo.processInfo.systemUptime) &&
+            policy.admission?.permits(at: ProcessInfo.processInfo.systemUptime) == true
     }
     var displayLayer: AVSampleBufferDisplayLayer? { sink?.layer }
     /// Prefer this independent registration for live background PiP. Do not ALSO feed Surface.onSourceFrame.
@@ -95,7 +141,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
             releaseMediaOwner(owner); return false
         }
         mediaOwner = owner
-        let isPossible = possible(controller)
+        let isPossible = controller.isPossible
         guard isPossible, mediaOwner == owner,
               startContextMatches(controller, admission: admission, fence: fence, state: .ready),
               MainActor.assumeIsolated({ mediaSession.contains(owner) }),
@@ -114,9 +160,9 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
             if self.controller === controller { stop() }
             return false
         }
-        startPlatform(controller); synchronizeSource(); didChangeState?(policy.state); return true
+        controller.start(); synchronizeSource(); didChangeState?(policy.state); return true
     }
-    private func startContextMatches(_ controller: AVPictureInPictureController, admission: VideoPresentationAdmission,
+    private func startContextMatches(_ controller: any LivePiPPlatformController, admission: VideoPresentationAdmission,
                                      fence: VideoPresentationFence, state: LivePiPPolicy.State) -> Bool {
         self.controller === controller && self.fence === fence && policy.state == state &&
         policy.admission?.identity == admission.identity && policy.admission?.lifetime === admission.lifetime &&
@@ -137,38 +183,47 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     }
     func stop() {
         precondition(Thread.isMainThread)
-        fence?.invalidate() // BEFORE sample flush, OS stop, or any application callback
-        source?.detach(); source = nil
+        preparationID = UUID()
+        stopCurrent()
+    }
+    private func stopCurrent() {
+        fence?.invalidate() // BEFORE sample flush, OS stop, or any application callback.
+        let oldSource = source, oldSink = sink, oldController = controller, oldOwner = mediaOwner
+        source = nil; sink = nil; fence = nil; controller = nil; mediaOwner = nil
         policy.stop(); expiryTimer?.invalidate(); expiryTimer = nil
-        sink?.invalidate(); sink = nil; fence = nil
-        let old = controller; controller = nil
-        old?.stopPictureInPicture(); old?.delegate = nil
-        releaseMediaOwner()
-        policy.didStop(); synchronizeSource(); didChangeState?(policy.state)
+        policy.didStop(); synchronizeSource()
+        oldSource?.detach(); oldSink?.invalidate()
+        oldController?.stop(); oldController?.detachDelegate()
+        // A synchronous OS stop callback may have installed a new run. Release only this capsule.
+        if let oldOwner { MainActor.assumeIsolated { mediaSession.release(oldOwner) } }
+        didChangeState?(policy.state)
+    }
+    private func matchesNative(_ controller: AVPictureInPictureController) -> Bool {
+        self.controller?.nativeController === controller
     }
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
-        guard self.controller === controller else { controller.stopPictureInPicture(); return }
+        guard matchesNative(controller) else { controller.stopPictureInPicture(); return }
         guard policy.didStart(at: ProcessInfo.processInfo.systemUptime) else { stop(); return }
         synchronizeSource(); didChangeState?(policy.state)
     }
-    func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) { if self.controller === controller { stop() } }
-    func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) { if self.controller === controller { stop() } }
+    func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) { if matchesNative(controller) { stop() } }
+    func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) { if matchesNative(controller) { stop() } }
     func pictureInPictureController(_ controller: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
-        guard self.controller === controller else { completionHandler(false); return }
+        guard matchesNative(controller) else { completionHandler(false); return }
         if let restoreForeground { restoreForeground(completionHandler) } else { completionHandler(false) }
     }
     func pictureInPictureController(_ controller: AVPictureInPictureController, setPlaying playing: Bool) {
-        guard self.controller === controller else { return }
+        guard matchesNative(controller) else { return }
         policy.setPlaying(playing, at: ProcessInfo.processInfo.systemUptime)
         if policy.state == .stopping { stop() } else { controller.invalidatePlaybackState(); synchronizeSource(); didChangeState?(policy.state) }
     }
     func pictureInPictureControllerTimeRangeForPlayback(_ controller: AVPictureInPictureController) -> CMTimeRange {
-        guard self.controller === controller, policy.admission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return .invalid }
+        guard matchesNative(controller), policy.admission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return .invalid }
         return CMTimeRange(start: .zero, duration: .positiveInfinity)
     }
-    func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool { self.controller !== controller || policy.state != .active }
+    func pictureInPictureControllerIsPlaybackPaused(_ controller: AVPictureInPictureController) -> Bool { !matchesNative(controller) || policy.state != .active }
     func pictureInPictureController(_ controller: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {
-        if self.controller === controller { renderSizeChanged?(newRenderSize) }
+        if matchesNative(controller) { renderSizeChanged?(newRenderSize) }
     }
     func pictureInPictureController(_ controller: AVPictureInPictureController, skipByInterval skipInterval: CMTime, completion completionHandler: @escaping () -> Void) { completionHandler() }
     deinit {

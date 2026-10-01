@@ -5,6 +5,7 @@ import XCTest
 final class MacVitalsPhoneTests: XCTestCase {
     private let suite = "MacVitalsPhoneTests"
     private var defaults: UserDefaults!
+    private var models: [PhoneRemoteModel] = []
 
     override func setUp() {
         super.setUp()
@@ -13,20 +14,25 @@ final class MacVitalsPhoneTests: XCTestCase {
     }
 
     override func tearDown() {
+        models.forEach { $0.connection.stop() }
+        models.removeAll()
         defaults.removePersistentDomain(forName: suite)
         super.tearDown()
     }
 
-    private func model() -> PhoneRemoteModel {
+    private func model(connected: Bool = true) -> PhoneRemoteModel {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
         model.vitalsMemory = MacVitalsMemory(defaults: defaults)
+        models.append(model)
+        if connected { model.connection.startInputFixtureForTesting(session: "vitals-status-fixture") }
         return model
     }
 
     private func send(_ vitals: MacVitals?, to model: PhoneRemoteModel, features: [String] = SessionFeature.host,
                       busy: BusyState? = nil) throws {
         let action = RemoteAction(action: "capture", x: 1, epoch: 1, features: features, busy: busy, macVitals: vitals)
-        model.connection.onControl?(try JSONEncoder().encode(action))
+        let receive = try XCTUnwrap(model.connection.onControl)
+        receive(try JSONEncoder().encode(action))
     }
 
     private func battery(_ percent: Int, load: String = "ok") -> MacVitals {
@@ -78,16 +84,16 @@ final class MacVitalsPhoneTests: XCTestCase {
     func testSessionEndRemembersALowBattery() throws {
         let model = model()
         try send(battery(4), to: model)
-        model.connection.onEnded?()
+        model.connection.stop()
         XCTAssertEqual(model.vitalsMemory.lastSeen(now: Date())?.percent, 4)
         XCTAssertNil(model.macVitals)
         XCTAssertFalse(model.macVitalsSupported)
     }
 
     func testAFailedAttemptKeepsTheLastSeenBattery() {
-        let model = model()
+        let model = model(connected: false)
         model.vitalsMemory.record(battery(4), at: Date())
-        model.connection.onEnded?()
+        model.connection.stop()
         XCTAssertEqual(model.vitalsMemory.lastSeen(now: Date())?.percent, 4,
                        "An attempt that never got a status knows nothing new about the battery")
     }
@@ -96,8 +102,9 @@ final class MacVitalsPhoneTests: XCTestCase {
         let model = model()
         try send(battery(4), to: model)
         let sleeping = RemoteAction(action: "capture", x: 0, epoch: 1, features: SessionFeature.host, hostState: "sleeping")
-        model.connection.onControl?(try JSONEncoder().encode(sleeping))
-        model.connection.onEnded?()
+        let receive = try XCTUnwrap(model.connection.onControl)
+        receive(try JSONEncoder().encode(sleeping))
+        model.connection.stop()
         XCTAssertEqual(model.vitalsMemory.lastSeen(now: Date())?.percent, 4,
                        "The Mac's last status before sleeping carries no vitals and must not erase the reading")
         XCTAssertEqual(model.lastDeparture, .sleeping)
@@ -107,7 +114,7 @@ final class MacVitalsPhoneTests: XCTestCase {
         let model = model()
         model.vitalsMemory.record(battery(4), at: Date())
         try send(nil, to: model, features: SessionFeature.host.filter { $0 != SessionFeature.macVitals })
-        model.connection.onEnded?()
+        model.connection.stop()
         XCTAssertEqual(model.vitalsMemory.lastSeen(now: Date())?.percent, 4,
                        "A Mac that never reports vitals knows nothing new about the battery")
     }
@@ -116,7 +123,7 @@ final class MacVitalsPhoneTests: XCTestCase {
         let model = model()
         model.vitalsMemory.record(battery(4), at: Date())
         try send(MacVitals(power: "ac", batteryPercent: 30, charging: true, load: "ok"), to: model)
-        model.connection.onEnded?()
+        model.connection.stop()
         XCTAssertNil(model.vitalsMemory.lastSeen(now: Date()))
     }
 
@@ -124,9 +131,36 @@ final class MacVitalsPhoneTests: XCTestCase {
         let model = model()
         try send(battery(15), to: model)
         XCTAssertEqual(model.sessionNotice, MacVitalsNotice.low(15))
-        model.connection.onEnded?()
+        model.connection.stop()
+        XCTAssertFalse(model.connection.connected)
+        model.connection.startInputFixtureForTesting(session: "vitals-next-session-fixture")
         try send(battery(14), to: model)
         XCTAssertEqual(model.sessionNotice, MacVitalsNotice.low(14), "Ending the session resets the once-per-session notices")
+    }
+
+    func testDisconnectedAndStoppedCallbacksCannotAdoptOrRememberVitals() throws {
+        let model = model(connected: false)
+        let receive = try XCTUnwrap(model.connection.onControl)
+        let initial = RemoteAction(action: "capture", x: 1, epoch: 1,
+                                   features: SessionFeature.host, macVitals: battery(64))
+        let data = try JSONEncoder().encode(initial)
+        receive(data)
+        XCTAssertNil(model.currentMacVitals())
+        XCTAssertNil(model.macVitals)
+        XCTAssertNil(model.sessionNotice)
+        model.connection.startInputFixtureForTesting(session: "vitals-retained-fixture")
+        receive(data)
+        XCTAssertEqual(model.currentMacVitals(), battery(64))
+        model.connection.stop()
+        XCTAssertFalse(model.connection.connected)
+        let late = RemoteAction(action: "capture", x: 1, epoch: 2,
+                                features: SessionFeature.host, macVitals: battery(4))
+        receive(try JSONEncoder().encode(late))
+        XCTAssertNil(model.currentMacVitals())
+        XCTAssertNil(model.macVitals)
+        XCTAssertNil(model.sessionNotice, "A late low-battery status cannot publish a new notice")
+        model.connection.stop()
+        XCTAssertNil(model.vitalsMemory.lastSeen(now: Date()), "A late status cannot become remembered battery evidence")
     }
 
     #if DEBUG

@@ -25,8 +25,23 @@ final class ScreenRecordingApprovalPhoneTests: XCTestCase {
         XCTAssertEqual(generic?.state, .sharingStopped, "Without the Mac's report nothing is claimed")
     }
 
-    func testThePhoneAsksForTheApprovalReasonAndTheWidgetShowsIt() {
-        XCTAssertEqual(Set(MacShareBlocker.Handshake.phone.features), [MacShareBlocker.feature, MacShareBlocker.approvalFeature])
+    func testThePhoneAsksForTheApprovalReasonAndTheWidgetShowsIt() throws {
+        let expected: Set<String> = ["blocker.1", "blocker.2", "features.32", "input.causal.1",
+                                     "input.pencil.1", "video.ltr.1", "video.refine.1"]
+        let modern = MacShareBlocker.Handshake.phone
+        XCTAssertEqual(Set(modern.features), expected)
+        XCTAssertEqual(modern.features.count, 7, "The exact advertised list contains no duplicate names")
+        let modernBody = try JSONEncoder().encode(modern)
+        XCTAssertLessThanOrEqual(modernBody.count, 1024)
+        XCTAssertEqual(MacShareBlocker.Handshake.features(in: modernBody), expected)
+        XCTAssertEqual(MacShareBlocker.screenRecordingApproval.told(to: expected), .screenRecordingApproval)
+
+        let legacy = MacShareBlocker.Handshake(features: ["blocker.1", "blocker.2"])
+        let legacyFeatures = MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(legacy))
+        XCTAssertEqual(legacyFeatures, ["blocker.1", "blocker.2"], "The original two-feature handshake stays readable")
+        XCTAssertFalse(legacyFeatures.contains(SessionFeature.extendedFeatureList))
+        XCTAssertEqual(MacShareBlocker.screenRecordingApproval.told(to: legacyFeatures), .screenRecordingApproval)
+        XCTAssertEqual(MacShareBlocker.screenRecordingApproval.told(to: ["blocker.1"]), .screenRecordingOff)
         XCTAssertEqual(MacWidgetSync.observedPresence(connected: false, departure: nil, failure: .screenRecordingApproval),
                        .screenRecordingApproval)
         XCTAssertEqual(MacWidgetSnapshot.Presence.screenRecordingApproval.label, "Approve on Mac")

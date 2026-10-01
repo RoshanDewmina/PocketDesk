@@ -229,17 +229,35 @@ final class AnywhereStoreKitTests: XCTestCase {
         // an in-app purchase. Keep the real SDK transaction and prove this store finishes it.
         print("STOREKIT REDEMPTION: external test purchase")
         let external = try await session.buyProduct(identifier: AnywherePlan.monthlyID, options: [])
-        print("STOREKIT REDEMPTION: latest verification")
-        let latest = await Transaction.latest(for: AnywherePlan.monthlyID)
-        let verification = try XCTUnwrap(latest)
+        print("STOREKIT REDEMPTION: exact unfinished verification")
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(8))
+        var matching: VerificationResult<Transaction>?
+        var externallyUnfinished = false
+        while clock.now < deadline {
+            try Task.checkCancellation()
+            for await candidate in Transaction.unfinished {
+                try Task.checkCancellation()
+                guard clock.now < deadline else { break }
+                guard case .verified(let pending) = candidate else {
+                    return XCTFail("Unverified SDK transaction in the unfinished test snapshot")
+                }
+                guard pending.id == external.id else { continue }
+                guard pending.productID == AnywherePlan.monthlyID else {
+                    return XCTFail("Wrong product for the exact unfinished external transaction")
+                }
+                matching = candidate
+                externallyUnfinished = true
+                break
+            }
+            if matching != nil { break }
+            if clock.now < deadline { try await Task.sleep(for: .milliseconds(200)) }
+        }
+        let verification = try XCTUnwrap(matching,
+            "Timed out waiting for the exact verified unfinished external transaction")
         guard case .verified(let transaction) = verification else { return XCTFail("unverified external transaction") }
         XCTAssertEqual(transaction.id, external.id)
         XCTAssertEqual(transaction.productID, AnywherePlan.monthlyID)
-        print("STOREKIT REDEMPTION: pre-finish ownership")
-        var externallyUnfinished = false
-        for await result in Transaction.unfinished {
-            if case .verified(let pending) = result, pending.id == external.id { externallyUnfinished = true }
-        }
         XCTAssertTrue(externallyUnfinished, "The exact external transaction must still be unfinished before redemption")
         print("STOREKIT REDEMPTION: redeem verified external transaction")
         await store.redeemed(verification)

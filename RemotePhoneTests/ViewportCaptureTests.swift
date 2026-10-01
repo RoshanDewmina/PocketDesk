@@ -8,6 +8,20 @@ import UIKit
 final class ViewportCaptureTests: XCTestCase {
     private let display = CGSize(width: 1470, height: 956)
     private let interval = ViewportReporter.minimumInterval
+    private var models: [PhoneRemoteModel] = []
+
+    override func tearDown() {
+        models.forEach { $0.connection.stop() }
+        models.removeAll()
+        super.tearDown()
+    }
+
+    private func connectedModel() -> PhoneRemoteModel {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        models.append(model)
+        model.connection.startInputFixtureForTesting(session: "viewport-status-fixture")
+        return model
+    }
 
     private func request(x: CGFloat = 367.5, display: CGSize? = nil) -> ViewportCaptureRequest {
         ViewportCaptureRequest(rect: CGRect(x: x, y: 239, width: 735, height: 338), pixelWidth: 2622,
@@ -15,12 +29,13 @@ final class ViewportCaptureTests: XCTestCase {
     }
 
     private func deliver(_ action: RemoteAction, to model: PhoneRemoteModel) throws {
-        model.connection.onControl?(try JSONEncoder().encode(action))
+        let receive = try XCTUnwrap(model.connection.onControl)
+        receive(try JSONEncoder().encode(action))
     }
 
     /// A model that has the Mac's geometry (epoch 4) and one `capture` status with these features.
     private func sessionModel(features: [String], pointerSync: PointerSync? = nil) throws -> PhoneRemoteModel {
-        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        let model = connectedModel()
         try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 4), to: model)
         try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, pointerSync: pointerSync, features: features),
                     to: model)
@@ -116,7 +131,7 @@ final class ViewportCaptureTests: XCTestCase {
     }
 
     func testTheViewportRidesOnHeartbeatsOnlyWhileTheMacAdvertisesIt() throws {
-        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        let model = connectedModel()
         try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 4), to: model)
         model.viewportChanged(request())
         XCTAssertNil(model.heartbeatAction(at: 1).viewport, "no capture status yet")
@@ -176,6 +191,39 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertNotNil(heartbeat.viewport)
         XCTAssertNotNil(heartbeat.pointerSync, "a heartbeat without it switches the Mac's pointer telemetry off")
         XCTAssertEqual(heartbeat.pointerSync, model.pointerOverlay.advertisement())
+    }
+
+    func testDisconnectedAndStoppedCallbacksCannotEnablePointerOrAdoptCrop() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        defer { model.connection.stop() }
+        let receive = try XCTUnwrap(model.connection.onControl)
+        let features = [SessionFeature.viewportCapture]
+        let region = CaptureRegion(epoch: 7, x: 327.5, y: 199, width: 815, height: 418,
+                                   outputWidth: 2622, outputHeight: 1345)
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 4), to: model)
+        let status = RemoteAction(action: "capture", x: 1, epoch: 4,
+                                  pointerSync: PointerSync(videoCursor: false),
+                                  features: features, captureRegion: region)
+        let data = try JSONEncoder().encode(status)
+        receive(data)
+        XCTAssertNil(model.captureRegion)
+        XCTAssertNil(model.cropSummary)
+        XCTAssertNil(model.heartbeatAction(at: 1).pointerSync)
+        model.connection.startInputFixtureForTesting(session: "viewport-retained-fixture")
+        receive(data)
+        XCTAssertEqual(model.captureRegion, region)
+        XCTAssertNotNil(model.heartbeatAction(at: 1).pointerSync)
+        model.connection.stop()
+        XCTAssertFalse(model.connection.connected)
+        // Use Stop's current geometry epoch so rejection is not merely stale geometry.
+        let late = RemoteAction(action: "capture", x: 1, epoch: 0,
+                                pointerSync: PointerSync(videoCursor: false),
+                                features: features, captureRegion: region)
+        receive(try JSONEncoder().encode(late))
+        XCTAssertNil(model.captureRegion)
+        XCTAssertNil(model.cropSummary)
+        XCTAssertNil(model.heartbeatAction(at: 2).pointerSync,
+                     "A retained callback cannot enable pointer telemetry after Stop")
     }
 
     func testAZoomedViewportReachesTheHeartbeatInDisplayPoints() throws {

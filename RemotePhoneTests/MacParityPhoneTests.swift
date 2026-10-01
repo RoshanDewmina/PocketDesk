@@ -4,11 +4,14 @@ import XCTest
 @MainActor
 final class MacParityPhoneTests: XCTestCase {
     private func deliver(_ action: RemoteAction, to model: PhoneRemoteModel) throws {
-        model.connection.onControl?(try JSONEncoder().encode(action))
+        let receive = try XCTUnwrap(model.connection.onControl)
+        receive(try JSONEncoder().encode(action))
     }
 
     func testCurtainStateAndRecoveryNoticeFollowTheMacsStatus() throws {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.connection.startInputFixtureForTesting(session: "curtain-status-fixture")
+        defer { model.connection.stop() }
 
         try deliver(RemoteAction(action: "capture", x: 1, epoch: 1,
                                  features: [SessionFeature.clipboardText, SessionFeature.backgroundPause]), to: model)
@@ -31,6 +34,32 @@ final class MacParityPhoneTests: XCTestCase {
         try deliver(RemoteAction(action: "capture", x: 1, epoch: 1, features: SessionFeature.host,
                                  curtain: "somethingNew"), to: model)
         XCTAssertEqual(model.curtainState, .off, "Unknown future states read as off")
+    }
+
+    func testDisconnectedAndStoppedCallbacksCannotAdoptCurtainStatus() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        defer { model.connection.stop() }
+        let receive = try XCTUnwrap(model.connection.onControl)
+        let status = RemoteAction(action: "capture", x: 1, epoch: 1, features: SessionFeature.host,
+                                  curtain: PrivacyCurtainState.up.rawValue,
+                                  hostEvent: HostLifecycleEvent.recovered.rawValue)
+        let data = try JSONEncoder().encode(status)
+        receive(data)
+        XCTAssertNil(model.curtainState)
+        XCTAssertNil(model.sessionNotice)
+        model.connection.startInputFixtureForTesting(session: "curtain-retained-fixture")
+        receive(data)
+        XCTAssertEqual(model.curtainState, .up)
+        XCTAssertEqual(model.sessionNotice, PhoneSessionNotice.hostRecovered)
+        model.connection.stop()
+        XCTAssertFalse(model.connection.connected)
+        XCTAssertNil(model.curtainState)
+        let previousNotice = model.sessionNotice
+        let late = RemoteAction(action: "capture", x: 1, epoch: 2, features: SessionFeature.host,
+                                curtain: PrivacyCurtainState.failed.rawValue)
+        receive(try JSONEncoder().encode(late))
+        XCTAssertNil(model.curtainState, "A retained callback cannot republish a curtain after Stop")
+        XCTAssertEqual(model.sessionNotice, previousNotice, "A late failure cannot publish a new notice")
     }
 
     func testCurtainRequestsNeedALiveControlledSession() {

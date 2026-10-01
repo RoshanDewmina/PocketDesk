@@ -44,9 +44,9 @@ final class BigTextUITests: XCTestCase {
         let step = app.buttons["remote.bigText.step.0"]
         scrollControls(app, to: step)
         step.tap()
-        XCTAssertTrue(step.waitForSelected(timeout: 5))
         let pill = app.descendants(matching: .any)["remote.bigText.pill"].firstMatch
         XCTAssertTrue(pill.waitForExistence(timeout: 3))
+        XCTAssertTrue(step.waitForSelected(timeout: 5))
         XCTAssertTrue(pill.waitForNonExistence(timeout: 5))
         tapDone(app)
         openControls(app)
@@ -98,7 +98,10 @@ final class BigTextUITests: XCTestCase {
         if app.buttons["Hide controls"].exists { return }
         let handle = app.buttons["Show controls"]
         XCTAssertTrue(handle.waitForExistence(timeout: 5))
-        handle.swipeUp()
+        waitUntilStill(handle)
+        XCTAssertTrue(handle.isHittable)
+        let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -80)))
         let hide = app.buttons["Hide controls"]
         XCTAssertTrue(hide.waitForExistence(timeout: 5))
         waitUntilStill(hide)
