@@ -123,20 +123,24 @@ final class PhoneMediaSessionTests: XCTestCase {
         session.retireAll()
         XCTAssertEqual(events, ["muteMac", "stopPiP", "deactivate"])
     }
-    func testDeviceRemovalEndsDictationAndDeactivatesWhenItWasTheLastOwner() {
+    func testAnyDeviceChangeEndsDictationAndDeactivatesWhenItWasTheLastOwner() {
         var retired = 0, releases = 0
         let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: { releases += 1 }))
         let mic = UUID()
         XCTAssertTrue(session.acquire(mic, kind: .recording, onRetired: { retired += 1 }))
-        session.routeChanged(deviceRemoved: false); XCTAssertTrue(session.contains(mic))
-        session.routeChanged(deviceRemoved: true)
-        XCTAssertFalse(session.contains(mic)); XCTAssertEqual(retired, 1); XCTAssertEqual(releases, 1)
+        session.routeChanged(deviceRemoved: false)
+        XCTAssertFalse(session.contains(mic), "AirPods connecting would leave dictation stalled on the old route")
+        XCTAssertEqual(retired, 1); XCTAssertEqual(releases, 1)
         XCTAssertFalse(session.release(mic)); XCTAssertEqual(releases, 1)
+        let removed = UUID()
+        XCTAssertTrue(session.acquire(removed, kind: .recording, onRetired: { retired += 1 }))
+        session.routeChanged(deviceRemoved: true)
+        XCTAssertFalse(session.contains(removed)); XCTAssertEqual(retired, 2); XCTAssertEqual(releases, 2)
         let mac = UUID()
         XCTAssertTrue(session.acquire(mac, kind: .macAudio, onRetired: {}))
         session.beginInterruption(); session.routeChanged(deviceRemoved: true)
         XCTAssertFalse(session.isInterrupted, "the last owner's retirement ends the interruption")
-        XCTAssertEqual(releases, 2)
+        XCTAssertEqual(releases, 3)
     }
 
     func testDuplicateOwnerCannotChangeKindAndRegistryIsBounded() {

@@ -162,11 +162,10 @@ final class PhoneMediaSession {
         retiring = false
     }
     /// Headphones must never end a background PiP (and with it the session). Apple asks apps to pause
-    /// only when a device is removed: Mac audio then stays retired until the user opts in again, and
-    /// dictation loses its microphone route. A newly connected device just carries the audio on.
+    /// playback only when a device is removed: Mac audio then stays retired until the user opts in
+    /// again. Dictation ends on any device change because its engine does not follow a new input route.
     func routeChanged(deviceRemoved: Bool) {
-        guard deviceRemoved else { return }
-        retire(kinds: [.macAudio, .recording])
+        retire(kinds: deviceRemoved ? [.macAudio, .recording] : [.recording])
     }
 
     func retire(kinds: Set<Kind>) {
