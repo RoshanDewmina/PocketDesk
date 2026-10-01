@@ -434,7 +434,7 @@ final class PhoneRemoteModel: ObservableObject {
             macAudioPlayback.end()
         }
     }
-    @Published private(set) var privacyShield = false { willSet { if newValue { invalidatePresentation(keepingPiP: mayKeepLivePiP || pipBackground && mayHoldBackgroundPiP) } } }
+    @Published private(set) var privacyShield = false { willSet { if newValue { invalidatePresentation(keepingPiP: mayKeepLivePiP || autoPiPMayStart || pipBackground && mayHoldBackgroundPiP) } } }
     private var hasBeenActive = false
     @Published var draft = "" { didSet { secureTextFocus.draftChanged(draft) } }
     @Published var secureTextFocus = SecureTextFocus()
@@ -486,6 +486,11 @@ final class PhoneRemoteModel: ObservableObject {
     private var presentationContentEpoch: UInt64 = 1
     private var pipBackground = false
     private var pipTransitional = false
+    /// The OS started PiP as the user left a live session; the Mac's live-view-only confirmation may still be pending.
+    private var autoPiPStarted = false
+    /// Internal kill switch, no UI: `defaults write <bundle id> farsideAutoPiPDisabled -bool YES`.
+    static let autoPiPDisabledKey = "farsideAutoPiPDisabled"
+    private(set) var autoPiPEnabled = true
     private struct PiPRestoreRequest {
         let session: UUID
         let contentEpoch: UInt64
@@ -536,12 +541,32 @@ final class PhoneRemoteModel: ObservableObject {
 
     private var mayKeepLivePiP: Bool {
         PresentationLeasePolicy.mayContinueBackground(state: pipState, admission: pipAdmission,
-            viewOnlyConfirmed: viewOnlyConfirmed, now: ProcessInfo.processInfo.systemUptime)
+            viewOnlyConfirmed: viewOnlyConfirmed, now: ProcessInfo.processInfo.systemUptime) || autoPiPAwaitingConfirmation
     }
     private var mayHoldBackgroundPiP: Bool {
         PresentationLeasePolicy.mayHoldBackground(state: pipState, admission: pipAdmission,
-            viewOnlyConfirmed: viewOnlyConfirmed, now: ProcessInfo.processInfo.systemUptime)
+            viewOnlyConfirmed: viewOnlyConfirmed, now: ProcessInfo.processInfo.systemUptime) || autoPiPAwaitingConfirmation
     }
+    /// An OS-started PiP is held for at most the 2 s view-only confirmation window (`viewOnlyStartDeadline`).
+    private var autoPiPAwaitingConfirmation: Bool {
+        autoPiPStarted && pendingViewOnlyStart && [.starting, .active, .paused].contains(pipState)
+            && pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true
+    }
+    /// Armed while a live picture session is in the foreground: leaving the app may then start PiP.
+    private var autoPiPArmed: Bool {
+        autoPiPEnabled && sceneIsActive && connection.connected && sessionMode == .picture
+            && hostFeatures.contains(SessionFeature.liveViewOnly) && pipState == .ready
+            && pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true
+            && !privacyShield && !contentConcealed && !viewOnlyConfirmed && !pendingViewOnlyStart
+            && !awaitingViewOnlyExit && pendingLockMac == nil && pipRestoreRequest == nil
+    }
+    /// Through `.inactive` an armed, not-yet-started PiP stays prepared so the OS can still auto-start it.
+    private var autoPiPMayStart: Bool {
+        livePiP.automaticStartAllowed && pipState == .ready && connection.connected && sessionMode == .picture
+            && pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true && pendingLockMac == nil
+    }
+    /// The inline PiP source layer sits behind the picture whenever an automatic start could be armed.
+    var showsInlinePiPSource: Bool { autoPiPEnabled && pipAdmission != nil && sessionMode == .picture }
     private func cachePresentationHost() {
         presentationHost = nil
         guard let invitation = connection.invitation,
@@ -578,6 +603,8 @@ final class PhoneRemoteModel: ObservableObject {
             pipAdmission = nil
             pendingViewOnlyStart = false
             viewOnlyStartDeadline = nil
+            autoPiPStarted = false
+            livePiP.automaticStartAllowed = false
             // Presentation retirement can repeat while the host applies our exit.
             // Preserve that exact cleanup request until its ACK or timeout; terminal
             // session teardown still retires its correlation synchronously.
@@ -636,10 +663,12 @@ final class PhoneRemoteModel: ObservableObject {
         // PiP and inline have separate terminal lifetimes: background retirement of inline cannot kill an approved PiP.
         let pipProposal = proof.map { VideoPresentationAdmission(identity: $0.identity, validUntil: $0.validUntil) }
         let nextPiP = VideoPresentationAdmission.renewed(hostFeatures.contains(SessionFeature.liveViewOnly) &&
-            (mayPreroll || pipTransitional && mayKeepLivePiP || pipBackground && mayHoldBackgroundPiP) ? pipProposal : nil, from: pipAdmission)
+            (mayPreroll || pipTransitional && (mayKeepLivePiP || autoPiPMayStart) || pipBackground && mayHoldBackgroundPiP) ? pipProposal : nil, from: pipAdmission)
         pipAdmission = nextPiP
         livePiP.updateAdmission(nextPiP)
         if nextPiP != nil, let track = connection.remoteVideo { livePiP.attachSourceTrack(track) }
+        // Re-armed only in the foreground; through `.inactive` the last foreground decision stands.
+        if sceneIsActive { livePiP.automaticStartAllowed = autoPiPArmed }
     }
     private var usefulPicture = UsefulPictureEvidence()
     private var lastUsefulPresentationUpdate: TimeInterval = 0
@@ -763,6 +792,7 @@ final class PhoneRemoteModel: ObservableObject {
         streamQuality = StreamQualityPreference.stored(in: preferences)
         self.macAudioPlayback = macAudioPlayback ?? PhoneSystemAudioPlayback()
         self.livePiP = livePiP ?? LivePiPController()
+        autoPiPEnabled = !preferences.bool(forKey: Self.autoPiPDisabledKey)
         self.background = background ?? SystemBackgroundExecution()
         self.resumeStore = resumeStore
         resumeCapsule = resumeStore.load()
@@ -814,10 +844,20 @@ final class PhoneRemoteModel: ObservableObject {
         self.livePiP.didChangeState = { [weak self] state in
             guard let self else { return }
             self.pipState = state
-            if self.pipBackground && state != .active && state != .paused && self.pipRestoreRequest == nil { self.disconnect(explicitEnd: false) }
+            if self.pipBackground && state != .active && state != .paused && !(state == .starting && self.autoPiPStarted)
+                && self.pipRestoreRequest == nil { self.disconnect(explicitEnd: false) }
             else if state == .ineligible && !self.invalidatingPiP && self.viewOnlyConfirmed && !self.awaitingViewOnlyExit && self.pipRestoreRequest == nil {
                 self.requestViewOnlyExit()
             }
+        }
+        self.livePiP.mayStartAutomatically = { [weak self] in
+            guard let self else { return false }
+            return self.autoPiPMayStart && !self.viewOnlyConfirmed && !self.pendingViewOnlyStart && !self.awaitingViewOnlyExit
+        }
+        self.livePiP.didStartAutomatically = { [weak self] in
+            guard let self else { return }
+            self.autoPiPStarted = true
+            self.requestViewOnlyEntry() // The Mac must confirm live view only within 2 s, as for the button.
         }
         self.livePiP.restoreForeground = { [weak self] completion in
             guard let self else { completion(false); return }
@@ -2137,7 +2177,7 @@ let now = ProcessInfo.processInfo.systemUptime
             completePiPRestoreIfCurrent()
         case .inactive:
             diagnostics.cancel()
-            pipTransitional = mayKeepLivePiP
+            pipTransitional = mayKeepLivePiP || autoPiPMayStart
             suspendMacAudio()
             sceneIsActive = false
             if hasBeenActive {
@@ -2472,7 +2512,12 @@ let now = ProcessInfo.processInfo.systemUptime
                 if !confirmed && (pipState == .active || pipState == .starting || pipState == .paused) {
                     invalidatePresentation()
                 }
-                if pendingViewOnlyStart {
+                if pendingViewOnlyStart && autoPiPStarted {
+                    pendingViewOnlyStart = false
+                    viewOnlyStartDeadline = nil
+                    autoPiPStarted = false
+                    if !confirmed || ![.starting, .active, .paused].contains(pipState) { stopPictureInPicture() }
+                } else if pendingViewOnlyStart {
                     pendingViewOnlyStart = false
                     viewOnlyStartDeadline = nil
                     if !confirmed || !sceneIsActive || !livePiP.startFromUserAction(foreground: true) {

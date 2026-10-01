@@ -58,6 +58,54 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertEqual(model.pipState, .active)
         return (model, proof, platform, { packets })
     }
+    /// Auto-PiP: armed only while a live picture session is in front; the OS start (simulated) keeps the session
+    /// through `.inactive` and `.background` while the Mac's live-view-only confirmation is pending; a refusal ends it.
+    func testLeavingALivePictureSessionStartsPiPAutomaticallyAndTheMacMustConfirmViewOnly() throws {
+        for refuse in [false, true] {
+            let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+            let platform = LifecyclePiPPlatform()
+            let pip = LivePiPController(mediaSession: registry, supported: { true }, platformFactory: { _, _ in platform })
+            let model = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip)
+            defer { model.disconnect() }
+            model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+            model.connection.startInputFixtureForTesting(session: "auto-pip")
+            model.geometryEpoch = 1
+            var packets: [ControlPacket] = []
+            model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+            _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+            XCTAssertTrue(pip.automaticStartAllowed, "armed while live in the foreground")
+            XCTAssertTrue(model.showsInlinePiPSource)
+            model.sceneChanged(.inactive)
+            XCTAssertEqual(model.pipState, .ready, "the prepared PiP survives the shield so the OS can still start it")
+            pip.automaticStartForTesting(platform)
+            XCTAssertEqual(platform.starts, 0, "the OS starts it; the app never calls start in the background")
+            let entry = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == true })
+            pip.confirmPlatformStartForTesting(platform)
+            XCTAssertEqual(model.pipState, .active)
+            model.sceneChanged(.background)
+            XCTAssertTrue(model.pipBackgroundForTesting); XCTAssertTrue(model.connection.connected)
+            model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: !refuse,
+                liveViewOnlyRequestID: entry.action.liveViewOnlyRequestID, x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
+            if refuse {
+                XCTAssertFalse(model.connection.connected, "a Mac that refuses live view only ends the background PiP")
+            } else {
+                XCTAssertTrue(model.viewOnlyConfirmedForTesting); XCTAssertEqual(model.pipState, .active)
+                XCTAssertTrue(model.connection.connected)
+            }
+        }
+        let suite = "auto-pip-\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: PhoneRemoteModel.autoPiPDisabledKey)
+        let pip = LivePiPController(mediaSession: PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {})),
+                                    supported: { true }, platformFactory: { _, _ in LifecyclePiPPlatform() })
+        let off = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip, preferences: defaults)
+        defer { off.disconnect() }
+        off.prepareConnection(mode: .picture); off.sceneChanged(.active)
+        off.connection.startInputFixtureForTesting(session: "auto-pip-off"); off.geometryEpoch = 1
+        _ = off.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+        XCTAssertFalse(pip.automaticStartAllowed, "the internal kill switch disarms it")
+        XCTAssertFalse(off.showsInlinePiPSource)
+    }
     func testActivePiPSurvivesInactiveHeartbeatThenBackgroundWithoutExitOrPause() throws {
         let (model, _, _, packets) = try activePiPModel()
         defer { model.disconnect() }

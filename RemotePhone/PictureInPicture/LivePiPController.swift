@@ -9,6 +9,11 @@ protocol LivePiPPlatformController: AnyObject {
     func stop()
     func invalidatePlaybackState()
     func detachDelegate()
+    func setAutomaticStart(_ enabled: Bool)
+}
+
+extension LivePiPPlatformController {
+    func setAutomaticStart(_ enabled: Bool) {}
 }
 
 private final class NativePiPPlatformController: LivePiPPlatformController {
@@ -28,6 +33,7 @@ private final class NativePiPPlatformController: LivePiPPlatformController {
     func stop() { nativeController?.stopPictureInPicture() }
     func invalidatePlaybackState() { nativeController?.invalidatePlaybackState() }
     func detachDelegate() { nativeController?.delegate = nil }
+    func setAutomaticStart(_ enabled: Bool) { nativeController?.canStartPictureInPictureAutomaticallyFromInline = enabled }
 }
 
 /// Root must supply current authorization and release ALL control before background live viewing.
@@ -63,6 +69,13 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         sourceLock.unlock()
     }
     var didChangeState: ((LivePiPPolicy.State) -> Void)?
+    /// Auto-start (leaving the app with a live session). The root sets this only while its session is live in
+    /// picture mode; the OS then starts PiP from the inline layer, `mayStartAutomatically` must still agree, and
+    /// `didStartAutomatically` then asks the Mac for live view only (which must confirm, as for a button start).
+    var automaticStartAllowed = false { didSet { applyAutomaticStart() } }
+    var mayStartAutomatically: (() -> Bool)?
+    var didStartAutomatically: (() -> Void)?
+    private func applyAutomaticStart() { controller?.setAutomaticStart(automaticStartAllowed && policy.state == .ready) }
     var restoreForeground: ((@escaping (Bool) -> Void) -> Void)?
     var renderSizeChanged: ((CMVideoDimensions) -> Void)?
 
@@ -100,6 +113,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         let timer = Timer(timeInterval: max(0.001, next.validUntil - ProcessInfo.processInfo.systemUptime), repeats: false) { [weak self] _ in self?.stop() }
         expiryTimer = timer; RunLoop.main.add(timer, forMode: .common)
         controller?.invalidatePlaybackState()
+        applyAutomaticStart()
         synchronizeSource(); didChangeState?(policy.state)
     }
     private func preparationMatches(_ preparation: UUID, admission: VideoPresentationAdmission) -> Bool {
@@ -118,11 +132,12 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         }
         source = LivePiPSource(track: track, admission: admission, fence: fence) { [weak self] in self?.offer($0) }
     }
-    /// Deliberate foreground button action only. The attached inline display layer must be visible.
+    /// Deliberate foreground button action, or (`automatic`) the OS starting PiP as the user leaves the app.
+    /// The attached inline display layer must be visible.
     @discardableResult
-    func startFromUserAction(foreground: Bool) -> Bool {
+    func startFromUserAction(foreground: Bool, automatic: Bool = false) -> Bool {
         precondition(Thread.isMainThread)
-        guard foreground, policy.state == .ready, mediaOwner == nil,
+        guard foreground || automatic && automaticStartAllowed, policy.state == .ready, mediaOwner == nil,
               let admission = policy.admission,
               admission.permits(at: ProcessInfo.processInfo.systemUptime),
               let controller, let fence else { return false }
@@ -158,7 +173,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         guard isPossible, mediaOwner == owner,
               startContextMatches(controller, admission: admission, fence: fence, state: .ready),
               MainActor.assumeIsolated({ mediaSession.contains(owner) }),
-              policy.userStart(foreground: foreground, supported: isSupported, possible: isPossible,
+              policy.userStart(foreground: foreground || automatic, supported: isSupported, possible: isPossible,
                                at: ProcessInfo.processInfo.systemUptime) else {
             releaseMediaOwner(owner); return false
         }
@@ -173,7 +188,8 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
             if self.controller === controller { stop() }
             return false
         }
-        controller.start(); synchronizeSource(); didChangeState?(policy.state); return true
+        if !automatic { controller.start() } // An automatic start is already under way in the OS.
+        applyAutomaticStart(); synchronizeSource(); didChangeState?(policy.state); return true
     }
     private func startContextMatches(_ controller: any LivePiPPlatformController, admission: VideoPresentationAdmission,
                                      fence: VideoPresentationFence, state: LivePiPPolicy.State) -> Bool {
@@ -207,7 +223,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         policy.stop(); expiryTimer?.invalidate(); expiryTimer = nil
         policy.didStop(); synchronizeSource()
         oldSource?.detach(); oldSink?.invalidate()
-        oldController?.stop(); oldController?.detachDelegate()
+        oldController?.setAutomaticStart(false); oldController?.stop(); oldController?.detachDelegate()
         // A synchronous OS stop callback may have installed a new run. Release only this capsule.
         if let oldOwner { MainActor.assumeIsolated { mediaSession.release(oldOwner) } }
         didChangeState?(policy.state)
@@ -215,6 +231,18 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     private func matchesNative(_ controller: AVPictureInPictureController) -> Bool {
         self.controller?.nativeController === controller
     }
+    func pictureInPictureControllerWillStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        guard matchesNative(controller), policy.state == .ready else { return } // A button start is already .starting.
+        beginAutomaticStart(self.controller)
+    }
+    private func beginAutomaticStart(_ candidate: (any LivePiPPlatformController)?) {
+        guard let candidate, candidate === controller, mayStartAutomatically?() == true,
+              candidate === controller, startFromUserAction(foreground: false, automatic: true) else { stop(); return }
+        didStartAutomatically?()
+    }
+    #if DEBUG
+    func automaticStartForTesting(_ candidate: any LivePiPPlatformController) { beginAutomaticStart(candidate) }
+    #endif
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
         guard matchesNative(controller) else { controller.stopPictureInPicture(); return }
         confirmPlatformStart(controller: self.controller)
