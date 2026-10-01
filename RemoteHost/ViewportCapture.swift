@@ -116,6 +116,12 @@ enum ViewportCapturePolicy {
         return ratio < shrinkBelow || ratio >= growFrom ? target : held
     }
 
+    /// Only the phone's regular heartbeat states its viewport. LTR acknowledgements and pointer probes
+    /// also travel as heartbeats, without one, and must not drop the crop between two regular ones.
+    static func describesViewport(_ heartbeat: RemoteAction) -> Bool {
+        heartbeat.videoFeedback == nil && heartbeat.pointerProbe == nil
+    }
+
     /// A restart keeps the last viewport only while it still lies on the new display.
     static func isValid(_ viewport: ViewportRegion, for display: DisplayGeometry) -> Bool {
         guard (try? viewport.validate()) != nil, display.isValid else { return false }

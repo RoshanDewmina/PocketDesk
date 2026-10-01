@@ -346,6 +346,7 @@ final class PhoneRemoteModel: ObservableObject {
     private var phoneLoad: PhoneLoadFeedback?
     private var phoneLoadReportedAt: TimeInterval?
     private var viewportSendTask: Task<Void, Never>?
+    private var viewportSendAt: TimeInterval?
     private var nativeScreenPixels: PixelSize?
     @Published var streamQuality: StreamQuality = .sharp {
         didSet {
@@ -1487,15 +1488,16 @@ final class PhoneRemoteModel: ObservableObject {
 
     /// The session view reports every change of what it shows; `settled` when a gesture has ended.
     func viewportChanged(_ request: ViewportCaptureRequest?, settled: Bool = false) {
-        viewportReporter.update(request)
-        sendViewportChange(settled: settled, at: ProcessInfo.processInfo.systemUptime)
+        let now = ProcessInfo.processInfo.systemUptime
+        viewportReporter.update(request, at: now)
+        sendViewportChange(settled: settled, at: now)
     }
 
     /// Everything a phone heartbeat carries. The viewport rides along only after the Mac advertised
     /// viewport capture, so an older Mac receives what it always did, plus `screenPixels`, which it ignores.
     func heartbeatAction(clock: ClockProbe? = nil,
                          at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> RemoteAction {
-        let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize, at: now) : nil
+        let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize) : nil
         let load = hostFeatures.contains(SessionFeature.ladder) &&
             phoneLoadReportedAt.map({ now >= $0 && now - $0 <= 2.5 }) == true ? phoneLoad : nil
         return RemoteAction(action: "heartbeat", epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
@@ -1543,7 +1545,8 @@ final class PhoneRemoteModel: ObservableObject {
 
     private func sendViewportChange(settled: Bool, at now: TimeInterval) {
         guard viewportCaptureSupported, connection.connected else { return }
-        switch viewportReporter.nextSend(settled: settled, at: now) {
+        let coverage = captureRegion?.rect ?? ViewportTransform.wholeDisplayRect(for: sourceSize)
+        switch viewportReporter.nextSend(settled: settled, coverage: coverage, at: now) {
         case .none:
             return
         case .at(let time):
@@ -1551,18 +1554,23 @@ final class PhoneRemoteModel: ObservableObject {
         case .now:
             viewportSendTask?.cancel()
             viewportSendTask = nil
+            viewportSendAt = nil
+            guard viewportReporter.commit(settled: settled, coverage: coverage, forDisplay: sourceSize, at: now) else { return }
             let action = heartbeatAction(at: now)
             if action.viewport != nil { _ = connection.sendControl(action) }
         }
     }
 
     private func scheduleViewportChange(at time: TimeInterval) {
-        guard viewportSendTask == nil else { return }
+        if viewportSendTask != nil, let scheduled = viewportSendAt, scheduled <= time { return }
+        viewportSendTask?.cancel()
+        viewportSendAt = time
         let delay = max(0, time - ProcessInfo.processInfo.systemUptime)
         viewportSendTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
             guard !Task.isCancelled, let self else { return }
             self.viewportSendTask = nil
+            self.viewportSendAt = nil
             self.sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
         }
     }
@@ -2928,6 +2936,7 @@ let now = ProcessInfo.processInfo.systemUptime
         ladder = nil
         viewportSendTask?.cancel()
         viewportSendTask = nil
+        viewportSendAt = nil
         viewportReporter.sessionEnded()
         phoneLoad = nil
         phoneLoadReportedAt = nil

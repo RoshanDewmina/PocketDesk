@@ -3,8 +3,8 @@ import CoreGraphics
 
 /// Phone → Mac on heartbeats (G4, Docs/perf/PLAN-120FPS-AND-LOAD.md §4): the part of the desktop
 /// the phone shows, in Mac points, and the phone's viewport in device pixels. Sent only after the
-/// Mac advertised `SessionFeature.viewportCapture`, debounced about 120 ms after a gesture settles
-/// and on rotation or keyboard changes. `epoch` increases with every change; the Mac echoes it in
+/// Mac advertised `SessionFeature.viewportCapture`; during a gesture only when the stream no longer
+/// covers the view (`ViewportReporter`). `epoch` increases with every change; the Mac echoes it in
 /// `CaptureRegion` so the phone knows which frames show which region.
 struct ViewportRegion: Codable, Equatable {
     var epoch: UInt64
