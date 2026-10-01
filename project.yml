@@ -89,7 +89,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote
-        CURRENT_PROJECT_VERSION: '20260930.11'
+        CURRENT_PROJECT_VERSION: '20260930.12'
         MARKETING_VERSION: '1.0'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
@@ -137,7 +137,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote.Widgets
-        CURRENT_PROJECT_VERSION: '20260930.11'
+        CURRENT_PROJECT_VERSION: '20260930.12'
         MARKETING_VERSION: '1.0'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
@@ -158,7 +158,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.Remote.Share
-        CURRENT_PROJECT_VERSION: '20260930.11'
+        CURRENT_PROJECT_VERSION: '20260930.12'
         MARKETING_VERSION: '1.0'
         DEVELOPMENT_TEAM: 39HM2X8GS6
         CODE_SIGN_STYLE: Automatic
@@ -229,7 +229,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Farside
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        CURRENT_PROJECT_VERSION: '20260930.11'
+        CURRENT_PROJECT_VERSION: '20260930.12'
         MARKETING_VERSION: '1.0'
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect directly to your paired iPhone or iPad on your local network.
         INFOPLIST_FILE: RemoteHost/Info.plist
