@@ -2811,7 +2811,7 @@ final class RemoteHostModel: ObservableObject {
         // A caller's Couch flag can be up to one tick old; a token must reflect health at this moment.
         let healthy = sessionState == .couch ? requestedHealthy && refreshCouchHealth() : requestedHealthy && awayPictureClear
         let features = connection.peerFeatures
-        connection.media?.videoFeedback.configure(allowed: healthy && sessionState == .picture && active && !phonePause.isPaused &&
+        connection.media?.videoFeedback.configure(allowed: healthy && !away.isLocking && sessionState == .picture && active && !phonePause.isPaused &&
             (features.contains(SessionFeature.videoLTR) || features.contains(SessionFeature.videoRefinement)),
             ltr: features.contains(SessionFeature.videoLTR), refinement: features.contains(SessionFeature.videoRefinement), geometry: inputEpoch.value, scope: captureScopeEpoch)
         connection.media?.configureVideoRefinement(enabled: healthy && sessionState == .picture && active && !phonePause.isPaused && features.contains(SessionFeature.videoRefinement), geometry: inputEpoch.value, scope: captureScopeEpoch)

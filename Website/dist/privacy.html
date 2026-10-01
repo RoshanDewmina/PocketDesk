@@ -119,7 +119,7 @@
 <p>Each time a device connects, our service receives its IP address (as any internet service does), the random room identifier, a random token and the time. It keeps live connection state in memory only while devices are connected. It keeps a list of approved room identifiers so that only paired Macs can use the service.</p>
 <p>If a direct connection is not possible and you have the Anywhere plan, your encrypted stream passes through a relay run by our provider Cloudflare. Cloudflare can see IP addresses, port numbers, timing and how much data passed. It cannot decrypt the stream. Relay credentials are short-lived and tied to a random room identifier, not to you. To find network addresses, connection setup may also contact a STUN server operated by Cloudflare.</p>
 </section><section class="doc-sec" aria-labelledby="notifications"><h2 id="notifications">Notifications (agent alerts, beta)</h2>
-<p>Farside only asks to send notifications if you turn on agent alerts. To deliver them, your phone’s Apple push notification token is sent to our server and stored with the random room identifier of the Mac it belongs to. Alerts say which agent needs you and contain no screen contents, prompts or file names. You can turn them off in iOS Settings or in the app, which deletes the token.</p>
+<p>Farside only asks to send notifications if you turn on agent alerts. To deliver them, your phone’s Apple push notification token is sent to our server and stored with the random room identifier of the Mac it belongs to. Notifications say a task on your Mac needs you and contain no screen contents, prompts or file names. An alert’s opaque pairing identity keeps an explicit connection tied to its originating Mac. You can turn them off in iOS Settings or in the app, which deletes the token.</p>
 </section><section class="doc-sec" aria-labelledby="subscription"><h2 id="subscription">Subscription information</h2>
 <p>The Anywhere plan is an auto-renewing subscription bought through Apple. Apple, not us, processes payment. To unlock relay access, the app sends the signed transaction that Apple provides to our server. Our server verifies it with Apple and stores: which subscription product it is, when it renews or expires, Apple’s identifier for the subscription (Apple’s original transaction ID), whether it is a live or test purchase, and which paired room identifiers it has enabled.</p>
 <p>We also receive notices from Apple about renewals, cancellations and refunds so that access matches your subscription. We keep this while your subscription is active and for <span class="tbd">90 days</span> <span class="placeholder">(to be confirmed)</span> afterwards, then delete it.</p>
@@ -195,6 +195,7 @@ Who we are: <span class="placeholder">legal name (to be confirmed)</span>, <span
       </ul></div>
       <div><h2>Help</h2><ul role="list">
         <li><a href="/support">Support</a></li>
+        <li><a href="/status">Service status</a></li>
         <li><a href="/support#messages">What a message means</a></li>
         <li><a href="/#beta">Join the beta</a></li>
         <li><a href="/privacy">Privacy policy</a></li>

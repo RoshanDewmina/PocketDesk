@@ -5,7 +5,7 @@
 Key facts:
 
 - Free on the same local network as the Mac, with no account and no ads.
-- The Anywhere plan adds access over the internet through an encrypted relay: planned at CA$5.99 a month or CA$49.99 a year, with a 7-day free trial, sold only inside the iPhone and iPad app through Apple.
+- The Anywhere plan adds access over the internet through an encrypted relay: planned at CA$7.99 a month or CA$59.99 a year, with a 7-day free trial, sold only inside the iPhone and iPad app through Apple.
 - The Mac helper is a free download from this website, signed with an Apple Developer ID and notarized by Apple. The iPhone and iPad app will be on the App Store.
 - Planned requirements: macOS 26 or later; iOS 26 or later; iPadOS 26 or later.
 - "Agent needs you" alerts for AI coding agents running on the Mac arrive as a beta; alerts carry no prompts, file names or screen content.
@@ -26,6 +26,7 @@ Key facts:
 ## Help
 
 - [Support](https://farside.example/support): setup, gestures, a can't-connect checklist, what every app message means, billing, contact
+- [Service status](https://farside.example/status): current service updates or explicitly unverified availability, authorized connection test and help
 
 ## Legal
 

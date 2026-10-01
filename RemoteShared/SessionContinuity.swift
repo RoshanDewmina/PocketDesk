@@ -91,7 +91,7 @@ enum HostLifecycleEvent: String {
 enum PhoneSessionNotice {
     static let hostRecovered = "Your Mac’s Farside restarted — reconnected."
     static let curtainLiftedLocally = "Someone at your Mac lifted the privacy curtain."
-    static let awayCovered = "Mac covered · locks if touched"
+    static let awayCovered = "Mac covered · requests a lock if touched"
     static let awayCantUnlock = "Away mode can’t unlock it."
     static let curtainFailed = "Your Mac couldn’t hide its screen safely, so it stayed visible."
 
