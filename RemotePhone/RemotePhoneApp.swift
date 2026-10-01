@@ -325,7 +325,9 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     /// G4: the part of the display the frames cover, as the Mac last reported it; nil for the whole display.
-    @Published private(set) var captureRegion: CaptureRegion? { willSet { if newValue != captureRegion { retireContentPresentation() } } }
+    // Not a presentation boundary: every viewport echo and ladder step changes it while the display,
+    // geometry epoch and owner stay the same. Retiring here blanked the picture several times a second.
+    @Published private(set) var captureRegion: CaptureRegion?
     /// G12: the Mac's own account of its load, for the pill; nil from a Mac without the ladder.
     @Published private(set) var busy: BusyState?
     /// The Mac's battery, temperature and load as last received; read through `currentMacVitals(now:)`.
@@ -1475,6 +1477,13 @@ final class PhoneRemoteModel: ObservableObject {
         return region
     }
 
+    /// Echoes renew only the epoch, up to 10 times a second; nothing on the phone reads it, so they
+    /// must not republish the region and re-render the session view.
+    static func regionCoverageChanged(_ old: CaptureRegion?, _ new: CaptureRegion?) -> Bool {
+        guard let old, let new else { return (old == nil) != (new == nil) }
+        return old.rect != new.rect || old.outputWidth != new.outputWidth || old.outputHeight != new.outputHeight
+    }
+
     private func sendViewportChange(settled: Bool, at now: TimeInterval) {
         guard viewportCaptureSupported, connection.connected else { return }
         switch viewportReporter.nextSend(settled: settled, at: now) {
@@ -2524,7 +2533,7 @@ let now = ProcessInfo.processInfo.systemUptime
             if displaySelectionSupported && !displaysRequested { requestDisplays() }
             let region = Self.croppedRegion(action.captureRegion, statusEpoch: action.epoch,
                                             geometryEpoch: geometryEpoch)
-            if region != captureRegion { captureRegion = region }
+            if Self.regionCoverageChanged(captureRegion, region) { captureRegion = region }
             if action.busy != busy { busy = action.busy }
             let now = ProcessInfo.processInfo.systemUptime
             let vitals = hostFeatures.contains(SessionFeature.macVitals) ? action.macVitals : nil
@@ -2716,6 +2725,7 @@ let now = ProcessInfo.processInfo.systemUptime
         acceptedLockMacRequest(request)
         return true
     }
+    var presentationContentEpochForTesting: UInt64 { presentationContentEpoch }
     /// Inject a finite, terminal presentation lease at the downstream model boundary, not network authority.
     func admitPiPProofForTesting(validUntil: TimeInterval) -> VideoPresentationAdmission {
         let proof = VideoPresentationAdmission(identity: .init(hostRecordID: "fixture-host", ownerPairID: "fixture-owner",

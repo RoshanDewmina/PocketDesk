@@ -393,4 +393,26 @@ final class ViewportCaptureTests: XCTestCase {
                        "the whole display renders as before")
         XCTAssertEqual(RemoteVideoSurface.contentMode(fillsFrame: true), .scaleToFill)
     }
+
+    /// The 20261001.1 blank: every viewport echo (new epoch, same rect) and every ladder step (new
+    /// output size) retired the content presentation, removing the picture until a new frame drew.
+    func testRegionEchoAndLadderStepKeepThePresentation() throws {
+        let model = try sessionModel(features: [SessionFeature.viewportCapture])
+        func status(_ region: CaptureRegion) throws {
+            try deliver(RemoteAction(action: "capture", x: 1, epoch: 4, features: [SessionFeature.viewportCapture],
+                                     captureRegion: region), to: model)
+        }
+        try status(CaptureRegion(epoch: 45, x: 0, y: 283, width: 1504, height: 960, outputWidth: 1920, outputHeight: 1232))
+        XCTAssertNotNil(model.captureRegion)
+        let content = model.presentationContentEpochForTesting
+        try status(CaptureRegion(epoch: 46, x: 0, y: 283, width: 1504, height: 960, outputWidth: 1920, outputHeight: 1232))
+        XCTAssertEqual(model.captureRegion?.epoch, 45, "an epoch-only echo does not republish the region")
+        try status(CaptureRegion(epoch: 46, x: 0, y: 283, width: 1504, height: 960, outputWidth: 1280, outputHeight: 816))
+        XCTAssertEqual(model.captureRegion?.outputWidth, 1280)
+        try status(CaptureRegion(epoch: 50, x: 0, y: 243, width: 1568, height: 1000, outputWidth: 1280, outputHeight: 816))
+        XCTAssertEqual(model.captureRegion?.epoch, 50)
+        XCTAssertEqual(model.presentationContentEpochForTesting, content)
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 5), to: model)
+        XCTAssertNotEqual(model.presentationContentEpochForTesting, content, "a new geometry epoch still retires")
+    }
 }
