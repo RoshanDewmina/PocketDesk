@@ -281,6 +281,17 @@ final class ViewportCaptureTests: XCTestCase {
                                                                       pointPixelScale: 0)))
     }
 
+    func testOnlyARegularHeartbeatStatesTheViewport() {
+        let viewport = centered(zoom: 3, on: asus)
+        XCTAssertTrue(Policy.describesViewport(RemoteAction(action: "heartbeat", epoch: 4, viewport: viewport)))
+        XCTAssertTrue(Policy.describesViewport(RemoteAction(action: "heartbeat", epoch: 4)),
+                      "a regular heartbeat without one returns to the whole display")
+        let ack = VideoFeedback(operation: .ltrAck, generation: "g", nonce: "n", token: 7, scopeEpoch: 1)
+        XCTAssertFalse(Policy.describesViewport(RemoteAction(action: "heartbeat", epoch: 4, videoFeedback: ack)),
+                       "an LTR acknowledgement must not drop the crop")
+        XCTAssertFalse(Policy.describesViewport(RemoteAction(action: "heartbeat", epoch: 4, pointerProbe: "probe-1")))
+    }
+
     func testOnlyGeometryChangesReconfigureTheStream() {
         let crop = CaptureRegion(epoch: 3, x: 512, y: 288, width: 1536, height: 864,
                                  outputWidth: 1536, outputHeight: 864)
