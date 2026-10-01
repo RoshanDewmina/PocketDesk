@@ -876,6 +876,7 @@ final class PeerMedia: NSObject {
                 self.receivingBudget = H264FrameBudget.receivingLimit(sdp: sdp)
                 self.adaptedFormat = nil
                 self.captureLock.unlock()
+                self.resourceBudget.observePeerMaxMessageSize(BulkAdmissionPolicy.maxMessageSize(sdp: sdp))
                 self.remoteDescriptionReady = true
                 self.remoteDescriptionsApplied += 1
                 self.configureNativeSender()
@@ -1021,6 +1022,7 @@ final class PeerMedia: NSObject {
         self.targetFPS = fps
         ladderState = nil
         captureLock.unlock()
+        observeLadder(nil)
         self.displayRefreshHz = displayRefreshHz
         captureDisplay = display
         reconfigureSenderRate()
@@ -1037,7 +1039,13 @@ final class PeerMedia: NSObject {
         captureLock.lock()
         ladderState = applied
         captureLock.unlock()
+        observeLadder(applied)
         reconfigureSenderRate()
+    }
+
+    /// DF10: the host's own rung, or on the phone the Mac's rung from its capture status. A step down backs files off.
+    func observeLadder(_ state: LadderState?) {
+        resourceBudget.observeLadder(steppedDown: (state?.rung ?? 0) > 0)
     }
 
     private func reconfigureSenderRate() {

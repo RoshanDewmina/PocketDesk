@@ -7,14 +7,15 @@ import CryptoKit
 enum FileTransferLimits {
     static let maximumBytes: Int64 = 1 << 30
     static let chunkHeaderBytes = 28
-    /// Receive compatibility with existing file.1 peers; new sends remain smaller.
+    /// Every file.1 receiver accepts 64 KiB. The link's budget picks each message's size: 64 KiB only on the
+    /// calm-LAN fast lane with a peer whose SDP max-message-size allows it, otherwise 16 KiB.
     static let maximumMessageBytes = 64 * 1024
-    static let maximumOutgoingMessageBytes = 16 * 1024
-    /// Without proven SCTP message interleaving, keep both paths within 16 KiB.
+    static let maximumOutgoingMessageBytes = maximumMessageBytes
     static let directChunkPayload = maximumOutgoingMessageBytes - chunkHeaderBytes
     /// Smaller relay chunks bound how long one message holds the shared association ahead of input.
     static let relayChunkPayload = 16 * 1024 - chunkHeaderBytes
-    static let directHighWater: UInt64 = 32 * 1024
+    /// An upper bound only: the budget's own queue bound (2 MiB fast lane, else 32 KiB) governs admission.
+    static let directHighWater: UInt64 = BulkAdmissionPolicy.fastLaneBufferedBytes
     static let relayHighWater: UInt64 = 32 * 1024
     /// Backstop only, kept above the media governor's relay ceiling; the governor adapts/pauses actual sends.
     static let relayBytesPerSecond: Double = 250_000

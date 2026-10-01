@@ -8,7 +8,7 @@ final class FileTransferFramingTests: XCTestCase {
     func testChunkRoundTripsTransferOffsetAndPayload() throws {
         let payload = Data((0..<FileTransferLimits.directChunkPayload).map { UInt8(truncatingIfNeeded: $0 * 7) })
         let message = try XCTUnwrap(FileChunk.encode(transfer: transfer, offset: 1_000_000_123, payload: payload))
-        XCTAssertEqual(message.count, FileTransferLimits.maximumOutgoingMessageBytes, "new sends are bounded to 16 KiB without interleaving")
+        XCTAssertEqual(message.count, FileTransferLimits.maximumMessageBytes, "fast-lane sends stay within every file.1 receiver's 64 KiB")
         XCTAssertEqual(FileChunk.decode(message), FileChunk.Decoded(transfer: transfer, offset: 1_000_000_123, payload: payload))
         let small = try XCTUnwrap(FileChunk.encode(transfer: transfer, offset: 65_508, payload: Data([1, 2, 3])))
         XCTAssertEqual(FileChunk.decode(small), FileChunk.Decoded(transfer: transfer, offset: 65_508, payload: Data([1, 2, 3])))
@@ -359,7 +359,7 @@ final class FileTransferEngineTests: XCTestCase {
         let saved = try XCTUnwrap(macFinishes.first?.savedURL)
         XCTAssertEqual(try Data(contentsOf: saved), data)
         XCTAssertEqual(files(), ["report.pdf"])
-        XCTAssertEqual(toMac.sentMessages, 193)
+        XCTAssertEqual(toMac.sentMessages, 49)
         XCTAssertEqual(toMac.largestMessage, FileTransferLimits.maximumOutgoingMessageBytes)
         XCTAssertEqual(Array(controlFrames.prefix(2)), ["offer", "accept"])
         XCTAssertTrue(controlFrames.contains("complete"))

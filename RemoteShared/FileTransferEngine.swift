@@ -566,7 +566,7 @@ final class FileTransferIO: @unchecked Sendable {
     }
     private final class Sending {
         let work: Outgoing, link: FileChannelLink, chunk: Int, highWater: UInt64
-        var pacer: FilePacer, hasher = SHA256(), sent: Int64 = 0, pumpScheduled = false
+        var pacer: FilePacer, hasher = SHA256(), sent: Int64 = 0, pumpScheduled = false, awaitingDrain = false
         init(work: Outgoing, link: FileChannelLink, chunk: Int, highWater: UInt64, pacer: FilePacer) {
             self.work = work; self.link = link; self.chunk = chunk; self.highWater = highWater; self.pacer = pacer
         }
@@ -584,6 +584,8 @@ final class FileTransferIO: @unchecked Sendable {
     private var sending: Sending? // IO queue only.
     private var receiving: Receiving?
     private static let chunksPerTurn = 64
+    /// Refill comes from the channel's buffered-amount callbacks (`wake`); this timer is only a backstop.
+    static let drainBackstop: TimeInterval = 0.02
     init(queue: DispatchQueue = DispatchQueue(label: "Farside.file-transfer", qos: .utility)) { self.queue = queue }
 
     func reserveSending(transfer: String, source: FileByteSource) -> Outgoing {
@@ -620,10 +622,15 @@ final class FileTransferIO: @unchecked Sendable {
         while sending.sent < total {
             guard work.lease.isActive else { return }
             guard let buffered = sending.link.fileBufferedAmount else { fail(sending, .connectionLost); return }
-            if buffered >= sending.highWater { schedule(sending, after: 0.005); return }
             let now = ProcessInfo.processInfo.systemUptime
             let chunk = min(sending.chunk, max(1, sending.link.fileMessageBytes(at: now) - FileTransferLimits.chunkHeaderBytes))
             let size = Int(min(Int64(chunk), total - sending.sent))
+            // Low-water refill: once full, wait until half the queue has drained so each wake sends a batch.
+            if buffered + UInt64(size + FileTransferLimits.chunkHeaderBytes) > sending.highWater
+                || (sending.awaitingDrain && buffered > sending.highWater / 2) {
+                sending.awaitingDrain = true; schedule(sending, after: Self.drainBackstop); return
+            }
+            sending.awaitingDrain = false
             guard sending.pacer.allows(size, at: now) else { schedule(sending, after: 0.01); return }
             guard sending.link.permitsFileSend(bytes: size + FileTransferLimits.chunkHeaderBytes, at: now) else {
                 sending.pacer.refund(size); schedule(sending, after: 0.01); return

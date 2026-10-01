@@ -2557,6 +2557,7 @@ let now = ProcessInfo.processInfo.systemUptime
             }
             if let notice = vitalsNotices.observe(vitals, pill: busy, now: now) { announce(notice) }
             ladder = action.ladder
+            connection.media?.observeLadder(action.ladder)
             sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
         case "geometry":
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
@@ -2574,6 +2575,7 @@ let now = ProcessInfo.processInfo.systemUptime
             captureRegion = nil
             busy = nil
             ladder = nil
+            connection.media?.observeLadder(nil)
             fresh = false
             captureHealthy = false
             lastFrame = 0

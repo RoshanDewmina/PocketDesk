@@ -131,7 +131,7 @@ final class MediaResourceBudgetTests: XCTestCase {
     }
 
     func testLANAllowanceBucketReachesTheAllowanceAt10msPumpTicksAndStaysGoverned() {
-        let budget = MediaResourceBudget()
+        let budget = MediaResourceBudget(fastLane: false) // The kill-switch and ladder-step fallback.
         var lan = sample(route: "Direct", capacity: nil, rtt: 8); lan.routeDetail = "lan"
         budget.observe(lan)
         var admitted = 0
@@ -150,6 +150,46 @@ final class MediaResourceBudgetTests: XCTestCase {
         XCTAssertFalse(budget.permits(bytes: 1, at: 1.5, controlBuffered: 0, fileBuffered: 0), "selected route detail change retires LAN credit")
         budget.end(); lan.at = 2; budget.observe(lan)
         XCTAssertFalse(budget.permits(bytes: 1, at: 2.1, controlBuffered: 0, fileBuffered: 0))
+    }
+
+    func testCalmLANFastLaneQueuesMebibytesInLargeMessagesAndBacksOffForInputLadderAndKillSwitch() {
+        var lan = sample(route: "Direct", capacity: nil, rtt: 8); lan.routeDetail = "lan"; lan.rttSampleMs = 8
+        XCTAssertEqual(BulkAdmissionPolicy.maxMessageSize(sdp: "v=0\r\na=sctp-port:5000\r\na=max-message-size:262144\r\n"), 262_144)
+        XCTAssertNil(BulkAdmissionPolicy.maxMessageSize(sdp: "v=0\r\na=sctp-port:5000\r\n"))
+        let budget = MediaResourceBudget(fastLane: true)
+        budget.observe(lan)
+        XCTAssertEqual(budget.messageBytes(at: 0.1), 16_384, "64 KiB only once the peer's SDP allows it")
+        budget.observePeerMaxMessageSize(262_144)
+        XCTAssertEqual(budget.messageBytes(at: 0.1), 65_536)
+        XCTAssertTrue(budget.permits(bytes: 65_536, at: 0.2, controlBuffered: 0, fileBuffered: 1_900_000), "MiB-scale queue")
+        XCTAssertFalse(budget.permits(bytes: 65_536, at: 0.3, controlBuffered: 0, fileBuffered: 2_040_000), "bounded at 2 MiB")
+        var admitted = 0
+        for tick in 1...100 where budget.permits(bytes: 65_536, at: 0.3 + Double(tick) / 100, controlBuffered: 0, fileBuffered: 0) {
+            admitted += 65_536
+        }
+        XCTAssertGreaterThan(admitted, 20_000_000, "tens of MB/s, not the 1 MB/s floor")
+        XCTAssertLessThanOrEqual(admitted, 26_000_000, "still a bounded allowance")
+        XCTAssertFalse(budget.permits(bytes: 65_536, at: 1.4, controlBuffered: 1, fileBuffered: 0), "queued input pauses files")
+
+        budget.observeLadder(steppedDown: true)
+        XCTAssertEqual(budget.messageBytes(at: 1.5), 16_384, "a ladder step backs off to the conservative lane")
+        XCTAssertFalse(budget.permits(bytes: 65_536, at: 1.5, controlBuffered: 0, fileBuffered: 0))
+        XCTAssertFalse(budget.permits(bytes: 16_384, at: 1.6, controlBuffered: 0, fileBuffered: 40_000), "32 KiB queue again")
+        budget.observeLadder(steppedDown: false)
+        XCTAssertEqual(budget.messageBytes(at: 1.7), 65_536)
+        budget.observePeerMaxMessageSize(65_535)
+        XCTAssertEqual(budget.messageBytes(at: 1.7), 16_384, "a peer that cannot take 64 KiB keeps 16 KiB messages")
+
+        var busy = lan; busy.at = 1.8; busy.rttSampleMs = 30; budget.observe(busy)
+        XCTAssertFalse(budget.permits(bytes: 16_384, at: 1.9, controlBuffered: 0, fileBuffered: 100_000), "an RTT rise leaves the fast lane")
+
+        let disabled = MediaResourceBudget(fastLane: false)
+        disabled.observe(lan); disabled.observePeerMaxMessageSize(0)
+        XCTAssertEqual(disabled.messageBytes(at: 0.1), 16_384, "kill switch keeps the old lane")
+        XCTAssertFalse(disabled.permits(bytes: 16_384, at: 0.2, controlBuffered: 0, fileBuffered: 40_000))
+        var relay = lan; relay.route = "Relay"; relay.routeDetail = "relay"
+        let relayed = MediaResourceBudget(fastLane: true); relayed.observe(relay); relayed.observePeerMaxMessageSize(0)
+        XCTAssertEqual(relayed.messageBytes(at: 0.1), BulkAdmissionPolicy.messageBytes(rate: 48_000), "relay pacing is unchanged")
     }
 
     func testBucketHoldsThirtyMillisecondsOfCreditButNeverLessThanOneMessage() {
