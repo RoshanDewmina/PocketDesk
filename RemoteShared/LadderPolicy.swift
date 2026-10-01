@@ -98,9 +98,6 @@ enum LadderTrigger: CaseIterable {
 /// - A target change restarts at the top of the new ladder.
 struct LadderPolicy: LadderEngine {
     static let downSamples = 2
-    /// A rung must hold this long before another load step-down; each step restarts the encoder, and
-    /// alternating encoding/phone/network reasons on a busy Mac otherwise walk the ladder every window.
-    static let minDwell: TimeInterval = 10
     static let upAfter: TimeInterval = 10
     static let maxClimbWait: TimeInterval = 60
     static let failedClimbWindow: TimeInterval = 10
@@ -170,9 +167,7 @@ struct LadderPolicy: LadderEngine {
             stepDown(because: thermal.reason, at: time)
             return
         }
-        let immediate = firing.contains(where: \.isImmediate)
-        let dwelt = lastMoveAt.map { time - $0 >= Self.minDwell } ?? true
-        if let load, !atFloor, immediate || (loadSamples >= Self.downSamples && dwelt) {
+        if let load, !atFloor, loadSamples >= Self.downSamples || firing.contains(where: \.isImmediate) {
             stepDown(because: load.reason, at: time)
             return
         }
