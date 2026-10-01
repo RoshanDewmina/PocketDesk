@@ -13,12 +13,18 @@ enum ViewportPreference {
     }
 }
 
-/// G4: when the phone tells the Mac which part of the desktop it shows. The newest request rides on
-/// every regular heartbeat, so a restarted Mac re-applies it; a change also leaves on a heartbeat of its
-/// own, at once when a gesture settles and otherwise at most every 100 ms. Each change sent takes the
-/// next epoch; an unchanged request keeps its epoch.
+/// G4: when the phone tells the Mac which part of the desktop it shows. Each change sent takes the next
+/// epoch, and every regular heartbeat repeats the newest one sent, so a restarted Mac re-applies it.
+///
+/// Every crop change costs the picture a few mis-scaled frames: the phone places frames by the region the
+/// Mac echoes on `capture` status, and that status travels apart from the video (MS21; recording
+/// 15:26:33 on 1 Oct, where the picture's scale jumped back and forth while the zoom readout fell
+/// steadily from 4.8x to 3.1x). So while a gesture runs, a change the stream still covers waits until the
+/// gesture settles or rests for `quietInterval`; a change it no longer covers leaves at most every
+/// `minimumInterval`, asking for twice the visible area, so a pinch out re-crops once per halving.
 struct ViewportReporter {
     static let minimumInterval: TimeInterval = 0.1
+    static let quietInterval: TimeInterval = 0.3
 
     enum Send: Equatable {
         case none
@@ -30,34 +36,63 @@ struct ViewportReporter {
     private(set) var epoch: UInt64 = 0
     private var sent: ViewportCaptureRequest?
     private var lastSentAt = -TimeInterval.infinity
+    private var changedAt = -TimeInterval.infinity
 
     var hasUnsentChange: Bool { request != nil && request != sent }
 
-    mutating func update(_ request: ViewportCaptureRequest?) {
+    mutating func update(_ request: ViewportCaptureRequest?, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        if request != self.request { changedAt = now }
         self.request = request
     }
 
-    /// When the newest request should leave on its own heartbeat.
-    func nextSend(settled: Bool, at now: TimeInterval) -> Send {
-        guard hasUnsentChange else { return .none }
-        let due = lastSentAt + Self.minimumInterval
-        return settled || now >= due ? .now : .at(due)
-    }
-
-    /// The region for a heartbeat leaving now; nil while the request belongs to another display.
-    mutating func region(forDisplay displaySize: CGSize, at now: TimeInterval) -> ViewportRegion? {
-        guard let request, request.displaySize == displaySize else { return nil }
-        if request != sent {
-            epoch += 1
-            sent = request
+    /// When the newest request should leave on its own heartbeat. `coverage` is the desktop rect the
+    /// stream shows now (the echoed crop, or the whole display); nil leaves every change as it comes.
+    func nextSend(settled: Bool, coverage: CGRect? = nil, at now: TimeInterval) -> Send {
+        guard hasUnsentChange, let request else { return .none }
+        if settled || sent == nil { return .now }
+        // A region sent but not yet echoed also counts: the Mac is about to stream it.
+        if let coverage, let sent, Self.covers(coverage, request.rect)
+            || sent.displaySize == request.displaySize && Self.covers(sent.rect, request.rect) {
+            let quiet = changedAt + Self.quietInterval
+            return now >= quiet ? .now : .at(quiet)
         }
-        lastSentAt = now
-        return request.region(epoch: epoch)
+        let due = lastSentAt + Self.minimumInterval
+        return now >= due ? .now : .at(due)
     }
 
-    /// A new session has been sent nothing, so its first heartbeat carries the request under a new epoch.
+    /// Makes what leaves now the request heartbeats repeat; false when nothing changes or the request
+    /// belongs to another display.
+    mutating func commit(settled: Bool, coverage: CGRect? = nil, forDisplay displaySize: CGSize,
+                         at now: TimeInterval) -> Bool {
+        guard let request, request.displaySize == displaySize,
+              let next = outgoing(settled: settled, coverage: coverage, at: now), next != sent else { return false }
+        epoch += 1
+        sent = next
+        lastSentAt = now
+        return true
+    }
+
+    /// The region every heartbeat carries: the newest one sent; nil while there is no request or it
+    /// belongs to another display.
+    func region(forDisplay displaySize: CGSize) -> ViewportRegion? {
+        guard request != nil, let sent, sent.displaySize == displaySize else { return nil }
+        return sent.region(epoch: epoch)
+    }
+
+    /// A new session has been sent nothing, so its first send carries the request under a new epoch.
     mutating func sessionEnded() {
         sent = nil
         lastSentAt = -.infinity
+    }
+
+    private func outgoing(settled: Bool, coverage: CGRect?, at now: TimeInterval) -> ViewportCaptureRequest? {
+        guard let request else { return nil }
+        guard !settled, sent != nil, now < changedAt + Self.quietInterval,
+              let coverage, !Self.covers(coverage, request.rect) else { return request }
+        return request.widened(by: 2)
+    }
+
+    private static func covers(_ coverage: CGRect, _ rect: CGRect) -> Bool {
+        coverage.insetBy(dx: -0.5, dy: -0.5).contains(rect)
     }
 }

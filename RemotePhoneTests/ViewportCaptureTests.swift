@@ -54,70 +54,130 @@ final class ViewportCaptureTests: XCTestCase {
 
     // MARK: When a change leaves
 
+    private func send(_ reporter: inout ViewportReporter, settled: Bool = false, coverage: CGRect? = nil,
+                      at now: TimeInterval) -> ViewportRegion? {
+        guard reporter.commit(settled: settled, coverage: coverage, forDisplay: display, at: now) else { return nil }
+        return reporter.region(forDisplay: display)
+    }
+
     func testTheFirstChangeLeavesAtOnceThenAtMostEvery100ms() throws {
         var reporter = ViewportReporter()
         XCTAssertEqual(reporter.nextSend(settled: false, at: 10), .none, "nothing to report yet")
-        reporter.update(request(x: 100))
+        reporter.update(request(x: 100), at: 10)
         XCTAssertEqual(reporter.nextSend(settled: false, at: 10), .now)
-        XCTAssertEqual(try XCTUnwrap(reporter.region(forDisplay: display, at: 10)).epoch, 1)
+        XCTAssertEqual(try XCTUnwrap(send(&reporter, at: 10)).epoch, 1)
         XCTAssertEqual(reporter.nextSend(settled: false, at: 10.01), .none, "nothing new since")
-        reporter.update(request(x: 110))
+        reporter.update(request(x: 110), at: 10.03)
         XCTAssertEqual(reporter.nextSend(settled: false, at: 10.03), .at(10 + interval))
-        reporter.update(request(x: 120))
+        reporter.update(request(x: 120), at: 10.09)
         XCTAssertEqual(reporter.nextSend(settled: false, at: 10.09), .at(10 + interval),
                        "a running pan keeps one pending send")
         XCTAssertEqual(reporter.nextSend(settled: false, at: 10 + interval), .now)
-        let second = try XCTUnwrap(reporter.region(forDisplay: display, at: 10 + interval))
+        let second = try XCTUnwrap(send(&reporter, at: 10 + interval))
         XCTAssertEqual(second.epoch, 2, "positions that were never sent use no epoch")
         XCTAssertEqual(second.x, 120)
     }
 
     func testASettledGestureLeavesAtOnce() {
         var reporter = ViewportReporter()
-        reporter.update(request(x: 100))
-        _ = reporter.region(forDisplay: display, at: 5)
-        reporter.update(request(x: 150))
+        reporter.update(request(x: 100), at: 5)
+        _ = send(&reporter, at: 5)
+        reporter.update(request(x: 150), at: 5.02)
         XCTAssertEqual(reporter.nextSend(settled: false, at: 5.02), .at(5 + interval))
         XCTAssertEqual(reporter.nextSend(settled: true, at: 5.02), .now)
-        XCTAssertEqual(reporter.region(forDisplay: display, at: 5.02)?.epoch, 2)
+        XCTAssertEqual(send(&reporter, settled: true, at: 5.02)?.epoch, 2)
         XCTAssertEqual(reporter.nextSend(settled: true, at: 5.03), .none, "settling with nothing new sends nothing")
     }
 
     func testAnUnchangedViewportKeepsItsEpochOnEveryHeartbeat() {
         var reporter = ViewportReporter()
-        reporter.update(request(x: 100))
-        XCTAssertEqual(reporter.region(forDisplay: display, at: 1)?.epoch, 1)
-        XCTAssertEqual(reporter.region(forDisplay: display, at: 1.25)?.epoch, 1)
-        reporter.update(request(x: 100))
+        reporter.update(request(x: 100), at: 1)
+        XCTAssertEqual(send(&reporter, at: 1)?.epoch, 1)
+        XCTAssertEqual(reporter.region(forDisplay: display)?.epoch, 1, "heartbeats repeat what was sent")
+        reporter.update(request(x: 100), at: 1.3)
         XCTAssertFalse(reporter.hasUnsentChange, "the same viewport again is not a change")
-        XCTAssertEqual(reporter.region(forDisplay: display, at: 1.5)?.epoch, 1)
-        reporter.update(request(x: 200))
-        XCTAssertEqual(reporter.region(forDisplay: display, at: 1.75)?.epoch, 2)
-        reporter.update(request(x: 100))
-        XCTAssertEqual(reporter.region(forDisplay: display, at: 2)?.epoch, 3, "going back is a change too")
+        XCTAssertNil(send(&reporter, at: 1.5))
+        reporter.update(request(x: 200), at: 1.75)
+        XCTAssertEqual(reporter.region(forDisplay: display)?.epoch, 1, "a change not yet sent is not repeated")
+        XCTAssertEqual(send(&reporter, at: 1.75)?.epoch, 2)
+        reporter.update(request(x: 100), at: 2)
+        XCTAssertEqual(send(&reporter, at: 2)?.epoch, 3, "going back is a change too")
         XCTAssertEqual(reporter.epoch, 3)
     }
 
     func testAViewportOfAnotherDisplayIsNeverSent() {
         var reporter = ViewportReporter()
         let external = CGSize(width: 1920, height: 1080)
-        reporter.update(request(display: external))
-        XCTAssertNil(reporter.region(forDisplay: display, at: 1))
+        reporter.update(request(display: external), at: 1)
+        XCTAssertFalse(reporter.commit(settled: true, forDisplay: display, at: 1))
+        XCTAssertNil(reporter.region(forDisplay: display))
         XCTAssertTrue(reporter.hasUnsentChange)
         XCTAssertEqual(reporter.epoch, 0)
-        XCTAssertEqual(reporter.region(forDisplay: external, at: 1.1)?.epoch, 1)
-        reporter.update(nil)
-        XCTAssertNil(reporter.region(forDisplay: external, at: 1.2))
+        XCTAssertTrue(reporter.commit(settled: true, forDisplay: external, at: 1.1))
+        XCTAssertEqual(reporter.region(forDisplay: external)?.epoch, 1)
+        reporter.update(nil, at: 1.2)
+        XCTAssertNil(reporter.region(forDisplay: external))
         XCTAssertEqual(reporter.nextSend(settled: true, at: 1.3), .none)
     }
 
     func testANewSessionResendsUnderAFreshEpoch() {
         var reporter = ViewportReporter()
-        reporter.update(request())
-        XCTAssertEqual(reporter.region(forDisplay: display, at: 1)?.epoch, 1)
+        reporter.update(request(), at: 1)
+        XCTAssertEqual(send(&reporter, at: 1)?.epoch, 1)
         reporter.sessionEnded()
-        XCTAssertEqual(reporter.nextSend(settled: false, at: 1.01), .now, "no throttle carried across sessions")
-        XCTAssertEqual(reporter.region(forDisplay: display, at: 1.01)?.epoch, 2, "an epoch is never reused")
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: CGRect(origin: .zero, size: display), at: 1.01), .now,
+                       "no throttle or hold carried across sessions")
+        XCTAssertEqual(send(&reporter, at: 1.01)?.epoch, 2, "an epoch is never reused")
+    }
+
+    // MARK: Crop changes during a gesture (recording 15:26:33, 1 Oct)
+
+    func testAPinchInsideTheStreamedAreaWaitsForTheSettle() throws {
+        var reporter = ViewportReporter()
+        let whole = CGRect(origin: .zero, size: display)
+        reporter.update(request(x: 100), at: 1)
+        XCTAssertNotNil(send(&reporter, coverage: whole, at: 1))
+        for step in 1...6 {
+            let now = 1 + Double(step) * 0.05
+            reporter.update(request(x: 100 + CGFloat(step)), at: now)
+            XCTAssertEqual(reporter.nextSend(settled: false, coverage: whole, at: now),
+                           .at(now + ViewportReporter.quietInterval), "the stream still shows every point asked for")
+        }
+        XCTAssertEqual(reporter.region(forDisplay: display)?.epoch, 1, "heartbeats keep the crop of the last send")
+        XCTAssertEqual(reporter.nextSend(settled: true, coverage: whole, at: 1.31), .now)
+        let settled = try XCTUnwrap(send(&reporter, settled: true, coverage: whole, at: 1.31))
+        XCTAssertEqual(settled.epoch, 2, "one crop change for the whole pinch")
+        XCTAssertEqual(settled.x, 106)
+    }
+
+    func testAPinchThatRestsGetsItsCropWithoutLiftingAFinger() {
+        var reporter = ViewportReporter()
+        let whole = CGRect(origin: .zero, size: display)
+        reporter.update(request(x: 100), at: 1)
+        _ = send(&reporter, coverage: whole, at: 1)
+        reporter.update(request(x: 140), at: 2)
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: whole, at: 2.1), .at(2 + ViewportReporter.quietInterval))
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: whole, at: 2.31), .now)
+        XCTAssertEqual(send(&reporter, coverage: whole, at: 2.31)?.x, 140)
+    }
+
+    func testAPinchOutPastTheCropAsksForTwiceTheVisibleAreaOnce() throws {
+        var reporter = ViewportReporter()
+        let crop = CGRect(x: 300, y: 200, width: 800, height: 420)
+        reporter.update(request(x: 367.5), at: 1)
+        _ = send(&reporter, settled: true, coverage: crop, at: 1)
+        let outward = ViewportCaptureRequest(rect: CGRect(x: 300, y: 180, width: 880, height: 405), pixelWidth: 2622,
+                                             pixelHeight: 1206, zoom: 2.98, displaySize: display)
+        reporter.update(outward, at: 2)
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: crop, at: 2), .now, "missing edges cannot wait")
+        let widened = try XCTUnwrap(send(&reporter, coverage: crop, at: 2))
+        XCTAssertEqual(widened.rect, CGRect(x: 0, y: 0, width: 1470, height: 810))
+        XCTAssertEqual(widened.zoom, 1.49, accuracy: 0.000_001)
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: crop, at: 2.15), .at(2 + ViewportReporter.quietInterval),
+                       "until the Mac echoes the wider crop, the same request is not sent again")
+        XCTAssertEqual(reporter.nextSend(settled: false, coverage: widened.rect, at: 2.15), .at(2 + ViewportReporter.quietInterval))
+        XCTAssertEqual(send(&reporter, settled: true, coverage: widened.rect, at: 2.2)?.rect, outward.rect,
+                       "the settle asks for exactly what is shown")
     }
 
     // MARK: What a heartbeat carries
