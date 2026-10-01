@@ -1017,15 +1017,15 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         // Keep a static desktop visible, but only while fresh ScreenCaptureKit
         // complete/idle status independently proves the source is still alive.
         if healthy, now - lastSentAt >= 0.45, let lastBuffer {
-            peer?.counters.idleResent()
-            deliver(lastBuffer, at: now)
+            deliver(lastBuffer, at: now, idleResend: true)
         }
     }
 
-    private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0) {
+    private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0, idleResend: Bool = false) {
         lastSentAt = time
         guard scopeTarget?.processIsAlive != false else { return }
         scopeLease.performIfValid {
+            if idleResend { peer?.counters.idleResent() }
             peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs)
             onGuestFrame?(buffer, time)
         }

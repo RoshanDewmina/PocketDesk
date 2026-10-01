@@ -2384,8 +2384,8 @@ struct NativeSessionView: View {
                                                : "Lower resolution for a more responsive connection.")
                 .font(.footnote).foregroundStyle(Farside.Palette.ash)
                 .listRowBackground(Farside.Palette.panel)
-            if !offlineLayoutCheck, let frameRate = model.link?.frameRate {
-                Text("Frame rate · \(frameRate)").font(.footnote).foregroundStyle(Farside.Palette.ash)
+            if !offlineLayoutCheck, let link = model.link {
+                Text("Frame rate · \(link.frameRate ?? "60 fps")").font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .accessibilityIdentifier("remote.pictureFrameRate")
                     .listRowBackground(Farside.Palette.panel)
             }

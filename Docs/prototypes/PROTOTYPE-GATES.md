@@ -24,7 +24,9 @@ The script reads every Mach-O image in the bundle three ways: raw bytes, `string
 
 Markers must be longer than 15 UTF-8 bytes. Swift encodes shorter literals inside instructions, where no byte or `strings` scan sees them. For example, the `flexfec-03` codec name used by the receive path is invisible to the scan.
 
-Recorded on 1 October 2026 at `claude/b2-proto` 6038f25, build 20260930.8. The Release host from `b2.sh proto host-release` printed `PASS Release exclusion: 8 Mach-O images, no prototype markers`. The Debug host from `b2.sh proto host-build` printed `PASS Debug control: 10 Mach-O images`. In Debug, all markers were found in `PocketDeskRemoteHost.debug.dylib`.
+Recorded on 1 October 2026 with hosts built from `claude/b2-proto` 6038f25, build 20260930.8. The later review fixes changed only the script, the Picture copy and where the idle resend is counted; none of them adds or removes a marker. The Release host from `b2.sh proto host-release` printed `PASS Release exclusion: 8 Mach-O images, no prototype markers`. The Debug host from `b2.sh proto host-build` printed `PASS Debug control: 10 Mach-O images`. All hits in the Debug build were in `PocketDeskRemoteHost.debug.dylib`: the eight virtual-display markers, `farsideRelayPacketRepair`, `kRTCFieldTrialFlexFec03Key` and `kRTCFieldTrialFlexFec03AdvertisedKey`. The `WebRTC-FlexFEC-03` literal was not found there, because Farside refers to the trial only through the WebRTC constants.
+
+The check fails closed. An unreadable bundle file, or a `strings`, `nm` or `grep` read failure on any image, exits 1 with a message rather than counting as no hits. The WebRTC exemption applies only to images under `Contents/Frameworks/WebRTC.framework/`.
 
 ## X22 relay FlexFEC packet repair
 
@@ -51,14 +53,19 @@ Recorded on 1 October 2026 at `claude/b2-proto` 6038f25, build 20260930.8. The R
 ## X26 true 120 fps
 
 - **Gate.** No prototype code: the 120 fps capture tier is existing default behaviour. `CaptureRatePolicy.targetFPS` returns 120 when `highRefreshCapture` is on (default) and the Mac display reports at least 100 Hz. Otherwise it returns 60. The phone presents at 120 Hz where it can. This batch adds measurement and honest copy only.
-- **What Release contains.** The same 120 fps tier as before, plus the counters below. The Picture page and the Diagnostics codec line say "up to 120 fps on a 120 Hz Mac display" only when a Mac report less than 5 s old shows a refresh of at least 100 Hz. If that report includes a target, it must also be 120 fps. Otherwise the copy says "60 fps", including for older Macs that send no refresh. This uses `CaptureRatePolicy.pictureRateDescription` and `LinkSummary.frameRate`.
+- **What Release contains.** The same 120 fps tier as before, plus the counters below. The Picture page and the Diagnostics codec line say "up to 120 fps on a 120 Hz Mac display" only when all three hold:
+  - A Mac report less than 5 s old shows a refresh of at least 100 Hz.
+  - If that report includes a target, it is 120 fps.
+  - This phone's measured presentation rate (`displayMaxFPS`) is at least 100.
+
+  Otherwise the copy says "60 fps", including on a 60 Hz phone and for older Macs that send no refresh. A stalled heartbeat does not flip the row: while the Mac report is merely stale, the session keeps its last known value. The value resets when a new session connects and when the session ends. This uses `CaptureRatePolicy.pictureRateDescription` and `LinkSummary.frameRate`.
 - **Counters.** All of these appear in the statistics overlay and the `PDSTATS` log, separate from presentation (`shown`), redraw and Smooth motion.
   - **Host `uniqueSourceFPS`.** Complete ScreenCaptureKit frames whose display time is later than every earlier one. Idle-status callbacks, frames with no display time, repeated display times and idle resends are excluded.
-  - **Host `captureResendFPS`.** Idle re-pushes of the last unchanged frame, counted separately.
+  - **Host `captureResendFPS`.** Idle re-pushes of the last unchanged frame, counted separately and only when the push actually goes out (after the capture-scope guards).
   - **Phone `uniqueDecodedFPS`.** Frames handed to the WebRTC renderer whose RTP timestamp was not among the last 32. Smooth motion frames are never counted, because they never pass through that renderer.
 
   The Mac forwards `uniqueSourceFPS` and `resendFPS` to the phone in `HostStreamSummary`; older phones ignore them. A Mac idle resend gets a new RTP timestamp, so phone unique decoded includes resends. Read it next to `Mac resends`. Resends happen only after 0.45 s without a new frame, so they are zero during sustained motion.
-- **Tests.** `StreamStatisticsTests.testUniqueSourceFramesExcludeIdleResendsAndRepeatedDisplayTimes` and `testUniqueDecodedFramesCountDistinctRtpTimestampsSeparatelyFromRedraws` cover the counters. `CaptureRatePolicyTests.testPictureCopyPromises120OnlyForAHighRefreshMacTarget` and the phone test `PhoneInstrumentsTests.testLinkSummaryPromises120OnlyFromAFreshHighRefreshMacReport` cover the copy.
+- **Tests.** `StreamStatisticsTests.testUniqueSourceFramesExcludeIdleResendsAndRepeatedDisplayTimes` and `testUniqueDecodedFramesCountDistinctRtpTimestampsSeparatelyFromRedraws` cover the counters. `CaptureRatePolicyTests.testPictureCopyPromises120OnlyForAHighRefreshMacTargetOnAHighRefreshPhone` and the phone test `PhoneInstrumentsTests.testLinkSummaryPromises120OnlyFromAFreshHighRefreshMacReportOnAHighRefreshPhone` cover the copy.
 - **Evidence needed to promote the 120 fps claim.** A physical display source of at least 100 Hz, such as a ProMotion MacBook Pro panel or an external 120 Hz display, or a proven virtual cadence. Then a sustained-motion run at the declared pixel size and load with all of these:
   - Host unique source ≥ 100 fps.
   - Phone unique decoded ≥ 100 fps.
@@ -66,3 +73,10 @@ Recorded on 1 October 2026 at `claude/b2-proto` 6038f25, build 20260930.8. The R
   - Redraw and interpolation excluded.
 
   The run must also report thermal state on the Mac and the iPhone over time, the M1 floor and pixel size, and the added latency of interpolation if Smooth motion is on. Until that receipt exists, no marketing or store copy may claim verified 120 fps.
+
+## Follow-ups
+
+- Extend `verify-prototype-exclusion.sh`:
+  - Raw text scan of non-Mach-O bundle files (resources, plists, scripts).
+  - A check that no symlink inside the bundle escapes it or is broken. The old out-of-repo script did this.
+  - Call it from `archive-mac.sh` or `validate_archive.py`, so every distribution archive runs it automatically.

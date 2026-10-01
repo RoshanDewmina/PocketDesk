@@ -179,18 +179,22 @@ final class PhoneInstrumentsTests: XCTestCase {
         XCTAssertNil(LinkSummary(report(decoder: "libavcodec", powerEfficient: nil))?.decoder)
     }
 
-    func testLinkSummaryPromises120OnlyFromAFreshHighRefreshMacReport() {
-        XCTAssertEqual(LinkSummary(report())?.frameRate, "60 fps", "no Mac report yet")
+    func testLinkSummaryPromises120OnlyFromAFreshHighRefreshMacReportOnAHighRefreshPhone() {
+        XCTAssertNil(LinkSummary(report())?.frameRate, "no Mac report yet: unknown, the session keeps its last value")
         var high = report()
         high.host = HostStreamSummary(targetFPS: 120, displayRefreshHz: 120)
         high.hostSummaryAgeMs = 900
+        high.displayMaxFPS = 120
         XCTAssertEqual(LinkSummary(high)?.frameRate, "up to 120 fps on a 120 Hz Mac display")
         var stale = high
         stale.hostSummaryAgeMs = 6_000
-        XCTAssertEqual(LinkSummary(stale)?.frameRate, "60 fps")
+        XCTAssertNil(LinkSummary(stale)?.frameRate, "a stalled heartbeat is unknown, not a drop to 60")
         var sixty = high
         sixty.host = HostStreamSummary(targetFPS: 60, displayRefreshHz: 60)
         XCTAssertEqual(LinkSummary(sixty)?.frameRate, "60 fps")
+        var sixtyPhone = high
+        sixtyPhone.displayMaxFPS = 60
+        XCTAssertEqual(LinkSummary(sixtyPhone)?.frameRate, "60 fps")
     }
 
     func testLinkSummaryNeedsSomethingToShow() {

@@ -36,25 +36,32 @@ is_macho() {
   [[ "$magic" == (feedface|feedfacf|cefaedfe|cffaedfe|cafebabe|bebafeca|cafebabf|bfbafeca) ]]
 }
 
+# A tool that cannot read an image must fail the check, never read as "no hits".
 hits_in() {
   local file="$1"; shift
-  local -a patterns found
-  local marker
+  local -a patterns
+  local marker text symbols raw rc
   for marker in "$@"; do patterns+=(-e "$marker"); done
-  found=(${(f)"$( { grep -a -o -F "${patterns[@]}" "$file"; strings -a "$file" | grep -o -F "${patterns[@]}"; nm -a "$file" 2>/dev/null | grep -o -F "${patterns[@]}"; } | sort -u )"})
-  print -l -- $found
+  text=$(strings -a "$file") || { print -u2 "FAIL: strings could not read $file"; return 3; }
+  symbols=$(nm -a "$file" 2>/dev/null) || { print -u2 "FAIL: nm could not read $file"; return 3; }
+  raw=$(grep -a -o -F "${patterns[@]}" "$file"); rc=$?
+  (( rc < 2 )) || { print -u2 "FAIL: grep could not read $file"; return 3; }
+  { print -r -- "$raw"; print -r -- "$text" | grep -o -F "${patterns[@]}"; print -r -- "$symbols" | grep -o -F "${patterns[@]}"; } | grep -v '^$' | sort -u
+  return 0
 }
 
 images=0
 failures=0
 debug_found=()
 while IFS= read -r -d '' file; do
+  [[ -r "$file" ]] || { print -u2 "FAIL: cannot read ${file#$app/}"; exit 1; }
   is_macho "$file" || continue
   images=$((images + 1))
   relative="${file#$app/}"
   markers=($virtual_markers $repair_markers)
-  [[ "$relative" == */WebRTC.framework/* ]] || markers+=($trial_markers)
-  found=(${(f)"$(hits_in "$file" $markers)"})
+  [[ "$relative" == Contents/Frameworks/WebRTC.framework/* ]] || markers+=($trial_markers)
+  output=$(hits_in "$file" $markers) || exit 1
+  found=(${(f)output})
   if (( ${#found} )); then
     print "HIT  $relative: ${(j:, :)found}"
     [[ "$relative" == Contents/MacOS/* ]] && debug_found+=($found)
