@@ -2,6 +2,7 @@ import XCTest
 import AVKit
 import SwiftUI
 import UIKit
+import WebRTC
 @testable import PocketDeskRemote
 
 private final class PresentationLifecyclePiPPlatform: LivePiPPlatformController {
@@ -114,6 +115,34 @@ final class PhonePresentationLifecycleTests: XCTestCase {
         XCTAssertTrue(sink.rendersInSoftware)
         center.post(name: UIApplication.willEnterForegroundNotification, object: nil)
         XCTAssertFalse(sink.rendersInSoftware)
+    }
+    /// Frozen PiP 1 Oct: the Mac's ladder resized the stream (1920x1232 <-> 2560x1656) inside one identity, and the
+    /// sink refused every frame of a new size for the rest of the session. A resize now replaces the output pool.
+    func testPiPSinkKeepsEnqueueingAfterTheStreamChangesSize() throws {
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let sink = LivePiPSampleBufferSink(admission: admission, fence: VideoPresentationFence(admission), center: NotificationCenter())
+        defer { sink.invalidate() }
+        sink.setEnabled(true)
+        func offer(width: Int, height: Int) throws {
+            var pixels: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
+                                               [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+            sink.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
+                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixels)), rotation: ._0, timeStampNs: 1),
+                arrivalMs: 1, marker: nil, originalSource: true))
+        }
+        func waitFor(_ count: Int) {
+            let deadline = Date().addingTimeInterval(3)
+            while sink.enqueued < count, Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.02)) }
+        }
+        try offer(width: 64, height: 40); waitFor(1)
+        XCTAssertEqual(sink.enqueued, 1)
+        try offer(width: 96, height: 60); waitFor(2)
+        XCTAssertEqual(sink.enqueued, 2, "a resized stream keeps reaching the PiP window")
+        sink.setBackground(true)
+        try offer(width: 64, height: 40); waitFor(3)
+        XCTAssertEqual(sink.enqueued, 3, "the CPU path also converts and enqueues")
     }
     func testBackgroundRequiresActualActivePiPAndHostAppliedConfirmation() {
         let proof = VideoPresentationAdmission(identity: identity(), validUntil: 12)

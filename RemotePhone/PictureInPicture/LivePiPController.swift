@@ -240,8 +240,8 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         policy.didStop(); synchronizeSource()
         oldSource?.detach(); oldSink?.invalidate()
         oldController?.setAutomaticStart(false); oldController?.stop(); oldController?.detachDelegate()
-        // AVKit may still have a block in flight for this controller; free it only after this main-queue turn.
-        if let oldController { DispatchQueue.main.async { withExtendedLifetime(oldController) {} } }
+        // AVKit keeps laying out the restore animation against this controller after our completion returns.
+        if let oldController { Self.holdForAVKit([oldController, oldSink]) }
         // A synchronous OS stop callback may have installed a new run. Release only this capsule.
         if let oldOwner { MainActor.assumeIsolated { mediaSession.release(oldOwner) } }
         didChangeState?(policy.state)
@@ -292,9 +292,14 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         let retained: [AnyObject?] = [platform, native, sink, sink?.layer]
         let complete: (Bool) -> Void = { restored in
             withExtendedLifetime(retained) { completionHandler(restored) }
-            DispatchQueue.main.async { withExtendedLifetime(retained) {} }
+            Self.holdForAVKit(retained)
         }
         if let restoreForeground { restoreForeground(complete) } else { complete(false) }
+    }
+    /// Long enough for AVKit's restore or stop animation to finish with the objects it still reads.
+    static let avkitHold: TimeInterval = 3
+    private static func holdForAVKit(_ objects: [AnyObject?]) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + avkitHold) { withExtendedLifetime(objects) {} }
     }
     #if DEBUG
     func restoreUserInterfaceForTesting(on candidate: any LivePiPPlatformController, _ completionHandler: @escaping (Bool) -> Void) {

@@ -115,6 +115,7 @@ struct FileFrame: Codable, Equatable {
         default:
             valid = name == nil && bytes == nil && type == nil && digest == nil && status == nil && url == nil
         }
+        guard op == "result" || reason == nil else { throw RemoteError.invalidMessage }
         guard valid else { throw RemoteError.invalidMessage }
     }
 

@@ -1058,7 +1058,7 @@ final class RemoteHostModel: ObservableObject {
     /// Received files only land quarantined in Downloads › Farside, never opened; Mac-to-phone needs a pick here.
     private var fileTransferRefusal: HostFileTransferService.Refusal? {
         HostFileTransferService.refusal(viewOnlyScope: captureScopeViewOnly, connected: connection.connected, sharing: active,
-            paused: phonePause.isPaused, liveViewOnly: liveViewOnly, locking: away.isLocking)
+            paused: phonePause.isPaused, liveViewOnly: liveViewOnly, locking: away.isLocking, lockFailed: awayLockFailed)
     }
 
     /// One line per refusal with every input, so a device report names the condition (no file names).
@@ -1089,6 +1089,8 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func phoneConnected() {
+        // A connected phone with sharing off breaks files (and causal input) silently; say so for device reports.
+        if !active { SessionLog.log.error("phone connected while sharing is not active (listening=\(self.listeningWithoutSharing, privacy: .public))") }
         axSessionGeneration.advance()
         away.refresh()
         bigText.retryPendingRestore()

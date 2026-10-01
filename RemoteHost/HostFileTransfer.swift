@@ -45,7 +45,7 @@ final class HostFileTransferService {
 
     /// Why files are refused, first failing condition wins. Travels as the result's `reason`.
     enum Refusal: String {
-        case viewOnlyScope, noSession, notSharing, paused, viewOnly, locking
+        case viewOnlyScope, noSession, notSharing, paused, viewOnly, locking, lockFailed
         var status: FileTransferStatus { self == .viewOnlyScope ? .disabled : .notAllowed }
     }
 
@@ -53,12 +53,13 @@ final class HostFileTransferService {
     /// unpaused, sharing session that is not in live view only or locking may transfer. A stored legacy
     /// `allowFileTransfer` value is never read.
     nonisolated static func refusal(viewOnlyScope: Bool, connected: Bool, sharing: Bool, paused: Bool,
-                                    liveViewOnly: Bool, locking: Bool) -> Refusal? {
+                                    liveViewOnly: Bool, locking: Bool, lockFailed: Bool = false) -> Refusal? {
         if viewOnlyScope { return .viewOnlyScope }
         if !connected { return .noSession }
         if !sharing { return .notSharing }
         if paused { return .paused }
         if liveViewOnly { return .viewOnly }
+        if lockFailed { return .lockFailed }
         if locking { return .locking }
         return nil
     }
@@ -105,11 +106,13 @@ final class HostFileTransferService {
         let generation = authorityGeneration, lease = effectLease
         queue.async { [weak self] in
             guard lease.isActive else {
+                SessionLog.log.error("file refused: superseded (session reset while admitting)")
                 DispatchQueue.main.async { MainActor.assumeIsolated { answer(.failure(.notAllowed)) } }; return
             }
             let result = Self.prepareSink(for: offer, in: folder)
             DispatchQueue.main.async { MainActor.assumeIsolated {
                 guard let self, self.authorityGeneration == generation else {
+                    SessionLog.log.error("file refused: superseded (session reset while admitting)")
                     if case .success(let sink) = result { sink.discard() }
                     answer(.failure(.notAllowed)); return
                 }

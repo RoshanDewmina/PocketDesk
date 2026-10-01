@@ -204,7 +204,8 @@ final class PhoneFileTransfer: ObservableObject {
         case "notSharing": return "Your Mac isn’t sharing its screen right now, so files are off. Start sharing on the Mac, then try again."
         case "paused": return "Your Mac still has this session paused for the background. Reconnect, then try again."
         case "viewOnly": return "Files are off in live view only (Picture in Picture). Return to control, then try again."
-        case "locking": return "Your Mac is locking, so files are off until it’s unlocked and you reconnect."
+        case "locking": return "Your Mac is locking, so files are off for now."
+        case "lockFailed": return "Your Mac didn’t confirm it locked, so files are off. Lock or use your Mac, then try again."
         default: return nil
         }
     }

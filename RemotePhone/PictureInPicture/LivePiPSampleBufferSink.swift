@@ -55,7 +55,9 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
         fence.invalidate()
         lock.lock(); closed = true; pending = nil; lock.unlock()
         layer.sampleBufferRenderer.flush(removingDisplayedImage: true, completionHandler: {})
-        queue.async { [weak self] in self?.pool = nil; self?.poolSize = .zero; self?.context.clearCaches() }
+        queue.async { [weak self] in
+            self?.pool = nil; self?.poolSize = .zero; self?.context.clearCaches(); self?.softwareContext.clearCaches()
+        }
     }
     private func drain() {
         while true {
@@ -83,12 +85,15 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
         let orientation: CGImagePropertyOrientation
         switch frame.frame.rotation.rawValue { case 90: orientation = .right; case 180: orientation = .down; case 270: orientation = .left; default: orientation = .up }
         image = image.oriented(orientation)
-        let scale = min(1, 2048 / max(image.extent.width, image.extent.height))
+        lock.lock(); let software = background; lock.unlock()
+        // The CPU path costs per pixel; the PiP window is small, so cap its output lower.
+        let scale = min(1, (software ? 1280 : 2048) / max(image.extent.width, image.extent.height))
         image = image.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
         let size = CGSize(width: max(1, Int(image.extent.width)), height: max(1, Int(image.extent.height)))
         if poolSize != size {
-            // A geometry change needs a new identity; never accumulate multiple output pools.
-            guard pool == nil else { return nil }
+            // The Mac's ladder resizes the stream within one identity (1 Oct: 1920x1232 <-> 2560x1656 during a PiP
+            // session). Returning nil here froze the PiP for good. Replace the pool; buffers the layer holds stay valid.
+            pool = nil; poolSize = .zero
             let attributes: [CFString: Any] = [kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferWidthKey: Int(size.width), kCVPixelBufferHeightKey: Int(size.height),
                 kCVPixelBufferIOSurfacePropertiesKey: [:], kCVPixelBufferMetalCompatibilityKey: true]
@@ -100,7 +105,6 @@ final class LivePiPSampleBufferSink: @unchecked Sendable {
         let limits = [kCVPixelBufferPoolAllocationThresholdKey: 3] as CFDictionary
         guard CVPixelBufferPoolCreatePixelBufferWithAuxAttributes(kCFAllocatorDefault, pool, limits, &output) == kCVReturnSuccess,
               let output else { return nil }
-        lock.lock(); let software = background; lock.unlock()
         (software ? softwareContext : context).render(image, to: output, bounds: CGRect(origin: .zero, size: size), colorSpace: colorSpace)
         CVBufferSetAttachment(output, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
         CVBufferSetAttachment(output, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)

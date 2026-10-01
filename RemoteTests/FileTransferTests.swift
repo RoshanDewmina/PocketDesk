@@ -879,6 +879,9 @@ final class HostFileLinkRevocationTests: XCTestCase {
         XCTAssertEqual(refusal(paused: true), .paused)
         XCTAssertEqual(refusal(viewOnly: true), .viewOnly)
         XCTAssertEqual(refusal(locking: true)?.status, .notAllowed)
+        XCTAssertEqual(HostFileTransferService.refusal(viewOnlyScope: false, connected: true, sharing: true, paused: false,
+                                                       liveViewOnly: false, locking: true, lockFailed: true), .lockFailed)
+        XCTAssertThrowsError(try FileFrame(op: "cancel", transfer: String(repeating: "d", count: 32), reason: "paused").validate())
         let service = HostFileTransferService(destination: { nil })
         var sent: [FileFrame] = []
         service.engine.sendControl = { sent.append($0); return true }

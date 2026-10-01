@@ -97,7 +97,7 @@ final class PhoneFileTransferTests: XCTestCase {
         let older = try files.engine.request().get()
         files.engine.receive(.result(older, .notAllowed))
         XCTAssertEqual(files.notice?.message, "Your Mac isn’t sharing files right now.", "an older Mac keeps the old copy")
-        for reason in ["noSession", "notSharing", "paused", "viewOnly", "locking"] {
+        for reason in ["noSession", "notSharing", "paused", "viewOnly", "locking", "lockFailed"] {
             XCTAssertNotNil(PhoneFileTransfer.message(refusal: reason, status: .notAllowed), reason)
         }
         XCTAssertNil(PhoneFileTransfer.message(refusal: "paused", status: .busy))

@@ -140,16 +140,20 @@ final class SessionLifecycleTests: XCTestCase {
         model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: true,
             liveViewOnlyRequestID: entry.action.liveViewOnlyRequestID, x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
         weak var started: LifecyclePiPPlatform?
-        var aliveAtCompletion: Bool?
+        var aliveAtCompletion: Bool?, restored: Bool?
         do {
             let platform = try XCTUnwrap(latest)
             started = platform
             pip.confirmPlatformStartForTesting(platform)
             XCTAssertEqual(model.pipState, .active)
             model.sceneChanged(.inactive); model.sceneChanged(.background)
-            pip.restoreUserInterfaceForTesting(on: platform) { _ in aliveAtCompletion = started != nil }
+            XCTAssertTrue(model.pipBackgroundForTesting)
+            pip.restoreUserInterfaceForTesting(on: platform) { aliveAtCompletion = started != nil; restored = $0 }
         }
+        XCTAssertNil(aliveAtCompletion, "the restore waits for the foreground")
         model.sceneChanged(.active) // Returning stops the PiP (releasing its controller), then completes the restore.
+        XCTAssertEqual(restored, true)
+        XCTAssertFalse(pip.controller === started, "the foreground return did stop that PiP before completing")
         XCTAssertEqual(aliveAtCompletion, true, "AVKit's completion must never run after its controller was freed")
     }
     func testActivePiPSurvivesInactiveHeartbeatThenBackgroundWithoutExitOrPause() throws {
