@@ -15,10 +15,12 @@ import WebRTC
 ///   FARSIDE_CRISP_BENCH=1 FARSIDE_CRISP_OUT=<dir> [FARSIDE_CRISP_TIMING=1] \
 ///     xcrun xctest -XCTest RemoteCoreTests.StillTextQPBenchTests <bundle>
 final class StillTextQPBenchTests: XCTestCase {
-    private static let width = 2560, height = 1664, scale: CGFloat = 2
+    /// FARSIDE_CRISP_SCALE=1 runs the half-size ladder rung (1280×832, text at 1×).
+    private static let scale: CGFloat = ProcessInfo.processInfo.environment["FARSIDE_CRISP_SCALE"] == "1" ? 1 : 2
+    private static let width = Int(1280 * scale), height = Int(832 * scale)
     private static let points = CGSize(width: 1280, height: 832)
     private static let seed: UInt16 = 0x3a7
-    private static let scrollStep = 24, scrollFrames = 60
+    private static let scrollStep = Int(12 * scale), scrollFrames = 60
     private static let documentHeight = height + scrollStep * scrollFrames
     private static let frameCount = 240
     private static let sampled = [0, 59, 180, 239]
@@ -133,7 +135,7 @@ final class StillTextQPBenchTests: XCTestCase {
         func ms(_ range: Range<Int>) -> [Double] { range.compactMap { encoded[$0]?.ms }.sorted() }
         func pct(_ values: [Double], _ p: Double) -> Double { values.isEmpty ? 0 : values[min(values.count - 1, Int(Double(values.count - 1) * p))] }
         let scrollMs = ms(60..<180), stillMs = ms(181..<240)
-        let keyFrames = (0..<Self.frameCount).filter { encoded[$0]?.image.frameType == .videoFrameKey }.count
+        let keyIndices = (0..<Self.frameCount).filter { encoded[$0]?.image.frameType == .videoFrameKey }
 
         let decoded = try decode(run, encoded: encoded.mapValues { ($0.image, $0.info) })
         var quality: [String] = []
@@ -147,7 +149,7 @@ final class StillTextQPBenchTests: XCTestCase {
         }
         let line = "{\"run\":\"\(run.label)\",\"kbps\":\(run.kbps),\"qpCeiling\":\(run.ceiling),\"clarity\":\(run.clarity),\"input\":\"\(run.nv12 ? "nv12" : "bgra")\""
             + ",\"keyBytes\":\(keyBytes),\"keyLinkMs\":\(String(format: "%.1f", Double(keyBytes) * 8 / Double(run.kbps)))"
-            + ",\"keyFrames\":\(keyFrames),\"still1sBytes\":\(window(0..<60)),\"stillDeltaMeanBytes\":\(window(1..<60) / 59)"
+            + ",\"keyFrames\":\(keyIndices.count),\"keyAt\":\(keyIndices),\"keyBytesAll\":\(keyIndices.map { bytes[$0] }),\"still1sBytes\":\(window(0..<60)),\"stillDeltaMeanBytes\":\(window(1..<60) / 59)"
             + ",\"scrollMeanBytes\":\(window(60..<180) / 120),\"scrollMaxBytes\":\(bytes[60..<180].max() ?? 0)"
             + ",\"settle1sBytes\":\(window(180..<240)),\"peak1sKbit\":\(peakWindow * 8 / 1000),\"peak1sOverTarget\":\(String(format: "%.2f", Double(peakWindow) * 8 / 1000 / Double(run.kbps)))"
             + ",\"emitted\":\(encoded.count),\"silentDrops\":\(silentDrops),\"timeouts\":\(timeouts)"
