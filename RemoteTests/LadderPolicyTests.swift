@@ -616,7 +616,7 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertNil(evaluate(&busy, rung(2, "power"), at: 44), "a climb is not news")
     }
 
-    func testACalmFloorShowsOnlyTheBoundedRecentStep() {
+    func testACalmFloorShowsNothing() {
         var busy = BusyPolicy()
         var floor = LadderPolicy.ladder(targetFPS: 60)[3]
         floor.reason = "phone"
@@ -829,10 +829,22 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(LadderTrigger.firing(slowDecode, at: top), [], "40 sent leave 25 ms per frame")
         slowDecode.phoneDecodeMs = 26
         XCTAssertEqual(LadderTrigger.firing(slowDecode, at: top), [.phoneDecode])
-        slowDecode.sentFPS = 29
+        slowDecode.sentFPS = 24
+        slowDecode.phoneDecodeMs = 45
+        XCTAssertEqual(LadderTrigger.firing(slowDecode, at: top), [.phoneDecode],
+                       "24 fps video leaves 41.7 ms a frame; 45 ms cannot keep up")
+        slowDecode.sentFPS = 9
         slowDecode.phoneDecodeMs = 200
         XCTAssertEqual(LadderTrigger.firing(slowDecode, at: top), [],
-                       "under half the rung's frames are too few to judge the phone by")
+                       "under 10 frames a second are too few to judge the phone by")
+
+        var thin = calm(targetFPS: 60)
+        thin.sentFPS = 10
+        thin.phonePresentedFPS = 5
+        thin.phoneSupersededPerSecond = 3
+        XCTAssertEqual(LadderTrigger.firing(thin, at: top), [.phoneSuperseded], "3 of 10 replaced, 5 shown")
+        thin.phoneSupersededPerSecond = 2
+        XCTAssertEqual(LadderTrigger.firing(thin, at: top), [], "two replaced frames are noise")
 
         var fewSent = overload
         fewSent.sentFPS = 30
@@ -840,6 +852,40 @@ final class LadderPolicyTests: XCTestCase {
         fewSent.phoneSupersededPerSecond = 5
         XCTAssertEqual(LadderTrigger.firing(fewSent, at: top), [],
                        "25 of the 30 sent shown is keeping up, though under 80 % of the rung's 60")
+    }
+
+    func testAKeyFrameSpreadOverTwoStillWindowsIsNotLoad() {
+        var policy = LadderPolicy(targetFPS: 60)
+        for second in 0...5 { _ = policy.evaluate(backlog(targetFPS: 60), at: TimeInterval(second)) }
+        XCTAssertEqual(policy.state.rung, 3)
+        var first = HostLoadMonitor.inputs(from: stillSample(afterMove: true))
+        first.pacerDelayMs = 420
+        var second = first
+        second.captureFPS = 0
+        second.pacerDelayMs = 1_348
+        XCTAssertNil(policy.evaluate(first, at: 6))
+        XCTAssertNil(policy.evaluate(second, at: 7), "two windows of one key frame's wait: no step")
+        XCTAssertEqual(policy.state.rung, 3)
+    }
+
+    func testAClimbOnAStillScreenThatFailsOnTheNextScrollStillBacksOff() {
+        var policy = LadderPolicy(targetFPS: 60)
+        _ = policy.evaluate(backlog(targetFPS: 60), at: 0)
+        XCTAssertEqual(policy.evaluate(backlog(targetFPS: 60), at: 1)?.rung, 1)
+        let still = HostLoadMonitor.inputs(from: stillSample(afterMove: false))
+        var climbedAt: Int?
+        for second in 2...40 where policy.evaluate(still, at: TimeInterval(second)) != nil { climbedAt = second }
+        XCTAssertEqual(climbedAt, 11, "a still screen is headroom")
+        XCTAssertEqual(policy.state.rung, 0)
+        XCTAssertNil(policy.evaluate(backlog(targetFPS: 60), at: 41))
+        XCTAssertEqual(policy.evaluate(backlog(targetFPS: 60), at: 42)?.rung, 1,
+                       "30 s after the climb, but on the scroll's second sample")
+        XCTAssertEqual(policy.climbWait, 20, "the climb was never tested by a moving picture, so it failed")
+        var next: Int?
+        for second in 43...80 where policy.evaluate(still, at: TimeInterval(second)) != nil {
+            next = next ?? second
+        }
+        XCTAssertEqual(next, 62, "the doubled wait")
     }
 
     func testTheBusyReasonIsThePersistentCauseNeverAKeyFrameSpike() throws {

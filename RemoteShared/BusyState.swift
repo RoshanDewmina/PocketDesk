@@ -3,12 +3,12 @@ import Foundation
 /// The Mac's honest account of its own load, sent on `capture` status and shown by the phone as a
 /// pill ("Mac is busy · 30 fps at 1440 px"). It is derived from the same signals the ladder uses,
 /// so it cannot disagree with current pressure: `busy` while one cause keeps firing at the ladder
-/// floor for 5 s, capture stays under 80 % of the rung's rate and late for 5 s, or encoder latency
-/// exceeds twice the frame interval for 5 s. It clears after 10 continuous seconds without that
-/// cause, avoiding repeated announcements during intermittent pressure. A step for load is not
-/// shown (the ladder heals it); `strained` lasts 8 s after a step for a hot Mac or Low Power Mode,
-/// then becomes `ok` even below the top (the `ladder` field still carries the rung). Old phones
-/// ignore the field.
+/// floor for 5 s (a hot Mac or phone at once), capture stays under 80 % of the rung's rate and late
+/// for 5 s, or encoder latency exceeds twice the frame interval for 5 s. It clears after 10
+/// continuous seconds without that cause, avoiding repeated announcements during intermittent
+/// pressure. A step for load is not shown (the ladder heals it); `strained` lasts 8 s after a step
+/// for a hot Mac or Low Power Mode, then becomes `ok` even below the top (the `ladder` field still
+/// carries the rung). Old phones ignore the field.
 struct BusyState: Codable, Equatable {
     enum Level: String, Codable {
         case ok, strained, busy

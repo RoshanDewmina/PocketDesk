@@ -103,7 +103,8 @@ final class HostLifecycleTests: XCTestCase {
     /// still screen, then nothing; the refresh stopped, the phone saw no frame for 2 s and paused
     /// control. Health ticks every 0.4 s as in `RemoteCapture.start()`.
     private func stillScreen(seconds: Double, idleStatusUntil: Double, last: SCFrameStatus = .idle,
-                             streamCapturing: Bool?) -> (healthyTicks: [Bool], sends: [Double]) {
+                             streamCapturing: Bool?, layoutChangesAt: Double = .infinity,
+                             layoutReadable: Bool = true) -> (healthyTicks: [Bool], sends: [Double]) {
         var health = CaptureHealthState()
         var nextStatus = 0.0
         var lastSentAt = 0.0
@@ -111,9 +112,15 @@ final class HostLifecycleTests: XCTestCase {
         var sends: [Double] = []
         for tick in 1...Int(seconds / 0.4) {
             let now = Double(tick) * 0.4
+            let layout = layoutReadable ? (now >= layoutChangesAt ? 2 : 1) : nil
             while nextStatus <= min(now, idleStatusUntil) {
-                health.observe(nextStatus + 1 / 36 > idleStatusUntil ? last : .idle, at: nextStatus)
+                let status: SCFrameStatus = nextStatus + 1 / 36 > idleStatusUntil ? last : .idle
+                health.observe(status, at: nextStatus)
+                if status == .idle, health.stillLayout == nil { health.witnessStillLayout(layout) }
                 nextStatus += 1 / 36
+            }
+            if streamCapturing == true, health.isSilent(at: now), health.wantsStillLayout {
+                health.witnessStillLayout(layout)
             }
             let healthy = health.isHealthy(at: now, streamCapturing: streamCapturing)
             healthyTicks.append(healthy)
@@ -142,6 +149,13 @@ final class HostLifecycleTests: XCTestCase {
         XCTAssertFalse(stopped.sends.contains { $0 > 9.8 }, "and nothing is refreshed")
         let unknown = stillScreen(seconds: 12, idleStatusUntil: 9, streamCapturing: nil)
         XCTAssertFalse(unknown.healthyTicks.last ?? true, "before macOS 27 the status alone decides, as before")
+        let moved = stillScreen(seconds: 30, idleStatusUntil: 9, streamCapturing: true, layoutChangesAt: 20)
+        XCTAssertTrue(moved.healthyTicks[..<49].allSatisfy { $0 })
+        XCTAssertFalse(moved.healthyTicks[49...].contains(true),
+                       "a window opened or moved with no frame from ScreenCaptureKit: a stalled stream fails closed")
+        XCTAssertFalse(moved.sends.contains { $0 > 20 }, "and the stale picture is not refreshed")
+        let unreadable = stillScreen(seconds: 12, idleStatusUntil: 9, streamCapturing: true, layoutReadable: false)
+        XCTAssertFalse(unreadable.healthyTicks.last ?? true, "no window list, no proof")
         let changed = stillScreen(seconds: 12, idleStatusUntil: 9, last: .complete, streamCapturing: true)
         XCTAssertFalse(changed.healthyTicks.last ?? true,
                        "silence right after a new frame is not a still screen; only an idle status says nothing changed")

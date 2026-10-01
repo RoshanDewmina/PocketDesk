@@ -76,7 +76,7 @@ enum LadderTrigger: CaseIterable {
             return inputs.qualityLimitation?.lowercased() == "bandwidth"
         case .phoneSuperseded:
             // Network bunching alone supersedes frames too; it counts only with a second phone signal.
-            guard let superseded = inputs.phoneSupersededPerSecond,
+            guard let superseded = inputs.phoneSupersededPerSecond, superseded >= 3,
                   let delivered = LadderPolicy.phoneMeasurableFPS(inputs, at: rung) else { return false }
             let slowDecode = inputs.phoneDecodeMs.map { $0 > 1000 / delivered } ?? false
             let fewPresented = inputs.phonePresentedFPS.map { $0 < 0.8 * delivered } ?? false
@@ -99,7 +99,8 @@ enum LadderTrigger: CaseIterable {
 /// - A still screen (`isStill`) and a window that sent under half the rung's frames are not load:
 ///   the pacer wait of one key frame and the phone counters of a 1 fps refresh step nothing.
 /// - Up one rung after `climbWait` clean seconds since the last bad or neutral sample or move, and
-///   30 s after a thermal move. A climb that steps down again within 10 s failed: the wait doubles
+///   30 s after a thermal move. A climb that steps down again within 10 s, or within its first 10
+///   samples of a moving picture (a climb made on a still screen), failed: the wait doubles
 ///   (10, 20, 40, 60 s); it returns to 10 s after 120 s on one rung or a down step with another reason.
 /// - Low Power Mode caps the top at the first rung of 60 fps or less (reason `power`), in one move.
 /// - A target change restarts at the top of the new ladder.
@@ -123,6 +124,8 @@ struct LadderPolicy: LadderEngine {
     private var calmSince: TimeInterval?
     private var lastMoveAt: TimeInterval?
     private var lastClimbAt: TimeInterval?
+    /// Samples since the last climb in which the picture moved (`!isStill`).
+    private var movingSinceClimb = 0
     private var thermalMoveAt: TimeInterval?
     private var backoffReason: LadderReason?
 
@@ -164,6 +167,7 @@ struct LadderPolicy: LadderEngine {
             move(to: lowPowerRung, reason: powerReason.rawValue, at: time)
             return
         }
+        if lastClimbAt != nil, !Self.isStill(inputs) { movingSinceClimb += 1 }
         let firing = LadderTrigger.firing(inputs, at: state)
         let thermal = firing.first { $0.isThermal }
         let load = firing.first { !$0.isThermal }
@@ -188,6 +192,7 @@ struct LadderPolicy: LadderEngine {
         let next = state.rung - 1
         move(to: next, reason: lowPower && next == lowPowerRung ? powerReason.rawValue : state.reason, at: time)
         lastClimbAt = time
+        movingSinceClimb = 0
     }
 
     private mutating func stepDown(because reason: LadderReason, at time: TimeInterval) {
@@ -195,7 +200,10 @@ struct LadderPolicy: LadderEngine {
             climbWait = Self.upAfter
             backoffReason = reason
         }
-        if let lastClimbAt, time - lastClimbAt < Self.failedClimbWindow {
+        // A climb made on a still screen is tested only once the picture moves: it failed if the step
+        // comes within 10 s of it or within its first 10 moving samples.
+        if let lastClimbAt, time - lastClimbAt < Self.failedClimbWindow
+            || Double(movingSinceClimb) < Self.failedClimbWindow {
             climbWait = min(climbWait * 2, Self.maxClimbWait)
         }
         lastClimbAt = nil
@@ -235,14 +243,17 @@ struct LadderPolicy: LadderEngine {
         inputs.captureFPS.map { $0 <= 1 } ?? false
     }
 
-    /// The frames the phone had to decode and show: the rung's rate, or fewer when the Mac sent fewer.
-    /// nil when that is under half the rung's rate: a still screen's refresh is about 1 fps, so the
-    /// phone's per-window counters are one or two frames, often a key frame at a new size, and a low
-    /// presented rate is the Mac's choice. Such a window is neither phone load nor evidence against a climb.
+    /// The frames the phone had to decode and show: the rung's rate, or fewer when the Mac sent fewer
+    /// (24 fps video on a 60 rung leaves 41.7 ms a frame). nil under `phoneMinimumFPS`: a still
+    /// screen's refresh is about 1 fps, so the phone's per-window counters are one or two frames,
+    /// often a key frame at a new size, and a low presented rate is the Mac's choice. Such a window
+    /// is neither phone load nor evidence against a climb.
     static func phoneMeasurableFPS(_ inputs: LadderInputs, at rung: LadderState) -> Double? {
         let delivered = max(0, min(rungFPS(rung), inputs.sentFPS ?? rungFPS(rung)))
-        return delivered >= 0.5 * rungFPS(rung) ? delivered : nil
+        return delivered >= min(phoneMinimumFPS, 0.5 * rungFPS(rung)) ? delivered : nil
     }
+
+    static let phoneMinimumFPS = 10.0
 
     static func rungFPS(_ rung: LadderState) -> Double { Double(max(1, rung.fps)) }
 

@@ -40,22 +40,66 @@ struct CaptureHealthState {
     private(set) var lastStatusAt: TimeInterval?
     private(set) var statusIsHealthy = false
     private(set) var lastStatusWasIdle = false
+    /// The captured display's window layout when the screen went still (`StillScreenWitness`).
+    private(set) var stillLayout: Int?
+    private(set) var stillLayoutChanged = false
 
     mutating func observe(_ status: SCFrameStatus, at time: TimeInterval) {
         lastStatusAt = time
         statusIsHealthy = status == .complete || status == .idle
         lastStatusWasIdle = status == .idle
+        if status != .idle { stillLayout = nil }
+        stillLayoutChanged = false
+    }
+
+    /// The window layout is recorded once per still run and compared on every silent tick; nil (no
+    /// window list) counts as a change.
+    var wantsStillLayout: Bool { lastStatusWasIdle && !stillLayoutChanged }
+
+    mutating func witnessStillLayout(_ layout: Int?) {
+        guard wantsStillLayout else { return }
+        guard let layout else { stillLayoutChanged = true; return }
+        if let stillLayout { stillLayoutChanged = layout != stillLayout } else { stillLayout = layout }
     }
 
     /// Fresh complete/idle status, or a still screen: ScreenCaptureKit stops sending idle status
     /// about 9 s after the picture last changed (PocketDeskStreamStats, 1 Oct 2026: captureIdleFPS
-    /// ~36 then 0 in every still run), so after an idle status `streamCapturing` (macOS 27's
-    /// `SCStream.isCapturing`, nil before it) is the proof the source is alive. Any other status,
-    /// or a stream that says it stopped, fails closed as before.
+    /// ~36 then 0 in every still run), so after an idle status the source counts as alive while
+    /// `streamCapturing` (macOS 27's `SCStream.isCapturing`, nil before it) holds and the display's
+    /// window layout is unchanged: a window that opened, closed or moved without a frame is a stalled
+    /// stream. Any other status, or a stream that says it stopped, fails closed as before.
     func isHealthy(at time: TimeInterval, staleAfter: TimeInterval = 0.8, streamCapturing: Bool? = nil) -> Bool {
         guard statusIsHealthy, let lastStatusAt, time >= lastStatusAt else { return false }
         if time - lastStatusAt <= staleAfter { return true }
-        return lastStatusWasIdle && streamCapturing == true
+        return lastStatusWasIdle && !stillLayoutChanged && streamCapturing == true
+    }
+
+    func isSilent(at time: TimeInterval, staleAfter: TimeInterval = 0.8) -> Bool {
+        lastStatusAt.map { time - $0 > staleAfter } ?? false
+    }
+}
+
+/// An independent check on a silent stream. A reconfiguration does not make ScreenCaptureKit speak
+/// again, and a screenshot differs from a stream frame of the same screen in ~460k of 4.2M luma
+/// samples (1 Oct 2026 probe), too close to a typed character to compare. The window layout is
+/// cheap and exact: on-screen windows of other apps over the captured display, in order.
+enum StillScreenWitness {
+    static func layout(over display: CGRect, excludingProcess pid: pid_t) -> Int? {
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                       kCGNullWindowID) as? [[String: Any]] else { return nil }
+        var hasher = Hasher()
+        for window in windows {
+            guard (window[kCGWindowOwnerPID as String] as? pid_t) != pid,
+                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let bounds = window[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
+                  rect.intersects(display) else { continue }
+            hasher.combine(window[kCGWindowNumber as String] as? Int)
+            hasher.combine(window[kCGWindowLayer as String] as? Int)
+            hasher.combine(rect.origin.x); hasher.combine(rect.origin.y)
+            hasher.combine(rect.width); hasher.combine(rect.height)
+        }
+        return hasher.finalize()
     }
 }
 
@@ -989,6 +1033,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
         let now = CACurrentMediaTime()
         health.observe(status, at: now)
+        if status == .idle, health.stillLayout == nil {
+            health.witnessStillLayout(StillScreenWitness.layout(over: display.frame, excludingProcess: getpid()))
+        }
         let displayTime = (attachments.first?[.displayTime] as? NSNumber)?.uint64Value ?? 0
         if status == .complete || status == .idle {
             peer?.counters.captured(idle: status == .idle,
@@ -1036,6 +1083,9 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             if notCapturingTicks >= 2 { reportStopped(CaptureNotCapturingError()); return }
         }
         let now = CACurrentMediaTime()
+        if streamCapturing == true, health.isSilent(at: now), health.wantsStillLayout {
+            health.witnessStillLayout(StillScreenWitness.layout(over: display.frame, excludingProcess: getpid()))
+        }
         let healthy = !failureReported && health.isHealthy(at: now, streamCapturing: streamCapturing)
         let callback = onHealth
         DispatchQueue.main.async { callback?(healthy) }
