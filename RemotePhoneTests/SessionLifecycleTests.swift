@@ -25,6 +25,40 @@ final class FakeBackgroundExecution: BackgroundExecution {
 
 @MainActor
 final class SessionLifecycleTests: XCTestCase {
+    func testAcceptedLockThenBackgroundAndActiveNeverHoldsResumesOrRetries() throws {
+        let background = FakeBackgroundExecution()
+        let suite = "lock-background-\(UUID())"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let resumeStore = SessionResumeStore(defaults: defaults)
+        let model = PhoneRemoteModel(background: background, resumeStore: resumeStore)
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "away-lock-background")
+        defer { model.connection.stop() }
+        var packets: [ControlPacket] = []
+        model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+        let request = PhoneAwayLockRequest(hostKey: "exact-fixture-host", session: model.connection.presentationSessionID,
+            epoch: 7, sentAt: ProcessInfo.processInfo.systemUptime)
+        XCTAssertTrue(model.sendAdmittedLockMacForTesting(request))
+        XCTAssertTrue(model.lockMacPendingForTesting)
+        XCTAssertEqual(packets.filter { $0.action.action == "lockMac" }.count, 1)
+        model.sceneChanged(.inactive)
+        XCTAssertEqual(background.begins, 0)
+        model.sceneChanged(.background)
+        XCTAssertFalse(model.lockMacPendingForTesting)
+        XCTAssertFalse(model.connection.connected)
+        XCTAssertFalse(model.connection.isRunning)
+        XCTAssertEqual(background.begins, 0, "Pending End and Lock cannot request ordinary background time")
+        XCTAssertNil(model.backgroundHoldEndsAt)
+        XCTAssertNil(resumeStore.load())
+        XCTAssertNil(model.viewportResume)
+        XCTAssertTrue(model.macNotice?.contains("wasn’t confirmed") == true)
+        model.sceneChanged(.active)
+        XCTAssertFalse(model.connection.isRunning, "Quick foreground return cannot retry the ended session")
+        XCTAssertFalse(packets.contains { ["pause", "resume"].contains($0.action.action) })
+        XCTAssertNil(resumeStore.load())
+    }
+
     func testEditableFocusReplyOpensOnlyForNewestFreshClickOnce() {
         var gate = TextFocusProbeGate()
         let first = gate.begin(epoch: 9, at: 10)

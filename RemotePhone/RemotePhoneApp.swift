@@ -150,6 +150,10 @@ final class PhoneRemoteModel: ObservableObject {
             session: connection.presentationSessionID, epoch: geometryEpoch, sentAt: ProcessInfo.processInfo.systemUptime)
         cancelInput(); setMacAudioMuted(true)
         guard connection.sendControl(RemoteAction(action: "lockMac", epoch: geometryEpoch)) else { return false }
+        acceptedLockMacRequest(request)
+        return true
+    }
+    private func acceptedLockMacRequest(_ request: PhoneAwayLockRequest) {
         // End is already the explicit local intent; waiting for a status must never seed resume.
         sessionEndReason = .user
         resumeTiming.cancel(.userEnded)
@@ -165,7 +169,6 @@ final class PhoneRemoteModel: ObservableObject {
             self.disconnect()
             self.macNotice = notice
         }
-        return true
     }
     private func receiveAwayStatus(_ action: RemoteAction) {
         guard action.epoch == geometryEpoch, let host = connection.presentationHostTrust else { return }
@@ -1975,6 +1978,12 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     func enterBackground() {
+        if pendingLockMac != nil {
+            let notice = "Lock wasn’t confirmed. Unlock or check your Mac in person."
+            disconnect()
+            macNotice = notice
+            return
+        }
         displayTickInput.cancel()
         if mayKeepLivePiP {
             pipBackground = true
@@ -2535,6 +2544,13 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     #if DEBUG
+    /// Injects the already-authorized transport boundary only; production admission remains unchanged.
+    func sendAdmittedLockMacForTesting(_ request: PhoneAwayLockRequest) -> Bool {
+        guard connection.sendControl(RemoteAction(action: "lockMac", epoch: request.epoch)) else { return false }
+        acceptedLockMacRequest(request)
+        return true
+    }
+    var lockMacPendingForTesting: Bool { pendingLockMac != nil }
     func expireViewOnlyExitForTesting(at now: TimeInterval) { tick(at: now) }
     func sendViewOnlyEntryForTesting() { requestViewOnlyEntry() }
     var viewOnlyExitDeadlineForTesting: TimeInterval? { viewOnlyExitDeadline }
