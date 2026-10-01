@@ -222,6 +222,32 @@ final class HostUISnapshotTests: XCTestCase {
             $0.detail = "Couldn’t reach the connection."
             $0.accessibility = .denied
         }, actions: .preview))
+        try render("setup-4d-ready-choices-pending", HostSetupView(state: ready(.ready) {
+            $0.consentPending = true
+            $0.openAtLogin = false
+        }, actions: .preview))
+    }
+
+    func testConsentChoices() throws {
+        var confirmed: (Bool, Bool)?
+        let fresh = ready(.ready) {
+            $0.consentPending = true
+            $0.openAtLogin = false
+            $0.keepAwake = false
+        }
+        try render("setup-5-consent-new", HostConsentView(state: fresh, confirm: { confirmed = ($0, $1) }))
+        XCTAssertNil(confirmed, "Nothing is applied until Continue")
+        try render("setup-5b-consent-prior-choices", HostConsentView(state: ready(.ready) {
+            $0.consentPending = true
+            $0.openAtLogin = true
+            $0.keepAwake = true
+        }, confirm: { _, _ in }))
+        try render("setup-5c-consent-change", HostConsentView(state: ready(.ready), confirm: { _, _ in }, cancel: {}))
+        try render("settings-keep-awake-on-battery", HostSettingsView(state: ready(.ready) {
+            $0.keepAwake = true
+            $0.keepAwakePausedOnBattery = true
+            $0.loginItem = .needsApproval
+        }, actions: .preview))
     }
 
     func testSettings() throws {
@@ -265,7 +291,8 @@ final class HostUISnapshotTests: XCTestCase {
         let stopped = HostPopoverPresentation.make(for: ready(.unavailable) { $0.crashLoopStopped = true })
         XCTAssertEqual(stopped.headline, "Stopped after repeated crashes")
         XCTAssertEqual(stopped.actions, [.tryAgain], "Try Again resumes sharing and clears the crash-loop stop")
-        XCTAssertEqual(HostBackgroundItemCopy.loginSubtitle(.needsApproval), "Waiting for approval in Login Items")
+        XCTAssertEqual(HostBackgroundItemCopy.loginSubtitle(wanted: true, state: .needsApproval),
+                       "On · needs approval in System Settings")
         XCTAssertEqual(HostCurtainCopy.subtitle(for: ready(.controlling) {
             $0.privacyCurtain = true
             $0.focusAccessibility = .denied

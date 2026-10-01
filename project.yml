@@ -311,6 +311,7 @@ targets:
       - RemoteHost/HostMenuBarGlyph.swift
       - RemoteShared/ConnectMotionModel.swift
       - RemoteHost/HostSetupView.swift
+      - RemoteHost/HostConsentView.swift
       - RemoteHost/HostSettingsView.swift
       - RemoteHost/HostGuestSettingsView.swift
       - RemoteShared/WakeRequest.swift

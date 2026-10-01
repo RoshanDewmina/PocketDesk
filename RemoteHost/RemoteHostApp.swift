@@ -155,6 +155,7 @@ extension HostActions {
             setAllowSystemAudio: model.setAllowSystemAudio,
             setAllowFileTransfer: model.setAllowFileTransfer,
             setOpenAtLogin: model.setOpenAtLogin,
+            confirmBackgroundChoices: { model.confirmBackgroundChoices(openAtLogin: $0, keepAwake: $1) },
             setAutomaticRecovery: model.setAutomaticRecovery,
             openLoginItems: model.openLoginItems,
             setPrivacyCurtain: model.setPrivacyCurtain,

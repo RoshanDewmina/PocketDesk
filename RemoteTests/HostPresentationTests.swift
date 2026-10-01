@@ -235,11 +235,14 @@ final class HostPresentationTests: XCTestCase {
         XCTAssertTrue(HostReadyCheck.isReady(checks))
         XCTAssertEqual(checks.first { $0.id == .display }?.detail, "Sharing Built-in Retina Display")
 
+        XCTAssertEqual(checks.map(\.id).last, .backgroundChoices)
+
         ready.openAtLogin = false
         checks = HostReadyCheck.checks(for: ready)
-        XCTAssertEqual(checks.first { $0.id == .openAtLogin }?.result, .optional)
-        XCTAssertEqual(checks.first { $0.id == .openAtLogin }?.fix, .openAtLogin)
-        XCTAssertTrue(HostReadyCheck.isReady(checks), "Open at login is recommended, not required")
+        XCTAssertEqual(checks.first { $0.id == .backgroundChoices }?.result, .pass)
+        XCTAssertEqual(checks.first { $0.id == .backgroundChoices }?.detail, "Opens when you open it · sleeps as usual")
+        XCTAssertEqual(checks.first { $0.id == .backgroundChoices }?.fix, .reviewChoices)
+        XCTAssertTrue(HostReadyCheck.isReady(checks), "Choosing off is a valid choice")
 
         let starting = HostReadyCheck.checks(for: state(.starting))
         XCTAssertEqual(starting.first { $0.id == .connection }?.result, .waiting)
@@ -257,6 +260,52 @@ final class HostPresentationTests: XCTestCase {
         let unavailable = HostReadyCheck.checks(for: state(.unavailable) { $0.detail = "The relay didn’t answer." })
         XCTAssertEqual(unavailable.first { $0.id == .connection }?.detail, "The relay didn’t answer.")
         XCTAssertEqual(unavailable.first { $0.id == .connection }?.fix, .tryAgain)
+    }
+
+    func testReadyCheckAsksForLoginAndKeepAwakeChoicesUntilConfirmed() {
+        let pending = HostReadyCheck.checks(for: state(.ready) { $0.consentPending = true })
+        let row = pending.first { $0.id == .backgroundChoices }
+        XCTAssertEqual(row?.result, .fail)
+        XCTAssertEqual(row?.fix, .reviewChoices)
+        XCTAssertFalse(HostReadyCheck.isReady(pending), "Setup is not finished until both are chosen")
+        XCTAssertLessThanOrEqual(HostSetupFlow.progressDots(page: .ready, state: state(.ready) { $0.consentPending = true }),
+                                 HostSetupFlow.progressDots(page: .ready, state: state(.ready)))
+
+        let chosen = HostReadyCheck.checks(for: state(.ready) {
+            $0.openAtLogin = true
+            $0.keepAwake = true
+            $0.loginItem = .on
+        }).first { $0.id == .backgroundChoices }
+        XCTAssertEqual(chosen?.result, .pass)
+        XCTAssertEqual(chosen?.detail, "Opens at login · stays awake while sharing")
+
+        let unapproved = HostReadyCheck.checks(for: state(.ready) {
+            $0.openAtLogin = true
+            $0.loginItem = .needsApproval
+        }).first { $0.id == .backgroundChoices }
+        XCTAssertEqual(unapproved?.result, .optional)
+        XCTAssertEqual(unapproved?.detail, "Open at login needs approval in Login Items")
+    }
+
+    func testLoginAndKeepAwakeSettingsShowTheChoiceAndWhatMacOSDid() {
+        typealias C = HostBackgroundItemCopy
+        XCTAssertEqual(C.loginSubtitle(wanted: true, state: .on), "On · registered")
+        XCTAssertEqual(C.loginSubtitle(wanted: true, state: .needsApproval), "On · needs approval in System Settings")
+        XCTAssertEqual(C.loginSubtitle(wanted: false, state: .off), "Off")
+        XCTAssertEqual(C.loginSubtitle(wanted: false, state: .on), "Off · still listed in Login Items")
+        XCTAssertTrue(C.loginSubtitle(wanted: true, state: .off).hasPrefix("On · not registered"))
+
+        let normal = HostKeepAwakeCopy.subtitle(pausedOnBattery: false)
+        XCTAssertTrue(normal.contains("A connected iPhone always keeps the screen on"), "States the automatic display hold")
+        XCTAssertTrue(normal.contains("Pauses on battery"))
+        XCTAssertTrue(HostKeepAwakeCopy.subtitle(pausedOnBattery: true).hasPrefix("Paused on battery"))
+
+        XCTAssertTrue(HostConsentCopy.loginBody.contains("Login Items notification"))
+        XCTAssertTrue(HostConsentCopy.loginBody.contains("Settings"))
+        XCTAssertTrue(HostConsentCopy.keepAwakeBody.contains("no phone is connected"))
+        XCTAssertTrue(HostConsentCopy.keepAwakeBody.contains("battery"))
+        XCTAssertTrue(HostConsentCopy.alwaysTrue.contains("keeps the screen on"))
+        XCTAssertTrue(HostConsentCopy.alwaysTrue.contains("never unlocks"))
     }
 
     func testReadyCheckTreatsViewOnlyAsAChoice() {

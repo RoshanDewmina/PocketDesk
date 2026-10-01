@@ -115,7 +115,8 @@ struct HostSettingsView: View {
                     .accessibilityIdentifier("farside.settings.allowControl")
                     .disabled(state.captureScopeViewOnly)
             }
-            HostSettingsRow("Keep this Mac awake", subtitle: "Prevents idle system sleep while sharing. Does not override lid close, lock or manual Sleep.") {
+            HostSettingsRow("Keep this Mac awake",
+                            subtitle: HostKeepAwakeCopy.subtitle(pausedOnBattery: state.keepAwakePausedOnBattery)) {
                 HostSwitch(label: "Keep this Mac awake", isOn: state.keepAwake, set: actions.setKeepAwake)
                     .accessibilityIdentifier("farside.settings.keepAwake")
             }
@@ -243,7 +244,8 @@ struct HostSettingsView: View {
                 HostSwitch(label: "Show in menu bar", isOn: state.menuBarIconShown, set: actions.setMenuBarIconShown)
                     .accessibilityIdentifier("farside.settings.showInMenuBar")
             }
-            HostSettingsRow("Open at login", subtitle: HostBackgroundItemCopy.loginSubtitle(state.loginItem)) {
+            HostSettingsRow("Open at login",
+                            subtitle: HostBackgroundItemCopy.loginSubtitle(wanted: state.openAtLogin, state: state.loginItem)) {
                 backgroundItemAccessory(state.loginItem) {
                     HostSwitch(label: "Open at login", isOn: state.openAtLogin, set: actions.setOpenAtLogin)
                         .accessibilityIdentifier("farside.settings.openAtLogin")

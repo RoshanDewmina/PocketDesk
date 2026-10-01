@@ -71,6 +71,7 @@ final class HostBackgroundServices {
         static let recoveryWanted = "automaticRecoveryEnabled"
         static let registeredHelper = "automaticRecoveryHelperFingerprint"
         static let explicitChoicePolicy = "backgroundChoicePolicyV2"
+        static let loginWanted = "openAtLoginWanted"
     }
 
     let loginItem: HostBackgroundService
@@ -99,6 +100,10 @@ final class HostBackgroundServices {
             }
             defaults.set(true, forKey: Key.explicitChoicePolicy)
         }
+        // An install from before the saved wish keeps whatever macOS already has registered.
+        if defaults.object(forKey: Key.loginWanted) == nil {
+            defaults.set(loginState.isRegistered, forKey: Key.loginWanted)
+        }
     }
 
     static func live(bundle: Bundle = .main) -> HostBackgroundServices {
@@ -123,6 +128,8 @@ final class HostBackgroundServices {
     }
 
     var recoveryWanted: Bool { defaults.bool(forKey: Key.recoveryWanted) }
+    /// The person's own open-at-login choice; `loginState` is what macOS has registered.
+    var loginWanted: Bool { defaults.bool(forKey: Key.loginWanted) }
 
     func refresh() {
         loginState = HostBackgroundItemState(loginItem.status)
@@ -152,6 +159,7 @@ final class HostBackgroundServices {
     @discardableResult
     func setLoginItem(_ enabled: Bool) -> String? {
         defaults.set(true, forKey: Key.loginDefaultApplied)
+        defaults.set(enabled, forKey: Key.loginWanted)
         let problem: String?
         if enabled {
             problem = register(loginItem, what: "open at login")

@@ -231,7 +231,11 @@ struct HostPreferences {
         static let allowBigText = "allowBigTextFromPhone"
         static let awayMode = "awayModeWhileSharing"
         static let awayIntroShown = "awayModeIntroShown"
+        static let consentVersion = "farsideConsentVersion"
     }
+
+    /// Raise when the open-at-login or keep-awake explanation changes enough to ask again.
+    static let consentVersion = 1
 
     let defaults: UserDefaults
 
@@ -324,6 +328,16 @@ struct HostPreferences {
     var awayIntroShown: Bool {
         get { defaults.bool(forKey: Key.awayIntroShown) }
         nonmutating set { defaults.set(newValue, forKey: Key.awayIntroShown) }
+    }
+
+    /// The open-at-login and keep-awake explanation the person last confirmed; 0 before any.
+    var acceptedConsentVersion: Int {
+        get { defaults.integer(forKey: Key.consentVersion) }
+        nonmutating set { defaults.set(newValue, forKey: Key.consentVersion) }
+    }
+
+    func consentPending(currentVersion: Int = HostPreferences.consentVersion) -> Bool {
+        acceptedConsentVersion < currentVersion
     }
 
     var allowBigText: Bool {

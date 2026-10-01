@@ -166,7 +166,8 @@ struct HostPopoverView: View {
                 bigTextRow(status)
             }
             VStack(alignment: .leading, spacing: 6) {
-                HostToggleRow(title: "Open at login", subtitle: HostBackgroundItemCopy.loginSubtitle(state.loginItem),
+                HostToggleRow(title: "Open at login",
+                              subtitle: HostBackgroundItemCopy.loginSubtitle(wanted: state.openAtLogin, state: state.loginItem),
                               isOn: state.openAtLogin, set: actions.setOpenAtLogin)
                     .accessibilityIdentifier("farside.popover.openAtLogin")
                 if state.loginItem == .needsApproval {

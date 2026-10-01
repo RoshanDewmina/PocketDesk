@@ -174,6 +174,36 @@ final class HostBackgroundServicesTests: XCTestCase {
         XCTAssertTrue(HostPreferences(defaults: defaults).keepAwake)
     }
 
+    func testLoginWishStartsFromWhatMacOSHasAndThenFollowsThePerson() {
+        XCTAssertFalse(services().loginWanted, "A new install wants nothing until the person chooses")
+
+        defaults.removeObject(forKey: "openAtLoginWanted")
+        let login = FakeBackgroundService(.requiresApproval)
+        let existing = services(login: login)
+        XCTAssertTrue(existing.loginWanted, "An existing registration is kept as the prior choice")
+        XCTAssertEqual(existing.loginState, .needsApproval, "The wish and the system status stay separate")
+        XCTAssertEqual(login.registrations, 0)
+
+        existing.setLoginItem(false)
+        XCTAssertFalse(services(login: login).loginWanted, "An explicit off survives relaunch")
+    }
+
+    func testConfirmingNewConsentCopyNeverResetsPriorRecoveryOrKeepAwakeChoices() {
+        defaults.set(true, forKey: "launchAtLoginDefaultApplied")
+        let agent = FakeBackgroundService(.enabled)
+        XCTAssertTrue(services(agent: agent).recoveryWanted)
+        let preferences = HostPreferences(defaults: defaults)
+        XCTAssertTrue(preferences.keepAwake)
+        XCTAssertTrue(preferences.consentPending(), "New copy is still shown once to an existing install")
+
+        preferences.acceptedConsentVersion = HostPreferences.consentVersion
+        let relaunched = services(agent: agent)
+        XCTAssertTrue(relaunched.recoveryWanted)
+        XCTAssertEqual(agent.unregistrations, 0)
+        XCTAssertTrue(HostPreferences(defaults: defaults).keepAwake)
+        XCTAssertFalse(HostPreferences(defaults: defaults).consentPending())
+    }
+
     func testRecoveryPolicy() {
         typealias P = HostBackgroundPolicy
         XCTAssertEqual(P.recoveryAction(wanted: true, setupComplete: false, installed: true, state: .off,
