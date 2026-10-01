@@ -2,8 +2,22 @@ import AVKit
 import WebRTC
 
 /// Root must supply current authorization and release ALL control before background live viewing.
-/// This controller does not activate audio, fabricate keepalive, or obtain network permission.
+/// A legitimate PiP playback session is acquired only by explicit Start. No fake audio or network grant.
 final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate {
+    private let mediaSession: PhoneMediaSession
+    private var mediaOwner: UUID?
+    private let supported: () -> Bool
+    private let possible: (AVPictureInPictureController) -> Bool
+    private let startPlatform: (AVPictureInPictureController) -> Void
+    @MainActor
+    init(mediaSession: PhoneMediaSession = .shared,
+         supported: @escaping () -> Bool = { AVPictureInPictureController.isPictureInPictureSupported() },
+         possible: @escaping (AVPictureInPictureController) -> Bool = { $0.isPictureInPicturePossible },
+         startPlatform: @escaping (AVPictureInPictureController) -> Void = { $0.startPictureInPicture() }) {
+        self.mediaSession = mediaSession; self.supported = supported; self.possible = possible
+        self.startPlatform = startPlatform; super.init()
+    }
+
     private(set) var policy = LivePiPPolicy()
     private(set) var controller: AVPictureInPictureController?
     private(set) var sink: LivePiPSampleBufferSink?
@@ -61,14 +75,32 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     @discardableResult
     func startFromUserAction(foreground: Bool) -> Bool {
         precondition(Thread.isMainThread)
-        guard let controller, policy.userStart(foreground: foreground,
-            supported: AVPictureInPictureController.isPictureInPictureSupported(), possible: controller.isPictureInPicturePossible,
-            at: ProcessInfo.processInfo.systemUptime) else { return false }
-        controller.startPictureInPicture(); synchronizeSource(); didChangeState?(policy.state); return true
+        guard foreground, policy.state == .ready,
+              policy.admission?.permits(at: ProcessInfo.processInfo.systemUptime) == true,
+              let controller, supported() else { return false }
+        let owner = UUID()
+        let acquired = MainActor.assumeIsolated {
+            mediaSession.acquire(owner, kind: .pictureInPicture, onRetired: { [weak self] in
+                guard let self, self.mediaOwner == owner else { return }
+                self.mediaOwner = nil
+                self.stop()
+            })
+        }
+        guard acquired else { return false }
+        mediaOwner = owner
+        guard policy.userStart(foreground: foreground,
+            supported: supported(), possible: possible(controller),
+            at: ProcessInfo.processInfo.systemUptime) else { releaseMediaOwner(); return false }
+        startPlatform(controller); synchronizeSource(); didChangeState?(policy.state); return true
     }
     func offer(_ source: VideoFrameEnvelope) {
         sourceLock.lock(); let current = sourceSink; sourceLock.unlock()
         current?.offer(source) // Sink enforces exact identity and monotonic admission under its fence.
+    }
+    private func releaseMediaOwner() {
+        guard let owner = mediaOwner else { return }
+        mediaOwner = nil
+        MainActor.assumeIsolated { mediaSession.release(owner) }
     }
     func stop() {
         precondition(Thread.isMainThread)
@@ -78,6 +110,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         sink?.invalidate(); sink = nil; fence = nil
         let old = controller; controller = nil
         old?.stopPictureInPicture(); old?.delegate = nil
+        releaseMediaOwner()
         policy.didStop(); synchronizeSource(); didChangeState?(policy.state)
     }
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
@@ -105,5 +138,8 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         if self.controller === controller { renderSizeChanged?(newRenderSize) }
     }
     func pictureInPictureController(_ controller: AVPictureInPictureController, skipByInterval skipInterval: CMTime, completion completionHandler: @escaping () -> Void) { completionHandler() }
-    deinit { expiryTimer?.invalidate(); fence?.invalidate(); source?.detach(); sink?.invalidate() }
+    deinit {
+        expiryTimer?.invalidate(); fence?.invalidate(); source?.detach(); sink?.invalidate()
+        if let owner = mediaOwner { let session = mediaSession; Task { @MainActor in session.release(owner) } }
+    }
 }

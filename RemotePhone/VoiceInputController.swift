@@ -236,7 +236,8 @@ private final class AppleOnDeviceVoiceBackend: VoiceRecognitionBackend {
     private var engine: AVAudioEngine?
     private var microphoneTapped = false
     private var audioEnded = false
-    private var sessionActive = false
+    private let mediaSession = PhoneMediaSession.shared
+    private var mediaOwner: UUID?
     private var callbackGeneration: UInt64 = 0
 
     func authorize(shouldContinue: @escaping @MainActor () -> Bool) async throws {
@@ -261,17 +262,20 @@ private final class AppleOnDeviceVoiceBackend: VoiceRecognitionBackend {
         guard let recognizer, recognizer.supportsOnDeviceRecognition else {
             throw VoiceInputError.onDeviceUnavailable
         }
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.record, mode: .measurement)
-        try session.setActive(true)
-        sessionActive = true
+        guard mediaOwner == nil else { throw VoiceInputError.microphoneUnavailable }
+        let owner = UUID()
+        guard mediaSession.acquire(owner, kind: .recording, onRetired: { [weak self] in
+            guard let self, self.mediaOwner == owner else { return }
+            self.stopMicrophone()
+            onFailure()
+        }) else { throw VoiceInputError.microphoneUnavailable }
+        mediaOwner = owner
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0, format.channelCount > 0 else {
-            try? session.setActive(false, options: .notifyOthersOnDeactivation)
-            sessionActive = false
+            stopMicrophone()
             throw VoiceInputError.microphoneUnavailable
         }
         let request = SFSpeechAudioBufferRecognitionRequest()
@@ -330,9 +334,9 @@ private final class AppleOnDeviceVoiceBackend: VoiceRecognitionBackend {
         }
         engine?.stop()
         engine = nil
-        if sessionActive {
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            sessionActive = false
+        if let owner = mediaOwner {
+            mediaOwner = nil
+            mediaSession.release(owner)
         }
     }
 }
