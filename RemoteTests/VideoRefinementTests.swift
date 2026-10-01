@@ -92,4 +92,41 @@ final class VideoRefinementTests: XCTestCase {
         context.configure(allowed: true, ltr: false, refinement: true, geometry: 8, scope: 3)
         XCTAssertNil(context.refinement(for: tag, at: ProcessInfo.processInfo.systemUptime))
     }
+    func testIdleTimerDropsIncompleteAssemblyWithoutAnotherIncomingPacket() throws {
+        let pipe = VideoRefinementChannel(); pipe.configure(enabled: true, geometry: 7, scope: 3)
+        pipe.send = { _, _ in true }
+        let packet = VideoRefinementChunk(version: 1, id: String(repeating: "b", count: 32), identity: identity(Data()),
+            total: 18000, offset: 0, body: Data(repeating: 5, count: 9000), ack: false)
+        pipe.receive(try JSONEncoder().encode(packet), at: 10)
+        XCTAssertEqual(pipe.retainedIncomingBytesForTesting, 9000)
+        pipe.pump(at: 12); XCTAssertEqual(pipe.retainedIncomingBytesForTesting, 9000)
+        pipe.pump(at: 12.001); XCTAssertEqual(pipe.retainedIncomingBytesForTesting, 0)
+    }
+    func testContextRetirementDropsCachedPNGAndFencesAnAlreadyQueuedProducerJob() throws {
+        var pixel: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 16, 16, kCVPixelFormatType_32BGRA, nil, &pixel), kCVReturnSuccess)
+        let pixels = try XCTUnwrap(pixel)
+        CVBufferSetAttachment(pixels, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(pixels, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_sRGB, .shouldPropagate)
+        CVPixelBufferLockBaseAddress(pixels, []); memset(CVPixelBufferGetBaseAddress(pixels), 255, CVPixelBufferGetDataSize(pixels)); CVPixelBufferUnlockBaseAddress(pixels, [])
+        for terminal in [false, true] {
+            let context = VideoFeedbackContext(); context.configure(allowed: true, refinement: true, geometry: 7, scope: 3)
+            let producer = context.refinementProducerForTesting, tag = try XCTUnwrap(context.encoded(token: nil))
+            var images = 0
+            _ = producer.inspect(pixels, tag: tag, at: 10) { _ in images += 1 }
+            _ = producer.inspect(pixels, tag: tag, at: 10.6) { _ in images += 1 }
+            producer.drainForTesting(); XCTAssertGreaterThan(producer.cachedBytesForTesting, 0); XCTAssertEqual(images, 1)
+            let entered = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0)
+            producer.reset()
+            producer.beforeEncodeForTesting = { entered.signal(); _ = resume.wait(timeout: .now() + 3) }
+            _ = producer.inspect(pixels, tag: tag, at: 20) { _ in images += 1 }
+            _ = producer.inspect(pixels, tag: tag, at: 20.6) { _ in images += 1 }
+            XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+            if terminal { context.end() } else { context.configure(allowed: false, refinement: true, geometry: 7, scope: 3) }
+            XCTAssertEqual(producer.cachedBytesForTesting, 0, "Retirement synchronously drops the sensitive cache")
+            resume.signal(); producer.drainForTesting()
+            XCTAssertEqual(producer.cachedBytesForTesting, 0); XCTAssertEqual(images, 1, "Old queued job cannot repopulate or emit")
+            if terminal { XCTAssertNil(producer.inspect(pixels, tag: tag, at: 30) { _ in XCTFail("Terminal producer") }) }
+        }
+    }
 }

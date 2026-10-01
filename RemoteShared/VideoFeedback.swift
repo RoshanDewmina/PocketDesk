@@ -81,12 +81,16 @@ final class VideoFeedbackContext: @unchecked Sendable {
     }
     private func clear() {
         overlay = nil
+        producer.reset(terminal: ended)
         generation = Self.id(); tokens.removeAll(); acknowledged.removeAll(); refresh = false
         pending.removeAll(); retired.removeAll(); decoded.removeAll(); decoderGeneration = UUID(); lastRefresh = -.infinity
     }
     func end() { lock.lock(); refinementImage = nil; overlay = nil; ended = true; allowed = false; clear(); feedback = nil; lock.unlock() }
     var permitsLTR: Bool { lock.lock(); defer { lock.unlock() }; return allowed && ltrAllowed && !ended && geometry > 0 && scope > 0 }
-    func beginEncoder() { lock.lock(); generation = Self.id(); tokens.removeAll(); acknowledged.removeAll(); refresh = false; lock.unlock() }
+    func beginEncoder() { lock.lock(); producer.reset(); generation = Self.id(); tokens.removeAll(); acknowledged.removeAll(); refresh = false; lock.unlock() }
+    #if DEBUG
+    var refinementProducerForTesting: VideoRefinementProducer { producer }
+    #endif
     func beginDecoder() {
         lock.lock(); let now = ProcessInfo.processInfo.systemUptime
         retired = retired.filter { now >= $0.value && now - $0.value <= 5 }

@@ -29,6 +29,9 @@ final class VideoRefinementChannel {
     private var lastReceivedID: String?
     var send: ((Data, Bool) -> Bool)? // Bool marks an ACK; no independent image credit pool.
     var image: ((VideoRefinementImage) -> Void)?
+    #if DEBUG
+    var retainedIncomingBytesForTesting: Int { incoming?.data.count ?? 0 }
+    #endif
     func configure(enabled: Bool, geometry: UInt64, scope: UInt64) {
         guard !ended else { return }
         if self.enabled != enabled || self.geometry != geometry || self.scope != scope {
@@ -46,6 +49,7 @@ final class VideoRefinementChannel {
     }
     func pump(at now: Double) {
         guard enabled, !ended, now.isFinite else { return }
+        if let incoming, now < incoming.started || now - incoming.started > 2 { self.incoming = nil }
         if let ack = pendingAck {
             if now < ack.1 || now - ack.1 > 2 { pendingAck = nil }
             else if send?(ack.0, true) == true { pendingAck = nil }
