@@ -498,8 +498,8 @@ final class FileChannelLoopbackTests: XCTestCase {
     private func connect(phoneAcceptsFiles: Bool) async throws -> (PeerMedia, PeerMedia) {
         let host = PeerMedia(isHost: true, servers: [], fileChannel: true)
         let phone = PeerMedia(isHost: false, servers: [], fileChannel: phoneAcceptsFiles)
-        host.onSignal = { [weak phone] in phone?.receive($0) }
-        phone.onSignal = { [weak host] in host?.receive($0) }
+        host.onSignal = { [weak self, weak phone] in if let sdp = $0.sdp { self?.descriptions.append("host " + sdp) }; phone?.receive($0) }
+        phone.onSignal = { [weak self, weak host] in if let sdp = $0.sdp { self?.descriptions.append("phone " + sdp) }; host?.receive($0) }
         var connected = false
         phone.onState = { if $0 == "connected" { connected = true } }
         host.offer()
@@ -526,6 +526,7 @@ final class FileChannelLoopbackTests: XCTestCase {
 
     private var hostStats: StreamStatsReport?
     private var phoneStats: StreamStatsReport?
+    private var descriptions: [String] = []
 
     private func routeSummary() -> String {
         func line(_ name: String, _ report: StreamStatsReport?) -> String {
@@ -624,6 +625,72 @@ final class FileChannelLoopbackTests: XCTestCase {
             XCTAssertGreaterThan(downRate, 400_000, "an app-limited host estimate keeps the LAN floor: \(routeSummary())")
         }
         XCTAssertNotNil(link.host.controlBufferedAmount, "the control channel is untouched")
+    }
+
+    /// DF10 bench, opt in with `FARSIDE_FILE_BENCH_MB=100`: throughput both ways on loopback, and the
+    /// phone->Mac control-message delay (send to the host's main-queue delivery) idle and during each transfer.
+    func testFileBenchBothWaysWithControlLatency() async throws {
+        guard let megabytes = ProcessInfo.processInfo.environment["FARSIDE_FILE_BENCH_MB"].flatMap(Int.init), megabytes > 0 else {
+            throw XCTSkip("set FARSIDE_FILE_BENCH_MB to run the DF10 bench")
+        }
+        let link = try await loopback()
+        defer { link.host.close(); link.phone.close(); try? FileManager.default.removeItem(at: link.folder) }
+        var data = Data(count: megabytes * 1_000_000)
+        data.withUnsafeMutableBytes { arc4random_buf($0.baseAddress, $0.count) }
+        var delays: [Double] = []
+        link.host.onControl = { message in
+            guard message.count == 8 else { return }
+            let sent = message.withUnsafeBytes { $0.loadUnaligned(as: UInt64.self) }
+            delays.append(Double(DispatchTime.now().uptimeNanoseconds - sent) / 1_000_000)
+        }
+        func probe(for seconds: Double) async throws {
+            let end = Date().addingTimeInterval(seconds)
+            while Date() < end {
+                var now = DispatchTime.now().uptimeNanoseconds
+                _ = link.phone.sendControl(Data(bytes: &now, count: 8))
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+        }
+        func summary(_ values: [Double]) -> String {
+            let sorted = values.sorted()
+            guard !sorted.isEmpty else { return "n=0" }
+            func pct(_ p: Double) -> Double { sorted[min(sorted.count - 1, Int(Double(sorted.count) * p))] }
+            return String(format: "n=%d p50 %.1f p95 %.1f p99 %.1f max %.1f ms", sorted.count, pct(0.5), pct(0.95), pct(0.99), sorted.last!)
+        }
+        try await probe(for: 3)
+        let idle = summary(delays)
+
+        func timed(_ start: () throws -> Void, finished: @escaping () -> FileTransferFinish?) async throws -> (Double, String) {
+            delays = []
+            let started = Date()
+            try start()
+            let deadline = Date().addingTimeInterval(600)
+            while finished() == nil, Date() < deadline {
+                var now = DispatchTime.now().uptimeNanoseconds
+                _ = link.phone.sendControl(Data(bytes: &now, count: 8))
+                try await Task.sleep(nanoseconds: 20_000_000)
+            }
+            XCTAssertEqual(finished()?.status, .stored, routeSummary())
+            return (Double(data.count) / Date().timeIntervalSince(started), summary(delays))
+        }
+        var phoneFinish: FileTransferFinish?, macFinish: FileTransferFinish?
+        link.phoneEngine.onFinish = { if $0.direction == .outgoing { phoneFinish = $0 } }
+        link.macEngine.onFinish = { if $0.direction == .outgoing { macFinish = $0 } }
+        let (up, upDelay) = try await timed({ _ = try link.phoneEngine.send(DataByteSource(data), name: "up.bin", type: nil).get() },
+                                            finished: { phoneFinish })
+        link.macEngine.onRequest = { transfer in
+            _ = link.macEngine.send(DataByteSource(data), name: "down.bin", type: nil, transfer: transfer)
+        }
+        let (down, downDelay) = try await timed({ _ = try link.phoneEngine.request().get() }, finished: { macFinish })
+        print(String(format: "FILE-BENCH %d MB phone->mac %.2f MB/s, mac->phone %.2f MB/s", megabytes, up / 1e6, down / 1e6))
+        print("FILE-BENCH control delay idle: \(idle)")
+        print("FILE-BENCH control delay during phone->mac: \(upDelay)")
+        print("FILE-BENCH control delay during mac->phone: \(downDelay)")
+        print("FILE-BENCH route: \(routeSummary())")
+        for description in descriptions {
+            let role = description.prefix { $0 != " " }
+            print("FILE-BENCH \(role) SDP " + description.split(separator: "\r\n").filter { $0.hasPrefix("a=max-message-size") || $0.hasPrefix("a=sctp-port") }.joined(separator: " "))
+        }
     }
 }
 
