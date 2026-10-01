@@ -2808,7 +2808,7 @@ final class RemoteHostModel: ObservableObject {
     private var advertisedFeatures: [String] {
         let tuning = StreamTuning.current
         let base = SessionFeature.host.filter {
-            if ($0 == SessionFeature.videoLTR || $0 == SessionFeature.videoRefinement) && !connection.peerFeatures.contains($0) { return false }
+            if ($0 == SessionFeature.videoLTR || $0 == SessionFeature.videoRefinement || $0 == SessionFeature.exactVideoTiming) && !connection.peerFeatures.contains($0) { return false }
             if $0 == SessionFeature.pencilInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.pencilInput) || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             if $0 == SessionFeature.causalInput && (!connection.allowsCausalInput || !connection.peerFeatures.contains(SessionFeature.causalInput)) { return false }
             return ($0 != SessionFeature.viewportCapture || tuning.viewportCapture) && ($0 != SessionFeature.ladder || tuning.ladder)
@@ -2826,8 +2826,8 @@ final class RemoteHostModel: ObservableObject {
         let healthy = sessionState == .couch ? requestedHealthy && refreshCouchHealth() : requestedHealthy && awayPictureClear
         let features = connection.peerFeatures
         connection.media?.videoFeedback.configure(allowed: healthy && !away.isLocking && sessionState == .picture && active && !phonePause.isPaused &&
-            (features.contains(SessionFeature.videoLTR) || features.contains(SessionFeature.videoRefinement)),
-            ltr: features.contains(SessionFeature.videoLTR), refinement: features.contains(SessionFeature.videoRefinement), geometry: inputEpoch.value, scope: captureScopeEpoch)
+            (features.contains(SessionFeature.videoLTR) || features.contains(SessionFeature.videoRefinement) || features.contains(SessionFeature.exactVideoTiming)),
+            ltr: features.contains(SessionFeature.videoLTR), refinement: features.contains(SessionFeature.videoRefinement), timing: features.contains(SessionFeature.exactVideoTiming), geometry: inputEpoch.value, scope: captureScopeEpoch)
         connection.media?.configureVideoRefinement(enabled: healthy && !away.isLocking && sessionState == .picture && active && !phonePause.isPaused && features.contains(SessionFeature.videoRefinement), geometry: inputEpoch.value, scope: captureScopeEpoch)
         let state = MacShareBlocker.sessionState(
             presence: presence ?? (displayAsleep ? .displayAsleep : nil),

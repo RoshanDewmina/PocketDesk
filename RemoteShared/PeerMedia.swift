@@ -1093,7 +1093,7 @@ final class PeerMedia: NSObject {
         return channel.bufferedAmount
     }
     /// `displayMs` is the frame's ScreenCaptureKit display time in mach ms, 0 for a re-send.
-    func pushFrame(_ buffer: CVPixelBuffer, timeStampNs: Int64, displayMs: Double = 0) {
+    func pushFrame(_ buffer: CVPixelBuffer, timeStampNs: Int64, displayMs: Double = 0, exactTiming: ExactVideoTiming? = nil) {
         guard captureLock.try() else { counters.pushSkipped(); return }
         defer { captureLock.unlock() }
         guard !closed, localGateOpen(), let source, let capturer else { return }
@@ -1109,6 +1109,7 @@ final class PeerMedia: NSObject {
             adaptedFormat = format
         }
         guard localGateOpen() else { return }
+        videoFeedback.pushedTiming(exactTiming, buffer: output)
         frameTimingLog?.pushed(ObjectIdentifier(output), displayMs: displayMs, pushMs: MachClock.nowMs())
         source.capturer(capturer, didCapture: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: output), rotation: ._0, timeStampNs: timeStampNs))
         counters.pushed()
@@ -1230,6 +1231,7 @@ final class PeerMedia: NSObject {
             stats.host = remoteHostSummary
             stats.host?.frameRecords = nil
             if let frameTiming = frameTimingReceiver?.drain() { stats.applyPhoneFrameTiming(frameTiming) }
+            if let exact = videoFeedback.drainTiming() { stats.applyExactVideoTiming(exact) }
             stats.hostFramesEncodedTotal = remoteFrameMark?.hostEncoded
             stats.framesArrivedAtMark = remoteFrameMark?.phoneArrived
             stats.frameMarkAt = remoteFrameMark?.at

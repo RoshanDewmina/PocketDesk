@@ -361,6 +361,18 @@ struct StreamStatsReport: Codable, Equatable {
     var frameToPhoneMaxMs: Double?
     var frameTimedCount: Int?
     var frameJoinLocked: Bool?
+    // In-band exact software timing, independent of heuristic RTP/size joins and pixel bench markers.
+    var exactDecoded: Int?
+    var exactPresented: Int?
+    var exactUniqueSources: Int?
+    var exactResends: Int?
+    var exactTimed: Int?
+    var exactMissingClock: Int?
+    var exactSourceToDecodeP50Ms: Double?
+    var exactSourceToDecodeP95Ms: Double?
+    var exactSourceToPresentP50Ms: Double?
+    var exactSourceToPresentP95Ms: Double?
+    var exactClockUncertaintyMs: Double?
 
     init(role: String, previous: StreamStatsSample?, current: StreamStatsSample,
          counters: StreamCounterSnapshot?) {
@@ -715,6 +727,10 @@ struct StreamStatsReport: Codable, Equatable {
             }
         }
         if let frameTimingLine { lines.append(frameTimingLine) }
+        if let exactDecoded {
+            lines.append("exact tagged software source→decode p50/p95 \(value(exactSourceToDecodeP50Ms, "ms"))/\(value(exactSourceToDecodeP95Ms, "ms")) · source→public presentation \(value(exactSourceToPresentP50Ms, "ms"))/\(value(exactSourceToPresentP95Ms, "ms")) ±\(value(exactClockUncertaintyMs, "ms"))")
+            lines.append("tagged records decoded \(exactDecoded) · original presented \(exactPresented ?? 0) · unique sources \(exactUniqueSources ?? 0) · resends \(exactResends ?? 0) · timed \(exactTimed ?? 0) · clock unavailable \(exactMissingClock ?? 0)")
+        }
         lines.append("input queue \(inputBufferedBytes ?? 0)B peak \(inputBufferedPeakBytes ?? 0)B · moves merged \(coalescedMoves ?? 0)")
         return lines
     }
@@ -849,6 +865,7 @@ final class StreamCounters: @unchecked Sendable {
     private var lastFlash: Bool?
     private var lastClickSentMs: Double?
     private var clock: ClockSyncEstimate?
+    private var clockObservedAtMs: Double?
     private var legibility: LegibilitySummary?
     private var presentedAt120 = 0
     private var presentedIntervalCount = 0
@@ -933,8 +950,12 @@ final class StreamCounters: @unchecked Sendable {
 
     // MARK: Bench marker, presentation cadence and input-to-photon (phone)
 
-    func clockUpdated(_ estimate: ClockSyncEstimate?) {
-        lock.lock(); clock = estimate; lock.unlock()
+    func clockUpdated(_ estimate: ClockSyncEstimate?, observedAtMs: Double = MachClock.nowMs()) {
+        lock.lock(); clock = estimate; clockObservedAtMs = estimate != nil ? observedAtMs : nil; lock.unlock()
+    }
+
+    var clockObservation: (estimate: ClockSyncEstimate?, atMs: Double?) {
+        lock.lock(); defer { lock.unlock() }; return (clock, clockObservedAtMs)
     }
 
     var clockEstimate: ClockSyncEstimate? {

@@ -646,7 +646,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     func fenceCapture() {
         scopeLease.invalidate()
         fenceAudio()
-        let clear = { [self] in lastBuffer = nil; audioConverter.reset() }
+        let clear = { [self] in lastBuffer = nil; sourceTiming.reset(); audioConverter.reset() }
         if DispatchQueue.getSpecific(key: captureQueueKey) == true { clear() }
         else { queue.sync(execute: clear) }
     }
@@ -658,6 +658,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
     private var lastBuffer: CVPixelBuffer?
     private var bufferVersion: UInt64 = 0
     private var lastBufferDisplayTime: UInt64 = 0
+    private var sourceTiming = CaptureSourceTiming()
     private var lastSentAt = 0.0
     private var stopping = false
     private let display: SCDisplay
@@ -948,6 +949,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
         of type: SCStreamOutputType
     ) {
+        let capturedMs = MachClock.nowMs() // Public SCK callback entry, before admission/metadata work.
         guard scopeTarget?.processIsAlive != false,
               scopeLease.performIfValid({}) else {
             reportStopped(HostCaptureScopeError.targetUnavailable)
@@ -980,7 +982,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         lastBuffer = buffer
         bufferVersion &+= 1
         lastBufferDisplayTime = displayTime
-        deliver(buffer, at: now, displayMs: displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : 0)
+        let timing = sourceTiming.captured(displayTicks: displayTime, atMs: capturedMs)
+        deliver(buffer, at: now, displayMs: displayTime > 0 ? CaptureTiming.milliseconds(fromMachTicks: displayTime) : 0, timing: timing)
     }
 
     func stream(_ stream: SCStream, didStopWithError error: Error) {
@@ -1017,15 +1020,15 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         // Keep a static desktop visible, but only while fresh ScreenCaptureKit
         // complete/idle status independently proves the source is still alive.
         if healthy, now - lastSentAt >= 0.45, let lastBuffer {
-            deliver(lastBuffer, at: now)
+            deliver(lastBuffer, at: now, timing: sourceTiming.resent())
         }
     }
 
-    private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0) {
+    private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0, timing: ExactVideoTiming? = nil) {
         lastSentAt = time
         guard scopeTarget?.processIsAlive != false else { return }
         scopeLease.performIfValid {
-            peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs)
+            peer?.pushFrame(buffer, timeStampNs: Int64(time * 1_000_000_000), displayMs: displayMs, exactTiming: timing)
             onGuestFrame?(buffer, time)
         }
     }

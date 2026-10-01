@@ -277,10 +277,6 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
             }
             if let tag = videoTag { videoTag = videoFeedback?.prepareRefinement(sourcePixels, tag: tag) }
             guard let pixels = configuration.fullColor444 ? HEVC444PixelTransfer.fullColor(sourcePixels) : sourcePixels else { return -1 }
-            let entry = Pending(epoch: currentEpoch, videoTag: videoTag, timestamp: UInt32(bitPattern: frame.timeStamp),
-                captureMs: frame.timeStampNs / 1_000_000, rotation: frame.rotation, submittedMs: MachClock.nowMs(), width: width, height: height)
-            pending[id] = entry
-            frameTiming?.submitted(ObjectIdentifier(buffer.pixelBuffer), key: entry.captureMs)
             var submittedTokens: [Int64] = []
             var properties: [CFString: Any] = [:]
             let independentKey = forceIDR
@@ -295,12 +291,19 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                 if !options.tokens.isEmpty { properties[kVTEncodeFrameOptionKey_AcknowledgedLTRTokens] = options.tokens.map { NSNumber(value: $0) } }
                 if options.refresh && !independentKey { properties[kVTEncodeFrameOptionKey_ForceLTRRefresh] = true }
             }
+            let submittedMs = MachClock.nowMs()
+            videoTag?.timing = videoFeedback?.submittedTiming(buffer: buffer.pixelBuffer, atMs: submittedMs)
+            let entry = Pending(epoch: currentEpoch, videoTag: videoTag, timestamp: UInt32(bitPattern: frame.timeStamp),
+                captureMs: frame.timeStampNs / 1_000_000, rotation: frame.rotation, submittedMs: submittedMs, width: width, height: height)
+            pending[id] = entry
+            frameTiming?.submitted(ObjectIdentifier(buffer.pixelBuffer), key: entry.captureMs)
             let result = VTCompressionSessionEncodeFrame(session, imageBuffer: pixels,
                 presentationTimeStamp: CMTime(value: frame.timeStampNs, timescale: 1_000_000_000),
                 duration: CMTime(value: 1, timescale: Int32(fps)), frameProperties: properties as CFDictionary, infoFlagsOut: nil) {
                     [weak self] status, flags, sample in
+                    let encodedAtMs = MachClock.nowMs() // Public VT output entry; owner queue work is later.
                     guard let self else { return }
-                    self.queue.async { [weak self] in self?.completed(id: id, epoch: currentEpoch, status: status, flags: flags, sample: sample) }
+                    self.queue.async { [weak self] in self?.completed(id: id, epoch: currentEpoch, status: status, flags: flags, sample: sample, encodedAtMs: encodedAtMs) }
                 }
             if result != noErr { pending.removeValue(forKey: id); counters?.droppedBeforeEncode() }
             if result == noErr { acknowledgedLTRSubmission = submittedTokens; refreshSubmission = properties[kVTEncodeFrameOptionKey_ForceLTRRefresh] as? Bool == true; forceIDR = false }
@@ -326,7 +329,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         if success, let attachments = CVBufferCopyAttachments(buffer.pixelBuffer, .shouldPropagate) { CVBufferSetAttachments(output, attachments, .shouldPropagate) }
         return success ? output : nil
     }
-    private func completed(id: UInt64, epoch: UUID, status: OSStatus, flags: VTEncodeInfoFlags, sample: CMSampleBuffer?) {
+    private func completed(id: UInt64, epoch: UUID, status: OSStatus, flags: VTEncodeInfoFlags, sample: CMSampleBuffer?, encodedAtMs: Double) {
         guard epoch == self.epoch, let entry = pending.removeValue(forKey: id), entry.epoch == epoch else { return }
         guard status == noErr, !flags.contains(.frameDropped), let sample else {
             counters?.encoderSilentlyDropped(1)
@@ -350,13 +353,15 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         }
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
         let isKey = (attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool) != true
-        if let submittedTag = entry.videoTag {
+        let now = MachClock.nowMs()
+        if var submittedTag = entry.videoTag {
+            submittedTag.timing?.encodedMs = encodedAtMs
+            if let timing = submittedTag.timing, (try? timing.validate()) == nil { submittedTag.timing = nil }
             // The token is a public CMSampleBuffer attachment, not an inferred frame number.
             let number = ltrApplied ? attachments?.first?[kVTSampleAttachmentKey_RequireLTRAcknowledgementToken] as? NSNumber : nil
             if let tag = videoFeedback?.encoded(token: number?.int64Value, expected: submittedTag),
                let marked = H26xVideoMarker.append(tag, to: data, hevc: configuration.codecType == kCMVideoCodecType_HEVC) { data = marked }
         }
-        let now = MachClock.nowMs()
         let image = RTCEncodedImage()
         image.buffer = data; image.encodedWidth = entry.width; image.encodedHeight = entry.height
         image.timeStamp = entry.timestamp; image.captureTimeMs = entry.captureMs
