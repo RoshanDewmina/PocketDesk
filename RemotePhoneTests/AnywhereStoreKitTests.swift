@@ -184,6 +184,11 @@ final class AnywhereStoreKitTests: XCTestCase {
         XCTAssertFalse(store.entitlement.hasAccess)
         let signed = await store.signedTransaction()
         XCTAssertNil(signed)
+        // The boundary task reports only after refresh() returns, and refresh() still awaits the
+        // trial-eligibility read after publishing .expired; a slow StoreKit daemon widens that gap.
+        while Date() < deadline, boundaryCallbacks == 0 {
+            try await Task.sleep(for: .milliseconds(50))
+        }
         XCTAssertEqual(boundaryCallbacks, 1, "The boundary produces one service refresh without a timer loop")
     }
 
