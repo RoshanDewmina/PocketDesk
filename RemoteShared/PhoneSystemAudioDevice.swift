@@ -14,6 +14,29 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
     private var playbackRequested = false
     private var epoch: UInt64 = 0
     private var initialized = false
+    private var observers: [NSObjectProtocol] = []
+    private var startedOnBuiltInOutput = true
+    var outputIsBuiltIn: () -> Bool = {
+        AVAudioSession.sharedInstance().currentRoute.outputs.contains { $0.portType == .builtInSpeaker || $0.portType == .builtInReceiver }
+    }
+
+    /// A new output (AirPods, headphones, CarPlay) can change the hardware format, and AVAudioEngine
+    /// then stops itself. Restart on the new route. Removal is left to PhoneMediaSession, which mutes.
+    override init() {
+        super.init()
+        let center = NotificationCenter.default
+        observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil) { [weak self] _ in
+            self?.restartIfStopped()
+        })
+        observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { [weak self] note in
+            let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+            guard reason != AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue, let self else { return }
+            let builtIn = self.outputIsBuiltIn()
+            self.lock.withLock { self.startedOnBuiltInOutput = builtIn } // A running engine follows the new route.
+            self.restartIfStopped()
+        })
+    }
+    deinit { observers.forEach(NotificationCenter.default.removeObserver) }
 
     var deviceInputSampleRate: Double { 48_000 }
     var deviceOutputSampleRate: Double { 48_000 }
@@ -61,6 +84,27 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
         let delegate = lock.withLock { audioDelegate }
         delegate?.dispatchAsync { [weak self] in self?.applyEngine() }
     }
+    private func restartIfStopped() {
+        let delegate = lock.withLock { audioDelegate }
+        delegate?.dispatchAsync { [weak self] in
+            guard let self else { return }
+            let (stalled, wasExternal) = self.lock.withLock {
+                (self.consent && self.playbackRequested && self.initialized && self.engine?.isRunning != true, !self.startedOnBuiltInOutput)
+            }
+            // The engine's own configuration change can beat the route change that mutes: never move Mac
+            // audio from headphones to the speaker by itself.
+            guard stalled, !(wasExternal && self.outputIsBuiltIn()) else { return }
+            self.applyEngine()
+        }
+    }
+    #if DEBUG
+    var isRenderingForTesting: Bool { lock.withLock { engine?.isRunning == true } }
+    func stopEngineForTesting() -> AVAudioEngine? {
+        let current = lock.withLock { engine }
+        current?.stop()
+        return current
+    }
+    #endif
     /// Runs on the ADM owner thread. Render callbacks use AVAudioEngine's single render thread.
     private func applyEngine() {
         let state = lock.withLock { (consent && playbackRequested && initialized, epoch, audioDelegate, engine) }
@@ -114,8 +158,11 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
             self.engine = engine; self.source = source
             return true
         }) else { return }
-        do { try engine.start() }
-        catch {
+        do {
+            try engine.start()
+            let builtIn = outputIsBuiltIn()
+            lock.withLock { startedOnBuiltInOutput = builtIn }
+        } catch {
             lock.withLock { self.engine = nil; self.source = nil; consent = false; epoch &+= 1 }
             engine.stop()
             DispatchQueue.main.async { [weak self] in self?.onFailure?() }

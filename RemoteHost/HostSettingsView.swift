@@ -94,7 +94,7 @@ struct HostSettingsView: View {
     private var phoneSection: some View {
         HostSettingsSection("Phone", footer: state.localPairRemovalMessage) {
             phoneRow
-            HostSettingsRow("Local network only", subtitle: "Enable on both devices to connect without internet. Changing it stops sharing; share again when ready.") {
+            HostSettingsRow("Local network only", subtitle: "Enable on both devices to connect without internet. Changing it ends the current connection; sharing stays on.") {
                 HostSwitch(label: "Local network only", isOn: state.localOnly, set: actions.setLocalOnly)
                     .accessibilityIdentifier("farside.settings.localOnly")
             }
@@ -134,7 +134,7 @@ struct HostSettingsView: View {
                            set: actions.setChimeOnConnect)
                     .accessibilityIdentifier("farside.settings.chime")
             }
-            HostSettingsRow("Share Mac audio", subtitle: "Sound from all apps, even outside the shared display. Off after restarting Farside.") {
+            HostSettingsRow("Share Mac audio", subtitle: "Sound from all apps, even outside the shared display.") {
                 HostSwitch(label: "Share Mac audio", isOn: state.allowSystemAudio, set: actions.setAllowSystemAudio)
                     .accessibilityIdentifier("farside.settings.systemAudio")
                     .disabled(state.captureScopeViewOnly)

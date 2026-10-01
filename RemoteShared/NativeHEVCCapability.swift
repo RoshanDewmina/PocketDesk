@@ -6,10 +6,13 @@ import WebRTC
 /// Positive cache is tied to the exact OS/model, probe revision and pinned RTP implementation.
 enum NativeHEVCCapability {
     private static let state = HEVCProcessState()
-    static var isDisabledThisLaunch: Bool { state.disabled }
-    static func failed() { state.disable() }
+    private static var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+    static var isDisabledThisLaunch: Bool { !state.permits(at: now) }
+    static func begin() -> HEVCRun { HEVCRun(at: now) }
+    static func failed(_ run: HEVCRun) { if run.markFailed() { state.failed(at: now) } }
+    static func ended(_ run: HEVCRun) { if let failed = run.markEnded() { state.ended(failed: failed, startedAt: run.startedAt, at: now) } }
     static func permits(isHost: Bool) -> Bool {
-        !VideoEncoderCompatibility.isOn && !state.disabled && supportsDecode && (!isHost || supportsEncode)
+        !VideoEncoderCompatibility.isOn && state.permits(at: now) && supportsDecode && (!isHost || supportsEncode)
     }
     static func warmUp() {
         DispatchQueue.global(qos: .utility).async {
@@ -84,8 +87,47 @@ private final class HEVCProbeResult: @unchecked Sendable {
     var value: Bool { lock.lock(); defer { lock.unlock() }; return result }
     func set(_ value: Bool) { lock.lock(); result = value; lock.unlock() }
 }
+/// A failure falls back to H.264 for that session and its reconnect, not for the life of the host.
+/// The next session after `retryAfter` tries HEVC again; a second failure keeps H.264 for this launch,
+/// so a Mac whose HEVC keeps failing starts sessions on H.264 instead of tearing them down.
+struct HEVCFallbackPolicy: Equatable {
+    static let retryAfter: TimeInterval = 10 * 60
+    static let failuresBeforeH264 = 2
+    static let cleanSession: TimeInterval = 60
+    private(set) var failures = 0
+    private(set) var lastFailure: TimeInterval?
+
+    func permits(at now: TimeInterval) -> Bool {
+        guard let lastFailure else { return true }
+        return failures < Self.failuresBeforeH264 && now - lastFailure >= Self.retryAfter
+    }
+    mutating func failed(at now: TimeInterval) { failures += 1; lastFailure = now }
+    mutating func ended(failed: Bool, startedAt: TimeInterval, at now: TimeInterval) {
+        guard !failed, now - startedAt >= Self.cleanSession else { return }
+        failures = 0; lastFailure = nil
+    }
+}
+/// One peer's HEVC outcome, reported to the launch-wide policy at most once each way.
+final class HEVCRun: @unchecked Sendable {
+    let startedAt: TimeInterval
+    private let lock = NSLock(); private var failed = false, ended = false
+    init(at now: TimeInterval) { startedAt = now }
+    func markFailed() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard !failed, !ended else { return false }
+        failed = true; return true
+    }
+    func markEnded() -> Bool? {
+        lock.lock(); defer { lock.unlock() }
+        guard !ended else { return nil }
+        ended = true; return failed
+    }
+}
 private final class HEVCProcessState: @unchecked Sendable {
-    private let lock = NSLock(); private var value = false
-    var disabled: Bool { lock.lock(); defer { lock.unlock() }; return value }
-    func disable() { lock.lock(); value = true; lock.unlock() }
+    private let lock = NSLock(); private var policy = HEVCFallbackPolicy()
+    func permits(at now: TimeInterval) -> Bool { lock.lock(); defer { lock.unlock() }; return policy.permits(at: now) }
+    func failed(at now: TimeInterval) { lock.lock(); policy.failed(at: now); lock.unlock() }
+    func ended(failed: Bool, startedAt: TimeInterval, at now: TimeInterval) {
+        lock.lock(); policy.ended(failed: failed, startedAt: startedAt, at: now); lock.unlock()
+    }
 }

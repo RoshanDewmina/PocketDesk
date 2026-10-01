@@ -11,6 +11,7 @@
 
 
 // Commerce and useful-session guidance
+"ANYWHERE_UNAVAILABLE" = "Anywhere isn’t available yet.";
 "APP_STORE_OFFLINE" = "Couldn’t reach the App Store. Check your connection, then try again.";
 "BENEFIT_ENCRYPTION" = "Encrypted between your iPhone and your Mac, even through our relay";
 "BENEFIT_ROUTE" = "On cellular or any Wi-Fi, away from home";

@@ -584,34 +584,39 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(busy.state, .ok)
     }
 
-    func testStrainedForEightSecondsAfterEachDownwardStep() throws {
+    func testAStepForLoadShowsNothing() {
+        for reason in ["encoding", "capture", "network", "phone"] {
+            var busy = BusyPolicy()
+            for (second, index) in [(0, 1), (5, 2), (12, 3), (20, 4), (40, 3), (50, 0)] {
+                XCTAssertNil(evaluate(&busy, index == 0 ? ladder120[0] : rung(index, reason), at: TimeInterval(second)),
+                             "\(reason) step to rung \(index): the ladder heals it, so no pill")
+            }
+            XCTAssertEqual(busy.state, .ok)
+        }
+    }
+
+    func testStrainedForEightSecondsAfterAStepForAHotMacOrLowPower() throws {
         var busy = BusyPolicy()
-        let strained = try XCTUnwrap(evaluate(&busy, rung(1, "encoding"), at: 0))
-        XCTAssertEqual(strained, BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "encoding"))
+        let strained = try XCTUnwrap(evaluate(&busy, rung(1, "thermal"), at: 0))
+        XCTAssertEqual(strained, BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "thermal"))
         XCTAssertNoThrow(try strained.validate())
-        for second in 1...7 { XCTAssertNil(evaluate(&busy, rung(1, "encoding"), at: TimeInterval(second))) }
-        XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 8), .ok,
+        for second in 1...7 { XCTAssertNil(evaluate(&busy, rung(1, "thermal"), at: TimeInterval(second))) }
+        XCTAssertEqual(evaluate(&busy, rung(1, "thermal"), at: 8), .ok,
                        "then ok although the rung stays below the top")
         for second in 9...30 {
-            XCTAssertNil(evaluate(&busy, rung(1, "encoding"), at: TimeInterval(second)), "no permanent pill")
+            XCTAssertNil(evaluate(&busy, rung(1, "thermal"), at: TimeInterval(second)), "no permanent pill")
         }
-        XCTAssertEqual(evaluate(&busy, rung(2, "encoding"), at: 31),
-                       BusyState(level: .strained, fps: 60, longEdge: 1920, reason: "encoding"))
-        for second in 32...38 { XCTAssertNil(evaluate(&busy, rung(2, "encoding"), at: TimeInterval(second))) }
-        XCTAssertEqual(evaluate(&busy, rung(2, "encoding"), at: 39), .ok)
-        XCTAssertNil(evaluate(&busy, rung(1, "encoding"), at: 40), "a climb is not news")
+        XCTAssertEqual(evaluate(&busy, rung(2, "power"), at: 31),
+                       BusyState(level: .strained, fps: 60, longEdge: 1920, reason: "power"))
+        XCTAssertEqual(evaluate(&busy, rung(3, "power"), at: 35),
+                       BusyState(level: .strained, fps: 30, longEdge: 1920, reason: "power"),
+                       "a further step restarts the eight seconds")
+        for second in 36...42 { XCTAssertNil(evaluate(&busy, rung(3, "power"), at: TimeInterval(second))) }
+        XCTAssertEqual(evaluate(&busy, rung(3, "power"), at: 43), .ok)
+        XCTAssertNil(evaluate(&busy, rung(2, "power"), at: 44), "a climb is not news")
     }
 
-    func testAFurtherStepRestartsTheEightSeconds() {
-        var busy = BusyPolicy()
-        XCTAssertEqual(evaluate(&busy, rung(1, "network"), at: 0)?.level, .strained)
-        XCTAssertEqual(evaluate(&busy, rung(2, "network"), at: 5),
-                       BusyState(level: .strained, fps: 60, longEdge: 1920, reason: "network"))
-        for second in 6...12 { XCTAssertNil(evaluate(&busy, rung(2, "network"), at: TimeInterval(second))) }
-        XCTAssertEqual(evaluate(&busy, rung(2, "network"), at: 13), .ok)
-    }
-
-    func testACalmFloorShowsOnlyTheBoundedRecentStep() {
+    func testACalmFloorShowsNothing() {
         var busy = BusyPolicy()
         var floor = LadderPolicy.ladder(targetFPS: 60)[3]
         floor.reason = "phone"
@@ -623,14 +628,7 @@ final class LadderPolicyTests: XCTestCase {
         screenshot.phoneDecodeMs = 3.3
         screenshot.phonePresentedFPS = 27
 
-        XCTAssertEqual(evaluate(&busy, floor, screenshot, at: 0),
-                       BusyState(level: .strained, fps: 30, longEdge: 1280, reason: "phone"))
-        for second in 1...7 {
-            XCTAssertNil(evaluate(&busy, floor, screenshot, at: TimeInterval(second)))
-        }
-        XCTAssertEqual(evaluate(&busy, floor, screenshot, at: 8), .ok,
-                       "a historical floor reason must not keep claiming current phone pressure")
-        for second in 9...30 {
+        for second in 0...30 {
             XCTAssertNil(evaluate(&busy, floor, screenshot, at: TimeInterval(second)))
         }
     }
@@ -639,18 +637,31 @@ final class LadderPolicyTests: XCTestCase {
         var busy = BusyPolicy()
         let floor = rung(4, "phone")
         let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
-        XCTAssertEqual(evaluate(&busy, floor, phonePressure, at: 0),
-                       BusyState(level: .strained, fps: 30, longEdge: 1280, reason: "phone"),
-                       "one non-immediate sample is only the recent downward step")
-        XCTAssertEqual(evaluate(&busy, floor, phonePressure, at: 1),
+        for second in 0...4 {
+            XCTAssertNil(evaluate(&busy, floor, phonePressure, at: TimeInterval(second)),
+                         "under five seconds of pressure is not yet persistent trouble")
+        }
+        XCTAssertEqual(evaluate(&busy, floor, phonePressure, at: 5),
                        BusyState(level: .busy, fps: 30, longEdge: 1280, reason: "phone"))
-        XCTAssertNil(evaluate(&busy, floor, at: 2), "one calm sample must not flicker the warning")
+        XCTAssertNil(evaluate(&busy, floor, at: 6), "one calm sample must not flicker the warning")
         XCTAssertEqual(busy.state, BusyState(level: .busy, fps: 30, longEdge: 1280, reason: "phone"))
-        XCTAssertNil(evaluate(&busy, floor, phonePressure, at: 3),
+        XCTAssertNil(evaluate(&busy, floor, phonePressure, at: 7),
                      "a live intermittent sample refreshes the calm clock without changing the pill")
-        for second in 4...12 { XCTAssertNil(evaluate(&busy, floor, at: TimeInterval(second))) }
-        XCTAssertEqual(evaluate(&busy, floor, at: 13), .ok,
+        for second in 8...16 { XCTAssertNil(evaluate(&busy, floor, at: TimeInterval(second))) }
+        XCTAssertEqual(evaluate(&busy, floor, at: 17), .ok,
                        "the historical floor reason cannot refresh ten seconds without current pressure")
+
+        var interrupted = BusyPolicy()
+        for second in 0...3 { XCTAssertNil(evaluate(&interrupted, floor, phonePressure, at: TimeInterval(second))) }
+        XCTAssertNil(evaluate(&interrupted, floor, at: 4))
+        for second in 5...9 { XCTAssertNil(evaluate(&interrupted, floor, phonePressure, at: TimeInterval(second))) }
+        XCTAssertEqual(evaluate(&interrupted, floor, phonePressure, at: 10)?.level, .busy,
+                       "the five seconds start again after a calm one")
+
+        var hot = BusyPolicy()
+        XCTAssertEqual(evaluate(&hot, rung(4, "thermal"), with { $0.hostThermalState = "serious" }, at: 0),
+                       BusyState(level: .busy, fps: 30, longEdge: 1280, reason: "thermal"),
+                       "a hot Mac at the floor is persistent by nature")
     }
 
     func testBusyWhenCaptureStaysBehindForFiveSeconds() {
@@ -695,10 +706,8 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 12),
                        BusyState(level: .busy, fps: 60, longEdge: 2560, reason: "encoding"))
         for second in 13...18 { XCTAssertNil(evaluate(&busy, rung(1, "encoding"), at: TimeInterval(second))) }
-        XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 19),
-                       BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "encoding"),
-                       "the current-pressure hold ends inside the later step's eight-second window")
-        XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 20), .ok)
+        XCTAssertEqual(evaluate(&busy, rung(1, "encoding"), at: 19), .ok,
+                       "the hold ends ten seconds after the last current pressure; the step itself shows nothing")
     }
 
     func testBusyNamesTheCurrentTriggerBeforeTheHistoricalLadderReason() {
@@ -718,18 +727,206 @@ final class LadderPolicyTests: XCTestCase {
     func testBusyRestartsWhenTheTargetChanges() {
         var busy = BusyPolicy()
         let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
-        XCTAssertEqual(evaluate(&busy, rung(4, "phone"), phonePressure, at: 0)?.level, .strained)
-        XCTAssertEqual(evaluate(&busy, rung(4, "phone"), phonePressure, at: 1)?.level, .busy)
-        XCTAssertEqual(evaluate(&busy, LadderPolicy.ladder(targetFPS: 60)[0], calm(targetFPS: 60), at: 2), .ok)
+        for second in 0...4 { _ = evaluate(&busy, rung(4, "phone"), phonePressure, at: TimeInterval(second)) }
+        XCTAssertEqual(evaluate(&busy, rung(4, "phone"), phonePressure, at: 5)?.level, .busy)
+        XCTAssertEqual(evaluate(&busy, LadderPolicy.ladder(targetFPS: 60)[0], calm(targetFPS: 60), at: 6), .ok)
     }
 
     func testTheProtocolEntryPointReportsNoSize() {
         var busy = BusyPolicy()
         let phonePressure = with { $0.phoneSupersededPerSecond = 8; $0.phonePresentedFPS = 20 }
-        XCTAssertEqual(busy.evaluate(ladder: rung(4, "phone"), inputs: phonePressure, at: 0),
-                       BusyState(level: .strained, fps: 30, longEdge: 0, reason: "phone"))
-        XCTAssertEqual(busy.evaluate(ladder: rung(4, "phone"), inputs: phonePressure, at: 1),
+        for second in 0...4 { _ = busy.evaluate(ladder: rung(4, "phone"), inputs: phonePressure, at: TimeInterval(second)) }
+        XCTAssertEqual(busy.evaluate(ladder: rung(4, "phone"), inputs: phonePressure, at: 5),
                        BusyState(level: .busy, fps: 30, longEdge: 0, reason: "phone"))
+    }
+
+    // MARK: Still screen (device test, 1 Oct 2026)
+
+    /// A still Mac screen as the 1 Oct LAN session reported it: no complete frames, the idle refresh
+    /// at ~1 fps, a healthy LAN, and a phone whose per-window counters cover one or two frames. The
+    /// first sample after a ladder move carries the one new-size key frame: a capture frame, a
+    /// 100-260 ms pacer wait, and a slow single decode on the phone.
+    private func stillSample(afterMove: Bool) -> HostLoadSample {
+        var report = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []), counters: nil)
+        report.decodeMs = afterMove ? 45 : 38
+        report.presentedFPS = afterMove ? 2 : 1
+        report.supersededPerSecond = afterMove ? 1 : 0
+        report.thermalState = 0
+        report.lowPowerMode = false
+        return HostLoadSample(targetFPS: 60, longEdge: 2560, captureFPS: afterMove ? 1 : 0, captureLatencyP90Ms: 4,
+                              encodedFPS: afterMove ? 2 : 1, encodeLatencyP90Ms: 3.4, encodeInFlightMax: 1,
+                              droppedBeforeEncode: 0, pacerDelayMs: afterMove ? 194 : 0, targetKbps: 19_385,
+                              availableKbps: 25_000, qualityLimitation: "none", hostThermalState: "fair",
+                              lowPowerMode: false, phoneLoad: PhoneLoadFeedback(report: report), sentKbps: 10,
+                              senderQueueMs: afterMove ? 194 : 0, networkQueueMs: 1, routeDetail: "lan",
+                              sentFPS: afterMove ? 2 : 1)
+    }
+
+    func testAnIdleSourceWithAHealthyPhoneAndNetworkNeverStepsDownAndClimbsBackToTheTop() {
+        var monitor = HostLoadMonitor(targetFPS: 60)
+        var overloaded = sample
+        overloaded.targetFPS = 60
+        overloaded.encodeInFlightMax = 2
+        overloaded.encodeLatencyP90Ms = 34
+        for second in 0...5 { _ = monitor.tick(sample: overloaded, at: TimeInterval(second)) }
+        XCTAssertEqual(monitor.ladder.state.rung, 3, "start at the floor, half size, as on the device")
+
+        var moves: [(time: Int, rung: Int)] = []
+        var justMoved = true
+        for second in 6...100 {
+            let tick = monitor.tick(sample: stillSample(afterMove: justMoved), at: TimeInterval(second))
+            XCTAssertNil(tick.busy, "second \(second): a still screen is not trouble, so no pill")
+            justMoved = tick.ladder != nil
+            if let ladder = tick.ladder { moves.append((second, ladder.rung)) }
+        }
+        XCTAssertEqual(moves.map(\.rung), [2, 1, 0], "only climbs, one rung at a time, back to full size")
+        XCTAssertEqual(moves.map(\.time), [16, 27, 38],
+                       "10 s after each new-size key frame's pacer wait, the step's included")
+        XCTAssertEqual(monitor.ladder.state, LadderPolicy.ladder(targetFPS: 60)[0])
+        XCTAssertEqual(monitor.ladder.climbWait, 10, "no climb failed, so the wait never doubled")
+        XCTAssertEqual(monitor.busy.state, .ok)
+        XCTAssertEqual(moves.last?.time, 38, "then 62 still seconds at the top: no move, so no encoder restart")
+    }
+
+    func testTheStillWindowsThatSteppedTheDeviceDownAreNotLoad() {
+        let rungTwo = LadderPolicy.ladder(targetFPS: 60)[2]
+        let keyFrame = HostLoadMonitor.inputs(from: stillSample(afterMove: true))
+        XCTAssertEqual(LadderTrigger.firing(keyFrame, at: rungTwo), [],
+                       "row 9349: one key frame's 194 ms pacer wait on a still screen is not a queue")
+        XCTAssertFalse(LadderPolicy.isClean(keyFrame, at: rungTwo), "but it does not count toward a climb")
+        let refresh = HostLoadMonitor.inputs(from: stillSample(afterMove: false))
+        XCTAssertEqual(LadderTrigger.firing(refresh, at: rungTwo), [],
+                       "row 9350 (the 'phone' step): 1 fps sent, so 1 presented and a 38 ms decode are the Mac's choice")
+        XCTAssertTrue(LadderPolicy.isClean(refresh, at: rungTwo))
+
+        var moving = keyFrame
+        moving.captureFPS = 30
+        moving.encodedFPS = 30
+        moving.sentFPS = 30
+        XCTAssertEqual(LadderTrigger.firing(moving, at: rungTwo), [.pacerDelay, .phoneDecode],
+                       "the same waits while the picture moves are load")
+    }
+
+    func testAGenuinePhoneOverloadStillStepsDown() {
+        let top = LadderPolicy.ladder(targetFPS: 60)[0]
+        var overload = calm(targetFPS: 60)
+        overload.sentFPS = 60
+        overload.phonePresentedFPS = 30
+        overload.phoneSupersededPerSecond = 30
+        overload.phoneDecodeMs = 10
+        XCTAssertEqual(LadderTrigger.firing(overload, at: top), [.phoneSuperseded])
+        var policy = LadderPolicy(targetFPS: 60)
+        XCTAssertNil(policy.evaluate(overload, at: 0))
+        var stepped = LadderPolicy.ladder(targetFPS: 60)[1]
+        stepped.reason = "phone"
+        XCTAssertEqual(policy.evaluate(overload, at: 1), stepped, "sent 60, presented 30: the phone cannot keep up")
+
+        var slowDecode = calm(targetFPS: 60)
+        slowDecode.sentFPS = 60
+        slowDecode.phoneDecodeMs = 17
+        XCTAssertEqual(LadderTrigger.firing(slowDecode, at: top), [.phoneDecode], "17 ms per frame at 60 sent")
+        slowDecode.sentFPS = 40
+        XCTAssertEqual(LadderTrigger.firing(slowDecode, at: top), [], "40 sent leave 25 ms per frame")
+        slowDecode.phoneDecodeMs = 26
+        XCTAssertEqual(LadderTrigger.firing(slowDecode, at: top), [.phoneDecode])
+        slowDecode.sentFPS = 24
+        slowDecode.phoneDecodeMs = 45
+        XCTAssertEqual(LadderTrigger.firing(slowDecode, at: top), [.phoneDecode],
+                       "24 fps video leaves 41.7 ms a frame; 45 ms cannot keep up")
+        slowDecode.sentFPS = 9
+        slowDecode.phoneDecodeMs = 200
+        XCTAssertEqual(LadderTrigger.firing(slowDecode, at: top), [],
+                       "under 10 frames a second are too few to judge the phone by")
+
+        var thin = calm(targetFPS: 60)
+        thin.sentFPS = 10
+        thin.phonePresentedFPS = 5
+        thin.phoneSupersededPerSecond = 3
+        XCTAssertEqual(LadderTrigger.firing(thin, at: top), [.phoneSuperseded], "3 of 10 replaced, 5 shown")
+        thin.phoneSupersededPerSecond = 2
+        XCTAssertEqual(LadderTrigger.firing(thin, at: top), [], "two replaced frames are noise")
+
+        var fewSent = overload
+        fewSent.sentFPS = 30
+        fewSent.phonePresentedFPS = 25
+        fewSent.phoneSupersededPerSecond = 5
+        XCTAssertEqual(LadderTrigger.firing(fewSent, at: top), [],
+                       "25 of the 30 sent shown is keeping up, though under 80 % of the rung's 60")
+    }
+
+    func testAKeyFrameSpreadOverTwoStillWindowsIsNotLoad() {
+        var policy = LadderPolicy(targetFPS: 60)
+        for second in 0...5 { _ = policy.evaluate(backlog(targetFPS: 60), at: TimeInterval(second)) }
+        XCTAssertEqual(policy.state.rung, 3)
+        var first = HostLoadMonitor.inputs(from: stillSample(afterMove: true))
+        first.pacerDelayMs = 420
+        var second = first
+        second.captureFPS = 0
+        second.pacerDelayMs = 1_348
+        XCTAssertNil(policy.evaluate(first, at: 6))
+        XCTAssertNil(policy.evaluate(second, at: 7), "two windows of one key frame's wait: no step")
+        XCTAssertEqual(policy.state.rung, 3)
+    }
+
+    func testAClimbOnAStillScreenThatFailsOnTheNextScrollStillBacksOff() {
+        var policy = LadderPolicy(targetFPS: 60)
+        _ = policy.evaluate(backlog(targetFPS: 60), at: 0)
+        XCTAssertEqual(policy.evaluate(backlog(targetFPS: 60), at: 1)?.rung, 1)
+        let still = HostLoadMonitor.inputs(from: stillSample(afterMove: false))
+        var climbedAt: Int?
+        for second in 2...40 where policy.evaluate(still, at: TimeInterval(second)) != nil { climbedAt = second }
+        XCTAssertEqual(climbedAt, 11, "a still screen is headroom")
+        XCTAssertEqual(policy.state.rung, 0)
+        XCTAssertNil(policy.evaluate(backlog(targetFPS: 60), at: 41))
+        XCTAssertEqual(policy.evaluate(backlog(targetFPS: 60), at: 42)?.rung, 1,
+                       "30 s after the climb, but on the scroll's second sample")
+        XCTAssertEqual(policy.climbWait, 20, "the climb was never tested by a moving picture, so it failed")
+        var next: Int?
+        for second in 43...80 where policy.evaluate(still, at: TimeInterval(second)) != nil {
+            next = next ?? second
+        }
+        XCTAssertEqual(next, 62, "the doubled wait")
+    }
+
+    func testTheBusyReasonIsThePersistentCauseNeverAKeyFrameSpike() throws {
+        var floor = LadderPolicy.ladder(targetFPS: 60)[3]
+        floor.reason = "phone"
+        var still = BusyPolicy()
+        for second in 0...30 {
+            let inputs = HostLoadMonitor.inputs(from: stillSample(afterMove: second.isMultiple(of: 5)))
+            XCTAssertNil(still.evaluate(ladder: floor, inputs: inputs, longEdge: 2560, at: TimeInterval(second)),
+                         "second \(second): the device showed 'connection is slow' here")
+        }
+
+        var phoneBusy = BusyPolicy()
+        var overload = calm(targetFPS: 60)
+        overload.sentFPS = 30
+        overload.phonePresentedFPS = 15
+        overload.phoneSupersededPerSecond = 15
+        for second in 0...4 {
+            XCTAssertNil(phoneBusy.evaluate(ladder: floor, inputs: overload, longEdge: 2560, at: TimeInterval(second)))
+        }
+        let shown = BusyState(level: .busy, fps: 30, longEdge: 1280, reason: "phone")
+        XCTAssertEqual(phoneBusy.evaluate(ladder: floor, inputs: overload, longEdge: 2560, at: 5), shown)
+        var spike = calm(targetFPS: 60)
+        spike.captureFPS = 30
+        spike.encodedFPS = 30
+        spike.sentFPS = 30
+        spike.pacerDelayMs = 194
+        XCTAssertEqual(LadderTrigger.firing(spike, at: floor), [.pacerDelay])
+        XCTAssertNil(phoneBusy.evaluate(ladder: floor, inputs: spike, longEdge: 2560, at: 6),
+                     "one network sample during a phone hold neither renames nor extends it")
+        for second in 7...14 {
+            XCTAssertNil(phoneBusy.evaluate(ladder: floor, inputs: calm(targetFPS: 60), longEdge: 2560, at: TimeInterval(second)))
+        }
+        XCTAssertEqual(phoneBusy.evaluate(ladder: floor, inputs: calm(targetFPS: 60), longEdge: 2560, at: 15), .ok)
+        let words = try XCTUnwrap(BusyPresentation(shown))
+        XCTAssertEqual(words.title, "Your iPhone is busy")
+
+        var networkBusy = BusyPolicy()
+        for second in 0...4 { _ = networkBusy.evaluate(ladder: floor, inputs: spike, longEdge: 2560, at: TimeInterval(second)) }
+        XCTAssertEqual(networkBusy.evaluate(ladder: floor, inputs: spike, longEdge: 2560, at: 5)?.reason, "network",
+                       "five seconds of a real queue at the floor is the connection")
     }
 
     // MARK: Host monitor
@@ -892,20 +1089,23 @@ final class LadderPolicyTests: XCTestCase {
         bad.encodeInFlightMax = 2
         bad.encodeLatencyP90Ms = 34
         assertTick(monitor.tick(sample: bad, at: 0), ladder: nil, busy: nil)
-        assertTick(monitor.tick(sample: bad, at: 1), ladder: rung(1, "encoding"),
-                   busy: BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "encoding"))
+        assertTick(monitor.tick(sample: bad, at: 1), ladder: rung(1, "encoding"), busy: nil,
+                   "a step for load is not news")
         assertTick(monitor.tick(sample: bad, at: 2), ladder: nil, busy: nil)
-        assertTick(monitor.tick(sample: bad, at: 3), ladder: rung(2, "encoding"),
-                   busy: BusyState(level: .strained, fps: 60, longEdge: 1920, reason: "encoding"))
+        assertTick(monitor.tick(sample: bad, at: 3), ladder: rung(2, "encoding"), busy: nil)
         assertTick(monitor.tick(sample: bad, at: 4), ladder: nil, busy: nil)
         var unsized = bad
         unsized.longEdge = nil
-        let smaller = BusyState(level: .strained, fps: 30, longEdge: 1920, reason: "encoding")
-        assertTick(monitor.tick(sample: unsized, at: 5), ladder: rung(3, "encoding"), busy: smaller,
-                   "nil keeps the last long edge")
+        assertTick(monitor.tick(sample: unsized, at: 5), ladder: rung(3, "encoding"), busy: nil)
+        assertTick(monitor.tick(sample: unsized, at: 6), ladder: nil, busy: nil)
+        assertTick(monitor.tick(sample: unsized, at: 7), ladder: rung(4, "encoding"), busy: nil)
+        for second in 8...11 { assertTick(monitor.tick(sample: unsized, at: TimeInterval(second)), ladder: nil, busy: nil) }
+        let floorBusy = BusyState(level: .busy, fps: 30, longEdge: 1280, reason: "encoding")
+        assertTick(monitor.tick(sample: unsized, at: 12), ladder: nil, busy: floorBusy,
+                   "five seconds of pressure at the floor; nil keeps the last long edge")
         XCTAssertEqual(monitor.longEdge, 2560)
-        XCTAssertEqual(monitor.ladder.state, rung(3, "encoding"))
-        XCTAssertEqual(monitor.busy.state, smaller)
+        XCTAssertEqual(monitor.ladder.state, rung(4, "encoding"))
+        XCTAssertEqual(monitor.busy.state, floorBusy)
     }
 
     func testTickPassesCaptureTimingToBothPolicies() {

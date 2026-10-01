@@ -50,8 +50,9 @@ struct RemoteHostApp: App {
         .windowResizability(.contentSize)
         .commands { CommandGroup(after: .appInfo) { HostUpdateButton() } }
 
-        // Removing the icon (Command-drag or System Settings → Menu Bar) only hides it: the Setup and
-        // Settings scenes keep the app, and sharing, running. Settings → Show in menu bar restores it.
+        // Removing the icon (Command-drag or System Settings → Menu Bar) only hides it: the app delegate
+        // declines to quit after the last window closes, so the app, and sharing, keep running.
+        // Settings → Show in menu bar restores it.
         MenuBarExtra(isInserted: Binding(get: { model.menuBarIconShown }, set: model.setMenuBarIconShown)) {
             HostPopoverContainer(model: model)
         } label: {

@@ -39,15 +39,99 @@ struct CaptureStartPreflight {
 struct CaptureHealthState {
     private(set) var lastStatusAt: TimeInterval?
     private(set) var statusIsHealthy = false
+    private(set) var lastStatusWasIdle = false
+    /// The captured display's window layout when the screen went still (`StillScreenWitness`).
+    private(set) var stillLayout: Int?
+    /// The drawn pointer inside the captured rect when the screen went still; nil when not drawn there.
+    private(set) var stillPointer: CGPoint?
+    private(set) var stillLayoutChanged = false
 
     mutating func observe(_ status: SCFrameStatus, at time: TimeInterval) {
         lastStatusAt = time
         statusIsHealthy = status == .complete || status == .idle
+        lastStatusWasIdle = status == .idle
+        if status != .idle { stillLayout = nil; stillPointer = nil }
+        stillLayoutChanged = false
     }
 
-    func isHealthy(at time: TimeInterval, staleAfter: TimeInterval = 0.8) -> Bool {
-        guard statusIsHealthy, let lastStatusAt else { return false }
-        return time >= lastStatusAt && time - lastStatusAt <= staleAfter
+    /// Read on the 0.4 s health tick, never on the frame path: once while idle status still arrives
+    /// (the baseline), then on every silent tick until it differs; nil (no window list) is a change.
+    /// So at most 2.5 window lists a second, and none between frames of moving content.
+    func wantsStillLayout(at time: TimeInterval, streamCapturing: Bool?) -> Bool {
+        guard streamCapturing == true, lastStatusWasIdle, !stillLayoutChanged else { return false }
+        return stillLayout == nil || isSilent(at: time)
+    }
+
+    /// A pointer move counts only beyond 1 point, at least a whole pixel the stream must redraw, so a
+    /// sub-pixel drift never fails a live stream closed.
+    mutating func witnessStillLayout(_ layout: Int?, pointer: CGPoint? = nil) {
+        guard lastStatusWasIdle, !stillLayoutChanged else { return }
+        guard let layout else { stillLayoutChanged = true; return }
+        guard let stillLayout else { stillLayout = layout; stillPointer = pointer; return }
+        let pointerMoved: Bool
+        switch (stillPointer, pointer) {
+        case (nil, nil): pointerMoved = false
+        case let (old?, new?): pointerMoved = hypot(new.x - old.x, new.y - old.y) > 1
+        default: pointerMoved = true
+        }
+        stillLayoutChanged = layout != stillLayout || pointerMoved
+    }
+
+    /// Fresh complete/idle status, or a still screen: ScreenCaptureKit stops sending idle status
+    /// about 9 s after the picture last changed (PocketDeskStreamStats, 1 Oct 2026: captureIdleFPS
+    /// ~36 then 0 in every still run), so after an idle status the source counts as alive while
+    /// `streamCapturing` (macOS 27's `SCStream.isCapturing`, nil before it) holds and the display's
+    /// window layout is unchanged: a window that opened, closed or moved without a frame is a stalled
+    /// stream. Any other status, or a stream that says it stopped, fails closed as before.
+    func isHealthy(at time: TimeInterval, staleAfter: TimeInterval = 0.8, streamCapturing: Bool? = nil) -> Bool {
+        guard statusIsHealthy, let lastStatusAt, time >= lastStatusAt else { return false }
+        if time - lastStatusAt <= staleAfter { return true }
+        return lastStatusWasIdle && !stillLayoutChanged && streamCapturing == true
+    }
+
+    func isSilent(at time: TimeInterval, staleAfter: TimeInterval = 0.8) -> Bool {
+        lastStatusAt.map { time - $0 > staleAfter } ?? false
+    }
+}
+
+/// An independent check on a silent stream. A reconfiguration does not make ScreenCaptureKit speak
+/// again, and a screenshot differs from a stream frame of the same screen in ~460k of 4.2M luma
+/// samples (1 Oct 2026 probe), too close to a typed character to compare. What the stream would show
+/// moving is cheap and exact: other apps' on-screen windows over the captured rect, in order (only
+/// `owner`'s for an app capture; only the size of `window` for a window capture), plus the pointer
+/// (`CaptureHealthState.witnessStillLayout`). 0.04 ms of CPU a call with 3 windows, 0.65 ms with 145 (1 Oct 2026).
+enum StillScreenWitness {
+    static func layout(over captured: CGRect, owner: pid_t? = nil, window: CGWindowID? = nil,
+                       excludingProcess pid: pid_t) -> Int? {
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
+                                                       kCGNullWindowID) as? [[String: Any]] else { return nil }
+        var hasher = Hasher()
+        for info in windows {
+            let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t
+            let number = info[kCGWindowNumber as String] as? Int
+            guard ownerPID != pid, owner == nil || ownerPID == owner,
+                  window == nil || number == window.map(Int.init),
+                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0.01,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
+                  window != nil || rect.intersects(captured) else { continue }
+            hasher.combine(number)
+            hasher.combine(info[kCGWindowLayer as String] as? Int)
+            if window == nil { hasher.combine(rect.origin.x); hasher.combine(rect.origin.y) }
+            hasher.combine(rect.width); hasher.combine(rect.height)
+        }
+        return hasher.finalize()
+    }
+}
+
+/// The idle refresh: while the source is healthy and nothing new was sent, the last frame goes out
+/// again, so a still screen keeps arriving at about 1.25 fps (one 0.4 s health tick in two), well
+/// inside the phone's 2 s freshness limit and enough traffic that the bandwidth estimate holds.
+enum CaptureIdleRefresh {
+    static let interval: TimeInterval = 0.45
+
+    static func isDue(healthy: Bool, hasFrame: Bool, now: TimeInterval, lastSentAt: TimeInterval) -> Bool {
+        healthy && hasFrame && now - lastSentAt >= interval
     }
 }
 
@@ -1008,21 +1092,39 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         if !failureReported && (scopeTarget?.processIsAlive == false || !scopeLease.performIfValid({})) {
             reportStopped(HostCaptureScopeError.targetUnavailable); return
         }
+        var streamCapturing: Bool?
         if #available(macOS 27, *), !failureReported {
-            notCapturingTicks = stream.isCapturing ? 0 : notCapturingTicks + 1
+            let capturing = stream.isCapturing
+            streamCapturing = capturing
+            notCapturingTicks = capturing ? 0 : notCapturingTicks + 1
             // Two ticks apart, so a stream still settling is never mistaken for one macOS stopped.
             if notCapturingTicks >= 2 { reportStopped(CaptureNotCapturingError()); return }
         }
         let now = CACurrentMediaTime()
-        let healthy = health.isHealthy(at: now)
+        if health.wantsStillLayout(at: now, streamCapturing: streamCapturing) {
+            let (layout, pointer) = stillLayout()
+            health.witnessStillLayout(layout, pointer: pointer)
+        }
+        let healthy = !failureReported && health.isHealthy(at: now, streamCapturing: streamCapturing)
         let callback = onHealth
         DispatchQueue.main.async { callback?(healthy) }
 
-        // Keep a static desktop visible, but only while fresh ScreenCaptureKit
-        // complete/idle status independently proves the source is still alive.
-        if healthy, now - lastSentAt >= 0.45, let lastBuffer {
+        // Keep a static desktop visible, but only while ScreenCaptureKit status (or, once a still
+        // screen silences it, the stream's own capturing state) proves the source is still alive.
+        if CaptureIdleRefresh.isDue(healthy: healthy, hasFrame: lastBuffer != nil, now: now, lastSentAt: lastSentAt),
+           let lastBuffer {
             deliver(lastBuffer, at: now, timing: sourceTiming.resent(), idleResend: true)
         }
+    }
+
+    /// The captured rect in global points, read fresh so a display rearrangement is not a change.
+    private func stillLayout() -> (layout: Int?, pointer: CGPoint?) {
+        let bounds = CGDisplayBounds(display.displayID)
+        let captured = appliedRegion.isWholeDisplay ? bounds : appliedRegion.rect.offsetBy(dx: bounds.minX, dy: bounds.minY)
+        let pointer = scopeTarget == nil && applied.showsCursor ? CGEvent(source: nil)?.location : nil
+        let layout = StillScreenWitness.layout(over: captured, owner: scopeTarget?.application.processIdentifier,
+                                               window: scopeTarget?.windowID, excludingProcess: getpid())
+        return (layout, pointer.flatMap { captured.contains($0) ? $0 : nil })
     }
 
     private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0, timing: ExactVideoTiming? = nil, idleResend: Bool = false) {

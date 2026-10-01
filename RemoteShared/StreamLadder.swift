@@ -87,6 +87,8 @@ struct LadderInputs: Equatable {
     var phonePresentedFPS: Double?
     var phoneThermalState: String?
     var phoneLowPowerMode: Bool? = nil
+    /// Frames the Mac sent in the window, which bounds what the phone could decode and show.
+    var sentFPS: Double? = nil
 
     var frameIntervalMs: Double { 1000 / Double(max(1, targetFPS)) }
 }

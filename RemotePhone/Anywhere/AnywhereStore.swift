@@ -8,7 +8,8 @@ import os
 /// approvals and purchases made on other devices are seen.
 @MainActor
 final class AnywhereStore: ObservableObject {
-    enum Load: Equatable { case idle, loading, loaded, failed }
+    /// `unavailable`: the App Store answered but has no Anywhere products for this app yet.
+    enum Load: Equatable { case idle, loading, loaded, unavailable, failed }
     enum PurchaseState: Equatable { case idle, purchasing, pending, purchased, failed(String) }
 
     static let shared = AnywhereStore()
@@ -93,7 +94,7 @@ final class AnywhereStore: ObservableObject {
             let loaded = try await Product.products(for: productIDs)
             products = loaded.sorted { (productIDs.firstIndex(of: $0.id) ?? 0) < (productIDs.firstIndex(of: $1.id) ?? 0) }
             if let group = loaded.compactMap(\.subscription?.subscriptionGroupID).first { groupID = group }
-            load = loaded.isEmpty ? .failed : .loaded
+            load = loaded.isEmpty ? .unavailable : .loaded
             await updateTrialEligibility()
         } catch {
             load = .failed

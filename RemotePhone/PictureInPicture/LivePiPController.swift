@@ -238,9 +238,18 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     }
     func pictureInPictureController(_ controller: AVPictureInPictureController, setPlaying playing: Bool) {
         guard matchesNative(controller) else { return }
-        policy.setPlaying(playing, at: ProcessInfo.processInfo.systemUptime)
-        if policy.state == .stopping { stop() } else { controller.invalidatePlaybackState(); synchronizeSource(); didChangeState?(policy.state) }
+        applyPlaying(playing)
     }
+    private func applyPlaying(_ playing: Bool) {
+        policy.setPlaying(playing, at: ProcessInfo.processInfo.systemUptime)
+        if policy.state == .stopping { stop() } else { controller?.invalidatePlaybackState(); synchronizeSource(); didChangeState?(policy.state) }
+    }
+    #if DEBUG
+    func setPlayingForTesting(_ playing: Bool, on candidate: any LivePiPPlatformController) {
+        guard candidate === controller else { return }
+        applyPlaying(playing)
+    }
+    #endif
     func pictureInPictureControllerTimeRangeForPlayback(_ controller: AVPictureInPictureController) -> CMTimeRange {
         guard matchesNative(controller), policy.admission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return .invalid }
         return CMTimeRange(start: .zero, duration: .positiveInfinity)

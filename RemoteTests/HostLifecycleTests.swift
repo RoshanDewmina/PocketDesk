@@ -99,6 +99,114 @@ final class HostLifecycleTests: XCTestCase {
         }
     }
 
+    /// Device test, 1 Oct 2026: ScreenCaptureKit sent ~36 idle statuses a second for about 9 s of a
+    /// still screen, then nothing; the refresh stopped, the phone saw no frame for 2 s and paused
+    /// control. Health ticks every 0.4 s as in `RemoteCapture.start()`.
+    private func stillScreen(seconds: Double, idleStatusUntil: Double, last: SCFrameStatus = .idle,
+                             streamCapturing: Bool?, layoutChangesAt: Double = .infinity,
+                             layoutReadable: Bool = true) -> (healthyTicks: [Bool], sends: [Double]) {
+        var health = CaptureHealthState()
+        var nextStatus = 0.0
+        var lastSentAt = 0.0
+        var healthyTicks: [Bool] = []
+        var sends: [Double] = []
+        for tick in 1...Int(seconds / 0.4) {
+            let now = Double(tick) * 0.4
+            let layout = layoutReadable ? (now >= layoutChangesAt ? 2 : 1) : nil
+            while nextStatus <= min(now, idleStatusUntil) {
+                let status: SCFrameStatus = nextStatus + 1 / 36 > idleStatusUntil ? last : .idle
+                health.observe(status, at: nextStatus)
+                nextStatus += 1 / 36
+            }
+            if health.wantsStillLayout(at: now, streamCapturing: streamCapturing) {
+                health.witnessStillLayout(layout)
+            }
+            let healthy = health.isHealthy(at: now, streamCapturing: streamCapturing)
+            healthyTicks.append(healthy)
+            if CaptureIdleRefresh.isDue(healthy: healthy, hasFrame: true, now: now, lastSentAt: lastSentAt) {
+                lastSentAt = now
+                sends.append(now)
+            }
+        }
+        return (healthyTicks, sends)
+    }
+
+    func testAStillScreenStaysHealthyAndKeepsRefreshingAfterIdleStatusStops() {
+        let still = stillScreen(seconds: 30, idleStatusUntil: 9, streamCapturing: true)
+        XCTAssertTrue(still.healthyTicks.allSatisfy { $0 }, "the stream says it is capturing; nothing changed")
+        let gaps = zip(still.sends.dropFirst(), still.sends).map { $0 - $1 }
+        XCTAssertLessThan(gaps.max() ?? .infinity, 2, "inside the phone's 2 s freshness limit")
+        for second in 0..<29 {
+            let inSecond = still.sends.filter { $0 > Double(second) && $0 <= Double(second + 1) }.count
+            XCTAssertGreaterThanOrEqual(inSecond, 1, "second \(second): at least 1 refresh frame a second")
+        }
+    }
+
+    func testOnlyAnIdleSourceThatStillCapturesOutlivesItsStatus() {
+        let stopped = stillScreen(seconds: 12, idleStatusUntil: 9, streamCapturing: false)
+        XCTAssertFalse(stopped.healthyTicks.last ?? true, "a stream that says it stopped fails closed")
+        XCTAssertFalse(stopped.sends.contains { $0 > 9.8 }, "and nothing is refreshed")
+        let unknown = stillScreen(seconds: 12, idleStatusUntil: 9, streamCapturing: nil)
+        XCTAssertFalse(unknown.healthyTicks.last ?? true, "before macOS 27 the status alone decides, as before")
+        let moved = stillScreen(seconds: 30, idleStatusUntil: 9, streamCapturing: true, layoutChangesAt: 20)
+        XCTAssertTrue(moved.healthyTicks[..<49].allSatisfy { $0 })
+        XCTAssertFalse(moved.healthyTicks[49...].contains(true),
+                       "a window opened or moved with no frame from ScreenCaptureKit: a stalled stream fails closed")
+        XCTAssertFalse(moved.sends.contains { $0 > 20 }, "and the stale picture is not refreshed")
+        let unreadable = stillScreen(seconds: 12, idleStatusUntil: 9, streamCapturing: true, layoutReadable: false)
+        XCTAssertFalse(unreadable.healthyTicks.last ?? true, "no window list, no proof")
+        let changed = stillScreen(seconds: 12, idleStatusUntil: 9, last: .complete, streamCapturing: true)
+        XCTAssertFalse(changed.healthyTicks.last ?? true,
+                       "silence right after a new frame is not a still screen; only an idle status says nothing changed")
+
+        for status: SCFrameStatus in [.blank, .suspended, .started, .stopped] {
+            var health = CaptureHealthState()
+            health.observe(.idle, at: 0)
+            health.observe(status, at: 1)
+            XCTAssertFalse(health.isHealthy(at: 1, streamCapturing: true), "\(status) must fail closed")
+            XCTAssertFalse(health.isHealthy(at: 5, streamCapturing: true), "\(status) must stay closed")
+        }
+        var future = CaptureHealthState()
+        future.observe(.idle, at: 5)
+        XCTAssertFalse(future.isHealthy(at: 4, streamCapturing: true), "a clock running backwards is not proof")
+        XCTAssertFalse(CaptureIdleRefresh.isDue(healthy: true, hasFrame: false, now: 10, lastSentAt: 0),
+                       "no frame of the current region, nothing to refresh")
+    }
+
+    /// 24 fps content on a 60 fps stream alternates complete and idle status; a window that moved
+    /// while frames flowed is the new baseline once the screen is still.
+    func testAWindowMovedDuringMotionIsTheStillBaseline() {
+        var health = CaptureHealthState()
+        var healthy: [Bool] = []
+        var frame = 0
+        for tick in 1...75 {
+            let now = Double(tick) * 0.4
+            while Double(frame) / 60 <= min(now, 14) {
+                let time = Double(frame) / 60
+                health.observe(time < 5 && frame % 5 < 2 ? .complete : .idle, at: time)
+                frame += 1
+            }
+            if health.wantsStillLayout(at: now, streamCapturing: true) {
+                health.witnessStillLayout(now < 3 ? 1 : 2)
+            }
+            healthy.append(health.isHealthy(at: now, streamCapturing: true))
+        }
+        XCTAssertTrue(healthy.allSatisfy { $0 }, "the window moved while frames flowed; the still screen stays live")
+    }
+
+    func testOnlyAPointerMoveTheStreamMustDrawCountsAsAChange() {
+        func silent(after pointer: CGPoint?) -> Bool {
+            var health = CaptureHealthState()
+            health.observe(.idle, at: 0)
+            health.witnessStillLayout(1, pointer: CGPoint(x: 10, y: 10))
+            health.witnessStillLayout(1, pointer: pointer)
+            return health.isHealthy(at: 5, streamCapturing: true)
+        }
+        XCTAssertTrue(silent(after: CGPoint(x: 10.4, y: 10.6)), "a sub-pixel drift draws nothing new")
+        XCTAssertFalse(silent(after: CGPoint(x: 12, y: 10)), "a drawn pointer moved with no frame: stalled")
+        XCTAssertFalse(silent(after: nil), "the pointer left the captured rect with no frame: stalled")
+    }
+
     func testCaptureOwnershipMakesOldCleanupStale() {
         var ownership = ScopedCaptureOwner()
         let first = ownership.begin()
