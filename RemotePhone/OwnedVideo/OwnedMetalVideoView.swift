@@ -82,12 +82,15 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         guard picture.width > 0, picture.height > 0, picture.width.isFinite, picture.height.isFinite else { return current ?? picture }
         let aspect = picture.width / picture.height
         let pictureLong = max(picture.width, picture.height)
-        var currentLong: CGFloat = 0
+        var long = pictureLong
         if let current, current.width > 0, current.height > 0 {
-            currentLong = max(current.width, current.height)
-            if abs(log((current.width / current.height) / aspect)) <= log(1.05), currentLong >= pictureLong { return current }
+            let currentLong = max(current.width, current.height)
+            if abs(log((current.width / current.height) / aspect)) <= log(1.05) {
+                if currentLong >= pictureLong { return current }
+                long = max(pictureLong, currentLong)
+            }
         }
-        let long = min(Self.backingCeiling, max(pictureLong, currentLong))
+        long = min(Self.backingCeiling, long)
         return aspect >= 1 ? CGSize(width: long, height: max(1, (long / aspect).rounded()))
                            : CGSize(width: max(1, (long * aspect).rounded()), height: long)
     }
