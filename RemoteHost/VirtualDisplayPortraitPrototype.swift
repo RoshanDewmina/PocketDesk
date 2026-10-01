@@ -314,7 +314,9 @@ private final class PortraitController: NSObject, NSWindowDelegate {
         if Self.modeCandidate(current).matches(options) {
             selection["action"] = "already-exact"; report["modeSelection"] = selection
         } else {
-            let offered = CGDisplayCopyAllDisplayModes(id, nil) as? [CGDisplayMode] ?? []
+            // HiDPI (2×) modes are only listed when duplicate low-resolution modes are requested.
+            let duplicates = [kCGDisplayShowDuplicateLowResolutionModes as String: true] as CFDictionary
+            let offered = CGDisplayCopyAllDisplayModes(id, duplicates) as? [CGDisplayMode] ?? []
             selection["offeredCount"] = offered.count
             selection["offeredModes"] = offered.prefix(64).map(Self.modeReport)
             selection["offeredReportTruncated"] = offered.count > 64

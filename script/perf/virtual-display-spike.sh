@@ -1,11 +1,14 @@
 #!/bin/zsh
 # Runs the Debug host's CGVirtualDisplay spike (Docs/perf/VIRTUAL-DISPLAY-SPIKE.md) and reports GO / NO-GO.
 #   script/perf/virtual-display-spike.sh [HOST_APP] [LOG] [--direct] [--scenarios 1x-120,1x-144,hidpi-120]
+#       [--portrait] [--steps encode,rotate,mirror:panel,sleep,hold:60] [--max-pixels 8192] [--kill9 SECONDS]
 # HOST_APP: a built Debug PocketDeskRemoteHost.app (default: the FarsidePerf DerivedData product).
 # LOG: where the spike's output goes (default /tmp/farside-virtual-display-spike-<time>.log).
 # By default the app is started through LaunchServices (open -n, like script/e2e) so macOS checks the
 # app's own Screen Recording grant; --direct executes the binary instead, which makes the terminal the
 # responsible process for that check. Nothing is built here.
+# --kill9 N: SIGKILLs the spike N seconds after its "HOLD display" line (pair with --steps hold:60) and
+# polls CGGetOnlineDisplayList for 15 s to see when the virtual display disappears (Q5 teardown).
 # Exit status: 0 GO, 1 NO-GO, 2 error or no verdict.
 set -euo pipefail
 
@@ -18,12 +21,20 @@ die() { print -u2 -- "virtual-display-spike: $*"; exit 2 }
 
 direct=0
 scenarios=""
+portrait=0
+steps=""
+max_pixels=""
+kill9=""
 positional=()
 while (( $# )); do
   case $1 in
     --direct) direct=1 ;;
     --scenarios) (( $# >= 2 )) || die "--scenarios needs a value"; scenarios=$2; shift ;;
-    -h|--help) sed -n '2,9p' "$0"; exit 0 ;;
+    --portrait) portrait=1 ;;
+    --steps) (( $# >= 2 )) || die "--steps needs a value"; steps=$2; shift ;;
+    --max-pixels) (( $# >= 2 )) || die "--max-pixels needs a value"; max_pixels=$2; shift ;;
+    --kill9) (( $# >= 2 )) || die "--kill9 needs seconds"; kill9=$2; shift ;;
+    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     -*) die "unknown option $1" ;;
     *) positional+=("$1") ;;
   esac
@@ -66,6 +77,9 @@ fi
 
 arguments=(--virtual-display-spike)
 [[ -n $scenarios ]] && arguments+=(--virtual-display-spike-scenarios "$scenarios")
+(( portrait )) && arguments+=(--virtual-display-spike-portrait)
+[[ -n $steps ]] && arguments+=(--virtual-display-spike-steps "$steps")
+[[ -n $max_pixels ]] && arguments+=(--virtual-display-spike-max-pixels "$max_pixels")
 mkdir -p "${LOG:h}"
 : > "$LOG"
 print -- "virtual-display-spike: $EXEC ${arguments[*]}"
@@ -75,6 +89,47 @@ stop_spike() {
   local pid
   for pid in $(spike_pids); do kill -INT $pid 2>/dev/null || true; done
 }
+
+# Q5 teardown: SIGKILL the held spike and watch the online display list from this shell. The poller is
+# a one-file Swift tool compiled once per run (the interpreter is too slow for a 100 ms poll).
+online_ids() { "$ONLINE_IDS" 2>/dev/null || true }
+build_online_ids() {
+  local dir
+  dir=$(mktemp -d /tmp/farside-online-ids.XXXXXX)
+  cat > "$dir/main.swift" <<'SWIFT'
+import CoreGraphics
+var count: UInt32 = 0
+_ = CGGetOnlineDisplayList(0, nil, &count)
+var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+_ = CGGetOnlineDisplayList(count, &ids, &count)
+print(ids.prefix(Int(count)).map(String.init).joined(separator: ","))
+SWIFT
+  xcrun swiftc -O -o "$dir/online-ids" "$dir/main.swift" >/dev/null 2>&1 || die "could not compile the display poller"
+  ONLINE_IDS=$dir/online-ids
+}
+kill9_watch() {
+  local line display pid t0 now
+  while ! line=$(/usr/bin/grep -m1 -E 'HOLD display [0-9]+ pid [0-9]+' "$LOG"); do
+    sleep 0.5
+    [[ -z $(spike_pids) ]] && { print -- "virtual-display-spike: kill9: spike ended before HOLD"; return; }
+  done
+  display=$(print -- "$line" | /usr/bin/sed -E 's/.*HOLD display ([0-9]+) pid ([0-9]+).*/\1/')
+  pid=$(print -- "$line" | /usr/bin/sed -E 's/.*HOLD display ([0-9]+) pid ([0-9]+).*/\2/')
+  sleep "$kill9"
+  print -- "virtual-display-spike: kill9: online before kill: $(online_ids); kill -9 $pid (display $display)"
+  t0=$(date +%s.%N)
+  kill -9 "$pid" 2>/dev/null || true
+  for _ in {1..150}; do
+    now=$(date +%s.%N)
+    if [[ ",$(online_ids)," != *",$display,"* ]]; then
+      print -- "virtual-display-spike: kill9: display $display GONE $(printf '%.0f' $(( (now - t0) * 1000 ))) ms after kill -9"
+      return
+    fi
+    sleep 0.1
+  done
+  print -- "virtual-display-spike: kill9: display $display STILL ONLINE 15 s after kill -9 (online: $(online_ids))"
+}
+[[ -n $kill9 ]] && { build_online_ids; kill9_watch & kill9_pid=$!; }
 
 if (( direct )); then
   trap 'stop_spike' INT TERM
@@ -95,6 +150,7 @@ else
   fi
 fi
 trap - INT TERM
+[[ -n ${kill9_pid:-} ]] && { wait $kill9_pid 2>/dev/null || true; }
 
 if /usr/bin/grep -q -F "CGPreflightScreenCaptureAccess false" "$LOG"; then
   print -- "virtual-display-spike: Screen Recording is not granted to the responsible process;" \
