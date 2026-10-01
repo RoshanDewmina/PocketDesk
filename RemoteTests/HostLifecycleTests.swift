@@ -116,10 +116,9 @@ final class HostLifecycleTests: XCTestCase {
             while nextStatus <= min(now, idleStatusUntil) {
                 let status: SCFrameStatus = nextStatus + 1 / 36 > idleStatusUntil ? last : .idle
                 health.observe(status, at: nextStatus)
-                if status == .idle, health.stillLayout == nil { health.witnessStillLayout(layout) }
                 nextStatus += 1 / 36
             }
-            if streamCapturing == true, health.isSilent(at: now), health.wantsStillLayout {
+            if health.wantsStillLayout(at: now, streamCapturing: streamCapturing) {
                 health.witnessStillLayout(layout)
             }
             let healthy = health.isHealthy(at: now, streamCapturing: streamCapturing)
@@ -172,6 +171,27 @@ final class HostLifecycleTests: XCTestCase {
         XCTAssertFalse(future.isHealthy(at: 4, streamCapturing: true), "a clock running backwards is not proof")
         XCTAssertFalse(CaptureIdleRefresh.isDue(healthy: true, hasFrame: false, now: 10, lastSentAt: 0),
                        "no frame of the current region, nothing to refresh")
+    }
+
+    /// 24 fps content on a 60 fps stream alternates complete and idle status; a window that moved
+    /// while frames flowed is the new baseline once the screen is still.
+    func testAWindowMovedDuringMotionIsTheStillBaseline() {
+        var health = CaptureHealthState()
+        var healthy: [Bool] = []
+        var frame = 0
+        for tick in 1...75 {
+            let now = Double(tick) * 0.4
+            while Double(frame) / 60 <= min(now, 14) {
+                let time = Double(frame) / 60
+                health.observe(time < 5 && frame % 5 < 2 ? .complete : .idle, at: time)
+                frame += 1
+            }
+            if health.wantsStillLayout(at: now, streamCapturing: true) {
+                health.witnessStillLayout(now < 3 ? 1 : 2)
+            }
+            healthy.append(health.isHealthy(at: now, streamCapturing: true))
+        }
+        XCTAssertTrue(healthy.allSatisfy { $0 }, "the window moved while frames flowed; the still screen stays live")
     }
 
     func testCaptureOwnershipMakesOldCleanupStale() {

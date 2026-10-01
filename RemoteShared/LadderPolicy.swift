@@ -109,6 +109,7 @@ struct LadderPolicy: LadderEngine {
     static let upAfter: TimeInterval = 10
     static let maxClimbWait: TimeInterval = 60
     static let failedClimbWindow: TimeInterval = 10
+    static let failedClimbSamples = 10
     static let stableReset: TimeInterval = 120
     static let thermalStepEvery: TimeInterval = 10
     static let thermalUpAfter: TimeInterval = 30
@@ -201,9 +202,9 @@ struct LadderPolicy: LadderEngine {
             backoffReason = reason
         }
         // A climb made on a still screen is tested only once the picture moves: it failed if the step
-        // comes within 10 s of it or within its first 10 moving samples.
+        // comes within 10 s of it or within its first 10 moving samples, inside the 120 s reset.
         if let lastClimbAt, time - lastClimbAt < Self.failedClimbWindow
-            || Double(movingSinceClimb) < Self.failedClimbWindow {
+            || (movingSinceClimb < Self.failedClimbSamples && time - lastClimbAt < Self.stableReset) {
             climbWait = min(climbWait * 2, Self.maxClimbWait)
         }
         lastClimbAt = nil

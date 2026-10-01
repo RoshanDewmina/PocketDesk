@@ -52,12 +52,16 @@ struct CaptureHealthState {
         stillLayoutChanged = false
     }
 
-    /// The window layout is recorded once per still run and compared on every silent tick; nil (no
-    /// window list) counts as a change.
-    var wantsStillLayout: Bool { lastStatusWasIdle && !stillLayoutChanged }
+    /// Read on the 0.4 s health tick, never on the frame path: once while idle status still arrives
+    /// (the baseline), then on every silent tick until it differs; nil (no window list) is a change.
+    /// So at most 2.5 window lists a second, and none between frames of moving content.
+    func wantsStillLayout(at time: TimeInterval, streamCapturing: Bool?) -> Bool {
+        guard streamCapturing == true, lastStatusWasIdle, !stillLayoutChanged else { return false }
+        return stillLayout == nil || isSilent(at: time)
+    }
 
     mutating func witnessStillLayout(_ layout: Int?) {
-        guard wantsStillLayout else { return }
+        guard lastStatusWasIdle, !stillLayoutChanged else { return }
         guard let layout else { stillLayoutChanged = true; return }
         if let stillLayout { stillLayoutChanged = layout != stillLayout } else { stillLayout = layout }
     }
@@ -81,23 +85,34 @@ struct CaptureHealthState {
 
 /// An independent check on a silent stream. A reconfiguration does not make ScreenCaptureKit speak
 /// again, and a screenshot differs from a stream frame of the same screen in ~460k of 4.2M luma
-/// samples (1 Oct 2026 probe), too close to a typed character to compare. The window layout is
-/// cheap and exact: on-screen windows of other apps over the captured display, in order.
+/// samples (1 Oct 2026 probe), too close to a typed character to compare. What the stream would show
+/// moving is cheap and exact: other apps' on-screen windows over the captured rect, in order (only
+/// `owner`'s for an app capture; only the size of `window` for a window capture), and the pointer
+/// when the stream draws it. 0.04 ms of CPU a call with 3 windows, 0.65 ms with 145 (1 Oct 2026).
 enum StillScreenWitness {
-    static func layout(over display: CGRect, excludingProcess pid: pid_t) -> Int? {
+    static func layout(over captured: CGRect, owner: pid_t? = nil, window: CGWindowID? = nil,
+                       excludingProcess pid: pid_t, pointer: CGPoint?) -> Int? {
         guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements],
                                                        kCGNullWindowID) as? [[String: Any]] else { return nil }
         var hasher = Hasher()
-        for window in windows {
-            guard (window[kCGWindowOwnerPID as String] as? pid_t) != pid,
-                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
-                  let bounds = window[kCGWindowBounds as String] as? NSDictionary,
+        for info in windows {
+            let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t
+            let number = info[kCGWindowNumber as String] as? Int
+            guard ownerPID != pid, owner == nil || ownerPID == owner,
+                  window == nil || number == window.map(Int.init),
+                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0.01,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
                   let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
-                  rect.intersects(display) else { continue }
-            hasher.combine(window[kCGWindowNumber as String] as? Int)
-            hasher.combine(window[kCGWindowLayer as String] as? Int)
-            hasher.combine(rect.origin.x); hasher.combine(rect.origin.y)
+                  window != nil || rect.intersects(captured) else { continue }
+            hasher.combine(number)
+            hasher.combine(info[kCGWindowLayer as String] as? Int)
+            if window == nil { hasher.combine(rect.origin.x); hasher.combine(rect.origin.y) }
             hasher.combine(rect.width); hasher.combine(rect.height)
+        }
+        if let pointer, captured.contains(pointer) {
+            hasher.combine(pointer.x); hasher.combine(pointer.y)
+        } else {
+            hasher.combine(false)
         }
         return hasher.finalize()
     }
@@ -1033,9 +1048,6 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
 
         let now = CACurrentMediaTime()
         health.observe(status, at: now)
-        if status == .idle, health.stillLayout == nil {
-            health.witnessStillLayout(StillScreenWitness.layout(over: display.frame, excludingProcess: getpid()))
-        }
         let displayTime = (attachments.first?[.displayTime] as? NSNumber)?.uint64Value ?? 0
         if status == .complete || status == .idle {
             peer?.counters.captured(idle: status == .idle,
@@ -1083,8 +1095,8 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
             if notCapturingTicks >= 2 { reportStopped(CaptureNotCapturingError()); return }
         }
         let now = CACurrentMediaTime()
-        if streamCapturing == true, health.isSilent(at: now), health.wantsStillLayout {
-            health.witnessStillLayout(StillScreenWitness.layout(over: display.frame, excludingProcess: getpid()))
+        if health.wantsStillLayout(at: now, streamCapturing: streamCapturing) {
+            health.witnessStillLayout(stillLayout())
         }
         let healthy = !failureReported && health.isHealthy(at: now, streamCapturing: streamCapturing)
         let callback = onHealth
@@ -1096,6 +1108,15 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
            let lastBuffer {
             deliver(lastBuffer, at: now, timing: sourceTiming.resent(), idleResend: true)
         }
+    }
+
+    /// The captured rect in global points, read fresh so a display rearrangement is not a change.
+    private func stillLayout() -> Int? {
+        let bounds = CGDisplayBounds(display.displayID)
+        let captured = appliedRegion.isWholeDisplay ? bounds : appliedRegion.rect.offsetBy(dx: bounds.minX, dy: bounds.minY)
+        let pointer = scopeTarget == nil && applied.showsCursor ? CGEvent(source: nil)?.location : nil
+        return StillScreenWitness.layout(over: captured, owner: scopeTarget?.application.processIdentifier,
+                                         window: scopeTarget?.windowID, excludingProcess: getpid(), pointer: pointer)
     }
 
     private func deliver(_ buffer: CVPixelBuffer, at time: TimeInterval, displayMs: Double = 0, timing: ExactVideoTiming? = nil, idleResend: Bool = false) {
