@@ -150,6 +150,11 @@ final class FileTransferFramingTests: XCTestCase {
         XCTAssertTrue(relay.allows(60_000, at: 0))
         XCTAssertFalse(relay.allows(60_000, at: 0), "burst spent")
         XCTAssertTrue(relay.allows(60_000, at: 0.05), "50 ms refills 50 KB")
+        relay.refund(60_000)
+        XCTAssertTrue(relay.allows(60_000, at: 0.05), "a send the media budget refused does not spend relay credit")
+        direct.refund(1)
+        XCTAssertGreaterThan(FileTransferLimits.relayBytesPerSecond, BulkAdmissionPolicy.relayCeilingKbps * 1_000 / 8,
+                             "the relay backstop never undercuts the media governor's relay ceiling")
     }
 
     func testRoomCheckKeepsAMargin() {
@@ -505,16 +510,17 @@ final class FileChannelLoopbackTests: XCTestCase {
         XCTAssertFalse(host.sendFile(Data([1])))
     }
 
-    func testEnginesMoveAFileOverTheFileChannel() async throws {
+    private struct Loopback {
+        let host: PeerMedia, phone: PeerMedia, phoneEngine: FileTransferEngine, macEngine: FileTransferEngine, folder: URL
+    }
+
+    private func loopback() async throws -> Loopback {
         let (host, phone) = try await connect(phoneAcceptsFiles: true)
-        defer { host.close(); phone.close() }
         let deadline = Date().addingTimeInterval(5)
         while !(phone.fileChannelOpen && host.fileChannelOpen), Date() < deadline { try await Task.sleep(nanoseconds: 20_000_000) }
         XCTAssertTrue(phone.fileChannelOpen)
-
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("FileChannelLoopback-" + UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
         let phoneEngine = FileTransferEngine(acceptsUnsolicitedOffers: false)
         let macEngine = FileTransferEngine(acceptsUnsolicitedOffers: true)
         phoneEngine.sendControl = { frame in DispatchQueue.main.async { macEngine.receive(frame) }; return true }
@@ -525,22 +531,68 @@ final class FileChannelLoopbackTests: XCTestCase {
         host.onFileBufferedAmountChange = { [weak macEngine] in macEngine?.fileBufferedAmountChanged() }
         phone.onFileMessage = { [weak phoneEngine] in phoneEngine?.receiveChunk($0) }
         phone.onFileBufferedAmountChange = { [weak phoneEngine] in phoneEngine?.fileBufferedAmountChanged() }
-        macEngine.admit = { offer, answer in
+        let admit: (FileTransferOffer, @escaping @MainActor (Result<FileByteSink, FileTransferStatus>) -> Void) -> Void = { offer, answer in
             answer(Result { try FolderFileSink(folder: folder, partialFolder: folder, name: offer.name, transfer: offer.transfer) }
                 .mapError { FolderFileSink.status(for: $0) })
         }
-        var finish: FileTransferFinish?
-        phoneEngine.onFinish = { finish = $0 }
+        macEngine.admit = admit
+        phoneEngine.admit = admit
+        return Loopback(host: host, phone: phone, phoneEngine: phoneEngine, macEngine: macEngine, folder: folder)
+    }
+
+    private func randomData(_ count: Int) -> Data {
         var generator = SystemRandomNumberGenerator()
+        return Data((0..<count).map { _ in UInt8.random(in: 0...255, using: &generator) })
+    }
+
+    func testEnginesMoveAFileOverTheFileChannel() async throws {
+        let link = try await loopback()
+        defer { link.host.close(); link.phone.close(); try? FileManager.default.removeItem(at: link.folder) }
+        var finish: FileTransferFinish?
+        link.phoneEngine.onFinish = { finish = $0 }
         // Keep real SCTP/governor integrity coverage to 32+ chunks within the CI deadline;
         // the deterministic engine suite retains the 3 MiB whole-file case.
-        let data = Data((0..<(512 * 1024 + 7)).map { _ in UInt8.random(in: 0...255, using: &generator) })
-        _ = try phoneEngine.send(DataByteSource(data), name: "big.bin", type: nil).get()
+        let data = randomData(512 * 1024 + 7)
+        _ = try link.phoneEngine.send(DataByteSource(data), name: "big.bin", type: nil).get()
         let done = Date().addingTimeInterval(30)
         while finish == nil, Date() < done { try await Task.sleep(nanoseconds: 20_000_000) }
         XCTAssertEqual(finish?.status, .stored)
-        XCTAssertEqual(try Data(contentsOf: folder.appendingPathComponent("big.bin")), data)
-        XCTAssertNotNil(host.controlBufferedAmount, "the control channel is untouched")
+        XCTAssertEqual(try Data(contentsOf: link.folder.appendingPathComponent("big.bin")), data)
+        XCTAssertNotNil(link.host.controlBufferedAmount, "the control channel is untouched")
+    }
+
+    func testFourMebibytesCrossTheLoopbackLANBothWaysAtTheLANAllowance() async throws {
+        let link = try await loopback()
+        defer { link.host.close(); link.phone.close(); try? FileManager.default.removeItem(at: link.folder) }
+        let data = randomData(4 * 1024 * 1024)
+        var phoneFinish: FileTransferFinish?, macFinish: FileTransferFinish?
+        link.phoneEngine.onFinish = { if $0.direction == .outgoing { phoneFinish = $0 } }
+        link.macEngine.onFinish = { if $0.direction == .outgoing { macFinish = $0 } }
+
+        var started = Date()
+        _ = try link.phoneEngine.send(DataByteSource(data), name: "up.bin", type: nil).get()
+        var done = Date().addingTimeInterval(40)
+        while phoneFinish == nil, Date() < done { try await Task.sleep(nanoseconds: 5_000_000) }
+        let upRate = Double(data.count) / Date().timeIntervalSince(started)
+        XCTAssertEqual(phoneFinish?.status, .stored)
+        XCTAssertEqual(try Data(contentsOf: link.folder.appendingPathComponent("up.bin")), data)
+
+        link.macEngine.onRequest = { transfer in
+            _ = link.macEngine.send(DataByteSource(data), name: "down.bin", type: nil, transfer: transfer)
+        }
+        started = Date()
+        _ = try link.phoneEngine.request().get()
+        done = Date().addingTimeInterval(40)
+        while macFinish == nil, Date() < done { try await Task.sleep(nanoseconds: 5_000_000) }
+        let downRate = Double(data.count) / Date().timeIntervalSince(started)
+        XCTAssertEqual(macFinish?.status, .stored)
+        XCTAssertEqual(try Data(contentsOf: link.folder.appendingPathComponent("down.bin")), data)
+        print("LOOPBACK-RECEIPT phone->mac \(Int(upRate)) B/s, mac->phone \(Int(downRate)) B/s")
+        // Loose on purpose (shared, loaded machine). Before the bucket and host LAN rule, phone->Mac
+        // measured ~0.9 MB/s here and Mac->phone did not finish 4 MiB within 40 s.
+        XCTAssertGreaterThan(upRate, 400_000)
+        XCTAssertGreaterThan(downRate, 400_000)
+        XCTAssertNotNil(link.host.controlBufferedAmount, "the control channel is untouched")
     }
 }
 

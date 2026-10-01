@@ -619,8 +619,11 @@ final class FileTransferIO: @unchecked Sendable {
             guard let buffered = sending.link.fileBufferedAmount else { fail(sending, .connectionLost); return }
             if buffered >= sending.highWater { schedule(sending, after: 0.005); return }
             let size = Int(min(Int64(sending.chunk), total - sending.sent))
-            guard sending.link.permitsFileSend(bytes: size + FileTransferLimits.chunkHeaderBytes, at: ProcessInfo.processInfo.systemUptime),
-                  sending.pacer.allows(size, at: ProcessInfo.processInfo.systemUptime) else { schedule(sending, after: 0.01); return }
+            let now = ProcessInfo.processInfo.systemUptime
+            guard sending.pacer.allows(size, at: now) else { schedule(sending, after: 0.01); return }
+            guard sending.link.permitsFileSend(bytes: size + FileTransferLimits.chunkHeaderBytes, at: now) else {
+                sending.pacer.refund(size); schedule(sending, after: 0.01); return
+            }
             let payload: Data
             do { payload = try work.source.read(upTo: size) } catch { fail(sending, .unreadable); return }
             guard payload.count == size, let message = FileChunk.encode(transfer: work.transfer, offset: sending.sent, payload: payload)

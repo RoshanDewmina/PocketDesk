@@ -16,8 +16,8 @@ enum FileTransferLimits {
     static let relayChunkPayload = 16 * 1024 - chunkHeaderBytes
     static let directHighWater: UInt64 = 32 * 1024
     static let relayHighWater: UInt64 = 32 * 1024
-    /// Backstop only; the media governor further adapts/pauses actual sends.
-    static let relayBytesPerSecond: Double = 62_500
+    /// Backstop only, kept above the media governor's relay ceiling; the governor adapts/pauses actual sends.
+    static let relayBytesPerSecond: Double = 250_000
     static let progressInterval: TimeInterval = 0.25
     /// Long enough for someone at the Mac to answer a first-use Downloads consent prompt.
     static let acceptTimeout: TimeInterval = 60
@@ -316,6 +316,11 @@ struct FilePacer {
         guard tokens >= Double(bytes) else { return false }
         tokens -= Double(bytes)
         return true
+    }
+
+    mutating func refund(_ bytes: Int) {
+        guard bytesPerSecond != nil else { return }
+        tokens = min(burst, tokens + Double(bytes))
     }
 }
 
