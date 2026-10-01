@@ -148,3 +148,60 @@ final class HostAXWebActivator: @unchecked Sendable {
 enum HostTextFocusLog {
     static let logger = Logger(subsystem: "com.roshan.PocketDesk", category: "textFocus")
 }
+
+enum HostAXPrewarmOutcome: Equatable, Sendable {
+    case noSession, native, alreadyAsked, laneBusy
+    case requested(HostAXWebActivation)
+
+    var reason: String {
+        switch self {
+        case .noSession: "noSession"
+        case .native: "native"
+        case .alreadyAsked: "alreadyAsked"
+        case .laneBusy: "laneBusy"
+        case .requested: "requested"
+        }
+    }
+}
+
+/// A cold Electron app builds its tree about 2 s after the request, so asking at the first tap
+/// answers that tap "not editable". During a live controlled session the request is made when a
+/// Chromium-based app becomes frontmost instead, under the same once-per-process policy and on the
+/// same bounded AX lane; never outside a session and never for a native app.
+struct HostAXWebPrewarm: Sendable {
+    typealias SetAttribute = @Sendable (HostAXWebAttribute, pid_t, HostAXBudget) -> HostAXSetOutcome
+    typealias IsOn = @Sendable (HostAXWebAttribute, pid_t, HostAXBudget) -> Bool?
+
+    var activator: HostAXWebActivator = .shared
+    var broker: HostAXBroker = .shared
+    var set: SetAttribute = { attribute, pid, budget in
+        HostAXWebActivator.set(attribute, on: AXUIElementCreateApplication(pid), budget: budget)
+    }
+    var isOn: IsOn = { attribute, pid, budget in
+        HostAXWebActivator.isOn(attribute, on: AXUIElementCreateApplication(pid), budget: budget)
+    }
+
+    func appActivated(pid: pid_t, launched: TimeInterval?, bundleURL: URL?,
+                      sessionActive: Bool) async -> HostAXPrewarmOutcome {
+        let outcome = await outcome(pid: pid, launched: launched, bundleURL: bundleURL, sessionActive: sessionActive)
+        HostTextFocusLog.logger.info("prewarm \(outcome.reason, privacy: .public)")
+        return outcome
+    }
+
+    private func outcome(pid: pid_t, launched: TimeInterval?, bundleURL: URL?,
+                         sessionActive: Bool) async -> HostAXPrewarmOutcome {
+        guard sessionActive else { return .noSession }
+        guard pid > 0, pid != getpid() else { return .native }
+        let key = HostAXProcessKey(pid: pid, launched: launched)
+        let (activator, set, isOn) = (activator, set, isOn)
+        // Classifying reads the bundle from disk, so it happens on the lane too, never on main.
+        return await broker.run(waitForLane: HostTextFocusProbe.lanePatience) { budget -> HostAXPrewarmOutcome? in
+            let engine = activator.engine(for: bundleURL)
+            guard engine.isWeb else { return .native }
+            guard let activation = activator.activateIfNeeded(key, engine: engine,
+                                                              set: { set($0, pid, budget) },
+                                                              isOn: { isOn($0, pid, budget) }) else { return .alreadyAsked }
+            return .requested(activation)
+        } ?? .laneBusy
+    }
+}

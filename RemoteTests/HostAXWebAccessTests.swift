@@ -168,4 +168,89 @@ final class HostAXWebAccessTests: XCTestCase {
         XCTAssertEqual(HostAXSetOutcome(.cannotComplete), .failed)
         XCTAssertEqual(HostAXSetOutcome(.notImplemented), .failed)
     }
+
+    // MARK: Prewarm on app activation
+
+    private final class Writes: @unchecked Sendable {
+        private let lock = NSLock()
+        private var items: [(HostAXWebAttribute, pid_t)] = []
+        func add(_ attribute: HostAXWebAttribute, _ pid: pid_t) { lock.lock(); items.append((attribute, pid)); lock.unlock() }
+        var attributes: [HostAXWebAttribute] { lock.lock(); defer { lock.unlock() }; return items.map(\.0) }
+        var pids: [pid_t] { lock.lock(); defer { lock.unlock() }; return items.map(\.1) }
+    }
+
+    private func prewarm(engine: HostAppEngine, writes: Writes, manual: HostAXSetOutcome = .applied) -> HostAXWebPrewarm {
+        HostAXWebPrewarm(activator: HostAXWebActivator(classify: { _ in engine }),
+                         broker: HostAXBroker(label: "test.ax.prewarm.\(UUID().uuidString)"),
+                         set: { attribute, pid, _ in writes.add(attribute, pid); return attribute == .manual ? manual : .applied },
+                         isOn: { _, _, _ in false })
+    }
+
+    private let app = URL(fileURLWithPath: "/Applications/Example.app")
+
+    func testActivationDuringASessionRequestsTheTreeOnceForThatProcess() async {
+        let writes = Writes()
+        let warm = prewarm(engine: .electron, writes: writes)
+        let first = await warm.appActivated(pid: 4242, launched: 100, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(first, .requested(HostAXWebActivation(attribute: .manual, outcome: .applied)))
+        let again = await warm.appActivated(pid: 4242, launched: 100, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(again, .alreadyAsked, "Switching back to the same process asks nothing")
+        XCTAssertEqual(writes.attributes, [.manual])
+        XCTAssertEqual(writes.pids, [4242])
+    }
+
+    func testActivationOutsideASessionAsksNothing() async {
+        let writes = Writes()
+        let warm = prewarm(engine: .electron, writes: writes)
+        let outcome = await warm.appActivated(pid: 4243, launched: 100, bundleURL: app, sessionActive: false)
+        XCTAssertEqual(outcome, .noSession)
+        XCTAssertEqual(writes.attributes, [])
+        let later = await warm.appActivated(pid: 4243, launched: 100, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(later, .requested(HostAXWebActivation(attribute: .manual, outcome: .applied)),
+                       "A skipped activation does not use up the process's one request")
+    }
+
+    func testNativeAppActivationAsksNothing() async {
+        let writes = Writes()
+        let warm = prewarm(engine: .native, writes: writes)
+        let outcome = await warm.appActivated(pid: 4244, launched: 100, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(outcome, .native)
+        XCTAssertEqual(writes.attributes, [])
+    }
+
+    func testChromeActivationFallsBackToEnhancedUserInterface() async {
+        let writes = Writes()
+        let warm = prewarm(engine: .chromium, writes: writes, manual: .unsupported)
+        let outcome = await warm.appActivated(pid: 4245, launched: 100, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(outcome, .requested(HostAXWebActivation(attribute: .enhanced, outcome: .applied)))
+        XCTAssertEqual(writes.attributes, [.manual, .enhanced])
+    }
+
+    func testPrewarmAndProbeShareTheOncePerProcessClaim() async {
+        let writes = Writes()
+        let activator = HostAXWebActivator(classify: { _ in .electron })
+        let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.prewarm.shared"),
+                                    set: { attribute, pid, _ in writes.add(attribute, pid); return .applied },
+                                    isOn: { _, _, _ in false })
+        _ = await warm.appActivated(pid: 4246, launched: 7, bundleURL: app, sessionActive: true)
+        XCTAssertNil(activator.activateIfNeeded(HostAXProcessKey(pid: 4246, launched: 7), engine: .electron,
+                                                set: { _ in .applied }, isOn: { _ in false }),
+                     "A probe in the prewarmed app does not ask again")
+    }
+
+    func testBusyLaneDropsThePrewarmWithoutUsingTheClaim() async {
+        let writes = Writes()
+        let activator = HostAXWebActivator(classify: { _ in .electron })
+        let broker = HostAXBroker(label: "test.ax.prewarm.busy")
+        let hog = Task { await broker.run(budget: 0.05) { _ -> Int? in Thread.sleep(forTimeInterval: 0.6); return 1 } }
+        _ = await hog.value
+        let warm = HostAXWebPrewarm(activator: activator, broker: broker,
+                                    set: { attribute, pid, _ in writes.add(attribute, pid); return .applied },
+                                    isOn: { _, _, _ in false })
+        let outcome = await warm.appActivated(pid: 4247, launched: 1, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(outcome, .laneBusy)
+        XCTAssertEqual(writes.attributes, [])
+        XCTAssertNotNil(activator.activateIfNeeded(HostAXProcessKey(pid: 4247, launched: 1), engine: .electron,
+                                                   set: { _ in .applied }, isOn: { _ in false }))
+    }
 }

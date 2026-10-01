@@ -628,6 +628,15 @@ final class RemoteHostModel: ObservableObject {
                 Task { @MainActor in self?.handleAvailability(event) }
             })
         }
+        observers.append(NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            Task { @MainActor in
+                guard let self, let app else { return }
+                self.prewarmAXTree(for: app)
+            }
+        })
         for (name, event) in [(HostScreenLock.locked, HostSleepPolicy.Event.screenLocked),
                               (HostScreenLock.unlocked, HostSleepPolicy.Event.screenUnlocked)] {
             observers.append(DistributedNotificationCenter.default().addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -2670,6 +2679,23 @@ final class RemoteHostModel: ObservableObject {
                 action: "heartbeat", epoch: ticket.epoch,
                 textFocusProbe: probe, textFocusEditable: focus.editable, textFocusSecure: secure, textFocusRect: rect
             ))
+        }
+    }
+
+    /// A live session the phone controls: connected, not paused, not view-only, input enabled.
+    private var axPrewarmSessionActive: Bool {
+        active && !terminating && connection.connected && !phonePause.isPaused &&
+            sessionControlAllowed && input.enabled && controlPermission.isGranted
+    }
+
+    private func prewarmAXTree(for app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        let launched = app.launchDate?.timeIntervalSince1970
+        let bundleURL = app.bundleURL
+        let sessionActive = axPrewarmSessionActive
+        Task.detached(priority: .utility) {
+            _ = await HostAXWebPrewarm().appActivated(pid: pid, launched: launched, bundleURL: bundleURL,
+                                                      sessionActive: sessionActive)
         }
     }
 
