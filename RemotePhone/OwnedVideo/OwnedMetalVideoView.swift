@@ -41,10 +41,11 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         backgroundColor = .black; clipsToBounds = true
         metal.clearColor = MTLClearColorMake(0, 0, 0, 1)
         metal.colorPixelFormat = .bgra8Unorm
-        // Backing pixels follow the view (as autoResizeDrawable did) but never exceed the decoded
-        // picture, so pinch zoom cannot allocate view-sized drawables beyond the source.
+        // Backing pixels are the decoded picture, whatever the zoom: pinch never reallocates them and
+        // never draws the picture into a smaller drawable. Core Animation fills the picture placement.
         metal.autoResizeDrawable = false
         metal.drawableSize = CGSize(width: 1, height: 1)
+        metal.layer.contentsGravity = .resize
         metal.framebufferOnly = true
         metal.preferredFramesPerSecond = fps
         (metal.layer as? CAMetalLayer)?.maximumDrawableCount = 2
@@ -102,13 +103,6 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         fallback?.isEnabled = false; fallback?.removeFromSuperview(); fallback = nil
         cache.map { CVMetalTextureCacheFlush($0, 0) }
     }
-    var displayScale: CGFloat { metal.window?.screen.scale ?? metal.traitCollection.displayScale }
-    static func drawablePixels(viewPoints: CGSize, scale: CGFloat, picture: CGSize) -> CGSize {
-        let width = (viewPoints.width * scale).rounded(), height = (viewPoints.height * scale).rounded()
-        guard scale > 0, width.isFinite, height.isFinite, width >= 1, height >= 1 else { return picture }
-        let fit = min(1, picture.width / width, picture.height / height)
-        return CGSize(width: max(1, (width * fit).rounded()), height: max(1, (height * fit).rounded()))
-    }
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { redraw = true }
     func draw(in view: MTKView) {
         guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { true }) == true else { invalidate(); return }
@@ -127,9 +121,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         guard let submission = mailbox.take(redraw: redraw) else { return }
         let envelope = submission.frame
         guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
-        // MTKView derives contentScaleFactor from drawableSize when it does not auto-resize.
-        let backing = Self.drawablePixels(viewPoints: view.bounds.size, scale: displayScale, picture: geometry.displaySize)
-        if view.drawableSize != backing { view.drawableSize = backing }
+        if view.drawableSize != geometry.displaySize { view.drawableSize = geometry.displaySize }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
               let command = commandQueue?.makeCommandBuffer(),
               let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else {
@@ -215,7 +207,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                           callback: ((VideoPresentationIdentity, UUID) -> Void)?) -> (CFTimeInterval) -> Void {
         { [weak self] presentedTime in
             guard presentedTime.isFinite, presentedTime > 0 else { return }
-            Self.presentedReceiptQueue.async { [weak self] in
+            Self.presentedReceiptQueue.async {
                 guard let self else { return }
                 _ = self.fence.withAdmission(envelope.identity, at: ProcessInfo.processInfo.systemUptime) {
                     self.counters?.presentedFrame(atMs: presentedTime * 1000, marker: envelope.marker)

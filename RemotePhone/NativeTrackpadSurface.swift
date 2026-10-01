@@ -180,7 +180,17 @@ final class NativeTrackpadInputView: UIView, UIPointerInteractionDelegate {
         if wanted {
             claimKeyboardFocus()
         } else if isFirstResponder {
-            _ = resignFirstResponder()
+            keyboard.releaseAll()
+            releaseKeyboardFocus()
+        }
+    }
+
+    /// Asynchronously too: resigning inside SwiftUI's update asks the hosting view whether it can
+    /// become first responder, which re-enters the update graph (20260930.8 scene-update hangs).
+    private func releaseKeyboardFocus() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.wantsKeyboardFocus, self.isFirstResponder else { return }
+            _ = self.resignFirstResponder()
         }
     }
 
