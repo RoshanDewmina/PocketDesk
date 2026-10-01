@@ -28,7 +28,11 @@ enum MacShareBlocker: String, Codable, Equatable {
         var features: [String]
         var mode: String? = nil
 
-        static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature, SessionFeature.extendedFeatureList, SessionFeature.causalInput, SessionFeature.pencilInput, SessionFeature.videoLTR, SessionFeature.videoRefinement])
+        static let phone = Handshake(features: [MacShareBlocker.feature, MacShareBlocker.approvalFeature, SessionFeature.extendedFeatureList, SessionFeature.causalInput, SessionFeature.pencilInput, SessionFeature.videoLTR])
+        /// The two opt-in picture requests fill the list to its eight-name bound at most.
+        static func phoneRequest(_ optional: [String], mode: String? = nil) -> Handshake {
+            Handshake(features: phone.features + optional.filter { [SessionFeature.videoRefinement, SessionFeature.textClarity].contains($0) }, mode: mode)
+        }
 
         static func requestedMode(in body: Data?) -> SessionMode {
             guard let body, body.count <= 1024,

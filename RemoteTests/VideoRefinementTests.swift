@@ -33,6 +33,48 @@ final class VideoRefinementTests: XCTestCase {
         XCTAssertEqual(refined.sourceRect, base.sourceRect); XCTAssertEqual(refined.width, base.width); XCTAssertEqual(refined.height, base.height)
         XCTAssertEqual(refined.preservesAspectRatio, base.preservesAspectRatio); XCTAssertEqual(refined.showsCursor, base.showsCursor)
     }
+    private func capturedFormat(_ peer: PeerMedia) -> OSType {
+        RemoteCaptureConfiguration.streamConfiguration(output: CapturePixelDimensions(width: 1920, height: 1200), region: nil, showsCursor: true,
+            fps: 60, displayRefreshHz: 60, tuning: .tuned, refinesText: peer.refinementCaptureEnabled, fullColor444: peer.fullColorCaptureEnabled).pixelFormat
+    }
+    func testRefinementIsNotRequestedWhenTheSettingIsOffAndCaptureStaysOnTheOriginal420Path() throws {
+        let suite = "VideoRefinementTests.off.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(defaults), [], "All picture refinements default off")
+        let request = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(defaults))
+        let heard = MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(request))
+        XCTAssertFalse(heard.contains(SessionFeature.videoRefinement)); XCTAssertFalse(heard.contains(SessionFeature.textClarity))
+        XCTAssertTrue(heard.contains(SessionFeature.videoLTR))
+        let host = PeerMedia(isHost: true, servers: [], hevc: false, hevc444: false, textClarity: heard.contains(SessionFeature.textClarity))
+        defer { host.close() }
+        host.requestRefinementCapture(heard.contains(SessionFeature.videoRefinement))
+        XCTAssertFalse(host.refinementCaptureEnabled); XCTAssertFalse(host.textClarity.enabled)
+        XCTAssertEqual(capturedFormat(host), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+    }
+    func testRefinementIsRequestedOnlyWhenTheSettingIsOnAndThenCapturesBGRA() throws {
+        let suite = "VideoRefinementTests.on.\(UUID().uuidString)", defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: StillTextPreferences.sharpenKey); defaults.set(true, forKey: StillTextPreferences.textClarityKey)
+        let request = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(defaults))
+        let body = try JSONEncoder().encode(request)
+        XCTAssertLessThanOrEqual(request.features.count, 8); XCTAssertLessThanOrEqual(body.count, 1024)
+        let heard = MacShareBlocker.Handshake.features(in: body)
+        XCTAssertTrue(heard.contains(SessionFeature.videoRefinement)); XCTAssertTrue(heard.contains(SessionFeature.textClarity))
+        XCTAssertEqual(MacShareBlocker.Handshake.phoneRequest(["unknown.1"]).features, MacShareBlocker.Handshake.phone.features)
+        let host = PeerMedia(isHost: true, servers: [], hevc: false, hevc444: false, textClarity: heard.contains(SessionFeature.textClarity))
+        defer { host.close() }
+        host.requestRefinementCapture(heard.contains(SessionFeature.videoRefinement))
+        XCTAssertTrue(host.refinementCaptureEnabled); XCTAssertTrue(host.textClarity.enabled)
+        XCTAssertEqual(capturedFormat(host), kCVPixelFormatType_32BGRA)
+        host.requestRefinementCapture(false)
+        XCTAssertEqual(capturedFormat(host), kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+    }
+    func testAnEarlierPhoneThatAlwaysListsRefinementStillNegotiatesWithinTheBound() throws {
+        let earlier = MacShareBlocker.Handshake(features: MacShareBlocker.Handshake.phone.features + [SessionFeature.videoRefinement])
+        let heard = MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(earlier))
+        XCTAssertEqual(heard.count, 7); XCTAssertTrue(heard.contains(SessionFeature.videoRefinement))
+        XCTAssertFalse(heard.contains(SessionFeature.textClarity), "An earlier phone never asks for the QP floor")
+    }
     func testReliableChannelUsesEncodedSizeAndOneAckBoundaryAndRevokeRetiresQueuedImage() throws {
         let sender = VideoRefinementChannel(), receiver = VideoRefinementChannel()
         sender.configure(enabled: true, geometry: 7, scope: 3); receiver.configure(enabled: true, geometry: 7, scope: 3)

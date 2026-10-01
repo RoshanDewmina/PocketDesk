@@ -130,6 +130,12 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private var restart = EncoderRestartPolicy()
     private var storedMaximumQPApplied: Bool = false
     var maximumQPApplied: Bool { serialized { storedMaximumQPApplied } }
+    private let textClarity: TextClarityContext?
+    private let propertyCatalog: (VTCompressionSession) -> [String: Any]?
+    private var textClarityArmed = false
+    private var textClarityApplied = false
+    var textClarityAvailable: Bool { serialized { textClarityArmed } }
+    var textClarityActive: Bool { serialized { textClarityApplied } }
     private var storedLowLatencyApplied: Bool = false
     var lowLatencyApplied: Bool { serialized { storedLowLatencyApplied } }
     private var storedHardwareReported: Bool?
@@ -141,8 +147,9 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
     private var storedLastStage: String = "not-started"
     var lastStage: String { serialized { storedLastStage } }
 
-    init(configuration: any OwnedVideoConfiguration, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil, videoFeedback: VideoFeedbackContext? = nil) {
-        self.videoFeedback = videoFeedback
+    init(configuration: any OwnedVideoConfiguration, counters: StreamCounters? = nil, frameTiming: HostFrameTimingLog? = nil, videoFeedback: VideoFeedbackContext? = nil,
+         textClarity: TextClarityContext? = nil, propertyCatalog: @escaping (VTCompressionSession) -> [String: Any]? = OwnedVTEncoder.supportedProperties) {
+        self.videoFeedback = videoFeedback; self.textClarity = textClarity; self.propertyCatalog = propertyCatalog
         self.configuration = configuration; self.counters = counters; self.frameTiming = frameTiming
         super.init(); queue.setSpecific(key: queueKey, value: 1)
     }
@@ -201,6 +208,9 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         if status != noErr { invalidate(); storedLastStatus = status; return status }
         storedMaximumQPApplied = VTSessionSetProperty(created, key: kVTCompressionPropertyKey_MaxAllowedFrameQP,
                                                value: maximumQP as CFNumber) == noErr
+        // Asked for only when the phone requested it; otherwise the session is exactly the default one.
+        textClarityArmed = textClarity?.enabled == true && storedMaximumQPApplied && TextClarityPolicy.supported(propertyCatalog(created))
+        textClarityApplied = false
         storedLastStage = "prepare"
         status = VTCompressionSessionPrepareToEncodeFrames(created)
         guard status == noErr else { invalidate(); storedLastStatus = status; return status }
@@ -220,11 +230,34 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         }
         storedLowLatencyApplied = configuration.lowLatency
         storedLastStatus = noErr
-        counters?.recordEncoderEvidence(VideoEncoderEvidence(path: .ownedVideoToolbox,
-            maximumQPBound: maximumQPApplied ? maximumQP : nil, lowLatencyRequested: lowLatencyApplied,
-            hardwareRequired: true, hardwareReported: hardwareReported))
+        recordEvidence()
         counters?.encoderSessionStarted()
         return noErr
+    }
+    private func recordEvidence() {
+        counters?.recordEncoderEvidence(VideoEncoderEvidence(path: .ownedVideoToolbox,
+            maximumQPBound: storedMaximumQPApplied ? maximumQP : nil, lowLatencyRequested: storedLowLatencyApplied,
+            hardwareRequired: true, hardwareReported: storedHardwareReported, textClarityActive: textClarityArmed ? textClarityApplied : nil))
+    }
+    static func supportedProperties(_ session: VTCompressionSession) -> [String: Any]? {
+        var catalog: CFDictionary?
+        guard VTSessionCopySupportedPropertyDictionary(session, supportedPropertyDictionaryOut: &catalog) == noErr else { return nil }
+        return catalog as? [String: Any]
+    }
+    /// Tightens the frame-QP ceiling only while capture reports a still picture, and restores the
+    /// session's own bound on the first changed frame. A rejected setter disarms it for the session.
+    private func updateTextClarity(_ session: VTCompressionSession) {
+        guard textClarityArmed else { return }
+        let still = textClarity?.isStill == true
+        guard still != textClarityApplied else { return }
+        let bound = still ? TextClarityPolicy.stillFrameQP(hevc: configuration.codecType == kCMVideoCodecType_HEVC, sessionBound: maximumQP) : maximumQP
+        if VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxAllowedFrameQP, value: bound as CFNumber) == noErr {
+            textClarityApplied = still
+        } else {
+            if textClarityApplied { _ = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxAllowedFrameQP, value: maximumQP as CFNumber) }
+            textClarityArmed = false; textClarityApplied = false
+        }
+        recordEvidence()
     }
     private func applyRate(_ session: VTCompressionSession) -> OSStatus {
         let rate = VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: Int(bitrate) * 1000 as CFNumber)
@@ -295,6 +328,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
                 if !options.tokens.isEmpty { properties[kVTEncodeFrameOptionKey_AcknowledgedLTRTokens] = options.tokens.map { NSNumber(value: $0) } }
                 if options.refresh && !independentKey { properties[kVTEncodeFrameOptionKey_ForceLTRRefresh] = true }
             }
+            updateTextClarity(session)
             let result = VTCompressionSessionEncodeFrame(session, imageBuffer: pixels,
                 presentationTimeStamp: CMTime(value: frame.timeStampNs, timescale: 1_000_000_000),
                 duration: CMTime(value: 1, timescale: Int32(fps)), frameProperties: properties as CFDictionary, infoFlagsOut: nil) {
@@ -406,6 +440,7 @@ final class OwnedVTEncoder: NSObject, RTCVideoEncoder {
         counters?.recordEncoderEvidence(nil)
         if let session { VTCompressionSessionInvalidate(session) }
         session = nil; storedMaximumQPApplied = false; storedLowLatencyApplied = false; storedHardwareReported = nil
+        textClarityArmed = false; textClarityApplied = false
     }
     func release() -> Int { serialized { invalidate(); return 0 } }
     deinit { if let session { VTCompressionSessionInvalidate(session) } }
@@ -520,15 +555,15 @@ final class ResilientVTEncoder: NSObject, RTCVideoEncoder {
     private var deliveryEpoch: UUID?
     private var usingOwned = false
     init(configuration: OwnedVTConfiguration, codecInfo: RTCVideoCodecInfo,
-         counters: StreamCounters?, frameTiming: HostFrameTimingLog?, videoFeedback: VideoFeedbackContext? = nil) {
-        owned = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback)
+         counters: StreamCounters?, frameTiming: HostFrameTimingLog?, videoFeedback: VideoFeedbackContext? = nil, textClarity: TextClarityContext? = nil) {
+        owned = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback, textClarity: textClarity)
         fallback = DesktopH264Encoder(codecInfo: codecInfo, counters: counters, frameTiming: frameTiming)
         maximumKbps = configuration.maximumKbps
         delivery = VideoEncoderCallbackDelivery(counters: counters)
         super.init(); queue.setSpecific(key: key, value: 1)
     }
-    init(configuration: OwnedHEVCConfiguration, counters: StreamCounters?, frameTiming: HostFrameTimingLog?, onFailure: (() -> Void)? = nil, videoFeedback: VideoFeedbackContext? = nil) {
-        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback)
+    init(configuration: OwnedHEVCConfiguration, counters: StreamCounters?, frameTiming: HostFrameTimingLog?, onFailure: (() -> Void)? = nil, videoFeedback: VideoFeedbackContext? = nil, textClarity: TextClarityContext? = nil) {
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, frameTiming: frameTiming, videoFeedback: videoFeedback, textClarity: textClarity)
         owned = encoder
         fallback = nil // Never label H.264 bytes as H.265. Rollback requires a new negotiation.
         maximumKbps = configuration.maximumKbps

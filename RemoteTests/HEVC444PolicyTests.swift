@@ -58,4 +58,21 @@ final class HEVC444PolicyTests: XCTestCase {
         XCTAssertNil(HEVC444Policy.cacheKey(role: "decode", systemAndModel: "26.0.unknown"))
         XCTAssertNotEqual(HEVC444Policy.cacheKey(role: "encode", systemAndModel: "26.0.Mac16,13"), HEVC444Policy.cacheKey(role: "decode", systemAndModel: "26.0.Mac16,13"))
     }
+
+    func testFullColorWinsOverStillTextRefinementOnBothSides() {
+        XCTAssertTrue(HEVC444Policy.permitsRefinement(requested: true, fullColor: false))
+        XCTAssertFalse(HEVC444Policy.permitsRefinement(requested: true, fullColor: true))
+        XCTAssertFalse(HEVC444Policy.permitsRefinement(requested: false, fullColor: false))
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(sharpen: true, textClarity: false, fullColor: true), [],
+                       "A phone with full color on never asks for refinement")
+        XCTAssertEqual(StillTextPreferences.requestedFeatures(sharpen: true, textClarity: true, fullColor: true), [SessionFeature.textClarity],
+                       "Text clarity is independent of full color")
+        let fullColorHost = PeerMedia(isHost: true, servers: [], hevc: true, hevc444: true)
+        let plainHost = PeerMedia(isHost: true, servers: [], hevc: true, hevc444: false)
+        defer { fullColorHost.close(); plainHost.close() }
+        XCTAssertTrue(fullColorHost.fullColorCaptureEnabled)
+        fullColorHost.requestRefinementCapture(true); plainHost.requestRefinementCapture(true)
+        XCTAssertFalse(fullColorHost.refinementCaptureEnabled, "An earlier phone's refinement request yields to this Mac's full color")
+        XCTAssertTrue(plainHost.refinementCaptureEnabled)
+    }
 }

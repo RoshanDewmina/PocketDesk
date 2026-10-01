@@ -1,6 +1,7 @@
 import XCTest
 import WebRTC
 import CoreVideo
+import VideoToolbox
 
 final class OwnedVTEncoderTests: XCTestCase {
     func testAnnexBRejectsTruncatedNALAndBoundsParameterSets() {
@@ -142,6 +143,121 @@ final class OwnedVTEncoderTests: XCTestCase {
         wait(for: [encoded, decoded], timeout: 5)
         _ = encoder.release()
         XCTAssertEqual(encoder.encode(frame, codecSpecificInfo: nil, frameTypes: []), -1)
+    }
+
+    private func textClarityFrame(width: Int = 256, height: Int = 128, shade: UInt8) throws -> RTCVideoFrame {
+        var pixel: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, width, height, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixel), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixel)
+        CVPixelBufferLockBaseAddress(buffer, [])
+        memset(try XCTUnwrap(CVPixelBufferGetBaseAddress(buffer)), Int32(shade), CVPixelBufferGetBytesPerRow(buffer) * height)
+        CVPixelBufferUnlockBaseAddress(buffer, [])
+        return RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1_000_000_000)
+    }
+    private func encodeAndWait(_ encoder: OwnedVTEncoder, _ frame: RTCVideoFrame, key: Bool = false) {
+        let done = expectation(description: "Encoded")
+        encoder.setCallback { _, _ in done.fulfill(); return true }
+        XCTAssertEqual(encoder.encode(frame, codecSpecificInfo: nil, frameTypes: key ? [NSNumber(value: RTCFrameType.videoFrameKey.rawValue)] : []), 0)
+        wait(for: [done], timeout: 5)
+    }
+    private func clarityConfigurations() throws -> [(name: String, configuration: any OwnedVideoConfiguration, still: Int)] {
+        [("H264", try XCTUnwrap(OwnedVTConfiguration(parameters: ["profile-level-id": "640034", "packetization-mode": "1"])), TextClarityPolicy.stillH264QP),
+         ("H265", try XCTUnwrap(OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters)), TextClarityPolicy.stillHEVCQP)]
+    }
+    private func clarityEncoder(_ configuration: any OwnedVideoConfiguration, name: String, counters: StreamCounters, context: TextClarityContext?,
+                                catalog: @escaping (VTCompressionSession) -> [String: Any]? = OwnedVTEncoder.supportedProperties) -> OwnedVTEncoder {
+        let encoder = OwnedVTEncoder(configuration: configuration, counters: counters, textClarity: context, propertyCatalog: catalog)
+        let settings = RTCVideoEncoderSettings()
+        settings.width = 256; settings.height = 128; settings.startBitrate = 4000; settings.maxBitrate = 4000
+        settings.maxFramerate = 60; settings.qpMax = 30; settings.name = name; settings.mode = .screensharing
+        XCTAssertEqual(encoder.startEncode(with: settings, numberOfCores: 1), 0, "\(name) VT stage=\(encoder.lastStage) status=\(encoder.lastStatus)")
+        return encoder
+    }
+
+    func testStillFrameQPIsTighterThanTheSessionBoundAndNeverLooser() {
+        XCTAssertEqual(TextClarityPolicy.stillFrameQP(hevc: true, sessionBound: 30), 24)
+        XCTAssertEqual(TextClarityPolicy.stillFrameQP(hevc: false, sessionBound: 30), 26)
+        XCTAssertEqual(TextClarityPolicy.stillFrameQP(hevc: false, sessionBound: 20), 20)
+        XCTAssertFalse(TextClarityPolicy.supported(nil))
+        XCTAssertFalse(TextClarityPolicy.supported([:]))
+        XCTAssertTrue(TextClarityPolicy.supported([kVTCompressionPropertyKey_MaxAllowedFrameQP as String: [:]]))
+        var now: TimeInterval = 100
+        let context = TextClarityContext(enabled: true) { now }
+        XCTAssertFalse(context.isStill, "No observed frame is not a still picture")
+        context.contentChanged(); now += TextClarityContext.stillAfter - 0.01
+        XCTAssertFalse(context.isStill)
+        now += 0.02
+        XCTAssertTrue(context.isStill)
+        context.contentChanged()
+        XCTAssertFalse(context.isStill)
+        let off = TextClarityContext(enabled: false) { now }
+        off.contentChanged(); now += 10
+        XCTAssertFalse(off.isStill)
+    }
+
+    func testTextClarityTightensTheHardwareQPCeilingOnlyWhileStillAndRestoresItOnMotion() throws {
+        for (name, configuration, still) in try clarityConfigurations() {
+            var now: TimeInterval = 100
+            let counters = StreamCounters(), context = TextClarityContext(enabled: true) { now }
+            let encoder = clarityEncoder(configuration, name: name, counters: counters, context: context)
+            defer { _ = encoder.release() }
+            guard encoder.maximumQPApplied else {
+                XCTAssertFalse(encoder.textClarityAvailable, "\(name): no QP setter, no floor")
+                throw XCTSkip("\(name): this encoder does not accept MaxAllowedFrameQP")
+            }
+            XCTAssertTrue(encoder.textClarityAvailable, "\(name): the hardware encoder lists MaxAllowedFrameQP")
+            XCTAssertEqual(counters.drain(inputBufferedBytes: nil).encoderEvidence?.textClarityActive, false)
+            context.contentChanged()
+            encodeAndWait(encoder, try textClarityFrame(shade: 40), key: true)
+            XCTAssertFalse(encoder.textClarityActive, "\(name): a changing picture keeps the session bound")
+            now += 1
+            encodeAndWait(encoder, try textClarityFrame(shade: 40))
+            XCTAssertTrue(encoder.textClarityActive, "\(name): still picture applies QP ≤ \(still)")
+            let applied = try XCTUnwrap(counters.drain(inputBufferedBytes: nil).encoderEvidence)
+            XCTAssertEqual(applied.textClarityActive, true); XCTAssertEqual(applied.maximumQPBound, 30)
+            XCTAssertNoThrow(try applied.validate())
+            context.contentChanged()
+            encodeAndWait(encoder, try textClarityFrame(shade: 200))
+            XCTAssertFalse(encoder.textClarityActive, "\(name): motion restores the session's own bound")
+            XCTAssertEqual(counters.drain(inputBufferedBytes: nil).encoderEvidence?.textClarityActive, false)
+        }
+    }
+
+    func testTextClarityIsAbsentUnlessRequestedAndSkippedWhenTheEncoderDoesNotListTheProperty() throws {
+        for (name, configuration, _) in try clarityConfigurations() {
+            var now: TimeInterval = 100
+            for (context, catalog) in [(TextClarityContext?.none, OwnedVTEncoder.supportedProperties),
+                                       (TextClarityContext(enabled: false) { now }, OwnedVTEncoder.supportedProperties),
+                                       (TextClarityContext(enabled: true) { now }, { (_: VTCompressionSession) -> [String: Any]? in [:] })] {
+                let counters = StreamCounters()
+                let encoder = clarityEncoder(configuration, name: name, counters: counters, context: context, catalog: catalog)
+                XCTAssertFalse(encoder.textClarityAvailable, name)
+                context?.contentChanged(); now += 5
+                encodeAndWait(encoder, try textClarityFrame(shade: 90), key: true)
+                encodeAndWait(encoder, try textClarityFrame(shade: 90))
+                XCTAssertFalse(encoder.textClarityActive, "\(name): the default session never changes its QP bound")
+                let evidence = try XCTUnwrap(counters.drain(inputBufferedBytes: nil).encoderEvidence)
+                XCTAssertNil(evidence.textClarityActive)
+                XCTAssertFalse(evidence.summary.contains("text clarity"))
+                _ = encoder.release()
+            }
+        }
+    }
+
+    func testTextClarityEvidenceIsOwnedEncoderOnlyAndReachesTheHostSummary() throws {
+        XCTAssertThrowsError(try VideoEncoderEvidence(path: .compatibility, maximumQPBound: nil, lowLatencyRequested: false, hardwareRequired: false,
+                                                      hardwareReported: nil, textClarityActive: false).validate())
+        let sample = StreamStatsSample(entries: [])
+        var snapshot = StreamCounterSnapshot(interval: 1)
+        XCTAssertNil(StreamStatsReport(role: "host", previous: nil, current: sample, counters: snapshot).hostSummary.textClarityActive)
+        snapshot.encoderEvidence = VideoEncoderEvidence(path: .ownedVideoToolbox, maximumQPBound: 30, lowLatencyRequested: true,
+                                                        hardwareRequired: true, hardwareReported: nil, textClarityActive: true)
+        let summary = StreamStatsReport(role: "host", previous: nil, current: sample, counters: snapshot).hostSummary
+        XCTAssertEqual(summary.textClarityActive, true)
+        let received = try JSONDecoder().decode(HostStreamSummary.self, from: JSONEncoder().encode(summary))
+        XCTAssertEqual(received, summary); XCTAssertNoThrow(try received.validate())
+        XCTAssertTrue(try XCTUnwrap(summary.encoderEvidence).summary.hasSuffix("text clarity active"))
     }
 }
 
