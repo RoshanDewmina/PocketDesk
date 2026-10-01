@@ -15,10 +15,20 @@ final class MacReachabilityProbeTests: XCTestCase {
         XCTAssertEqual(outcome, .answering)
         XCTAssertEqual(transport.connects.count, 1)
         XCTAssertNil(transport.connects[0].hostToken, "It registers as the phone, never as a host")
-        XCTAssertEqual(transport.connects[0].features, [], "It must not ask to renew a lease it will not keep")
+        XCTAssertEqual(transport.connects[0].features, ["probe.1"],
+                       "Only probe.1: the service answers and closes it without admitting a phone; no renewal, relay or route")
         XCTAssertEqual(transport.connects[0].invitation, invitation)
         XCTAssertTrue(transport.sent.isEmpty, "It says nothing beyond registering, so it can never start a session")
         XCTAssertEqual(transport.closeCount, 1, "It leaves as soon as it has its answer")
+    }
+
+    func testTheRegisterFrameCarriesTheProbeFeature() throws {
+        let frame = SignalingClient.registerMessage(invitation: try TestPairing.invitation(), hostToken: nil,
+                                                    features: MacReachabilityProbe.features, entitlement: nil)
+        XCTAssertEqual(frame.role, "client")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(frame)) as? [String: Any])
+        XCTAssertEqual(json["features"] as? [String], ["probe.1"],
+                       "A featureless register is refused as upgrade_required on staging and production")
     }
 
     func testTheServiceSaysNoMacIsThere() async throws {

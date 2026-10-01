@@ -8,11 +8,16 @@ import Foundation
 /// answers one code for "the Mac is not there" and "you are not authorized", so a refusal is reported
 /// as "not answering", never as "asleep".
 ///
-/// The Mac sees this exactly as it sees a phone that connects and cancels at once, which it already
-/// handles. The caller must not probe while its own coordinator is running: the service allows one
-/// phone per room and would answer `already_connected`.
+/// It registers with `probe.1` only. The service checks the phone's credentials, answers and closes the
+/// socket without admitting it: the probe never takes or replaces the phone's place, even from an intent
+/// process while the app holds a quiet session, and the Mac never hears of it. While any phone is
+/// registered the service answers `already_connected`. It deliberately does not list `route.1`: a service
+/// that predates `probe.1` then refuses it as `upgrade_required` on public deployments instead of
+/// admitting it as a phone that could replace a live session.
 @MainActor
 final class MacReachabilityProbe {
+    static let features = ["probe.1"]
+
     enum Outcome: Equatable {
         /// The Mac's Farside answered: the Mac is awake and online.
         case answering
@@ -45,7 +50,7 @@ final class MacReachabilityProbe {
             transport.onMessage = { [weak self] message in self?.receive(message) }
             transport.onClose = { [weak self] in self?.finish(.serviceUnreachable) }
             do {
-                try transport.connect(invitation: invitation, hostToken: nil, features: [])
+                try transport.connect(invitation: invitation, hostToken: nil, features: Self.features)
             } catch {
                 finish(.serviceUnreachable)
                 return

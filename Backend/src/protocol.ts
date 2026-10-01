@@ -4,6 +4,8 @@ export const PROTOCOL_VERSION = 1;
 export const RENEWAL_FEATURE = "renew.1";
 export const REMOTE_FEATURE = "remote.1";
 export const ROUTE_FEATURE = "route.1";
+/** A phone asking only whether its Mac is registered; it is answered and closed, never admitted. */
+export const PROBE_FEATURE = "probe.1";
 
 export const MAX_FRAME_BYTES = 256 * 1024;
 export const MAX_JSON_CHARS = 200 * 1024;

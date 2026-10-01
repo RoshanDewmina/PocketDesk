@@ -414,6 +414,70 @@ describe("NW24: keepalive and stale peer replacement", () => {
     expect(await rejoined.next()).toEqual({ type: "peer", online: true });
   });
 
+  it("a probe is answered and closed without the Mac hearing of it, and never holds the phone's place", async () => {
+    const p = await pairing();
+    const absent = await open();
+    absent.send(registerMessage(p, "client", { features: ["probe.1"] }));
+    expect((await absent.next()).code).toBe("host_unavailable_or_unauthorized");
+
+    const host = await connectHost(p);
+    const wrong = await open();
+    wrong.send({ ...registerMessage(p, "client", { features: ["probe.1"] }), token: "c".repeat(64) });
+    expect((await wrong.next()).code).toBe("host_unavailable_or_unauthorized");
+    const probe = await open();
+    probe.send(registerMessage(p, "client", { features: ["probe.1"] }));
+    expect(await probe.next()).toEqual({ type: "registered", role: "client" });
+    expect((await probe.closed).reason).toBe("probe_answered");
+    expect(probe.messages).toEqual([]);
+
+    const phone = await connectClient(p);
+    expect(await host.next()).toEqual({ type: "peer", online: true });
+    expect(await phone.next()).toEqual({ type: "peer", online: true });
+  });
+
+  it("a probe never replaces a phone, however quiet; a real re-registration still does", async () => {
+    const p = await pairing();
+    const host = await connectHost(p);
+    const phone = await connectClient(p);
+    await phone.next(); await host.next();
+    await advance(60_000);
+    for (const features of [["probe.1"], ["probe.1", "route.1", "renew.1", "remote.1"]]) {
+      const probe = await open();
+      probe.send(registerMessage(p, "client", { features }));
+      expect(await probe.next()).toEqual({ type: "error", code: "already_connected" });
+      expect((await probe.closed).reason).toBe("already_connected");
+    }
+    expect(phone.ws.readyState).toBe(WebSocket.OPEN);
+    expect(phone.messages).toEqual([]);
+    expect(host.messages).toEqual([]);
+
+    await connectClient(p);
+    expect(await phone.next()).toEqual({ type: "error", code: "replaced" });
+    expect(await host.next()).toEqual({ type: "peer", online: false });
+    expect(await host.next()).toEqual({ type: "peer", online: true });
+  });
+
+  it("on a public deployment a probe passes the route gate that refuses a featureless phone", async () => {
+    const p = await pairing();
+    await runInDurableObject(stub(p.room), (instance: RoomDO) => {
+      const room = instance as unknown as { config: Record<string, unknown> };
+      room.config = { ...room.config, environmentName: "staging" };
+    });
+    const host = await connectHost(p, { features: ["route.1"] });
+    const legacy = await open();
+    legacy.send(registerMessage(p, "client"));
+    expect((await legacy.next()).code).toBe("upgrade_required");
+    const probe = await open();
+    probe.send(registerMessage(p, "client", { features: ["probe.1"] }));
+    expect(await probe.next()).toEqual({ type: "registered", role: "client" });
+    expect((await probe.closed).reason).toBe("probe_answered");
+
+    const phone = await connectClient(p, { features: ["route.1"] });
+    expect((await host.next()).type).toBe("route");
+    expect(await host.next()).toEqual({ type: "peer", online: true });
+    expect((await phone.next()).type).toBe("route");
+  });
+
   it("the keepalive repeats each peer's current ice, including servers refreshed by a renewal", async () => {
     turn.reset();
     const token = await entitlementToken();

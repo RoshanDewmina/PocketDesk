@@ -7,7 +7,7 @@ import { environmentLetter, verifyEntitlementToken } from "./entitlement/token";
 import { fingerprint, log, logError } from "./log";
 import { forgetPushRoom } from "./push";
 import {
-  AUTH_TIMEOUT_MS, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, REMOTE_FEATURE, RENEWAL_FEATURE, ROUTE_FEATURE, iceWithinClientLimits,
+  AUTH_TIMEOUT_MS, MESSAGES_PER_SECOND, OUTBOUND_BYTES_PER_SECOND, PROBE_FEATURE, REMOTE_FEATURE, RENEWAL_FEATURE, ROUTE_FEATURE, iceWithinClientLimits,
   parseAuthenticatedFrame, parseJsonFrame, parseRegister, type ErrorCode, type IceServer, type PeerRole, type RegisterMessage,
 } from "./protocol";
 import { WindowCounter, addressKey, allow, withTimeout } from "./ratelimit";
@@ -74,6 +74,8 @@ const revokeBackoffMs = (attempts: number) => {
 };
 
 class IssuanceRateLimited extends Error {}
+
+const isProbe = (msg: RegisterMessage): boolean => msg.role === "client" && msg.features.has(PROBE_FEATURE);
 
 /** A registration that did not ask for remote access (Couch mode) must stay on the proven local route. */
 export function unentitledRelayPass(config: { allowUnentitledRelay: boolean; devRelayRooms: Set<string> },
@@ -838,7 +840,8 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   private async register(ws: WebSocket, attachment: Attachment, msg: RegisterMessage): Promise<void> {
-    this.save(ws, { ...attachment, pending: true, role: msg.role });
+    // A pending probe holds no role, so it never counts as the phone in the room.
+    this.save(ws, { ...attachment, pending: true, role: isProbe(msg) ? undefined : msg.role });
     try {
       await this.registerPeer(ws, attachment, msg);
     } finally {
@@ -855,7 +858,9 @@ export class RoomDO extends DurableObject<Env> {
     const remoteAware = msg.features.has(REMOTE_FEATURE) || msg.entitlement !== undefined;
     const renewable = msg.features.has(RENEWAL_FEATURE);
     const routeAware = msg.features.has(ROUTE_FEATURE);
-    if (isPublicEnvironment(this.config.environmentName) && !routeAware) {
+    const probe = isProbe(msg);
+    // A probe never receives route policy, so it has nothing to be aware of.
+    if (isPublicEnvironment(this.config.environmentName) && !routeAware && !probe) {
       this.error(ws, "upgrade_required"); return;
     }
 
@@ -934,6 +939,7 @@ export class RoomDO extends DurableObject<Env> {
     if (this.peer("host") !== host || this.state().client_token_hash !== clientTokenHash) {
       this.error(ws, "host_unavailable_or_unauthorized"); return;
     }
+    if (probe) { this.answerProbe(ws, room); return; }
     if (!this.takeSlot("client", ws, now)) { this.error(ws, "already_connected"); return; }
 
     let entitlement = await this.checkEntitlement(msg.entitlement, remoteAware);
@@ -1047,6 +1053,19 @@ export class RoomDO extends DurableObject<Env> {
     this.send(ws, { type: "peer", online: true });
     log("client_registered", { room: fingerprint(room), entitled: entitlement.entitled, renewable });
     await this.scheduleAlarm();
+  }
+
+  /**
+   * "Is my Mac awake?" from a phone's widget or intent, possibly while the app holds a quiet session. The
+   * credentials were checked like any phone's, but the probe never takes, waits on or replaces the phone
+   * slot, and the Mac is never told: no `peer`, no route epoch, no relay.
+   */
+  private answerProbe(ws: WebSocket, room: string): void {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    if (this.slotTaken("client", ws)) { this.error(ws, "already_connected"); return; }
+    this.send(ws, { type: "registered", role: "client" });
+    this.close(ws, 1000, "probe_answered");
+    log("probe_answered", { room: fingerprint(room) });
   }
 
   // ---- renewal --------------------------------------------------------------------------------

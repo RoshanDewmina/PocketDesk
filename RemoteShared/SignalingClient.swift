@@ -78,10 +78,7 @@ final class SignalingClient: SignalingTransport {
         self.socket = socket
         let run = generation
         socket.resume()
-        send(RelayMessage(type: "register", version: 1, role: hostToken == nil ? "client" : "host",
-            room: invitation.room, token: hostToken ?? invitation.token,
-            clientTokenHash: hostToken == nil ? nil : SecureRandom.digest(invitation.token),
-            features: features.isEmpty ? nil : features, entitlement: hostToken == nil ? entitlement : nil))
+        send(Self.registerMessage(invitation: invitation, hostToken: hostToken, features: features, entitlement: entitlement))
         let keepalive = SignalingKeepalive(timing: keepaliveTiming, ping: { [weak socket] handler in
             guard let socket else { handler(URLError(.networkConnectionLost)); return }
             socket.sendPing(pongReceiveHandler: handler)
@@ -111,6 +108,12 @@ final class SignalingClient: SignalingTransport {
                 self.lost("closed by the service or network")
             }
         }
+    }
+    static func registerMessage(invitation: PairInvitation, hostToken: String?, features: [String], entitlement: String?) -> RelayMessage {
+        RelayMessage(type: "register", version: 1, role: hostToken == nil ? "client" : "host",
+            room: invitation.room, token: hostToken ?? invitation.token,
+            clientTokenHash: hostToken == nil ? nil : SecureRandom.digest(invitation.token),
+            features: features.isEmpty ? nil : features, entitlement: hostToken == nil ? entitlement : nil)
     }
     /// Guest traffic never consumes the native owner queue reserve or closes its signaling socket.
     @discardableResult
