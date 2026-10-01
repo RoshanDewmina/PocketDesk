@@ -8,14 +8,23 @@ final class VideoFeedbackTests: XCTestCase {
         try await runNative(hevc: false)
         try await runNative(hevc: true)
     }
+    #if DEBUG && AUDIO_LIFETIME_TESTS
     @MainActor
-    private func runNative(hevc: Bool) async throws {
+    func testActualNativeRefinementSendUnderFinalRouteFenceAndPausedCallbackCut() async throws {
+        try await runNative(hevc: false, fencedRoute: true)
+    }
+    #endif
+    @MainActor
+    private func runNative(hevc: Bool, fencedRoute: Bool = false) async throws {
         let previousLoopback = E2EMedia.loopbackOnly; E2EMedia.loopbackOnly = true
         let previousTiming = FrameTimingSwitch.override; FrameTimingSwitch.override = false
-        let host = PeerMedia(isHost: true, servers: [], hevc: hevc, videoLTR: !hevc)
-        let phone = PeerMedia(isHost: false, servers: [], hevc: hevc)
+        let host = PeerMedia(isHost: true, servers: [], fileChannel: true, hevc: hevc, videoLTR: !hevc)
+        let phone = PeerMedia(isHost: false, servers: [], fileChannel: true, hevc: hevc)
         FrameTimingSwitch.override = previousTiming
         defer { host.close(); phone.close(); E2EMedia.loopbackOnly = previousLoopback }
+        #if DEBUG && AUDIO_LIFETIME_TESTS
+        if fencedRoute { host.forceNativeRouteAuthorityForTesting() }
+        #endif
         XCTAssertNil(host.frameTimingLog)
         host.videoFeedback.configure(allowed: true, ltr: true, refinement: true, geometry: 7, scope: 3)
         phone.videoFeedback.configure(allowed: true, ltr: true, refinement: true, geometry: 7, scope: 3)
@@ -63,6 +72,45 @@ final class VideoFeedbackTests: XCTestCase {
         else { XCTAssertEqual(host.videoFeedback.receiverAcknowledgements, 0, "HEVC has no unproven LTR capability") }
         XCTAssertTrue(observedCodec?.lowercased().contains(hevc ? "h265" : "h264") == true, "Actual RTP codec observed: \(observedCodec ?? "unknown")")
         XCTAssertGreaterThan(renderer.refinedFrames, 0, "Actual reliable channel PNG matches exact decoded base tag")
+        #if DEBUG && AUDIO_LIFETIME_TESTS
+        if fencedRoute {
+            let paused = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0)
+            let result = RefinementRouteResult()
+            host.installRefinementSubmissionHooksForTesting(before: {
+                if result.claimPause() { paused.signal(); _ = resume.wait(timeout: .now() + 4) }
+            }, submitted: { result.recordEffect() })
+            let pauseDeadline = ProcessInfo.processInfo.systemUptime + 3
+            var reached = false
+            while !reached, ProcessInfo.processInfo.systemUptime < pauseDeadline {
+                host.pushFrame(pixels, timeStampNs: Int64(ProcessInfo.processInfo.systemUptime * 1_000_000_000))
+                reached = paused.wait(timeout: .now()) == .success
+                if !reached { try await Task.sleep(for: .milliseconds(20)) }
+            }
+            XCTAssertTrue(reached, "Actual native refinement send paused immediately before the final production route fence")
+            DispatchQueue(label: "refinement-test.ice-callback").sync { host.cutRefinementPathForTesting() }
+            resume.signal()
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertEqual(result.effects, 0, "No actual native send starts after path retirement returns")
+            return
+        }
+        #endif
+        var fileMessages: [Data] = []
+        phone.onFileMessage = { data in DispatchQueue.main.async { fileMessages.append(data) } }
+        host.closeRefinementChannelForTesting()
+        let fileDeadline = ProcessInfo.processInfo.systemUptime + 3
+        let filePayload = Data("governed-file-after-refinement-close".utf8)
+        var fileSent = false
+        while fileMessages.isEmpty, ProcessInfo.processInfo.systemUptime < fileDeadline {
+            if host.refinementChannelRetiredForTesting, !fileSent,
+               host.permitsFileSend(bytes: filePayload.count, at: ProcessInfo.processInfo.systemUptime) {
+                fileSent = host.sendFile(filePayload)
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(host.refinementChannelRetiredForTesting, "Closed optional native lane detached only after owner retirement")
+        XCTAssertTrue(fileSent); XCTAssertEqual(fileMessages, [filePayload], "Actual governed file channel survives optional refinement failure")
+        host.configureVideoRefinement(enabled: true, geometry: 7, scope: 3)
+        XCTAssertTrue(host.refinementChannelRetiredForTesting, "Failure never silently reopens the optional lane")
         phone.close()
         XCTAssertNil(phone.videoFeedback.encoded(token: 1))
     }
@@ -222,12 +270,43 @@ final class VideoFeedbackTests: XCTestCase {
         let capabilities = SharedCaptureScopePolicy.features(SessionFeature.host, kind: .window)
         XCTAssertTrue(capabilities.contains(SessionFeature.videoLTR)); XCTAssertFalse(capabilities.contains(SessionFeature.pencilInput))
     }
+    #if DEBUG && AUDIO_LIFETIME_TESTS
+    func testProductionFinalNativeRouteGateRefusesPausedSubmissionAfterCallbackCutReturns() {
+        let peer = PeerMedia(isHost: true, servers: [], localLink: ProvenLocalLink(localAddress: "192.168.1.10", peerAddress: "192.168.1.20"), hevc: false)
+        defer { peer.close() }
+        peer.authorizeRefinementPathForTesting()
+        let paused = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0), finished = DispatchSemaphore(value: 0)
+        let result = RefinementRouteResult()
+        DispatchQueue(label: "refinement-test.owner").async {
+            let accepted = peer.submitNativeRefinementEffectForTesting(before: {
+                paused.signal(); _ = resume.wait(timeout: .now() + 3)
+            }, effect: { result.recordEffect(); return true })
+            result.recordAccepted(accepted); finished.signal()
+        }
+        XCTAssertEqual(paused.wait(timeout: .now() + 2), .success)
+        DispatchQueue(label: "refinement-test.native-callback").sync { peer.cutRefinementPathForTesting() }
+        resume.signal(); XCTAssertEqual(finished.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(result.effects, 0); XCTAssertFalse(result.accepted)
+        XCTAssertFalse(peer.submitNativeRefinementEffectForTesting(before: {}, effect: { result.recordEffect(); return true }))
+    }
+    #endif
     private func frame(_ timestamp: UInt32) throws -> RTCVideoFrame {
         var pixel: CVPixelBuffer?
         XCTAssertEqual(CVPixelBufferCreate(nil, 16, 16, kCVPixelFormatType_32BGRA, nil, &pixel), kCVReturnSuccess)
         let result = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: try XCTUnwrap(pixel)), rotation: ._0, timeStampNs: 1_000_000)
         result.timeStamp = Int32(bitPattern: timestamp); return result
     }
+}
+
+private final class RefinementRouteResult: @unchecked Sendable {
+    private let lock = NSLock()
+    private var effectCount = 0, acceptedValue = false
+    private var pauseClaimed = false
+    func claimPause() -> Bool { lock.lock(); defer { lock.unlock() }; if pauseClaimed { return false }; pauseClaimed = true; return true }
+    var effects: Int { lock.lock(); defer { lock.unlock() }; return effectCount }
+    var accepted: Bool { lock.lock(); defer { lock.unlock() }; return acceptedValue }
+    func recordEffect() { lock.lock(); effectCount += 1; lock.unlock() }
+    func recordAccepted(_ value: Bool) { lock.lock(); acceptedValue = value; lock.unlock() }
 }
 
 /// Holds submissions until the test emits the second input's successful callback.

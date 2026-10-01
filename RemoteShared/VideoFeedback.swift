@@ -87,6 +87,7 @@ final class VideoFeedbackContext: @unchecked Sendable {
     }
     func end() { lock.lock(); refinementImage = nil; overlay = nil; ended = true; allowed = false; clear(); feedback = nil; lock.unlock() }
     var permitsLTR: Bool { lock.lock(); defer { lock.unlock() }; return allowed && ltrAllowed && !ended && geometry > 0 && scope > 0 }
+    func disableRefinement() { lock.lock(); refinementAllowed = false; overlay = nil; producer.reset(); lock.unlock() }
     func beginEncoder() { lock.lock(); producer.reset(); generation = Self.id(); tokens.removeAll(); acknowledged.removeAll(); refresh = false; lock.unlock() }
     #if DEBUG
     var refinementProducerForTesting: VideoRefinementProducer { producer }
@@ -114,11 +115,14 @@ final class VideoFeedbackContext: @unchecked Sendable {
             (!sender || identity.generation == generation)
     }
     func setRefinementImage(_ callback: ((VideoRefinementImage) -> Void)?) { lock.lock(); refinementImage = callback; lock.unlock() }
-    func prepareRefinement(_ buffer: CVPixelBuffer, tag: VideoFrameTag) -> VideoFrameTag {
-        lock.lock(); let permitted = allowed && refinementAllowed && !ended && tag.generation == generation && tag.geometryEpoch == geometry && tag.scopeEpoch == scope; lock.unlock()
+    func prepareRefinement(_ buffer: CVPixelBuffer, tag: VideoFrameTag, at now: Double = ProcessInfo.processInfo.systemUptime) -> VideoFrameTag {
+        // Admission and the producer's generation ticket are one operation with retirement.
+        // Inspect hashes at most the bounded ROI; producer callbacks run asynchronously without its lock.
+        lock.lock(); defer { lock.unlock() }
+        let permitted = allowed && refinementAllowed && !ended && tag.generation == generation && tag.geometryEpoch == geometry && tag.scopeEpoch == scope
         guard permitted else { return tag }
         var result = tag
-        result.refinement = producer.inspect(buffer, tag: tag, at: ProcessInfo.processInfo.systemUptime) { [weak self] image in
+        result.refinement = producer.inspect(buffer, tag: tag, at: now) { [weak self] image in
             guard let self else { return }
             self.lock.lock()
             let current = self.allowed && self.refinementAllowed && !self.ended && image.identity.generation == self.generation &&

@@ -111,16 +111,21 @@ final class VideoRefinementTests: XCTestCase {
         CVPixelBufferLockBaseAddress(pixels, []); memset(CVPixelBufferGetBaseAddress(pixels), 255, CVPixelBufferGetDataSize(pixels)); CVPixelBufferUnlockBaseAddress(pixels, [])
         for terminal in [false, true] {
             let context = VideoFeedbackContext(); context.configure(allowed: true, refinement: true, geometry: 7, scope: 3)
-            let producer = context.refinementProducerForTesting, tag = try XCTUnwrap(context.encoded(token: nil))
+            let producer = context.refinementProducerForTesting
+            var tag = try XCTUnwrap(context.encoded(token: nil))
             var images = 0
-            _ = producer.inspect(pixels, tag: tag, at: 10) { _ in images += 1 }
-            _ = producer.inspect(pixels, tag: tag, at: 10.6) { _ in images += 1 }
+            context.setRefinementImage { _ in images += 1 }
+            _ = context.prepareRefinement(pixels, tag: tag, at: 10)
+            _ = context.prepareRefinement(pixels, tag: tag, at: 10.6)
             producer.drainForTesting(); XCTAssertGreaterThan(producer.cachedBytesForTesting, 0); XCTAssertEqual(images, 1)
+            context.configure(allowed: false, refinement: true, geometry: 7, scope: 3)
+            XCTAssertEqual(producer.cachedBytesForTesting, 0)
+            context.configure(allowed: true, refinement: true, geometry: 7, scope: 3)
+            tag = try XCTUnwrap(context.encoded(token: nil))
             let entered = DispatchSemaphore(value: 0), resume = DispatchSemaphore(value: 0)
-            producer.reset()
             producer.beforeEncodeForTesting = { entered.signal(); _ = resume.wait(timeout: .now() + 3) }
-            _ = producer.inspect(pixels, tag: tag, at: 20) { _ in images += 1 }
-            _ = producer.inspect(pixels, tag: tag, at: 20.6) { _ in images += 1 }
+            _ = context.prepareRefinement(pixels, tag: tag, at: 20)
+            _ = context.prepareRefinement(pixels, tag: tag, at: 20.6)
             XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
             if terminal { context.end() } else { context.configure(allowed: false, refinement: true, geometry: 7, scope: 3) }
             XCTAssertEqual(producer.cachedBytesForTesting, 0, "Retirement synchronously drops the sensitive cache")

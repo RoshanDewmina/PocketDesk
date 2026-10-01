@@ -326,38 +326,62 @@ final class PeerMedia: NSObject {
     private let refinementLock = NSLock()
     private var refinementChannel: RTCDataChannel?
     private var refinementEnded = false
+    private var refinementUnavailable = false
     private let refinementQueue = DispatchQueue(label: "farside.video.refinement-channel")
     private let refinementQueueKey = DispatchSpecificKey<UInt8>()
     private let refinementPipe = VideoRefinementChannel()
     private var refinementTimer: DispatchSourceTimer?
     private var requestedRefinementCapture = false
-    var refinementCaptureEnabled: Bool { refinementLock.lock(); defer { refinementLock.unlock() }; return !refinementEnded && requestedRefinementCapture }
+    var refinementCaptureEnabled: Bool { refinementLock.lock(); defer { refinementLock.unlock() }; return !refinementEnded && !refinementUnavailable && requestedRefinementCapture }
     func requestRefinementCapture(_ enabled: Bool) {
-        refinementLock.lock(); if !refinementEnded { requestedRefinementCapture = enabled && nativeDesktopCodecs }; refinementLock.unlock()
+        refinementLock.lock(); if !refinementEnded { requestedRefinementCapture = enabled && !refinementUnavailable && nativeDesktopCodecs }; refinementLock.unlock()
     }
     func configureVideoRefinement(enabled: Bool, geometry: UInt64, scope: UInt64) {
-        if enabled && isHost { openRefinementChannel() }
-        let operation = { self.refinementPipe.configure(enabled: enabled, geometry: geometry, scope: scope) }
+        refinementLock.lock(); let admitted = enabled && !refinementEnded && !refinementUnavailable; refinementLock.unlock()
+        if !admitted { videoFeedback.disableRefinement() }
+        if admitted && isHost { openRefinementChannel() }
+        let operation = { self.refinementPipe.configure(enabled: admitted, geometry: geometry, scope: scope) }
         if DispatchQueue.getSpecific(key: refinementQueueKey) != nil { operation() } else { refinementQueue.sync(execute: operation) }
     }
     private func openRefinementChannel() {
-        refinementLock.lock(); let needed = !refinementEnded && refinementChannel == nil; refinementLock.unlock()
+        refinementLock.lock(); let needed = !refinementEnded && !refinementUnavailable && refinementChannel == nil; refinementLock.unlock()
         guard needed, let connection else { return }
         let config = RTCDataChannelConfiguration(); config.isOrdered = true
         guard let next = connection.dataChannel(forLabel: Self.refinementChannelLabel, configuration: config) else { return }
-        refinementLock.lock(); let adopt = !refinementEnded && refinementChannel == nil
+        refinementLock.lock(); let adopt = !refinementEnded && !refinementUnavailable && refinementChannel == nil
         if adopt { refinementChannel = next }; refinementLock.unlock()
         if adopt { next.delegate = self } else { next.close() }
     }
     private func adoptRefinementChannel(_ channel: RTCDataChannel) -> Bool {
         refinementLock.lock(); defer { refinementLock.unlock() }
-        guard !isHost, nativeDesktopCodecs, !refinementEnded, refinementChannel == nil,
+        guard !isHost, nativeDesktopCodecs, !refinementEnded, !refinementUnavailable, refinementChannel == nil,
               channel.isOrdered, channel.isReliable else { return false }
         refinementChannel = channel; return true // Dormant until authenticated capture capabilities/epoch arrive.
     }
     private func isRefinementChannel(_ channel: RTCDataChannel) -> Bool {
         refinementLock.lock(); defer { refinementLock.unlock() }; return refinementChannel === channel
     }
+    /// Runs on the refinement owner after all already-admitted sends. A failed optional
+    /// lane is terminal for this peer, but must not indefinitely poison healthy file credit.
+    private func retireClosedRefinementChannel(_ channel: RTCDataChannel) {
+        guard channel.readyState == .closed else { return }
+        refinementLock.lock(); let current = refinementChannel === channel; refinementLock.unlock()
+        guard current else { return }
+        refinementPipe.end(); videoFeedback.disableRefinement()
+        refinementLock.lock()
+        if refinementChannel === channel { refinementChannel = nil; refinementUnavailable = true; requestedRefinementCapture = false }
+        refinementLock.unlock()
+        channel.delegate = nil
+        onFileBufferedAmountChange?()
+    }
+    #if DEBUG
+    func closeRefinementChannelForTesting() {
+        refinementLock.lock(); let target = refinementChannel; refinementLock.unlock(); target?.close()
+    }
+    var refinementChannelRetiredForTesting: Bool {
+        refinementLock.lock(); defer { refinementLock.unlock() }; return refinementUnavailable && refinementChannel == nil
+    }
+    #endif
     private var aggregateBulkBuffered: UInt64? {
         fileLock.lock(); refinementLock.lock()
         let file = fileChannel, image = refinementChannel, ended = refinementEnded
@@ -377,9 +401,20 @@ final class PeerMedia: NSObject {
         let target = refinementEnded ? nil : refinementChannel
         refinementLock.unlock()
         guard let target, target.readyState == .open, localGateOpen() else { return false }
+        #if DEBUG && AUDIO_LIFETIME_TESTS
+        refinementLock.lock(); let beforeSubmission = refinementBeforeSubmissionForTesting, submitted = refinementSubmittedForTesting; refinementLock.unlock()
+        beforeSubmission?()
+        #endif
         // Only the refinement owner queue sends; close drains that queue before detachment.
         // Never hold a Swift channel lock while entering a public native send/callback.
-        return target.sendData(RTCDataBuffer(data: data, isBinary: true))
+        return withNativeRouteSubmissionAuthority {
+            guard target.readyState == .open,
+                  videoFeedback.permitsRefinement(packet.identity, sender: isHost && !packet.ack) else { return false }
+            #if DEBUG && AUDIO_LIFETIME_TESTS
+            submitted?()
+            #endif
+            return target.sendData(RTCDataBuffer(data: data, isBinary: true))
+        } ?? false
     }
     private let pointerLock = NSLock()
     private var pointerChannel: RTCDataChannel?
@@ -461,6 +496,40 @@ final class PeerMedia: NSObject {
         localRouteLock.lock(); defer { localRouteLock.unlock() }
         return localPathAuthorized
     }
+
+    /// Serializes the final native effect with callback-thread path retirement.
+    /// Public DataChannel Send proxies to the network thread; observer notifications post
+    /// to signaling rather than synchronously acquiring this authority lock from Send.
+    /// No channel lock or owner-queue drain is held inside callback-thread retirement.
+    private func withNativeRouteSubmissionAuthority<T>(_ operation: () -> T) -> T? {
+        localRouteLock.lock()
+        #if DEBUG && AUDIO_LIFETIME_TESTS
+        let requiresAuthority = localLink != nil || forcedNativeRouteAuthorityForTesting
+        #else
+        let requiresAuthority = localLink != nil
+        #endif
+        guard requiresAuthority else { localRouteLock.unlock(); return operation() }
+        defer { localRouteLock.unlock() }
+        guard localPathAuthorized else { return nil }
+        return operation()
+    }
+    #if DEBUG && AUDIO_LIFETIME_TESTS
+    private var forcedNativeRouteAuthorityForTesting = false
+    private var refinementBeforeSubmissionForTesting: (() -> Void)?
+    private var refinementSubmittedForTesting: (() -> Void)?
+    /// Explicit test injection into an already-connected loopback peer, never a real local proof.
+    func forceNativeRouteAuthorityForTesting() {
+        localRouteLock.lock(); forcedNativeRouteAuthorityForTesting = true; localPathAuthorized = true; localPathEverAuthorized = true; localRouteLock.unlock()
+    }
+    func installRefinementSubmissionHooksForTesting(before: (() -> Void)?, submitted: (() -> Void)?) {
+        refinementLock.lock(); refinementBeforeSubmissionForTesting = before; refinementSubmittedForTesting = submitted; refinementLock.unlock()
+    }
+    func authorizeRefinementPathForTesting() { _ = authorizeLocalPath() }
+    func cutRefinementPathForTesting() { _ = cutLocalPath() }
+    func submitNativeRefinementEffectForTesting(before: () -> Void, effect: () -> Bool) -> Bool {
+        before(); return withNativeRouteSubmissionAuthority(effect) ?? false
+    }
+    #endif
 
     /// The media path is the proven one-hop local link and is still selected.
     var provenLocalLinkActive: Bool { localLink != nil && localGateOpen() }
@@ -1344,7 +1413,10 @@ extension PeerMedia: RTCDataChannelDelegate {
         onFileBufferedAmountChange?()
     }
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
-        if isRefinementChannel(dataChannel) { return }
+        if isRefinementChannel(dataChannel) {
+            refinementQueue.async { [weak self] in self?.retireClosedRefinementChannel(dataChannel) }
+            return
+        }
         if isPointerChannel(dataChannel) { return }
         if isFileChannel(dataChannel) {
             if dataChannel.readyState == .closed { onFileBufferedAmountChange?() }
