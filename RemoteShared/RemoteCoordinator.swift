@@ -1015,8 +1015,9 @@ final class RemoteCoordinator: ObservableObject {
                 // Non-closing: `registered` (access "local") and an empty `ice` follow.
                 if !isHost, code == "entitlement_required" { entitlementRequired = true; return }
                 let serviceError = "Connection service: \(code). Check the Mac and retry."
-                // A freshly stopped phone may still occupy the server's client slot
-                // for a moment. Retry within the existing bound; never evict it.
+                // A freshly stopped phone, or this phone's socket from before a network change, may
+                // still occupy the server's client slot. Retry within the existing bound; the service
+                // replaces a holder that has gone silent.
                 if !isHost, code == "host_unavailable_or_unauthorized" || code == "already_connected" {
                     connectionLost(finalStatus: serviceError)
                 } else if isHost, code == "already_connected" {
@@ -1322,6 +1323,9 @@ final class RemoteCoordinator: ObservableObject {
                     self.connected = true; self.retryCount = 0; self.recoveringLiveSession = false
                     self.reconnecting = false
                     self.timeout?.cancel(); self.onAuthenticated?()
+                } else if state == "failed", peer.dtlsRejected {
+                    SessionLog.log.error("media DTLS rejected the peer certificate; ending session")
+                    self.sessionFailed("Secure connection failed. Reconnect or pair again on your Mac.")
                 } else if state == "failed" || state == "disconnected" || state == "closed" {
                     SessionLog.log.error("media state \(state, privacy: .public); ending session")
                     self.peerDisconnected()

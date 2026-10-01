@@ -607,6 +607,8 @@ final class PeerMedia: NSObject {
     private(set) var iceRestarts = 0
     /// Remote descriptions applied so far: 1 after the first connection, one more per completed renegotiation.
     private(set) var remoteDescriptionsApplied = 0
+    /// DTLS refused the peer: its certificate did not match the fingerprint in the sealed remote description.
+    private(set) var dtlsRejected = false
     private static let restartGrace: TimeInterval = 15
     private let captureLock = NSLock()
     private var receivingBudget: H264FrameBudget?
@@ -1473,6 +1475,18 @@ extension PeerMedia: RTCPeerConnectionDelegate {
         }
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
+    /// DTLS checks the peer's certificate against the remote description's fingerprint, which only the
+    /// paired peer can seal. A mismatch fails the connection while ICE stays up, so the ICE handler never
+    /// reports it; without this the session would sit until the handshake timer.
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCPeerConnectionState) {
+        guard newState == .failed, [.connected, .completed].contains(peerConnection.iceConnectionState) else { return }
+        SessionLog.log.error("\(self.role, privacy: .public) media failed: DTLS rejected the peer certificate on a connected ICE path")
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.closed else { return }
+            self.dtlsRejected = true
+            self.onState?("failed")
+        }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didGenerate candidate: RTCIceCandidate) {
         #if DEBUG
         guard E2EMedia.allows(candidate: candidate.sdp) else { return }
