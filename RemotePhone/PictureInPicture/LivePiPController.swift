@@ -240,6 +240,8 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         policy.didStop(); synchronizeSource()
         oldSource?.detach(); oldSink?.invalidate()
         oldController?.setAutomaticStart(false); oldController?.stop(); oldController?.detachDelegate()
+        // AVKit may still have a block in flight for this controller; free it only after this main-queue turn.
+        if let oldController { DispatchQueue.main.async { withExtendedLifetime(oldController) {} } }
         // A synchronous OS stop callback may have installed a new run. Release only this capsule.
         if let oldOwner { MainActor.assumeIsolated { mediaSession.release(oldOwner) } }
         didChangeState?(policy.state)
@@ -279,8 +281,27 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) { if matchesNative(controller) { stop() } }
     func pictureInPictureController(_ controller: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {
         guard matchesNative(controller) else { completionHandler(false); return }
-        if let restoreForeground { restoreForeground(completionHandler) } else { completionHandler(false) }
+        restoreUserInterface(platform: self.controller, native: controller, completionHandler)
     }
+    /// The restore can finish after the root has already stopped this PiP (returning to the app retires it),
+    /// and AVKit's completion block then reads the source layer's player controller. Keep the platform
+    /// controller (and so the native controller), the sink and its layer alive until after the handler
+    /// returns and one more main-queue turn, or AVKit touches a freed controller (crash 1 Oct 15:33).
+    private func restoreUserInterface(platform: (any LivePiPPlatformController)?, native: AnyObject?,
+                                      _ completionHandler: @escaping (Bool) -> Void) {
+        let retained: [AnyObject?] = [platform, native, sink, sink?.layer]
+        let complete: (Bool) -> Void = { restored in
+            withExtendedLifetime(retained) { completionHandler(restored) }
+            DispatchQueue.main.async { withExtendedLifetime(retained) {} }
+        }
+        if let restoreForeground { restoreForeground(complete) } else { complete(false) }
+    }
+    #if DEBUG
+    func restoreUserInterfaceForTesting(on candidate: any LivePiPPlatformController, _ completionHandler: @escaping (Bool) -> Void) {
+        guard candidate === controller else { completionHandler(false); return }
+        restoreUserInterface(platform: candidate, native: nil, completionHandler)
+    }
+    #endif
     func pictureInPictureController(_ controller: AVPictureInPictureController, setPlaying playing: Bool) {
         guard matchesNative(controller) else { return }
         applyPlaying(playing)

@@ -120,6 +120,38 @@ final class SessionLifecycleTests: XCTestCase {
         XCTAssertFalse(pip.automaticStartAllowed, "the internal kill switch disarms it")
         XCTAssertFalse(off.showsInlinePiPSource)
     }
+    /// Crash 1 Oct 15:33 (build .3): tapping the PiP window to return ran AVKit's restore completion after the
+    /// foreground return had already stopped the PiP and released its controller, so AVKit read freed memory.
+    func testPiPRestoreKeepsThePlatformControllerAliveUntilTheCompletionReturns() throws {
+        let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+        weak var latest: LifecyclePiPPlatform?
+        let pip = LivePiPController(mediaSession: registry, supported: { true },
+                                    platformFactory: { _, _ in let made = LifecyclePiPPlatform(); latest = made; return made })
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip)
+        defer { model.disconnect() }
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "pip-restore-lifetime")
+        model.geometryEpoch = 1
+        var packets: [ControlPacket] = []
+        model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+        _ = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+        model.sendViewOnlyEntryForTesting()
+        let entry = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == true })
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: true,
+            liveViewOnlyRequestID: entry.action.liveViewOnlyRequestID, x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
+        weak var started: LifecyclePiPPlatform?
+        var aliveAtCompletion: Bool?
+        do {
+            let platform = try XCTUnwrap(latest)
+            started = platform
+            pip.confirmPlatformStartForTesting(platform)
+            XCTAssertEqual(model.pipState, .active)
+            model.sceneChanged(.inactive); model.sceneChanged(.background)
+            pip.restoreUserInterfaceForTesting(on: platform) { _ in aliveAtCompletion = started != nil }
+        }
+        model.sceneChanged(.active) // Returning stops the PiP (releasing its controller), then completes the restore.
+        XCTAssertEqual(aliveAtCompletion, true, "AVKit's completion must never run after its controller was freed")
+    }
     func testActivePiPSurvivesInactiveHeartbeatThenBackgroundWithoutExitOrPause() throws {
         let (model, _, _, packets) = try activePiPModel()
         defer { model.disconnect() }
