@@ -332,7 +332,9 @@ final class SessionIntegrationTests: XCTestCase {
             phone.status == "Pairing was interrupted. Scan a fresh QR to try again."
         }
         XCTAssertNil(phone.invitation); XCTAssertNil(phoneStore.data)
-        XCTAssertEqual(try hostStore.read(HostPair.self), committed, "Failure cannot roll back the host's approved trust")
+        let retained = try XCTUnwrap(hostStore.read(HostPair.self))
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        XCTAssertTrue(try encoder.encode(retained) == encoder.encode(committed), "Failure cannot roll back any approved host trust field")
         XCTAssertFalse(host.awaitingApproval); XCTAssertFalse(host.connected)
         phone.start()
         XCTAssertEqual(phone.status, "Pair with your Mac first")
