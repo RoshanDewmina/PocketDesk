@@ -1,6 +1,6 @@
 # Farside — bulk test batch 2
 
-Candidate build: **20260930.9** on phone and Mac host, branch `claude/batch-2`. The exact commit, automated results and install state are recorded in `~/Documents/Codex/2026-09-30/re/BULK-TEST-2-READY.md`. Run this after the batch-1 pass (`BULK-TEST-1.md`); every batch-1 check still applies.
+Installed build: **phone 20261001.2 / Mac host 20261001.1**, branch `claude/batch-2` (tip 3489a93; the host is a279442, which differs only in phone code). The exact commit, automated results and install state are recorded in `~/Documents/Codex/2026-09-30/re/BULK-TEST-2-READY.md`. Run this after the batch-1 pass (`BULK-TEST-1.md`); every batch-1 check still applies.
 
 Marks: **[AUTO]** simulator/unit evidence, **[MIRROR]** Claude can drive it through iPhone Mirroring, **[HANDS]** needs Roshan physically. Record PASS / FAIL / BLOCKED with a short receipt.
 
@@ -19,7 +19,7 @@ Boundary: no backend deployment, no App Store Connect, no purchases, no messages
 - [ ] [MIRROR] An older phone build (.7 or .8) connects to the .9 host over LAN; the first tap and key arrive; the host does not crash.
 - [ ] [MIRROR] Steady state on a quiet LAN: ≈ 0 PLI/s and no key-frame storm in the host overlay over 60 s still and 60 s motion.
 - [ ] [MIRROR] After a 3 s capture-health gap, presentation and `fresh` recover within a few seconds and touch works again.
-- [ ] [MIRROR] On the .9 phone, a one-finger drag moves the Mac pointer and a two-finger pinch changes the viewport scale, under HEVC and after forcing H.264 (Picture → compatibility). GATE: the `claude/fix-phone-touch-8` fix must be in the build.
+- [ ] [MIRROR] On the phone, a one-finger drag moves the Mac pointer and a two-finger pinch changes the viewport scale, under HEVC and after forcing H.264 (Picture → compatibility); the .8 touch fix (86aac61) and the no-blank-on-ladder-step fix (3489a93) are in this build.
 
 ## Consent and power (X13)
 
