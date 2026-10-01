@@ -49,11 +49,11 @@ final class SecurityTests: XCTestCase {
 @MainActor
 final class DTLSFingerprintTests: XCTestCase {
     private static func forged(_ signal: MediaSignal) -> MediaSignal {
-        guard var sdp = signal.sdp,
-              let range = sdp.range(of: "a=fingerprint:sha-256 [0-9A-Fa-f:]+", options: .regularExpression) else { return signal }
-        sdp.replaceSubrange(range, with: "a=fingerprint:sha-256 " + Array(repeating: "AB", count: 32).joined(separator: ":"))
+        guard let sdp = signal.sdp else { return signal }
         var copy = signal
-        copy.sdp = sdp
+        copy.sdp = sdp.replacingOccurrences(of: "a=fingerprint:sha-256 [0-9A-Fa-f:]+",
+                                            with: "a=fingerprint:sha-256 " + Array(repeating: "AB", count: 32).joined(separator: ":"),
+                                            options: .regularExpression)
         return copy
     }
 

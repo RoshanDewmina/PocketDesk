@@ -609,6 +609,8 @@ final class PeerMedia: NSObject {
     private(set) var remoteDescriptionsApplied = 0
     /// DTLS refused the peer: its certificate did not match the fingerprint in the sealed remote description.
     private(set) var dtlsRejected = false
+    /// Standardized ICE state (signaling thread). Unlike `iceConnectionState` it stays connected when only DTLS fails.
+    private var standardizedICE: RTCIceConnectionState = .new
     private static let restartGrace: TimeInterval = 15
     private let captureLock = NSLock()
     private var receivingBudget: H264FrameBudget?
@@ -1475,15 +1477,20 @@ extension PeerMedia: RTCPeerConnectionDelegate {
         }
     }
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didChangeStandardizedIceConnectionState newState: RTCIceConnectionState) {
+        standardizedICE = newState
+    }
     /// DTLS checks the peer's certificate against the remote description's fingerprint, which only the
-    /// paired peer can seal. A mismatch fails the connection while ICE stays up, so the ICE handler never
-    /// reports it; without this the session would sit until the handshake timer.
+    /// paired peer can seal. A mismatch fails the connection while ICE itself has not failed, and the legacy
+    /// ICE state never reaches connected without DTLS, so the ICE handler never reports it; without this
+    /// the session would sit until the handshake timer.
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCPeerConnectionState) {
-        guard newState == .failed, [.connected, .completed].contains(peerConnection.iceConnectionState) else { return }
-        SessionLog.log.error("\(self.role, privacy: .public) media failed: DTLS rejected the peer certificate on a connected ICE path")
+        guard newState == .failed, standardizedICE != .failed, standardizedICE != .closed else { return }
+        SessionLog.log.error("\(self.role, privacy: .public) media failed: DTLS failed while ICE had not")
         DispatchQueue.main.async { [weak self] in
             guard let self, !self.closed else { return }
-            self.dtlsRejected = true
+            // The certificate is checked only at the handshake; a DTLS failure after connecting is an ordinary drop.
+            self.dtlsRejected = !self.connectedPublished
             self.onState?("failed")
         }
     }
