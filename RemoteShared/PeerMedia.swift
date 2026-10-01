@@ -1555,7 +1555,7 @@ final class StreamCadenceRenderer: NSObject, RTCVideoRenderer {
     init(counters: StreamCounters) { self.counters = counters }
     func setSize(_ size: CGSize) {}
     func renderFrame(_ frame: RTCVideoFrame?) {
-        guard frame != nil else { return }
-        counters.rendered()
+        guard let frame else { return }
+        counters.rendered(rtp: UInt32(bitPattern: frame.timeStamp))
     }
 }

@@ -155,6 +155,55 @@ final class StreamStatisticsTests: XCTestCase {
         XCTAssertEqual(decoded.captureMaximumDimension, 2560)
         XCTAssertFalse(report.summaryLines.isEmpty)
     }
+
+    func testUniqueSourceFramesExcludeIdleResendsAndRepeatedDisplayTimes() throws {
+        let counters = StreamCounters()
+        for displayMs in [1_000, 1_008.3, 1_008.3, 1_004, 1_016.7] {
+            counters.captured(idle: false, displayTimeMs: displayMs, at: displayMs / 1_000)
+        }
+        counters.captured(idle: false, displayTimeMs: nil)
+        counters.captured(idle: false, displayTimeMs: 0)
+        counters.captured(idle: true, displayTimeMs: 1_025)
+        counters.idleResent(); counters.idleResent()
+        let snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.captureFrames, 7)
+        XCTAssertEqual(snapshot.uniqueSourceFrames, 3, "duplicate, earlier, missing and idle display times are not new pixels")
+        XCTAssertEqual(snapshot.captureResends, 2)
+        let report = StreamStatsReport(role: "host", previous: nil, current: StreamStatsSample(entries: []),
+            counters: StreamCounterSnapshot(interval: 2, captureFrames: 240, uniqueSourceFrames: 236, captureResends: 1))
+        XCTAssertEqual(report.captureFPS, 120)
+        XCTAssertEqual(report.uniqueSourceFPS, 118)
+        XCTAssertEqual(report.captureResendFPS, 0.5)
+        let received = try JSONDecoder().decode(HostStreamSummary.self, from: JSONEncoder().encode(report.hostSummary))
+        XCTAssertEqual(received.uniqueSourceFPS, 118); XCTAssertEqual(received.resendFPS, 0.5); try received.validate()
+        let older = try JSONDecoder().decode(HostStreamSummary.self, from: Data("{}".utf8))
+        XCTAssertNil(older.uniqueSourceFPS); XCTAssertNil(older.resendFPS)
+        var invalid = received; invalid.uniqueSourceFPS = -1
+        XCTAssertThrowsError(try invalid.validate())
+        XCTAssertTrue(report.summaryLines.contains("unique source 118fps · idle resends 0.5/s"))
+        counters.captured(idle: false, displayTimeMs: 1_016.7)
+        XCTAssertEqual(counters.drain(inputBufferedBytes: nil).uniqueSourceFrames, 0, "identity survives a drain")
+    }
+
+    func testUniqueDecodedFramesCountDistinctRtpTimestampsSeparatelyFromRedraws() {
+        let counters = StreamCounters()
+        for rtp: UInt32 in [100, 100, 850, 100, 1_600] { counters.rendered(rtp: rtp) }
+        counters.rendered()
+        counters.presented(latencyMs: 2); counters.presented(latencyMs: 2); counters.presented(latencyMs: 2)
+        let snapshot = counters.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.renderedFrames, 6)
+        XCTAssertEqual(snapshot.uniqueDecodedFrames, 3, "a repeated timestamp is the same encoded frame")
+        XCTAssertEqual(snapshot.presentedFrames, 3)
+        for rtp in UInt32(0)..<UInt32(StreamCounters.decodedRtpMemory + 1) { counters.rendered(rtp: 10_000 + rtp * 750) }
+        XCTAssertEqual(counters.drain(inputBufferedBytes: nil).uniqueDecodedFrames, StreamCounters.decodedRtpMemory + 1)
+        var report = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []),
+            counters: StreamCounterSnapshot(interval: 1, renderedFrames: 121, uniqueDecodedFrames: 119, presentedFrames: 120))
+        report.host = HostStreamSummary(uniqueSourceFPS: 119.5, resendFPS: 0)
+        XCTAssertEqual(report.renderedFPS, 121)
+        XCTAssertEqual(report.uniqueDecodedFPS, 119)
+        XCTAssertEqual(report.presentedFPS, 120)
+        XCTAssertTrue(report.summaryLines.contains("unique source 120fps (Mac) · unique decoded 119fps · Mac resends 0.0/s"))
+    }
 }
 
 final class StreamStageStatisticsTests: XCTestCase {

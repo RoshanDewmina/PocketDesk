@@ -179,6 +179,20 @@ final class PhoneInstrumentsTests: XCTestCase {
         XCTAssertNil(LinkSummary(report(decoder: "libavcodec", powerEfficient: nil))?.decoder)
     }
 
+    func testLinkSummaryPromises120OnlyFromAFreshHighRefreshMacReport() {
+        XCTAssertEqual(LinkSummary(report())?.frameRate, "60 fps", "no Mac report yet")
+        var high = report()
+        high.host = HostStreamSummary(targetFPS: 120, displayRefreshHz: 120)
+        high.hostSummaryAgeMs = 900
+        XCTAssertEqual(LinkSummary(high)?.frameRate, "up to 120 fps on a 120 Hz Mac display")
+        var stale = high
+        stale.hostSummaryAgeMs = 6_000
+        XCTAssertEqual(LinkSummary(stale)?.frameRate, "60 fps")
+        var sixty = high
+        sixty.host = HostStreamSummary(targetFPS: 60, displayRefreshHz: 60)
+        XCTAssertEqual(LinkSummary(sixty)?.frameRate, "60 fps")
+    }
+
     func testLinkSummaryNeedsSomethingToShow() {
         var empty = report(codec: nil, level: nil, width: nil, height: nil, powerEfficient: nil)
         empty.route = "Route pending"

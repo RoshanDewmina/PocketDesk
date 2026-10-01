@@ -2929,6 +2929,7 @@ struct LinkSummary: Equatable {
     var decoder: String?
     /// A physical iPhone negotiated an H.264 level below 5.2, which caps the picture the Mac sends.
     var reducedLevel = false
+    var frameRate = CaptureRatePolicy.pictureRateDescription(hostDisplayRefreshHz: nil, hostTargetFPS: nil)
 
     /// H.264 level 5.2, the level the phone offers when its decoder passed the capability probe.
     static let fullLevel = 0x34
@@ -2953,6 +2954,9 @@ struct LinkSummary: Equatable {
         decoder = Self.decoderDescription(implementation: report.decoderImplementation,
                                           powerEfficient: report.powerEfficientDecoder)
         reducedLevel = physicalDevice && level.map { $0 < Self.fullLevel } == true
+        let host = (report.hostSummaryAgeMs ?? .infinity) <= 5_000 ? report.host : nil
+        frameRate = CaptureRatePolicy.pictureRateDescription(hostDisplayRefreshHz: host?.displayRefreshHz,
+                                                             hostTargetFPS: host?.targetFPS)
         guard route != nil || roundTripMs != nil || pictureSize != nil || codecLevel != nil else { return nil }
     }
 

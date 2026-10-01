@@ -1017,6 +1017,7 @@ private final class RemoteCaptureSession: NSObject, SCStreamOutput, SCStreamDele
         // Keep a static desktop visible, but only while fresh ScreenCaptureKit
         // complete/idle status independently proves the source is still alive.
         if healthy, now - lastSentAt >= 0.45, let lastBuffer {
+            peer?.counters.idleResent()
             deliver(lastBuffer, at: now)
         }
     }
