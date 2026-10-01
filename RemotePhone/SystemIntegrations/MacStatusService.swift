@@ -22,7 +22,7 @@ final class MacStatusService {
     /// the system launched just for the intent has no session at all.
     var currentSession: () -> (connected: Bool, running: Bool) = { (false, false) }
     var makeProbe: () -> MacReachabilityProbe = { MacReachabilityProbe() }
-    var lastReached: () -> Date? = { LastReached.date() }
+    var lastReached: (PairedMac) -> Date? = { LastReached.date(room: $0.invitation?.room) }
     var now: () -> Date = { Date() }
 
     func report(for mac: PairedMac) async -> Report {
@@ -44,7 +44,7 @@ final class MacStatusService {
             return Report(state: .awake, spoken: "\(mac.name) answered just now and looks awake.")
         case .notAnswering:
             let tail = "It may be asleep, off or offline."
-            if let last = lastReached() {
+            if let last = lastReached(mac) {
                 return Report(state: .notAnswering,
                               spoken: "I have not heard from \(mac.name) since \(LastReached.spoken(last, now: now())). \(tail)")
             }

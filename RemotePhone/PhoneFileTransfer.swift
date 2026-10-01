@@ -18,7 +18,7 @@ final class PhoneFileTransfer: ObservableObject {
     @Published private(set) var notice: ClipboardNotice?
     @Published var received: ReceivedFile?
 
-    let engine = FileTransferEngine(acceptsUnsolicitedOffers: false)
+    let engine: FileTransferEngine
     /// The share extension's hand-off for the transfer in flight, so it can show progress.
     var receipts: ((String, FileTransferSnapshot?, FileTransferFinish?) -> Void)?
     var onLinkResult: ((FileTransferStatus) -> Void)?
@@ -36,7 +36,9 @@ final class PhoneFileTransfer: ObservableObject {
     init(destination: @escaping () -> URL? = { FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first },
          staging: URL = FileManager.default.temporaryDirectory,
          availableSpace: @escaping (URL) -> Int64? = PhoneFileTransfer.availableSpace,
-         idleTimer: PhoneIdleTimer = .shared) {
+         idleTimer: PhoneIdleTimer = .shared,
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+        engine = FileTransferEngine(acceptsUnsolicitedOffers: false, clock: clock)
         self.idleTimer = idleTimer
         self.destination = destination
         self.staging = staging
@@ -171,7 +173,7 @@ final class PhoneFileTransfer: ObservableObject {
             post("Saved to Files › On My iPhone › Farside", .success)
             if let url = finish.savedURL { received = ReceivedFile(url: url) }
         case (.incoming, let status):
-            post(Self.message(receiving: status), .caution)
+            post(Self.message(receiving: status, fileOffered: finish.name != nil), .caution)
         }
     }
 
@@ -214,7 +216,8 @@ final class PhoneFileTransfer: ObservableObject {
         }
     }
 
-    static func message(receiving status: FileTransferStatus) -> String {
+    /// `fileOffered` is false while the Mac is still choosing (a request has no name yet).
+    static func message(receiving status: FileTransferStatus, fileOffered: Bool = false) -> String {
         switch status {
         case .cancelled: "Cancelled on your Mac."
         case .tooLarge: "That file is over 1 GB, the limit for now."
@@ -227,7 +230,7 @@ final class PhoneFileTransfer: ObservableObject {
         case .diskFull: "Not enough space on this iPhone for that file."
         case .denied: "Farside couldn’t save the file on this iPhone."
         case .invalid: "The file didn’t arrive intact, so it was discarded. Try again."
-        case .timedOut: "Nothing was chosen on your Mac in time."
+        case .timedOut: fileOffered ? "Your Mac stopped sending the file. Try again." : "Nothing was chosen on your Mac in time."
         case .backgrounded: "Transfer stopped when Farside left the screen. Try again."
         case .connectionLost: "The connection dropped during the transfer. Try again."
         default: "The transfer didn’t finish. Try again."

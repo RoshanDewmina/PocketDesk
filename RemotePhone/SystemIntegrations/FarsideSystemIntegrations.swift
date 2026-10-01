@@ -116,10 +116,10 @@ final class FarsideSystemIntegrations {
         let observed = MacWidgetSync.observedPresence(connected: connection.connected, departure: model.lastDeparture,
                                                       failure: failure)
         let name = connection.invitation?.name
-        let key = "\(name ?? "")|\(observed?.rawValue ?? "")"
+        let key = "\(connection.invitation?.room ?? "")|\(name ?? "")|\(observed?.rawValue ?? "")"
         guard force || key != lastWidgetObservation else { return }
         lastWidgetObservation = key
-        MacWidgetSync.shared.update(macName: name, observed: observed)
+        MacWidgetSync.shared.update(macName: name, room: connection.invitation?.room, observed: observed)
     }
 
     /// Siri and Shortcuts learn the Mac's name for spoken parameters, so tell them when it changes.
