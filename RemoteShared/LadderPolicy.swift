@@ -54,8 +54,12 @@ enum LadderTrigger: CaseIterable {
         case .encodeBacklog:
             return (inputs.encodeInFlightMax ?? 0) >= 3
         case .encodeQueue:
-            // Latency grows ~13 ms per frame in flight, so a sustained second frame is a queue forming.
-            return inputs.encodeInFlightMax == 2
+            // Latency grows ~13 ms per frame in flight, so a sustained second frame is a queue forming,
+            // but only while frames take longer than the rung's interval. At 30 fps a 17-19 ms 2560 px
+            // encode overlaps the next frame now and then with no queue; on the M4 Air that failed every
+            // climb to full size within 2 s and backed the ladder off to 60 s (20260930 stream stats).
+            guard inputs.encodeInFlightMax == 2 else { return false }
+            return inputs.encodeLatencyP90Ms.map { $0 > interval } ?? true
         case .droppedBeforeEncode:
             return Double(inputs.droppedBeforeEncode ?? 0) > 0.05 * fps
         case .cpuLimited:

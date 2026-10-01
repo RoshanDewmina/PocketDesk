@@ -56,9 +56,16 @@ final class HostAXBroker: @unchecked Sendable {
 
     var isBusy: Bool { lock.lock(); defer { lock.unlock() }; return busy }
 
-    func run<T: Sendable>(budget total: TimeInterval = defaultBudget,
+    /// `waitForLane` lets a query wait that long for an earlier, abandoned call to return instead of
+    /// being dropped: a double tap cancels the first tap's focus probe, whose AX call keeps the lane.
+    func run<T: Sendable>(budget total: TimeInterval = defaultBudget, waitForLane: TimeInterval = 0,
                           _ work: @escaping @Sendable (HostAXBudget) -> T?) async -> T? {
-        guard total.isFinite, total > 0, claim() else { return nil }
+        guard total.isFinite, total > 0, waitForLane.isFinite else { return nil }
+        let laneDeadline = clock() + max(0, waitForLane)
+        while !claim() {
+            guard clock() < laneDeadline, !Task.isCancelled else { return nil }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
         let budget = HostAXBudget(total: total, clock: clock)
         let reply = ReplyOnce<T>()
         return await withTaskCancellationHandler {

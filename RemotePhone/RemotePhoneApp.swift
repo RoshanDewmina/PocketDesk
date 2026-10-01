@@ -1836,7 +1836,8 @@ final class PhoneRemoteModel: ObservableObject {
 
     @discardableResult
     func action(_ name: String, x: Double = 0, y: Double = 0) -> Bool {
-        sendInput(name, x: x, y: y, count: ["click", "right", "double"].contains(name) ? 1 : nil)
+        sendInput(name, x: x, y: y, count: ["click", "right", "double"].contains(name) ? 1 : nil,
+                  probeTextFocus: name == "double")
     }
 
     @discardableResult

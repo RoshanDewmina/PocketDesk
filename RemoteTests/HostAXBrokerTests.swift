@@ -27,6 +27,27 @@ final class HostAXBrokerTests: XCTestCase {
         XCTAssertEqual(recovered, 2)
     }
 
+    /// A double tap cancels the first tap's focus probe, but its AX call keeps the lane. The second
+    /// tap's probe used to be dropped and answered "not editable", so the keyboard never opened.
+    func testSupersededSlowQueryDoesNotDropTheNextFocusProbe() async {
+        let broker = HostAXBroker(label: "test.ax.superseded")
+        let first = Task { await broker.run(budget: 0.25) { _ -> Int? in Thread.sleep(forTimeInterval: 0.15); return 1 } }
+        try? await Task.sleep(for: .milliseconds(20))
+        first.cancel()
+        let firstValue = await first.value
+        XCTAssertNil(firstValue)
+        XCTAssertTrue(broker.isBusy, "The cancelled first-tap AX call still owns the lane")
+        let second = await broker.run(budget: 0.25, waitForLane: HostTextFocusProbe.lanePatience) { _ in 2 }
+        XCTAssertEqual(second, 2, "The double tap's probe waits for the lane instead of reporting non-editable")
+
+        let hog = Task { await broker.run(budget: 0.05) { _ -> Int? in Thread.sleep(forTimeInterval: 0.6); return 3 } }
+        _ = await hog.value
+        let started = Date()
+        let starved = await broker.run(budget: 0.25, waitForLane: 0.1) { _ in 4 }
+        XCTAssertNil(starved, "patience is bounded: a hung app still drops the query")
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.3)
+    }
+
     func testBudgetShrinksPerCallTimeoutAndStopsWhenSpent() {
         var now: TimeInterval = 100
         let budget = HostAXBudget(total: 0.2, clock: { now })

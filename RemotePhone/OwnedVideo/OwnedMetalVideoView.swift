@@ -41,10 +41,11 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         backgroundColor = .black; clipsToBounds = true
         metal.clearColor = MTLClearColorMake(0, 0, 0, 1)
         metal.colorPixelFormat = .bgra8Unorm
-        // Zoom changes the layer's view bounds, not the backing pixel allocation. Allocate
-        // only the current validated source crop; Core Animation scales it for the viewport.
+        // Backing pixels are the decoded picture, whatever the zoom: pinch never reallocates them and
+        // never draws the picture into a smaller drawable. Core Animation fills the picture placement.
         metal.autoResizeDrawable = false
         metal.drawableSize = CGSize(width: 1, height: 1)
+        metal.layer.contentsGravity = .resize
         metal.framebufferOnly = true
         metal.preferredFramesPerSecond = fps
         (metal.layer as? CAMetalLayer)?.maximumDrawableCount = 2
@@ -216,7 +217,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                           callback: ((VideoPresentationIdentity, UUID) -> Void)?) -> (CFTimeInterval) -> Void {
         { [weak self] presentedTime in
             guard presentedTime.isFinite, presentedTime > 0 else { return }
-            Self.presentedReceiptQueue.async { [weak self] in
+            Self.presentedReceiptQueue.async {
                 guard let self else { return }
                 _ = self.fence.withAdmission(envelope.identity, at: ProcessInfo.processInfo.systemUptime) {
                     self.counters?.presentedFrame(atMs: presentedTime * 1000, marker: envelope.marker)

@@ -28,17 +28,22 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         }
         offer(rotation: ._0, cropped: false)
         XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240))
-        for zoom in [1.0, 3.0, 10.0] {
+        XCTAssertEqual(view.metal.layer.contentsGravity, .resize, "Core Animation fills the picture placement")
+        var pinched: [CGSize] = []
+        for zoom in [0.25, 1.0, 3.0, 10.0] {
             view.frame = CGRect(x: 0, y: 0, width: 402 * zoom, height: 874 * zoom)
             view.setNeedsLayout(); view.layoutIfNeeded()
-            offer(rotation: ._0, cropped: false) // A frame drawn after the layout is what could resize the backing.
-            XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240), "pinch layout must not allocate view-sized backing pixels")
+            view.draw(in: view.metal) // The relayout redraw is what would resize the drawable.
+            pinched.append(view.metal.drawableSize)
         }
+        XCTAssertEqual(pinched, Array(repeating: CGSize(width: 320, height: 240), count: 4),
+                       "pinch layout neither allocates view-sized backing pixels nor resizes per frame")
         offer(rotation: ._90, cropped: true)
-        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 80, height: 120))
+        let rotated = CGSize(width: 80, height: 120)
+        XCTAssertEqual(view.metal.drawableSize, rotated, "the decoded crop, rotated")
         view.invalidate()
         offer(rotation: ._0, cropped: false)
-        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 80, height: 120), "retired source cannot reallocate a closed surface")
+        XCTAssertEqual(view.metal.drawableSize, rotated, "retired source cannot reallocate a closed surface")
     }
     /// Core Animation calls presented handlers holding the layer lock that `addPresentedHandler`
     /// needs on main while main holds the fence (8BADF00D reports from build 20260930.8).

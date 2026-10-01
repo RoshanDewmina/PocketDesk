@@ -65,6 +65,28 @@ final class TabletInputPhoneTests: XCTestCase {
         try model.connection.receiveInputFixtureForTesting(ControlPacket(session: "pencil", sequence: 2, action: RemoteAction(action: "heartbeat", epoch: 8), input: context))
         XCTAssertFalse(model.dragging); XCTAssertFalse(model.canControl); XCTAssertTrue(model.connection.connected)
     }
+    /// 20260930.8 hang reports: resigning synchronously inside SwiftUI's updateUIView asked the
+    /// hosting view whether it could become first responder, re-entering the update graph.
+    @MainActor
+    func testKeyboardFocusReleaseWaitsForTheUpdateToFinish() async throws {
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 300))
+        let view = NativeTrackpadInputView(frame: window.bounds)
+        window.addSubview(view); window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        view.setKeyboardFocus(true)
+        await Task.yield(); try? await Task.sleep(for: .milliseconds(50))
+        try XCTSkipUnless(view.isFirstResponder, "this test host cannot hand out first responder")
+        view.setKeyboardFocus(false)
+        XCTAssertTrue(view.isFirstResponder, "no responder-chain walk inside the caller's update")
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertFalse(view.isFirstResponder)
+
+        view.setKeyboardFocus(true); try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(view.isFirstResponder)
+        view.setKeyboardFocus(false); view.setKeyboardFocus(true)
+        try? await Task.sleep(for: .milliseconds(50))
+        XCTAssertTrue(view.isFirstResponder, "a release overtaken by a new claim keeps focus")
+    }
     func testUnderlyingCanvasUpdateCannotStealLockedKeyboardDisconnectOrFocus() async {
         let hardware = HardwarePeripherals.shared
         let locked = NativeTrackpadInputView(), underlying = NativeTrackpadInputView(), owner = NSObject()

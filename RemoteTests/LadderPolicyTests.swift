@@ -12,10 +12,11 @@ final class LadderPolicyTests: XCTestCase {
                      phoneDecodeMs: 3, phonePresentedFPS: Double(targetFPS), phoneThermalState: "nominal")
     }
 
-    /// Bad at every rung, two samples to act: two frames in flight.
+    /// Bad at every rung, two samples to act: two frames in flight, each slower than any rung's interval.
     private func backlog(targetFPS: Int = 120) -> LadderInputs {
         var inputs = calm(targetFPS: targetFPS)
         inputs.encodeInFlightMax = 2
+        inputs.encodeLatencyP90Ms = 34
         return inputs
     }
 
@@ -88,7 +89,8 @@ final class LadderPolicyTests: XCTestCase {
                 trigger: .encodeLatency, reason: "encoding"),
             Row(name: "three frames in flight", inputs: with { $0.encodeInFlightMax = 3 },
                 trigger: .encodeBacklog, reason: "encoding"),
-            Row(name: "two frames in flight", inputs: with { $0.encodeInFlightMax = 2 },
+            Row(name: "two frames in flight, slower than the interval",
+                inputs: with { $0.encodeInFlightMax = 2; $0.encodeLatencyP90Ms = 9 },
                 trigger: .encodeQueue, reason: "encoding"),
             Row(name: "dropped over 5 % of the rung rate", inputs: with { $0.droppedBeforeEncode = 7 },
                 trigger: .droppedBeforeEncode, reason: "encoding"),
@@ -280,7 +282,7 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(run(&phone, 0...20) { _ in hotPhone }.map { $0.time }, [0, 10, 20], "the phone is limited too")
 
         var mixed = LadderPolicy(targetFPS: 120)
-        let hotAndBacklogged = with { $0.hostThermalState = "serious"; $0.encodeInFlightMax = 2 }
+        let hotAndBacklogged = with { $0.hostThermalState = "serious"; $0.encodeInFlightMax = 2; $0.encodeLatencyP90Ms = 34 }
         let moves = run(&mixed, 0...10) { _ in hotAndBacklogged }
         XCTAssertEqual(moves.map { $0.time }, [0, 2, 4, 6], "load keeps its own two-sample pace until the floor")
         XCTAssertEqual(moves.map { $0.state.reason },
@@ -290,11 +292,40 @@ final class LadderPolicyTests: XCTestCase {
     func testTheReasonIsTheHighestPriorityTriggerOfTheMovingSample() {
         var policy = LadderPolicy(targetFPS: 120)
         XCTAssertNil(policy.evaluate(with { $0.pacerDelayMs = 80 }, at: 0))
-        let both = with { $0.pacerDelayMs = 80; $0.encodeInFlightMax = 2 }
+        let both = with { $0.pacerDelayMs = 80; $0.encodeInFlightMax = 2; $0.encodeLatencyP90Ms = 9 }
         XCTAssertEqual(policy.evaluate(both, at: 1), rung(1, "encoding"))
-        XCTAssertNil(policy.evaluate(with { $0.encodeInFlightMax = 2 }, at: 2))
+        XCTAssertNil(policy.evaluate(with { $0.encodeInFlightMax = 2; $0.encodeLatencyP90Ms = 17 }, at: 2))
         XCTAssertEqual(policy.evaluate(with { $0.phoneDecodeMs = 30 }, at: 3), rung(2, "phone"),
                        "bad samples in a row may have different causes; the second names the move")
+    }
+
+    /// 20260930 M4 Air stream stats: at the 30 fps full-size rung HEVC took p90 17-19 ms with an
+    /// occasional second frame in flight while encoding all 30 fps. That is headroom, not a queue.
+    func testAnOccasionalOverlapUnderTheIntervalIsNotAQueue() {
+        var sixty = LadderPolicy(targetFPS: 60)
+        let thirty = sixty.rungs[1]
+        XCTAssertEqual(thirty.fps, 30); XCTAssertEqual(thirty.sizeFraction, 1)
+        var overlap = calm(targetFPS: 60)
+        overlap.captureFPS = 57; overlap.encodedFPS = 30; overlap.encodeLatencyP90Ms = 17.8; overlap.encodeInFlightMax = 2
+        XCTAssertEqual(LadderTrigger.firing(overlap, at: thirty), [])
+        XCTAssertTrue(LadderPolicy.isClean(overlap, at: thirty))
+        XCTAssertTrue(LadderTrigger.firing(overlap, at: sixty.rungs[0]).contains(.encodeQueue),
+                      "the same overlap at 60 fps is slower than the 16.7 ms interval: a queue")
+        var queued = overlap; queued.encodeLatencyP90Ms = nil
+        XCTAssertEqual(LadderTrigger.firing(queued, at: thirty), [.encodeQueue], "no latency trace keeps the old rule")
+
+        var stepped = calm(targetFPS: 60); stepped.encodeInFlightMax = 2; stepped.encodeLatencyP90Ms = 34
+        _ = sixty.evaluate(stepped, at: 0)
+        XCTAssertEqual(sixty.evaluate(stepped, at: 1)?.rung, 1)
+        _ = sixty.evaluate(stepped, at: 2)
+        XCTAssertEqual(sixty.evaluate(stepped, at: 3)?.rung, 2)
+        var moves: [Int] = []
+        for second in 4...40 {
+            if let move = sixty.evaluate(overlap, at: TimeInterval(second)) { moves.append(move.rung) }
+        }
+        XCTAssertEqual(moves.first, 1, "climbs back to full size and stays there")
+        XCTAssertEqual(sixty.state.rung, moves.last)
+        XCTAssertFalse(moves.dropFirst().contains(2), "no failed climb back to 0.75")
     }
 
     // MARK: Up
@@ -449,6 +480,7 @@ final class LadderPolicyTests: XCTestCase {
 
         var savingBacklog = saving
         savingBacklog.encodeInFlightMax = 2
+        savingBacklog.encodeLatencyP90Ms = 17
         XCTAssertNil(policy.evaluate(savingBacklog, at: 41))
         XCTAssertEqual(policy.evaluate(savingBacklog, at: 42), rung(2, "encoding"), "load still steps below the cap")
         for second in 43...51 { XCTAssertNil(policy.evaluate(saving, at: TimeInterval(second))) }
@@ -858,6 +890,7 @@ final class LadderPolicyTests: XCTestCase {
         var monitor = HostLoadMonitor(targetFPS: 120)
         var bad = sample
         bad.encodeInFlightMax = 2
+        bad.encodeLatencyP90Ms = 34
         assertTick(monitor.tick(sample: bad, at: 0), ladder: nil, busy: nil)
         assertTick(monitor.tick(sample: bad, at: 1), ladder: rung(1, "encoding"),
                    busy: BusyState(level: .strained, fps: 60, longEdge: 2560, reason: "encoding"))
