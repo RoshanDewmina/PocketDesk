@@ -87,6 +87,29 @@ final class PhoneFileTransferTests: XCTestCase {
         files.reset()
     }
 
+    func testMidTransferStallSaysTheMacStoppedSending() throws {
+        var now: TimeInterval = 1_000
+        let files = PhoneFileTransfer(destination: { self.folder }, staging: folder, availableSpace: { _ in nil }, clock: { now })
+        files.engine.sendControl = { _ in true }
+        let transfer = try files.engine.request().get()
+        files.engine.receive(offer(transfer, bytes: 3))
+        XCTAssertEqual(files.snapshot?.direction, .incoming)
+        now += FileTransferLimits.acceptTimeout + 1
+        files.engine.checkTimeouts()
+        XCTAssertNil(files.snapshot)
+        XCTAssertEqual(files.notice?.message, "Your Mac stopped sending the file. Try again.")
+    }
+
+    func testUnansweredRequestSaysNothingWasChosen() throws {
+        var now: TimeInterval = 1_000
+        let files = PhoneFileTransfer(destination: { self.folder }, staging: folder, availableSpace: { _ in nil }, clock: { now })
+        files.engine.sendControl = { _ in true }
+        _ = try files.engine.request().get()
+        now += FileTransferLimits.pickTimeout + 1
+        files.engine.checkTimeouts()
+        XCTAssertEqual(files.notice?.message, "Nothing was chosen on your Mac in time.")
+    }
+
     func testUnrequestedOfferIsRefused() {
         let files = PhoneFileTransfer(destination: { self.folder }, staging: folder, availableSpace: { _ in nil })
         var sent: [FileFrame] = []
