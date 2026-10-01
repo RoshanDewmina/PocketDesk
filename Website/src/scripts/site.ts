@@ -1,7 +1,9 @@
-// Shared behaviour for every page. Kept small: fonts, the mobile menu, the motion switch, scroll reveals.
+// Shared behaviour for every page. Kept small: fonts, the mobile menu, the motion switch, scroll reveals and
+// the footer.
 
 import { FONTS_URL } from "../lib/fonts";
 import { isPaused, onMotionChange, prefersReduced, setPaused } from "./motion";
+import { initFooter } from "./footer";
 import { initReveals, initStatusChip } from "./reveal";
 
 initReveals();
@@ -22,6 +24,9 @@ export const webFonts = new Promise<void>((done) => {
     }, 0),
   );
 });
+
+// The footer's dot field starts only when the end of the page comes near (src/scripts/footer.ts).
+initFooter(webFonts);
 
 // Mobile menu: a <details> disclosure that also closes on Escape, outside clicks and link taps.
 const menu = document.querySelector<HTMLDetailsElement>(".nav-mob");

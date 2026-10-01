@@ -1,19 +1,17 @@
 import { config } from "../../site.config";
 import a2File from "../hero-a2/a2.html" with { type: "text" };
 import { html, pd, raw, type Html } from "../lib/html";
-import { markSvg } from "../lib/mark";
-import { guideCards, icon, ogUrl, page, type Assets } from "./layout";
+import { icon, ogUrl, page, type Assets } from "./layout";
 import { faqPage, graph, softwareApplication, webPage, type QA } from "./schema";
+
+// The home page, kept short (owner, 30 Sep 2026): the hero with the pocket demo and the beta form, three
+// steps, four features, one pricing block, six questions. Guides are linked from the FAQ and the footer.
 
 const P = config.pricing;
 const R = config.requirements;
 const C = config.copy;
 
-/** A price for the Doto numerals, with the decimal point set in the UI face (Doto draws "." like a plus). */
-const amount = (price: string) => {
-  const [whole, cents] = price.replace("CA$", "").split(".");
-  return html`<span class="cur">CA$</span>${whole}${cents ? html`${pd}${cents}` : ""}`;
-};
+const a2Markup = a2File as unknown as string;
 
 /** The two SVG symbols the demos draw with (the Farside mark and the Mac pointer), from the hero lab. In the hero, so
  * they sit outside the content-visibility sections below. */
@@ -21,10 +19,6 @@ const A2_SPRITE = raw(`<svg class="a2-sprite" width="0" height="0" aria-hidden="
   <symbol id="mk" viewBox="0 0 26 38"><g fill="#EDE8DF"><circle cx="3" cy="8" r="1.4"/><circle cx="7" cy="8" r="1.4"/><circle cx="3" cy="12" r="1.4"/><circle cx="7" cy="12" r="1.4"/><circle cx="11" cy="12" r="1.4"/><circle cx="3" cy="16" r="1.4"/><circle cx="7" cy="16" r="1.4"/><circle cx="11" cy="16" r="1.4"/><circle cx="15" cy="16" r="1.4"/><circle cx="3" cy="20" r="1.4"/><circle cx="7" cy="20" r="1.4"/><circle cx="11" cy="20" r="1.4"/><circle cx="15" cy="20" r="1.4"/><circle cx="19" cy="20" r="1.4"/><circle cx="3" cy="24" r="1.4"/><circle cx="7" cy="24" r="1.4"/><circle cx="11" cy="24" r="1.4"/><circle cx="15" cy="24" r="1.4"/><circle cx="19" cy="24" r="1.4"/><circle cx="23" cy="24" r="1.4"/><circle cx="3" cy="28" r="1.4"/><circle cx="7" cy="28" r="1.4"/><circle cx="11" cy="28" r="1.4"/><circle cx="3" cy="32" r="1.4"/><circle cx="11" cy="32" r="1.4"/><circle cx="15" cy="32" r="1.4"/><circle cx="15" cy="36" r="1.4"/></g><circle cx="3.2" cy="3.2" r="2.8" fill="#FF5B1F"/></symbol>
   <symbol id="ptr" viewBox="-1.5 -1.5 17 23"><path d="M0 0V16.6L4.1 12.8L6.8 19.1L9.7 17.9L7 11.7H12.7Z" fill="#000" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/></symbol>
 </svg>`);
-
-/** The approved phone + Mac demo ("A2"), rendered into the page so it holds its size from the first paint. */
-const a2Markup = a2File as unknown as string;
-const a2Demo = raw(a2Markup.replace(/^\s*<template[^>]*>/, "").replace(/<\/template>\s*$/, ""));
 
 /** A2's Mac scene (the desktop and its windows), which the hero's "From the pocket" demo steers. */
 const i0 = a2Markup.indexOf('<div class="a2-scene">');
@@ -47,7 +41,7 @@ const pocketDemo = html`<figure class="hero-demo lx" role="img" aria-label="Demo
           <div class="lx-view"><i></i><i></i><i></i><i></i><b></b><b></b><b></b><b></b></div>
           <div class="lx-mptr"><svg viewBox="-1.5 -1.5 17 23"><use href="#ptr"/></svg></div>
         </div></div></div>
-        <div class="lx-deck"><i></i></div>
+        <div class="lx-deck"></div>
         <div class="lx-base"></div>
       </div>
     </div>
@@ -87,65 +81,28 @@ const motionButton = html`<button class="motion" type="button" hidden>
   <span class="lbl">Pause motion</span>
 </button>`;
 
+/**
+ * Results of a plain (no-script) form post land here through :target: /?joined=1#joined or
+ * /?joined=0&error=<code>#join-error-<code> (functions/api/waitlist.ts).
+ */
+const joinNotes = html`<div class="join-notes">
+  <p id="joined">You’re on the list. We’ll email you when your beta invite is ready.</p>
+  <p id="join-error-invalid_email">That email address doesn’t look right. Check it and try again.</p>
+  <p id="join-error-rate_limited">Too many tries from your connection. Please try again in a few minutes.</p>
+  <p id="join-error-forbidden">That sign-up was blocked. Reload this page and try again.</p>
+</div>`;
+
 const hero = html`<section class="hero" id="top" aria-labelledby="hero-title">
   ${A2_SPRITE}
   <div class="hero-c w">
-    <p class="eyebrow"><i></i>Remote control for your own Mac<i></i></p>
+    <p class="eyebrow"><i></i>Farside · remote desktop for your Mac<i></i></p>
     <h1 class="h1" id="hero-title"><span class="ln dw"><span>Your Mac is far${pd}</span></span> <span class="ln dw"><span>Your reach <em>isn’t.</em></span></span></h1>
-    <p class="sub">Farside puts your Mac on your iPhone or iPad and turns the whole screen into a trackpad. One finger points. A tap clicks. Free on your own Wi‑Fi.</p>
-    ${joinForm("join-hero")}
+    <p class="sub">Use your Mac from your iPhone or iPad. Free on your own Wi‑Fi.</p>
+    ${joinForm("beta")}
+    ${joinNotes}
   </div>
   ${pocketDemo}
   <div class="hero-foot w">${motionButton}</div>
-</section>`;
-
-/**
- * Four numbers, each backed by the repo (see Website/README.md, "Stats strip"). No latency or frame-rate
- * figures: the measured ones are for one phone and one Mac, and `bun run check` blocks them on purpose.
- */
-const STATS: { n: number; from: number; pre?: string; label: string }[] = [
-  { n: 0, from: 12, label: "Accounts to make" },
-  { n: 1, from: 9, label: "Code to scan, then you’re paired" },
-  { n: 4, from: 0, label: "Pointer sizes, up to Extra Large" },
-  { n: 0, from: 99, pre: "CA$", label: "On your own Wi‑Fi" },
-];
-
-const stats = html`<section class="stats-sec" aria-label="Farside in four numbers">
-  <ul class="stats w" role="list" data-rv>
-    ${STATS.map(
-      (s) => html`<li class="stat"><b>${s.pre ? html`<small>${s.pre}</small>` : ""}<span data-count="${s.n}" data-from="${s.from}">${s.n}</span></b><span>${s.label}</span></li>`,
-    )}
-  </ul>
-</section>`;
-
-const gap = html`<section class="sec" id="gap" aria-labelledby="gap-title">
-  <div class="w">
-    ${sh("gap-title", "Try it", html`Close the <em>gap.</em>`, html`Your fingertip on the glass, the pointer on your Mac. Reach for it with your mouse, trackpad or finger. The hand follows with the same soft lag the app’s view uses.`)}
-    <div class="gap" data-rv>
-      <div class="gap-stage">
-        <canvas class="gap-cv" aria-hidden="true"></canvas>
-        <p class="gap-hint" aria-hidden="true">Reach for the pointer</p>
-      </div>
-      <div class="gap-ui">
-        <p class="gap-say"><span class="cap gap-cap">Status · reaching</span><span class="gap-line" aria-live="polite">Nearly there. Keep going.</span></p>
-        <div class="gap-side">
-          <p class="gap-meter"><span class="cap">Gap</span><b class="gap-km">41 cm</b></p>
-          <button class="gap-go ghostb" type="button">Close it for me</button>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>`;
-
-const see = html`<section class="sec" id="see" aria-labelledby="see-title">
-  <div class="w see-grid">
-    <div class="see-copy">
-      ${sh("see-title", "See it", html`Watch it <em>steer.</em>`)}
-      <p class="sec-intro" data-rv="self">Your Mac on top, your iPhone below. Slide on the phone and the pointer moves; the picture follows it. Tap, and it clicks.</p>
-      <p class="sec-note" data-rv="self">Drag on the phone screen to try it yourself.</p>
-    </div>
-    <div class="stage" id="stage">${a2Demo}</div>
-  </div>
 </section>`;
 
 /** A build-time dither illustration (decorative: the text says it all). */
@@ -157,11 +114,11 @@ function art(assets: Assets, key: string): Html {
 
 const how = (assets: Assets) => html`<section class="sec" id="how" aria-labelledby="how-title">
   <div class="w">
-    ${sh("how-title", "How it works", html`Three touches${pd}<br> <em>Then</em> you’re in${pd}`, html`No account to make, nothing to set up on your router and no cables.`)}
+    ${sh("how-title", "How it works", html`Three steps<span class="pd">,</span> <em>then</em> you’re in${pd}`)}
     <ol class="steps" role="list" data-rv>
-      <li class="step">${art(assets, "art-step1")}<p class="n" aria-hidden="true">01</p><h3>Get the free Mac app</h3><p>Install it and turn on the two permissions it asks for. It shows you where.</p></li>
-      <li class="step">${art(assets, "art-step2")}<p class="n" aria-hidden="true">02</p><h3>Pair your iPhone</h3><p>Scan the code on your Mac, then approve your phone on the Mac. No account needed.</p></li>
-      <li class="step">${art(assets, "art-step3")}<p class="n" aria-hidden="true">03</p><h3>Tap Connect</h3><p>Your Mac’s screen appears, and your phone becomes its trackpad.</p></li>
+      <li class="step">${art(assets, "art-step1")}<p class="n" aria-hidden="true">01</p><h3>Get Farside for Mac</h3><p>It’s free. Install it and allow the two permissions it asks for.</p></li>
+      <li class="step">${art(assets, "art-step2")}<p class="n" aria-hidden="true">02</p><h3>Pair your iPhone</h3><p>Scan the code on your Mac, then approve your phone. No account.</p></li>
+      <li class="step">${art(assets, "art-step3")}<p class="n" aria-hidden="true">03</p><h3>Tap Connect</h3><p>Your Mac’s screen appears. Your phone is now its trackpad.</p></li>
     </ol>
     <p class="req" data-rv="self">You’ll need ${R.mac}, and an iPhone with ${R.iphone} or an iPad with ${R.ipad}.</p>
   </div>
@@ -169,75 +126,65 @@ const how = (assets: Assets) => html`<section class="sec" id="how" aria-labelled
 
 const features = (assets: Assets) => html`<section class="sec" id="features" aria-labelledby="features-title">
   <div class="w">
-    ${sh("features-title", "What it does", html`Small screen${pd}<br> <em>Whole</em> Mac${pd}`, html`Your actual Mac, steered with one thumb. The picture stays sharp; the dots are only decoration.`)}
+    ${sh("features-title", "What you get", html`Small screen${pd} <em>Whole</em> Mac${pd}`)}
     <ul class="feats" role="list" data-rv>
-      <li class="feat">${art(assets, "art-feat-pad")}<h3>Your screen is the trackpad</h3><p>Slide to move the pointer and tap to click. The pointer is big and sharp, and you feel a small tap with each click.</p></li>
-      <li class="feat">${art(assets, "art-feat-zoom")}<h3>Zoom in on small text</h3><p>Pinch to zoom, and the view follows the pointer.</p></li>
+      <li class="feat">${art(assets, "art-feat-pad")}<h3>The screen is a trackpad</h3><p>Slide to move the pointer. Tap to click. You feel each click.</p></li>
+      <li class="feat">${art(assets, "art-feat-zoom")}<h3>Zoom in on small text</h3><p>Pinch to zoom. The view follows the pointer.</p></li>
       <li class="feat">${art(assets, "art-feat-voice")}<h3>Type or talk</h3><p>Use the keyboard or your voice. Copy and paste works both ways.</p></li>
-      <li class="feat">${art(assets, "art-feat-trust")}<h3>Only phones you approve</h3><p>The connection is encrypted, and your Mac asks before any new phone can connect.</p></li>
+      <li class="feat">${art(assets, "art-feat-trust")}<h3>Only your phones</h3><p>It’s encrypted, and your Mac asks before a new phone can connect.</p></li>
     </ul>
   </div>
 </section>`;
 
+/** A price in Doto, with the decimal point set in the UI face (Doto draws "." like a plus). */
+const amount = (price: string) => {
+  const [whole, cents] = price.replace("CA$", "").split(".");
+  return html`<span class="cur">CA$</span>${whole}${cents ? html`${pd}${cents}` : ""}`;
+};
+
 const pricing = html`<section class="sec" id="pricing" aria-labelledby="pricing-title">
   <div class="w">
-    ${sh("pricing-title", "Pricing", html`Free at home${pd}<br> A plan for <em>away.</em>`, html`When your iPhone or iPad and your Mac share a Wi‑Fi network, Farside is free. Reaching your Mac from somewhere else is what Anywhere is for.`)}
-    <div class="plans" data-rv>
-      <article class="plan" aria-labelledby="plan-free">
-        <p class="cap">Free at home</p>
-        <h3 id="plan-free">On your own Wi‑Fi<span class="sr-only">: free</span></h3>
+    ${sh("pricing-title", "Pricing", html`Free at home${pd} <em>Anywhere</em> for away${pd}`)}
+    <div class="price" data-rv>
+      <div class="price-col">
+        <h3 class="cap">Free at home</h3>
         <p class="amt">${amount("CA$0")}</p>
-        <p class="per">Not a trial in a trench coat.</p>
-        <ul role="list">
-          <li>Your iPhone or iPad and Mac on the same Wi‑Fi</li>
-          <li>Trackpad, keyboard and voice typing</li>
-          <li>No account, no ads</li>
-        </ul>
-        <a class="cta" href="#beta">${C.cta}<span class="arr" aria-hidden="true">${icon.arrow}</span></a>
-      </article>
-      <article class="plan any" aria-labelledby="plan-any">
-        <p class="cap">Anywhere <span class="badge">${P.final ? "Coming soon" : "Planned"}</span></p>
-        <h3 id="plan-any">Past your <em>front door</em></h3>
+        <p>When your iPhone or iPad and your Mac are on the same Wi‑Fi. No account, no ads.</p>
+      </div>
+      <div class="price-col any">
+        <h3 class="cap">Anywhere</h3>
         <p class="amt">${amount(P.monthly)}<small>a month</small></p>
-        <p class="per">or ${P.yearly} a year, about ${P.yearlyPerMonth} a month · save ${P.yearlySaving}</p>
-        <ul role="list">
-          <li>Everything in Free at home</li>
-          <li>Use your Mac away from home, on mobile data or any Wi‑Fi</li>
-          <li>Starts with a ${P.trialDays}‑day free trial</li>
-        </ul>
-        <p class="plan-foot">Sold in the iPhone and iPad app, through Apple.</p>
-      </article>
+        <p>Or ${P.yearly} a year. Use your Mac when you’re away from home. Starts with a ${P.trialDays}‑day free trial.</p>
+      </div>
     </div>
-    <p class="fine" data-rv="self">Prices in Canadian dollars. Anywhere is sold in the app through Apple, which shows your local price before you pay.</p>
+    <p class="fine" data-rv="self">Prices in Canadian dollars. Anywhere is sold in the iPhone and iPad app through Apple, which shows your local price first.</p>
   </div>
 </section>`;
 
 const QAS: QA[] = [
   {
     q: "Is it really free?",
-    a: html`<p>Yes, when your iPhone or iPad and your Mac are on the same Wi‑Fi network. There’s no account and no ads. To use your Mac away from home you’ll need the Anywhere plan: ${P.monthly} a month or ${P.yearly} a year${P.final ? "" : " (planned)"}, after a ${P.trialDays}-day free trial.</p>`,
+    a: html`<p>Yes, when your iPhone or iPad and your Mac are on the same Wi‑Fi. No account, no ads. To use your Mac away from home, there’s Anywhere: ${P.monthly} a month or ${P.yearly} a year, after a ${P.trialDays}-day free trial.</p>`,
   },
   {
     q: "What do I need?",
-    a: html`<p>${R.mac}, with the free Farside Mac app, and an iPhone with ${R.iphone} or an iPad with ${R.ipad}. These are the planned requirements. The <a href="/control-mac-from-iphone">setup guide</a> walks you through it.</p>`,
+    a: html`<p>${R.mac}, with Farside for Mac (free). And an iPhone with ${R.iphone}, or an iPad with ${R.ipad}. The <a href="/control-mac-from-iphone">setup guide</a> shows each step.</p>`,
   },
   {
     q: "Can anyone else see my screen?",
-    a: html`<p>No. Your screen, typing and voice travel between your own devices, encrypted. You approve every phone on your Mac, and you can stop sharing from the Mac’s menu bar at any time. The <a href="/privacy">privacy policy</a> has the details.</p>`,
+    a: html`<p>No. Everything travels encrypted between your own devices. Your Mac asks before a new phone can connect, and you can stop sharing from its menu bar at any time. More in the <a href="/privacy">privacy policy</a>.</p>`,
   },
   {
     q: "Does my Mac need to be awake?",
-    a: html`<p>Yes. Farside can’t wake a sleeping Mac or log in for you. While your phone is connected, it keeps the Mac awake.</p>`,
-  },
-  { q: "Will I hear my Mac’s sound?", a: html`<p>No. Sound keeps playing on the Mac itself.</p>` },
-  { q: "Does it work with Windows or Android?", a: html`<p>No. Farside is for Macs, used from an iPhone or iPad.</p>` },
-  {
-    q: "Can it tell me when an AI agent on my Mac needs me?",
-    a: html`<p>Yes, as a beta feature. If a coding agent on your Mac stops to ask for something, Farside can alert your iPhone. It’s off until you turn it on, and the alert doesn’t include what’s on your screen.</p>`,
+    a: html`<p>Yes. Farside can’t wake a sleeping Mac or log in for you. While you’re connected, it keeps your Mac awake.</p>`,
   },
   {
     q: "When can I get it?",
-    a: html`<p>Farside is in beta testing. <a href="#beta">Join the beta</a> and we’ll email you an invite.</p>`,
+    a: html`<p>Farside is in beta and coming soon to the App Store. <a href="#beta">Join the beta</a> and we’ll email you an invite.</p>`,
+  },
+  {
+    q: "Is Farside the same as farside.app?",
+    a: html`<p>No. Farside at getfarside.com is a remote desktop app for your Mac, made by ${config.contact.legalName ?? "an independent developer"}. It isn’t related to farside.app or to other products with a similar name. <a href="/about">About Farside</a>.</p>`,
   },
 ];
 
@@ -247,31 +194,7 @@ const faq = html`<section class="sec" id="faq" aria-labelledby="faq-title">
     <div class="faq" data-rv>
       ${QAS.map(({ q, a }) => html`<details><summary><span>${q}</span><span class="pm" aria-hidden="true"></span></summary><div class="a">${a}</div></details>`)}
     </div>
-    <p class="more" data-rv="self">More answers on the <a href="/support">support page</a>.</p>
-    <div class="home-guides" id="guides" data-rv>
-      <h3 class="cap">Guides</h3>
-      ${guideCards()}
-    </div>
-  </div>
-</section>`;
-
-/**
- * Beta sign-up. Works without JavaScript (a plain form post; the function answers with a redirect to
- * /?joined=1#joined or /?joined=0&error=…#join-error-…). src/scripts/waitlist.ts upgrades it to an in-page request.
- */
-const beta = html`<section class="sec join-sec" id="beta" aria-labelledby="beta-title">
-  <div class="w">
-    <div class="band-mark" aria-hidden="true">${raw(markSvg(44))}</div>
-    <p class="eyebrow">Beta</p>
-    <h2 class="h2 dw" id="beta-title">${C.cta}</h2>
-    <p class="sec-intro">Try Farside before it launches. ${C.availability}</p>
-    <div class="join-notes">
-      <p id="joined">You’re on the list. We’ll email you when your beta invite is ready.</p>
-      <p id="join-error-invalid_email">That email address doesn’t look right. Check it and try again.</p>
-      <p id="join-error-rate_limited">Too many tries from your connection. Please try again in a few minutes.</p>
-      <p id="join-error-forbidden">That sign-up was blocked. Reload this page and try again.</p>
-    </div>
-    ${joinForm("join-beta")}
+    <p class="more" data-rv="self">More answers on the <a href="/support">support page</a>. Guides: <a href="/control-mac-from-iphone">control your Mac from your iPhone</a>, <a href="/iphone-as-mac-trackpad">use your iPhone as a trackpad</a> and <a href="/compare">how Farside compares</a>.</p>
   </div>
 </section>`;
 
@@ -289,6 +212,7 @@ export function homePage(assets: Assets) {
       script: "home",
       bodyClass: "home",
       og: "home",
+      homeCss: true,
       jsonLd: graph(
         webPage({ path: "/", name: "Farside: Control your Mac from your iPhone", description: DESC, image }),
         softwareApplication(image),
@@ -296,6 +220,6 @@ export function homePage(assets: Assets) {
       ),
     },
     assets,
-    html`${hero}\n${stats}\n${gap}\n${see}\n${how(assets)}\n${features(assets)}\n${pricing}\n${faq}\n${beta}`,
+    html`${hero}\n${how(assets)}\n${features(assets)}\n${pricing}\n${faq}`,
   );
 }

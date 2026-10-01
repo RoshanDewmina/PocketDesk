@@ -8,8 +8,10 @@ export { FONTS_URL };
 export type ImgAsset = { src: string; src2x: string; w: number; h: number; srcset?: string };
 
 export type Assets = {
-  /** The whole stylesheet, inlined in every page (no render-blocking request; allowed by its CSP hash). */
+  /** The shared stylesheet, inlined in every page (no render-blocking request; allowed by its CSP hash). */
   cssText: string;
+  /** Home-only styles (hero demo, home sections), inlined after cssText on the home page only. */
+  homeCss: string;
   js: { home: string; site: string };
   /** Versioned URL of each Open Graph image, keyed by page slug. */
   og: Record<string, string>;
@@ -28,8 +30,10 @@ export type PageMeta = {
   ogTitle?: string;
   jsonLd?: unknown;
   current?: "support" | "privacy" | "terms" | "guides" | "compare";
-  /** Not-found page: no canonical URL of its own. */
+  /** Not-found page: no canonical URL, no og:url, and noindex. */
   noCanonical?: boolean;
+  /** Also inline home.css (the home page). */
+  homeCss?: boolean;
 };
 
 export const abs = (path: string) => `${config.SITE_URL}${path}`;
@@ -79,16 +83,17 @@ export function betaHref() {
 }
 
 /**
- * Download for Mac + App Store: live links after launch, "Coming soon" placeholders before.
- * At launch, swap the App Store placeholder for Apple's official badge artwork (Apple Marketing Resources).
+ * Farside for Mac + the App Store: "Coming soon" placeholders until launch day. With config.launch.live on,
+ * the Mac download becomes a link and the App Store placeholder becomes Apple's official badge
+ * (static/app-store-badge.svg, unmodified, at least 40 px high; scripts/build.ts refuses to go live without it).
  */
 export function storeButtons(opts: { mac?: boolean } = {}): Html {
-  const { macDownloadUrl, appStoreUrl } = config.launch;
-  const mac = macDownloadUrl
-    ? html`<a class="store" href="${macDownloadUrl}">${icon.mac}<span><small>Free download</small>Download for Mac</span></a>`
-    : html`<span class="store">${icon.mac}<span><small>Coming soon</small>Download for Mac</span><span class="sr-only"> (not available yet)</span></span>`;
-  const ios = appStoreUrl
-    ? html`<a class="store" href="${appStoreUrl}">${icon.phone}<span><small>Download on the</small>App Store</span></a>`
+  const { live, macDownloadUrl, appStoreUrl } = config.launch;
+  const mac = live && macDownloadUrl
+    ? html`<a class="store" href="${macDownloadUrl}">${icon.mac}<span><small>Free download</small>Farside for Mac</span></a>`
+    : html`<span class="store">${icon.mac}<span><small>Coming soon</small>Farside for Mac</span><span class="sr-only"> (not available yet)</span></span>`;
+  const ios = live && appStoreUrl
+    ? html`<a class="store-badge" href="${appStoreUrl}"><img src="/app-store-badge.svg" width="120" height="40" alt="Download on the App Store"></a>`
     : html`<span class="store">${icon.phone}<span><small>Soon on the</small>App Store</span><span class="sr-only"> (iPhone and iPad app, not available yet)</span></span>`;
   return html`<div class="stores">${opts.mac === false ? "" : mac}${ios}</div>`;
 }
@@ -100,6 +105,7 @@ export function breadcrumbNav(trail: [string, string][]): Html {
   )}</ol></nav>`;
 }
 
+/** Guide cards for the guide pages (the home page and the footer link to the guides too). */
 export const GUIDES: [string, string, string][] = [
   ["/control-mac-from-iphone", "Control your Mac from your iPhone", "Set up in three steps, then steer with one thumb"],
   ["/iphone-as-mac-trackpad", "Use your iPhone as a Mac trackpad", "Every gesture, the haptics, the pointer and the zoom"],
@@ -151,41 +157,48 @@ const SOCIAL: [keyof typeof config.social, string][] = [
   ["tiktok", "TikTok"],
 ];
 
+const FOOT_GUIDES: [string, string][] = [
+  ["/control-mac-from-iphone", "Control your Mac from iPhone"],
+  ["/iphone-as-mac-trackpad", "iPhone as a Mac trackpad"],
+  ["/remote-desktop-for-mac", "Remote desktop for Mac"],
+  ["/compare", "Compare"],
+];
+
+/**
+ * The end of every page: a full-screen footer that sits under the page and is uncovered as the content lifts
+ * away. Its canvas (src/scripts/footer.ts) turns into a giant dotted "farside" that reaches for the pointer;
+ * the links sit on solid plates so they stay readable over it. The text wordmark below the canvas is the
+ * fallback without script and for Reduce Motion until the still frame is drawn.
+ */
 function footer(): Html {
   const owner = config.contact.legalName ?? "Farside";
   const social = SOCIAL.filter(([key]) => config.social[key]);
   const support = config.contact.supportEmail;
-  return html`<footer class="site-footer">
-  <div class="w">
-    <div class="foot-top">
-      <a class="brand" href="/" aria-label="Farside home">${raw(markSvg(18))}<span class="wm" aria-hidden="true">farside</span></a>
-      <p class="foot-tag">Your Mac is far. Your reach <em>isn’t.</em></p>
+  const link = (href: string, label: string) => html`<li><a class="plate" href="${href}">${label}</a></li>`;
+  return html`<footer class="site-footer" aria-labelledby="foot-title">
+  <canvas class="foot-cv" aria-hidden="true"></canvas>
+  <div class="foot-in w">
+    <div class="foot-head">
+      <h2 class="foot-tag plate" id="foot-title">Your Mac is far. Your reach <em>isn’t.</em></h2>
+      <a class="cta" href="/#beta">${config.copy.cta}<span class="arr" aria-hidden="true">${icon.arrow}</span></a>
     </div>
+    <div class="foot-mark"><p class="foot-wm" aria-hidden="true">farside</p></div>
     <nav class="foot-nav" aria-label="Footer">
-      <div><h2>Farside</h2><ul role="list">
-        <li><a href="/#how">How it works</a></li>
-        <li><a href="/#pricing">Pricing</a></li>
-        <li><a href="/#faq">FAQ</a></li>
-        <li><a href="/#beta">${config.copy.cta}</a></li>
-      </ul></div>
-      <div><h2>Guides</h2><ul role="list">
-        ${GUIDES.map(([href, t]) => html`<li><a href="${href}">${t}</a></li>`)}
-      </ul></div>
-      <div><h2>Help</h2><ul role="list">
-        <li><a href="/support">Support</a></li>
-        <li><a href="/support#messages">What a message means</a></li>
-        ${support ? html`<li><a href="mailto:${support}">${support}</a></li>` : ""}
-        <li><a href="/privacy">Privacy policy</a></li>
-        <li><a href="/terms">Terms of use (draft)</a></li>
-      </ul></div>
-      ${social.length
-        ? html`<div><h2>Follow</h2><ul role="list">${social.map(([key, label]) => html`<li><a href="${config.social[key]!}" rel="me noopener">${label}</a></li>`)}</ul></div>`
-        : ""}
+      <ul role="list">
+        ${link("/support", "Support")}
+        ${link("/about", "About")}
+        ${link("/privacy", "Privacy")}
+        ${link("/terms", "Terms")}
+        ${support ? html`<li><a class="plate" href="mailto:${support}">${support}</a></li>` : ""}
+      </ul>
+      <ul role="list" aria-label="Guides">
+        ${FOOT_GUIDES.map(([href, t]) => link(href, t))}
+        ${social.map(([key, label]) => html`<li><a class="plate" href="${config.social[key]!}" rel="me noopener">${label}</a></li>`)}
+      </ul>
     </nav>
-    <p class="foot-wm" aria-hidden="true">farside</p>
-    <div class="foot-fine">
-      <p>© 2026 ${owner}. No cookies, no analytics and no ads on this site.</p>
-      <p>Apple, Mac, iPhone, iPad and App Store are trademarks of Apple Inc., registered in the U.S. and other countries and regions. Farside is not affiliated with Apple. Other product names belong to their owners.</p>
+    <div class="foot-fine plate">
+      <p>© 2026 ${owner}. No cookies, no analytics, no ads.</p>
+      <p>Apple, Mac, iPhone, iPad and App Store are trademarks of Apple Inc., registered in the U.S. and other countries and regions. Farside is not affiliated with Apple.</p>
     </div>
   </div>
 </footer>`;
@@ -207,7 +220,11 @@ export function page(meta: PageMeta, assets: Assets, body: Html): string {
   const ogTitle = meta.ogTitle ?? meta.title;
   const img = abs(ogUrl(assets, meta.og));
   const imgAlt = "A halftone fingertip meets a Mac pointer at one ember dot, beside the Farside headline.";
-  const banner = config.launch.appStoreId ? html`\n<meta name="apple-itunes-app" content="app-id=${config.launch.appStoreId}">` : "";
+  // Smart App Banner, launch day only. app-argument must be a path the app claims (AASA: /open).
+  const banner =
+    config.launch.live && config.launch.appStoreId
+      ? html`\n<meta name="apple-itunes-app" content="app-id=${config.launch.appStoreId}, app-argument=${abs("/open")}">`
+      : "";
   const ld = meta.jsonLd
     ? raw(`\n<script type="application/ld+json">${JSON.stringify(meta.jsonLd).replace(/</g, "\\u003c")}</script>`)
     : "";
@@ -217,7 +234,7 @@ export function page(meta: PageMeta, assets: Assets, body: Html): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${meta.title}</title>
-<meta name="description" content="${meta.description}">${meta.noCanonical ? "" : html`\n<link rel="canonical" href="${url}">`}
+<meta name="description" content="${meta.description}">${meta.noCanonical ? html`\n<meta name="robots" content="noindex">` : html`\n<link rel="canonical" href="${url}">`}
 <meta name="theme-color" content="#050505">
 <meta name="color-scheme" content="dark">
 <link rel="icon" href="/favicon.ico" sizes="32x32">
@@ -227,15 +244,14 @@ export function page(meta: PageMeta, assets: Assets, body: Html): string {
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <noscript><link rel="stylesheet" href="${FONTS_URL}"></noscript>
-<style>${raw(assets.cssText)}</style>
+<style>${raw(assets.cssText)}</style>${meta.homeCss ? html`\n<style>${raw(assets.homeCss)}</style>` : ""}
 <script type="module" src="${assets.js[meta.script]}"></script>
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Farside">
 <meta property="og:locale" content="en_CA">
 <meta property="og:title" content="${ogTitle}">
 <meta property="og:description" content="${meta.description}">
-<meta property="og:url" content="${url}">
-<meta property="og:image" content="${img}">
+${meta.noCanonical ? "" : html`<meta property="og:url" content="${url}">\n`}<meta property="og:image" content="${img}">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -252,6 +268,7 @@ ${header(meta)}
 <main id="main" tabindex="-1">
 ${body}
 </main>
+<div class="foot-space" aria-hidden="true"></div>
 ${footer()}
 </body>
 </html>
