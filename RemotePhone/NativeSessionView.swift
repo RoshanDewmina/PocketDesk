@@ -3111,8 +3111,7 @@ private struct DotWaveform: View {
     }
 }
 
-/// One line at standard sizes; at accessibility sizes the value moves under the title so neither
-/// breaks mid-word or truncates.
+/// At accessibility sizes the value goes under the title so neither breaks mid-word or truncates.
 private struct SettingsSummaryLabel: View {
     let title: String
     let symbol: String

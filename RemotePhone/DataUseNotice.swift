@@ -82,7 +82,7 @@ struct DataWarningCard: View {
             // At the largest text sizes the message scrolls and the buttons stack, so both stay on screen.
             ViewThatFits(in: .vertical) {
                 notice
-                ScrollView { notice }.scrollBounceBehavior(.basedOnSize)
+                ScrollView { notice.frame(maxWidth: .infinity, alignment: .leading) }.scrollBounceBehavior(.basedOnSize)
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 10) { buttons }
