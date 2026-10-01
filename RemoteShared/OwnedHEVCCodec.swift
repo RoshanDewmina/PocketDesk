@@ -169,7 +169,10 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                         kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, outputCallback: nil, decompressionSessionOut: &session)
                 guard result == noErr else { fail(result); return -1 }
             }
-            guard let session, let format, !payload.isEmpty, pending.count < 2 else { return -1 }
+            guard let session, let format, !payload.isEmpty else { return -1 }
+            // Rejecting a frame breaks the HEVC reference chain and makes WebRTC request a keyframe;
+            // a burst then triggers more keyframes. Bound in-flight work by waiting instead.
+            if pending.count >= 2 { VTDecompressionSessionWaitForAsynchronousFrames(session) }
             var block: CMBlockBuffer?
             guard CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: nil, blockLength: payload.count,
                 blockAllocator: kCFAllocatorDefault, customBlockSource: nil, offsetToData: 0, dataLength: payload.count, flags: 0, blockBufferOut: &block) == noErr, let block else { return -1 }
