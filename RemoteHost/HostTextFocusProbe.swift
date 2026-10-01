@@ -45,6 +45,10 @@ enum HostTextFocusProbe {
         return id.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
 
+    /// The second tap of a double cancels the first tap's probe, whose AX call may still hold the
+    /// lane; dropping the new probe answered "not editable" and the keyboard never opened.
+    static let lanePatience: TimeInterval = 0.25
+
     static func editableAtClick(_ point: CGPoint) async -> Bool {
         await focus(at: point, geometry: false).editable
     }
@@ -54,7 +58,9 @@ enum HostTextFocusProbe {
     static func focus(at point: CGPoint?, geometry: Bool,
                       broker: HostAXBroker = .shared) async -> HostTextFocusResult {
         if let point, !(point.x.isFinite && point.y.isFinite) { return .unfocused }
-        return await broker.run { budget in inspect(point, geometry: geometry, budget: budget) } ?? .unfocused
+        return await broker.run(waitForLane: lanePatience) { budget in
+            inspect(point, geometry: geometry, budget: budget)
+        } ?? .unfocused
     }
 
     private static func inspect(_ point: CGPoint?, geometry: Bool, budget: HostAXBudget) -> HostTextFocusResult {
