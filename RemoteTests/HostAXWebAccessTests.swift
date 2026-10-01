@@ -97,19 +97,19 @@ final class HostAXWebAccessTests: XCTestCase {
     func testPolicyClaimsEachWebProcessOnceAndNeverNativeApps() {
         var policy = HostAXWebActivationPolicy()
         let claude = HostAXProcessKey(pid: 501, launched: 1000)
-        XCTAssertFalse(policy.claim(HostAXProcessKey(pid: 77, launched: 1), engine: .native))
-        XCTAssertTrue(policy.claim(claude, engine: .electron))
-        XCTAssertFalse(policy.claim(claude, engine: .electron), "At most once per process")
-        XCTAssertTrue(policy.claim(HostAXProcessKey(pid: 501, launched: 2000), engine: .electron),
+        XCTAssertFalse(policy.claim(HostAXProcessKey(pid: 77, launched: 1), engine: .native, now: 0) != nil)
+        XCTAssertTrue(policy.claim(claude, engine: .electron, now: 0) != nil)
+        XCTAssertFalse(policy.claim(claude, engine: .electron, now: 0) != nil, "At most once per process")
+        XCTAssertTrue(policy.claim(HostAXProcessKey(pid: 501, launched: 2000), engine: .electron, now: 0) != nil,
                       "A relaunch that reuses the pid is a new process")
-        XCTAssertTrue(policy.claim(HostAXProcessKey(pid: 900, launched: 5), engine: .chromium))
+        XCTAssertTrue(policy.claim(HostAXProcessKey(pid: 900, launched: 5), engine: .chromium, now: 0) != nil)
         XCTAssertEqual(policy.attempted.count, 3)
     }
 
     func testPolicyMemoryIsBounded() {
         var policy = HostAXWebActivationPolicy()
         for pid in 0..<(HostAXWebActivationPolicy.capacity * 3) {
-            _ = policy.claim(HostAXProcessKey(pid: pid_t(pid), launched: nil), engine: .electron)
+            _ = policy.claim(HostAXProcessKey(pid: pid_t(pid), launched: nil), engine: .electron, now: 0)
         }
         XCTAssertLessThanOrEqual(policy.attempted.count, HostAXWebActivationPolicy.capacity)
     }
@@ -183,7 +183,7 @@ final class HostAXWebAccessTests: XCTestCase {
         HostAXWebPrewarm(activator: HostAXWebActivator(classify: { _ in engine }),
                          broker: HostAXBroker(label: "test.ax.prewarm.\(UUID().uuidString)"),
                          set: { attribute, _, pid, _ in writes.add(attribute, pid); return attribute == .manual ? manual : .applied },
-                         isOn: { _, _, _ in .off })
+                         isOn: { _, _, _ in .off }, trusted: { true })
     }
 
     private let app = URL(fileURLWithPath: "/Applications/Example.app")
@@ -231,7 +231,7 @@ final class HostAXWebAccessTests: XCTestCase {
         let activator = HostAXWebActivator(classify: { _ in .electron })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.prewarm.shared"),
                                     set: { attribute, _, pid, _ in writes.add(attribute, pid); return .applied },
-                                    isOn: { _, _, _ in .off })
+                                    isOn: { _, _, _ in .off }, trusted: { true })
         _ = await warm.appActivated(pid: 4246, launched: 7, bundleURL: app, sessionActive: true)
         XCTAssertNil(activator.activateIfNeeded(HostAXProcessKey(pid: 4246, launched: 7), engine: .electron,
                                                 set: { _ in .applied }, isOn: { _ in .off }),
@@ -246,7 +246,7 @@ final class HostAXWebAccessTests: XCTestCase {
         _ = await hog.value
         let warm = HostAXWebPrewarm(activator: activator, broker: broker,
                                     set: { attribute, _, pid, _ in writes.add(attribute, pid); return .applied },
-                                    isOn: { _, _, _ in .off })
+                                    isOn: { _, _, _ in .off }, trusted: { true })
         let outcome = await warm.appActivated(pid: 4247, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(outcome, .laneBusy)
         XCTAssertEqual(writes.attributes, [])
@@ -296,7 +296,7 @@ final class HostAXWebAccessTests: XCTestCase {
     func testUnsentPrewarmLeavesTheProcessAskable() async {
         let activator = HostAXWebActivator(classify: { _ in .electron })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.prewarm.unsent"),
-                                    set: { _, _, _, _ in .notAttempted }, isOn: { _, _, _ in .off })
+                                    set: { _, _, _, _ in .notAttempted }, isOn: { _, _, _ in .off }, trusted: { true })
         let outcome = await warm.appActivated(pid: 64, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(outcome, .notSent)
         XCTAssertFalse(activator.isClaimed(HostAXProcessKey(pid: 64, launched: 1)))
@@ -324,7 +324,7 @@ final class HostAXWebAccessTests: XCTestCase {
         let activator = HostAXWebActivator(classify: { _ in .chromium })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.revert"),
                                     set: { attribute, value, pid, _ in flags.set(attribute, value, pid) },
-                                    isOn: { _, pid, _ in flags.read(pid) })
+                                    isOn: { _, pid, _ in flags.read(pid) }, trusted: { true })
         let ours = await warm.appActivated(pid: 70, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(ours, .requested(HostAXWebActivation(attribute: .enhanced, outcome: .applied)))
         let theirs = await warm.appActivated(pid: 71, launched: 1, bundleURL: app, sessionActive: true)
@@ -358,5 +358,66 @@ final class HostAXWebAccessTests: XCTestCase {
         XCTAssertEqual(activator.revertEnhanced(isOn: { _ in .on }, turnOff: { turnedOff.append($0); return .applied }), [chrome])
         XCTAssertEqual(turnedOff, [chrome], "AXManualAccessibility on the Electron app is left on")
         XCTAssertTrue(activator.isClaimed(electron))
+    }
+
+    // MARK: Second review: retries after failure, trust, overrun
+
+    func testFailedRequestRetriesOnlyAfterTheCooldownAndAtMostThreeTimes() {
+        var now: TimeInterval = 1000
+        let activator = HostAXWebActivator(classify: { _ in .electron }, clock: { now })
+        let key = HostAXProcessKey(pid: 90, launched: 1)
+        var writes = 0
+        func ask() -> HostAXActivationAttempt {
+            activator.request(key, engine: .electron, set: { _ in writes += 1; return .failed }, isOn: { _ in .off })
+        }
+        XCTAssertEqual(ask(), .sent(HostAXWebActivation(attribute: .manual, outcome: .failed)))
+        now += 1
+        XCTAssertEqual(ask(), .skipped, "A failed request is not repeated inside the cooldown")
+        now += HostAXWebActivationPolicy.retryCooldown
+        XCTAssertEqual(ask(), .sent(HostAXWebActivation(attribute: .manual, outcome: .failed)))
+        now += HostAXWebActivationPolicy.retryCooldown
+        XCTAssertEqual(ask(), .sent(HostAXWebActivation(attribute: .manual, outcome: .failed)))
+        now += HostAXWebActivationPolicy.retryCooldown * 10
+        XCTAssertEqual(ask(), .skipped, "The third failure stops retries for this process")
+        XCTAssertEqual(writes, HostAXWebActivationPolicy.maxAttempts)
+    }
+
+    func testAppliedRequestIsNeverRepeatedAndUnsentAfterFailureKeepsTheCount() {
+        var now: TimeInterval = 0
+        let activator = HostAXWebActivator(classify: { _ in .electron }, clock: { now })
+        let key = HostAXProcessKey(pid: 91, launched: 1)
+        XCTAssertEqual(activator.request(key, engine: .electron, set: { _ in .failed }, isOn: { _ in .off }),
+                       .sent(HostAXWebActivation(attribute: .manual, outcome: .failed)))
+        now += HostAXWebActivationPolicy.retryCooldown
+        XCTAssertEqual(activator.request(key, engine: .electron, set: { _ in .notAttempted }, isOn: { _ in .off }), .notSent)
+        XCTAssertEqual(activator.request(key, engine: .electron, set: { _ in .applied }, isOn: { _ in .off }),
+                       .sent(HostAXWebActivation(attribute: .manual, outcome: .applied)),
+                       "An unsent retry does not use up the cooldown or an attempt")
+        now += 100
+        XCTAssertEqual(activator.request(key, engine: .electron, set: { _ in .applied }, isOn: { _ in .off }), .skipped)
+    }
+
+    func testPrewarmWithoutAccessibilityTrustAsksNothing() async {
+        let writes = Writes()
+        let activator = HostAXWebActivator(classify: { _ in .electron })
+        let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.untrusted"),
+                                    set: { attribute, _, pid, _ in writes.add(attribute, pid); return .failed },
+                                    isOn: { _, _, _ in .off }, trusted: { false })
+        let outcome = await warm.appActivated(pid: 92, launched: 1, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(outcome, .notTrusted)
+        XCTAssertEqual(writes.attributes, [])
+        XCTAssertFalse(activator.isClaimed(HostAXProcessKey(pid: 92, launched: 1)))
+    }
+
+    func testPrewarmThatOverrunsItsBudgetReportsTimedOutNotLaneBusy() async {
+        let activator = HostAXWebActivator(classify: { _ in .electron })
+        let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.overrun"),
+                                    set: { _, _, _, _ in Thread.sleep(forTimeInterval: 0.4); return .failed },
+                                    isOn: { _, _, _ in .off }, trusted: { true })
+        let outcome = await warm.appActivated(pid: 93, launched: 1, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(outcome, .timedOut)
+        try? await Task.sleep(for: .milliseconds(300))
+        XCTAssertTrue(activator.isClaimed(HostAXProcessKey(pid: 93, launched: 1)),
+                      "The write that ran late was sent and counts as a failed attempt")
     }
 }

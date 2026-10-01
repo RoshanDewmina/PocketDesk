@@ -69,21 +69,45 @@ struct HostAXProcessKey: Hashable, Sendable {
 /// cut window animations for. So that attribute is only the fallback, and never written when already on.
 struct HostAXWebActivationPolicy {
     static let capacity = 64
+    /// A request that was sent but failed (typically a timeout while the app launches) may be repeated,
+    /// at most this many times in all and this far apart, so a hung app does not pay on every tap.
+    static let maxAttempts = 3
+    static let retryCooldown: TimeInterval = 5
 
-    private(set) var attempted: Set<HostAXProcessKey> = []
-
-    /// True exactly once per process of a Chromium-based app. Forgetting everything at capacity can only
-    /// repeat an idempotent request for an app that already has its tree.
-    mutating func claim(_ key: HostAXProcessKey, engine: HostAppEngine) -> Bool {
-        guard engine.isWeb, !attempted.contains(key) else { return false }
-        if attempted.count >= Self.capacity { attempted.removeAll(keepingCapacity: true) }
-        attempted.insert(key)
-        return true
+    struct Record: Equatable, Sendable {
+        var attempts: Int
+        var lastAt: TimeInterval
+        /// The last request was sent and failed; another may follow after the cooldown.
+        var failed: Bool
     }
 
-    /// A request that was never sent (cancelled or out of time) must not use up the process's one ask.
-    mutating func release(_ key: HostAXProcessKey) {
-        attempted.remove(key)
+    private(set) var records: [HostAXProcessKey: Record] = [:]
+
+    var attempted: Set<HostAXProcessKey> { Set(records.keys) }
+
+    /// Claims one request for a process of a Chromium-based app, returning the record it replaced so an
+    /// unsent request can restore it. Nil means no request now. Forgetting everything at capacity can
+    /// only repeat an idempotent request for an app that already has its tree.
+    mutating func claim(_ key: HostAXProcessKey, engine: HostAppEngine, now: TimeInterval) -> Record?? {
+        guard engine.isWeb else { return nil }
+        let previous = records[key]
+        if let previous {
+            guard previous.failed, previous.attempts < Self.maxAttempts,
+                  now - previous.lastAt >= Self.retryCooldown else { return nil }
+        } else if records.count >= Self.capacity {
+            records.removeAll(keepingCapacity: true)
+        }
+        records[key] = Record(attempts: (previous?.attempts ?? 0) + 1, lastAt: now, failed: false)
+        return .some(previous)
+    }
+
+    mutating func finish(_ key: HostAXProcessKey, failed: Bool) {
+        records[key]?.failed = failed
+    }
+
+    /// A request that was never sent (cancelled or out of time) does not count as an attempt.
+    mutating func release(_ key: HostAXProcessKey, restoring previous: Record? = nil) {
+        records[key] = previous
     }
 
     static func needsEnhancedFallback(after manual: HostAXSetOutcome, enhanced: HostAXFlagRead) -> Bool {
@@ -96,6 +120,14 @@ struct HostAXWebActivation: Equatable, Sendable {
     let outcome: HostAXSetOutcome
 }
 
+enum HostAXActivationAttempt: Equatable, Sendable {
+    /// Native, already asked, or a failed request still cooling down.
+    case skipped
+    /// The budget ran out before anything was written; the process stays askable.
+    case notSent
+    case sent(HostAXWebActivation)
+}
+
 final class HostAXWebActivator: @unchecked Sendable {
     static let shared = HostAXWebActivator()
 
@@ -105,9 +137,12 @@ final class HostAXWebActivator: @unchecked Sendable {
     /// Processes where Farside turned AXEnhancedUserInterface on, to turn it off again at session end.
     private var enhancedByUs: Set<HostAXProcessKey> = []
     private let classify: (URL?) -> HostAppEngine
+    private let clock: () -> TimeInterval
 
-    init(classify: @escaping (URL?) -> HostAppEngine = { HostAppEngine.classify(bundleURL: $0) }) {
+    init(classify: @escaping (URL?) -> HostAppEngine = { HostAppEngine.classify(bundleURL: $0) },
+         clock: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.classify = classify
+        self.clock = clock
     }
 
     func engine(for bundleURL: URL?) -> HostAppEngine {
@@ -124,44 +159,52 @@ final class HostAXWebActivator: @unchecked Sendable {
         return engine
     }
 
-    /// Nil when this process was already asked, needs nothing, or the request could not be sent. A
-    /// request that was sent and failed is not repeated for the same process: a hung app would
-    /// otherwise pay for it on every tap. One that was never sent leaves the process askable.
+    /// The activation that was sent, or nil when nothing was (see `request`).
     func activateIfNeeded(_ key: HostAXProcessKey, engine: HostAppEngine,
                           set: (HostAXWebAttribute) -> HostAXSetOutcome,
                           isOn: (HostAXWebAttribute) -> HostAXFlagRead) -> HostAXWebActivation? {
+        if case .sent(let activation) = request(key, engine: engine, set: set, isOn: isOn) { return activation }
+        return nil
+    }
+
+    /// One request per process; a sent request that failed may be repeated after a cooldown, and one
+    /// that was never sent leaves the process askable.
+    func request(_ key: HostAXProcessKey, engine: HostAppEngine,
+                 set: (HostAXWebAttribute) -> HostAXSetOutcome,
+                 isOn: (HostAXWebAttribute) -> HostAXFlagRead) -> HostAXActivationAttempt {
+        let now = clock()
         lock.lock()
-        let claimed = policy.claim(key, engine: engine)
+        let claim = policy.claim(key, engine: engine, now: now)
         lock.unlock()
-        guard claimed else { return nil }
+        guard let previous = claim else { return .skipped }
+        func unsent() -> HostAXActivationAttempt {
+            lock.lock(); policy.release(key, restoring: previous); lock.unlock()
+            HostTextFocusLog.logger.info("AX tree request not sent; process stays askable")
+            return .notSent
+        }
         let manual = set(.manual)
-        guard manual != .notAttempted else { return unclaim(key) }
+        guard manual != .notAttempted else { return unsent() }
         var result = HostAXWebActivation(attribute: .manual, outcome: manual)
         if manual == .unsupported {
             let enhanced = isOn(.enhanced)
-            guard enhanced != .notAttempted else { return unclaim(key) }
+            guard enhanced != .notAttempted else { return unsent() }
             if HostAXWebActivationPolicy.needsEnhancedFallback(after: manual, enhanced: enhanced) {
                 let outcome = set(.enhanced)
-                guard outcome != .notAttempted else { return unclaim(key) }
+                guard outcome != .notAttempted else { return unsent() }
                 result = HostAXWebActivation(attribute: .enhanced, outcome: outcome)
                 // The Codex app reports notImplemented yet turns it on, so any sent write is remembered.
                 if outcome != .unsupported { lock.lock(); enhancedByUs.insert(key); lock.unlock() }
             }
         }
+        lock.lock(); policy.finish(key, failed: result.outcome == .failed); lock.unlock()
         HostTextFocusLog.logger.info(
             "AX tree requested engine=\(engine.rawValue, privacy: .public) attribute=\(result.attribute.rawValue, privacy: .public) outcome=\(result.outcome.rawValue, privacy: .public)")
-        return result
+        return .sent(result)
     }
 
     func isClaimed(_ key: HostAXProcessKey) -> Bool {
         lock.lock(); defer { lock.unlock() }
         return policy.attempted.contains(key)
-    }
-
-    private func unclaim(_ key: HostAXProcessKey) -> HostAXWebActivation? {
-        lock.lock(); policy.release(key); lock.unlock()
-        HostTextFocusLog.logger.info("AX tree request not sent; process stays askable")
-        return nil
     }
 
     /// At session end, turns AXEnhancedUserInterface off where Farside turned it on and it is still on,
@@ -215,7 +258,7 @@ enum HostTextFocusLog {
 }
 
 enum HostAXPrewarmOutcome: Equatable, Sendable {
-    case noSession, native, alreadyAsked, laneBusy, notSent
+    case noSession, notTrusted, native, alreadyAsked, laneBusy, timedOut, notSent
     case requested(HostAXWebActivation)
 
     var reason: String {
@@ -223,7 +266,9 @@ enum HostAXPrewarmOutcome: Equatable, Sendable {
         case .noSession: "noSession"
         case .native: "native"
         case .alreadyAsked: "alreadyAsked"
+        case .notTrusted: "notTrusted"
         case .laneBusy: "laneBusy"
+        case .timedOut: "timedOut"
         case .notSent: "notSent"
         case .requested: "requested"
         }
@@ -246,6 +291,7 @@ struct HostAXWebPrewarm: Sendable {
     var isOn: IsOn = { attribute, pid, budget in
         HostAXWebActivator.isOn(attribute, on: AXUIElementCreateApplication(pid), budget: budget)
     }
+    var trusted: @Sendable () -> Bool = { AXIsProcessTrusted() }
 
     func appActivated(pid: pid_t, launched: TimeInterval?, bundleURL: URL?,
                       sessionActive: Bool) async -> HostAXPrewarmOutcome {
@@ -259,18 +305,32 @@ struct HostAXWebPrewarm: Sendable {
         guard sessionActive else { return .noSession }
         guard pid > 0, pid != getpid() else { return .native }
         let key = HostAXProcessKey(pid: pid, launched: launched)
-        let (activator, set, isOn) = (activator, set, isOn)
+        let (activator, set, isOn, trusted) = (activator, set, isOn, trusted)
+        let started = Flag()
         // Classifying reads the bundle from disk, so it happens on the lane too, never on main.
-        return await broker.run(waitForLane: HostTextFocusProbe.lanePatience) { budget -> HostAXPrewarmOutcome? in
+        let result = await broker.run(waitForLane: HostTextFocusProbe.lanePatience) { budget -> HostAXPrewarmOutcome? in
+            started.set()
+            // The session predicate checks the post-events permission; without AX trust a write fails
+            // with apiDisabled and would count as a failed attempt.
+            guard trusted() else { return .notTrusted }
             let engine = activator.engine(for: bundleURL)
             guard engine.isWeb else { return .native }
-            guard let activation = activator.activateIfNeeded(key, engine: engine,
-                                                              set: { set($0, true, pid, budget) },
-                                                              isOn: { isOn($0, pid, budget) }) else {
-                return activator.isClaimed(key) ? .alreadyAsked : .notSent
+            switch activator.request(key, engine: engine, set: { set($0, true, pid, budget) },
+                                     isOn: { isOn($0, pid, budget) }) {
+            case .skipped: return .alreadyAsked
+            case .notSent: return .notSent
+            case .sent(let activation): return .requested(activation)
             }
-            return .requested(activation)
-        } ?? .laneBusy
+        }
+        // The broker discards work that overran its budget; that work may still have written.
+        return result ?? (started.isSet ? .timedOut : .laneBusy)
+    }
+
+    private final class Flag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        func set() { lock.lock(); value = true; lock.unlock() }
+        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
     }
 
     /// Session end: undo AXEnhancedUserInterface where Farside set it. A busy lane leaves it for the next end.
