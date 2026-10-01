@@ -2408,34 +2408,28 @@ final class RemoteHostModel: ObservableObject {
             HostInputExecutor.Admitted(action: action, upgraded: true,
                                        expires: inputFreshness.postingDeadline(for: action, epoch: inputEpoch.value))
         }
-        let generation = input.currentGeneration
         let preparation = semantic.map { $0.action == "key" && $0.key == "c" && $0.modifiers == ["command"] } == true && input.enabled
             ? clipboard.prepareForCopyShortcut() : nil
-        let post = { [weak self, weak peer] in
-            guard let self, let peer, self.connection.media === peer, self.input.currentGeneration == generation else { return }
-            let accepted = self.input.submitCausal(context, steps: steps, semantic: admittedSemantic, preparation: preparation,
-                routeAuthority: { operation in peer.withInputPostingAuthority(operation) ?? RemoteInputOutcome() },
-                completion: { [weak self, weak peer] receipt in
-                    MainActor.assumeIsolated {
-                        guard let self, let peer, self.connection.media === peer, self.input.currentGeneration == receipt.generation else { return }
-                        for (action, result) in receipt.results {
-                            self.pointerTelemetry.moveProcessed(action)
-                            self.finishInput(action, outcome: result.outcome, upgraded: true, now: ProcessInfo.processInfo.systemUptime,
-                                             point: result.point, activeHold: result.externalHold, startedMs: result.startedMs,
-                                             endedMs: result.endedMs, arrivedMs: nil)
-                        }
-                        if receipt.failed || receipt.intervention {
-                            if let semantic, semantic.action == "text" { self.sendTextResult(for: semantic.key, accepted: false) }
-                            _ = self.connection.recoverCausalInput(context)
-                        } else { self.connection.acknowledgeCausalInput(context, applied: receipt.applied) }
-                    }
-                })
-            if !accepted {
-                if let semantic, semantic.action == "text" { self.sendTextResult(for: semantic.key, accepted: false) }
-                _ = self.connection.recoverCausalInput(context)
+        let accepted = input.post(owner: self, peer: peer, isLive: { $0.connection.media === $1 }, submit: { [input] authority, completion in
+            input.submitCausal(context, steps: steps, semantic: admittedSemantic, preparation: preparation,
+                               routeAuthority: authority, completion: completion)
+        }, deliver: { (model: RemoteHostModel, receipt: HostInputExecutor.BatchReceipt) in
+            guard model.input.currentGeneration == receipt.generation else { return }
+            for (action, result) in receipt.results {
+                model.pointerTelemetry.moveProcessed(action)
+                model.finishInput(action, outcome: result.outcome, upgraded: true, now: ProcessInfo.processInfo.systemUptime,
+                                  point: result.point, activeHold: result.externalHold, startedMs: result.startedMs,
+                                  endedMs: result.endedMs, arrivedMs: nil)
             }
+            if receipt.failed || receipt.intervention {
+                if let semantic, semantic.action == "text" { model.sendTextResult(for: semantic.key, accepted: false) }
+                _ = model.connection.recoverCausalInput(context)
+            } else { model.connection.acknowledgeCausalInput(context, applied: receipt.applied) }
+        })
+        if !accepted {
+            if let semantic, semantic.action == "text" { sendTextResult(for: semantic.key, accepted: false) }
+            _ = connection.recoverCausalInput(context)
         }
-        post()
     }
 
     private func receive(_ data: Data) {
@@ -2578,25 +2572,20 @@ final class RemoteHostModel: ObservableObject {
         guard let peer = connection.media else { return }
         let preparation = action.action == "key" && action.key == "c" && action.modifiers == ["command"] && input.enabled
             ? clipboard.prepareForCopyShortcut() : nil
-        let post = { [weak self, weak peer] in
-            guard let self, let peer, self.connection.media === peer else { return }
-            let submitted = self.input.submit(action, upgraded: admission == .upgraded, expires: expires, expectedGeneration: admittedGeneration, preparation: preparation,
-                routeAuthority: { operation in peer.withInputPostingAuthority(operation) ?? RemoteInputOutcome() },
-                completion: { [weak self, weak peer] receipt in
-                    MainActor.assumeIsolated {
-                        guard let self, let peer, self.connection.media === peer, self.input.accepts(receipt) else { return }
-                        self.finishInput(action, outcome: receipt.outcome, upgraded: admission == .upgraded,
-                                         now: ProcessInfo.processInfo.systemUptime, point: receipt.point,
-                                         activeHold: receipt.externalHold, startedMs: receipt.startedMs,
-                                         endedMs: receipt.endedMs, arrivedMs: arrivedMs)
-                    }
-                })
-            if !submitted {
-                self.releaseRemoteInput(notifyPhone: true)
-                self.connection.endPhoneInputSession("Input queue was full. Reconnecting.")
-            }
+        let submitted = input.post(owner: self, peer: peer, isLive: { $0.connection.media === $1 }, submit: { [input] authority, completion in
+            input.submit(action, upgraded: admission == .upgraded, expires: expires, expectedGeneration: admittedGeneration,
+                         preparation: preparation, routeAuthority: authority, completion: completion)
+        }, deliver: { (model: RemoteHostModel, receipt: HostInputExecutor.Receipt) in
+            guard model.input.accepts(receipt) else { return }
+            model.finishInput(action, outcome: receipt.outcome, upgraded: admission == .upgraded,
+                              now: ProcessInfo.processInfo.systemUptime, point: receipt.point,
+                              activeHold: receipt.externalHold, startedMs: receipt.startedMs,
+                              endedMs: receipt.endedMs, arrivedMs: arrivedMs)
+        })
+        if !submitted {
+            releaseRemoteInput(notifyPhone: true)
+            connection.endPhoneInputSession("Input queue was full. Reconnecting.")
         }
-        post()
     }
 
     private func finishInput(_ action: RemoteAction, outcome: RemoteInputOutcome, upgraded: Bool,
