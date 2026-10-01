@@ -83,6 +83,27 @@ final class PhoneMediaSessionTests: XCTestCase {
         XCTAssertEqual(configured, 1); XCTAssertEqual(deactivated, 1)
     }
 
+    func testLastOwnerDeactivationCannotReenterAcquisitionOrRetirementRestart() {
+        var registry: PhoneMediaSession!
+        var duringDeactivation = true, releases = 0
+        registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {
+            releases += 1
+            if duringDeactivation {
+                XCTAssertFalse(registry.acquire(UUID(), kind: .pictureInPicture, onRetired: {}))
+                registry.retireAll()
+                XCTAssertFalse(registry.acquire(UUID(), kind: .recording, onRetired: {}))
+            }
+        }))
+        let old = UUID(), next = UUID()
+        XCTAssertTrue(registry.acquire(old, kind: .pictureInPicture, onRetired: {}))
+        XCTAssertTrue(registry.release(old)); XCTAssertEqual(releases, 1)
+        duringDeactivation = false
+        XCTAssertTrue(registry.acquire(next, kind: .pictureInPicture, onRetired: {}))
+        XCTAssertFalse(registry.release(old)); XCTAssertTrue(registry.contains(next))
+        XCTAssertEqual(releases, 1)
+        registry.release(next); XCTAssertEqual(releases, 2)
+    }
+
     func testDuplicateOwnerCannotChangeKindAndRegistryIsBounded() {
         let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
         let id = UUID()
