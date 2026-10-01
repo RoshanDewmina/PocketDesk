@@ -185,6 +185,7 @@
 		27271BEF3CD8B7A47E620033 /* BigTextProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F67EED2B1DFE7DA4819F1461 /* BigTextProtocol.swift */; };
 		274119C8D79C44696F016432 /* AnywhereStoreKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E57A75F4FB698B857CC6F42 /* AnywhereStoreKitTests.swift */; };
 		274AB3019D901C3E379273DF /* NativeCodecCapability.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB7E6B1B2D48610494416341 /* NativeCodecCapability.swift */; };
+		274F7F40E5A0FC6EC38479BF /* HostGuestSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEAE6E4AD4B0C377DFE9C40B /* HostGuestSettingsView.swift */; };
 		27501DC95C4C5BB3FCD68ACA /* VideoAdmissionLifetimeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A98D9D2E500C15E0408F846 /* VideoAdmissionLifetimeTests.swift */; };
 		27591B33CE73CC071150F456 /* RemotePhoneApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8FC077F3131B8830DBE715F /* RemotePhoneApp.swift */; };
 		27B9184CADFE50A02F9B8B22 /* PhoneClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D0946F7F5C7A6572E8C193F /* PhoneClipboard.swift */; };
@@ -3531,6 +3532,7 @@
 				9E8E4AFBA3F2BC24B7E731BA /* HostAwayEnvironment.swift in Sources */,
 				437FA109CDAAFF8F297B969E /* HostAwayPresentation.swift in Sources */,
 				025C7C5ACA218DE7AC3619BE /* HostFontTests.swift in Sources */,
+				274F7F40E5A0FC6EC38479BF /* HostGuestSettingsView.swift in Sources */,
 				C451862110535A7F0F73D284 /* HostIdentityStore.swift in Sources */,
 				0DFB4E414B448734F36B004E /* HostLANWake.swift in Sources */,
 				3CE454E805022BB5DFA4902A /* HostLiveStrip.swift in Sources */,
