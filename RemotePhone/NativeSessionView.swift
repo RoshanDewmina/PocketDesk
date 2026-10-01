@@ -656,6 +656,10 @@ struct NativeSessionView: View {
                     verdict: model.qualityVerdict, stall: model.wifiStallTip,
                     dismissed: model.dismissedQualityBanners, device: UIDevice.current.model), dismiss: model.dismissQualityBanner)
             }
+            if let warning = model.dataWarning {
+                DataWarningCard(content: warning, useLessData: model.useLessData, keep: model.keepDataQuality)
+                    .transition(.opacity)
+            }
             if streamStatsEnabled && !model.streamSummaryLines.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
                     let lines = model.streamSummaryLines + [model.cropSummary?.caption, SmoothMotionController.overlayLine].compactMap { $0 }

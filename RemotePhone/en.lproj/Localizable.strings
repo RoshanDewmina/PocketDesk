@@ -130,8 +130,8 @@
 "DATA_USE_PRESET_SPOKEN" = "%@: about %@ to %@ gigabytes per hour";
 "DATA_USE_NOTE" = "Estimates run from a still screen to constant motion, with Mac audio while you listen. Files and guest viewers are counted separately. Experimental relay packet repair adds up to 20%%. Carrier billing adds network overhead.";
 "DATA_WARNING_TITLE" = "On cellular or metered data";
-"DATA_WARNING_BODY" = "%@ uses about %@–%@ GB per hour. Files and guest viewers are extra. Your session keeps running.";
-"DATA_WARNING_LOWER" = "%@ uses about %@–%@ GB per hour.";
+"DATA_WARNING_RATE" = "%@ uses about %@–%@ GB per hour.";
+"DATA_WARNING_EXTRA" = "Files and guest viewers are extra. Your session keeps running.";
 "DATA_WARNING_LESS" = "Use less data";
 "DATA_WARNING_LESS_HINT" = "Switches the picture to %@.";
 "DATA_WARNING_KEEP" = "Keep";

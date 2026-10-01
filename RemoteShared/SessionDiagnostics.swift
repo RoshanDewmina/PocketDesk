@@ -47,7 +47,7 @@ struct DiagnosticSessionRecorder {
         if let usage = report.transportUsage {
             bytes.observe(.init(generation: usage.generation, at: usage.sampledAt, sent: usage.bytesSent,
                 received: usage.bytesReceived, sentKbps: usage.sentKbps, receivedKbps: usage.receivedKbps,
-                media: usage.mediaBytes, files: usage.fileBytes))
+                media: usage.mediaByEntry, files: usage.fileByEntry))
         } else {
             bytes.observe(.init(generation: UUID(), at: now, sent: nil, received: nil, sentKbps: nil, receivedKbps: nil))
         }
@@ -80,7 +80,7 @@ struct DiagnosticSessionRecorder {
 
 /// Counts only differences actually observed on one selected transport generation.
 /// No RTP addition (would double count), billing conversion, guest aggregation or gap extrapolation.
-/// The media/file split is reported only when every counted interval could also be split.
+/// The media/file split is reported only when every counted interval carried split counters.
 struct DiagnosticByteLedger {
     struct Reading {
         let generation: UUID
@@ -89,8 +89,8 @@ struct DiagnosticByteLedger {
         let received: UInt64?
         let sentKbps: Double?
         let receivedKbps: Double?
-        var media: UInt64? = nil
-        var files: UInt64? = nil
+        var media: [String: UInt64]? = nil
+        var files: [String: UInt64]? = nil
     }
     private var previous: Reading?
     private var sent: UInt64 = 0
@@ -111,8 +111,9 @@ struct DiagnosticByteLedger {
         let (ns, so) = sent.addingReportingOverflow(s - os), (nr, ro) = received.addingReportingOverflow(r - or)
         guard !so, !ro else { complete = false; recentKbps = nil; return }
         sent = ns; received = nr; measured = true; seconds += next.at - old.at
-        if let om = old.media, let nm = next.media, let of = old.files, let nf = next.files, nm >= om, nf >= of {
-            media = media &+ (nm - om); files = files &+ (nf - of)
+        if let om = old.media, let nm = next.media, let of = old.files, let nf = next.files {
+            media = media &+ TransportByteSplit.growth(from: om, to: nm)
+            files = files &+ TransportByteSplit.growth(from: of, to: nf)
         } else { splitComplete = false }
         if let up = next.sentKbps, let down = next.receivedKbps, up.isFinite, down.isFinite, up >= 0, down >= 0 {
             recentKbps = up + down
@@ -127,7 +128,11 @@ struct DiagnosticByteLedger {
          .init(.transportIntervalsComplete, measured ? (complete ? 1 : 0) : nil),
          .init(.mediaRTPBytes, split ? Double(media) : nil),
          .init(.oneOffFileBytes, split ? Double(files) : nil),
-         .init(.otherTransportBytes, split ? max(0, total - Double(media) - Double(files)) : nil),
-         .init(.transportAverageGBPerHour, measured && seconds > 0 ? DataUseEstimate.gigabytesPerHour(kbps: total * 8 / 1000 / seconds) : nil)]
+         .init(.otherTransportBytes, split && total >= Double(media) + Double(files) ? total - Double(media) - Double(files) : nil),
+         .init(.transportAverageGBPerHour, measured && seconds > 0 ? Self.gigabytesPerHour(total, seconds) : nil),
+         .init(.mediaAverageGBPerHour, split && seconds > 0 ? Self.gigabytesPerHour(Double(media), seconds) : nil)]
+    }
+    private static func gigabytesPerHour(_ bytes: Double, _ seconds: Double) -> Double {
+        DataUseEstimate.gigabytesPerHour(kbps: bytes * 8 / 1000 / seconds)
     }
 }

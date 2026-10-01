@@ -20,8 +20,11 @@ struct DataUseEstimate: Equatable {
         highKbps = max(0, videoKbps.upperBound) * repair + audio
     }
 
-    init(_ quality: StreamQuality, audio: Bool, packetRepair: Bool) {
-        self.init(videoKbps: quality.staticKbps...Double(quality.maximumBitrateBps) / 1000,
+    /// The ceiling follows `tuning`, so an encoder-ceiling override changes the estimate. The ceiling does
+    /// not depend on frame rate today, so 120 fps shares the 60 fps range.
+    init(_ quality: StreamQuality, tuning: StreamTuning = .tuned, audio: Bool, packetRepair: Bool) {
+        let ceilingKbps = Double(tuning.maximumBitrateBps(for: quality)) / 1000
+        self.init(videoKbps: min(quality.staticKbps, ceilingKbps)...ceilingKbps,
                   audioKbps: audio ? Self.macAudioKbps : 0,
                   repairOverhead: packetRepair ? Self.packetRepairOverhead : 0)
     }

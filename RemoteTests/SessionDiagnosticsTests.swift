@@ -101,43 +101,53 @@ final class SessionDiagnosticsTests: XCTestCase {
         XCTAssertEqual(recorder.finish(at: 13).facts.first { $0.metric == .videoKbps }?.value, 50)
     }
 
-    func testSessionMeterSplitsMediaFilesAndOtherAndComparesMeasuredRateWithEstimate() throws {
+    func testSessionMeterSplitsMediaFilesAndOtherAndComparesMeasuredRatesWithEstimate() throws {
         var recorder = DiagnosticSessionRecorder(); let generation = UUID()
         var report = try JSONDecoder().decode(StreamStatsReport.self, from: Data(#"{"role":"phone"}"#.utf8))
-        func usage(_ at: Double, _ received: UInt64, media: UInt64?, files: UInt64?) -> TransportUsage {
+        func usage(_ at: Double, _ received: UInt64, media: [String: UInt64]?, files: [String: UInt64]?) -> TransportUsage {
             var usage = TransportUsage(generation: generation, sampledAt: at, bytesSent: 1000, bytesReceived: received,
                                        sentKbps: 0, receivedKbps: 8, coverage: .selectedTransport)
-            usage.mediaBytes = media; usage.fileBytes = files
+            usage.mediaByEntry = media; usage.fileByEntry = files
             return usage
         }
         let estimate = DataUseEstimate(.sharp, audio: true, packetRepair: false)
-        report.transportUsage = usage(10, 0, media: 0, files: 0); recorder.observe(report, at: 10, estimate: estimate)
-        report.transportUsage = usage(11, 1_000_000, media: 900_000, files: 50_000); recorder.observe(report, at: 11)
-        report.transportUsage = usage(12, 2_000_000, media: 1_800_000, files: 100_000); recorder.observe(report, at: 12)
+        report.transportUsage = usage(10, 0, media: ["v": 0], files: [:]); recorder.observe(report, at: 10, estimate: estimate)
+        report.transportUsage = usage(11, 1_000_000, media: ["v": 850_000, "a": 50_000], files: ["f": 50_000]); recorder.observe(report, at: 11)
+        report.transportUsage = usage(12, 2_000_000, media: ["v": 1_700_000, "a": 100_000], files: ["f": 100_000]); recorder.observe(report, at: 12)
         let result = recorder.finish(at: 12)
         try result.validate()
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(report), as: UTF8.self).contains("mediaByEntry"), "Stats IDs never reach a log")
         func value(_ metric: DiagnosticFact.Metric) -> Double? { result.facts.first { $0.metric == metric }?.value }
-        XCTAssertEqual(value(.mediaRTPBytes), 1_800_000); XCTAssertEqual(value(.oneOffFileBytes), 100_000)
-        XCTAssertEqual(value(.otherTransportBytes), 100_000)
+        XCTAssertEqual(value(.mediaRTPBytes), 1_750_000, "The audio entry is a baseline in the interval it appears")
+        XCTAssertEqual(value(.oneOffFileBytes), 50_000)
+        XCTAssertEqual(value(.otherTransportBytes), 200_000)
         XCTAssertEqual(try XCTUnwrap(value(.transportAverageGBPerHour)), 3.6, accuracy: 1e-9, "2 MB in 2 s is 8 Mb/s")
+        XCTAssertEqual(try XCTUnwrap(value(.mediaAverageGBPerHour)), 3.15, accuracy: 1e-9)
         XCTAssertEqual(try XCTUnwrap(value(.estimateHighGBPerHour)), estimate.highGBPerHour, accuracy: 1e-9)
         XCTAssertEqual(result.facts.first { $0.metric == .estimateLowGBPerHour }?.source, .inferred)
         let summary = try XCTUnwrap(result.dataUseSummary)
-        for part in ["2.0 MB total", "video + audio 1.8 MB · files 0.1 MB · other 0.1 MB", "measured 3.60 GB/hour", "preset estimate 0.21–11.28 GB/hour"] {
+        for part in ["2.0 MB total", "video + audio 1.8 MB · files 50 KB · other 200 KB", "measured 3.60 GB/hour total",
+                     "measured 3.15 GB/hour video + audio", "last preset estimate 0.21–11.28 GB/hour video + audio (repair, files and guests not included)"] {
             XCTAssertTrue(summary.contains(part), summary)
         }
         XCTAssertLessThanOrEqual(result.facts.count, SessionDiagnosticReport.maximumFacts)
     }
 
-    func testMeterShowsTotalOnlyWhenAnIntervalCouldNotBeSplit() throws {
+    func testMeterShowsTotalOnlyWithoutSplitCountersAndOtherUnknownWhenCountersDisagree() throws {
         var ledger = DiagnosticByteLedger(); let generation = UUID()
-        ledger.observe(.init(generation: generation, at: 10, sent: 0, received: 0, sentKbps: nil, receivedKbps: nil, media: 0, files: 0))
-        ledger.observe(.init(generation: generation, at: 11, sent: 0, received: 500, sentKbps: nil, receivedKbps: nil, media: 400, files: nil))
+        ledger.observe(.init(generation: generation, at: 10, sent: 0, received: 0, sentKbps: nil, receivedKbps: nil, media: [:], files: [:]))
+        ledger.observe(.init(generation: generation, at: 11, sent: 0, received: 500, sentKbps: nil, receivedKbps: nil, media: ["v": 400], files: nil))
         XCTAssertEqual(ledger.facts.first { $0.metric == .transportReceivedBytes }?.value, 500)
         XCTAssertNil(ledger.facts.first { $0.metric == .mediaRTPBytes }?.value)
         XCTAssertNil(ledger.facts.first { $0.metric == .oneOffFileBytes }?.value)
         let report = SessionDiagnosticReport(kind: .session, outcome: .sessionEnded, seconds: 1, samples: 2, facts: ledger.facts)
         XCTAssertTrue(try XCTUnwrap(report.dataUseSummary).contains("could not split"))
         XCTAssertTrue(report.preview.contains("could not split"))
+
+        var disagree = DiagnosticByteLedger()
+        disagree.observe(.init(generation: generation, at: 10, sent: 0, received: 0, sentKbps: nil, receivedKbps: nil, media: ["v": 0], files: [:]))
+        disagree.observe(.init(generation: generation, at: 11, sent: 0, received: 100, sentKbps: nil, receivedKbps: nil, media: ["v": 300], files: [:]))
+        XCTAssertEqual(disagree.facts.first { $0.metric == .mediaRTPBytes }?.value, 300)
+        XCTAssertNil(disagree.facts.first { $0.metric == .otherTransportBytes }?.value, "A negative remainder is unknown, not zero")
     }
 }

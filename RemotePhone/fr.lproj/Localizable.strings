@@ -123,12 +123,12 @@
 "ONE_TIME_ACTIVE" = "Votre achat à vie ne se renouvelle pas. Le service Farside vérifie toujours l’accès ; le jumelage et l’autorisation du trajet actuel restent distincts.";
 
 // Data use estimates (Picture page) and the one-time cellular notice
-"DATA_USE_PRESET" = "%@ : environ %@ à %@ Go par heure";
-"DATA_USE_PRESET_SPOKEN" = "%@ : environ %@ à %@ gigaoctets par heure";
-"DATA_USE_NOTE" = "Les estimations vont d’un écran immobile à un mouvement constant, avec le son du Mac pendant l’écoute. Les fichiers et les spectateurs invités sont comptés à part. La réparation de paquets expérimentale par relais ajoute jusqu’à 20 %%. La facturation de l’opérateur ajoute la surcharge du réseau.";
+"DATA_USE_PRESET" = "%@ : environ %@ à %@ Go par heure";
+"DATA_USE_PRESET_SPOKEN" = "%@ : environ %@ à %@ gigaoctets par heure";
+"DATA_USE_NOTE" = "Les estimations vont d’un écran immobile à un mouvement constant, avec le son du Mac pendant l’écoute. Les fichiers et les spectateurs invités sont comptés à part. La réparation de paquets expérimentale par relais ajoute jusqu’à 20 %%. La facturation de l’opérateur ajoute la surcharge du réseau.";
 "DATA_WARNING_TITLE" = "Données cellulaires ou limitées";
-"DATA_WARNING_BODY" = "%@ utilise environ %@ à %@ Go par heure. Les fichiers et les spectateurs invités s’y ajoutent. Votre session continue.";
-"DATA_WARNING_LOWER" = "%@ utilise environ %@ à %@ Go par heure.";
+"DATA_WARNING_RATE" = "%@ utilise environ %@ à %@ Go par heure.";
+"DATA_WARNING_EXTRA" = "Les fichiers et les spectateurs invités s’y ajoutent. Votre session continue.";
 "DATA_WARNING_LESS" = "Utiliser moins de données";
 "DATA_WARNING_LESS_HINT" = "Passe l’image en %@.";
 "DATA_WARNING_KEEP" = "Conserver";

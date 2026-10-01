@@ -10,7 +10,7 @@ struct DiagnosticFact: Codable, Equatable {
              networkRoundTripMs, roundTripSpreadMs, hostPacerMeanMs, decodeMeanMs, hostEncodeMeanMs,
              inputPostingP95Ms, preEncodeWaitP95Ms, wifiBurstPossible, awdlCause, billableBytes,
              oneOffFileBytes, guestBytes, energyJoules, physicalGlassMs, mediaRTPBytes, otherTransportBytes,
-             transportAverageGBPerHour, estimateLowGBPerHour, estimateHighGBPerHour
+             transportAverageGBPerHour, estimateLowGBPerHour, estimateHighGBPerHour, mediaAverageGBPerHour
         var title: String {
             switch self {
             case .authenticatedEchoes: "Authenticated replies"
@@ -52,8 +52,9 @@ struct DiagnosticFact: Codable, Equatable {
             case .mediaRTPBytes: "Video + audio RTP bytes, both directions"
             case .otherTransportBytes: "Other transport bytes (control, pointer, RTCP, DTLS/SCTP/ICE)"
             case .transportAverageGBPerHour: "Measured average peer transport GB/hour"
-            case .estimateLowGBPerHour: "Preset estimate GB/hour, still screen"
-            case .estimateHighGBPerHour: "Preset estimate GB/hour, sustained motion"
+            case .estimateLowGBPerHour: "Last preset estimate GB/hour, still screen (repair not included)"
+            case .estimateHighGBPerHour: "Last preset estimate GB/hour, sustained motion (repair not included)"
+            case .mediaAverageGBPerHour: "Measured average video + audio RTP GB/hour"
             }
         }
     }
@@ -123,16 +124,19 @@ struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
     /// Measured session bytes beside the preset's modelled range, so the two can be compared.
     var dataUseSummary: String? {
         guard let sent = value(.transportSentBytes), let received = value(.transportReceivedBytes) else { return nil }
-        func size(_ bytes: Double) -> String { bytes >= 1e9 ? String(format: "%.2f GB", bytes / 1e9) : String(format: "%.1f MB", bytes / 1e6) }
+        func size(_ bytes: Double) -> String {
+            bytes >= 1e9 ? String(format: "%.2f GB", bytes / 1e9) : bytes >= 1e6 ? String(format: "%.1f MB", bytes / 1e6) : String(format: "%.0f KB", bytes / 1e3)
+        }
         var parts = ["Data used \(size(sent + received)) total"]
-        if let media = value(.mediaRTPBytes), let files = value(.oneOffFileBytes), let other = value(.otherTransportBytes) {
-            parts.append("video + audio \(size(media)) · files \(size(files)) · other \(size(other))")
+        if let media = value(.mediaRTPBytes), let files = value(.oneOffFileBytes) {
+            parts.append("video + audio \(size(media)) · files \(size(files)) · other \(value(.otherTransportBytes).map(size) ?? "unknown")")
         } else {
             parts.append("these counters could not split video and audio from files, so only the total is shown")
         }
-        if let average = value(.transportAverageGBPerHour) { parts.append(String(format: "measured %.2f GB/hour", average)) }
+        if let average = value(.transportAverageGBPerHour) { parts.append(String(format: "measured %.2f GB/hour total", average)) }
+        if let media = value(.mediaAverageGBPerHour) { parts.append(String(format: "measured %.2f GB/hour video + audio", media)) }
         if let low = value(.estimateLowGBPerHour), let high = value(.estimateHighGBPerHour) {
-            parts.append(String(format: "preset estimate %.2f–%.2f GB/hour (files and guests not included)", low, high))
+            parts.append(String(format: "last preset estimate %.2f–%.2f GB/hour video + audio (repair, files and guests not included)", low, high))
         }
         return parts.joined(separator: " · ") + "."
     }

@@ -39,6 +39,15 @@ struct PhoneRemoteView: View {
                 NativeSessionView(model: model, connection: connection, offlineLayoutCheck: true)
             }
         }
+        .overlay(alignment: .bottom) {
+            if !presentedSession && !model.contentConcealed && !LaunchOptions.layoutCheck, let warning = model.dataWarning {
+                // On Home the card sits at the bottom; a session shows it under its top pills instead,
+                // clear of the dock and End session.
+                DataWarningCard(content: warning, useLessData: model.useLessData, keep: model.keepDataQuality)
+                    .padding(.bottom, 12)
+                    .transition(.opacity)
+            }
+        }
         .overlay(alignment: .topLeading) {
             if presentedSession && !model.contentConcealed && !model.privacyShield {
                 UsefulSessionEntry(progress: model.usefulSession, replayCoach: onboarding.replayCoach)

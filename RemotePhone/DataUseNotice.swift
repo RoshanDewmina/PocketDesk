@@ -10,6 +10,18 @@ struct DataWarningGate {
     func markSeen() { defaults.set(true, forKey: Self.seenKey) }
 }
 
+enum StreamQualityPreference {
+    static let key = "streamQuality"
+
+    static func stored(in defaults: UserDefaults = .standard) -> StreamQuality {
+        defaults.string(forKey: key).flatMap(StreamQuality.init(rawValue:)) ?? .sharp
+    }
+
+    static func store(_ quality: StreamQuality, in defaults: UserDefaults = .standard) {
+        defaults.set(quality.rawValue, forKey: key)
+    }
+}
+
 extension StreamQuality {
     var lowerDataPreset: StreamQuality? { self == .sharp ? .balanced : nil }
 }
@@ -40,22 +52,22 @@ struct DataWarningContent: Equatable {
     let spoken: String
     let lessData: StreamQuality?
 
-    static func make(quality: StreamQuality, audio: Bool, bundle: Bundle = .main, locale: Locale = .current) -> DataWarningContent {
-        let estimate = DataUseEstimate(quality, audio: audio, packetRepair: false)
-        let value = DataUseCopy.range(estimate, locale: locale)
-        let lower = quality.lowerDataPreset
-        var message = CommerceLocalization.text("DATA_WARNING_BODY", "%@ uses about %@–%@ GB per hour. Files and guest viewers are extra. Your session keeps running.",
-                                                quality.title, value.low, value.high, bundle: bundle, locale: locale)
-        var spoken = DataUseCopy.presetSpoken(quality, estimate, bundle: bundle, locale: locale)
-        if let lower {
-            let lowerEstimate = DataUseEstimate(lower, audio: audio, packetRepair: false)
-            let lowerValue = DataUseCopy.range(lowerEstimate, locale: locale)
-            message += " " + CommerceLocalization.text("DATA_WARNING_LOWER", "%@ uses about %@–%@ GB per hour.", lower.title, lowerValue.low, lowerValue.high,
-                                                       bundle: bundle, locale: locale)
-            spoken += ". " + DataUseCopy.presetSpoken(lower, lowerEstimate, bundle: bundle, locale: locale)
+    /// `canLower` is false until the Mac has applied a preset, since only then can the phone change it.
+    static func make(quality: StreamQuality, tuning: StreamTuning = .tuned, audio: Bool, canLower: Bool,
+                     bundle: Bundle = .main, locale: Locale = .current) -> DataWarningContent {
+        let lower = canLower ? quality.lowerDataPreset : nil
+        var written: [String] = [], spoken: [String] = []
+        for preset in [quality] + (lower.map { [$0] } ?? []) {
+            let estimate = DataUseEstimate(preset, tuning: tuning, audio: audio, packetRepair: false)
+            let value = DataUseCopy.range(estimate, locale: locale)
+            written.append(CommerceLocalization.text("DATA_WARNING_RATE", "%@ uses about %@–%@ GB per hour.", preset.title, value.low, value.high,
+                                                     bundle: bundle, locale: locale))
+            spoken.append(DataUseCopy.presetSpoken(preset, estimate, bundle: bundle, locale: locale) + ".")
         }
+        let extra = CommerceLocalization.text("DATA_WARNING_EXTRA", "Files and guest viewers are extra. Your session keeps running.", bundle: bundle, locale: locale)
         let title = CommerceLocalization.text("DATA_WARNING_TITLE", "On cellular or metered data", bundle: bundle, locale: locale)
-        return DataWarningContent(title: title, message: message, spoken: spoken, lessData: lower)
+        return DataWarningContent(title: title, message: (written + [extra]).joined(separator: " "),
+                                  spoken: (spoken + [extra]).joined(separator: " "), lessData: lower)
     }
 }
 
@@ -101,7 +113,6 @@ struct DataWarningCard: View {
         .farsidePlate(Farside.Radius.card, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
         .frame(maxWidth: 420)
         .padding(.horizontal, 16)
-        .padding(.bottom, 12)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.dataWarning")
         .onAppear { AccessibilityNotification.Announcement("\(content.title). \(content.spoken)").post() }

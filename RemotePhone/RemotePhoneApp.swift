@@ -30,12 +30,6 @@ struct RemotePhoneApp: App {
                     model.sceneChanged(phase)
                 }
                 .onChange(of: phase) { _, value in model.sceneChanged(value) }
-                .overlay(alignment: .bottom) {
-                    if let warning = model.dataWarning {
-                        DataWarningCard(content: warning, useLessData: model.useLessData, keep: model.keepDataQuality)
-                            .transition(.opacity)
-                    }
-                }
         }
     }
 }
@@ -124,8 +118,9 @@ final class PhoneRemoteModel: ObservableObject {
     let linkHints = PhoneLinkHintMonitor()
     @Published private(set) var linkHint: NetworkLinkHint?
     let diagnostics = PhoneDiagnostics()
-    @Published private(set) var dataWarning: DataWarningContent?
+    @Published private(set) var dataWarningShown = false
     private let dataWarningGate: DataWarningGate
+    private let preferences: UserDefaults
     private var linkConsentObserver: AnyCancellable?
     let files = PhoneFileTransfer()
     let sendToMac = SendToMacInbox()
@@ -352,7 +347,9 @@ final class PhoneRemoteModel: ObservableObject {
     private var nativeScreenPixels: PixelSize?
     @Published var streamQuality: StreamQuality = .sharp {
         didSet {
-            if oldValue != streamQuality { qualityRequestedAt = ProcessInfo.processInfo.systemUptime }
+            guard oldValue != streamQuality else { return }
+            qualityRequestedAt = ProcessInfo.processInfo.systemUptime
+            StreamQualityPreference.store(streamQuality, in: preferences)
         }
     }
     private var qualityRequestedAt: TimeInterval?
@@ -752,8 +749,10 @@ final class PhoneRemoteModel: ObservableObject {
 
     init(background: BackgroundExecution? = nil, resumeStore: SessionResumeStore = SessionResumeStore(),
          macAudioPlayback: PhoneSystemAudioPlayback? = nil, livePiP: LivePiPController? = nil,
-         dataWarningDefaults: UserDefaults = .standard) {
-        dataWarningGate = DataWarningGate(defaults: dataWarningDefaults)
+         preferences: UserDefaults = .standard) {
+        self.preferences = preferences
+        dataWarningGate = DataWarningGate(defaults: preferences)
+        streamQuality = StreamQualityPreference.stored(in: preferences)
         self.macAudioPlayback = macAudioPlayback ?? PhoneSystemAudioPlayback()
         self.livePiP = livePiP ?? LivePiPController()
         self.background = background ?? SystemBackgroundExecution()
@@ -767,6 +766,7 @@ final class PhoneRemoteModel: ObservableObject {
         connection.localDisplayName = UIDevice.current.name
         #if DEBUG
         contentConcealed = ProcessInfo.processInfo.arguments.contains("--ui-background-concealed-check")
+        dataWarningShown = LaunchOptions.has("--ui-data-warning")
         if LaunchOptions.demoMacName != nil || LaunchOptions.value("--ui-last-battery=") != nil {
             // UI tests get their own last-seen battery so they never read or overwrite the real one.
             let suite = "farside.ui-tests.vitals"
@@ -1382,17 +1382,22 @@ final class PhoneRemoteModel: ObservableObject {
 
     func observeLinkHint(_ hint: NetworkLinkHint?) {
         linkHint = hint
-        guard dataWarning == nil, dataWarningGate.shouldOffer(metered: hint?.metered == true) else { return }
-        dataWarning = DataWarningContent.make(quality: streamQuality, audio: !macAudioMuted)
+        guard !dataWarningShown, dataWarningGate.shouldOffer(metered: hint?.metered == true) else { return }
+        dataWarningShown = true
+    }
+    var dataWarning: DataWarningContent? {
+        guard dataWarningShown else { return nil }
+        return DataWarningContent.make(quality: streamQuality, tuning: StreamTuning.current, audio: !macAudioMuted,
+                                       canLower: appliedStreamQuality != nil)
     }
     func useLessData() {
-        if let lower = streamQuality.lowerDataPreset { streamQuality = lower }
+        if appliedStreamQuality != nil, let lower = streamQuality.lowerDataPreset { streamQuality = lower }
         dismissDataWarning()
     }
     func keepDataQuality() { dismissDataWarning() }
-    private func dismissDataWarning() { dataWarningGate.markSeen(); dataWarning = nil }
+    private func dismissDataWarning() { dataWarningGate.markSeen(); dataWarningShown = false }
     func dataUseEstimate(for quality: StreamQuality) -> DataUseEstimate {
-        DataUseEstimate(quality, audio: !macAudioMuted, packetRepair: false)
+        DataUseEstimate(quality, tuning: StreamTuning.current, audio: !macAudioMuted, packetRepair: false)
     }
     private var diagnosticAuthority: Bool {
         sceneIsActive && connection.connected && !privacyShield && !contentConcealed &&

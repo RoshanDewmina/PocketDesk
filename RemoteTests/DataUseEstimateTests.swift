@@ -49,10 +49,26 @@ final class DataUseEstimateTests: XCTestCase {
             StreamStatsEntry(id: "o", type: "outbound-rtp", values: ["kind": "video", "bytesSent": 5]),
             StreamStatsEntry(id: "f", type: "data-channel", values: ["label": "file", "bytesSent": 30, "bytesReceived": 70]),
             StreamStatsEntry(id: "c", type: "data-channel", values: ["label": "control", "bytesSent": 999, "bytesReceived": 999])]
-        XCTAssertEqual(TransportByteSplit.media(entries), 1325)
-        XCTAssertEqual(TransportByteSplit.files(entries, label: "file"), 100)
-        XCTAssertEqual(TransportByteSplit.files(Array(entries.prefix(3)), label: "file"), 0, "No file channel carries no file bytes")
+        XCTAssertEqual(TransportByteSplit.media(entries), ["v": 1100, "a": 220, "o": 5])
+        XCTAssertEqual(TransportByteSplit.files(entries, label: "file"), ["f": 100])
+        XCTAssertEqual(TransportByteSplit.files(Array(entries.prefix(3)), label: "file"), [:], "No file channel carries no file bytes")
         let unreported = [StreamStatsEntry(id: "v", type: "inbound-rtp", values: ["kind": "video"])]
         XCTAssertNil(TransportByteSplit.media(unreported))
+    }
+
+    func testPerEntryGrowthSurvivesVanishingNewAndRestartedEntries() {
+        XCTAssertEqual(TransportByteSplit.growth(from: ["v": 100, "a": 50], to: ["v": 300, "a": 80]), 230)
+        XCTAssertEqual(TransportByteSplit.growth(from: ["v": 100, "gone": 999], to: ["v": 150, "new": 40]), 50,
+                       "A vanished entry adds nothing; a new one is only a baseline")
+        XCTAssertEqual(TransportByteSplit.growth(from: ["v": 500], to: ["v": 20]), 0, "A restarted counter is not negative growth")
+    }
+
+    func testEstimateFollowsTheTuningCeilingOverride() {
+        var tuning = StreamTuning.tuned
+        tuning.encoderCeilingKbps = 8_000
+        let capped = DataUseEstimate(.sharp, tuning: tuning, audio: false, packetRepair: false)
+        XCTAssertEqual(capped.highKbps, 8_000); XCTAssertEqual(capped.highGBPerHour, 3.6, accuracy: 1e-9)
+        tuning.encoderCeilingKbps = 1_000
+        XCTAssertLessThanOrEqual(DataUseEstimate(.sharp, tuning: tuning, audio: false, packetRepair: false).lowKbps, 1_000)
     }
 }
