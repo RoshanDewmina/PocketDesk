@@ -78,7 +78,9 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     static func backingSize(picture: CGSize, longSide: CGFloat, current: CGSize?) -> CGSize {
         guard picture.width > 0, picture.height > 0, picture.width.isFinite, picture.height.isFinite else { return current ?? picture }
         let aspect = (picture.width / picture.height * 32).rounded() / 32
-        if let current, current.width > 0, current.height > 0, (current.width / current.height * 32).rounded() / 32 == aspect { return current }
+        // Real crops wobble by about half a percent; keep the drawable while the picture stays within one
+        // quantum of its aspect, so only a rotation or a scope change reallocates.
+        if let current, current.width > 0, current.height > 0, abs(current.width / current.height - picture.width / picture.height) < 1.0 / 32 { return current }
         let long = max(1, min(4096, longSide.isFinite ? longSide.rounded() : 4096))
         return aspect >= 1 ? CGSize(width: long, height: max(1, (long / aspect).rounded()))
                            : CGSize(width: max(1, (long * aspect).rounded()), height: long)
@@ -151,11 +153,17 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                                        current: view.drawableSize == CGSize(width: 1, height: 1) ? nil : view.drawableSize)
         if view.drawableSize != backing { view.drawableSize = backing }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
-              let command = commandQueue?.makeCommandBuffer(),
-              let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else {
+              let command = commandQueue?.makeCommandBuffer() else {
             mailbox.completed(submission.id)
             showFallback(envelope)
             redraw = false
+            return
+        }
+        guard let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else {
+            // Both drawables in flight, or a resize in progress: keep the last picture on screen and
+            // retry on the next tick rather than covering it with the black fallback view.
+            mailbox.completed(submission.id)
+            redraw = true
             return
         }
         let buffer = pixels.buffer
