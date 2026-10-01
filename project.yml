@@ -316,6 +316,7 @@ targets:
       - RemoteHost/Availability/WakeTargetRegistrationView.swift
       - RemoteShared/SessionDiagnosticReport.swift
       - RemoteHost/TransportPreferenceRows.swift
+      - RemoteShared/HEVC444Policy.swift
       - RemoteShared/LegalNoticesView.swift
       - RemoteShared/ThirdPartyNotices.txt
     settings:
