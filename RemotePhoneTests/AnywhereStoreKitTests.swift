@@ -74,6 +74,14 @@ final class AnywhereStoreKitTests: XCTestCase {
 
     /// Named to run first: StoreKit caches introductory-offer eligibility for the process, and
     /// `SKTestSession.clearTransactions()` does not reset that cache after an earlier test's trial.
+    func testProductsThatDontExistAreUnavailableNotOffline() async {
+        let missing = AnywhereStore(productIDs: ["com.farside.tests.not-in-the-store"], accountToken: { nil },
+                                    serviceAvailable: { true }, sync: {})
+        await missing.loadProducts()
+        XCTAssertEqual(missing.load, .unavailable, "An empty answer from the App Store is not a connection failure")
+        XCTAssertTrue(missing.offers.isEmpty)
+    }
+
     func testAFreshCustomerIsOfferedTheTrial() async {
         await store.refresh()
         XCTAssertEqual(store.entitlement.phase, .notSubscribed)
