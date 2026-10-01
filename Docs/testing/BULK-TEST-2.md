@@ -17,6 +17,8 @@ Boundary: no backend deployment, no App Store Connect, no purchases, no messages
 ## Regressions carried from .8 (do first)
 
 - [ ] [MIRROR] An older phone build (.7 or .8) connects to the .9 host over LAN; the first tap and key arrive; the host does not crash.
+- [ ] [MIRROR] Steady state on a quiet LAN: ≈ 0 PLI/s and no key-frame storm in the host overlay over 60 s still and 60 s motion.
+- [ ] [MIRROR] After a 3 s capture-health gap, presentation and `fresh` recover within a few seconds and touch works again.
 - [ ] [MIRROR] On the .9 phone, a one-finger drag moves the Mac pointer and a two-finger pinch changes the viewport scale, under HEVC and after forcing H.264 (Picture → compatibility). GATE: the `claude/fix-phone-touch-8` fix must be in the build.
 
 ## Consent and power (X13)
