@@ -57,12 +57,15 @@ final class WiFiStallDetectorTests: XCTestCase {
         report.receivedFPS = fps
         report.renderGapMaxMs = gap
         report.packetLossPercent = loss
-        report.host = HostStreamSummary(captureGapP90Ms: hostCaptureGap, pacerDelayMs: pacer)
+        report.hostSummaryAgeMs = 100
+        report.host = HostStreamSummary(captureFPS: fps, captureGapP90Ms: hostCaptureGap,
+                                       captureGapMaxMs: hostCaptureGap, pacerDelayMs: pacer)
         return report
     }
 
     func testOnceASecondStallsShowTheTipAfterAFullWindow() {
         var detector = WiFiStallDetector()
+        XCTAssertFalse(detector.observe(second(gap: 20)), "first motion second establishes continuity")
         for index in 0..<(WiFiStallDetector.window - 1) {
             XCTAssertFalse(detector.observe(second(gap: 105)), "second \(index)")
         }
@@ -83,6 +86,51 @@ final class WiFiStallDetectorTests: XCTestCase {
         }
         XCTAssertTrue(detector.recent.isEmpty)
         XCTAssertNil(detector.tip)
+    }
+
+    func testIdleThen120HzBurstsNeverBecomeAnAirDropStallButContinuousSourceStallsDo() {
+        var detector = WiFiStallDetector()
+        for _ in 0..<30 {
+            detector.observe(second(gap: 600, fps: 2, hostCaptureGap: 600))
+            // A single source-idle outlier is invisible to P90 but visible to max.
+            var burst = second(gap: 450, fps: 66, hostCaptureGap: 8)
+            burst.host?.captureGapMaxMs = 450
+            detector.observe(burst)
+            detector.observe(second(gap: 9, fps: 120, hostCaptureGap: 9))
+        }
+        XCTAssertNil(detector.tip)
+        XCTAssertTrue(detector.recent.isEmpty)
+        for _ in 0..<WiFiStallDetector.window { detector.observe(second(gap: 110, fps: 120, hostCaptureGap: 9)) }
+        XCTAssertNotNil(detector.tip, "continuous observed source motion with long arrival gaps still reports the pattern")
+    }
+
+    func testUnknownStaleAndNonfiniteSourceEvidenceCannotInferAStall() {
+        let known = second(gap: 110)
+        var unknowns: [StreamStatsReport] = []
+        var value = known; value.host?.captureGapMaxMs = nil; unknowns.append(value)
+        value = known; value.hostSummaryAgeMs = nil; unknowns.append(value)
+        value = known; value.hostSummaryAgeMs = 3_001; unknowns.append(value)
+        value = known; value.host?.captureGapMaxMs = .nan; unknowns.append(value)
+        value = known; value.renderGapMaxMs = .infinity; unknowns.append(value)
+        value = known; value.packetLossPercent = nil; unknowns.append(value)
+        value = known; value.host?.pacerDelayMs = nil; unknowns.append(value)
+        value = known; value.route = "Route pending"; unknowns.append(value)
+        for value in unknowns { XCTAssertNil(WiFiStallDetector.stalled(value)) }
+        var detector = WiFiStallDetector()
+        for _ in 0...WiFiStallDetector.window { detector.observe(known) }
+        XCTAssertNotNil(detector.tip)
+        XCTAssertTrue(detector.observe(unknowns[0]))
+        XCTAssertNil(detector.tip, "unreported evidence clears an earlier inference")
+    }
+
+    func testPausedStatisticsAndBackwardClockBreakTheMotionRun() {
+        var detector = WiFiStallDetector()
+        for index in 0...WiFiStallDetector.window { detector.observe(second(gap: 110), at: Double(index)) }
+        XCTAssertNotNil(detector.tip)
+        XCTAssertTrue(detector.observe(second(gap: 600), at: 100), "resume first second cannot inherit an old motion run")
+        XCTAssertNil(detector.tip); XCTAssertTrue(detector.recent.isEmpty)
+        detector.observe(second(gap: 110), at: 99)
+        XCTAssertTrue(detector.recent.isEmpty, "backward time resets continuity")
     }
 
     func testOccasionalStallsNeverShowAndTheTipClearsWithHysteresis() {

@@ -41,6 +41,10 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         backgroundColor = .black; clipsToBounds = true
         metal.clearColor = MTLClearColorMake(0, 0, 0, 1)
         metal.colorPixelFormat = .bgra8Unorm
+        // Zoom changes the layer's view bounds, not the backing pixel allocation. Allocate
+        // only the current validated source crop; Core Animation scales it for the viewport.
+        metal.autoResizeDrawable = false
+        metal.drawableSize = CGSize(width: 1, height: 1)
         metal.framebufferOnly = true
         metal.preferredFramesPerSecond = fps
         (metal.layer as? CAMetalLayer)?.maximumDrawableCount = 2
@@ -115,7 +119,8 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     private func drawAdmitted(in view: MTKView) {
         guard let submission = mailbox.take(redraw: redraw) else { return }
         let envelope = submission.frame
-        guard envelope.geometry != nil else { mailbox.completed(submission.id); invalidate(); return }
+        guard let geometry = envelope.geometry else { mailbox.completed(submission.id); invalidate(); return }
+        if view.drawableSize != geometry.displaySize { view.drawableSize = geometry.displaySize }
         guard let pixels = envelope.pixels, let pipeline = pipelines[pixels.bgra], let cache,
               let command = commandQueue?.makeCommandBuffer(),
               let descriptor = view.currentRenderPassDescriptor, let drawable = view.currentDrawable else {

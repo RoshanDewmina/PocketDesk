@@ -1,8 +1,44 @@
 import CoreGraphics
+import CoreVideo
+import MetalKit
+import WebRTC
 import XCTest
 @testable import PocketDeskRemote
 
 final class OwnedVideoLifecycleTests: XCTestCase {
+    @MainActor
+    func testDrawablePixelsFollowOwnedCropAndRotationAcrossPinchLayoutsAndRetirement() throws {
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
+        XCTAssertFalse(view.metal.autoResizeDrawable)
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 320, 240, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        func offer(rotation: RTCVideoRotation, cropped: Bool) {
+            let source = cropped ? RTCCVPixelBuffer(pixelBuffer: buffer, adaptedWidth: 60, adaptedHeight: 40,
+                cropWidth: 120, cropHeight: 80, cropX: 20, cropY: 10) : RTCCVPixelBuffer(pixelBuffer: buffer)
+            view.offer(VideoFrameEnvelope(receiptID: UUID(), identity: id,
+                frame: RTCVideoFrame(buffer: source, rotation: rotation, timeStampNs: 1),
+                arrivalMs: 1, marker: nil, originalSource: true))
+            view.draw(in: view.metal) // Production admission and drawable preparation, no GPU timing claim.
+        }
+        offer(rotation: ._0, cropped: false)
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240))
+        for zoom in [1.0, 3.0, 10.0] {
+            view.frame = CGRect(x: 0, y: 0, width: 402 * zoom, height: 874 * zoom)
+            view.setNeedsLayout(); view.layoutIfNeeded()
+            XCTAssertEqual(view.metal.drawableSize, CGSize(width: 320, height: 240), "pinch layout must not allocate view-sized backing pixels")
+        }
+        offer(rotation: ._90, cropped: true)
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 80, height: 120))
+        view.invalidate()
+        offer(rotation: ._0, cropped: false)
+        XCTAssertEqual(view.metal.drawableSize, CGSize(width: 80, height: 120), "retired source cannot reallocate a closed surface")
+    }
     private func identity(_ epoch: UInt64 = 1) -> VideoPresentationIdentity {
         VideoPresentationIdentity(hostRecordID: "host-A", ownerPairID: "grant-A", sessionID: UUID(), trackID: UUID(), contentEpoch: epoch, geometryEpoch: 1)
     }

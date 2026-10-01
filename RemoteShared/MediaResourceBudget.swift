@@ -10,6 +10,8 @@ struct MediaCapacityObservation {
     var totalTransportKbps: Double? = nil
     var rttMs: Double?
     var pacerDelayMs: Double?
+    /// Current selected candidate-pair classification, never a configured route or authorization.
+    var routeDetail: String? = nil
 }
 
 enum BulkAdmissionPolicy {
@@ -31,8 +33,14 @@ enum BulkAdmissionPolicy {
             if let baselineRTT, rtt > baselineRTT + max(50, baselineRTT * 0.5) { return nil }
         }
         guard let capacity = observation.capacityKbps else {
-            // A receive-only phone may have no GCC estimate. Keep a small bounded fallback;
-            // it is not a measured capacity or a bandwidth/performance guarantee.
+            // A receive-only phone has no measured outbound-video GCC capacity. A fresh
+            // selected LAN pair with measured low RTT may use a bounded upload policy;
+            // the aggregate 32 KiB queue and empty-control gates still apply per chunk.
+            // This allowance is NOT a measured capacity or a throughput guarantee.
+            if observation.route == "Direct", observation.routeDetail == "lan",
+               let rtt = observation.rttMs, rtt <= 20 {
+                return 1_000_000
+            }
             return observation.route == "Relay" ? 16_000 : 32_000
         }
         guard capacity.isFinite, capacity > 0 else { return nil }
@@ -59,7 +67,7 @@ final class MediaResourceBudget: @unchecked Sendable {
     func observe(_ next: MediaCapacityObservation) {
         lock.lock(); defer { lock.unlock() }
         guard !ended else { return }
-        if observation?.route != next.route {
+        if observation?.route != next.route || observation?.routeDetail != next.routeDetail {
             baselineRTT = nil; tokens = 0; lastCredit = next.at
         }
         if let rtt = next.rttMs, rtt.isFinite, rtt >= 0 {

@@ -15,6 +15,8 @@ struct PairInvitation: Codable, Equatable {
     var ownerPairID: String? = nil
     /// Opaque local discovery locator; it is never authentication or route proof.
     var localServiceName: String? = nil
+    /// Identity presence is a prerequisite only; it never proves a route or owner authority.
+    var hasOwnerLocalIdentity: Bool { durableHostID != nil && ownerPairID != nil && localServiceName != nil }
 
     func validate(now: Date = Date(), enrollment: Bool = true) throws {
         guard version == 1, SecureRandom.isToken(room), SecureRandom.isToken(token), key.count == 32,
@@ -144,10 +146,11 @@ enum SecureRandom {
 }
 
 enum RemoteError: Error, LocalizedError {
-    case invalidPairing, random, invalidMessage, stale, keychain(OSStatus), backpressure
+    case invalidPairing, localPairingRefreshRequired, random, invalidMessage, stale, keychain(OSStatus), backpressure
     var errorDescription: String? {
         switch self {
         case .invalidPairing: "The pairing code is invalid or expired. Open Pair Phone on your Mac."
+        case .localPairingRefreshRequired: "Local network only requires a fresh owner-approved QR code from your Mac. Connect normally or re-pair to enable it."
         case .random: "Secure pairing could not be created. Try again."
         case .invalidMessage: "The connection could not be authenticated. Pair again on your Mac."
         case .stale: "An old session message was rejected. Reconnect to continue."
@@ -214,6 +217,9 @@ protocol PairPersistence {
 struct PairStoreSecurityCalls {
     let copyMatching: ([String: Any]) -> (OSStatus, Any?)
     let delete: ([String: Any]) -> OSStatus
+    var update: ([String: Any], [String: Any]) -> OSStatus = {
+        SecItemUpdate($0 as CFDictionary, $1 as CFDictionary)
+    }
 
     static let live = Self(
         copyMatching: { search in
@@ -247,7 +253,11 @@ struct PairStore: PairPersistence {
     func save<T: Encodable>(_ value: T) throws {
         let data = try JSONEncoder().encode(value)
         let updates: [String: Any] = [kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly]
+#if os(macOS)
+        let status = security.update(query, updates)
+#else
         let status = SecItemUpdate(query as CFDictionary, updates as CFDictionary)
+#endif
         if status == errSecItemNotFound {
             var add = query; updates.forEach { add[$0.key] = $0.value }
             let result = SecItemAdd(add as CFDictionary, nil)
@@ -258,11 +268,30 @@ struct PairStore: PairPersistence {
         var search = query
         search[kSecReturnData as String] = true
         search[kSecMatchLimit as String] = kSecMatchLimitOne
+#if os(macOS)
+        let (status, output) = security.copyMatching(search)
+#else
         var output: CFTypeRef?
         let status = SecItemCopyMatching(search as CFDictionary, &output)
+#endif
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = output as? Data else { throw RemoteError.keychain(status) }
+        if try isRemovedMarker(data) { return nil }
         return try JSONDecoder().decode(type, from: data)
+    }
+    private struct RemovedRecord: Codable {
+        var pairStoreRemoval = "revoked.v1"
+        var version = 1
+        let account: String
+    }
+    private func isRemovedMarker(_ data: Data) throws -> Bool {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["pairStoreRemoval"] != nil else { return false }
+        guard Set(object.keys) == ["pairStoreRemoval", "version", "account"],
+              let marker = try? JSONDecoder().decode(RemovedRecord.self, from: data),
+              marker.pairStoreRemoval == "revoked.v1", marker.version == 1,
+              marker.account == account else { throw RemoteError.invalidPairing }
+        return true
     }
     func delete() throws {
 #if os(macOS)
@@ -274,6 +303,7 @@ struct PairStore: PairPersistence {
             try requireAbsent()
             return
         }
+        if lookupStatus == errSecInvalidOwnerEdit { try overwriteRemovedMarker(); return }
         guard lookupStatus == errSecSuccess else { throw RemoteError.keychain(lookupStatus) }
         guard let reference = output as? Data, !reference.isEmpty, reference.count <= 4_096 else {
             throw PairStoreDeletionError.invalidPersistentReference
@@ -290,6 +320,7 @@ struct PairStore: PairPersistence {
             try requireAbsent()
             return
         }
+        if deleteStatus == errSecInvalidOwnerEdit { try overwriteRemovedMarker(); return }
         guard deleteStatus == errSecSuccess else { throw RemoteError.keychain(deleteStatus) }
         try requireAbsent()
 #else
@@ -299,6 +330,21 @@ struct PairStore: PairPersistence {
     }
 
 #if os(macOS)
+    private func overwriteRemovedMarker() throws {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        let marker = try encoder.encode(RemovedRecord(account: account))
+        // Change data only: never edit Keychain ownership, accessibility, or another account.
+        let status = security.update(query, [kSecValueData as String: marker])
+        guard status == errSecSuccess else { throw RemoteError.keychain(status) }
+        var search = query
+        search[kSecReturnData as String] = true
+        search[kSecMatchLimit as String] = kSecMatchLimitAll
+        let (verified, output) = security.copyMatching(search)
+        if verified == errSecItemNotFound { return } // Concurrent actual deletion is also absence.
+        guard verified == errSecSuccess else { throw RemoteError.keychain(verified) }
+        guard let values = output as? [Data], !values.isEmpty,
+              values.allSatisfy({ $0 == marker }) else { throw PairStoreDeletionError.recordRemains }
+    }
     private func requireAbsent() throws {
         // Recheck the original class/service/account query. A stale reference or
         // duplicate record must not turn a partial removal into success.

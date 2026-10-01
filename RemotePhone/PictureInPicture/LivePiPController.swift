@@ -35,6 +35,7 @@ private final class NativePiPPlatformController: LivePiPPlatformController {
 final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, AVPictureInPictureSampleBufferPlaybackDelegate {
     private let mediaSession: PhoneMediaSession
     private var mediaOwner: UUID?
+    private var mediaInterrupted = false
     private let supported: () -> Bool
     typealias PlatformFactory = (AVSampleBufferDisplayLayer, LivePiPController) -> (any LivePiPPlatformController)?
     private let platformFactory: PlatformFactory
@@ -57,7 +58,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     private var sourceSink: LivePiPSampleBufferSink?
     private func synchronizeSource() {
         sourceLock.lock()
-        sourceSink = policy.state == .ready || policy.state == .starting || policy.state == .active ? sink : nil
+        sourceSink = !mediaInterrupted && (policy.state == .ready || policy.state == .starting || policy.state == .active) ? sink : nil
         sink?.setEnabled(sourceSink != nil)
         sourceLock.unlock()
     }
@@ -133,6 +134,18 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
                 guard let self, self.mediaOwner == owner else { return }
                 self.mediaOwner = nil
                 self.stop()
+            }, onSuspended: { [weak self] in
+                guard let self, self.mediaOwner == owner else { return }
+                self.mediaInterrupted = true; self.synchronizeSource()
+            }, onResumed: { [weak self, weak controller, weak fence] in
+                guard let self, let controller, let fence, self.mediaOwner == owner,
+                      self.controller === controller, self.fence === fence,
+                      self.policy.admission?.identity == admission.identity,
+                      self.policy.admission?.lifetime === admission.lifetime,
+                      self.policy.admission?.permits(at: ProcessInfo.processInfo.systemUptime) == true,
+                      [.starting, .active, .paused].contains(self.policy.state) else { return false }
+                self.mediaInterrupted = false; self.synchronizeSource()
+                return true // No new OS start: only the same admitted consumer becomes drawable again.
             })
         }
         guard acquired else { return false }
@@ -190,6 +203,7 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
         fence?.invalidate() // BEFORE sample flush, OS stop, or any application callback.
         let oldSource = source, oldSink = sink, oldController = controller, oldOwner = mediaOwner
         source = nil; sink = nil; fence = nil; controller = nil; mediaOwner = nil
+        mediaInterrupted = false
         policy.stop(); expiryTimer?.invalidate(); expiryTimer = nil
         policy.didStop(); synchronizeSource()
         oldSource?.detach(); oldSink?.invalidate()
@@ -203,9 +217,19 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     }
     func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
         guard matchesNative(controller) else { controller.stopPictureInPicture(); return }
+        confirmPlatformStart(controller: self.controller)
+    }
+    private func confirmPlatformStart(controller candidate: (any LivePiPPlatformController)?) {
+        guard let candidate, candidate === controller else { return }
         guard policy.didStart(at: ProcessInfo.processInfo.systemUptime) else { stop(); return }
         synchronizeSource(); didChangeState?(policy.state)
     }
+    #if DEBUG
+    /// Actual controller state boundary; injected fixtures do not manufacture or start native AVKit.
+    func confirmPlatformStartForTesting(_ candidate: any LivePiPPlatformController) {
+        confirmPlatformStart(controller: candidate)
+    }
+    #endif
     func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) { if matchesNative(controller) { stop() } }
     func pictureInPictureController(_ controller: AVPictureInPictureController, failedToStartPictureInPictureWithError error: Error) { if matchesNative(controller) { stop() } }
     func pictureInPictureController(_ controller: AVPictureInPictureController, restoreUserInterfaceForPictureInPictureStopWithCompletionHandler completionHandler: @escaping (Bool) -> Void) {

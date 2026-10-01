@@ -12,11 +12,17 @@ private final class MockPairSecurity {
     var verificationStatus: OSStatus?
     var deleteStatus = errSecSuccess
     var afterDelete: (() -> Void)?
+    var updateStatus: OSStatus = errSecInvalidOwnerEdit
+    var storedData: Data?
+    var afterUpdate: (() -> Void)?
+    var verificationValues: [Data]?
+    private(set) var updateQueries: [[String: Any]] = []
+    private(set) var updateAttributes: [[String: Any]] = []
     private(set) var copyQueries: [[String: Any]] = []
     private(set) var deleteQueries: [[String: Any]] = []
 
-    func store() -> PairStore {
-        PairStore(account: "host", security: PairStoreSecurityCalls(
+    func store(account: String = "host") -> PairStore {
+        PairStore(account: account, security: PairStoreSecurityCalls(
             copyMatching: { [self] search in
                 copyQueries.append(search)
                 if search[kSecReturnPersistentRef as String] != nil {
@@ -27,13 +33,26 @@ private final class MockPairSecurity {
                     return (errSecSuccess, reference)
                 }
                 if let verificationStatus { return (verificationStatus, nil) }
-                return (present ? errSecSuccess : errSecItemNotFound, nil)
+                if !present { return (errSecItemNotFound, nil) }
+                if search[kSecReturnData as String] != nil {
+                    if search[kSecMatchLimit as String] as? String == kSecMatchLimitAll as String {
+                        return (errSecSuccess, verificationValues ?? storedData.map { [$0] } ?? [])
+                    }
+                    return (errSecSuccess, storedData)
+                }
+                return (errSecSuccess, nil)
             },
             delete: { [self] search in
                 deleteQueries.append(search)
                 if deleteStatus == errSecSuccess { present = false }
                 afterDelete?()
                 return deleteStatus
+            },
+            update: { [self] query, attributes in
+                updateQueries.append(query); updateAttributes.append(attributes)
+                if updateStatus == errSecSuccess { storedData = attributes[kSecValueData as String] as? Data }
+                afterUpdate?()
+                return updateStatus
             }
         ))
     }
@@ -126,6 +145,92 @@ final class PairStoreDeletionTests: XCTestCase {
         mock.deleteStatus = -25244
         assertKeychainStatus(-25244) { try mock.store().delete() }
         XCTAssertTrue(mock.present)
+    }
+
+    func testOwnerEditDeleteFailureOverwritesOnlySelectedAccountAndSurvivesRelaunch() throws {
+        let mock = MockPairSecurity()
+        mock.deleteStatus = errSecInvalidOwnerEdit; mock.updateStatus = errSecSuccess
+        let store = mock.store()
+        try store.delete()
+        XCTAssertEqual(mock.updateQueries.count, 1)
+        XCTAssertEqual(Set(mock.updateQueries[0].keys), [kSecClass as String, kSecAttrService as String, kSecAttrAccount as String])
+        XCTAssertEqual(mock.updateQueries[0][kSecAttrAccount as String] as? String, "host")
+        XCTAssertEqual(Set(mock.updateAttributes[0].keys), [kSecValueData as String], "No ownership/accessibility edits")
+        XCTAssertEqual(mock.copyQueries.last?[kSecMatchLimit as String] as? String, kSecMatchLimitAll as String)
+        XCTAssertTrue(mock.present, "Logical revocation may retain an inert Keychain item")
+        XCTAssertNil(try store.read(HostPair.self))
+        XCTAssertNil(try mock.store().read(HostPair.self), "A relaunched reader cannot resurrect revoked credentials")
+    }
+
+    func testOwnerEditLookupFailureUsesSameScopedVerifiedFallback() throws {
+        let mock = MockPairSecurity()
+        mock.lookupStatus = errSecInvalidOwnerEdit; mock.updateStatus = errSecSuccess
+        try mock.store().delete()
+        XCTAssertTrue(mock.deleteQueries.isEmpty)
+        XCTAssertEqual(mock.updateQueries.count, 1)
+        XCTAssertNil(try mock.store().read(HostPair.self))
+    }
+
+    func testOtherSecurityErrorsNeverOverwriteCredentials() {
+        let lookup = MockPairSecurity(); lookup.lookupStatus = errSecInteractionNotAllowed
+        assertKeychainStatus(errSecInteractionNotAllowed) { try lookup.store().delete() }
+        XCTAssertTrue(lookup.updateQueries.isEmpty)
+        let deletion = MockPairSecurity(); deletion.deleteStatus = errSecAuthFailed
+        assertKeychainStatus(errSecAuthFailed) { try deletion.store().delete() }
+        XCTAssertTrue(deletion.updateQueries.isEmpty)
+    }
+
+    func testFailedMarkerUpdateRetainsPriorRecordAndFailsRemoval() {
+        let mock = MockPairSecurity()
+        mock.deleteStatus = errSecInvalidOwnerEdit; mock.updateStatus = errSecInteractionNotAllowed
+        let before = Data("fixture-prior-record".utf8); mock.storedData = before
+        assertKeychainStatus(errSecInteractionNotAllowed) { try mock.store().delete() }
+        XCTAssertEqual(mock.storedData, before); XCTAssertTrue(mock.present)
+    }
+
+    func testMarkerUpdateMustActuallyPersistAndCoverEveryMatchingRecord() {
+        let unchanged = MockPairSecurity()
+        unchanged.deleteStatus = errSecInvalidOwnerEdit; unchanged.updateStatus = errSecSuccess
+        unchanged.afterUpdate = { unchanged.storedData = Data("fixture-retained-record".utf8) }
+        XCTAssertThrowsError(try unchanged.store().delete()) { error in
+            XCTAssertEqual(error as? PairStoreDeletionError, .recordRemains)
+        }
+        let duplicate = MockPairSecurity()
+        duplicate.deleteStatus = errSecInvalidOwnerEdit; duplicate.updateStatus = errSecSuccess
+        duplicate.afterUpdate = { duplicate.verificationValues = [duplicate.storedData!, Data("fixture-other-record".utf8)] }
+        XCTAssertThrowsError(try duplicate.store().delete()) { error in
+            XCTAssertEqual(error as? PairStoreDeletionError, .recordRemains)
+        }
+    }
+
+    func testMarkerReadbackErrorNeverReportsConfirmedRemoval() {
+        let mock = MockPairSecurity()
+        mock.deleteStatus = errSecInvalidOwnerEdit; mock.updateStatus = errSecSuccess
+        mock.verificationStatus = errSecInteractionNotAllowed
+        assertKeychainStatus(errSecInteractionNotAllowed) { try mock.store().delete() }
+    }
+
+    func testUnknownWrongAccountAndMalformedMarkerNeverCountAsAbsence() throws {
+        let mock = MockPairSecurity()
+        let markers: [[String: Any]] = [
+            ["pairStoreRemoval": "revoked.v1", "version": 2, "account": "host"],
+            ["pairStoreRemoval": "revoked.v1", "version": 1, "account": "other"],
+            ["pairStoreRemoval": "unknown", "version": 1, "account": "host"],
+            ["pairStoreRemoval": "revoked.v1", "version": 1, "account": "host", "extra": true]
+        ]
+        for object in markers {
+            mock.storedData = try JSONSerialization.data(withJSONObject: object)
+            XCTAssertThrowsError(try mock.store().read(HostPair.self))
+        }
+    }
+
+    func testExplicitFreshPairCanReplaceAnInertMarker() throws {
+        let mock = MockPairSecurity()
+        mock.deleteStatus = errSecInvalidOwnerEdit; mock.updateStatus = errSecSuccess
+        try mock.store().delete()
+        let fresh = try HostPair.create(server: "wss://fixture.invalid/signal", name: "Fixture")
+        try mock.store().save(fresh)
+        XCTAssertEqual(try mock.store().read(HostPair.self)?.invitation, fresh.invitation)
     }
 
     func testSuccessfulDeleteCannotMaskVerificationError() {

@@ -13,12 +13,18 @@ final class PhoneMediaSession {
         let activate: () throws -> Void
         let deactivate: () throws -> Void
     }
-    private struct Entry { let kind: Kind; let retired: () -> Void }
+    private struct Entry {
+        let kind: Kind
+        let retired: () -> Void
+        let suspended: () -> Void
+        let resumed: () -> Bool
+    }
     private var owners: [UUID: Entry] = [:]
     private var retiring = false
     private var acquiring = false
     private var deactivating = false
     private var generation: UInt64 = 0
+    private(set) var isInterrupted = false
     private let backend: Backend
     private var observers: [NSObjectProtocol] = []
     private(set) var lastOperationFailed = false
@@ -46,10 +52,20 @@ final class PhoneMediaSession {
                          AVAudioSession.mediaServicesWereResetNotification] {
                 observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
                     MainActor.assumeIsolated {
-                        if note.name == AVAudioSession.interruptionNotification,
-                           (note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt) != AVAudioSession.InterruptionType.began.rawValue { return }
-                        if note.name == AVAudioSession.routeChangeNotification,
-                           (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt) != AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue { return }
+                        if note.name == AVAudioSession.interruptionNotification {
+                            guard let type = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt else { return }
+                            if type == AVAudioSession.InterruptionType.began.rawValue { self?.beginInterruption() }
+                            else if type == AVAudioSession.InterruptionType.ended.rawValue {
+                                let raw = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                                self?.endInterruption(shouldResume: AVAudioSession.InterruptionOptions(rawValue: raw).contains(.shouldResume))
+                            }
+                            return
+                        }
+                        if note.name == AVAudioSession.routeChangeNotification {
+                            let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
+                            guard reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue ||
+                                  reason == AVAudioSession.RouteChangeReason.newDeviceAvailable.rawValue else { return }
+                        }
                         self?.retireAll()
                     }
                 })
@@ -60,8 +76,9 @@ final class PhoneMediaSession {
 
     func contains(_ owner: UUID) -> Bool { owners[owner] != nil }
     @discardableResult
-    func acquire(_ owner: UUID, kind: Kind, onRetired: @escaping () -> Void) -> Bool {
-        guard !retiring, !acquiring, !deactivating else { return false }
+    func acquire(_ owner: UUID, kind: Kind, onRetired: @escaping () -> Void,
+                 onSuspended: @escaping () -> Void = {}, onResumed: @escaping () -> Bool = { false }) -> Bool {
+        guard !retiring, !acquiring, !deactivating, !isInterrupted else { return false }
         if let existing = owners[owner] { return existing.kind == kind }
         guard owners.count < 8,
               kind != .recording || owners.isEmpty,
@@ -86,20 +103,54 @@ final class PhoneMediaSession {
                 return false
             }
         }
-        owners[owner] = Entry(kind: kind, retired: onRetired)
+        owners[owner] = Entry(kind: kind, retired: onRetired, suspended: onSuspended, resumed: onResumed)
         return true
     }
 
     @discardableResult
     func release(_ owner: UUID) -> Bool {
         guard owners.removeValue(forKey: owner) != nil else { return false }
-        if owners.isEmpty && !retiring { deactivate() }
+        if owners.isEmpty && !retiring && !acquiring { deactivate() }
         return true
     }
 
-    /// No automatic restart: callbacks stop/mute their actual consumers before final deactivation.
+    /// Temporary OS suspension retains only the already-admitted playback owners. Recording is terminal.
+    func beginInterruption() {
+        guard !isInterrupted else { return }
+        if acquiring || owners.values.contains(where: { $0.kind == .recording }) { retireAll(); return }
+        isInterrupted = true
+        let current = generation
+        let previous = owners
+        for (id, entry) in previous {
+            guard isInterrupted, generation == current else { return }
+            if owners[id] != nil { entry.suspended() }
+        }
+    }
+    func endInterruption(shouldResume: Bool) {
+        guard isInterrupted else { return } // A late ended notification cannot revive retired owners.
+        guard shouldResume, !owners.isEmpty, !acquiring, !retiring, !deactivating else { retireAll(); return }
+        acquiring = true
+        defer { acquiring = false }
+        let current = generation
+        do { try backend.activate() }
+        catch { retireAll(); lastOperationFailed = true; return }
+        guard isInterrupted, generation == current else { return }
+        isInterrupted = false
+        let previous = owners
+        for (id, entry) in previous {
+            guard generation == current else { return }
+            guard owners[id] != nil else { continue }
+            let resume = entry.resumed()
+            guard generation == current else { return }
+            if !resume, owners.removeValue(forKey: id) != nil { entry.retired() }
+        }
+        if owners.isEmpty { deactivate() }
+    }
+
+    /// Irreversible retirement: callbacks stop/mute actual consumers before final deactivation.
     func retireAll() {
         generation &+= 1 // An interruption during first activation also retires that acquisition.
+        isInterrupted = false
         guard !retiring, !owners.isEmpty else { return }
         retiring = true
         let previous = Array(owners.values)

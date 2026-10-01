@@ -1,6 +1,7 @@
 import XCTest
 import SwiftUI
 import Combine
+import AVKit
 @testable import PocketDeskRemote
 
 @MainActor
@@ -23,8 +24,112 @@ final class FakeBackgroundExecution: BackgroundExecution {
     }
 }
 
+
+private final class LifecyclePiPPlatform: LivePiPPlatformController {
+    var nativeController: AVPictureInPictureController? { nil }
+    var isPossible: Bool { true }
+    private(set) var starts = 0
+    func start() { starts += 1 }
+    func stop() {}
+    func invalidatePlaybackState() {}
+    func detachDelegate() {}
+}
+
 @MainActor
 final class SessionLifecycleTests: XCTestCase {
+    /// Downstream model + finite proof + injected public-platform operation boundary; no real native producer.
+    private func activePiPModel() throws -> (PhoneRemoteModel, VideoPresentationAdmission, LifecyclePiPPlatform, () -> [ControlPacket]) {
+        let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+        let platform = LifecyclePiPPlatform()
+        let pip = LivePiPController(mediaSession: registry, supported: { true }, platformFactory: { _, _ in platform })
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), livePiP: pip)
+        model.prepareConnection(mode: .picture); model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "pip-lifecycle")
+        model.geometryEpoch = 1
+        var packets: [ControlPacket] = []
+        model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+        let proof = model.admitPiPProofForTesting(validUntil: ProcessInfo.processInfo.systemUptime + 20)
+        model.sendViewOnlyEntryForTesting()
+        let entry = try XCTUnwrap(packets.last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == true })
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: true, liveViewOnlyRequestID: entry.action.liveViewOnlyRequestID,
+            x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
+        XCTAssertEqual(platform.starts, 1)
+        pip.confirmPlatformStartForTesting(platform)
+        XCTAssertEqual(model.pipState, .active)
+        return (model, proof, platform, { packets })
+    }
+    func testActivePiPSurvivesInactiveHeartbeatThenBackgroundWithoutExitOrPause() throws {
+        let (model, _, _, packets) = try activePiPModel()
+        defer { model.disconnect() }
+        let lifetime = try XCTUnwrap(model.pipAdmission).lifetime
+        model.sceneChanged(.inactive)
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 0.3)
+        XCTAssertEqual(model.pipState, .active); XCTAssertTrue(model.connection.connected)
+        XCTAssertTrue(model.pipAdmission?.lifetime === lifetime)
+        XCTAssertFalse(model.awaitingViewOnlyExitForTesting)
+        model.sceneChanged(.background)
+        XCTAssertTrue(model.pipBackgroundForTesting); XCTAssertTrue(model.connection.connected)
+        XCTAssertEqual(model.pipState, .active)
+        XCTAssertFalse(packets().contains { $0.action.action == "pause" || $0.action.liveViewOnly == false })
+    }
+    func testControlCenterReturnKeepsSamePiPConsentAndLifetime() throws {
+        let (model, _, _, packets) = try activePiPModel()
+        defer { model.disconnect() }
+        let lifetime = try XCTUnwrap(model.pipAdmission).lifetime
+        model.sceneChanged(.inactive)
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 0.3)
+        model.sceneChanged(.active)
+        XCTAssertEqual(model.pipState, .active)
+        XCTAssertTrue(model.pipAdmission?.lifetime === lifetime)
+        XCTAssertTrue(model.connection.connected); XCTAssertFalse(model.awaitingViewOnlyExitForTesting)
+        XCTAssertFalse(packets().contains { $0.action.liveViewOnly == false })
+    }
+    func testPiPRestoreWaitsForForegroundAndControlWaitsForExactExitACK() throws {
+        let (model, _, _, packets) = try activePiPModel()
+        defer { model.disconnect() }
+        model.sceneChanged(.inactive); model.sceneChanged(.background)
+        var restored: [Bool] = []
+        model.livePiP.restoreForeground? { restored.append($0) }
+        XCTAssertTrue(restored.isEmpty)
+        model.livePiP.stop() // Actual stop ordering before scene active must not disconnect pending restoration.
+        XCTAssertTrue(model.connection.connected)
+        model.sceneChanged(.active)
+        XCTAssertEqual(restored, [true]); XCTAssertTrue(model.connection.connected)
+        XCTAssertTrue(model.awaitingViewOnlyExitForTesting); XCTAssertTrue(model.viewOnlyConfirmedForTesting)
+        let exit = try XCTUnwrap(packets().last { $0.action.action == "viewOnly" && $0.action.liveViewOnly == false })
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: false, liveViewOnlyRequestID: "wrong-request",
+            x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
+        XCTAssertTrue(model.awaitingViewOnlyExitForTesting)
+        model.connection.onControl?(try JSONEncoder().encode(RemoteAction(action: "capture", liveViewOnly: false, liveViewOnlyRequestID: exit.action.liveViewOnlyRequestID,
+            x: 1, epoch: 1, features: [SessionFeature.liveViewOnly])))
+        XCTAssertFalse(model.awaitingViewOnlyExitForTesting); XCTAssertFalse(model.viewOnlyConfirmedForTesting)
+    }
+    func testPiPRestoreTimeoutAndEndCannotResurrectRetiredSession() throws {
+        for explicitEnd in [true, false] {
+            let (model, _, _, _) = try activePiPModel()
+            model.sceneChanged(.inactive); model.sceneChanged(.background)
+            var restored: [Bool] = []
+            model.livePiP.restoreForeground? { restored.append($0) }
+            model.livePiP.stop()
+            if explicitEnd { model.disconnect() }
+            else { model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 3) }
+            XCTAssertEqual(restored, [false]); XCTAssertFalse(model.connection.connected)
+            model.sceneChanged(.active)
+            XCTAssertFalse(model.connection.isRunning); XCTAssertEqual(restored, [false])
+        }
+    }
+    func testPiPRevokedDuringInactiveFailsClosedAndActuallyRequestsHostExit() throws {
+        let (model, proof, _, packets) = try activePiPModel()
+        defer { model.disconnect() }
+        model.sceneChanged(.inactive); proof.lifetime.retire()
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 0.3)
+        XCTAssertNotEqual(model.pipState, .active)
+        XCTAssertTrue(model.awaitingViewOnlyExitForTesting)
+        XCTAssertTrue(packets().contains { $0.action.action == "viewOnly" && $0.action.liveViewOnly == false && $0.action.liveViewOnlyRequestID != nil })
+        model.sceneChanged(.active)
+        XCTAssertNotEqual(model.pipState, .active, "No automatic OS restart after terminal retirement")
+    }
+
     func testAcceptedLockThenBackgroundAndActiveNeverHoldsResumesOrRetries() throws {
         let background = FakeBackgroundExecution()
         let suite = "lock-background-\(UUID())"

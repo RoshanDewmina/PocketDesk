@@ -1208,7 +1208,8 @@ final class PeerMedia: NSObject {
             // A receive-only phone has no outbound-video GCC estimate for its file uploads.
             // The transport's camera bootstrap estimate is not observed upload capacity.
             route: sample.route, capacityKbps: isHost ? stats.availableOutgoingKbps : nil,
-            videoKbps: transportRate.kbps ?? stats.sentKbps, totalTransportKbps: transportRate.kbps, rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs))
+            videoKbps: transportRate.kbps ?? stats.sentKbps, totalTransportKbps: transportRate.kbps, rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs,
+            routeDetail: sample.routeDetail))
         if isHost {
             if nativeDesktopCodecs {
                 stats.targetFPS = targetFPS

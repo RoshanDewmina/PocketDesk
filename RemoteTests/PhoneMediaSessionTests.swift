@@ -112,4 +112,75 @@ final class PhoneMediaSessionTests: XCTestCase {
         for _ in 0..<7 { XCTAssertTrue(session.acquire(UUID(), kind: .macAudio, onRetired: {})) }
         XCTAssertFalse(session.acquire(UUID(), kind: .macAudio, onRetired: {}))
     }
+    func testTemporaryInterruptionResumesOnlySameOptedInOwnerAndRejectsNewAdmission() {
+        var events: [String] = []
+        let session = PhoneMediaSession(backend: .init(configure: { _ in events.append("configure") },
+            activate: { events.append("activate") }, deactivate: { events.append("deactivate") }))
+        let owner = UUID()
+        XCTAssertTrue(session.acquire(owner, kind: .macAudio, onRetired: { events.append("retire") },
+            onSuspended: { events.append("suspend") }, onResumed: { events.append("resume"); return true }))
+        session.beginInterruption(); session.beginInterruption()
+        XCTAssertTrue(session.contains(owner)); XCTAssertTrue(session.isInterrupted)
+        XCTAssertFalse(session.acquire(UUID(), kind: .macAudio, onRetired: {}))
+        XCTAssertEqual(events, ["configure", "activate", "suspend"])
+        session.endInterruption(shouldResume: true)
+        XCTAssertFalse(session.isInterrupted); XCTAssertTrue(session.contains(owner))
+        XCTAssertEqual(events, ["configure", "activate", "suspend", "activate", "resume"])
+        session.release(owner)
+    }
+    func testLateInterruptionEndCannotReviveTerminalOrReleasedPlaybackOwner() {
+        for terminal in [true, false] {
+            var resumes = 0, activations = 0
+            let session = PhoneMediaSession(backend: .init(configure: { _ in },
+                activate: { activations += 1 }, deactivate: {}))
+            let old = UUID()
+            XCTAssertTrue(session.acquire(old, kind: .macAudio, onRetired: {}, onResumed: { resumes += 1; return true }))
+            session.beginInterruption()
+            if terminal { session.retireAll() } else { session.release(old) }
+            session.endInterruption(shouldResume: true)
+            XCTAssertFalse(session.contains(old)); XCTAssertEqual(resumes, 0); XCTAssertEqual(activations, 1)
+            let next = UUID(); XCTAssertTrue(session.acquire(next, kind: .macAudio, onRetired: {}))
+            session.endInterruption(shouldResume: true)
+            XCTAssertTrue(session.contains(next)); XCTAssertEqual(resumes, 0); XCTAssertEqual(activations, 2)
+            session.release(next)
+        }
+    }
+    func testNoResumeOptionRecordingAndExpiredConsumerRemainTerminal() {
+        for kind in [PhoneMediaSession.Kind.macAudio, .recording] {
+            var retired = 0, resumed = 0
+            let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+            let id = UUID()
+            XCTAssertTrue(session.acquire(id, kind: kind, onRetired: { retired += 1 }, onResumed: { resumed += 1; return true }))
+            session.beginInterruption(); session.endInterruption(shouldResume: false)
+            XCTAssertFalse(session.contains(id)); XCTAssertEqual(retired, 1); XCTAssertEqual(resumed, 0)
+        }
+        let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+        let expired = UUID(); var retired = 0
+        XCTAssertTrue(session.acquire(expired, kind: .pictureInPicture, onRetired: { retired += 1 }, onResumed: { false }))
+        session.beginInterruption(); session.endInterruption(shouldResume: true)
+        XCTAssertFalse(session.contains(expired)); XCTAssertEqual(retired, 1)
+    }
+    func testResumeBackendReentrantRetirementCannotRestartOldConsumer() {
+        var session: PhoneMediaSession!, activations = 0, resumed = 0
+        session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {
+            activations += 1
+            if activations == 2 { session.retireAll() }
+        }, deactivate: {}))
+        let id = UUID()
+        XCTAssertTrue(session.acquire(id, kind: .macAudio, onRetired: {}, onResumed: { resumed += 1; return true }))
+        session.beginInterruption(); session.endInterruption(shouldResume: true)
+        XCTAssertFalse(session.contains(id)); XCTAssertEqual(resumed, 0)
+    }
+
+    func testResumeCallbackReleaseDefersExactlyOneLastOwnerDeactivation() {
+        var releases = 0
+        let session = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: { releases += 1 }))
+        let id = UUID()
+        XCTAssertTrue(session.acquire(id, kind: .macAudio, onRetired: {}, onResumed: {
+            session.release(id); return false
+        }))
+        session.beginInterruption(); session.endInterruption(shouldResume: true)
+        XCTAssertFalse(session.contains(id)); XCTAssertEqual(releases, 1)
+    }
+
 }

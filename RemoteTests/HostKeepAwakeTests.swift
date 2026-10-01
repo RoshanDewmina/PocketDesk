@@ -90,8 +90,8 @@ final class HostAvailabilityTests: XCTestCase {
         XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: false) == (true, false))
         XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: true) == (true, true))
         XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: false, phoneConnected: true) == (false, false))
-        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: false, sharing: true, phoneConnected: true) == (false, false),
-                      "Turning off Keep awake leaves normal macOS sleep settings in charge")
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: false, sharing: true, phoneConnected: true) == (false, true),
+                      "A live phone automatically holds the display; idle system reachability remains opt-in")
     }
 
     func testIdleConnectedSessionKeepsAssertionsWithoutInputOrAudioActivityAndPauseReleasesDisplay() {
@@ -99,10 +99,10 @@ final class HostAvailabilityTests: XCTestCase {
         var released: [UInt32] = []
         let display = HostKeepAwake(backend: .init(acquire: { acquired += 1; return 17 },
                                                  release: { released.append($0); return true }))
-        // The owner chose keep-awake. Idle video/view-only/audio activity is not a power predicate.
+        // No idle reachability consent: a connected viewer still holds the display.
         for _ in 0..<4 {
-            let desired = HostPowerPolicy.assertions(keepAwake: true, sharing: true, phoneConnected: true)
-            XCTAssertTrue(desired.system)
+            let desired = HostPowerPolicy.assertions(keepAwake: false, sharing: true, phoneConnected: true)
+            XCTAssertFalse(desired.system)
             if desired.display { XCTAssertTrue(display.start()) }
         }
         XCTAssertEqual(acquired, 1, "A long idle session reuses its assertion")
@@ -113,7 +113,7 @@ final class HostAvailabilityTests: XCTestCase {
         XCTAssertEqual(released, [17])
         XCTAssertFalse(display.isActive)
         XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: true, sharing: false, phoneConnected: false) == (false, false))
-        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: false, sharing: true, phoneConnected: true) == (false, false))
+        XCTAssertTrue(HostPowerPolicy.assertions(keepAwake: false, sharing: true, phoneConnected: true) == (false, true))
     }
 
     func testLockDetectionReadsTheSessionDictionary() {

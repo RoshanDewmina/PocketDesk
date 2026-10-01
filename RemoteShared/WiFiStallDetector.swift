@@ -47,33 +47,52 @@ struct WiFiStallDetector: Equatable {
     static let showAtStalls = 7
     static let hideAtStalls = 2
     static let stallGapMs = 80.0
-    static let minimumMotionFPS = 20.0
+    static let minimumMotionFPS = 40.0
     static let maximumLossPercent = 1.0
     static let maximumHostCaptureGapMs = 40.0
     static let maximumHostPacerDelayMs = 30.0
 
     private(set) var recent: [Bool] = []
     private(set) var showing = false
+    private var previousMotion = false
+    private var previousMotionAt: TimeInterval?
 
     var tip: WiFiStallTip? { showing ? WiFiStallTip() : nil }
 
     /// Nil when the second does not count: no motion, loss, a relay route, or a Mac-side delay.
     static func stalled(_ report: StreamStatsReport) -> Bool? {
-        guard report.route != "Relay",
-              let fps = report.receivedFPS, fps >= minimumMotionFPS,
-              let gap = report.renderGapMaxMs,
-              (report.packetLossPercent ?? 0) <= maximumLossPercent else { return nil }
-        if let host = report.host {
-            if let captureGap = host.captureGapP90Ms, captureGap > maximumHostCaptureGapMs { return nil }
-            if let pacer = host.pacerDelayMs, pacer > maximumHostPacerDelayMs { return nil }
-        }
+        guard report.route == "Direct",
+              let fps = report.receivedFPS, fps.isFinite, fps >= minimumMotionFPS,
+              let gap = report.renderGapMaxMs, gap.isFinite, gap >= 0,
+              let loss = report.packetLossPercent, loss.isFinite, loss >= 0, loss <= maximumLossPercent,
+              let age = report.hostSummaryAgeMs, age.isFinite, age >= 0, age <= 3_000,
+              let host = report.host,
+              let sourceFPS = host.captureFPS, sourceFPS.isFinite, sourceFPS >= minimumMotionFPS,
+              let sourceGap = host.captureGapMaxMs, sourceGap.isFinite, sourceGap >= 0,
+              sourceGap <= maximumHostCaptureGapMs,
+              let pacer = host.pacerDelayMs, pacer.isFinite, pacer >= 0,
+              pacer <= maximumHostPacerDelayMs else { return nil }
         return gap >= stallGapMs
     }
 
     /// True when `tip` changed.
     @discardableResult
-    mutating func observe(_ report: StreamStatsReport) -> Bool {
-        guard let stalled = Self.stalled(report) else { return false }
+    mutating func observe(_ report: StreamStatsReport, at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        // A source-idle/burst or unknown second breaks the motion run. Keep truthful raw
+        // cadence diagnostics; do not label a cross-window idle gap as a Wi-Fi stall.
+        guard now.isFinite, now >= 0, let stalled = Self.stalled(report) else {
+            let before = showing
+            reset()
+            return before
+        }
+        let contiguous = previousMotionAt.map { now >= $0 && now - $0 <= 2.5 } ?? false
+        guard previousMotion, contiguous else {
+            let before = showing
+            recent = []; showing = false
+            previousMotion = true; previousMotionAt = now
+            return before
+        }
+        previousMotionAt = now
         recent.append(stalled)
         if recent.count > Self.window { recent.removeFirst(recent.count - Self.window) }
         let stalls = recent.filter { $0 }.count
@@ -89,5 +108,7 @@ struct WiFiStallDetector: Equatable {
     mutating func reset() {
         recent = []
         showing = false
+        previousMotion = false
+        previousMotionAt = nil
     }
 }

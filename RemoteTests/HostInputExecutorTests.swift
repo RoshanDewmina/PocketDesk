@@ -174,6 +174,68 @@ final class HostInputExecutorTests: XCTestCase {
         executor.beginCausalContext(next)
         queue.resume(); wait(for: [done], timeout: 2); XCTAssertTrue(sink.events.isEmpty)
     }
+    @MainActor
+    func testRejectedExecutorCheckpointRebasesOnlyCurrentPeerAndFreshInputStillPosts() throws {
+        for rejection in ["expired", "disabled", "driver", "lease"] {
+            let sink = ExecutorSink()
+            var now: TimeInterval = 10
+            let executor = sink.executor(clock: { now })
+            let host = RemoteCoordinator(isHost: true, store: MemoryPairStore(), signaling: ScriptedSignaling())
+            let phone = RemoteCoordinator(isHost: false, store: MemoryPairStore(), signaling: ScriptedSignaling())
+            host.startInputFixtureForTesting(session: "recover"); phone.startInputFixtureForTesting(session: "recover")
+            defer { host.stop(); phone.stop() }
+            var upstream: [ControlPacket] = [], downstream: [ControlPacket] = []
+            host.inputPacketSenderForTesting = { downstream.append($0); return true }
+            phone.inputPacketSenderForTesting = { upstream.append($0); return true }
+            host.onCausalRecovery = { executor.invalidateQueued(); _ = executor.release(); executor.cancelLease() }
+            host.onCausalContext = { executor.beginCausalContext($0) }
+            host.setHostInputEpoch(7); phone.requestCausalInput(epoch: 7)
+            try host.receiveInputFixtureForTesting(upstream.removeFirst())
+            try phone.receiveInputFixtureForTesting(downstream.removeFirst()); executor.drain()
+            if rejection == "lease" {
+                let hold = expectation(description: "leased hold")
+                executor.submit(RemoteAction(action: "dragDown", epoch: 7, interaction: NativeInteraction(hold: "lease", clickCount: 1)),
+                                upgraded: true, expires: 100, routeAuthority: authority) { receipt in
+                    XCTAssertTrue(receipt.outcome.accepted); hold.fulfill()
+                }
+                wait(for: [hold], timeout: 2); now = 100
+            }
+            if rejection == "disabled" { executor.enabled = false }
+            if rejection == "driver" { sink.refuse = true }
+            XCTAssertTrue(phone.sendInputMoves([RemoteAction(action: "move", x: 3, epoch: 7)]))
+            let oldAnchor = try XCTUnwrap(upstream.first?.input?.anchor)
+            let rejected = expectation(description: "checkpoint \(rejection)")
+            host.onCausalInput = { context, semantic in
+                let deadline: TimeInterval = rejection == "expired" ? now : now + 1
+                XCTAssertTrue(executor.submitCausal(context, steps: context.segments.map { .init(action: $0.action, upgraded: true, expires: deadline) },
+                    semantic: nil, routeAuthority: self.authority) { receipt in
+                    XCTAssertTrue(receipt.failed)
+                    XCTAssertTrue(host.recoverCausalInput(context)); rejected.fulfill()
+                })
+            }
+            try host.receiveInputFixtureForTesting(upstream.removeFirst())
+            wait(for: [rejected], timeout: 2); executor.drain()
+            XCTAssertTrue(host.connected); XCTAssertTrue(host.hostRegistered); XCTAssertTrue(host.isRunning)
+            XCTAssertFalse(executor.held)
+            let anchor = try XCTUnwrap(downstream.first?.input)
+            XCTAssertEqual(anchor.kind, "anchor"); XCTAssertNotEqual(anchor.anchor, oldAnchor)
+            try phone.receiveInputFixtureForTesting(downstream.removeFirst())
+            sink.refuse = false; executor.enabled = true; now = 10
+            let fresh = expectation(description: "fresh post")
+            host.onCausalInput = { context, _ in
+                XCTAssertTrue(executor.submitCausal(context, steps: context.segments.map { self.admitted($0.action) }, semantic: nil,
+                    routeAuthority: self.authority) { receipt in
+                    XCTAssertFalse(receipt.failed); XCTAssertEqual(receipt.applied, 1); fresh.fulfill()
+                })
+            }
+            XCTAssertTrue(phone.sendInputMoves([RemoteAction(action: "move", x: 5, epoch: 7)]))
+            try host.receiveInputFixtureForTesting(upstream.removeFirst())
+            wait(for: [fresh], timeout: 2)
+            XCTAssertTrue(host.connected); XCTAssertTrue(phone.connected)
+            XCTAssertEqual(sink.events.last?.point.x, 105)
+        }
+    }
+
     func testReleaseLinearizesAfterInFlightPostingAndEmitsOneUp() {
         let sink = ExecutorSink(), executor = sink.executor()
         let started = DispatchSemaphore(value: 0), unblock = DispatchSemaphore(value: 0), released = DispatchSemaphore(value: 0)

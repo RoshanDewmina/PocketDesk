@@ -252,6 +252,21 @@ struct PointerMoveCoalescer {
         return result
     }
 
+    /// Only unsent compatible motion may merge. Do not erase reversals (clamping matters)
+    /// or Pencil samples (pressure/path matters), and never cross an authority boundary.
+    static func coalescedUnsentMove(_ held: RemoteAction, _ next: RemoteAction) -> RemoteAction? {
+        guard isMove(held), held.action == next.action, held.pencil == nil, next.pencil == nil,
+              (held.pointerSync == nil) == (next.pointerSync == nil),
+              let authority = envelope(held), authority == envelope(next) else { return nil }
+        var result = next
+        if next.action == "move" {
+            guard held.x * next.x >= 0, held.y * next.y >= 0 else { return nil }
+            result.x += held.x; result.y += held.y
+            guard abs(result.x) <= 20_000, abs(result.y) <= 20_000 else { return nil }
+        }
+        return result
+    }
+
     /// Everything but the position and the ordinal, which merging is allowed to change.
     private static func envelope(_ action: RemoteAction) -> Data? {
         var copy = action

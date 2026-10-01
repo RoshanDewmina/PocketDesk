@@ -216,6 +216,8 @@ final class RemoteCoordinator: ObservableObject {
     var onCausalInput: ((InputCausalEnvelope, RemoteAction?) -> Void)?
     var onCausalContext: ((InputCausalEnvelope) -> Void)?
     var onCausalRejected: ((RemoteAction) -> Void)?
+    /// Exact-current-context cleanup before publishing a recovery anchor.
+    var onCausalRecovery: (() -> Void)?
     private var hostInputEpoch: UInt64 = 0
     private var hostInputAnchor = InputCausalEnvelope.identity()
     private var causalContext: InputCausalEnvelope?
@@ -226,12 +228,19 @@ final class RemoteCoordinator: ObservableObject {
     private var motionSequence: UInt64 = 0
     private var motionReplay = InputMotionReplay()
     private var deferredInput: [RemoteAction] = []
+    private var deferredInputSizes: [Int] = []
+    private var deferredInputBytes = 0
+    private var reliableMotionOrdinal: UInt64?
+    private var inputRecoveryPending = false
+    private var inputRecoveryTimeout: Task<Void, Never>?
+    private static let maximumDeferredActions = 512
+    private static let maximumDeferredSemantics = 64
     var causalInputNegotiated: Bool { causalContext != nil }
     #if DEBUG
     // Input-only fixture seam: no sockets, pairing store mutations or authorization bypass in release.
     var inputPacketSenderForTesting: ((ControlPacket) -> Bool)?
     func startInputFixtureForTesting(session: String) {
-        self.session = session; connected = true
+        self.session = session; connected = true; stopped = false; hostRegistered = isHost
         peerFeatures = [SessionFeature.extendedFeatureList, SessionFeature.causalInput]
     }
     func receiveInputFixtureForTesting(_ packet: ControlPacket, motion: Bool = false) throws {
@@ -341,6 +350,61 @@ final class RemoteCoordinator: ObservableObject {
         _ = transmit(RemoteAction(action: "heartbeat", epoch: context.epoch), input: context)
     }
 
+    @discardableResult
+    func recoverCausalInput(_ context: InputCausalEnvelope) -> Bool {
+        guard isHost, connected, let current = causalContext, context.nonce == current.nonce,
+              context.anchor == current.anchor, context.epoch == current.epoch else { return false }
+        onCausalRecovery?()
+        guard let after = causalContext, after.nonce == current.nonce, after.anchor == current.anchor,
+              after.epoch == current.epoch else { return false }
+        rebaseCausalInput()
+        return true
+    }
+
+    /// Legacy invalid input ends this peer attempt; it never suspends Mac sharing.
+    func endPhoneInputSession(_ message: String) {
+        guard isHost else { return }
+        sessionFailed(message)
+    }
+
+    private func clearDeferredInput() {
+        deferredInput.removeAll(); deferredInputSizes.removeAll(); deferredInputBytes = 0
+    }
+    private func enqueueDeferredInput(_ action: RemoteAction) -> Bool {
+        if let last = deferredInput.last, let merged = PointerMoveCoalescer.coalescedUnsentMove(last, action),
+           let oldSize = deferredInputSizes.last, let size = try? JSONEncoder().encode(merged).count {
+            guard deferredInputBytes - oldSize + size <= 256 * 1024 else { return false }
+            deferredInput[deferredInput.count - 1] = merged
+            deferredInputSizes[deferredInputSizes.count - 1] = size
+            deferredInputBytes += size - oldSize
+            return true
+        }
+        guard deferredInput.count < Self.maximumDeferredActions,
+              let size = try? JSONEncoder().encode(action).count,
+              deferredInputBytes + size <= 256 * 1024 else { return false }
+        if Self.causalSemantics.contains(action.action),
+           deferredInput.filter({ Self.causalSemantics.contains($0.action) }).count >= Self.maximumDeferredSemantics { return false }
+        deferredInput.append(action); deferredInputSizes.append(size); deferredInputBytes += size
+        return true
+    }
+
+    /// A bounded queue can expire without expiring the connection. Discard unsent
+    /// semantics, ask the authenticated host to release/rebase, then await its anchor.
+    private func requestInputRecovery() -> Bool {
+        guard !isHost, connected, var context = causalContext else { return false }
+        if inputRecoveryPending { return false }
+        inputRecoveryPending = true; clearDeferredInput(); reliableMotionOrdinal = nil
+        context.kind = "rebase"; context.applied = 0; context.segments = []
+        guard transmit(RemoteAction(action: "heartbeat", epoch: context.epoch), input: context) else { return false }
+        inputRecoveryTimeout?.cancel()
+        inputRecoveryTimeout = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard !Task.isCancelled, let self, self.inputRecoveryPending else { return }
+            self.peerDisconnected() // Preserve the normal reconnect budget.
+        }
+        return false
+    }
+
     func requestCausalInput(epoch: UInt64) {
         guard !isHost, connected, epoch > 0,
               causalContext?.epoch != epoch,
@@ -351,6 +415,7 @@ final class RemoteCoordinator: ObservableObject {
         moveFlush?.cancel(); moveFlush = nil
         media?.allowPointerChannel()
         let nonce = InputCausalEnvelope.identity()
+        clearDeferredInput() // A replacement offer cannot carry queued work from retired geometry.
         offeredInputNonce = nonce; offeredInputEpoch = epoch
         let offer = InputCausalEnvelope(kind: "offer", nonce: nonce, anchor: String(repeating: "0", count: 32), epoch: epoch)
         _ = transmit(RemoteAction(action: "heartbeat", epoch: epoch), input: offer)
@@ -363,17 +428,17 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     func sendInputMoves(_ actions: [RemoteAction]) -> Bool {
-        guard !isHost, connected else { return false }
+        guard !isHost, connected, !inputRecoveryPending else { return false }
         guard causalContext != nil else {
             if offeredInputNonce != nil {
+                guard actions.allSatisfy({ $0.epoch == offeredInputEpoch }) else { return false }
                 do {
                     for action in actions {
                         try action.validate()
-                        guard ["move", "moveTo"].contains(action.action), action.epoch == offeredInputEpoch, deferredInput.count < 64 else { throw RemoteError.stale }
-                        deferredInput.append(action)
+                        guard ["move", "moveTo"].contains(action.action), action.epoch == offeredInputEpoch, enqueueDeferredInput(action) else { throw RemoteError.stale }
                     }
                     return true
-                } catch { sessionFailed("Input negotiation queue was full or stale."); return false }
+                } catch { peerDisconnected(); return false }
             }
             return actions.allSatisfy { sendControl($0) }
         }
@@ -384,12 +449,11 @@ final class RemoteCoordinator: ObservableObject {
             for action in actions {
                 try action.validate()
                 if !deferredInput.isEmpty || !motionPrefix.canAppend(action) {
-                    guard deferredInput.count < 64 else { throw RemoteError.stale }
-                    deferredInput.append(action)
+                    guard enqueueDeferredInput(action) else { return requestInputRecovery() }
                 } else { try motionPrefix.append(action) }
             }
             return sendMotionPrefix(reliable: !deferredInput.isEmpty)
-        } catch { sessionFailed("Pointer state expired. Reconnect from the phone."); return false }
+        } catch { return requestInputRecovery() }
     }
 
     private func envelope(kind: String) -> InputCausalEnvelope? {
@@ -399,7 +463,14 @@ final class RemoteCoordinator: ObservableObject {
     }
     private func sendMotionPrefix(reliable: Bool) -> Bool {
         guard let envelope = envelope(kind: reliable ? "barrier" : "motion") else { return false }
-        if reliable { return transmit(RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope) }
+        if reliable {
+            guard !envelope.segments.isEmpty else { return true }
+            // One reliable checkpoint per ACK round-trip, even at 240 Hz. The
+            // immutable on-wire prefix stays intact; only its unsent tail merges.
+            if reliableMotionOrdinal != nil { return true }
+            reliableMotionOrdinal = envelope.applied
+            return transmit(RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope)
+        }
         motionSequence &+= 1
         let packet = ControlPacket(session: session, sequence: motionSequence,
                                    action: RemoteAction(action: "heartbeat", epoch: envelope.epoch), input: envelope)
@@ -423,7 +494,7 @@ final class RemoteCoordinator: ObservableObject {
             } else {
                 guard let barrier = envelope(kind: "barrier"), transmit(action, input: barrier) else { throw RemoteError.stale }
             }
-            deferredInput.removeFirst()
+            deferredInput.removeFirst(); deferredInputBytes -= deferredInputSizes.removeFirst()
         }
         if !motionPrefix.segments.isEmpty { _ = sendMotionPrefix(reliable: !deferredInput.isEmpty) }
     }
@@ -441,38 +512,57 @@ final class RemoteCoordinator: ObservableObject {
         }
         switch input.kind {
         case "offer":
-            guard isHost, allowsCausalInput, peerFeatures.contains(SessionFeature.causalInput), input.epoch == hostInputEpoch, packet.action.action == "heartbeat" else { throw RemoteError.stale }
-            if let current = causalContext {
-                guard current.nonce == input.nonce, current.epoch == input.epoch else { throw RemoteError.stale }
-                return
-            }
+            guard isHost, allowsCausalInput, peerFeatures.contains(SessionFeature.causalInput),
+                  hostInputEpoch > 0, packet.action.action == "heartbeat" else { throw RemoteError.stale }
+            if let current = causalContext, current.nonce == input.nonce { return }
+            // Geometry may advance while an initial offer is in flight. The authenticated
+            // host accepts its nonce at CURRENT geometry; old queued input is never posted.
             let context = InputCausalEnvelope(kind: "accept", nonce: input.nonce, anchor: hostInputAnchor, epoch: hostInputEpoch)
             causalContext = context; motionReplay = InputMotionReplay(); onCausalContext?(context)
             media?.openPointerChannel()
             _ = transmit(RemoteAction(action: "heartbeat", epoch: context.epoch), input: context)
         case "accept":
-            guard !isHost, packet.action.action == "heartbeat", input.nonce == offeredInputNonce,
-                  input.epoch == offeredInputEpoch else { throw RemoteError.stale }
+            guard !isHost, packet.action.action == "heartbeat" else { throw RemoteError.stale }
+            guard input.nonce == offeredInputNonce else { return } // A newer correlated offer supersedes this response.
+            let changedGeometry = input.epoch != offeredInputEpoch
             inputNegotiationTimeout?.cancel(); inputNegotiationTimeout = nil
-            offeredInputNonce = nil; causalContext = input; motionPrefix = InputMotionPrefix()
+            offeredInputNonce = nil; causalContext = input; motionPrefix = InputMotionPrefix(); reliableMotionOrdinal = nil
+            if changedGeometry { clearDeferredInput(); onCausalContext?(input) }
             try drainDeferredInput()
         case "anchor":
-            guard !isHost, let current = causalContext, input.nonce == current.nonce,
-                  packet.action.action == "heartbeat" else { throw RemoteError.stale }
+            guard !isHost, packet.action.action == "heartbeat" else { throw RemoteError.stale }
+            guard let current = causalContext, input.nonce == current.nonce else { return }
             guard input.anchor != current.anchor || input.epoch != current.epoch else { return }
-            causalContext = input; motionPrefix = InputMotionPrefix(); deferredInput = []
+            causalContext = input; motionPrefix = InputMotionPrefix(); clearDeferredInput()
+            reliableMotionOrdinal = nil; inputRecoveryPending = false
+            inputRecoveryTimeout?.cancel(); inputRecoveryTimeout = nil
             onCausalContext?(input)
         case "ack":
             guard !isHost, let current = causalContext, input.nonce == current.nonce,
                   input.anchor == current.anchor, input.epoch == current.epoch,
                   packet.action.action == "heartbeat" else { return }
-            try motionPrefix.acknowledge(input.applied); try drainDeferredInput()
+            guard !inputRecoveryPending else { return }
+            try motionPrefix.acknowledge(input.applied)
+            if let ordinal = reliableMotionOrdinal, input.applied >= ordinal { reliableMotionOrdinal = nil }
+            try drainDeferredInput()
+        case "rebase":
+            guard isHost, let current = causalContext, input.nonce == current.nonce,
+                  packet.action.action == "heartbeat" else { throw RemoteError.stale }
+            if !recoverCausalInput(input) {
+                var anchor = current; anchor.kind = "anchor"; anchor.applied = 0; anchor.segments = []
+                _ = transmit(RemoteAction(action: "heartbeat", epoch: anchor.epoch), input: anchor)
+            }
         case "barrier":
             guard isHost, let current = causalContext, input.nonce == current.nonce,
                   packet.action.action == "heartbeat" || Self.causalSemantics.contains(packet.action.action) else { throw RemoteError.stale }
             // Reliable input already in flight can belong to the retired geometry.
             // Never let its cleanup affect a newer hold, or end a healthy session.
-            guard input.epoch == current.epoch else { onCausalRejected?(packet.action); return }
+            guard input.epoch == current.epoch else {
+                onCausalRejected?(packet.action)
+                var anchor = current; anchor.kind = "anchor"; anchor.applied = 0; anchor.segments = []
+                _ = transmit(RemoteAction(action: "heartbeat", epoch: anchor.epoch), input: anchor)
+                return
+            }
             if input.anchor != current.anchor {
                 onCausalRejected?(packet.action)
                 var anchor = current; anchor.kind = "anchor"; anchor.applied = 0; anchor.segments = []
@@ -506,17 +596,19 @@ final class RemoteCoordinator: ObservableObject {
             return false
         }
         do { try action.validate() } catch { connectionLost(); return false }
+        if !isHost, inputRecoveryPending, Self.causalSemantics.contains(action.action) { return false }
         if !isHost, offeredInputNonce != nil, Self.causalSemantics.contains(action.action) {
-            if action.action == "release" { deferredInput.removeAll() }
-            guard action.epoch == offeredInputEpoch, deferredInput.count < 64 else { sessionFailed("Input negotiation queue was full or stale."); return false }
-            deferredInput.append(action); return true
+            guard action.epoch == offeredInputEpoch else { return false }
+            if action.action == "release" { clearDeferredInput() }
+            guard enqueueDeferredInput(action) else { peerDisconnected(); return false }
+            return true
         }
         if !isHost, let context = causalContext, Self.causalSemantics.contains(action.action) {
             guard action.epoch == context.epoch else { return false }
-            if action.action == "release" { deferredInput.removeAll() }
+            if action.action == "release" { clearDeferredInput() }
             if !deferredInput.isEmpty {
-                guard deferredInput.count < 64 else { sessionFailed("Input queue was full."); return false }
-                deferredInput.append(action); return sendMotionPrefix(reliable: true)
+                guard enqueueDeferredInput(action) else { return requestInputRecovery() }
+                return sendMotionPrefix(reliable: true)
             }
             guard let barrier = envelope(kind: "barrier") else { return false }
             return transmit(action, input: barrier)
@@ -643,8 +735,8 @@ final class RemoteCoordinator: ObservableObject {
                 features.append(SignalingFeature.remoteAccess)
             }
             wireSignalingCallbacks()
-            if localOnly && (invitation.durableHostID == nil || invitation.ownerPairID == nil || invitation.localServiceName == nil) {
-                throw RemoteError.invalidPairing
+            if localOnly && !invitation.hasOwnerLocalIdentity {
+                throw RemoteError.localPairingRefreshRequired
             }
             try relay.connect(invitation: invitation, hostToken: hostPair?.hostToken, features: features,
                               entitlement: isHost || localOnly || sessionModeRequest == .couch ? nil : entitlementToken?())
@@ -786,7 +878,9 @@ final class RemoteCoordinator: ObservableObject {
         inputNegotiationTimeout?.cancel(); inputNegotiationTimeout = nil
         causalContext = nil; offeredInputNonce = nil; offeredInputEpoch = 0; hostInputEpoch = 0
         hostInputAnchor = InputCausalEnvelope.identity(); motionPrefix = InputMotionPrefix()
-        motionSequence = 0; motionReplay = InputMotionReplay(); deferredInput = []
+        motionSequence = 0; motionReplay = InputMotionReplay(); clearDeferredInput()
+        reliableMotionOrdinal = nil; inputRecoveryPending = false
+        inputRecoveryTimeout?.cancel(); inputRecoveryTimeout = nil
         request = ""; session = ""; sequence = 0; guardState = nil; proofReceived = false
         peerFeatures = []
         peerRequestedMode = .picture

@@ -53,7 +53,7 @@ final class AwayEnvironmentTests: XCTestCase {
                       "Away mode is its own keep-awake request")
         XCTAssertTrue(P.assertions(keepAwake: true, sharing: false, phoneConnected: false, awayArmed: true) == (false, false),
                       "Nothing is held while sharing is not running")
-        XCTAssertTrue(P.assertions(keepAwake: false, sharing: true, phoneConnected: true, awayArmed: false) == (false, false))
+        XCTAssertTrue(P.assertions(keepAwake: false, sharing: true, phoneConnected: true, awayArmed: false) == (false, true))
     }
 
     func testLockWarnings() {

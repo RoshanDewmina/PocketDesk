@@ -381,14 +381,57 @@ final class PhoneRemoteModel: ObservableObject {
         return "\(scope.label) · view only · audio off"
     }
     @Published private(set) var macAudioMuted = true
-    private let macAudioPlayback = PhoneSystemAudioPlayback()
+    private let macAudioPlayback: PhoneSystemAudioPlayback
+    private struct MacAudioConsent {
+        let peer: PeerMedia
+        let session: UUID
+        let contentEpoch: UInt64
+        let geometry: UInt64
+    }
+    private var macAudioConsent: MacAudioConsent?
+    private var macAudioSuspended = false
+    private func currentMacAudioConsent() -> Bool {
+        guard !macAudioMuted, let consent = macAudioConsent else { return false }
+        return connection.media === consent.peer && connection.presentationSessionID == consent.session &&
+            presentationContentEpoch == consent.contentEpoch && geometryEpoch == consent.geometry &&
+            connection.connected && !captureScopeViewOnly && !viewOnlyConfirmed && !pendingViewOnlyStart &&
+            !awaitingViewOnlyExit && !pipBackground && pendingLockMac == nil
+    }
+    private func suspendMacAudio() {
+        guard !macAudioMuted else { return }
+        macAudioSuspended = true
+        connection.media?.setRemoteAudioMuted(true)
+    }
+    private func resumeMacAudioIfAllowed() {
+        guard macAudioSuspended else { return }
+        guard currentMacAudioConsent() else { setMacAudioMuted(true); return }
+        guard sceneIsActive, !privacyShield, !contentConcealed, macAudioPlayback.isAdmitted,
+              connection.presentationDeadline(at: ProcessInfo.processInfo.systemUptime) != nil else { return }
+        macAudioSuspended = false
+        connection.media?.setRemoteAudioMuted(false)
+    }
     func setMacAudioMuted(_ muted: Bool) {
         if !muted {
-            guard !captureScopeViewOnly, !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground, connection.connected, !contentConcealed, sceneIsActive, macAudioPlayback.begin() else { return }
+            guard !captureScopeViewOnly, !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground,
+                  pendingLockMac == nil, connection.connected, !contentConcealed, sceneIsActive,
+                  let peer = connection.media, connection.presentationDeadline(at: ProcessInfo.processInfo.systemUptime) != nil else { return }
+            let session = connection.presentationSessionID, content = presentationContentEpoch, geometry = geometryEpoch
+            guard macAudioPlayback.begin() else { return }
+            guard connection.media === peer, connection.presentationSessionID == session,
+                  presentationContentEpoch == content, geometryEpoch == geometry, sceneIsActive, !privacyShield,
+                  !contentConcealed, !captureScopeViewOnly, !viewOnlyConfirmed, !pendingViewOnlyStart,
+                  !awaitingViewOnlyExit, !pipBackground, pendingLockMac == nil,
+                  connection.presentationDeadline(at: ProcessInfo.processInfo.systemUptime) != nil else {
+                macAudioPlayback.end(); return
+            }
+            macAudioConsent = MacAudioConsent(peer: peer, session: session, contentEpoch: content, geometry: geometry)
         }
         macAudioMuted = muted
         connection.media?.setRemoteAudioMuted(muted)
-        if muted { macAudioPlayback.end() }
+        if muted {
+            macAudioConsent = nil; macAudioSuspended = false
+            macAudioPlayback.end()
+        }
     }
     @Published private(set) var privacyShield = false { willSet { if newValue { invalidatePresentation(keepingPiP: mayKeepLivePiP) } } }
     private var hasBeenActive = false
@@ -432,7 +475,7 @@ final class PhoneRemoteModel: ObservableObject {
     private let clickFeedback = UIImpactFeedbackGenerator(style: .heavy)
     private let secondaryClickFeedback = UIImpactFeedbackGenerator(style: .rigid)
 
-    let livePiP = LivePiPController()
+    let livePiP: LivePiPController
     @Published private(set) var pipState: LivePiPPolicy.State = .ineligible
     @Published private(set) var inlinePresentationAdmission: VideoPresentationAdmission?
     @Published private(set) var pipAdmission: VideoPresentationAdmission?
@@ -440,7 +483,47 @@ final class PhoneRemoteModel: ObservableObject {
     private var appliedReceiptTracker = AppliedInputReceiptTracker()
     private var presentationHost: PhoneHostTrust?
     private var presentationContentEpoch: UInt64 = 1
-        private var pipBackground = false
+    private var pipBackground = false
+    private var pipTransitional = false
+    private struct PiPRestoreRequest {
+        let session: UUID
+        let contentEpoch: UInt64
+        let geometry: UInt64
+        let deadline: TimeInterval
+        let complete: (Bool) -> Void
+    }
+    private var pipRestoreRequest: PiPRestoreRequest?
+    #if DEBUG
+    // Model lifecycle boundary only: never presented as native producer or route admission evidence.
+    private var presentationProofForTesting: VideoPresentationAdmission?
+    #endif
+    private func finishPiPRestore(_ restored: Bool) {
+        guard let request = pipRestoreRequest else { return }
+        pipRestoreRequest = nil // Completion may synchronously reenter.
+        request.complete(restored)
+    }
+    private func requestPiPRestore(_ completion: @escaping (Bool) -> Void) {
+        guard connection.connected, pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else {
+            completion(false); return
+        }
+        let session = connection.presentationSessionID, content = presentationContentEpoch, geometry = geometryEpoch
+        finishPiPRestore(false)
+        guard pipRestoreRequest == nil, connection.connected, connection.presentationSessionID == session,
+              presentationContentEpoch == content, geometryEpoch == geometry,
+              pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { completion(false); return }
+        pipRestoreRequest = PiPRestoreRequest(session: connection.presentationSessionID,
+            contentEpoch: presentationContentEpoch, geometry: geometryEpoch,
+            deadline: ProcessInfo.processInfo.systemUptime + 2, complete: completion)
+        if sceneIsActive { completePiPRestoreIfCurrent() }
+    }
+    private func completePiPRestoreIfCurrent() {
+        guard let request = pipRestoreRequest else { return }
+        guard request.session == connection.presentationSessionID, request.contentEpoch == presentationContentEpoch,
+              request.geometry == geometryEpoch, connection.connected,
+              ProcessInfo.processInfo.systemUptime < request.deadline else { finishPiPRestore(false); return }
+        guard sceneIsActive, !privacyShield, !contentConcealed else { return }
+        finishPiPRestore(true) // UI restored; control still waits for the matching host exit ACK.
+    }
     private var invalidatingPiP = false
     private var viewOnlyConfirmed = false
     private var pendingViewOnlyStart = false
@@ -463,10 +546,13 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private func retireContentPresentation() {
         diagnostics.cancel()
+        pipTransitional = false
         invalidatePresentation()
         presentationContentEpoch &+= 1
+        setMacAudioMuted(true)
+        finishPiPRestore(false)
     }
-    private func invalidatePresentation(keepingPiP: Bool = false) {
+    private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
         PhoneIdleTimer.shared.endSession()
         if pendingWake != nil { wakeStatus = "The helper session changed. No new wake result can be confirmed." }
         pendingWake = nil; wakeTimeout?.cancel(); wakeTimeout = nil
@@ -482,10 +568,8 @@ final class PhoneRemoteModel: ObservableObject {
         if !keepingPiP {
             // A queued enter may already have suspended the host. Retiring its content
             // correlation cannot retire the independent cleanup obligation.
-            if connection.connected && (pendingViewOnlyStart || viewOnlyConfirmed) && !awaitingViewOnlyExit {
-                awaitingViewOnlyExit = true
-                viewOnlyExitDeadline = ProcessInfo.processInfo.systemUptime + 2
-            }
+            let needsExit = requestHostExit && connection.connected &&
+                (pendingViewOnlyStart || viewOnlyConfirmed) && !awaitingViewOnlyExit
             pipAdmission = nil
             pendingViewOnlyStart = false
             viewOnlyStartDeadline = nil
@@ -493,6 +577,8 @@ final class PhoneRemoteModel: ObservableObject {
             invalidatingPiP = true
             livePiP.stop()
             invalidatingPiP = false
+            // A deadline alone cannot return the Mac to interactive mode. Send a correlated exit.
+            if needsExit { requestViewOnlyExit() }
         }
     }
     private func refreshPresentation(at now: TimeInterval) {
@@ -505,9 +591,19 @@ final class PhoneRemoteModel: ObservableObject {
                 contentEpoch: presentationContentEpoch, geometryEpoch: geometryEpoch)
         }
         let blocked = pendingLockMac != nil || host?.invitation != connection.invitation || hostPresence == .locked || hostPresence == .switchedUser
-        let proof = PresentationLeasePolicy.admission(identity: identity, routeDeadline: connection.presentationDeadline(at: now),
+        var proof = PresentationLeasePolicy.admission(identity: identity, routeDeadline: connection.presentationDeadline(at: now),
             captureHealthAt: lastCaptureHealth, healthy: captureHealthy, picture: sessionMode == .picture,
             trackPresent: connection.remoteVideo != nil, blocked: blocked, now: now)
+        #if DEBUG
+        if let fixture = presentationProofForTesting, connection.connected,
+           fixture.identity.sessionID == connection.presentationSessionID,
+           fixture.identity.trackID == connection.presentationTrackID,
+           fixture.identity.contentEpoch == presentationContentEpoch, fixture.identity.geometryEpoch == geometryEpoch,
+           pendingLockMac == nil, fixture.permits(at: now) {
+            proof = VideoPresentationAdmission(identity: fixture.identity, validUntil: fixture.validUntil)
+        }
+        #endif
+        resumeMacAudioIfAllowed()
         let inline = VideoPresentationAdmission.renewed(sceneIsActive && !privacyShield && !contentConcealed ? proof : nil,
             from: inlinePresentationAdmission)
         if let peer = connection.media {
@@ -530,7 +626,7 @@ final class PhoneRemoteModel: ObservableObject {
         // PiP and inline have separate terminal lifetimes: background retirement of inline cannot kill an approved PiP.
         let pipProposal = proof.map { VideoPresentationAdmission(identity: $0.identity, validUntil: $0.validUntil) }
         let nextPiP = VideoPresentationAdmission.renewed(hostFeatures.contains(SessionFeature.liveViewOnly) &&
-            (mayPreroll || pipBackground && mayKeepLivePiP) ? pipProposal : nil, from: pipAdmission)
+            (mayPreroll || (pipBackground || pipTransitional) && mayKeepLivePiP) ? pipProposal : nil, from: pipAdmission)
         pipAdmission = nextPiP
         livePiP.updateAdmission(nextPiP)
         if nextPiP != nil, let track = connection.remoteVideo { livePiP.attachSourceTrack(track) }
@@ -612,9 +708,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
     func stopPictureInPicture() {
         invalidatePresentation()
-        if sceneIsActive {
-            requestViewOnlyExit()
-        } else if pipBackground { disconnect(explicitEnd: false) }
+        if pipBackground && pipRestoreRequest == nil { disconnect(explicitEnd: false) }
     }
     private func requestViewOnlyExit() {
         awaitingViewOnlyExit = true
@@ -651,7 +745,10 @@ final class PhoneRemoteModel: ObservableObject {
     private var resumeResolved = true
     private var resumeStartedAt: TimeInterval = 0
 
-    init(background: BackgroundExecution? = nil, resumeStore: SessionResumeStore = SessionResumeStore()) {
+    init(background: BackgroundExecution? = nil, resumeStore: SessionResumeStore = SessionResumeStore(),
+         macAudioPlayback: PhoneSystemAudioPlayback? = nil, livePiP: LivePiPController? = nil) {
+        self.macAudioPlayback = macAudioPlayback ?? PhoneSystemAudioPlayback()
+        self.livePiP = livePiP ?? LivePiPController()
         self.background = background ?? SystemBackgroundExecution()
         self.resumeStore = resumeStore
         resumeCapsule = resumeStore.load()
@@ -691,18 +788,25 @@ final class PhoneRemoteModel: ObservableObject {
             UserDefaults.standard.removeObject(forKey: "miniMap.pad")
         }
         usefulSession.onConfirmVisiblePicture = { [weak self] in self?.confirmVisibleUsefulPicture() }
-        macAudioPlayback.onMustMute = { [weak self] in self?.setMacAudioMuted(true) }
-        livePiP.didChangeState = { [weak self] state in
+        self.macAudioPlayback.onMustMute = { [weak self] in self?.setMacAudioMuted(true) }
+        self.macAudioPlayback.onSuspended = { [weak self] in self?.suspendMacAudio() }
+        self.macAudioPlayback.onResumed = { [weak self] in
+            guard let self, self.currentMacAudioConsent(),
+                  self.connection.presentationDeadline(at: ProcessInfo.processInfo.systemUptime) != nil else { return false }
+            self.resumeMacAudioIfAllowed()
+            return true
+        }
+        self.livePiP.didChangeState = { [weak self] state in
             guard let self else { return }
             self.pipState = state
-            if self.pipBackground && state != .active { self.disconnect(explicitEnd: false) }
-            else if state == .ineligible && !self.invalidatingPiP && self.sceneIsActive && self.viewOnlyConfirmed && !self.awaitingViewOnlyExit {
+            if self.pipBackground && state != .active && self.pipRestoreRequest == nil { self.disconnect(explicitEnd: false) }
+            else if state == .ineligible && !self.invalidatingPiP && self.viewOnlyConfirmed && !self.awaitingViewOnlyExit && self.pipRestoreRequest == nil {
                 self.requestViewOnlyExit()
             }
         }
-        livePiP.restoreForeground = { [weak self] completion in
-            // OS may foreground the app; completion never grants control or hides expired proof.
-            completion(self?.sceneIsActive == true)
+        self.livePiP.restoreForeground = { [weak self] completion in
+            guard let self else { completion(false); return }
+            self.requestPiPRestore(completion)
         }
         connection.onPresentationInvalidated = { [weak self] in self?.retireContentPresentation() }
         connection.restore()
@@ -1391,7 +1495,7 @@ final class PhoneRemoteModel: ObservableObject {
         #endif
         SmoothMotionController.noteOutgoing(action: action.action, dragging: dragging)
         displayTickInput.send = { [weak self] actions in self?.connection.sendInputMoves(actions) ?? false }
-        displayTickInput.onFailure = { [weak self] in self?.connection.stop() }
+        displayTickInput.onFailure = { [weak self] in self?.displayTickInput.cancel() }
         if action.action == "release" { displayTickInput.cancel() }
         else if ["move", "moveTo"].contains(action.action) { return displayTickInput.offer(action) }
         else if !displayTickInput.flush() { return false }
@@ -1951,8 +2055,10 @@ let now = ProcessInfo.processInfo.systemUptime
         PhoneIdleTimer.shared.endSession()
         cancelLockMacRequest()
         usefulSession.invalidate(explicitEnd: explicitEnd)
-        pipBackground = false
-        invalidatePresentation()
+        pipTransitional = false; pipBackground = false
+        invalidatePresentation(requestHostExit: false)
+        setMacAudioMuted(true)
+        finishPiPRestore(false)
         viewOnlyConfirmed = false
         awaitingViewOnlyExit = false
         viewOnlyExitDeadline = nil
@@ -1981,9 +2087,13 @@ let now = ProcessInfo.processInfo.systemUptime
             acceptResumeMeasurement(resumeTiming.sceneActive(at: ProcessInfo.processInfo.systemUptime))
             sceneWasBackground = false
             returnToForeground()
+            pipTransitional = false
+            resumeMacAudioIfAllowed()
+            completePiPRestoreIfCurrent()
         case .inactive:
             diagnostics.cancel()
-            setMacAudioMuted(true)
+            pipTransitional = mayKeepLivePiP
+            suspendMacAudio()
             sceneIsActive = false
             if hasBeenActive {
                 cancelInput()
@@ -2014,6 +2124,8 @@ let now = ProcessInfo.processInfo.systemUptime
             return
         }
         displayTickInput.cancel()
+        setMacAudioMuted(true) // Background is a terminal boundary for Mac-audio consent.
+        pipTransitional = false
         if mayKeepLivePiP {
             pipBackground = true
             invalidatePresentation(keepingPiP: true)
@@ -2097,7 +2209,6 @@ let now = ProcessInfo.processInfo.systemUptime
         if pipBackground {
             pipBackground = false
             invalidatePresentation()
-            requestViewOnlyExit()
             contentConcealed = false; resumeState = .none
             suspendInputReadiness() // Fresh foreground status and token are required.
         }
@@ -2184,8 +2295,9 @@ let now = ProcessInfo.processInfo.systemUptime
     private func sessionEnded() {
         let waitingForLock = pendingLockMac != nil
         diagnostics.ended()
-        pipBackground = false
-        invalidatePresentation()
+        pipTransitional = false; pipBackground = false
+        invalidatePresentation(requestHostExit: false)
+        finishPiPRestore(false)
         presentationHost = nil
         viewOnlyConfirmed = false
         awaitingViewOnlyExit = false
@@ -2579,6 +2691,19 @@ let now = ProcessInfo.processInfo.systemUptime
         acceptedLockMacRequest(request)
         return true
     }
+    /// Inject a finite, terminal presentation lease at the downstream model boundary, not network authority.
+    func admitPiPProofForTesting(validUntil: TimeInterval) -> VideoPresentationAdmission {
+        let proof = VideoPresentationAdmission(identity: .init(hostRecordID: "fixture-host", ownerPairID: "fixture-owner",
+            sessionID: connection.presentationSessionID, trackID: connection.presentationTrackID,
+            contentEpoch: presentationContentEpoch, geometryEpoch: geometryEpoch), validUntil: validUntil)
+        presentationProofForTesting = proof
+        hostFeatures.insert(SessionFeature.liveViewOnly)
+        refreshPresentation(at: ProcessInfo.processInfo.systemUptime)
+        return proof
+    }
+    var pipBackgroundForTesting: Bool { pipBackground }
+    var awaitingViewOnlyExitForTesting: Bool { awaitingViewOnlyExit }
+    var viewOnlyConfirmedForTesting: Bool { viewOnlyConfirmed }
     var lockMacPendingForTesting: Bool { pendingLockMac != nil }
     func expireViewOnlyExitForTesting(at now: TimeInterval) { tick(at: now) }
     func sendViewOnlyEntryForTesting() { requestViewOnlyEntry() }
@@ -2591,6 +2716,10 @@ let now = ProcessInfo.processInfo.systemUptime
     }
     private func tick(at suppliedNow: TimeInterval? = nil) {
         let now = suppliedNow ?? ProcessInfo.processInfo.systemUptime
+        if let request = pipRestoreRequest, now >= request.deadline {
+            finishPiPRestore(false)
+            if pipBackground { disconnect(explicitEnd: false); return }
+        }
         if awaitingViewOnlyExit, let deadline = viewOnlyExitDeadline, now >= deadline {
             disconnect(explicitEnd: false)
             showSessionNotice("Your Mac didn’t confirm foreground control. Reconnect to continue.")
@@ -2663,8 +2792,10 @@ let now = ProcessInfo.processInfo.systemUptime
         cancelLockMacRequest()
         awayState = nil
         awayStatusEpoch = nil
-        pipBackground = false
-        invalidatePresentation()
+        pipTransitional = false; pipBackground = false
+        invalidatePresentation(requestHostExit: false)
+        setMacAudioMuted(true)
+        finishPiPRestore(false)
         shareLiveSessionID = nil
         displayTickInput.cancel()
         // Only a session that received vitals knows the battery, so a failed reconnect or an older Mac keeps

@@ -154,6 +154,7 @@ struct HomeView: View {
     @State private var showLegal = false
     @State private var showSecurity = false
     @State private var showPairedMacs = false
+    @State private var savedMacs: [PairedMac] = []
     @State private var lastBattery: MacVitalsMemory.LastSeen?
     @ObservedObject private var anywhere = AnywhereStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -164,6 +165,8 @@ struct HomeView: View {
     @Environment(\.dynamicTypeSize) private var typeSize
 
     private var macName: String? { connection.invitation?.name ?? LaunchOptions.demoMacName }
+    private var savedMacState: SavedMacHomeState { SavedMacHomeState(selected: connection.invitation, saved: savedMacs) }
+    private func refreshSavedMacs() { savedMacs = PairedMacs.all() }
     private var status: MacStatus { MacStatus(connection.status, couch: model.attemptMode == .couch) }
     private var covered: Bool { model.pairingEntry != nil || friendlyError != nil || onboarding.step != nil || showDetails || showTroubleshoot || showPaywall || showServerData || showLegal || showSecurity || showPairedMacs }
 
@@ -238,6 +241,7 @@ struct HomeView: View {
         .onChange(of: model.macNotice) { _, _ in showDepartureIfNeeded() }
         .onChange(of: model.couchRefusal) { _, _ in showCouchRefusalIfNeeded() }
         .onAppear {
+            refreshSavedMacs()
             showDepartureIfNeeded()
             showCouchRefusalIfNeeded()
             if macName != nil && connection.invitation != nil { onboarding.offerCoach() }
@@ -247,6 +251,7 @@ struct HomeView: View {
             refreshLastBattery()
         }
         .onChange(of: connection.invitation) { _, _ in
+            refreshSavedMacs()
             lastReachedAt = 0
             checkedHealth = nil
             lastFailure = nil
@@ -254,7 +259,7 @@ struct HomeView: View {
             model.refreshSendToMac(force: true)
         }
         .onChange(of: connection.connected) { _, _ in refreshLastBattery() }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { refreshLastBattery() } }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { refreshSavedMacs(); refreshLastBattery() } }
     }
 
     private func refreshLastBattery() {
@@ -268,6 +273,7 @@ struct HomeView: View {
             FarsideWordmark(size: 28)
             Spacer()
             Menu {
+                Button { showPairedMacs = true } label: { Label("Your Macs", systemImage: "laptopcomputer") }
                 Button { onboarding.replayCoach() } label: { Label("How to steer", systemImage: "hand.draw") }
                 Button { showTroubleshoot = true } label: { Label("Trouble connecting?", systemImage: "questionmark.circle") }
                 Button { model.pairingEntry = .paste } label: { Label("Paste Pairing Code", systemImage: "doc.on.clipboard") }
@@ -305,6 +311,15 @@ struct HomeView: View {
                         vitalsCause: model.lastDeparture == .sleeping ? lastBattery.map(MacVitalsMemory.sleepNote) : nil,
                         act: act)
                 connectControl
+            } else if savedMacState == .choose {
+                VStack(alignment: .leading, spacing: Farside.Space.s) {
+                    FarsideHeading("Choose your Mac.", accent: "your", size: 30)
+                    Text("Your other Macs are still saved. Choose one before connecting.")
+                        .foregroundStyle(Farside.Palette.ash).fixedSize(horizontal: false, vertical: true)
+                    Button { showPairedMacs = true } label: { Label("Choose a Mac", systemImage: "laptopcomputer") }
+                        .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
+                        .accessibilityIdentifier("home.chooseSavedMac")
+                }.padding(.top, Farside.Space.m)
             } else {
                 emptyState
             }
@@ -315,7 +330,7 @@ struct HomeView: View {
             Spacer(minLength: verticalSizeClass == .compact ? Farside.Space.l : Farside.Space.xl)
             UsefulSessionEntry(progress: model.usefulSession, replayCoach: onboarding.replayCoach)
                 .padding(.bottom, Farside.Space.m)
-            if macName != nil { homeList }
+            if macName != nil || savedMacState == .choose { homeList }
             AnywherePlanRow(store: anywhere) { showPaywall = true }
                 .padding(.top, Farside.Space.m)
         }
@@ -463,12 +478,22 @@ struct HomeView: View {
                     model.refreshSendToMac(force: true)
                 }))
                 .accessibilityIdentifier("home.localOnly")
-                Text("Enable this on your Mac too. Connection requires a verified local route. Older pairings need a new owner-approved QR code.")
+                .disabled(!connection.localOnly && connection.invitation?.hasOwnerLocalIdentity != true)
+                Text(connection.invitation == nil
+                     ? "Choose a saved Mac first. Enable Local network only on both devices."
+                     : connection.invitation?.hasOwnerLocalIdentity == true
+                        ? "Enable this on your Mac too. Connection requires a verified local route."
+                        : "Re-pair from a fresh owner-approved QR code on this Mac to enable Local network only. Connect normally until then.")
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(16)
             Rectangle().fill(Farside.Palette.line).frame(height: 1)
+            if connection.invitation?.ownerPairID == nil, connection.invitation != nil {
+                Text("Send to My Mac needs a fresh owner-approved pairing. Confirm the new pairing works before forgetting its older record.")
+                    .font(.footnote).foregroundStyle(Farside.Palette.ash).padding(16)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             Button { model.pairingEntry = .scan } label: {
                 HomeRow(title: "Pair another Mac", trailing: "plus")
             }

@@ -8,6 +8,20 @@ struct PairedMac: Equatable {
     let name: String
     let invitation: PairInvitation?
     var legacyAliases: [String] = []
+    var pairingRefreshNote: String? {
+        guard let invitation, !invitation.hasOwnerLocalIdentity else { return nil }
+        return invitation.ownerPairID == nil
+            ? "Older pairing · re-pair for sharing and local access"
+            : "Older pairing · re-pair for local access"
+    }
+}
+
+/// Home selection is deliberate: saved records do not imply a selected destination.
+enum SavedMacHomeState: Equatable {
+    case empty, choose, selected
+    init(selected: PairInvitation?, saved: [PairedMac]) {
+        self = selected != nil ? .selected : saved.isEmpty ? .empty : .choose
+    }
 }
 
 enum PairedMacs {

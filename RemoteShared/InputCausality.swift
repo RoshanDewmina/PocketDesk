@@ -24,7 +24,7 @@ struct InputCausalEnvelope: Codable {
         id.utf8.count == 32 && id.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
     }
     func validate() throws {
-        guard version == 1, ["offer", "accept", "anchor", "ack", "motion", "barrier"].contains(kind),
+        guard version == 1, ["offer", "accept", "anchor", "ack", "motion", "barrier", "rebase"].contains(kind),
               Self.validID(nonce), Self.validID(anchor), epoch > 0, segments.count <= Self.maximumSegments else { throw RemoteError.invalidMessage }
         if !["motion", "barrier"].contains(kind), !segments.isEmpty { throw RemoteError.invalidMessage }
         var previous: UInt64?

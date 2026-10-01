@@ -602,7 +602,15 @@ export class RoomDO extends DurableObject<Env> {
     const state = this.state();
     const entitlementId = attachment.entitlementId ?? state.entitlement_id;
     const deviceId = attachment.deviceId ?? state.entitled_device;
-    if (!entitlementId || !deviceId) return this.unentitledRelayAllowed(attachment.remoteAware) ? "valid" : "invalid";
+    if (!entitlementId || !deviceId) {
+      // The dev pass belongs to the admitted phone, never the socket asking to renew.
+      const phone = attachment.role === "host" ? this.peer("client") : undefined;
+      const admitted = phone ? this.attachment(phone) : undefined;
+      const passAware = attachment.role === "host"
+        ? admitted?.entitled === true && admitted.remoteAware
+        : attachment.role === "client" && attachment.remoteAware;
+      return this.unentitledRelayAllowed(passAware) ? "valid" : "invalid";
+    }
     try {
       const row = await withTimeout(entitlementForDevice(this.env.DB, entitlementId, deviceId), STORAGE_TIMEOUT_MS, "entitlement lookup");
       return row !== null && hasAccess(row, now, this.config.oneTimeProducts) && row.device_room === state.room ? "valid" : "invalid";

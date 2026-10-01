@@ -525,8 +525,10 @@ final class RemoteHostModel: ObservableObject {
             self?.reconcileAvailabilityAfterCoordinatorReset()
         }
         connection.onControl = { [weak self] data in self?.receive(data) }
+        connection.onCausalRecovery = { [weak self] in self?.releaseRemoteInput(notifyPhone: true) }
         connection.onCausalContext = { [weak self] context in
             guard let self else { return }
+            self.releaseRemoteInput(notifyPhone: false)
             self.input.beginCausalContext(context)
             self.inputFreshness.noteCausalUpgrade()
         }
@@ -2368,7 +2370,11 @@ final class RemoteHostModel: ObservableObject {
 
     private func receiveCausalInput(_ context: InputCausalEnvelope, semantic: RemoteAction?) {
         guard connection.connected, active, context.epoch == inputEpoch.value, !sessionRefused, !phonePause.isPaused && !liveViewOnly,
-              let peer = connection.media else { return }
+              let peer = connection.media else {
+            _ = connection.recoverCausalInput(context)
+            if let semantic, semantic.action == "text" { sendTextResult(for: semantic.key, accepted: false) }
+            return
+        }
         if let semantic, semantic.action == "release" {
             input.withAuthority {
                 let scope = input.releaseScope(for: semantic)
@@ -2377,12 +2383,15 @@ final class RemoteHostModel: ObservableObject {
                     releaseRemoteInput(notifyPhone: false)
                     input.discardCausalPrefix(context)
                     connection.acknowledgeCausalInput(context, applied: input.appliedOrdinal)
-                }
+                } else { _ = connection.recoverCausalInput(context) }
             }
             return
         }
         guard (semantic?.pencil == nil && context.segments.allSatisfy({ $0.action.pencil == nil })) ||
-            (sessionState == .picture && connection.peerFeatures.contains(SessionFeature.pencilInput)) else { return }
+            (sessionState == .picture && connection.peerFeatures.contains(SessionFeature.pencilInput)) else {
+            _ = connection.recoverCausalInput(context)
+            return
+        }
         invalidateTextFocus()
         if sessionState == .couch { refreshCouchHealth() }
         input.enabled = HostControlPolicy.isEnabled(userConsent: sessionControlAllowed, accessibilityPermission: controlPermission,
@@ -2391,7 +2400,10 @@ final class RemoteHostModel: ObservableObject {
             HostInputExecutor.Admitted(action: segment.action, upgraded: true,
                                        expires: inputFreshness.postingDeadline(for: segment.action, epoch: inputEpoch.value))
         }
-        if sessionState == .couch, context.segments.contains(where: { $0.action.action == "moveTo" }) { return }
+        if sessionState == .couch, context.segments.contains(where: { $0.action.action == "moveTo" }) {
+            _ = connection.recoverCausalInput(context)
+            return
+        }
         let admittedSemantic = semantic.map { action in
             HostInputExecutor.Admitted(action: action, upgraded: true,
                                        expires: inputFreshness.postingDeadline(for: action, epoch: inputEpoch.value))
@@ -2412,23 +2424,23 @@ final class RemoteHostModel: ObservableObject {
                                              point: result.point, activeHold: result.externalHold, startedMs: result.startedMs,
                                              endedMs: result.endedMs, arrivedMs: nil)
                         }
-                        if receipt.intervention {
-                            self.releaseRemoteInput(notifyPhone: true)
+                        if receipt.failed || receipt.intervention {
                             if let semantic, semantic.action == "text" { self.sendTextResult(for: semantic.key, accepted: false) }
-                            self.connection.rebaseCausalInput()
-                        } else if receipt.failed {
-                            self.stop(); self.detail = "Input checkpoint expired. Reconnect from the phone."
+                            _ = self.connection.recoverCausalInput(context)
                         } else { self.connection.acknowledgeCausalInput(context, applied: receipt.applied) }
                     }
                 })
-            if !accepted { self.stop(); self.detail = "Input queue was full. Reconnect from the phone." }
+            if !accepted {
+                if let semantic, semantic.action == "text" { self.sendTextResult(for: semantic.key, accepted: false) }
+                _ = self.connection.recoverCausalInput(context)
+            }
         }
         post()
     }
 
     private func receive(_ data: Data) {
         guard let action = try? JSONDecoder().decode(RemoteAction.self, from: data) else {
-            countInput("rejected-parse"); stop(); return
+            countInput("rejected-parse"); connection.endPhoneInputSession("Invalid phone input."); return
         }
         countInput("received")
         if action.action == "wakeRequest" { receiveWakeRequest(action); return }
@@ -2504,9 +2516,8 @@ final class RemoteHostModel: ObservableObject {
         guard Self.userInputActions.contains(action.action), inputEpoch.accepts(action) else {
             countInput(Self.userInputActions.contains(action.action) ? "rejected-epoch" : "rejected-unknown-action")
             if inputFreshness.upgraded || action.interaction != nil {
-                stop()
-                autoStart.suspend()
-                detail = "The phone sent input from an old session. Reconnect from the phone."
+                releaseRemoteInput(notifyPhone: true)
+                connection.endPhoneInputSession("The phone sent input from an old session. Reconnecting.")
             } else {
                 releaseRemoteInput(notifyPhone: true)
             }
@@ -2523,9 +2534,8 @@ final class RemoteHostModel: ObservableObject {
         let admission = inputFreshness.admit(action, epoch: inputEpoch.value, now: now)
         if admission == .terminate {
             countInput("rejected-freshness-terminate")
-            stop()
-            autoStart.suspend()
-            detail = "The phone’s input session expired. Reconnect from the phone."
+            releaseRemoteInput(notifyPhone: true)
+            connection.endPhoneInputSession("The phone’s input session expired. Reconnecting.")
             return
         }
         if input.leaseExpired(at: now) {
@@ -2581,7 +2591,10 @@ final class RemoteHostModel: ObservableObject {
                                          endedMs: receipt.endedMs, arrivedMs: arrivedMs)
                     }
                 })
-            if !submitted { self.stop(); self.detail = "Input queue was full. Reconnect from the phone." }
+            if !submitted {
+                self.releaseRemoteInput(notifyPhone: true)
+                self.connection.endPhoneInputSession("Input queue was full. Reconnecting.")
+            }
         }
         post()
     }

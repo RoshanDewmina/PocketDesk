@@ -1,6 +1,21 @@
 import XCTest
 
 final class StreamStatisticsTests: XCTestCase {
+    func testHostSummaryCarriesObservedMaximumGapAndOlderMissingFieldRemainsUnknown() throws {
+        let previous = StreamStatsSample(entries: senderEntries(at: 1, encoded: 0, sent: 0, bytes: 0, encodeTime: 0, qp: 0))
+        let current = StreamStatsSample(entries: senderEntries(at: 2, encoded: 66, sent: 66, bytes: 100_000, encodeTime: 0.1, qp: 100))
+        let report = StreamStatsReport(role: "host", previous: previous, current: current,
+            counters: StreamCounterSnapshot(interval: 1, captureFrames: 66, captureGapP90Ms: 8, captureGapMaxMs: 450))
+        XCTAssertEqual(report.captureGapMaxMs, 450)
+        XCTAssertEqual(report.hostSummary.captureGapMaxMs, 450, "source-idle outlier survives sender summary rather than being hidden byP90")
+        let encoded = try JSONEncoder().encode(report.hostSummary)
+        let received = try JSONDecoder().decode(HostStreamSummary.self, from: encoded)
+        XCTAssertEqual(received.captureGapMaxMs, 450); try received.validate()
+        let older = try JSONDecoder().decode(HostStreamSummary.self, from: Data("{}".utf8))
+        XCTAssertNil(older.captureGapMaxMs); try older.validate()
+        var invalid = received; invalid.captureGapMaxMs = .nan
+        XCTAssertThrowsError(try invalid.validate())
+    }
     private func senderEntries(at seconds: Double, encoded: Double, sent: Double, bytes: Double,
                                encodeTime: Double, qp: Double) -> [StreamStatsEntry] {
         [

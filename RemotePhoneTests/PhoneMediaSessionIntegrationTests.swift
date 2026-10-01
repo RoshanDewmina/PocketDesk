@@ -210,4 +210,38 @@ final class PhoneMediaSessionIntegrationTests: XCTestCase {
         pip.stop(); XCTAssertEqual(releases, 1)
     }
 
+    func testMacPlaybackTemporaryInterruptionPreservesOwnerAndExplicitEndBlocksLateResume() {
+        let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+        let playback = PhoneSystemAudioPlayback(session: registry)
+        var suspended = 0, resumed = 0, muted = 0
+        playback.onSuspended = { suspended += 1 }
+        playback.onResumed = { resumed += 1; return true }
+        playback.onMustMute = { muted += 1 }
+        XCTAssertTrue(playback.begin()); XCTAssertTrue(playback.isAdmitted)
+        registry.beginInterruption()
+        XCTAssertFalse(playback.isAdmitted); XCTAssertTrue(playback.isInterrupted); XCTAssertEqual(suspended, 1)
+        registry.endInterruption(shouldResume: true)
+        XCTAssertTrue(playback.isAdmitted); XCTAssertEqual(resumed, 1); XCTAssertEqual(muted, 0)
+        registry.beginInterruption(); playback.end()
+        registry.endInterruption(shouldResume: true)
+        XCTAssertFalse(playback.isAdmitted); XCTAssertEqual(resumed, 1)
+    }
+    func testPiPInterruptionCannotResumeExpiredOrReplacementLifetime() throws {
+        let registry = PhoneMediaSession(backend: .init(configure: { _ in }, activate: {}, deactivate: {}))
+        let pip = fixtureController(mediaSession: registry)
+        let admitted = proof(); pip.updateAdmission(admitted)
+        XCTAssertTrue(pip.startFromUserAction(foreground: true))
+        let platform = try XCTUnwrap(pip.controller)
+        pip.confirmPlatformStartForTesting(platform)
+        XCTAssertEqual(pip.policy.state, .active)
+        registry.beginInterruption(); admitted.lifetime.retire()
+        registry.endInterruption(shouldResume: true)
+        XCTAssertEqual(pip.policy.state, .ineligible)
+        let fresh = proof(); pip.updateAdmission(fresh)
+        XCTAssertTrue(pip.startFromUserAction(foreground: true))
+        registry.endInterruption(shouldResume: true)
+        XCTAssertEqual(pip.policy.state, .starting)
+        pip.stop()
+    }
+
 }

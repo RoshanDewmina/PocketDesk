@@ -38,7 +38,13 @@ struct PairedMacSelectionSheet: View {
                     if model.selectPairedMac(id: mac.id) { dismiss() }
                 } label: {
                     HStack {
-                        Label(mac.name, systemImage: "laptopcomputer")
+                        VStack(alignment: .leading, spacing: 4) {
+                            Label(mac.name, systemImage: "laptopcomputer")
+                            if let note = mac.pairingRefreshNote {
+                                Text(note).font(.footnote).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
                         Spacer()
                         if model.connection.invitation == mac.invitation {
                             Image(systemName: "checkmark").accessibilityLabel("Selected")
@@ -49,6 +55,13 @@ struct PairedMacSelectionSheet: View {
                 .accessibilityIdentifier("pairedMac.select." + mac.id)
             }
             .navigationTitle("Your Macs")
+            .safeAreaInset(edge: .bottom) {
+                if macs.contains(where: { $0.pairingRefreshNote != nil }) {
+                    Text("After a fresh owner-approved pairing works, select the older pairing to forget it. Names alone don’t establish that two records are the same Mac.")
+                        .font(.footnote).foregroundStyle(.secondary).padding()
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } } }
             .onAppear { macs = PairedMacs.all() }
         }

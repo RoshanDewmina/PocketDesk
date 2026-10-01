@@ -1,17 +1,18 @@
-import { runDurableObjectAlarm } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { unentitledRelayPass, type RoomDO } from "../src/room";
 import { isPublicEnvironment, loadConfig } from "../src/config";
 import { randomHex } from "../src/util";
 import { parseChain, signCompactJws, transactionPayload, type TestChain } from "./helpers/apple-chain";
 import { connectClient, connectHost, pairing, postJson, sleep, testEnv } from "./helpers/client";
-import { installTurnMock } from "./helpers/turn-mock";
+import { installTurnMock, type TurnMock } from "./helpers/turn-mock";
 
 const rooms = () => testEnv.ROOM as unknown as DurableObjectNamespace<RoomDO>;
 let chain: TestChain;
+let turn: TurnMock;
 beforeAll(() => {
   chain = parseChain(testEnv.TEST_APPLE_CHAIN);
-  installTurnMock();
+  turn = installTurnMock();
 });
 
 async function paidToken(): Promise<string> {
@@ -35,6 +36,67 @@ describe("route.1 server policy", () => {
     expect(unentitledRelayPass(config, "c".repeat(64), true)).toBe(false);
     expect(unentitledRelayPass(config, undefined, true)).toBe(false);
     expect(unentitledRelayPass({ allowUnentitledRelay: true, devRelayRooms: new Set() }, room, false)).toBe(true);
+  });
+
+  it("refreshes the host relay after 21 minutes using only the admitted Anywhere phone dev pass", async () => {
+    turn.reset();
+    const p = await pairing(), stub = rooms().get(rooms().idFromName(p.room));
+    // Test runtime only: configure one exact room, with no global free relay or entitlement row.
+    await runInDurableObject(stub, instance => {
+      const config = (instance as unknown as { config: { allowUnentitledRelay: boolean; devRelayRooms: Set<string> } }).config;
+      expect(config.allowUnentitledRelay).toBe(false); config.devRelayRooms.add(p.room);
+    });
+    const host = await connectHost(p, { features: ["route.1", "renew.1"] });
+    const phone = await connectClient(p, { features: ["route.1", "renew.1", "remote.1"] });
+    const oldIce = await host.next();
+    const initial = await host.next(); expect(await phone.next()).toEqual(initial);
+    expect(initial).toMatchObject({ type: "route", access: "remote", revision: 1 });
+    expect(await host.next()).toEqual({ type: "peer", online: true }); await phone.next();
+    const before = turn.generateCalls;
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 21 * 60_000); host.send({ type: "renew" });
+      const revised = await host.next(); expect(await phone.next()).toEqual(revised);
+      expect(revised).toMatchObject({ type: "route", access: "remote", revision: 2, epoch: initial.epoch });
+      const renewed = await host.next();
+      expect(renewed).toMatchObject({ type: "renewed", credentialSeconds: 3600 });
+      expect(renewed.code).toBeUndefined(); expect(renewed.servers).not.toEqual(oldIce.servers);
+      expect(turn.generateCalls).toBe(before + 1);
+      expect(host.ws.readyState).toBe(WebSocket.OPEN); expect(phone.ws.readyState).toBe(WebSocket.OPEN);
+    } finally {
+      vi.useRealTimers(); phone.close(); host.close();
+      await runInDurableObject(stub, instance => {
+        (instance as unknown as { config: { devRelayRooms: Set<string> } }).config.devRelayRooms.delete(p.room);
+      });
+    }
+  });
+
+  it("does not give a Couch phone or its renewing host relay in that same developer-pass room", async () => {
+    turn.reset();
+    const p = await pairing(), stub = rooms().get(rooms().idFromName(p.room));
+    await runInDurableObject(stub, instance => {
+      const config = (instance as unknown as { config: { allowUnentitledRelay: boolean; devRelayRooms: Set<string> } }).config;
+      expect(config.allowUnentitledRelay).toBe(false); config.devRelayRooms.add(p.room);
+    });
+    const host = await connectHost(p, { features: ["route.1", "renew.1"] });
+    const phone = await connectClient(p, { features: ["route.1", "renew.1"] });
+    expect(host.ice.servers).toEqual([]); expect(phone.ice.servers).toEqual([]);
+    const initial = await host.next(); expect(await phone.next()).toEqual(initial);
+    expect(initial).toMatchObject({ type: "route", access: "local" });
+    await host.next(); await phone.next();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(Date.now() + 21 * 60_000); host.send({ type: "renew" });
+      const revised = await host.next(); expect(await phone.next()).toEqual(revised);
+      expect(revised).toMatchObject({ type: "route", access: "local", revision: 2, epoch: initial.epoch });
+      const renewed = await host.next(); expect(renewed.type).toBe("renewed");
+      expect(renewed.servers).toBeUndefined(); expect(turn.generateCalls).toBe(0);
+    } finally {
+      vi.useRealTimers(); phone.close(); host.close();
+      await runInDurableObject(stub, instance => {
+        (instance as unknown as { config: { devRelayRooms: Set<string> } }).config.devRelayRooms.delete(p.room);
+      });
+    }
   });
 
   it("requires route policy and refuses free relay on both public deployments", () => {

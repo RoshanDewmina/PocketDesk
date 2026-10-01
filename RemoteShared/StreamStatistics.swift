@@ -126,6 +126,8 @@ struct HostStreamSummary: Codable, Equatable {
     var captureFPS: Double?
     var captureLatencyMs: Double?
     var captureGapP90Ms: Double?
+    /// Largest observed source gap, including idle periods; absence is unknown on older hosts.
+    var captureGapMaxMs: Double?
     var pushSkipped: Int?
     var droppedBeforeEncode: Int?
     var encodedFPS: Double?
@@ -187,7 +189,7 @@ struct HostStreamSummary: Codable, Equatable {
     static let displayDescriptionBytes = 48
 
     func validate() throws {
-        let numbers = [captureFPS, captureLatencyMs, captureGapP90Ms, encodedFPS, encodeMs, pacerDelayMs,
+        let numbers = [captureFPS, captureLatencyMs, captureGapP90Ms, captureGapMaxMs, encodedFPS, encodeMs, pacerDelayMs,
                        sentFPS, sentKbps, targetKbps, maxKbps, qpAverage,
                        encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs,
                        inputMainDelayP50Ms, inputMainDelayP95Ms, inputMainDelayMaxMs, inputPostP95Ms].compactMap { $0 }
@@ -504,6 +506,7 @@ struct StreamStatsReport: Codable, Equatable {
 
     var hostSummary: HostStreamSummary {
         HostStreamSummary(captureFPS: captureFPS, captureLatencyMs: captureLatencyMs, captureGapP90Ms: captureGapP90Ms,
+                          captureGapMaxMs: captureGapMaxMs.map { min($0, 10_000_000) },
                           pushSkipped: pushSkipped, droppedBeforeEncode: droppedBeforeEncode,
                           encodedFPS: encodedFPS, encodeMs: encodeMs, pacerDelayMs: pacerDelayMs,
                           sentFPS: sentFPS, sentKbps: sentKbps, targetKbps: targetKbps, maxKbps: maxKbps,
