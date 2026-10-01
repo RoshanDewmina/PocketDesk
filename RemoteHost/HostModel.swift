@@ -532,6 +532,7 @@ final class RemoteHostModel: ObservableObject {
         startAwayMode()
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.captureScopeViewOnly && !self.away.isLocking && !self.away.wantsCover && !self.active && !self.connection.connected }
         connection.restore()
+        if preferences.localOnly { connection.setLocalOnly(true) }
         connection.startAllowed = { [weak self] in self?.serverRemovalPending == false && self?.captureScopeNeedsSelection == false }
         connection.shareBlocker = { [weak self] in
             MacShareBlocker.current(screenRecordingGranted: CGPreflightScreenCaptureAccess(),
@@ -988,10 +989,14 @@ final class RemoteHostModel: ObservableObject {
 
     // MARK: Sharing
 
+    /// Changes only the route: the session on the old route ends and sharing, if on, restarts on the new one.
     func setLocalOnly(_ enabled: Bool) {
         guard connection.localOnly != enabled else { return }
-        stopSharing()
+        if active || listeningWithoutSharing { stop() }
         connection.setLocalOnly(enabled)
+        preferences.localOnly = enabled
+        events.record(.sharing, enabled ? "Local network only on" : "Local network only off")
+        reconcileSharing()
     }
 
     func stopSharing() {

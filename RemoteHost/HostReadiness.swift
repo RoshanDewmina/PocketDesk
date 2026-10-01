@@ -287,6 +287,12 @@ struct HostPreferences {
         nonmutating set { defaults.set(newValue, forKey: Key.allowSystemAudio) }
     }
 
+    /// Local network only: the route choice, never whether sharing is on.
+    var localOnly: Bool {
+        get { defaults.bool(forKey: Key.localOnly) }
+        nonmutating set { defaults.set(newValue, forKey: Key.localOnly) }
+    }
+
     var allowControl: Bool {
         get { defaults.bool(forKey: Key.allowControl) }
         nonmutating set { defaults.set(newValue, forKey: Key.allowControl) }

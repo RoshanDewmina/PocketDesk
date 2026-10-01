@@ -137,6 +137,17 @@ final class HostReadinessTests: XCTestCase {
         XCTAssertFalse(HostPreferences(defaults: defaults).allowSystemAudio)
     }
 
+    func testLocalNetworkOnlyIsOffByDefaultAndSurvivesRelaunch() throws {
+        let suite = "HostReadinessTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        XCTAssertFalse(HostPreferences(defaults: defaults).localOnly)
+        HostPreferences(defaults: defaults).localOnly = true
+        XCTAssertTrue(HostPreferences(defaults: defaults).localOnly)
+        XCTAssertTrue(HostPreferences(defaults: defaults).sharingEnabled, "The route choice never turns sharing off")
+    }
+
     func testLoginAndKeepAwakeConsentIsAskedOnceAndAgainOnlyWhenItsVersionRises() throws {
         let suite = "HostReadinessTests-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))

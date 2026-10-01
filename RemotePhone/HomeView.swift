@@ -481,11 +481,7 @@ struct HomeView: View {
             .accessibilityIdentifier("home.pairedMacs")
             Rectangle().fill(Farside.Palette.line).frame(height: 1)
             VStack(alignment: .leading, spacing: 6) {
-                Toggle("Local network only", isOn: Binding(get: { connection.localOnly }, set: { value in
-                    model.disconnect()
-                    connection.setLocalOnly(value)
-                    model.refreshSendToMac(force: true)
-                }))
+                Toggle("Local network only", isOn: Binding(get: { connection.localOnly }, set: { model.setLocalOnly($0) }))
                 .accessibilityIdentifier("home.localOnly")
                 .disabled(!connection.localOnly && connection.invitation?.hasOwnerLocalIdentity != true)
                 Text(connection.invitation == nil

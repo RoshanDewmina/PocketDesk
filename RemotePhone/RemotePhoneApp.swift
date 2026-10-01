@@ -825,6 +825,7 @@ final class PhoneRemoteModel: ObservableObject {
         }
         connection.onPresentationInvalidated = { [weak self] in self?.retireContentPresentation() }
         connection.restore()
+        if preferences.bool(forKey: Self.localOnlyKey) { connection.setLocalOnly(true) }
         linkHints.start()
         linkConsentObserver = linkHints.$hint.removeDuplicates().sink { [weak self] hint in self?.observeLinkHint(hint) }
         connection.onAuthenticated = { [weak self] in
@@ -1692,6 +1693,14 @@ final class PhoneRemoteModel: ObservableObject {
               let ownerPairID = invitation.ownerPairID else { return nil }
         let value = SendToMacDestination(hostRecordID: String(canonical.dropFirst(2)), ownerPairID: ownerPairID)
         return value.isValid ? value : nil
+    }
+
+    static let localOnlyKey = "localNetworkOnly"
+    func setLocalOnly(_ enabled: Bool) {
+        disconnect()
+        connection.setLocalOnly(enabled)
+        preferences.set(enabled, forKey: Self.localOnlyKey)
+        refreshSendToMac(force: true)
     }
 
     func refreshSendToMac(force: Bool = false) {

@@ -403,3 +403,30 @@ final class ViewportPreferenceTests: XCTestCase {
         XCTAssertEqual(ViewportPreference.stored(in: defaults), .fill)
     }
 }
+
+@MainActor
+final class LocalOnlyPreferenceTests: XCTestCase {
+    private let suite = "LocalOnlyPreferenceTests"
+    private var defaults: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        defaults = UserDefaults(suiteName: suite)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suite)
+        super.tearDown()
+    }
+
+    func testLocalNetworkOnlySurvivesRelaunch() {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults)
+        XCTAssertFalse(model.connection.localOnly)
+        model.setLocalOnly(true)
+        XCTAssertTrue(model.connection.localOnly)
+        XCTAssertTrue(PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults).connection.localOnly)
+        model.setLocalOnly(false)
+        XCTAssertFalse(PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults).connection.localOnly)
+    }
+}
