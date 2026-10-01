@@ -17,6 +17,7 @@ final class PhoneMediaSession {
     private var owners: [UUID: Entry] = [:]
     private var retiring = false
     private var acquiring = false
+    private var deactivating = false
     private var generation: UInt64 = 0
     private let backend: Backend
     private var observers: [NSObjectProtocol] = []
@@ -60,7 +61,7 @@ final class PhoneMediaSession {
     func contains(_ owner: UUID) -> Bool { owners[owner] != nil }
     @discardableResult
     func acquire(_ owner: UUID, kind: Kind, onRetired: @escaping () -> Void) -> Bool {
-        guard !retiring, !acquiring else { return false }
+        guard !retiring, !acquiring, !deactivating else { return false }
         if let existing = owners[owner] { return existing.kind == kind }
         guard owners.count < 8,
               kind != .recording || owners.isEmpty,
@@ -73,15 +74,15 @@ final class PhoneMediaSession {
                 try backend.configure(kind == .recording ? .recording : .playback)
                 try backend.activate()
                 guard generation == current else {
+                    deactivate()
                     lastOperationFailed = true
-                    try? backend.deactivate()
                     return false
                 }
                 lastOperationFailed = false
             } catch {
-                lastOperationFailed = true
                 // No sibling owner exists. Undo any partially activated configuration.
-                try? backend.deactivate()
+                deactivate()
+                lastOperationFailed = true
                 return false
             }
         }
@@ -108,6 +109,9 @@ final class PhoneMediaSession {
         retiring = false
     }
     private func deactivate() {
+        guard !deactivating else { return }
+        deactivating = true
+        defer { deactivating = false }
         do { try backend.deactivate(); lastOperationFailed = false }
         catch { lastOperationFailed = true }
     }

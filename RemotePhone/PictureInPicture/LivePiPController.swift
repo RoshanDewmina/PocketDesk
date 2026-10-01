@@ -75,9 +75,12 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     @discardableResult
     func startFromUserAction(foreground: Bool) -> Bool {
         precondition(Thread.isMainThread)
-        guard foreground, policy.state == .ready,
-              policy.admission?.permits(at: ProcessInfo.processInfo.systemUptime) == true,
-              let controller, supported() else { return false }
+        guard foreground, policy.state == .ready, mediaOwner == nil,
+              let admission = policy.admission,
+              admission.permits(at: ProcessInfo.processInfo.systemUptime),
+              let controller, let fence else { return false }
+        let isSupported = supported()
+        guard isSupported, startContextMatches(controller, admission: admission, fence: fence, state: .ready) else { return false }
         let owner = UUID()
         let acquired = MainActor.assumeIsolated {
             mediaSession.acquire(owner, kind: .pictureInPicture, onRetired: { [weak self] in
@@ -87,11 +90,38 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
             })
         }
         guard acquired else { return false }
+        // Platform configuration may synchronously retire or replace this controller.
+        guard mediaOwner == nil, startContextMatches(controller, admission: admission, fence: fence, state: .ready) else {
+            releaseMediaOwner(owner); return false
+        }
         mediaOwner = owner
-        guard policy.userStart(foreground: foreground,
-            supported: supported(), possible: possible(controller),
-            at: ProcessInfo.processInfo.systemUptime) else { releaseMediaOwner(); return false }
+        let isPossible = possible(controller)
+        guard isPossible, mediaOwner == owner,
+              startContextMatches(controller, admission: admission, fence: fence, state: .ready),
+              MainActor.assumeIsolated({ mediaSession.contains(owner) }),
+              policy.userStart(foreground: foreground, supported: isSupported, possible: isPossible,
+                               at: ProcessInfo.processInfo.systemUptime) else {
+            releaseMediaOwner(owner); return false
+        }
+        // Check after every external callback. Do not hold a presentation lock across the
+        // OS call: its synchronous delegate may stop/detach the native source reentrantly.
+        let admitted = fence.withAdmission(admission.identity, at: ProcessInfo.processInfo.systemUptime) {
+            mediaOwner == owner && startContextMatches(controller, admission: admission, fence: fence, state: .starting)
+                && MainActor.assumeIsolated({ mediaSession.contains(owner) })
+        } == true
+        guard admitted else {
+            releaseMediaOwner(owner)
+            if self.controller === controller { stop() }
+            return false
+        }
         startPlatform(controller); synchronizeSource(); didChangeState?(policy.state); return true
+    }
+    private func startContextMatches(_ controller: AVPictureInPictureController, admission: VideoPresentationAdmission,
+                                     fence: VideoPresentationFence, state: LivePiPPolicy.State) -> Bool {
+        self.controller === controller && self.fence === fence && policy.state == state &&
+        policy.admission?.identity == admission.identity && policy.admission?.lifetime === admission.lifetime &&
+        admission.permits(at: ProcessInfo.processInfo.systemUptime) &&
+        policy.admission?.permits(at: ProcessInfo.processInfo.systemUptime) == true
     }
     func offer(_ source: VideoFrameEnvelope) {
         sourceLock.lock(); let current = sourceSink; sourceLock.unlock()
@@ -99,7 +129,10 @@ final class LivePiPController: NSObject, AVPictureInPictureControllerDelegate, A
     }
     private func releaseMediaOwner() {
         guard let owner = mediaOwner else { return }
-        mediaOwner = nil
+        releaseMediaOwner(owner)
+    }
+    private func releaseMediaOwner(_ owner: UUID) {
+        if mediaOwner == owner { mediaOwner = nil }
         MainActor.assumeIsolated { mediaSession.release(owner) }
     }
     func stop() {
