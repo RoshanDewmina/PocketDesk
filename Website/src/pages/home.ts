@@ -94,9 +94,9 @@ const joinNotes = html`<div class="join-notes">
 
 /**
  * The hero background (src/hero-bg/): a CSS poster from the first paint, then a WebGL shader of the same look.
- * Three looks on the preview, ?bg=spectrum|aurora|bloom; the poster here is the default.
+ * Four looks on the preview, ?bg=reach|spectrum|aurora|bloom; the poster here is the default (reach).
  */
-const heroBg = html`<div class="hero-bg" data-bg="spectrum" aria-hidden="true"><canvas></canvas></div>`;
+const heroBg = html`<div class="hero-bg" data-bg="reach" aria-hidden="true"><canvas></canvas></div>`;
 
 const hero = html`<section class="hero" id="top" aria-labelledby="hero-title">
   ${heroBg}

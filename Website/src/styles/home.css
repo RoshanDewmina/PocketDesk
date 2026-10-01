@@ -63,6 +63,15 @@
     background: radial-gradient(closest-side, rgba(5, 5, 5, 0.92), rgba(5, 5, 5, 0.88) 66%, rgba(5, 5, 5, 0));
   }
 }
+/* The reach look needs a clear band between the sign-up and the MacBook, where the fingertip meets the pointer. */
+.hero-bg[data-bg="reach"] ~ .hero-demo {
+  margin-top: clamp(28px, 4vh, 44px);
+}
+@media (max-width: 639px) {
+  .hero-bg[data-bg="reach"] ~ .hero-demo {
+    margin-top: 72px;
+  }
+}
 /* Small mono labels over the light get a solid plate (the eyebrow, and the header's status chip on the home page). */
 .hero .eyebrow {
   padding: 5px 12px;

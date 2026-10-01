@@ -44,6 +44,7 @@ export function csp(styleHashes: string[]) {
     "font-src https://fonts.gstatic.com",
     "img-src 'self' data:",
     "connect-src 'self'",
+    "worker-src 'self'",
     "manifest-src 'self'",
     "base-uri 'none'",
     "form-action 'self'",
@@ -51,8 +52,8 @@ export function csp(styleHashes: string[]) {
     "object-src 'none'",
     "upgrade-insecure-requests",
     "require-trusted-types-for 'script'",
-    // No script writes HTML strings, so no Trusted Types policy may be created at all.
-    "trusted-types 'none'",
+    // One named policy, used only to start the reach background's worker from its own bundle URL (src/scripts/tt.ts).
+    "trusted-types farside",
   ].join("; ");
 }
 
@@ -224,6 +225,19 @@ const hash8 = (data: ArrayBuffer | Uint8Array | string) => new Bun.CryptoHasher(
 const sha256b64 = (text: string) => new Bun.CryptoHasher("sha256").update(text).digest("base64");
 
 async function bundle(out: string) {
+  // The reach background's worker is bundled first so its content-hashed URL can be compiled into the page script.
+  const worker = await Bun.build({
+    entrypoints: [join(ROOT, "src/hero-bg/reach-worker.ts")],
+    outdir: join(out, "assets"),
+    naming: "[name]-[hash].[ext]",
+    target: "browser",
+    format: "esm",
+    minify: true,
+    sourcemap: "none",
+  });
+  if (!worker.success) throw new AggregateError(worker.logs, "worker bundle failed");
+  const workerUrl = `/assets/${basename(worker.outputs[0]!.path)}`;
+
   const js = await Bun.build({
     entrypoints: ENTRIES.map((e) => join(ROOT, "src/scripts", `${e}.ts`)),
     outdir: join(out, "assets"),
@@ -233,6 +247,7 @@ async function bundle(out: string) {
     minify: true,
     splitting: false,
     sourcemap: "none",
+    define: { __REACH_WORKER__: JSON.stringify(workerUrl) },
   });
   if (!js.success) throw new AggregateError(js.logs, "JavaScript bundle failed");
   const jsMap = {} as Assets["js"];

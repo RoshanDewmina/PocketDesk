@@ -1,5 +1,6 @@
-// The home hero's background: one WebGL quad behind the hero, in one of three looks Roshan is choosing between
-// (?bg=spectrum|aurora|bloom on the preview, spectrum by default):
+// The home hero's background, in one of four looks Roshan is choosing between (?bg=reach|spectrum|aurora|bloom
+// on the preview, reach by default). "reach" is concept 21's original halftone art (reach.ts, a 2D canvas in a
+// worker); the other three are one WebGL quad each, drawn here:
 //   spectrum  full-rainbow light curtains hanging from the top, swaying, some columns read as LED dots
 //   aurora    the same curtains in the Reach ember palette only
 //   bloom     a soft ember/amber/gold bloom seen through a coarse LED tile grid, breathing and turning
@@ -10,13 +11,13 @@
 import { isPaused, motionAllowed, onMotionChange, prefersReduced } from "../scripts/motion";
 import { BLOOM, DOT_CELL, DOT_COLS, T0 } from "./pattern";
 
-export const LOOKS = ["spectrum", "aurora", "bloom"] as const;
+export const LOOKS = ["reach", "spectrum", "aurora", "bloom"] as const;
 export type Look = (typeof LOOKS)[number];
 
 /** The look from ?bg= (preview comparison), else the default. Sets the poster straight away. */
 export function pickLook(el: HTMLElement): Look {
   const q = new URLSearchParams(location.search).get("bg") as Look | null;
-  const look: Look = q && (LOOKS as readonly string[]).includes(q) ? q : "spectrum";
+  const look: Look = q && (LOOKS as readonly string[]).includes(q) ? q : "reach";
   el.dataset.bg = look;
   return look;
 }
@@ -105,12 +106,12 @@ void main(){
   gl_FragColor=vec4(vec3(.0196)+c*(uMode==2?1.:1.3),1.);
 }`;
 
-const MODE: Record<Look, number> = { spectrum: 0, aurora: 1, bloom: 2 };
+const MODE: Record<Exclude<Look, "reach">, number> = { spectrum: 0, aurora: 1, bloom: 2 };
 /** Rendered at this fraction of CSS px (× DPR, capped) and scaled up: the looks are soft by design. */
 const RES = 0.6;
 const MAX_PIXELS = 900_000;
 
-export function startHeroBg(el: HTMLElement, look: Look) {
+export function startHeroBg(el: HTMLElement, look: Exclude<Look, "reach">) {
   // Motion off now (Reduce Motion, Save-Data, or a pause remembered from an earlier visit): keep the poster,
   // and start the first time motion is allowed again.
   if (!motionAllowed()) {
@@ -126,7 +127,7 @@ export function startHeroBg(el: HTMLElement, look: Look) {
   run(el, look);
 }
 
-function run(el: HTMLElement, look: Look) {
+function run(el: HTMLElement, look: Exclude<Look, "reach">) {
   const cv = el.querySelector<HTMLCanvasElement>("canvas");
   if (!cv) return;
   const frameMs = 1000 / (window.innerWidth < 640 ? 24 : 30);

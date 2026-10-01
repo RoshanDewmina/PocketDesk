@@ -23,6 +23,8 @@ export type FieldOptions = {
   seed?: number;
   /** Free-floating stars per 10,000 px² that drift slowly left and shift with `parallax` (hero starfield). */
   stars?: number;
+  /** How much a ripple tints the dots it passes toward ember (0.9 by default; lower keeps rings bone). */
+  rippleTint?: number;
 };
 
 type Star = { x: number; y: number; z: number; ph: number };
@@ -197,7 +199,7 @@ export class Field {
         if (lum > 1) lum = 1;
         const r = rr * Math.sqrt(lum);
         if (r < 0.38) continue;
-        const e = E + rp * 0.9;
+        const e = E + rp * (this.o.rippleTint ?? 0.9);
         const P = e > 0.5 ? pE : e > 0.18 ? pM : pB;
         const px = cx + ox;
         const py = cy + oy;
