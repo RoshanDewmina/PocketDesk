@@ -4,6 +4,10 @@ Resumed clean `efd26ad`; engineering-health `aff1b9b` remains only on the exclud
 
 Syntax/plist/diff checks and release fixtures **23/23 PASS**; fresh independent GPT source review approves. Live Apple/Sparkle documents refreshed to external batch7c `apple/*-cut.md`; Xcode27.0/27A266a, macOS27.0.1/26A434. Native build/test receipts and final candidate remain pending in batch7c NOTES.
 
+# B8 first-minute lane — 2 October 2026
+
+Worktree `farside-b8-first60`, branch `claude/b8-first60` from `4127cd4`. Implementation checkpoints `66d5774`, `2bff12d` and `cce21a9` cover all eight authorized first-minute items behind `PocketDeskFirst60Disabled`. Independent source review approves `cce21a9`; overall verification is incomplete. The first required gate failed compilation (missing return, now source-fixed) and simulator creation, with zero test receipts. A corrected retry was stopped while still queued behind other lanes; no passing native build/test, rendering, timing or push is claimed. The quiet measurement request and shared simulator availability require orchestrator coordination. [Evidence, merge regions and later physical criteria](testing/B8-FIRST60.md). Ledger/handoff: `/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b8-first60/NOTES.md`. Design-polish retains visual ownership. No installed-host, phone, provider or physical acceptance.
+
 # Batch 7b integration in verification — 2 October 2026
 
 Branch `claude/batch-7b`, base `9ee6b24` (.3), merges `596ec47`, `439447e`, `f24d906`, `916fc03`, `2a6e547`, `f8db1c9` in that order. Build **20261002.4** uses four YAML/eight PBX version entries. Privacy default on with explicit choices preserved; optional scroll package default off. Product Interaction manifest matches linked/no tracking/App Functionality answers. Release product change is only nonexempt encryption metadata; iPad orientation override remains.

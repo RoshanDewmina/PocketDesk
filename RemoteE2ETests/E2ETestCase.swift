@@ -140,6 +140,12 @@ class E2ETestCase: XCTestCase {
     func launchPhone(reset: Bool = false, voiceTranscript: String? = nil) {
         launchedVoiceTranscript = voiceTranscript
         var arguments = ["--farside-e2e"]
+        if let variant = ProcessInfo.processInfo.environment["FARSIDE_FIRST60_VARIANT"],
+           ["legacy", "first60"].contains(variant) {
+            arguments += ["-PocketDeskFirst60Disabled", variant == "legacy" ? "YES" : "NO",
+                          "-PocketDeskFirstPictureShown", "NO", "-PocketDeskFirst60HintStage", "0"]
+            recorder.note("first-minute measurement variant=\(variant)")
+        }
         if let token = E2EFile.text(E2EPaths.token), token.count == 64 { arguments += ["--farside-e2e-token", token] }
         if reset { arguments.append("--farside-e2e-reset-pairing") }
         if let voiceTranscript { arguments += ["--farside-e2e-voice-transcript", voiceTranscript] }
@@ -236,7 +242,14 @@ class E2ETestCase: XCTestCase {
         field.typeText(code)
         let pair = app.buttons["Pair Mac"]
         guard pair.waitForExistence(timeout: 3), pair.isEnabled else { throw E2EFailure("Pair Mac stayed disabled after entering the code") }
+        recorder.metrics["pairSubmitUnixTime"] = Date().timeIntervalSince1970
         pair.tap()
+        let allow = app.buttons["pairing.localNetwork.allow"]
+        if allow.waitForExistence(timeout: 3) {
+            allow.tap()
+            recorder.metrics["pairingActions"] = 5
+            // Simulator grants Bonjour access; this doesn't count physical system alerts.
+        } else { recorder.metrics["pairingActions"] = 4 }
         recorder.note("entered invitation through Paste Code (\(code.count) characters)")
     }
 

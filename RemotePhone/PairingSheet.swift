@@ -14,11 +14,20 @@ struct PairingSheet: View {
     @State private var problemSerial = 0
     @State private var burst = false
     @State private var waitingForApproval = false
+    @State private var foundCode: String?
+    @State private var foundMacName = ""
+    @State private var networkResult: First60LocalNetworkCheck.Result?
+    @State private var checkingNetwork = false
+    @State private var localNetworkCheck = First60LocalNetworkCheck()
+    @State private var networkTask: Task<Void, Never>?
+    @State private var networkGeneration = UUID()
+
     @State private var showsReplacementConfirmation = false
     @FocusState private var codeFocused: Bool
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.scenePhase) private var scenePhase
 
     private enum CameraState { case priming, scanning, denied, unavailable }
 
@@ -32,11 +41,12 @@ struct PairingSheet: View {
         #if DEBUG
         if LaunchOptions.has("--ui-camera-priming") { initial = .priming }
         else if LaunchOptions.has("--ui-camera-denied") { initial = .denied }
-        else if PermissionPrimer.needsPriming(.camera) { initial = .priming }
+        else if !First60.isEnabled(), PermissionPrimer.needsPriming(.camera) { initial = .priming }
         else if PermissionPrimer.cameraDenied { initial = .denied }
         else { initial = .scanning }
         #else
-        initial = PermissionPrimer.needsPriming(.camera) ? .priming : (PermissionPrimer.cameraDenied ? .denied : .scanning)
+        initial = !First60.isEnabled() && PermissionPrimer.needsPriming(.camera)
+            ? .priming : (PermissionPrimer.cameraDenied ? .denied : .scanning)
         #endif
         _camera = State(initialValue: initial)
     }
@@ -46,7 +56,9 @@ struct PairingSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Farside.Space.l) {
                     FarsideHeading("Pair your Mac.", accent: "your", size: 30)
-                    if waitingForApproval { approvalWaiting } else {
+                    if waitingForApproval { approvalWaiting }
+                    else if foundCode != nil { foundMac }
+                    else {
                         FarsideSegmented(label: "Pairing method",
                                          options: [(PairingEntry.scan, "Scan"), (PairingEntry.paste, "Paste Code")],
                                          selection: $entry, accessibilityStacked: true)
@@ -82,13 +94,15 @@ struct PairingSheet: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", systemImage: "xmark") {
+                        cancelNetworkCheck()
+                        model.cancelPairingLocalAccess()
                         if waitingForApproval { connection.stop() }
                         dismiss()
                     }
                 }
             }
             .safeAreaBar(edge: .bottom) {
-                if entry == .paste && !waitingForApproval {
+                if entry == .paste && !waitingForApproval && foundCode == nil {
                     Button(action: pair) {
                         Text("Pair Mac")
                     }
@@ -105,7 +119,7 @@ struct PairingSheet: View {
         }
         .tint(Farside.Palette.bone)
         .farsideSheet()
-        .interactiveDismissDisabled(burst || waitingForApproval)
+        .interactiveDismissDisabled(burst || waitingForApproval || checkingNetwork)
         .confirmationDialog("Replace this Mac pairing?", isPresented: $showsReplacementConfirmation,
                             titleVisibility: .visible, presenting: model.pendingPairReplacement) { pending in
             Button("Replace pairing") { if model.confirmPairReplacement(pending) { waitingForApproval = true } }
@@ -118,14 +132,25 @@ struct PairingSheet: View {
             if !shown, model.pendingPairReplacement != nil { model.cancelPairReplacement(); entry = .paste }
         }
         .onDisappear {
+            cancelNetworkCheck()
             model.cancelPairReplacement()
             if waitingForApproval, connection.enrollmentPending { connection.stop() }
         }
         .onChange(of: connection.enrollmentPending) { _, pending in
-            if waitingForApproval, !pending, connection.invitation?.version == 1, connection.isRunning {
+            if waitingForApproval, !pending, connection.invitation?.version == 1, connection.isRunning,
+               !First60.isEnabled() {
                 waitingForApproval = false
                 celebrate()
             }
+        }
+        .onChange(of: connection.connected) { _, connected in
+            if First60.isEnabled(), waitingForApproval, connected, !connection.enrollmentPending {
+                waitingForApproval = false
+                celebrate()
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active, camera == .denied, !PermissionPrimer.cameraDenied { camera = .scanning }
         }
         .animation(Farside.Motion.easeOut(), value: problemSerial)
         .animation(Farside.Motion.easeOut(Farside.Motion.micro), value: burst)
@@ -136,6 +161,7 @@ struct PairingSheet: View {
         }
         .onChange(of: model.pairingCode) { _, _ in if entry == .paste { problem = nil } }
         .onAppear {
+            if First60.isEnabled(), !model.pairingCode.isEmpty { _ = stageCode(model.pairingCode) }
             #if DEBUG
             if LaunchOptions.has("--ui-pairing-burst") { burst = true }
             if LaunchOptions.has("--ui-pairing-expired") {
@@ -147,9 +173,122 @@ struct PairingSheet: View {
         .accessibilityIdentifier("pairing.sheet")
     }
 
+    /// This explicit action is also the reverse-pairing defense for links opened by Camera.
+    /// A scan/link supplies a name, never authority; the six-digit comparison and Mac Allow follow.
+    private var foundMac: some View {
+        VStack(alignment: .leading, spacing: Farside.Space.m) {
+            Text("Found \(foundMacName).")
+                .font(.headline)
+                .privacySensitive()
+                .accessibilityIdentifier("pairing.foundMac")
+            Text("Only continue if this Mac is in front of you and you opened its Farside pairing window. Never pair from a code someone sent you.")
+                .font(.subheadline)
+                .fixedSize(horizontal: false, vertical: true)
+            if checkingNetwork {
+                ProgressView().tint(Farside.Palette.bone)
+                Text("Allow Wi-Fi access so Farside can reach it. Choose Allow in the iOS Local Network alert.")
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if networkResult == .denied {
+                Text(LocalNetworkAccess.deniedTitle).font(.subheadline.weight(.semibold))
+                Text(LocalNetworkAccess.deniedNextStep).font(.subheadline)
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+                }
+                .buttonStyle(FarsidePrimaryButtonStyle())
+                Button("Check again", action: checkNetwork).buttonStyle(FarsideLinkButtonStyle())
+            } else if networkResult == .unavailable || networkResult == .cancelled {
+                Text("Farside couldn’t verify Wi-Fi access. Keep this device and your Mac on the same Wi-Fi, then check again.")
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Check again", action: checkNetwork).buttonStyle(FarsidePrimaryButtonStyle())
+            } else {
+                Text("Allow Wi-Fi access so Farside can reach it. Your Mac must then show the same six-digit code and choose Allow.")
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Allow Wi-Fi access", action: checkNetwork)
+                    .buttonStyle(FarsidePrimaryButtonStyle())
+                    .accessibilityIdentifier("pairing.localNetwork.allow")
+            }
+            Button("Use another code") {
+                cancelNetworkCheck()
+                model.cancelPairingLocalAccess()
+                foundCode = nil; foundMacName = ""; networkResult = nil
+                model.pairingCode = ""
+            }
+            .buttonStyle(FarsideLinkButtonStyle())
+            .disabled(checkingNetwork)
+        }
+        .padding(Farside.Space.l)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .farsidePlate()
+        .accessibilityIdentifier("pairing.localNetwork")
+    }
+
+    private func cancelNetworkCheck() {
+        networkGeneration = UUID()
+        networkTask?.cancel(); networkTask = nil
+        localNetworkCheck.cancel()
+        checkingNetwork = false
+    }
+
+    @discardableResult
+    private func stageCode(_ code: String) -> Bool {
+        guard First60.isEnabled() else {
+            let paired = model.enroll(code)
+            if paired { waitingForApproval = true }
+            return paired
+        }
+        do {
+            let code = try PairInvitation.normalizedCode(code.trimmingCharacters(in: .whitespacesAndNewlines))
+            let invitation = try PairInvitation.parse(code)
+            cancelNetworkCheck()
+            model.cancelPairingLocalAccess()
+            foundCode = code; foundMacName = invitation.name
+            networkResult = nil; problem = nil; model.error = ""
+            codeFocused = false
+            return true
+        } catch {
+            problem = PairingCodeProblem(code: code); problemSerial &+= 1
+            return false
+        }
+    }
+
+    private func checkNetwork() {
+        guard let code = foundCode, !checkingNetwork else { return }
+        // A long Settings visit can outlive the invitation. No stale authorization is retained.
+        guard (try? PairInvitation.parse(code)) != nil else {
+            foundCode = nil; problem = .expired; problemSerial &+= 1
+            return
+        }
+        cancelNetworkCheck()
+        let generation = networkGeneration
+        checkingNetwork = true; networkResult = nil
+        PermissionPrimer.markPrimed(.localNetwork)
+        networkTask = Task { @MainActor in
+            let result = await localNetworkCheck.check()
+            guard !Task.isCancelled, networkGeneration == generation, foundCode == code else { return }
+            checkingNetwork = false; networkResult = result
+            guard result == .allowed else { return }
+            model.approvePairingLocalAccess(code)
+            if model.enroll(code) {
+                foundCode = nil
+                waitingForApproval = true
+            } else if model.pendingPairReplacement == nil {
+                model.cancelPairingLocalAccess()
+                foundCode = nil
+                problem = PairingCodeProblem(code: code); problemSerial &+= 1
+            }
+        }
+    }
+
     private var approvalWaiting: some View {
         VStack(alignment: .leading, spacing: Farside.Space.m) {
-            if let code = connection.pairingComparisonCode {
+            if First60.isEnabled(), let wait = connection.permissionWait {
+                ProgressView().tint(Farside.Palette.bone)
+                Text(wait.message).font(.subheadline).fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("pairing.macPermissionWait")
+            } else if let code = connection.pairingComparisonCode {
                 Text("Check your Mac.")
                     .font(.headline)
                 Text(verbatim: code)
@@ -225,9 +364,7 @@ struct PairingSheet: View {
             ZStack {
                 ScannerView(onCode: { code in
                     if burst { return true }
-                    let paired = model.enroll(code)
-                    if paired { waitingForApproval = true }
-                    return paired
+                    return stageCode(code)
                 }, onRejected: { reason in
                     problem = reason
                     problemSerial &+= 1
@@ -334,12 +471,7 @@ struct PairingSheet: View {
 
     private func pair() {
         let code = model.pairingCode
-        if model.enroll(code) {
-            waitingForApproval = true
-        } else if model.pendingPairReplacement == nil {
-            problem = PairingCodeProblem(code: code)
-            problemSerial &+= 1
-        }
+        _ = stageCode(code)
     }
 }
 

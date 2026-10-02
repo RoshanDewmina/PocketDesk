@@ -140,3 +140,54 @@ final class LocalNetworkDeniedTests: XCTestCase {
         defaults.removePersistentDomain(forName: "LocalNetworkDeniedTests")
     }
 }
+
+@MainActor
+final class First60PhonePairingTests: XCTestCase {
+    private func fixture() -> (PhoneRemoteModel, UserDefaults) {
+        let name = "First60PhonePairingTests." + UUID().uuidString
+        let defaults = UserDefaults(suiteName: name)!
+        return (PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults,
+                coordinator: RemoteCoordinator(isHost: false, store: MemoryStore())), defaults)
+    }
+
+    func testEnrollmentCannotStartBeforeExactCodeNetworkApproval() throws {
+        let (model, _) = fixture()
+        defer { model.disconnect() }
+        let first = try TestPairing.invitation()
+        let second = try TestPairing.invitation()
+        XCTAssertFalse(model.enroll(try first.code()))
+        XCTAssertFalse(model.connection.isRunning)
+        model.approvePairingLocalAccess(try first.code())
+        XCTAssertFalse(model.enroll(try second.code()))
+        XCTAssertFalse(model.connection.isRunning)
+        model.cancelPairingLocalAccess()
+        XCTAssertFalse(model.enroll(try first.code()))
+        XCTAssertFalse(model.connection.isRunning)
+    }
+
+    func testExternalCameraLinkOnlyStagesReviewAndCannotRetargetOpenSheet() throws {
+        let (model, _) = fixture()
+        defer { model.disconnect() }
+        let first = try TestPairing.invitation()
+        let second = try TestPairing.invitation()
+        model.stagePairingLink(try XCTUnwrap(URL(string: first.cameraCode())))
+        XCTAssertEqual(model.pairingEntry, .paste)
+        XCTAssertEqual(model.pairingCode, try first.code())
+        XCTAssertFalse(model.connection.isRunning)
+        model.stagePairingLink(try XCTUnwrap(URL(string: second.cameraCode())))
+        XCTAssertEqual(model.pairingCode, try first.code())
+        XCTAssertFalse(model.enroll(try first.code()))
+        XCTAssertFalse(model.connection.isRunning)
+    }
+
+    func testDisabledFlowDoesNotAdmitExternalPairingLinks() throws {
+        let (model, defaults) = fixture()
+        defaults.set(true, forKey: First60.disabledDefaultsKey)
+        defer { model.disconnect() }
+        let invitation = try TestPairing.invitation()
+        model.stagePairingLink(try XCTUnwrap(URL(string: invitation.cameraCode())))
+        XCTAssertNil(model.pairingEntry)
+        XCTAssertEqual(model.pairingCode, "")
+        XCTAssertFalse(model.connection.isRunning)
+    }
+}

@@ -15,6 +15,10 @@ final class OnboardingFlow: ObservableObject {
     }
 
     static let coachSeenKey = "coach.seen"
+    static let firstPictureKey = "PocketDeskFirstPictureShown"
+    static func first60Enabled(in defaults: UserDefaults = .standard) -> Bool {
+        First60.isEnabled(defaults)
+    }
     @Published var step: Step?
     private var afterPriming: (() -> Void)?
     private let defaults: UserDefaults
@@ -41,14 +45,19 @@ final class OnboardingFlow: ObservableObject {
 
     /// Pairing is still waiting for authority and useful content; it is not task success.
     func afterPairing() {
+        guard !Self.first60Enabled(in: defaults) else { return }
         if PermissionPrimer.needsPriming(.localNetwork, in: defaults) {
             afterPriming = nil
             step = .priming(.localNetwork)
         }
     }
 
-    /// Shown once, automatically; replayable from Home.
+    /// The full practice coach stays available on demand; live hints teach first use.
     func offerCoach() {
+        if Self.first60Enabled(in: defaults) {
+            defaults.set(true, forKey: Self.coachSeenKey)
+            return
+        }
         guard !coachSeen, !LaunchOptions.suppressesOnboarding, step == nil else { return }
         step = .coach
     }

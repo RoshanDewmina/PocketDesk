@@ -153,6 +153,10 @@ final class RemoteHostModel: ObservableObject {
     private var recoveryNoticePending = false
     private var recoveryNoticeDelivered = false
     private var setupWasComplete = false
+    @Published private(set) var first60SetupFinished = false
+    private var first60Enabled: Bool { First60.isEnabled(preferences.defaults) }
+    private var first60SetupPending: Bool { first60Enabled && !first60SetupFinished }
+
     private var sessionsThisLaunch = 0
     /// Input admission counts since launch, by outcome; no content.
     private var inputCounts: [String: Int] = [:]
@@ -392,22 +396,43 @@ final class RemoteHostModel: ObservableObject {
         )
     }
     var canPair: Bool {
-        displayRefreshStatus == .ready && screenRecordingPermission.isGranted && HostPairingPreflight.isEligible(
+        if first60SetupPending { return !serverRemovalPending && !captureScopeNeedsSelection }
+        return displayRefreshStatus == .ready && screenRecordingPermission.isGranted && HostPairingPreflight.isEligible(
             selectedDisplayID: selected,
             availableDisplayIDs: displays.map(\.displayID)
         )
     }
+    private var first60Status: First60SetupStatus {
+        let ready = screenRecordingPermission.isGranted && !captureApproval.isPending && displayRefreshStatus == .ready
+        let permission: First60PermissionWait? = !ready ? .init(stage: .screenRecording)
+            : first60SetupPending && !controlPermission.isGranted && !accessibilitySkipped && allowControl
+                ? .init(stage: .accessibility) : nil
+        return .init(open: first60SetupPending || !ready, permission: permission, mediaReady: ready)
+    }
+
+    func finishFirst60Setup() {
+        guard first60Enabled else { return }
+        first60SetupFinished = true
+        preferences.defaults.set(true, forKey: First60.finishedDefaultsKey)
+        connection.refreshFirst60SetupStatus()
+        // Preserve saved background choices; finishing setup does not opt into new ones.
+        applyBackgroundDefaults()
+    }
+
     var needsSetup: Bool { setupStep != .done }
-    var presentsSetupAtLaunch: Bool { HostLaunchPolicy.presentsSetup(step: setupStep, pairingDeferred: pairingDeferred) }
+    var presentsSetupAtLaunch: Bool {
+        first60SetupPending && !pairingDeferred || HostLaunchPolicy.presentsSetup(step: setupStep, pairingDeferred: pairingDeferred)
+    }
 
     func presentsConsentAtLaunch(launchedAsLoginItem: Bool) -> Bool {
-        HostLaunchPolicy.presentsConsent(step: setupStep, consentPending: consentPending,
+        HostLaunchPolicy.presentsConsent(step: setupStep, consentPending: consentPending, first60: first60Enabled,
                                          launchedAsLoginItem: launchedAsLoginItem,
                                          loginItemRegistered: loginItemState.isRegistered)
     }
 
     var setupStep: HostSetupStep {
-        .current(
+        if first60SetupPending && (!hasPairedPhone || pairingRequested) { return .pairPhone }
+        return .current(
             screenRecording: screenRecordingPermission,
             accessibility: controlPermission,
             accessibilitySkipped: accessibilitySkipped,
@@ -467,6 +492,10 @@ final class RemoteHostModel: ObservableObject {
             accessibilitySkipped: accessibilitySkipped,
             status: status,
             setupStep: setupStep,
+            first60SetupPending: first60SetupPending,
+            first60RemoteDoneAvailable: first60SetupPending && connection.connected && sessionState == .picture
+                && sessionHealthy && sessionControlAllowed && controlPermission.isGranted
+                && !captureScopeViewOnly && NSScreen.screens.count == 1,
             hasPairedPhone: hasPairedPhone,
             pairedDevices: connection.pairedDevices.map { device in
                 HostPairedDeviceRow(id: device.id, name: PhoneDisplayName.display(device.phoneName),
@@ -586,6 +615,15 @@ final class RemoteHostModel: ObservableObject {
         browserSession.canAcquire = { [weak self] in guard let self else { return false }; return !self.captureScopeViewOnly && !self.away.isLocking && !self.away.wantsCover && !self.active && !self.connection.connected }
         if preferences.localOnly { connection.setLocalOnly(true) }
         connection.restore()
+        // Existing paired users keep their completed setup. Fresh installs persist the pending state
+        // before enrollment, so an OS-required restart does not skip the first-use surface.
+        if let saved = preferences.defaults.object(forKey: First60.finishedDefaultsKey) as? Bool {
+            first60SetupFinished = saved
+        } else {
+            first60SetupFinished = hasPairedPhone
+            preferences.defaults.set(first60SetupFinished, forKey: First60.finishedDefaultsKey)
+        }
+        connection.first60SetupStatus = first60Enabled ? { [weak self] in self?.first60Status } : nil
         connection.startAllowed = { [weak self] in self?.serverRemovalPending == false && self?.captureScopeNeedsSelection == false }
         connection.shareBlocker = { [weak self] in
             MacShareBlocker.current(screenRecordingGranted: CGPreflightScreenCaptureAccess(),
@@ -867,22 +905,27 @@ final class RemoteHostModel: ObservableObject {
         ) else { objectWillChange.send(); return }
         guard !browserSession.controller.running else { detail = "Browser access is on. Stop it before pairing a phone."; return }
         guard !connection.connected, connection.media == nil, !connection.awaitingApproval,
-              !captureApproval.isPending, !consentPending else {
+              !captureApproval.isPending, first60Enabled || !consentPending else {
             detail = HostDeviceLimitError.busy.localizedDescription; return
         }
-        guard canPair, let display = validatedSelectedDisplay() else {
+        guard canPair else {
             detail = "Farside needs Screen Recording and a display to share before pairing."
             return
         }
+        let display = first60SetupPending ? nil : validatedSelectedDisplay()
+        if !first60SetupPending && display == nil { return }
         releaseRemoteInput(notifyPhone: true)
         do {
-            guard let invitation = try HostPairingPreflight.createInvitation(
-                selectedDisplayID: selected,
-                availableDisplayIDs: displays.map(\.displayID),
-                create: {
-                    try connection.createPair(server: serviceAddress, name: Self.computerName ?? "My Mac")
-                }
-            ) else { return }
+            let invitation: PairInvitation
+            if first60SetupPending {
+                invitation = try connection.createPair(server: serviceAddress, name: Self.computerName ?? "My Mac")
+            } else {
+                guard let created = try HostPairingPreflight.createInvitation(
+                    selectedDisplayID: selected, availableDisplayIDs: displays.map(\.displayID),
+                    create: { try connection.createPair(server: serviceAddress, name: Self.computerName ?? "My Mac") }
+                ) else { return }
+                invitation = created
+            }
             preferences.serviceAddress = serviceAddress
             localPairRemovalMessage = nil
             pairingCode = try invitation.code()
@@ -893,7 +936,11 @@ final class RemoteHostModel: ObservableObject {
             preferences.sharingEnabled = true
             autoStart.clear()
             active = false
-            start(display: display)
+            if let display { start(display: display) }
+            else {
+                listeningWithoutSharing = true
+                connection.start()
+            }
         } catch {
             detail = error.localizedDescription
         }
@@ -1064,6 +1111,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func connectionDidChange() {
+        connection.refreshFirst60SetupStatus()
         reconcileAutomaticClipboard()
         recordServiceTransition()
         refreshAgentPushRelay()
@@ -1206,6 +1254,17 @@ final class RemoteHostModel: ObservableObject {
 
     private func reconcileSharing() {
         guard removalAllowsSharing else { return }
+        if first60SetupPending && connection.isRunning && listeningWithoutSharing {
+            if displayRefreshStatus == .failed || displayRefreshStatus == .unavailable {
+                stop(); detail = "Couldn’t find a display to share. Try again on this Mac."
+                return
+            }
+            if screenRecordingPermission.isGranted && displayRefreshStatus == .ready {
+                active = true; listeningWithoutSharing = false
+            }
+            connection.refreshFirst60SetupStatus()
+            return
+        }
         if MacShareBlocker.shouldListenWithoutSharing(
             wantsSharing: wantsSharing,
             suppressed: autoStart.suppressed,
@@ -2191,7 +2250,8 @@ final class RemoteHostModel: ObservableObject {
         }
         let locked = HostScreenLock.isLocked()
         if locked != screenLocked { handleAvailability(locked ? .screenLocked : .screenUnlocked) }
-        let setupComplete = setupStep == .done
+        connection.refreshFirst60SetupStatus()
+        let setupComplete = setupStep == .done && !first60SetupPending
         if setupComplete && !setupWasComplete { applyBackgroundDefaults() }
         setupWasComplete = setupComplete
     }
@@ -3116,6 +3176,7 @@ final class RemoteHostModel: ObservableObject {
             captureUnhealthySince = ProcessInfo.processInfo.systemUptime
         }
         captureHealthy = healthy
+        if first60SetupPending { objectWillChange.send() }
         defer { reconcileCurtain() }
         input.enabled = HostControlPolicy.isEnabled(
             userConsent: sessionControlAllowed,

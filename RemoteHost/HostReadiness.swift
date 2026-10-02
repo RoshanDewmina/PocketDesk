@@ -203,9 +203,9 @@ enum HostLaunchPolicy {
     /// launch can't be a login-item launch: macOS didn't report one, and Farside isn't registered to
     /// open at login (an SMAppService launch may not carry the login-item Apple event). Otherwise it
     /// waits for the person to open Farside's setup, Settings or menu.
-    static func presentsConsent(step: HostSetupStep, consentPending: Bool, launchedAsLoginItem: Bool,
+    static func presentsConsent(step: HostSetupStep, consentPending: Bool, first60: Bool = false, launchedAsLoginItem: Bool,
                                 loginItemRegistered: Bool) -> Bool {
-        step == .done && consentPending && !launchedAsLoginItem && !loginItemRegistered
+        !first60 && step == .done && consentPending && !launchedAsLoginItem && !loginItemRegistered
     }
 }
 

@@ -13,8 +13,9 @@ struct PhoneRemoteView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var showsSession: Bool {
-        connection.connected || connection.remoteVideo != nil
-            || (sessionHeld && MacStatus(connection.status).tone == .busy)
+        (connection.connected || connection.remoteVideo != nil
+            || (sessionHeld && MacStatus(connection.status).tone == .busy))
+            && (presentedSession || !OnboardingFlow.first60Enabled() || model.firstPictureReady)
     }
 
     var body: some View {
@@ -161,6 +162,15 @@ struct HomeView: View {
     @State private var showSecurity = false
     @State private var showPairedMacs = false
     @State private var savedMacs: [PairedMac] = []
+    @AppStorage(OnboardingFlow.firstPictureKey) private var firstPictureShown = false
+    private var showsLaterOptions: Bool {
+        if !OnboardingFlow.first60Enabled() || firstPictureShown { return true }
+        #if DEBUG
+        // Existing screenshot/layout fixtures describe an established user.
+        if !LaunchOptions.has("--ui-first60"), LaunchOptions.has("--ui-demo-mac") { return true }
+        #endif
+        return false
+    }
     @State private var lastBattery: MacVitalsMemory.LastSeen?
     @ObservedObject private var anywhere = AnywhereStore.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -298,6 +308,12 @@ struct HomeView: View {
                 Button { model.pairingEntry = .paste } label: { Label("Paste Pairing Code", systemImage: "doc.on.clipboard") }
                 Button { showDetails = true } label: { Label("Connection Details", systemImage: "network") }
                 Button { showPaywall = true } label: { Label("Farside Anywhere", systemImage: "globe") }
+                if !showsLaterOptions, connection.invitation != nil {
+                    Button(CouchCopy.entryTitle) { connect(mode: .couch) }
+                    Toggle("Local network only", isOn: Binding(get: { connection.localOnly }, set: { model.setLocalOnly($0) }))
+                        .disabled(!connection.localOnly && connection.invitation?.hasOwnerLocalIdentity != true)
+                    Button("Alerts & Lock Screen") { AgentAlertCenter.shared.showsSettings = true }
+                }
                 Button { showLegal = true } label: { Label("Third-Party Notices", systemImage: "doc.text") }
                 Button { showServerData = true } label: { Label("Server Data", systemImage: "externaldrive") }
                 Button { showSecurity = true } label: { Label("Settings", systemImage: "gearshape") }
@@ -393,9 +409,11 @@ struct HomeView: View {
 
     private var homeUtilities: some View {
         VStack(alignment: .leading, spacing: 0) {
-            if macName != nil || savedMacState == .choose { homeList }
-            AnywherePlanRow(store: anywhere) { showPaywall = true }
-                .padding(.top, Farside.Space.m)
+            if showsLaterOptions {
+                if macName != nil || savedMacState == .choose { homeList }
+                AnywherePlanRow(store: anywhere) { showPaywall = true }
+                    .padding(.top, Farside.Space.m)
+            }
         }
     }
 
@@ -486,6 +504,7 @@ struct HomeView: View {
                     .accessibilityLabel("Connect")
                     .accessibilityHint("Closes the gap: opens your Mac’s screen on this \(DeviceWord.current)")
                     .accessibilityIdentifier("home.connect")
+                if showsLaterOptions {
                 VStack(spacing: 6) {
                     Button(CouchCopy.entryTitle) { connect(mode: .couch) }
                         .buttonStyle(FarsideSecondaryButtonStyle(height: 52))
@@ -497,6 +516,7 @@ struct HomeView: View {
                         .accessibilityLabel(CouchCopy.entryCaption)
                 }
                 .frame(maxWidth: .infinity)
+                }
             }
         }
         .padding(.top, Farside.Space.m)
@@ -505,15 +525,26 @@ struct HomeView: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: Farside.Space.m) {
             FarsideHeading("Your Mac is far. Your reach isn’t.", accent: "isn’t", size: 32)
-            Text("Install Farside on your Mac, choose Pair a phone in its menu bar, then scan the code it shows.")
+            Text(OnboardingFlow.first60Enabled()
+                 ? "Farside needs its free Mac helper. Send yourself the link, open it on your Mac, then scan the code it shows."
+                 : "Install Farside on your Mac, choose Pair a phone in its menu bar, then scan the code it shows.")
                 .font(.body)
                 .foregroundStyle(Farside.Palette.ash)
                 .fixedSize(horizontal: false, vertical: true)
             VStack(spacing: Farside.Space.xs) {
+                if OnboardingFlow.first60Enabled() {
+                    ShareLink(item: URL(string: "https://getfarside.com/mac")!) {
+                        Label("Get Farside for Mac", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
+                    .accessibilityIdentifier("home.getMac")
+                    Text("getfarside.com/mac")
+                        .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                }
                 Button { model.pairingEntry = .scan } label: {
                     Label("Scan pairing code", systemImage: "qrcode.viewfinder")
                 }
-                .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
+                .buttonStyle(FarsideSecondaryButtonStyle(height: 60))
                 .accessibilityLabel("Scan pairing code")
                 Button("Paste a pairing code") { model.pairingEntry = .paste }
                     .buttonStyle(FarsideLinkButtonStyle())
@@ -803,7 +834,11 @@ struct MacStatus: Equatable {
             // Raw media states are transient; the coordinator follows each with a retry or a reason.
             self.init(text: "Reconnecting", tone: .busy, progress: 1)
         default:
-            if raw.hasPrefix("Connecting securely") {
+            if raw == First60PermissionWait(stage: .screenRecording).message {
+                self.init(text: "Waiting for your Mac to share its screen", tone: .busy, inContact: true, progress: 3)
+            } else if raw == First60PermissionWait(stage: .accessibility).message {
+                self.init(text: "Allow control on your Mac", tone: .busy, inContact: true, progress: 3)
+            } else if raw.hasPrefix("Connecting securely") {
                 self.init(text: "Connecting securely", tone: .busy, progress: 1)
             } else if raw.hasPrefix("Authenticating") {
                 self.init(text: FriendlyError.cardStatus(raw), tone: .busy, inContact: true, progress: 2)

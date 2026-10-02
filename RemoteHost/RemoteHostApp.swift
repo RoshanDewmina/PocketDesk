@@ -76,7 +76,10 @@ private struct HostSetupContainer: View {
     @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
-        var actions = HostActions.live(model, finishSetup: { dismissWindow(id: HostWindowID.setup) })
+        var actions = HostActions.live(model, finishSetup: {
+            model.finishFirst60Setup()
+            dismissWindow(id: HostWindowID.setup)
+        })
         actions.cancelPairing = {
             model.cancelPairing()
             dismissWindow(id: HostWindowID.setup)

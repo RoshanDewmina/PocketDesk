@@ -123,6 +123,21 @@ final class PairEnrollmentCryptoTests: XCTestCase {
         XCTAssertNotEqual(keys.trustKey, other.trustKey)
         XCTAssertFalse(other.confirms(keys.confirmation(role: "phone"), role: "phone"))
     }
+    func testFirst60ProofIsIgnoredByLegacyDecoderWithoutChangingKeys() throws {
+        struct LegacyProof: Codable { let reveal: PairEnrollment.Reveal; let confirmation: Data }
+        let a = try agreement()
+        let phoneKeys = try a.keys(isHost: false)
+        var proof = PairEnrollment.Proof(reveal: a.phone.reveal, confirmation: phoneKeys.confirmation(role: "phone"))
+        proof.first60 = true
+        let legacyProof = try JSONDecoder().decode(LegacyProof.self, from: PairEnrollment.encoded(proof))
+        XCTAssertNil(a.request.handshake.first60, "New first60 opt-in never enters the enrollment transcript")
+        let legacyHostKeys = try a.keys(isHost: true, reveal: legacyProof.reveal)
+        XCTAssertTrue(legacyHostKeys.confirms(legacyProof.confirmation, role: "phone"))
+        XCTAssertEqual(legacyHostKeys.sessionKey, phoneKeys.sessionKey)
+        XCTAssertEqual(legacyHostKeys.trustKey, phoneKeys.trustKey)
+        XCTAssertEqual(legacyHostKeys.comparisonCode, phoneKeys.comparisonCode)
+    }
+
     func testVersionExpiryBoundsAndInvalidCurvePointsFailClosed() throws {
         let a = try agreement()
         var expired = a.invitation; expired.expires = .distantPast
@@ -203,6 +218,59 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         XCTAssertNil(rig.host.pairingComparisonCode); XCTAssertNil(rig.phone.pairingComparisonCode)
         XCTAssertFalse(rig.phone.enrollmentPending)
     }
+    func testFirst60ApprovalPersistsTrustAndWaitsWithoutMediaThenResumes() async throws {
+        let rig = try ComparisonEnrollmentRig(handshakeTimeoutNanoseconds: 30_000_000)
+        defer { rig.stop() }
+        var ready = false
+        var open = true
+        rig.host.shareBlocker = { ready ? nil : .screenRecordingOff }
+        rig.host.first60SetupStatus = {
+            .init(open: open, permission: ready ? nil : .init(stage: .screenRecording), mediaReady: ready)
+        }
+        try rig.begin()
+        XCTAssertNil(rig.phone.permissionWait, "No setup status or authority before explicit Mac Allow")
+        XCTAssertNil(rig.phoneStore.data)
+        rig.host.approve(); rig.pump()
+        XCTAssertNotNil(rig.phoneStore.data, "Trust survives an OS-required host restart")
+        XCTAssertEqual(rig.phone.permissionWait?.stage, .screenRecording)
+        XCTAssertEqual(rig.phone.setupInProgress, true)
+        XCTAssertNil(rig.host.media); XCTAssertNil(rig.phone.media)
+        // The ordinary media/handshake deadline cannot race a human permission wait.
+        try await Task.sleep(nanoseconds: 90_000_000)
+        for _ in 0..<3 { rig.host.refreshFirst60SetupStatus(); rig.pump() }
+        XCTAssertTrue(rig.phone.isRunning); XCTAssertTrue(rig.host.isRunning)
+        XCTAssertNil(rig.host.media); XCTAssertNil(rig.phone.media)
+        ready = true
+        rig.host.refreshFirst60SetupStatus(); rig.pump()
+        XCTAssertNil(rig.phone.permissionWait)
+        XCTAssertNotNil(rig.host.media); XCTAssertNotNil(rig.phone.media)
+        XCTAssertEqual(rig.phone.setupInProgress, true, "Picture readiness does not finish the Done exercise")
+        open = false
+        rig.host.refreshFirst60SetupStatus(); rig.pump()
+        XCTAssertEqual(rig.phone.setupInProgress, false)
+    }
+
+    func testFirst60PermissionWaitEndsOnRevocation() throws {
+        let rig = try ComparisonEnrollmentRig(); defer { rig.stop() }
+        rig.host.shareBlocker = { .screenRecordingOff }
+        rig.host.first60SetupStatus = { .init(open: true, permission: .init(stage: .screenRecording), mediaReady: false) }
+        try rig.begin(); rig.host.approve(); rig.pump()
+        XCTAssertEqual(rig.phone.permissionWait?.stage, .screenRecording)
+        _ = rig.host.revoke()
+        XCTAssertNil(rig.host.permissionWait)
+        XCTAssertNil(rig.host.media)
+        rig.host.refreshFirst60SetupStatus()
+        XCTAssertNil(rig.host.media, "A stale grant after revoke cannot start a peer")
+    }
+
+    func testNewPhoneAndOldHostDoNotWaitForAnUnsupportedSetupMessage() throws {
+        let rig = try ComparisonEnrollmentRig(); defer { rig.stop() }
+        try rig.begin(); rig.host.approve(); rig.pump()
+        XCTAssertNil(rig.phone.setupInProgress)
+        XCTAssertNil(rig.phone.permissionWait)
+        XCTAssertNotNil(rig.phone.media)
+    }
+
     func testEarlyAllowAndReplayedCompetingRequestCannotReplaceTheDisplayedCandidate() throws {
         let rig = try ComparisonEnrollmentRig(); defer { rig.stop() }
         try rig.begin()
@@ -309,24 +377,49 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         signal.deliver(RelayMessage(type: "peer", online: true))
         let qr = try SignalCipher(key: invitation.key, room: invitation.room)
         let requestMessage = try qr.open(try XCTUnwrap(signal.sent.last?.payload), sender: "client")
-        let request = try PairEnrollment.decode(PairEnrollment.Request.self, body: requestMessage.body)
+        // Decode the actual new phone request through the old host's shapes, then re-encode
+        // exactly the legacy request used in its commitment and key transcript.
+        struct LegacyHandshake: Codable { let features: [String]; let mode: String?; let options: [String]? }
+        struct LegacyRequest: Codable { let version: Int; let commitment: Data; let handshake: LegacyHandshake; let phoneName: String? }
+        let actualRequest = try PairEnrollment.decode(PairEnrollment.Request.self, body: requestMessage.body)
+        XCTAssertNil(actualRequest.handshake.first60)
+        let legacy = try PairEnrollment.decode(LegacyRequest.self, body: requestMessage.body)
+        let request = try PairEnrollment.decode(PairEnrollment.Request.self, body: PairEnrollment.encoded(legacy))
+        XCTAssertEqual(try PairEnrollment.encoded(request), try PairEnrollment.encoded(actualRequest),
+                       "The sender's v2 transcript must survive the old host's decode/encode")
         let ephemeral = try PairEnrollment.Ephemeral(), session = try SecureRandom.token()
         let challenge = PairEnrollment.Challenge(reveal: ephemeral.reveal)
         signal.deliver(RelayMessage(type: "signal", payload: try qr.seal(ProtectedMessage(kind: "enrollmentChallenge",
             request: requestMessage.request, session: session, sequence: 0, body: try PairEnrollment.encoded(challenge)), sender: "host")))
         let proofMessage = try qr.open(try XCTUnwrap(signal.sent.last?.payload), sender: "client")
-        let proof = try PairEnrollment.decode(PairEnrollment.Proof.self, body: proofMessage.body)
+        struct LegacyProof: Codable { let reveal: PairEnrollment.Reveal; let confirmation: Data }
+        let actualProof = try PairEnrollment.decode(PairEnrollment.Proof.self, body: proofMessage.body)
+        XCTAssertEqual(actualProof.first60, true)
+        let proof = try PairEnrollment.decode(LegacyProof.self, body: proofMessage.body)
         let keys = try PairEnrollment.derive(invitation: invitation, requestID: requestMessage.request, sessionID: session,
             request: request, challenge: challenge, phone: proof.reveal, ephemeral: ephemeral, isHost: true)
         XCTAssertTrue(keys.confirms(proof.confirmation, role: "phone"))
         let derived = try SignalCipher(key: keys.sessionKey, room: invitation.room)
         signal.deliver(RelayMessage(type: "signal", payload: try derived.seal(ProtectedMessage(kind: "enrollmentReady",
             request: requestMessage.request, session: session, sequence: 0, body: keys.confirmation(role: "host")), sender: "host")))
-        XCTAssertNotNil(phone.pairingComparisonCode)
+        XCTAssertEqual(phone.pairingComparisonCode, keys.comparisonCode,
+                       "The actual new sender and the legacy host derive identical comparison and session keys")
         var saved = invitation; saved.version = 1; saved.key = keys.trustKey; saved.token = keys.trustToken; saved.expires = .distantFuture
         let accepted = ProtectedMessage(kind: "accepted", request: requestMessage.request, session: session, sequence: 1, body: nil)
         return (phone, store, signal, derived, accepted, saved)
     }
+    func testActualNewPhoneEmitterEnrollsWithLegacyHostWithoutSetupCapabilityAck() throws {
+        let (phone, store, signal, derived, template, legitimate) = try authenticatedPhone()
+        defer { phone.stop() }
+        var accepted = template
+        accepted.body = try PairEnrollment.encoded(legitimate)
+        signal.deliver(RelayMessage(type: "signal", payload: try derived.seal(accepted, sender: "host")))
+        XCTAssertEqual(try store.read(PairInvitation.self), legitimate)
+        XCTAssertNil(phone.setupInProgress)
+        XCTAssertNil(phone.permissionWait)
+        XCTAssertNotNil(phone.media, "An older host sends no setup extension; the new phone continues ordinary media admission")
+    }
+
     func testForgedAcceptedRejectsWrongTrustAndEveryOwnerIdentityBindingWithoutSaving() throws {
         for mutation in 0..<8 {
             let (phone, store, signal, derived, template, legitimate) = try authenticatedPhone()

@@ -109,6 +109,36 @@ struct BigTextState: Equatable {
     var autoApplied = false
 }
 
+/// Presentation timing only. This never supplies video admission or an input grant.
+struct FirstPictureSettlement {
+    static let maximumHold: TimeInterval = 1
+    private(set) var deadline: TimeInterval?
+    private(set) var ready = false
+
+    mutating func begin(at now: TimeInterval, hold: Bool) {
+        ready = !hold
+        deadline = hold ? now + Self.maximumHold : nil
+    }
+    @discardableResult
+    mutating func refresh(at now: TimeInterval, settled: Bool) -> Bool {
+        guard let deadline else { return ready }
+        if settled || now >= deadline { ready = true; self.deadline = nil }
+        return ready
+    }
+    mutating func cancel() { deadline = nil }
+}
+
+enum First60HintStage: Int {
+    case move, click, finished
+    var text: String? {
+        switch self {
+        case .move: "Slide to move"
+        case .click: "Tap to click"
+        case .finished: nil
+        }
+    }
+}
+
 @MainActor
 final class PhoneRemoteModel: ObservableObject {
     /// A lost live session keeps retrying for about 90 seconds, long enough for the Mac's
@@ -124,6 +154,80 @@ final class PhoneRemoteModel: ObservableObject {
     private let dataWarningGate: DataWarningGate
     private let preferences: UserDefaults
     private var linkConsentObserver: AnyCancellable?
+    private var first60SetupObserver: AnyCancellable?
+    static let firstPictureShownKey = "PocketDeskFirstPictureShown"
+    static let first60HintStageKey = "PocketDeskFirst60HintStage"
+    @Published private(set) var firstPictureReady = false
+    @Published private(set) var firstPictureSettling = false
+    @Published private(set) var first60HintStage = First60HintStage.move
+    var first60Enabled: Bool { First60.isEnabled(preferences) }
+    private var firstPictureSettlement = FirstPictureSettlement()
+    private var firstPictureTask: Task<Void, Never>?
+    private var firstPictureCaptureObserved = false
+    private var firstPictureSession = false
+    private var initialScaleOpportunity = false
+    private var initialScaleDeferredForSetup = false
+    private var firstPictureVeilDeadline: TimeInterval?
+    private var firstPictureVeilTask: Task<Void, Never>?
+    private var initialBigTextRequestID: String?
+    var first60InlineHint: String? {
+        guard first60Enabled, firstPictureReady, fresh, canControl, sessionMode == .picture,
+              sceneIsActive, !privacyShield, !contentConcealed else { return nil }
+        // Older Macs cannot confirm a posted click. Never invent a completion on send.
+        if first60HintStage == .click && !hostFeatures.contains(SessionFeature.inputReceipt) { return nil }
+        return first60HintStage.text
+    }
+
+    private func beginFirstPicture() {
+        firstPictureTask?.cancel()
+        stopFirstPictureSettling()
+        firstPictureCaptureObserved = false
+        firstPictureSession = first60Enabled && !preferences.bool(forKey: Self.firstPictureShownKey) && requestedMode == .picture
+        initialScaleOpportunity = firstPictureSession
+        initialScaleDeferredForSetup = firstPictureSession && connection.setupInProgress == true
+        firstPictureSettlement.begin(at: ProcessInfo.processInfo.systemUptime, hold: firstPictureSession)
+        firstPictureReady = firstPictureSettlement.ready
+        guard !firstPictureReady else { return }
+        firstPictureTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(FirstPictureSettlement.maximumHold))
+            guard let self, !Task.isCancelled else { return }
+            self.refreshFirstPicture()
+        }
+    }
+
+    private func refreshFirstPicture(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        if let deadline = firstPictureVeilDeadline, now >= deadline { stopFirstPictureSettling() }
+        let scaleSettled = !bigTextSupported || connection.setupInProgress == true
+            || (bigText.autoApplied && bigText.pendingTarget == nil && bigTextSendTask == nil)
+        let settled = firstPictureCaptureObserved && captureHealthy && geometryEpoch > 0
+            && (!curtainSupported || curtainState != .pending) && scaleSettled
+        if firstPictureSettlement.refresh(at: now, settled: settled), !firstPictureReady {
+            firstPictureReady = true
+            firstPictureTask?.cancel(); firstPictureTask = nil
+        }
+    }
+
+    private func startFirstPictureSettling() {
+        firstPictureVeilTask?.cancel()
+        firstPictureSettling = true
+        firstPictureVeilDeadline = ProcessInfo.processInfo.systemUptime + FirstPictureSettlement.maximumHold
+        firstPictureVeilTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(FirstPictureSettlement.maximumHold))
+            guard !Task.isCancelled else { return }
+            self?.stopFirstPictureSettling()
+        }
+    }
+    private func stopFirstPictureSettling() {
+        firstPictureVeilTask?.cancel(); firstPictureVeilTask = nil
+        firstPictureVeilDeadline = nil
+        if firstPictureSettling { firstPictureSettling = false }
+    }
+
+    private func advanceFirst60Hint(_ stage: First60HintStage) {
+        guard first60Enabled, stage.rawValue == first60HintStage.rawValue + 1 else { return }
+        first60HintStage = stage
+        preferences.set(stage.rawValue, forKey: Self.first60HintStageKey)
+    }
     let files = PhoneFileTransfer()
     let sendToMac = SendToMacInbox()
     private var shareLiveSessionID: String?
@@ -776,6 +880,11 @@ final class PhoneRemoteModel: ObservableObject {
               let receipt = action.inputAppliedReceipt,
               appliedReceiptTracker.consume(receipt, epoch: action.epoch, context: context, at: now) else { return }
         usefulSession.applied(context: context, now: now)
+        // Setup Done can start Big Text before this ACK arrives and hide the hint.
+        // The consumed receipt remains authoritative within its exact original context.
+        if first60Enabled, receipt.kind == "click", first60HintStage == .click {
+            advanceFirst60Hint(.finished)
+        }
     }
     func startPictureInPicture() {
         guard sceneIsActive, !privacyShield, !contentConcealed, !awaitingViewOnlyExit, pipState == .ready,
@@ -842,6 +951,8 @@ final class PhoneRemoteModel: ObservableObject {
             sessionLossRetryLimit: 24, maximumRetryDelayNanoseconds: 4_000_000_000)
         #endif
         self.preferences = preferences
+        firstPictureReady = !First60.isEnabled(preferences) || preferences.bool(forKey: Self.firstPictureShownKey)
+        first60HintStage = First60HintStage(rawValue: preferences.integer(forKey: Self.first60HintStageKey)) ?? .move
         dataWarningGate = DataWarningGate(defaults: preferences)
         streamQuality = StreamQualityPreference.stored(in: preferences)
         self.macAudioPlayback = macAudioPlayback ?? PhoneSystemAudioPlayback()
@@ -934,8 +1045,24 @@ final class PhoneRemoteModel: ObservableObject {
         connection.restore()
         linkHints.start()
         linkConsentObserver = linkHints.$hint.removeDuplicates().sink { [weak self] hint in self?.observeLinkHint(hint) }
+        first60SetupObserver = connection.$setupInProgress.removeDuplicates().sink { [weak self] open in
+            if open == true {
+                if self?.firstPictureSession == true { self?.initialScaleDeferredForSetup = true }
+                return
+            }
+            // Published values emit before assignment. Read the accepted status next turn.
+            DispatchQueue.main.async { [weak self] in
+                if let self, self.connection.setupInProgress != true, let deferred = self.deferredSetupBigText {
+                    self.deferredSetupBigText = nil
+                    self.sendBigText(display: deferred.display, width: deferred.width, initialPresentation: deferred.initial)
+                }
+                self?.applySavedBigText()
+                self?.refreshFirstPicture()
+            }
+        }
         connection.onAuthenticated = { [weak self] in
             guard let self else { return }
+            self.beginFirstPicture()
             self.invalidatePresentation()
             self.cachePresentationHost()
             self.cancelLockMacRequest()
@@ -1364,6 +1491,7 @@ final class PhoneRemoteModel: ObservableObject {
     var bigTextClock: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     private var bigTextSendTask: Task<Void, Never>?
     private var bigTextDisplayID: UInt32?
+    private var deferredSetupBigText: (display: UInt32, width: Double, initial: Bool)?
     private struct BigTextRequest {
         let id: String
         let display: UInt32
@@ -1380,7 +1508,9 @@ final class PhoneRemoteModel: ObservableObject {
 
     private var bigTextStatusReliabilityEnabled: Bool { !bigTextMemory.defaults.bool(forKey: Self.bigTextStatusDisabledKey) }
     var bigTextPillTarget: Double? {
-        bigTextStatusReliabilityEnabled && bigText.pendingPillExpired ? nil : bigText.pendingTarget
+        if first60Enabled, initialBigTextRequestID != nil,
+           initialBigTextRequestID == bigTextPendingRequest?.id { return nil }
+        return bigTextStatusReliabilityEnabled && bigText.pendingPillExpired ? nil : bigText.pendingTarget
     }
 
     var bigTextSupported: Bool { sessionMode == .picture && !captureScopeViewOnly && supports(SessionFeature.displayScale) }
@@ -1392,6 +1522,8 @@ final class PhoneRemoteModel: ObservableObject {
     /// several quick choices cost one mode change.
     func chooseBigText(_ width: Double?) {
         guard bigTextSupported, pendingModeSwitch == nil, let id = currentDisplayID, let descriptor = currentDescriptor else { return }
+        initialBigTextRequestID = nil
+        initialScaleOpportunity = false
         rememberBigText(width, display: descriptor)
         bigText.savedWidth = width
         bigText.sessionOff = false
@@ -1401,6 +1533,8 @@ final class PhoneRemoteModel: ObservableObject {
 
     func setBigTextOffForSession(_ off: Bool) {
         guard bigTextSupported, pendingModeSwitch == nil, let id = currentDisplayID else { return }
+        initialBigTextRequestID = nil
+        initialScaleOpportunity = false
         bigText.sessionOff = off
         bigText.autoApplied = true
         scheduleBigText(display: id, width: off ? 0 : (bigText.savedWidth ?? 0))
@@ -1408,6 +1542,8 @@ final class PhoneRemoteModel: ObservableObject {
 
     func chooseBigTextNow(_ width: Double) {
         guard bigTextSupported, let id = currentDisplayID else { return }
+        initialBigTextRequestID = nil
+        initialScaleOpportunity = false
         bigTextSendTask?.cancel()
         bigTextSendTask = nil
         sendBigText(display: id, width: width)
@@ -1424,8 +1560,13 @@ final class PhoneRemoteModel: ObservableObject {
         bigTextPendingRequest = nil
         bigText.pendingTarget = nil
         bigText.pendingSince = nil
-        showSessionNotice(bigTextStatusReliabilityEnabled ? "Couldn't confirm text size" : "Couldn't change text size")
+        if first60Enabled, timedOut?.id == initialBigTextRequestID, initialBigTextRequestID != nil {
+            showSessionNotice("Using your Mac’s current text size.")
+        } else {
+            showSessionNotice(bigTextStatusReliabilityEnabled ? "Couldn't confirm text size" : "Couldn't change text size")
+        }
         if let timedOut { bigTextTimedOut = (timedOut, sessionNoticeGeneration) }
+        refreshFirstPicture()
     }
 
     static func bigTextMessage(_ error: BigTextError) -> String? {
@@ -1448,9 +1589,13 @@ final class PhoneRemoteModel: ObservableObject {
         }
     }
 
-    private func sendBigText(display: UInt32, width: Double) {
+    private func sendBigText(display: UInt32, width: Double, initialPresentation: Bool = false) {
         guard bigTextSupported, pendingModeSwitch == nil, currentDisplayID == display,
               !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground else { return }
+        if first60Enabled, connection.setupInProgress == true {
+            deferredSetupBigText = (display, width, initialPresentation)
+            return
+        }
         if let timedOut = bigTextTimedOut, sessionNoticeGeneration == timedOut.noticeGeneration {
             sessionNoticeTask?.cancel()
             sessionNotice = nil
@@ -1464,6 +1609,8 @@ final class PhoneRemoteModel: ObservableObject {
         let noOp = descriptor?.scaleBaselineWidth.flatMap { width >= $0 ? descriptor?.scaleCurrentWidth : nil }
         let accepted = width == 0 ? descriptor?.scaleBaselineWidth : (boundedNearest ?? noOp)
         bigTextPendingRequest = BigTextRequest(id: id, display: display, acceptedWidth: accepted)
+        initialBigTextRequestID = initialPresentation && first60Enabled ? id : nil
+        if initialPresentation, initialScaleDeferredForSetup, firstPictureReady { startFirstPictureSettling() }
         lastBigTextRequest = (display, width, id)
         bigTextRequestsSent += 1
         // Pending even if the send failed: the 8 s timeout then tells the person, instead of silence.
@@ -1509,16 +1656,22 @@ final class PhoneRemoteModel: ObservableObject {
         } ?? false
         if let pending = bigTextPendingRequest, action.scaleRequestID == pending.id,
            (bigTextStatusReliabilityEnabled && pendingSucceeded) || (error != .busy && (action.scaleError != nil || pendingSucceeded)) {
+            if pending.id == initialBigTextRequestID { stopFirstPictureSettling() }
             bigTextPendingRequest = nil
             bigText.pendingTarget = nil
             bigText.pendingSince = nil
-            if !(bigTextStatusReliabilityEnabled && pendingSucceeded), let error, let message = Self.bigTextMessage(error) { showSessionNotice(message) }
+            if !(bigTextStatusReliabilityEnabled && pendingSucceeded), let error, let message = Self.bigTextMessage(error) {
+                showSessionNotice(first60Enabled && pending.id == initialBigTextRequestID
+                    ? "Using your Mac’s current text size." : message)
+            }
         }
         applySavedBigText()
+        refreshFirstPicture()
     }
 
     private func applySavedBigText() {
         guard bigTextSupported, !bigText.autoApplied, bigText.pendingTarget == nil, bigTextSendTask == nil,
+              !first60Enabled || connection.setupInProgress != true,
               captureHealthy, pendingModeSwitch == nil, pendingDisplayID == nil,
               !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground,
               let baseline = bigText.baselineWidth, let current = bigText.currentWidth,
@@ -1539,14 +1692,16 @@ final class PhoneRemoteModel: ObservableObject {
                 bigText.savedWidth = width
             }
         }
+        let initialPresentation = initialScaleOpportunity
+        initialScaleOpportunity = false
         bigText.autoApplied = true
         // A different phone may have left its level during the host's disconnect grace.
         guard !bigText.sessionOff, let saved = bigText.savedWidth else {
-            if current != baseline { sendBigText(display: id, width: 0) }
+            if current != baseline { sendBigText(display: id, width: 0, initialPresentation: initialPresentation) }
             return
         }
         guard saved < baseline, saved != current else { return }
-        sendBigText(display: id, width: saved)
+        sendBigText(display: id, width: saved, initialPresentation: initialPresentation)
     }
 
     private func rememberBigText(_ width: Double?, display: DisplayDescriptor) {
@@ -2045,12 +2200,37 @@ final class PhoneRemoteModel: ObservableObject {
         return sendInput("key", key: key, modifiers: ["command"])
     }
 
+    private var localAccessApprovedPairingCode: String?
+
+    /// Approval is scoped to this exact, still-valid QR; it is never persisted across attempts.
+    func approvePairingLocalAccess(_ code: String) {
+        guard let normalized = try? PairInvitation.normalizedCode(code),
+              (try? PairInvitation.parse(normalized)) != nil else { return }
+        localAccessApprovedPairingCode = normalized
+    }
+
+    func cancelPairingLocalAccess() { localAccessApprovedPairingCode = nil }
+
+    /// External URLs are untrusted navigation. Show the same in-app review as a camera scan.
+    func stagePairingLink(_ url: URL) {
+        guard First60.isEnabled(preferences), !connection.isRunning, pairingEntry == nil,
+              let normalized = try? PairInvitation.normalizedCode(url.absoluteString),
+              (try? PairInvitation.parse(normalized)) != nil else { return }
+        cancelPairingLocalAccess()
+        pairingCode = normalized
+        pairingEntry = .paste
+    }
+
     @discardableResult
     func enroll(_ code: String) -> Bool {
         guard pendingPairReplacement == nil else { return false }
         do {
-            let code = code.trimmingCharacters(in: .whitespacesAndNewlines)
+            let code = try PairInvitation.normalizedCode(code.trimmingCharacters(in: .whitespacesAndNewlines))
             let invitation = try PairInvitation.parse(code)
+            guard !First60.isEnabled(preferences) || localAccessApprovedPairingCode == code else {
+                self.error = "Allow Wi-Fi access in the pairing sheet before pairing this Mac."
+                return false
+            }
             if let request = try PhoneTrustStore.shared.replacementRequest(for: invitation) {
                 let oldName = try PhoneTrustStore.shared.snapshot().hosts
                     .first { $0.id == request.existingHostRecordID }?.invitation.name ?? "this Mac"
@@ -2061,6 +2241,7 @@ final class PhoneRemoteModel: ObservableObject {
             }
             disconnect()
             try connection.enroll(code)
+            cancelPairingLocalAccess()
             pairingCode = ""
             error = ""
             return true
@@ -2070,12 +2251,13 @@ final class PhoneRemoteModel: ObservableObject {
         }
     }
 
-    func cancelPairReplacement() { pendingPairReplacement = nil }
+    func cancelPairReplacement() { pendingPairReplacement = nil; cancelPairingLocalAccess() }
 
     @discardableResult
     func confirmPairReplacement(_ pending: PendingPairReplacement) -> Bool {
         guard let current = pendingPairReplacement, current.code == pending.code,
               current.approval.request == pending.approval.request else { return false }
+        guard !First60.isEnabled(preferences) || localAccessApprovedPairingCode == pending.code else { return false }
         pendingPairReplacement = nil
         do {
             let invitation = try PairInvitation.parse(pending.code) // rechecks QR expiry on confirmation
@@ -2088,6 +2270,7 @@ final class PhoneRemoteModel: ObservableObject {
             }
             disconnect()
             try connection.enroll(pending.code, replacementApproval: pending.approval)
+            cancelPairingLocalAccess()
             pairingCode = ""
             error = ""
             return true
@@ -2102,6 +2285,11 @@ final class PhoneRemoteModel: ObservableObject {
         acceptResumeMeasurement(resumeTiming.frame(at: lastFrame))
         // A @Published set notifies even when unchanged, and this runs at 4 Hz while streaming.
         if !fresh { fresh = true }
+        refreshFirstPicture()
+        if first60Enabled, firstPictureSession, firstPictureReady, sessionMode == .picture,
+           !preferences.bool(forKey: Self.firstPictureShownKey) {
+            preferences.set(true, forKey: Self.firstPictureShownKey)
+        }
         refreshUsefulSession(at: lastFrame)
         #if DEBUG
         PhoneE2E.active?.frameReceived()
@@ -2214,6 +2402,10 @@ let now = ProcessInfo.processInfo.systemUptime
             let accepted = sendInput("move", x: delta.width, y: delta.height,
                                      pointerSync: ordinal.map { PointerSync(move: $0) })
             if accepted {
+                if first60HintStage == .move, first60InlineHint != nil,
+                   delta.width.isFinite, delta.height.isFinite, delta != .zero {
+                    advanceFirst60Hint(.click)
+                }
                 if sessionMode == .couch, let ordinal {
                     couchAck.sent(ordinal: ordinal, at: ProcessInfo.processInfo.systemUptime)
                 }
@@ -2788,6 +2980,7 @@ let now = ProcessInfo.processInfo.systemUptime
             }
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             hostFeatures = Set(SharedCaptureScopePolicy.features(action.features ?? [], kind: sharedCaptureScope?.kind ?? .display))
+            if action.features != nil { firstPictureCaptureObserved = true }
             if hostFeatures.contains(SessionFeature.causalInput) { connection.requestCausalInput(epoch: geometryEpoch) }
             hostPresence = action.hostState.flatMap(HostPresence.init(rawValue:))
             sessionBlocker = action.hostState.flatMap(MacShareBlocker.init(rawValue:))
@@ -2870,6 +3063,7 @@ let now = ProcessInfo.processInfo.systemUptime
             ladder = action.ladder
             connection.media?.observeLadder(action.ladder)
             sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
+            refreshFirstPicture()
         case "geometry":
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             guard action.epoch != geometryEpoch else { return }
@@ -3086,6 +3280,7 @@ let now = ProcessInfo.processInfo.systemUptime
     }
     private func tick(at suppliedNow: TimeInterval? = nil) {
         let now = suppliedNow ?? ProcessInfo.processInfo.systemUptime
+        refreshFirstPicture(at: now)
         if let request = pipRestoreRequest, now >= request.deadline {
             finishPiPRestore(false)
             if pipBackground { disconnect(explicitEnd: false); return }
@@ -3157,6 +3352,15 @@ let now = ProcessInfo.processInfo.systemUptime
     }
 
     private func end() {
+        firstPictureTask?.cancel(); firstPictureTask = nil
+        firstPictureSettlement.cancel()
+        firstPictureSession = false
+        initialScaleOpportunity = false
+        initialScaleDeferredForSetup = false
+        stopFirstPictureSettling()
+        firstPictureCaptureObserved = false
+        initialBigTextRequestID = nil
+        deferredSetupBigText = nil
         PhoneIdleTimer.shared.endSession()
         let awayWasOn = (presentationHost ?? connection.presentationHostTrust).map { awayMemory.wasOn(host: $0) } ?? false
         cancelLockMacRequest()

@@ -78,6 +78,14 @@ final class RemoteCoordinator: ObservableObject {
     @Published private(set) var entitlementRequired = false
     /// Host: a missing grant that stops this Mac accepting any session (see `MacShareBlocker`).
     var shareBlocker: (() -> MacShareBlocker?)?
+    /// Host-owned first setup status; nil disables the extension on this host.
+    var first60SetupStatus: (() -> First60SetupStatus?)?
+    @Published private(set) var setupInProgress: Bool?
+    @Published private(set) var permissionWait: First60PermissionWait?
+    private var first60Negotiated = false
+    private var first60WaitingForMedia = false
+    private var lastFirst60Status: First60SetupStatus?
+
     /// Host: what the current phone listed in its handshake request.
     private(set) var peerFeatures: Set<String> = []
     /// What this phone asked for in the current session's handshake; a settings change waits for the next one.
@@ -1192,6 +1200,8 @@ final class RemoteCoordinator: ObservableObject {
         request = ""; session = ""; sequence = 0; guardState = nil; proofReceived = false
         enrollmentEphemeral = nil; enrollmentRequest = nil; enrollmentChallenge = nil; enrollmentKeys = nil
         pairingComparisonCode = nil; pendingPairingPhoneName = nil; enrollmentPending = false
+        first60Negotiated = false; first60WaitingForMedia = false
+        setupInProgress = nil; permissionWait = nil; lastFirst60Status = nil
         peerFeatures = []
         requestedFeatures = []
         peerRequestedMode = .picture
@@ -1260,12 +1270,17 @@ final class RemoteCoordinator: ObservableObject {
                         let handshake = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(),
                                                                                mode: sessionModeRequest == .couch ? SessionMode.couch.rawValue : nil)
                         requestedFeatures = handshake.requested
+                        first60Negotiated = handshake.first60 == true
                         if let scannedEnrollment {
                             let ephemeral = try PairEnrollment.Ephemeral()
                             let name = localDisplayName.flatMap(PhoneIdentity.sanitized)
+                            // Keep the v2 crypto transcript readable by older Macs. The optional
+                            // setup capability rides the proof, which is outside that transcript.
+                            var enrollmentHandshake = handshake
+                            enrollmentHandshake.first60 = nil
                             let commit = try PairEnrollment.commitment(invitation: scannedEnrollment, requestID: request,
-                                reveal: ephemeral.reveal, handshake: handshake, phoneName: name)
-                            let enrollment = PairEnrollment.Request(commitment: commit, handshake: handshake, phoneName: name)
+                                reveal: ephemeral.reveal, handshake: enrollmentHandshake, phoneName: name)
+                            let enrollment = PairEnrollment.Request(commitment: commit, handshake: enrollmentHandshake, phoneName: name)
                             enrollmentEphemeral = ephemeral; enrollmentRequest = enrollment; enrollmentPending = true
                             send(kind: "enrollmentRequest", body: try PairEnrollment.encoded(enrollment), handshake: true)
                         } else {
@@ -1347,7 +1362,9 @@ final class RemoteCoordinator: ObservableObject {
             request = message.request; session = try SecureRandom.token()
             guardState = SessionReplayGuard(request: request, session: session)
             peerFeatures = MacShareBlocker.Handshake.features(in: message.body)
+            first60Negotiated = First60.isEnabled() && first60SetupStatus != nil && MacShareBlocker.Handshake.supportsFirst60(in: message.body)
             peerRequestedMode = MacShareBlocker.Handshake.requestedMode(in: message.body)
+            first60Negotiated = first60Negotiated && peerRequestedMode == .picture
             send(kind: "challenge", handshake: true); setTimeout(); return
         }
         if !isHost, message.kind == "challenge" {
@@ -1365,8 +1382,10 @@ final class RemoteCoordinator: ObservableObject {
                   message.sequence == 0, !proofReceived else { throw RemoteError.stale }
             proofReceived = true
             if peerRequestedMode != .couch, let blocker = shareBlocker?() {
-                refuseSession(blocker)
-                return
+                if !first60MayWait(for: blocker) {
+                    refuseSession(blocker)
+                    return
+                }
             }
             if hostPair?.paired == true { acceptSession() }
             else {
@@ -1392,7 +1411,11 @@ final class RemoteCoordinator: ObservableObject {
             LocalLinkProof.log.info("peer endpoint received; proof exists=\(self.localLinkProof != nil, privacy: .public)")
             localLinkProof?.setPeer(endpoint)
         case "accepted" where !isHost:
-            guard media == nil else { throw RemoteError.stale }
+            // A request alone is not negotiation: older Macs ignore the optional handshake key.
+            let acceptedObject = message.body.flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+            let acknowledged = acceptedObject?["first60"] as? Bool
+            first60Negotiated = first60Negotiated && acknowledged == true
+            guard media == nil, setupInProgress == nil else { throw RemoteError.stale }
             if scannedEnrollment != nil {
                 guard enrollmentKeys != nil, pairingComparisonCode != nil, message.body != nil else { throw RemoteError.invalidMessage }
             }
@@ -1413,7 +1436,10 @@ final class RemoteCoordinator: ObservableObject {
                 // QR still needs the same explicit replacement admission and expiry.
                 try persistAcceptedInvitation(scannedEnrollment)
             }
-            prepareMedia()
+            if first60Negotiated {
+                first60WaitingForMedia = true; setupInProgress = true
+                setTimeout(nanoseconds: First60.permissionTimeoutNanoseconds)
+            } else { prepareMedia() }
             send(kind: "acceptedAck", body: SessionModeRequest.body(for: sessionModeRequest, name: localDisplayName))
         case MacShareBlocker.refusalKind where !isHost:
             guard media == nil, let body = message.body else { throw RemoteError.invalidMessage }
@@ -1425,7 +1451,23 @@ final class RemoteCoordinator: ObservableObject {
             recordPeerName(PhoneIdentity.decode(message.body))
             guard !stopped else { return }
             peerRequestedMode = SessionModeRequest.mode(fromAcceptedAckBody: message.body)
-            prepareMedia()
+            if first60Negotiated {
+                first60WaitingForMedia = true
+                setTimeout(nanoseconds: First60.permissionTimeoutNanoseconds)
+                refreshFirst60SetupStatus()
+            } else { prepareMedia() }
+        case "setupStatus" where !isHost:
+            guard first60Negotiated, !enrollmentPending, let body = message.body, body.count <= 512 else { throw RemoteError.invalidMessage }
+            let update = try JSONDecoder().decode(First60SetupStatus.self, from: body)
+            try update.validate()
+            // A status may explain an established view-only session, never stop its safety timers.
+            if !first60WaitingForMedia, !update.mediaReady { throw RemoteError.invalidMessage }
+            setupInProgress = update.open; permissionWait = update.permission
+            if let wait = update.permission { status = wait.message }
+            if first60WaitingForMedia, update.mediaReady {
+                first60WaitingForMedia = false
+                setTimeout(); prepareMedia()
+            }
         case "media":
             guard let body = message.body else { throw RemoteError.invalidMessage }
             let signal = try JSONDecoder().decode(MediaSignal.self, from: body)
@@ -1452,7 +1494,9 @@ final class RemoteCoordinator: ObservableObject {
             enrollmentChallenge = challenge
             let handshakeBody = try PairEnrollment.encoded(incoming.handshake)
             peerFeatures = MacShareBlocker.Handshake.features(in: handshakeBody)
+            first60Negotiated = First60.isEnabled() && first60SetupStatus != nil && MacShareBlocker.Handshake.supportsFirst60(in: handshakeBody)
             peerRequestedMode = MacShareBlocker.Handshake.requestedMode(in: handshakeBody)
+            first60Negotiated = first60Negotiated && peerRequestedMode == .picture
             send(kind: "enrollmentChallenge", body: try PairEnrollment.encoded(challenge), handshake: true)
             setTimeout(); return
         }
@@ -1466,6 +1510,7 @@ final class RemoteCoordinator: ObservableObject {
             session = message.session; guardState = SessionReplayGuard(request: request, session: session)
             enrollmentChallenge = challenge; enrollmentKeys = keys
             var proof = PairEnrollment.Proof(reveal: ephemeral.reveal, confirmation: keys.confirmation(role: "phone"))
+            proof.first60 = first60Negotiated ? true : nil
             #if DEBUG
             proof.e2eApproval = e2eEnrolling ? e2eEnrollmentProof : nil
             #endif
@@ -1482,9 +1527,12 @@ final class RemoteCoordinator: ObservableObject {
             let keys = try PairEnrollment.derive(invitation: pair.invitation, requestID: request, sessionID: session,
                 request: enrollmentRequest, challenge: enrollmentChallenge, phone: proof.reveal, ephemeral: ephemeral, isHost: true)
             guard keys.confirms(proof.confirmation, role: "phone") else { throw RemoteError.invalidMessage }
+            first60Negotiated = First60.isEnabled() && first60SetupStatus != nil && proof.first60 == true && peerRequestedMode == .picture
             enrollmentKeys = keys; enrollmentEphemeral = nil; proofReceived = true
             cipher = try SignalCipher(key: keys.sessionKey, room: pair.invitation.room)
-            if peerRequestedMode != .couch, let blocker = shareBlocker?() { refuseSession(blocker); return }
+            if peerRequestedMode != .couch, let blocker = shareBlocker?(), !first60MayWait(for: blocker) {
+                refuseSession(blocker); return
+            }
             pendingPairingPhoneName = enrollmentRequest.phoneName
             pairingComparisonCode = keys.comparisonCode; awaitingApproval = true
             send(kind: "enrollmentReady", body: keys.confirmation(role: "host"), handshake: true)
@@ -1536,9 +1584,23 @@ final class RemoteCoordinator: ObservableObject {
             try store.save(pair); hostPair = pair; peerName = pair.phoneName
         } catch { fail(error.localizedDescription) }
     }
+    private func first60MayWait(for blocker: MacShareBlocker) -> Bool {
+        first60Negotiated && first60SetupStatus?()?.open == true
+            && (blocker == .screenRecordingOff || blocker == .screenRecordingApproval)
+    }
+    private func acceptedInvitationBody(_ invitation: PairInvitation) throws -> Data {
+        let encoded = try JSONEncoder().encode(invitation)
+        guard first60Negotiated else { return encoded }
+        guard var object = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] else { throw RemoteError.invalidMessage }
+        object["first60"] = true
+        return try JSONSerialization.data(withJSONObject: object)
+    }
     private func acceptSession() {
         do {
             guard let hostPair else { throw RemoteError.invalidPairing }
+            if peerRequestedMode != .couch, let blocker = shareBlocker?(), !first60MayWait(for: blocker) {
+                refuseSession(blocker); return
+            }
             if !hostPair.paired {
                 // Persist before publishing new trust. An interrupted enrollment may require
                 // a fresh QR, but can never reconnect using the exposed enrollment key.
@@ -1553,12 +1615,41 @@ final class RemoteCoordinator: ObservableObject {
                 try next.rememberCurrentDevice()
                 try store.save(next)
                 self.hostPair = next; invitation = next.invitation
-                send(kind: "accepted", body: try JSONEncoder().encode(next.invitation))
+                send(kind: "accepted", body: try acceptedInvitationBody(next.invitation))
                 pairingComparisonCode = nil; pendingPairingPhoneName = nil
-            } else { send(kind: "accepted") }
+            } else { send(kind: "accepted", body: first60Negotiated ? try acceptedInvitationBody(hostPair.invitation) : nil) }
             status = "Connecting live desktop…"; setTimeout()
         } catch { fail(error.localizedDescription) }
     }
+    #if DEBUG
+    /// Phone presentation fixture only; it supplies no media, trust, route or input authority.
+    func setFirst60SetupStatusForTesting(_ update: First60SetupStatus) throws {
+        try update.validate()
+        setupInProgress = update.open; permissionWait = update.permission
+    }
+    #endif
+
+    /// Called when the Mac's actual grants/catalog change. Only an approved, sealed session may wait;
+    /// repeated status polls never extend its fixed deadline or establish media/input authority.
+    func refreshFirst60SetupStatus() {
+        guard isHost, first60Negotiated, proofReceived, !awaitingApproval, hostPair?.paired == true,
+              !session.isEmpty, !stopped, let update = first60SetupStatus?() else { return }
+        guard routeAuthorized else { sessionFailed("The connection route is no longer authorized."); return }
+        guard (try? update.validate()) != nil else { sessionFailed("Mac setup status was invalid."); return }
+        if !first60WaitingForMedia && !update.mediaReady { return }
+        if update != lastFirst60Status {
+            guard let body = try? JSONEncoder().encode(update) else { return }
+            send(kind: "setupStatus", body: body)
+            lastFirst60Status = update
+            setupInProgress = update.open; permissionWait = update.permission
+            if let wait = update.permission { status = wait.message }
+        }
+        if first60WaitingForMedia && update.mediaReady {
+            first60WaitingForMedia = false
+            setTimeout(); prepareMedia()
+        }
+    }
+
     /// An authenticated phone is never accepted while a grant is missing. One that understands blockers
     /// is told which; an older phone just times out, as it did when the Mac was not listening.
     private func refuseSession(_ blocker: MacShareBlocker) {

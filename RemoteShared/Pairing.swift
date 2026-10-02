@@ -42,7 +42,28 @@ struct PairInvitation: Codable, Equatable {
     func code() throws -> String {
         "pocketdesk:" + (try JSONEncoder().encode(self)).base64EncodedString()
     }
+    /// A Camera-app-readable custom URL. Opening it only stages a review in the phone UI;
+    /// it conveys no approval. Existing `code()` stays available for older phone versions.
+    func cameraCode() throws -> String {
+        "farside://pair#" + (try JSONEncoder().encode(self)).base64EncodedString()
+    }
+
+    static func normalizedCode(_ text: String) throws -> String {
+        guard text.utf8.count < 4096 else { throw RemoteError.invalidPairing }
+        if text.hasPrefix("pocketdesk:") { return text }
+        // Pairing.swift is also compiled by the narrow host snapshot target.
+        guard !UserDefaults.standard.bool(forKey: "PocketDeskFirst60Disabled"), let parts = URLComponents(string: text), parts.scheme == "farside",
+              parts.host == "pair", parts.path.isEmpty, parts.port == nil,
+              parts.user == nil, parts.password == nil, parts.query == nil,
+              let payload = parts.fragment, !payload.isEmpty,
+              let bytes = Data(base64Encoded: payload), bytes.base64EncodedString() == payload else {
+            throw RemoteError.invalidPairing
+        }
+        return "pocketdesk:" + payload
+    }
+
     static func parse(_ text: String, now: Date = Date()) throws -> Self {
+        let text = try normalizedCode(text)
         guard text.utf8.count < 4096, text.hasPrefix("pocketdesk:"),
               let data = Data(base64Encoded: String(text.dropFirst(11))) else { throw RemoteError.invalidPairing }
         let result = try JSONDecoder().decode(Self.self, from: data)
@@ -302,6 +323,9 @@ enum PairEnrollment {
     struct Proof: Codable {
         let reveal: Reveal
         let confirmation: Data
+        /// Optional setup capability is outside the hashed request transcript. Legacy decoders
+        /// ignore it and still derive the same comparison code, session and durable trust keys.
+        var first60: Bool? = nil
         #if DEBUG
         /// Existing private E2E enrollment authorization; absent from Release wire encoding.
         var e2eApproval: Data? = nil

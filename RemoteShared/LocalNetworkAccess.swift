@@ -108,3 +108,95 @@ enum LocalNetworkAccess {
         return result
     }
 }
+
+/// A successful Bonjour registration proves that an operation requiring Local Network access
+/// actually completed. Neither a timer nor an NWBrowser `.ready` state grants permission.
+/// The ephemeral service contains no pairing identity and refuses every incoming connection.
+/// TN3179: PolicyDenied can arrive before the alert is answered; it never advances enrollment.
+@MainActor
+final class First60LocalNetworkCheck {
+    enum Result: Equatable { case allowed, denied, unavailable, cancelled }
+    private var browser: NWBrowser?
+    private var listener: NWListener?
+    private var generation = UUID()
+    private var decision = First60LocalNetworkDecision()
+
+    func cancel() {
+        generation = UUID()
+        browser?.cancel(); browser = nil
+        listener?.cancel(); listener = nil
+    }
+
+    func check(timeout: TimeInterval = 15) async -> Result {
+        cancel()
+        guard LocalNetworkAccess.appIsActive, !Task.isCancelled else { return .cancelled }
+        decision = First60LocalNetworkDecision()
+        let run = generation
+        let parameters = NWParameters.tcp
+        parameters.includePeerToPeer = false
+        do {
+            let listener = try NWListener(using: parameters)
+            self.listener = listener
+            listener.service = NWListener.Service(name: "Farside-Permission-" + UUID().uuidString,
+                                                  type: LocalMacDiscovery.serviceType, domain: "local.")
+            listener.newConnectionHandler = { $0.cancel() }
+            listener.serviceRegistrationUpdateHandler = { [weak self] change in
+                Task { @MainActor in
+                    guard let self, self.generation == run else { return }
+                    if case .add = change { self.decision.registered = true }
+                }
+            }
+            listener.stateUpdateHandler = { [weak self] state in
+                Task { @MainActor in
+                    guard let self, self.generation == run else { return }
+                    if case .failed = state { self.decision.failed = true }
+                }
+            }
+            listener.start(queue: DispatchQueue(label: "farside.permission-listener"))
+        } catch { cancel(); return .unavailable }
+        let browser = NWBrowser(for: .bonjour(type: LocalMacDiscovery.serviceType, domain: "local."), using: parameters)
+        self.browser = browser
+        browser.stateUpdateHandler = { [weak self] state in
+            Task { @MainActor in
+                guard let self, self.generation == run else { return }
+                switch state {
+                case .waiting(let error):
+                    if case .dns(let code) = error, code == -65570 { self.decision.policyDenied = true }
+                case .failed: self.decision.failed = true
+                default: break
+                }
+            }
+        }
+        browser.start(queue: DispatchQueue(label: "farside.permission-browser"))
+        var activeElapsed: TimeInterval = 0
+        var last = ProcessInfo.processInfo.systemUptime
+        defer { if generation == run { cancel() } }
+        while generation == run, !Task.isCancelled {
+            let now = ProcessInfo.processInfo.systemUptime
+            if LocalNetworkAccess.appIsActive {
+                activeElapsed += now - last
+                if let result = decision.result(active: true, elapsed: activeElapsed, timeout: timeout) { return result }
+            }
+            last = now
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return .cancelled
+    }
+}
+
+/// Unknown, denial and elapsed time never stand in for a completed permission-requiring operation.
+struct First60LocalNetworkDecision {
+    var registered = false
+    var policyDenied = false
+    var failed = false
+    func result(active: Bool, elapsed: TimeInterval, timeout: TimeInterval = 15,
+                cancelled: Bool = false) -> First60LocalNetworkCheck.Result? {
+        if cancelled { return .cancelled }
+        guard active else { return nil }
+        if registered { return .allowed }
+        // Recovery may be offered on an early PolicyDenied, but enrollment remains blocked.
+        if policyDenied, elapsed >= 2 { return .denied }
+        if failed || elapsed >= timeout { return .unavailable }
+        return nil
+    }
+}

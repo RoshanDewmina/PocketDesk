@@ -63,6 +63,8 @@ struct HostViewState: Equatable {
     var accessibilitySkipped = false
     var status: HostStatus = .starting
     var setupStep: HostSetupStep = .screenRecording
+    var first60SetupPending = false
+    var first60RemoteDoneAvailable = false
     var hasPairedPhone = false
     var pairedDevices: [HostPairedDeviceRow] = []
     var pairingRequested = false

@@ -1,4 +1,5 @@
 import XCTest
+import SwiftUI
 @testable import PocketDeskRemote
 
 @MainActor
@@ -651,5 +652,216 @@ final class BigTextPhoneTests: XCTestCase {
         XCTAssertEqual(model.bigText, BigTextState())
         XCTAssertNil(model.lastBigTextRequest)
         XCTAssertFalse(model.bigTextSupported)
+    }
+}
+
+@MainActor
+final class First60PhoneTests: XCTestCase {
+    private var defaults: UserDefaults!
+    private var model: PhoneRemoteModel!
+    private var packets: [ControlPacket] = []
+    private var display: DisplayDescriptor {
+        var value = DisplayDescriptor(id: 1, name: "Built-in", width: 1470, height: 956)
+        value.scaleSteps = [ScaleStep(width: 1024, height: 665)]
+        value.scaleBaselineWidth = 1470
+        value.scaleCurrentWidth = 1470
+        return value
+    }
+    override func setUp() {
+        super.setUp()
+        defaults = makeTestDefaults("First60PhoneTests")
+        defaults.set(true, forKey: BigTextAutoLevel.disabledKey)
+        packets = []
+    }
+    override func tearDown() {
+        model?.disconnect()
+        model = nil
+        super.tearDown()
+    }
+    private func start(features: [String] = []) throws {
+        let trust = PhoneTrustStore(records: MemoryStore(), legacy: MemoryStore())
+        try trust.saveApproved(TestPairing.invitation())
+        model = PhoneRemoteModel(background: FakeBackgroundExecution(), resumeStore: SessionResumeStore(defaults: defaults), preferences: defaults,
+            coordinator: RemoteCoordinator(isHost: false, store: PhonePairPersistence(trust: trust)))
+        model.bigTextMemory = BigTextMemory(defaults: defaults)
+        model.bigTextRoomOverride = "first60-room"
+        model.prepareConnection(mode: .picture)
+        model.sceneChanged(.active)
+        model.connection.startInputFixtureForTesting(session: "first60")
+        model.connection.inputPacketSenderForTesting = { [weak self] packet in self?.packets.append(packet); return true }
+        model.connection.onAuthenticated?()
+        try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 1))
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 1, features: features, display: 1))
+        try deliver(RemoteAction(action: "viewing", x: 1, epoch: 1))
+    }
+    private func deliver(_ action: RemoteAction) throws {
+        model.connection.onControl?(try JSONEncoder().encode(action))
+    }
+    private func rememberWidth(_ width: Double) throws {
+        BigTextMemory(defaults: defaults).remember(width, forHost: try XCTUnwrap(model.connection.presentationHostTrust),
+            display: display, among: [display])
+    }
+    private func catalog(current: Double = 1470, error: String? = nil) throws {
+        var value = display
+        value.scaleCurrentWidth = current
+        try deliver(RemoteAction(action: "displays", epoch: 1, displays: [value], display: 1,
+            scaleError: error, scaleRequestID: error != nil || current != 1470 ? model.lastBigTextRequest?.requestID : nil))
+    }
+    private func lastClick() throws -> RemoteAction {
+        try XCTUnwrap(packets.last { $0.action.action == "click" }?.action)
+    }
+    private func applied(_ request: RemoteAction, accepted: Bool, requestID: String? = nil) throws {
+        var response = RemoteAction(action: "inputApplied", epoch: 1)
+        response.inputAppliedReceipt = InputAppliedReceipt(requestID: try XCTUnwrap(requestID ?? request.inputRequestID), kind: "click", accepted: accepted)
+        try deliver(response)
+    }
+    func testInitialAutomaticScaleSettlesBeforeIrisAndReconnectDoesNotHold() throws {
+        try start(features: [SessionFeature.displayScale])
+        try rememberWidth(1024)
+        XCTAssertFalse(model.firstPictureReady)
+        try catalog()
+        XCTAssertEqual(model.bigText.pendingTarget, 1024)
+        XCTAssertNil(model.bigTextPillTarget, "Initial display change is behind the iris")
+        XCTAssertFalse(model.firstPictureReady)
+        try catalog(current: 1024)
+        XCTAssertTrue(model.firstPictureReady)
+        XCTAssertFalse(defaults.bool(forKey: PhoneRemoteModel.firstPictureShownKey), "Opening a gate supplies no picture")
+        model.frameReceived()
+        XCTAssertTrue(defaults.bool(forKey: PhoneRemoteModel.firstPictureShownKey))
+        model.disconnect()
+        model.connection.startInputFixtureForTesting(session: "first60-reconnect")
+        model.connection.onAuthenticated?()
+        XCTAssertTrue(model.firstPictureReady)
+    }
+    func testInitialFailureFallsBackButManualFailureKeepsDiagnostics() throws {
+        try start(features: [SessionFeature.displayScale])
+        try rememberWidth(1024)
+        try catalog()
+        try catalog(error: "failed")
+        XCTAssertEqual(model.sessionNotice, "Using your Mac’s current text size.")
+        XCTAssertTrue(model.firstPictureReady)
+        model.chooseBigTextNow(1024)
+        XCTAssertEqual(model.bigTextPillTarget, 1024)
+        try catalog(error: "failed")
+        XCTAssertEqual(model.sessionNotice, PhoneRemoteModel.bigTextMessage(.failed))
+    }
+    func testSetupOpenDefersScaleUntilAcceptedDoneStatus() async throws {
+        try start(features: [SessionFeature.displayScale])
+        try rememberWidth(1024)
+        try model.connection.setFirst60SetupStatusForTesting(.init(open: true, mediaReady: true))
+        try catalog()
+        XCTAssertNil(model.lastBigTextRequest)
+        XCTAssertFalse(model.bigText.autoApplied)
+        XCTAssertTrue(model.firstPictureReady, "The phone may show setup without resizing the Mac's Done target")
+        XCTAssertFalse(model.firstPictureSettling)
+        try model.connection.setFirst60SetupStatusForTesting(.init(open: false, mediaReady: true))
+        await withCheckedContinuation { continuation in
+            DispatchQueue.main.async { continuation.resume() }
+        }
+        XCTAssertEqual(model.lastBigTextRequest?.width, 1024)
+        XCTAssertNil(model.bigTextPillTarget)
+        XCTAssertTrue(model.firstPictureSettling, "Keep the mounted renderer covered during the initial post-Done resize")
+        try catalog(current: 1024)
+        XCTAssertFalse(model.firstPictureSettling)
+    }
+    func testDeferredInitialResizeVeilIsBoundedAndEndCancelsIt() async throws {
+        try start(features: [SessionFeature.displayScale])
+        try rememberWidth(1024)
+        try model.connection.setFirst60SetupStatusForTesting(.init(open: true, mediaReady: true))
+        try catalog()
+        model.frameReceived()
+        try model.connection.setFirst60SetupStatusForTesting(.init(open: false, mediaReady: true))
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        XCTAssertTrue(model.firstPictureSettling)
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 1.1)
+        XCTAssertFalse(model.firstPictureSettling)
+        XCTAssertEqual(model.bigText.pendingTarget, 1024, "Bounded presentation waiting never invents scale confirmation")
+        model.disconnect()
+        model.connection.startInputFixtureForTesting(session: "first60-reconnected")
+        model.connection.onAuthenticated?()
+        XCTAssertTrue(model.firstPictureReady)
+        XCTAssertFalse(model.firstPictureSettling)
+    }
+    func testPrivacyPendingWaitsForAppliedCurtainStatus() throws {
+        try start(features: [SessionFeature.displayScale, SessionFeature.privacyCurtain])
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 1,
+            features: [SessionFeature.displayScale, SessionFeature.privacyCurtain], curtain: "pending", display: 1))
+        try catalog()
+        XCTAssertFalse(model.firstPictureReady)
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 1,
+            features: [SessionFeature.displayScale, SessionFeature.privacyCurtain], curtain: "up", display: 1))
+        XCTAssertTrue(model.firstPictureReady)
+    }
+    func testUnansweredGateIsBoundedAndDisconnectRetiresItsDeadline() throws {
+        try start(features: [SessionFeature.displayScale])
+        XCTAssertFalse(model.firstPictureReady)
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 1.1)
+        XCTAssertTrue(model.firstPictureReady)
+        XCTAssertFalse(defaults.bool(forKey: PhoneRemoteModel.firstPictureShownKey))
+        model.connection.onAuthenticated?()
+        XCTAssertFalse(model.firstPictureReady)
+        model.disconnect()
+        model.expireViewOnlyExitForTesting(at: ProcessInfo.processInfo.systemUptime + 2)
+        XCTAssertFalse(model.firstPictureReady)
+    }
+    func testHintsAdvanceOnceFromRealMoveThenCorrelatedAppliedClickOnly() throws {
+        try start(features: [SessionFeature.inputReceipt])
+        model.frameReceived()
+        XCTAssertEqual(model.first60InlineHint, "Slide to move")
+        _ = model.gesture(.move(.zero))
+        XCTAssertEqual(model.first60HintStage, .move)
+        XCTAssertTrue(model.gesture(.move(CGSize(width: 1, height: 0))))
+        XCTAssertEqual(model.first60InlineHint, "Tap to click")
+        XCTAssertTrue(model.gesture(.click(count: 1)))
+        let click = try lastClick()
+        XCTAssertEqual(model.first60HintStage, .click, "A successful local send is not a posted click")
+        try applied(click, accepted: true, requestID: String(repeating: "f", count: 32))
+        XCTAssertEqual(model.first60HintStage, .click)
+        try applied(click, accepted: false)
+        XCTAssertEqual(model.first60HintStage, .click)
+        XCTAssertTrue(model.gesture(.click(count: 1)))
+        let next = try lastClick()
+        try applied(next, accepted: true)
+        XCTAssertEqual(model.first60HintStage, .finished)
+        XCTAssertNil(model.first60InlineHint)
+        try applied(next, accepted: true)
+        XCTAssertEqual(defaults.integer(forKey: PhoneRemoteModel.first60HintStageKey), First60HintStage.finished.rawValue)
+        let restored = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults,
+            coordinator: RemoteCoordinator(isHost: false, store: MemoryStore()))
+        XCTAssertEqual(restored.first60HintStage, .finished)
+        restored.disconnect()
+    }
+    func testAppliedDoneClickCompletesHintWhileDeferredScaleTemporarilyBlocksControl() async throws {
+        try start(features: [SessionFeature.displayScale, SessionFeature.inputReceipt])
+        try rememberWidth(1024)
+        try model.connection.setFirst60SetupStatusForTesting(.init(open: true, mediaReady: true))
+        try catalog()
+        model.frameReceived()
+        XCTAssertTrue(model.gesture(.move(CGSize(width: 1, height: 0))))
+        XCTAssertEqual(model.first60InlineHint, "Tap to click")
+        XCTAssertTrue(model.gesture(.click(count: 1)))
+        let doneClick = try lastClick()
+        XCTAssertEqual(model.first60HintStage, .click, "Sending Done does not prove it was posted")
+
+        try model.connection.setFirst60SetupStatusForTesting(.init(open: false, mediaReady: true))
+        await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        XCTAssertEqual(model.bigText.pendingTarget, 1024)
+        XCTAssertFalse(model.canControl)
+        XCTAssertNil(model.first60InlineHint)
+        try applied(doneClick, accepted: true)
+        XCTAssertEqual(model.first60HintStage, .finished, "Exact posted Done still counts while its resize is pending")
+        XCTAssertEqual(defaults.integer(forKey: PhoneRemoteModel.first60HintStageKey), First60HintStage.finished.rawValue)
+    }
+    func testMixedPeerDoesNotPretendToConfirmClickAndKillSwitchRestoresNormalPresentation() throws {
+        try start()
+        model.frameReceived()
+        XCTAssertTrue(model.gesture(.move(CGSize(width: 1, height: 0))))
+        XCTAssertEqual(model.first60HintStage, .click)
+        XCTAssertNil(model.first60InlineHint, "Legacy Mac cannot supply an applied click receipt")
+        model.disconnect()
+        defaults.set(true, forKey: First60.disabledDefaultsKey)
+        try start(features: [SessionFeature.displayScale])
+        XCTAssertTrue(model.firstPictureReady)
+        XCTAssertNil(model.first60InlineHint)
     }
 }
