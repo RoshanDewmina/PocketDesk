@@ -3424,7 +3424,7 @@ private struct SessionPill: View {
                 })
                 .accessibilityIdentifier(primaryIdentifier)
                 .accessibilityLabel(expandedDock ? "Hide controls" : "Show controls")
-                .accessibilityValue(reconnecting ? "Reconnecting to \(macName)…" : back ?? busy?.accessibilityLabel ?? bigText ?? notice ?? (viewOnly ? "\(caption) · View only" : caption))
+                .accessibilityValue(spokenStatus)
                 .accessibilityHint("Tap for controls. Double-tap to type.")
                 .accessibilityAction(named: Text("Show keyboard")) { keyboard() }
                 if reconnecting {
@@ -3457,6 +3457,15 @@ private struct SessionPill: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.session.pill")
         .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
+    }
+
+    private var spokenStatus: String {
+        if reconnecting { return "Reconnecting to \(macName)…" }
+        if let back { return back }
+        if let busy { return busy.accessibilityLabel }
+        if let bigText { return bigText }
+        if let notice { return notice }
+        return viewOnly ? "\(caption) · View only" : caption
     }
 
     private var primaryIdentifier: String {

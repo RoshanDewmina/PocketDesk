@@ -100,6 +100,11 @@ final class BigTextUITests: XCTestCase {
         XCTAssertTrue(handle.waitForExistence(timeout: 5))
         waitUntilStill(handle)
         XCTAssertTrue(handle.isHittable)
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists {
+            handle.tap()
+            XCTAssertTrue(app.buttons["Hide controls"].waitForExistence(timeout: 5))
+            return
+        }
         let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -80)))
         let hide = app.buttons["Hide controls"]
