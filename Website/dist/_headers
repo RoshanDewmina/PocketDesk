@@ -30,6 +30,12 @@
 /llms.txt
   Content-Type: text/plain; charset=utf-8
 
+# The Farside for Mac DMG (scripts/add-mac-download.ts); versioned file names, so a day of caching is safe.
+/downloads/*
+  Content-Type: application/x-apple-diskimage
+  Content-Disposition: attachment
+  Cache-Control: public, max-age=86400
+
 # Apple fetches this extensionless file directly; its response must be JSON with no redirect.
 /.well-known/apple-app-site-association
   Content-Type: application/json

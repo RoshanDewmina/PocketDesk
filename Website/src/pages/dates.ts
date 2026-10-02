@@ -4,6 +4,7 @@
 export const UPDATED: Record<string, string> = {
   "/": "2026-10-02",
   "/about": "2026-10-02",
+  "/mac": "2026-10-02",
   "/control-mac-from-iphone": "2026-09-30",
   "/iphone-as-mac-trackpad": "2026-09-30",
   "/remote-desktop-for-mac": "2026-09-30",

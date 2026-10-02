@@ -113,7 +113,7 @@ const SETUP: { name: string; text: string; body: Html }[] = [
   {
     name: "Put Farside for Mac on your Mac",
     text: `Download Farside for Mac, open it and move it to Applications if it asks. It lives in the menu bar and needs ${R.mac}.`,
-    body: html`${config.launch.macDownloadUrl ? html`<a href="${config.launch.macDownloadUrl}">Download Farside for Mac</a>` : html`Download Farside for Mac from this website <span class="placeholder">(coming soon)</span>`}, open it, and move it to Applications if it asks. It lives in the menu bar. You need ${R.mac}.`,
+    body: html`${config.launch.macDownloadUrl ? html`<a href="/mac">Download Farside for Mac</a>` : html`Download Farside for Mac from this website <span class="placeholder">(coming soon)</span>`}, open it, and move it to Applications if it asks. It lives in the menu bar. You need ${R.mac}.`,
   },
   {
     name: "Allow two permissions",

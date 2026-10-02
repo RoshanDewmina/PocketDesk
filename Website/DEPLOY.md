@@ -36,8 +36,12 @@ bun run build                                           # preview: placeholders 
 bunx wrangler@4 pages deploy dist --project-name farside-site --branch preview   # → https://preview.farside-site-dgk.pages.dev (noindex)
 
 bun run build:prod                                      # production: fails until site.config.ts (contacts, CTA URL, privacyEffective) is filled
+bun scripts/add-mac-download.ts <path to the DMG>       # the Farside for Mac DMG (not in git), checked against launch.macBytes/macSha256
+bun run check                                           # optional but recommended: links (including the DMG), layout, CSP
 bunx wrangler@4 pages deploy dist --project-name farside-site --branch main
 ```
+
+The Farside for Mac DMG is served from `/downloads/` (offered on `/mac`; `/download/mac/latest` redirects to it). It is kept out of git (`.gitignore`), so `add-mac-download.ts` must run after every build and before every deploy, or the deploy drops the download. For a new Mac build: set `launch.macDownloadUrl`, `macVersion`, `macSha256` and `macBytes` in `site.config.ts`, rebuild, add the new DMG, deploy. The 1.0 (20261002.3) DMG lives in `~/Documents/Codex/2026-10-01/release/20261002.3/mac-release-20261002T191948Z/`.
 
 Custom domain (production only, after the owner approves the site): Workers & Pages → `farside-site` → Custom domains → add `getfarside.com` and `www.getfarside.com`, then redirect `www` to the apex with a Bulk Redirect.
 

@@ -43,6 +43,8 @@ export type Launch = {
   /** Mac companion version and SHA-256, shown next to the download when it exists. */
   macVersion: string | null;
   macSha256: string | null;
+  /** Size of the DMG in bytes; `scripts/add-mac-download.ts` checks it and the SHA-256 against the file. */
+  macBytes: number | null;
 };
 
 export type CtaStage = "follow" | "testflight" | "preorder";
@@ -70,11 +72,17 @@ export const config = {
 
   launch: {
     live: false,
-    macDownloadUrl: null,
+    /**
+     * The notarized DMG is served from this site but is not in git: after `bun run build:prod`, run
+     * `bun scripts/add-mac-download.ts <path to the DMG>` to copy it into dist/downloads/ (DEPLOY.md).
+     * The /mac page offers it; the App Store switch above stays separate.
+     */
+    macDownloadUrl: "/downloads/Farside-for-Mac-1.0-20261002.3.dmg",
     appStoreUrl: null,
     appStoreId: null,
-    macVersion: null,
-    macSha256: null,
+    macVersion: "1.0 (20261002.3)",
+    macSha256: "0c39638ae4a370aec4cedf5be68a2203ce466ede4351be5e215715f9a946832b",
+    macBytes: 17408265,
   } satisfies Launch as Launch,
 
   /**

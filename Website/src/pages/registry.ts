@@ -4,6 +4,7 @@
 import { aboutPage } from "./about";
 import { homePage } from "./home";
 import type { Assets } from "./layout";
+import { macPage } from "./mac";
 import { notFoundPage } from "./notfound";
 import { privacyPage } from "./privacy";
 import { supportPage } from "./support";
@@ -33,6 +34,14 @@ export const PAGES: PageDef[] = [
     render: supportPage,
     sitemap: true,
     llms: { section: "Help", title: "Support", note: "setup, gestures, a can't-connect checklist, what every app message means, billing, contact" },
+  },
+  {
+    slug: "mac",
+    path: "/mac",
+    file: "mac.html",
+    render: macPage,
+    sitemap: true,
+    llms: { section: "Help", title: "Download Farside for Mac", note: "the free Mac companion: download, requirements, three install steps, file size and SHA-256" },
   },
   {
     slug: "privacy",

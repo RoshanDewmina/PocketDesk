@@ -91,6 +91,12 @@ function headersFile(styleHashes: string[]) {
 /llms.txt
   Content-Type: text/plain; charset=utf-8
 
+# The Farside for Mac DMG (scripts/add-mac-download.ts); versioned file names, so a day of caching is safe.
+/downloads/*
+  Content-Type: application/x-apple-diskimage
+  Content-Disposition: attachment
+  Cache-Control: public, max-age=86400
+
 # Apple fetches this extensionless file directly; its response must be JSON with no redirect.
 /.well-known/apple-app-site-association
   Content-Type: application/json
@@ -124,7 +130,6 @@ function redirectsFile() {
 /remote-desktop-for-mac /                          301
 /beta                  /#beta                      302
 /download              /#beta                      302
-/mac                   ${mac}  302
 /download/mac/latest   ${mac}  302
 /app                   ${app}  302
 `;
@@ -172,7 +177,7 @@ Key facts:
 
 - Free on the same local network as the Mac, with no account and no ads.
 - Farside Anywhere is the paid plan for using the Mac away from home${P.final ? `: ${P.monthly} a month or ${P.yearly} a year` : ""}. It is not on sale yet, and will be sold only inside the iPhone and iPad app through Apple.
-- Farside for Mac (the companion that runs on the Mac) will be a free download from this website, signed with an Apple Developer ID and notarized by Apple. Farside for iPhone and iPad (one universal app) will be on the App Store.
+- Farside for Mac (the companion that runs on the Mac) ${config.launch.macDownloadUrl ? `is a free download at ${config.SITE_URL}/mac` : "will be a free download from this website"}, signed with an Apple Developer ID and notarized by Apple. Farside for iPhone and iPad (one universal app) will be on the App Store.
 - Planned requirements: ${R.mac} (Macs with an Intel processor are not supported); iPhone with ${R.iphone}, or iPad with ${R.ipad}.
 - Limits: Macs only (no Windows, Linux or Android); one Mac display at a time; the Mac must be awake and logged in; no pressure gestures.
 - The website sets no cookies and runs no analytics.

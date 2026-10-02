@@ -97,7 +97,7 @@ const S: Section[] = [
   {
     id: "diagnostics",
     title: "Diagnostics",
-    body: html`<p>Farside contains no crash-reporting or analytics service. If you choose to share analytics with app developers in iOS or macOS settings, Apple may give us anonymous, aggregated crash and usage reports; we cannot identify you from them. A hidden diagnostic setting can save technical connection statistics (frame rate, bitrate, connection type) to a file on your device. Nothing uploads that file; you can send it to us if you choose.</p>`,
+    body: html`<p>Farside contains no crash-reporting or analytics SDK. Our connection service keeps daily aggregate totals of successful host registrations, signaling readiness with local-only or Anywhere authorization, and positive or negative entitlement verification results. Each stored total contains only a UTC date, a fixed event name and a count. These totals contain no device, install, room, transaction or user identifiers, IP addresses, precise event times, or screen or input content. We do not use them to identify people or build individual usage histories. Totals are eligible for deletion after 90 days by our daily cleanup job. If you choose to share analytics with app developers in iOS or macOS settings, Apple may give us anonymous, aggregated crash and usage reports; we cannot identify you from them. A hidden diagnostic setting can save technical connection statistics (frame rate, bitrate, connection type) to a file on your device. Nothing uploads that file; you can send it to us if you choose.</p>`,
   },
   {
     id: "not-collected",
