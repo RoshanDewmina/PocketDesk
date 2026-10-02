@@ -4,6 +4,121 @@ import QuartzCore
 
 @MainActor
 final class PhoneDisplayTickInputPumpTests: XCTestCase {
+    func testSynthetic120HzOffersCompare60And120HzRequestedTicks() throws {
+        func run(couch: Bool) throws -> (waitP50: Double, waitP90: Double, gapP50: Double, gapP90: Double) {
+            var now: TimeInterval = 10
+            var config = configuration()
+            config.now = { now }
+            config.maximumFramesPerSecond = { 120 }
+            var requested: CAFrameRateRange?
+            var link: FakePhoneDisplayTickLink?
+            config.displayLinkFactory = { range, tick in
+                requested = range
+                let created = FakePhoneDisplayTickLink(onTick: tick)
+                link = created
+                return created
+            }
+            let pump = PhoneDisplayTickInputPump(configuration: config)
+            var waits: [Double] = [], sends: [TimeInterval] = []
+            pump.send = { actions in
+                sends.append(now)
+                for action in actions { waits.append((now - (10 + action.x / 120)) * 1_000) }
+                return true
+            }
+            XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 0), preferDisplayMaximum: couch))
+            let preferred = try XCTUnwrap(try XCTUnwrap(requested).preferred)
+            let tickStride = Int(120 / preferred)
+            for sample in 1...120 {
+                now = 10 + Double(sample) / 120
+                XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: Double(sample)), preferDisplayMaximum: couch))
+                if sample.isMultiple(of: tickStride) { link?.fire() }
+            }
+            XCTAssertEqual(waits.count, 121)
+            func percentile(_ values: [Double], _ fraction: Double) -> Double {
+                let sorted = values.sorted()
+                return sorted[Int(ceil(Double(sorted.count) * fraction)) - 1]
+            }
+            let gapError = zip(sends.dropFirst(), sends).map { pair in
+                abs((pair.0 - pair.1) * 1_000 - 1_000 / 120)
+            }
+            return (percentile(waits, 0.5), percentile(waits, 0.9),
+                    percentile(gapError, 0.5), percentile(gapError, 0.9))
+        }
+        // The injected link honors the preference exactly. This is synthetic queue evidence;
+        // real CADisplayLink callback cadence is a separate device acceptance gate.
+        let old = try run(couch: false), new = try run(couch: true)
+        XCTAssertEqual(old.waitP50, 0, accuracy: 0.001)
+        XCTAssertEqual(old.waitP90, 1_000 / 120, accuracy: 0.001)
+        XCTAssertEqual(new.waitP50, 0, accuracy: 0.001)
+        XCTAssertEqual(new.waitP90, 0, accuracy: 0.001)
+        XCTAssertEqual(old.gapP50, 1_000 / 120, accuracy: 0.001)
+        XCTAssertEqual(old.gapP90, 1_000 / 120, accuracy: 0.001)
+        XCTAssertEqual(new.gapP50, 0, accuracy: 0.001)
+        XCTAssertEqual(new.gapP90, 0, accuracy: 0.001)
+        print("SYNTHETIC Couch 120Hz offers: 60Hz ticks wait p50/p90=\(old.waitP50)/\(old.waitP90)ms gap-error p50/p90=\(old.gapP50)/\(old.gapP90)ms; 120Hz ticks wait p50/p90=\(new.waitP50)/\(new.waitP90)ms gap-error p50/p90=\(new.gapP50)/\(new.gapP90)ms")
+    }
+
+    func testCouchPrefersDisplayMaximumAndPictureKeeps60Hz() throws {
+        var config = configuration()
+        config.maximumFramesPerSecond = { 120 }
+        var ranges: [CAFrameRateRange?] = []
+        var links: [FakePhoneDisplayTickLink] = []
+        config.displayLinkFactory = { range, tick in
+            ranges.append(range)
+            let link = FakePhoneDisplayTickLink(onTick: tick)
+            links.append(link)
+            return link
+        }
+        let pump = PhoneDisplayTickInputPump(configuration: config)
+        var batches: [[Double]] = []
+        pump.send = { batches.append($0.map(\.x)); return true }
+        XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 1), preferDisplayMaximum: true))
+        XCTAssertEqual(try XCTUnwrap(ranges[0]).preferred, 120)
+        XCTAssertEqual(try XCTUnwrap(ranges[0]).minimum, 60)
+        XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 2), preferDisplayMaximum: true))
+        // Recreate the link when the mode changes; pending motion remains ordered.
+        XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 3)))
+        XCTAssertEqual(links[0].invalidationCount, 1)
+        XCTAssertEqual(try XCTUnwrap(ranges[1]).preferred, 60)
+        links[0].fire()
+        XCTAssertEqual(batches, [[1]])
+        links[1].fire()
+        XCTAssertEqual(batches, [[1], [2, 3]])
+    }
+
+    func testCouchCadenceUses60HzFallbackAndHonorsRollback() throws {
+        for optimized in [true, false] {
+            var config = configuration()
+            config.maximumFramesPerSecond = { 60 }
+            config.userDefaults.set(optimized, forKey: PhoneDisplayTickInputPump.optimizationDefaultsKey)
+            var ranges: [CAFrameRateRange?] = []
+            config.displayLinkFactory = { range, tick in
+                ranges.append(range)
+                return FakePhoneDisplayTickLink(onTick: tick)
+            }
+            let pump = PhoneDisplayTickInputPump(configuration: config)
+            pump.send = { _ in true }
+            XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 1), preferDisplayMaximum: true))
+            if optimized { XCTAssertEqual(try XCTUnwrap(ranges[0]).preferred, 60) }
+            else { XCTAssertNil(ranges[0]) }
+        }
+        var config = configuration()
+        config.maximumFramesPerSecond = { 120 }
+        config.userDefaults.set(true, forKey: PhoneDisplayTickInputPump.couchMaximumCadenceDisabledKey)
+        var range: CAFrameRateRange?
+        config.displayLinkFactory = { requested, tick in
+            range = requested
+            return FakePhoneDisplayTickLink(onTick: tick)
+        }
+        let pump = PhoneDisplayTickInputPump(configuration: config)
+        pump.send = { _ in true }
+        XCTAssertTrue(pump.offer(RemoteAction(action: "move", x: 1), preferDisplayMaximum: true))
+        let requested = try XCTUnwrap(range)
+        XCTAssertEqual(requested.preferred, 60, "Couch rollback retains the prior60Hz hint and link retention")
+        XCTAssertEqual(requested.maximum, 120)
+        XCTAssertEqual(requested.minimum, 60)
+    }
+
     func testBuiltPhoneEnablesDisplayLinkFrameRateHints() {
         XCTAssertEqual(Bundle.main.object(forInfoDictionaryKey: "CADisableMinimumFrameDurationOnPhone") as? Bool, true)
     }

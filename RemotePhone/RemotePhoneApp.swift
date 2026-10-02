@@ -1691,7 +1691,9 @@ final class PhoneRemoteModel: ObservableObject {
         }
         displayTickInput.onFailure = { [weak self] in self?.displayTickInput.cancel() }
         if action.action == "release" { displayTickInput.cancel() }
-        else if ["move", "moveTo"].contains(action.action) { return displayTickInput.offer(action) }
+        else if ["move", "moveTo"].contains(action.action) {
+            return displayTickInput.offer(action, preferDisplayMaximum: sessionMode == .couch)
+        }
         else if !displayTickInput.flush() { return false }
         return connection.sendControl(action)
     }

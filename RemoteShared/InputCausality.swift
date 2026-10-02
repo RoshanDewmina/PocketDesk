@@ -1,4 +1,56 @@
 import Foundation
+import os
+
+/// Opt-in numeric timing only. Never feeds input admission, ACKs or posting authority.
+/// Collect the host's input log to compare calibrated phone sends with callback arrival
+/// and posting-queue cadence. No pointer coordinates, text, keys or peer identifiers.
+enum InputCadenceTrace {
+    static let defaultsKey = "couchInputTimingTraceEnabled"
+    #if DEBUG
+    static let enabled = UserDefaults.standard.bool(forKey: defaultsKey)
+    #else
+    static let enabled = false
+    #endif
+    private static let log = Logger(subsystem: "com.roshan.PocketDesk", category: "couchTiming")
+
+    static func key(_ context: InputCausalEnvelope) -> String {
+        "\(context.nonce.prefix(8)).\(context.anchor.prefix(8)).\(context.epoch)"
+    }
+    static func arrival(_ packet: ControlPacket, atMs: Double, lane: String) {
+        guard enabled, let context = packet.input, !context.segments.isEmpty else { return }
+        let message = "couchTiming stage=arrival key=\(key(context)) applied=\(context.applied) first=\(context.segments.first!.ordinal) sequence=\(packet.sequence) lane=\(lane) send=\(packet.inputTiming?.isValid == true ? packet.inputTiming!.sendHostMs : -1) uncertainty=\(packet.inputTiming?.isValid == true ? packet.inputTiming!.uncertaintyMs : -1) arrival=\(atMs) main=\(MachClock.nowMs()) segments=\(context.segments.count)"
+        log.info("\(message, privacy: .public)")
+    }
+    static func posted(_ context: InputCausalEnvelope, ordinal: UInt64, coalesced: Int,
+                       startedMs: Double, endedMs: Double, accepted: Bool, arrivalMs: Double?) {
+        guard enabled else { return }
+        let message = "couchTiming stage=post key=\(key(context)) applied=\(ordinal) sourceArrival=\(arrivalMs ?? -1) at=\(startedMs) end=\(endedMs) coalesced=\(coalesced) accepted=\(accepted ? 1 : 0)"
+        log.info("\(message, privacy: .public)")
+    }
+    static func sent(_ packet: ControlPacket, lane: String, bytes: Int, buffered: UInt64) {
+        guard enabled, let context = packet.input, !context.segments.isEmpty else { return }
+        let message = "couchTiming stage=send key=\(key(context)) applied=\(context.applied) sequence=\(packet.sequence) lane=\(lane) at=\(MachClock.nowMs()) segments=\(context.segments.count) bytes=\(bytes) buffered=\(buffered)"
+        log.info("\(message, privacy: .public)")
+    }
+    static func touch(ms: Double, sampleCount: Int) {
+        guard enabled else { return }
+        let message = "couchTiming stage=touch sample=\(ms) callback=\(MachClock.nowMs()) samples=\(sampleCount)"
+        log.info("\(message, privacy: .public)")
+    }
+    static func pump(offeredMs: Double, sendMs: Double, count: Int) {
+        guard enabled else { return }
+        let message = "couchTiming stage=pump offer=\(offeredMs) at=\(sendMs) actions=\(count)"
+        log.info("\(message, privacy: .public)")
+    }
+    static func permission(_ api: String, probe: () -> Bool) -> Bool {
+        guard enabled else { return probe() }
+        let start = MachClock.nowMs()
+        let granted = probe()
+        let message = "couchTiming stage=permission api=\(api) at=\(start) end=\(MachClock.nowMs()) granted=\(granted ? 1 : 0)"
+        log.info("\(message, privacy: .public)")
+        return granted
+    }
+}
 
 /// Independent motion replay and application state. Ordered semantic packets retain control v1.
 /// A prefix recovers dropped packets without replacing relative movement with a lossy endpoint.

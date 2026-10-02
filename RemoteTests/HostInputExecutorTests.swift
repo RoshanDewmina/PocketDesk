@@ -290,6 +290,43 @@ final class HostInputExecutorTests: XCTestCase {
         queue.resume(); wait(for: [done], timeout: 2)
         XCTAssertTrue(sink.keys.isEmpty)
     }
+    func testQueuedInputRejectsPostingObservationThatExpiredDuringDelay() {
+        let queue = DispatchQueue(label: "posting-snapshot-expiry"), sink = ExecutorSink()
+        let snapshot = HostPostingGrantSnapshot(enabled: true)
+        var now: TimeInterval = 10
+        snapshot.update(.granted, at: now)
+        let executor = HostInputExecutor(driver: RemoteInputDriver(eventSink: sink.sink, isTrusted: {
+            snapshot.isGranted(at: now)
+        }), queue: queue, clock: { now })
+        executor.configure(bounds: CGRect(x: 0, y: 0, width: 200, height: 200)); executor.enabled = true
+        queue.suspend()
+        let done = expectation(description: "stale posting observation refused")
+        XCTAssertTrue(executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: 11,
+                                     routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.outcome.accepted); done.fulfill()
+        })
+        executor.withAuthority { now = 10.5 }
+        queue.resume(); wait(for: [done], timeout: 2); executor.drain()
+        XCTAssertTrue(sink.keys.isEmpty)
+    }
+    func testQueuedInputRejectsFreshPostingObservationThatWasRevoked() {
+        let queue = DispatchQueue(label: "posting-snapshot-revocation"), sink = ExecutorSink()
+        let snapshot = HostPostingGrantSnapshot(enabled: true)
+        snapshot.update(.granted, at: 10)
+        let executor = HostInputExecutor(driver: RemoteInputDriver(eventSink: sink.sink, isTrusted: {
+            snapshot.isGranted(at: 10.1)
+        }), queue: queue, clock: { 10.1 })
+        executor.configure(bounds: CGRect(x: 0, y: 0, width: 200, height: 200)); executor.enabled = true
+        queue.suspend()
+        let done = expectation(description: "revoked posting observation refused")
+        XCTAssertTrue(executor.submit(RemoteAction(action: "key", key: "a"), upgraded: false, expires: 11,
+                                     routeAuthority: authority) { receipt in
+            XCTAssertFalse(receipt.outcome.accepted); done.fulfill()
+        })
+        snapshot.update(.denied, at: 10.1)
+        queue.resume(); wait(for: [done], timeout: 2); executor.drain()
+        XCTAssertTrue(sink.keys.isEmpty)
+    }
     func testDeadlineAndRouteAreCheckedAfterQueueDelay() {
         let sink = ExecutorSink(), executor = sink.executor()
         let done = expectation(description: "expired")

@@ -187,6 +187,30 @@ final class NativeGestureEngine {
         self.doubleClickInterval = Self.safeInterval(doubleClickInterval)
     }
 
+    struct MotionSample {
+        var point: CGPoint
+        var time: TimeInterval
+    }
+
+    /// UIKit's actual coalesced samples include the callback's final touch. Replay only
+    /// one existing relative contact, before gain calculation, without duplicating that final.
+    /// Multiple contacts and absolute-touch gestures keep their original snapshot path.
+    @discardableResult
+    func updateCoalescedMotion(id: UInt64, samples: [MotionSample], final: MotionSample) -> Bool {
+        guard active.count == 1, active[id] != nil, !direct, !panMode else { return false }
+        guard final.time.isFinite, final.point.x.isFinite, final.point.y.isFinite,
+              final.time > lastUpdateTime else { return true }
+        let earlier = samples.filter {
+            $0.time.isFinite && $0.time > lastUpdateTime && $0.time < final.time &&
+            $0.point.x.isFinite && $0.point.y.isFinite
+        }.suffix(23)
+        for sample in earlier where sample.time > lastUpdateTime {
+            update([Touch(id: id, point: sample.point)], at: sample.time)
+        }
+        update([Touch(id: id, point: final.point)], at: final.time)
+        return true
+    }
+
     func update(_ touches: [Touch], at time: TimeInterval, cancelled: Bool = false) {
         guard time.isFinite else { return }
         lastUpdateTime = time
