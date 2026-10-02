@@ -155,7 +155,8 @@ struct NativeSessionView: View {
         }
         .overlay {
             if keyboardOpen {
-                KeyboardLayoutDock(onFrame: { keyboardBarFrame = $0; scheduleGeometry() }) { keyboardBar }
+                KeyboardLayoutDock(containerOnlySafeArea: keyboardContainerAreaProbe,
+                                   onFrame: { keyboardBarFrame = $0; scheduleGeometry() }) { keyboardDockContent }
                     .onDisappear { keyboardBarFrame = .zero; scheduleGeometry() }
                     // SwiftUI must not also move the dock for the keyboard. UIKit's keyboard
                     // layout guide owns that one offset and updates it on first presentation,
@@ -1446,6 +1447,27 @@ struct NativeSessionView: View {
         if offlineLayoutCheck && LaunchOptions.has("--ui-software-keyboard") { return false }
         #endif
         return peripherals.keyboardConnected
+    }
+
+    private var keyboardContainerAreaProbe: Bool {
+        #if DEBUG
+        regularSessionLayout && offlineLayoutCheck && LaunchOptions.has("--ui-keyboard-container-area")
+        #else
+        false
+        #endif
+    }
+
+    @ViewBuilder private var keyboardDockContent: some View {
+        #if DEBUG
+        if regularSessionLayout && offlineLayoutCheck && LaunchOptions.has("--ui-keyboard-ax-contain") {
+            keyboardBar.accessibilityElement(children: .contain)
+                .accessibilityIdentifier("remote.keyboard.dock")
+        } else {
+            keyboardBar
+        }
+        #else
+        keyboardBar
+        #endif
     }
 
     private var keyboardBar: some View {
@@ -3341,6 +3363,7 @@ struct NativeSessionView: View {
     }
 
     private func closeKeyboard() {
+        recordChromeHitProbe("close keyboard")
         dismissedAutoKeyboardRevision = model.autoKeyboardRevision
         cancelGesture()
         keyboardOpen = false

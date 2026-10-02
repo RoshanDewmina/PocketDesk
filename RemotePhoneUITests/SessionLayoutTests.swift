@@ -493,8 +493,18 @@ final class SessionLayoutTests: XCTestCase {
 
     @MainActor
     func testRegularConnectedPillCollapsesAndDoubleTapOpensKeyboard() throws {
+        try checkRegularSoftwareKeyboard(probe: "--ui-keyboard-ax-contain")
+    }
+
+    @MainActor
+    func testRegularSoftwareKeyboardWithContainerSafeArea() throws {
+        try checkRegularSoftwareKeyboard(probe: "--ui-keyboard-container-area")
+    }
+
+    @MainActor
+    private func checkRegularSoftwareKeyboard(probe: String) throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard", "--ui-input-probe", "--ui-keyboard-hit-probe"]
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard", "--ui-input-probe", "--ui-keyboard-hit-probe", probe]
         launchOfflineFixture(app)
         try requireRegularPill(app)
         let pill = app.descendants(matching: .any)["remote.session.pill"].firstMatch
@@ -505,26 +515,52 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertTrue(app.buttons["Command"].exists)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         let returnKey = app.buttons.matching(NSPredicate(format: "identifier == 'remote.keys' AND label == 'Return'")).firstMatch
-        attachKeyboardHitDiagnostics(app, name: "Regular software keyboard hit testing")
+        attachKeyboardHitDiagnostics(app, name: "Regular software keyboard hit testing " + probe)
         XCTAssertTrue(returnKey.isEnabled)
-        XCTAssertTrue(returnKey.isHittable, "The regular keyboard row must expose its final key without scrolling")
+        let reportedHittable = returnKey.isHittable
         XCTAssertFalse(app.descendants(matching: .any)["remote.keys"].firstMatch.scrollViews.firstMatch.exists)
         XCTAssertFalse(app.descendants(matching: .any)["remote.dock"].firstMatch.exists)
+        // Independently exercise the physical target while retaining the AX hittability gate.
+        returnKey.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let input = app.descendants(matching: .any)["remote.inputProbe"].firstMatch
+        let action = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS 'key return'"), object: input)
+        XCTAssertEqual(XCTWaiter.wait(for: [action], timeout: 5), .completed,
+                       "The displayed Return target must reach the admitted input probe")
+        let hide = app.buttons["remote.keyboard.hide"]
+        hide.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.textViews.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(reportedHittable, "The regular keyboard row must expose its final key without scrolling")
     }
 
     @MainActor
     func testRegularHardwareKeyboardShowsTextFieldWithoutKeyBar() throws {
+        try checkRegularHardwareKeyboard(probe: "--ui-keyboard-ax-contain")
+    }
+
+    @MainActor
+    func testRegularHardwareKeyboardWithContainerSafeArea() throws {
+        try checkRegularHardwareKeyboard(probe: "--ui-keyboard-container-area")
+    }
+
+    @MainActor
+    private func checkRegularHardwareKeyboard(probe: String) throws {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-hardware-keyboard", "--ui-keyboard-hit-probe"]
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-hardware-keyboard", "--ui-keyboard-hit-probe", probe]
         launchOfflineFixture(app)
         try requireRegularPill(app)
         app.buttons["Show controls"].doubleTap()
         XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
         XCTAssertFalse(app.descendants(matching: .any)["remote.keys"].firstMatch.exists)
         XCTAssertFalse(app.buttons["Command"].exists)
-        attachKeyboardHitDiagnostics(app, name: "Regular hardware-field dismissal hit testing")
-        XCTAssertTrue(app.buttons["remote.keyboard.hide"].isHittable)
+        attachKeyboardHitDiagnostics(app, name: "Regular hardware-field dismissal hit testing " + probe)
+        let hide = app.buttons["remote.keyboard.hide"]
+        let reportedHittable = hide.isHittable
         XCTAssertFalse(app.buttons["Send text"].isEnabled)
+        hide.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.textViews.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(reportedHittable)
     }
 
     @MainActor

@@ -6,17 +6,21 @@ import UIKit
 /// proposal when the contained editor becomes first responder immediately after insertion.
 struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
     private let content: Content
+    private let containerOnlySafeArea: Bool
     /// The panel's frame in window coordinates, after each layout pass that moves it with the keyboard.
     private let onFrame: ((CGRect) -> Void)?
 
-    init(onFrame: ((CGRect) -> Void)? = nil, @ViewBuilder content: () -> Content) {
+    init(containerOnlySafeArea: Bool = false, onFrame: ((CGRect) -> Void)? = nil, @ViewBuilder content: () -> Content) {
         self.content = content()
+        self.containerOnlySafeArea = containerOnlySafeArea
         self.onFrame = onFrame
     }
 
     func makeUIViewController(context: Context) -> Controller {
         let controller = Controller(content: content)
+        controller.setContainerOnlySafeArea(containerOnlySafeArea)
         controller.onFrame = onFrame
+        controller.setContainerOnlySafeArea(containerOnlySafeArea)
         return controller
     }
 
@@ -101,6 +105,10 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
         func update(_ content: Content) {
             host.rootView = content
             host.view.invalidateIntrinsicContentSize()
+        }
+
+        func setContainerOnlySafeArea(_ enabled: Bool) {
+            host.safeAreaRegions = enabled ? .container : .all
         }
     }
 }
