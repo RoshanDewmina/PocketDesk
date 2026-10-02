@@ -359,12 +359,22 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private var qualityRequestedAt: TimeInterval?
 
+    var pictureMode: PictureMode {
+        get { PictureMode(quality: streamQuality) }
+        set { streamQuality = newValue.streamQuality }
+    }
+    var pictureSmoothMotion: SmoothMotionMode {
+        PictureModePreference.motion(for: pictureMode, defaults: preferences)
+    }
+
     var streamQualityStatus: String? {
         guard let appliedStreamQuality else { return "Update Farside on your Mac to change picture quality." }
         guard appliedStreamQuality != streamQuality else { return nil }
         let elapsed = ProcessInfo.processInfo.systemUptime - (qualityRequestedAt ?? ProcessInfo.processInfo.systemUptime)
-        return elapsed < 3 ? "Switching to \(streamQuality.title)…"
-            : "Mac is still using \(appliedStreamQuality.title). Switch modes to retry."
+        return elapsed < 3
+            ? CommerceLocalization.text("PICTURE_MODE_SWITCHING", "Switching to %@…", pictureMode.localizedTitle())
+            : CommerceLocalization.text("PICTURE_MODE_PENDING", "Mac is still using %@. Switch modes to retry.",
+                                        PictureMode(quality: appliedStreamQuality).localizedTitle())
     }
     private var pointerTimer: Timer?
 

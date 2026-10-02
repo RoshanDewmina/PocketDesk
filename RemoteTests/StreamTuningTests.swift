@@ -201,10 +201,15 @@ final class NativeSenderTuningTests: XCTestCase {
         XCTAssertTrue(connected)
         let expected = host.tuning.qualityBitrates ? Double(StreamQuality.balanced.maximumBitrateBps) / 1000 : 12_000
         XCTAssertEqual(host.appliedSenderMaxKbps, expected)
-        if host.tuning.degradationPreference != nil {
+        if host.tuning.qualityBitrates && !UserDefaults.standard.bool(forKey: PictureMode.legacyKey) {
+            XCTAssertEqual(host.appliedDegradationPreference, .maintainFramerate, "Performance favours motion")
+        } else if host.tuning.degradationPreference != nil {
             XCTAssertEqual(host.appliedDegradationPreference, host.tuning.degradationPreference)
         }
         host.applyStreamQuality(.sharp)
+        if let preference = host.tuning.degradationPreference {
+            XCTAssertEqual(host.appliedDegradationPreference, preference, "Quality restores resolution preference in-place")
+        }
         if host.tuning.qualityBitrates {
             XCTAssertEqual(host.appliedSenderMaxKbps, Double(StreamQuality.sharp.maximumBitrateBps) / 1000)
         }

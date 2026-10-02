@@ -19,6 +19,53 @@ final class DataUseNoticeTests: XCTestCase {
 
     private var cellular: NetworkLinkHint { NetworkLinkHint.from(.init(cellular: true))! }
 
+    func testFreshAndMalformedPreferencesDefaultToQualityWithoutInterpolation() {
+        for value in [nil, "unknown"] as [String?] {
+            defaults.removePersistentDomain(forName: suite)
+            defaults.set(value, forKey: StreamQualityPreference.key)
+            defaults.set("unknown", forKey: PictureModePreference.key)
+            let model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults)
+            XCTAssertEqual(model.pictureMode, .quality)
+            XCTAssertEqual(model.pictureSmoothMotion, .off)
+            XCTAssertEqual(defaults.string(forKey: PictureModePreference.key), "quality")
+        }
+    }
+
+    func testMigrationUsesSavedPresetAndRetainsIndependentMotionKeyOnlyForTesting() {
+        for quality in StreamQuality.allCases {
+            defaults.removePersistentDomain(forName: suite)
+            defaults.set(quality.rawValue, forKey: StreamQualityPreference.key)
+            defaults.set("always", forKey: SmoothMotionMode.key)
+            let model = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults)
+            XCTAssertEqual(model.pictureMode, PictureMode(quality: quality))
+            XCTAssertEqual(model.pictureSmoothMotion, quality == .sharp ? .off : .auto)
+            XCTAssertEqual(defaults.string(forKey: SmoothMotionMode.key), "always", "Retain the internal test key")
+            model.pictureMode = .quality
+            XCTAssertEqual(model.streamQuality, .sharp)
+            XCTAssertEqual(model.pictureSmoothMotion, .off)
+            model.pictureMode = .performance
+            XCTAssertEqual(model.streamQuality, .balanced)
+            XCTAssertEqual(model.pictureSmoothMotion, .auto)
+            XCTAssertEqual(defaults.string(forKey: StreamQualityPreference.key), "balanced")
+            XCTAssertEqual(PictureModePreference.stored(in: defaults), .performance)
+            let relaunched = PhoneRemoteModel(background: FakeBackgroundExecution(), preferences: defaults)
+            XCTAssertEqual(relaunched.pictureMode, .performance)
+            XCTAssertEqual(relaunched.pictureSmoothMotion, .auto)
+        }
+    }
+
+    func testNewSavedModeWinsAndLegacySwitchReadsOldKeys() {
+        defaults.set("performance", forKey: PictureModePreference.key)
+        defaults.set("sharp", forKey: StreamQualityPreference.key)
+        defaults.set("always", forKey: SmoothMotionMode.key)
+        XCTAssertEqual(PictureModePreference.stored(in: defaults), .performance)
+        defaults.set(true, forKey: PictureModePreference.legacyKey)
+        XCTAssertEqual(PictureModePreference.stored(in: defaults), .quality)
+        XCTAssertEqual(PictureModePreference.motion(for: .quality, defaults: defaults), .always)
+        defaults.set(false, forKey: PictureModePreference.legacyKey)
+        XCTAssertEqual(PictureModePreference.motion(for: .quality, defaults: defaults), .off)
+    }
+
     func testGateOffersOnceThenPersistsAcrossInstancesWithInjectedDefaults() {
         let gate = DataWarningGate(defaults: defaults)
         XCTAssertFalse(gate.shouldOffer(metered: false))
@@ -50,11 +97,13 @@ final class DataUseNoticeTests: XCTestCase {
         model.observeLinkHint(cellular)
         let warning = try XCTUnwrap(model.dataWarning)
         XCTAssertEqual(warning.lessData, .balanced)
-        XCTAssertTrue(warning.message.contains("Sharper"), warning.message)
+        XCTAssertTrue(warning.message.contains("Quality"), warning.message)
         XCTAssertTrue(warning.spoken.contains("Files and guest viewers are extra. Your session keeps running."), warning.spoken)
         XCTAssertTrue(model.connection.connected, "The notice never stops the session")
         model.useLessData()
         XCTAssertEqual(model.streamQuality, .balanced)
+        XCTAssertEqual(model.pictureMode, .performance)
+        XCTAssertEqual(model.pictureSmoothMotion, .auto)
         XCTAssertNil(model.dataWarning)
         XCTAssertTrue(DataWarningGate(defaults: defaults).seen)
         model.observeLinkHint(nil); model.observeLinkHint(cellular)
@@ -85,8 +134,8 @@ final class DataUseNoticeTests: XCTestCase {
         let path = try XCTUnwrap(Bundle.main.path(forResource: "fr", ofType: "lproj"))
         let french = try XCTUnwrap(Bundle(path: path))
         let english = Locale(identifier: "en_US"), canadian = Locale(identifier: "fr_CA")
-        let expected: [StreamQuality: (String, String)] = [.balanced: ("Responsive: about 0.1–5.4 GB per hour", "Responsive\u{00A0}: environ 0,1 à 5,4 Go par heure"),
-                                                           .sharp: ("Sharper: about 0.2–11 GB per hour", "Sharper\u{00A0}: environ 0,2 à 11 Go par heure")]
+        let expected: [StreamQuality: (String, String)] = [.balanced: ("Performance: about 0.1–5.4 GB per hour", "Performance\u{00A0}: environ 0,1 à 5,4 Go par heure"),
+                                                           .sharp: ("Quality: about 0.2–11 GB per hour", "Qualité\u{00A0}: environ 0,2 à 11 Go par heure")]
         for quality in StreamQuality.allCases {
             let estimate = DataUseEstimate(quality, audio: false, packetRepair: false)
             XCTAssertEqual(DataUseCopy.presetLine(quality, estimate, locale: english), expected[quality]?.0)
