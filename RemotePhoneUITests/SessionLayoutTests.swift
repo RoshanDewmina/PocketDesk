@@ -1,8 +1,10 @@
 import XCTest
+import UIKit
 
 final class SessionLayoutTests: XCTestCase {
     @MainActor
     func testRegularInputSettingsHaveNoPencilOptIn() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires an iPad simulator")
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-controls-settings", "--ui-controls-page=keyboard"]
         app.launch()
@@ -13,12 +15,12 @@ final class SessionLayoutTests: XCTestCase {
     }
     @MainActor
     func testRegularPortraitPictureStacksOverPadAndSurvivesKeyboard() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires an iPad simulator")
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard"]
         app.launch()
-        guard app.buttons["remote.session.pill"].waitForExistence(timeout: 4) else {
-            throw XCTSkip("Regular-width iPad fixture")
-        }
+        XCTAssertTrue(app.descendants(matching: .any)["remote.session.pill"].firstMatch.waitForExistence(timeout: 5),
+                      "Regular iPad must expose the pill")
         let picture = app.descendants(matching: .any)["remote.picture"].firstMatch
         let pad = app.descendants(matching: .any)["remote.stacked.pad"].firstMatch
         XCTAssertTrue(pad.waitForExistence(timeout: 5))
@@ -26,7 +28,7 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertEqual(picture.frame.height, picture.frame.width / 1.6, accuracy: 2)
         XCTAssertLessThanOrEqual(picture.frame.maxY, pad.frame.minY + 14)
         let before = picture.frame
-        app.buttons["remote.session.pill"].doubleTap()
+        app.buttons["Show controls"].doubleTap()
         XCTAssertTrue(app.buttons["Hide keyboard"].waitForExistence(timeout: 5))
         XCTAssertEqual(picture.frame.minY, before.minY, accuracy: 1)
         XCTAssertEqual(picture.frame.height, before.height, accuracy: 1)
@@ -40,10 +42,11 @@ final class SessionLayoutTests: XCTestCase {
 
     @MainActor
     func testRegular690PointBandStacksAndCompactBandKeepsHandle() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires an iPad simulator")
         let app = XCUIApplication()
         app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-window-width=690", "--ui-window-height=1032"]
         app.launch()
-        XCTAssertTrue(app.buttons["remote.session.pill"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["remote.session.pill"].firstMatch.waitForExistence(timeout: 5))
         let picture = app.descendants(matching: .any)["remote.picture"].firstMatch
         XCTAssertTrue(app.descendants(matching: .any)["remote.stacked.pad"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(picture.frame.width, 690, accuracy: 2)
@@ -52,7 +55,7 @@ final class SessionLayoutTests: XCTestCase {
         app.launchArguments = ["--ui-layout-check", "--ui-window-width=390", "--ui-window-height=834", "--ui-width-class=compact"]
         app.launch()
         XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["remote.session.pill"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists)
         XCTAssertFalse(app.descendants(matching: .any)["remote.stacked.pad"].firstMatch.exists)
         attachScreenshot("Compact iPad band retains phone chrome")
     }
