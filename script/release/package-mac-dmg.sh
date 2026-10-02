@@ -21,13 +21,17 @@ mkdir "$scratch/content" "$mountpoint"
 ditto "$FARSIDE_DISTRIBUTION_APP" "$scratch/content/Farside.app"
 ln -s /Applications "$scratch/content/Applications"
 printf '%s\n' 'Drag Farside to Applications, then open it. Grant Screen Recording and Accessibility when requested. Keep your iPhone or iPad on the same Wi-Fi as your Mac. Apple silicon and macOS 26 or later required.' > "$scratch/content/Install.txt"
-hdiutil create -volname 'Farside for Mac' -srcfolder "$scratch/content" -format UDRW "$scratch/layout.dmg" >/dev/null
+# Explicit HFS+ avoids the macOS 27 legacy create path's default-APFS Resource busy
+# failure and is readable on the macOS 26 deployment target.
+hdiutil create -fs HFS+ -volname 'Farside for Mac' -srcfolder "$scratch/content" -format UDRW "$scratch/layout.dmg" >/dev/null
 hdiutil attach -nobrowse -noautoopen -mountpoint "$mountpoint" "$scratch/layout.dmg" >/dev/null
 mounted=1
 # Configure only this mounted disk's Finder window; never open the application.
-osascript <<'APPLESCRIPT'
+osascript - "$mountpoint" <<'APPLESCRIPT'
+on run argv
+set imageFolder to POSIX file (item 1 of argv) as alias
 tell application "Finder"
-  tell disk "Farside for Mac"
+  tell folder imageFolder
     open
     set current view of container window to icon view
     set toolbar visible of container window to false
@@ -44,6 +48,7 @@ tell application "Finder"
     delay 2
   end tell
 end tell
+end run
 APPLESCRIPT
 sync
 hdiutil detach "$mountpoint" >/dev/null

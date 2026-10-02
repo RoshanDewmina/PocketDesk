@@ -9,7 +9,7 @@ set -euo pipefail
 [[ "$FARSIDE_DISTRIBUTION_APP" == /* && -d "$FARSIDE_DISTRIBUTION_APP" ]] || exit 2
 [[ "$FARSIDE_NOTARY_OUTPUT" == /* && ! -e "$FARSIDE_NOTARY_OUTPUT" ]] || exit 2
 codesign --verify --deep --strict "$FARSIDE_DISTRIBUTION_APP"
-identity="$(codesign -dv "$FARSIDE_DISTRIBUTION_APP" 2>&1)"
+identity="$(codesign -dv --verbose=4 "$FARSIDE_DISTRIBUTION_APP" 2>&1)"
 [[ "$identity" == *'Authority=Developer ID Application:'* && "$identity" == *'runtime'* ]] || { print -u2 'A hardened Developer ID application is required'; exit 2; }
 mkdir -p "$FARSIDE_NOTARY_OUTPUT"
 ditto -c -k --keepParent "$FARSIDE_DISTRIBUTION_APP" "$FARSIDE_NOTARY_OUTPUT/Farside.zip"
