@@ -81,6 +81,8 @@ final class FarsideScreenshotTour: XCTestCase {
             Shot(name: "home-paired-macs", arguments: home),
             Shot(name: "home-session-check", arguments: home),
             Shot(name: "home-session-support", arguments: home),
+            Shot(name: "home-session-blocker-options", arguments: home),
+            Shot(name: "home-system-connect-prompt", arguments: home),
             Shot(name: "home-alert-settings", arguments: ["--ui-agent-settings"]),
             Shot(name: "agent-alert", arguments: ["--ui-seed-pairing=Studio Mac", "--ui-agent-alert=claude_code"]),
             Shot(name: "agent-alert-test", arguments: ["--ui-seed-pairing=Studio Mac", "--ui-agent-alert=claude_code:test"]),
@@ -97,6 +99,9 @@ final class FarsideScreenshotTour: XCTestCase {
             Shot(name: "big-text-pending", arguments: probe + ["--ui-controls-check"]),
             Shot(name: "big-text-selected", arguments: probe + ["--ui-controls-check"]),
             Shot(name: "controls-lan-wake", arguments: probe + ["--ui-controls-check"]),
+            Shot(name: "controls-keyboard-view-options", arguments: probe + ["--ui-controls-settings", "--ui-controls-page=view"]),
+            Shot(name: "controls-precision-tap-options", arguments: probe + ["--ui-controls-settings", "--ui-controls-page=touch"]),
+            Shot(name: "controls-shortcuts-expanded", arguments: probe + ["--ui-controls-settings", "--ui-controls-page=keyboard", "-remapReservedShortcuts", "YES"]),
             Shot(name: "controls-diagnostics-old-mac", arguments: probe + ["--ui-controls-settings", "--ui-controls-page=diagnostics", "--ui-vitals=old"])
         ]
         let pages = ["display", "touch", "view", "clipboard", "keyboard", "steer", "diagnostics"].map {
@@ -143,7 +148,7 @@ final class FarsideScreenshotTour: XCTestCase {
                 let name = (accessibility ? "ax-xxxl-" : "")
                     + (landscape && !shot.landscape ? "landscape-" : "") + shot.name
                 planned.append(name)
-                if ["picture", "controls-settings-keyboard", "controls-settings-diagnostics"].contains(shot.name) {
+                if ["picture", "controls-settings-keyboard", "controls-settings-diagnostics", "controls-shortcuts-expanded"].contains(shot.name) {
                     planned.append(name + "-lower")
                 }
             }
@@ -190,7 +195,7 @@ final class FarsideScreenshotTour: XCTestCase {
                 if !captureOrientationMatches(orientation, in: app) { reached = false }
                 attach(reached ? name : "missing-" + name)
                 // Long settings forms need both their top and lower rows in the catalogue.
-                if reached && ["picture", "controls-settings-keyboard", "controls-settings-diagnostics"].contains(shot.name) {
+                if reached && ["picture", "controls-settings-keyboard", "controls-settings-diagnostics", "controls-shortcuts-expanded"].contains(shot.name) {
                     let page = element("remote.controls.page", in: app)
                     if page.exists {
                         page.swipeUp()
@@ -264,12 +269,61 @@ final class FarsideScreenshotTour: XCTestCase {
                 return require(app.switches["settings.security.requireOwner"], "Security settings")
             }
             return require(app.navigationBars[choices[shot.name]!], choices[shot.name]!)
-        case "home-session-check", "home-session-support":
+        case "home-session-check", "home-session-support", "home-session-blocker-options":
             // UsefulSessionEntry owns its sheet state inside Home's orientation-specific tree.
             // Keep that presenter alive by navigating in the requested capture orientation.
             guard tap(app.buttons["Session check"], in: app) else { return false }
             guard require(app.navigationBars["Session check"], "Useful-session progress") else { return false }
+            if shot.name == "home-session-blocker-options" {
+                let picker = app.descendants(matching: .any)
+                    .matching(NSPredicate(format: "label BEGINSWITH %@", "What got in the way?")).firstMatch
+                guard tap(picker, in: app) else { return false }
+                return visibleOptions(["Reaching the Mac", "Seeing a usable picture", "Controlling the Mac",
+                                       "Finishing my task", "Nothing; the task worked"], in: app)
+            }
             return shot.name == "home-session-check" || reveal(app.buttons["Copy a safe support summary"], in: app)
+        case "home-system-connect-prompt":
+            // The public /open route presents a question; never tap its Connect action.
+            let requested = XCUIDevice.shared.orientation
+            let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+            safari.activate()
+            guard safari.wait(for: .runningForeground, timeout: 4) else { return missing("Safari unavailable for public Farside open route") }
+            defer { app.activate() }
+            let address = safari.textFields.matching(NSPredicate(format: "identifier == 'URL' OR label == 'Address' OR label == 'Search or enter website name'")).firstMatch
+            guard address.waitForExistence(timeout: 3), address.isHittable else { return missing("Safari URL field unavailable for public Farside open route") }
+            address.tap()
+            let current = address.value as? String ?? ""
+            guard current.count < 4096 else { return missing("Safari URL field could not be safely replaced") }
+            address.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + "farside://open\n")
+            let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+            let deadline = ProcessInfo.processInfo.systemUptime + 4
+            repeat {
+                if element("connectPrompt", in: app).exists { break }
+                let confirmation = [safari.alerts.firstMatch, system.alerts.firstMatch].first {
+                    $0.exists && ($0.label.localizedCaseInsensitiveContains("Farside")
+                        || $0.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", "Farside")).firstMatch.exists)
+                }
+                if let confirmation {
+                    let open = confirmation.buttons["Open"]
+                    guard open.exists && open.isHittable else { return missing("Farside-specific Safari confirmation has no Open action") }
+                    let landscape = requested == .landscapeLeft || requested == .landscapeRight
+                    let permissionName = (landscape ? "landscape-" : "portrait-") + "system-open-farside-confirmation"
+                    let frame = safari.frame
+                    if landscape ? frame.width > frame.height : frame.height > frame.width {
+                        attach(permissionName)
+                    } else {
+                        _ = missing("Safari Farside confirmation frame does not match requested capture orientation")
+                        attach("missing-" + permissionName)
+                    }
+                    open.tap()
+                    break
+                }
+                Thread.sleep(forTimeInterval: 0.1)
+            } while ProcessInfo.processInfo.systemUptime < deadline
+            app.activate()
+            return require(element("connectPrompt", in: app), "Public-route Connect question")
+                && require(app.buttons["connectPrompt.connect"], "Connect question action")
+                && require(app.buttons["connectPrompt.close"], "Connect question dismissal")
         case "pairing-malformed-code":
             let field = app.textViews["Pairing code"].exists ? app.textViews["Pairing code"] : app.textFields["Pairing code"]
             guard tap(field, in: app) else { return false }
@@ -361,6 +415,22 @@ final class FarsideScreenshotTour: XCTestCase {
             guard selected(step) else { return false }
             guard pill.waitForNonExistence(timeout: 3) else { return missing("Big Text confirmation did not clear progress") }
             return selected(step)
+        case "controls-keyboard-view-options", "controls-precision-tap-options":
+            let keyboard = shot.name == "controls-keyboard-view-options"
+            guard require(app.navigationBars[keyboard ? "View" : "Touch"], "Local controls options page") else { return false }
+            let picker = element(keyboard ? "remote.keyboardView" : "remote.precisionTap", in: app)
+            guard revealLocalSettingsRow(picker, in: app), tap(picker, in: app, scroll: false) else { return false }
+            // Exact, hittable choices distinguish the opened picker from descriptive footers.
+            return visibleOptions(keyboard ? ["Pinned", "Follow typing"] : ["Off", "Touch and hold", "Every tap"], in: app)
+        case "controls-shortcuts-expanded":
+            guard require(app.navigationBars["Keyboard and pointer"], "Keyboard shortcuts page") else { return false }
+            let disclosure = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label == %@", "Shortcuts")).firstMatch
+            guard revealLocalSettingsRow(disclosure, in: app), tap(disclosure, in: app, scroll: false) else { return false }
+            let shortcut = app.descendants(matching: .any)
+                .matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@ AND label CONTAINS %@",
+                                      "App Switcher", "⌃⌥Tab", "⌘Tab")).firstMatch
+            return revealLocalSettingsRow(shortcut, in: app)
         case "controls-lan-wake":
             guard tap(app.buttons["remote.controls.settings"].firstMatch, in: app) else { return false }
             guard tap(app.buttons["Wake another Mac on this LAN"], in: app) else { return false }
@@ -419,6 +489,37 @@ final class FarsideScreenshotTour: XCTestCase {
     @MainActor
     private func require(_ element: XCUIElement, _ description: String, timeout: TimeInterval = 4) -> Bool {
         element.waitForExistence(timeout: timeout) || missing("Missing \(description)")
+    }
+
+    @MainActor
+    private func visibleOptions(_ labels: [String], in app: XCUIApplication) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        repeat {
+            let allVisible = labels.allSatisfy { label in
+                app.descendants(matching: .any).matching(NSPredicate(format: "label == %@", label))
+                    .allElementsBoundByIndex.contains { $0.exists && $0.isHittable }
+            }
+            if allVisible { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return missing("Opened local picker did not present all visible choices: " + labels.joined(separator: ", "))
+    }
+
+    @MainActor
+    private func revealLocalSettingsRow(_ target: XCUIElement, in app: XCUIApplication) -> Bool {
+        let page = element("remote.controls.page", in: app)
+        guard require(page, "Local options settings scroll page") else { return false }
+        // Short landscape forms can fling past a disclosure or picker on a full swipe.
+        for _ in 0..<20 {
+            if target.exists && target.isHittable { return true }
+            let frame = page.frame
+            guard frame.height > 0 else { return missing("Local options page has no usable scroll area") }
+            let passedTarget = target.exists && target.frame.maxY <= frame.minY
+            let distance = min(120, max(44, frame.height * 0.18))
+            let start = page.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: passedTarget ? 0.32 : 0.72))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: passedTarget ? distance : -distance)))
+        }
+        return target.exists && target.isHittable || missing("Local option or expanded shortcut row unavailable after bounded short scrolling")
     }
 
     @MainActor
