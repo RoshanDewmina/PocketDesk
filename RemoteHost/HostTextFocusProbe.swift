@@ -125,9 +125,9 @@ enum HostTextFocusTapPolicy {
         let evidence = ax()
         if let editable = evidence.axEditable {
             guard editable else { return false }
-            if evidence.tapHitsFocused || evidence.focusChangedAt.map {
+            if evidence.tapHitsFocused || evidence.focusChangedAt.map({
                 $0 >= tapIssuedAt && $0 <= now && $0 <= tapIssuedAt + window
-            } == true { return true }
+            }) == true { return true }
             // Monaco/xterm can retain a hidden textarea while the visible canvas cannot be
             // related to it by AX. A known non-text target vetoes; an opaque target may use
             // the real I-beam, including after the user manually dismisses the keyboard.
