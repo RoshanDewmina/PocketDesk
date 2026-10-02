@@ -437,6 +437,23 @@ final class HostUISnapshotTests: XCTestCase {
         try render("couch-hud", CouchHUDView())
     }
 
+    func testPrivacyCurtainComponents() throws {
+        let displaySize = CGSize(width: 1440, height: 900)
+        for (name, style) in [("sharing", PrivacyCurtainStyle.sharing),
+                              ("away", .away), ("away-lock-failed", .awayLockFailed)] {
+            // The source-copy View body fills an invented display; no shielding window is created.
+            try render("privacy-curtain-\(name)", PrivacyCurtainView(style: style)
+                .frame(width: displaySize.width, height: displaySize.height), fixedSize: displaySize)
+        }
+    }
+
+    func testReceivedLinkOfferComponent() throws {
+        let fixtureURL = try XCTUnwrap(URL(string: "https://example.invalid/fixture-link"))
+        // Test-only source-copy View body. Neither action opens a URL or changes the clipboard.
+        try render("received-link-offer", HostLinkOfferView(url: fixtureURL, open: {}, dismiss: {})
+            .background(HostTheme.windowBackground))
+    }
+
     func testCrashLoopAndCurtainAreExplained() {
         let stopped = HostPopoverPresentation.make(for: ready(.unavailable) { $0.crashLoopStopped = true })
         XCTAssertEqual(stopped.headline, "Stopped after repeated crashes")

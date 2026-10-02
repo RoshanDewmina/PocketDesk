@@ -54,3 +54,82 @@ struct CouchHUDView: View {
         .accessibilityElement(children: .combine)
     }
 }
+
+// Offscreen snapshot fixture: exact production styles and View body, no curtain controller.
+// Source: RemoteHost/PrivacyCurtain.swift SHA-256 79ee9b39f80a9b912576c5c7f7c9ca64c8236478fc7e418e256d6a250b0bcbc6
+enum PrivacyCurtainStyle: Equatable {
+    case sharing, away, awayLockFailed
+}
+
+struct PrivacyCurtainView: View {
+    var style: PrivacyCurtainStyle = .sharing
+
+    private var title: LocalizedStringKey {
+        switch style {
+        case .sharing: "This Mac is being used remotely"
+        case .away, .awayLockFailed: "Away mode is on"
+        }
+    }
+
+    private var line: LocalizedStringKey {
+        switch style {
+        case .sharing: "Press Esc three times to lift"
+        case .away: "Touching the keyboard, mouse or trackpad locks this Mac"
+        case .awayLockFailed: "This Mac stays covered. Unlock it at the Mac to continue"
+        }
+    }
+
+    var body: some View {
+        ZStack {
+            Farside.Palette.void.ignoresSafeArea()
+            VStack(spacing: Farside.Space.s) {
+                HStack(spacing: Farside.Space.s) {
+                    Circle()
+                        .fill(Farside.Palette.ember)
+                        .frame(width: 10, height: 10)
+                        .accessibilityHidden(true)
+                    Text(title)
+                        .font(.system(size: 28, weight: .semibold))
+                        .foregroundStyle(Farside.Palette.bone)
+                }
+                Text(line)
+                    .font(.system(size: 15, design: .monospaced))
+                    .foregroundStyle(Farside.Palette.ash)
+            }
+            .multilineTextAlignment(.center)
+            .padding(Farside.Space.xl)
+        }
+    }
+}
+
+// Offscreen snapshot fixture: exact production View body; private visibility relaxed for test access.
+// Open and Dismiss callbacks are no-ops in the snapshot. No link or clipboard effect.
+// Source: RemoteHost/HostFileTransfer.swift SHA-256 cc19b6e8eb8f5066cb8d08008bc1be5fdfd1bfda12a8847e3f8a8f2bf23ccccd
+struct HostLinkOfferView: View {
+    let url: URL
+    let open: () -> Void
+    let dismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(url.host() ?? url.absoluteString)
+                .font(.headline)
+                .lineLimit(1)
+            Text("Also copied to the clipboard. Farside doesn’t open links by itself.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Dismiss", action: dismiss)
+                    .accessibilityIdentifier("farside.link.dismiss")
+                Button("Open", action: open)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("farside.link.open")
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
+        .accessibilityElement(children: .contain)
+    }
+}
