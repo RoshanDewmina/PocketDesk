@@ -1,3 +1,9 @@
+# Batch 7c required release port — 2 October 2026
+
+Resumed clean `efd26ad`; engineering-health `aff1b9b` remains only on the excluded attempt branch. Required release changes port `09d831f`, `cd57e99` and their prior encryption-metadata correction, preserving integrated project membership/version and Debug identity. App Intent descriptions use computer; hardcoded nonexempt-encryption YES is removed without inventing a compliance classification; existing four iPad orientations remain. Explicit supplied host plist contains existing service/update keys. Release host/watchdog suppress base debug entitlement injection; Sparkle helper re-signing runs only for signed Developer ID Release. Notary verbosity and exact-mount HFS+ temporary DMG fixes match the source lane. No release signing/notarization/DMG/upload action is executed here.
+
+Syntax/plist/diff checks and release fixtures **23/23 PASS**; fresh independent GPT source review approves. Live Apple/Sparkle documents refreshed to external batch7c `apple/*-cut.md`; Xcode27.0/27A266a, macOS27.0.1/26A434. Native build/test receipts and final candidate remain pending in batch7c NOTES.
+
 # Batch 7b integration in verification — 2 October 2026
 
 Branch `claude/batch-7b`, base `9ee6b24` (.3), merges `596ec47`, `439447e`, `f24d906`, `916fc03`, `2a6e547`, `f8db1c9` in that order. Build **20261002.4** uses four YAML/eight PBX version entries. Privacy default on with explicit choices preserved; optional scroll package default off. Product Interaction manifest matches linked/no tracking/App Functionality answers. Release product change is only nonexempt encryption metadata; iPad orientation override remains.

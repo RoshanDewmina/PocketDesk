@@ -1,3 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict><key>NSBonjourServices</key><array><string>_farside._tcp</string></array></dict></plist>
+<plist version="1.0">
+<dict>
+    <key>NSBonjourServices</key>
+    <array><string>_farside._tcp</string></array>
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>Share a selected display with your paired phone.</string>
+    <key>PocketDeskServiceURL</key>
+    <string>$(FARSIDE_HOST_SERVICE_URL)</string>
+    <key>SUPublicEDKey</key>
+    <string>$(FARSIDE_UPDATE_PUBLIC_KEY)</string>
+    <key>SUFeedURL</key>
+    <string>https://getfarside.com/mac/appcast.xml</string>
+    <key>SUEnableAutomaticChecks</key>
+    <false/>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
+</dict>
+</plist>

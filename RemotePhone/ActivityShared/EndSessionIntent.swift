@@ -61,7 +61,7 @@ enum SessionActivityStore {
 struct EndSessionIntent: LiveActivityIntent {
     static var title: LocalizedStringResource { "End session" }
     static var description: IntentDescription? {
-        IntentDescription("Ends your Farside session and gives your Mac its desk back.")
+        IntentDescription("Ends your Farside session.")
     }
     static var supportedModes: IntentModes { .background }
     static var authenticationPolicy: IntentAuthenticationPolicy { .alwaysAllowed }

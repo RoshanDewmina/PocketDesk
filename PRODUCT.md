@@ -1,3 +1,7 @@
+# Batch 7c 7 PM cut — 2 October 2026
+
+Roshan will manually test and submit the latest fully verified build finished for 7 PM. This lane integrates required release metadata/packaging fixes first, then first60, phone UX, connection recovery, design polish and host UX as time permits. Stop merging at 17:40 ET, drop unverified lanes, set build **20261002.5**, then complete automated suites, regression gate and signed Debug artifacts. Engineering-health/P34, input-parity, audio and host-capture are deferred. New optional feel/picture/audio paths retain owner-approved defaults. This worktree performs no installation, ASC/upload, deployment or main merge; Roshan owns manual testing/submission.
+
 # Batch 7b defaults and regression boundary — 2 October 2026
 
 Roshan explicitly chose **Privacy curtain ON by default**; preserve existing explicit On/Off choices. The Mac stays covered during a brief phone background pause and bounds its post-session hold around Big Text restoration. Optional scroll/zoom/crop changes remain **OFF** behind `PocketDeskScrollFixes` pending on-device A/B. Preserve the historical behaviors in `Docs/perf/REGRESSION-GOLDEN.md`; automated proxies are separate from physical acceptance. This task integrates six specified lanes, sets build20261002.4, verifies local candidates and pushes the integration branch. Installation, backend deployment, notarization and release execution remain separate actions.

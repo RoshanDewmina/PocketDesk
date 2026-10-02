@@ -9,9 +9,6 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<!-- Bundled WebRTC implements DTLS/SRTP outside Apple OS; retain the compliance questionnaire. -->
-	<key>ITSAppUsesNonExemptEncryption</key>
-	<true/>
 	<key>UIBackgroundModes</key>
 	<array><string>audio</string></array>
 	<key>NSBonjourServices</key>

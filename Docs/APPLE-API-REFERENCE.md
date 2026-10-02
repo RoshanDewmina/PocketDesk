@@ -1,3 +1,7 @@
+# Batch 7c release-port refresh — 2 October 2026
+
+Live TLS Markdown fetched Xcode27, macOS27 and iOS27 release notes, `ITSAppUsesNonExemptEncryption` and notarization requirements; Sparkle sandboxing/code-signing guidance read live. Receipts: `/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/batch-7c/apple/*-cut.md`. Xcode27.0/27A266a and macOS27.0.1/26A434 verified locally. Removing the hardcoded encryption key leaves the upload questionnaire; it does not classify the app. Sparkle manual signing preserves only Downloader entitlements and signs nested helpers before framework/host. No SDK27-only symbol or deployment-target change is introduced. Source preparation does not establish exact Release signatures or notarization.
+
 # Batch 7b integration freshness — 2 October 2026
 
 Verified Xcode27.0/27A266a and macOS27.0.1/26A434. Live TLS Markdown re-fetched macOS/iOS27 release notes, CGDisplayRegisterReconfigurationCallback and privacy collected-data type; receipts `/Volumes/Studio/Development/Caches/batch7b-logs/apple-refresh`. Product Interaction key checked against Apple's current [collected data type documentation](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacycollecteddatatypes/nsprivacycollecteddatatype). No new OS27-only symbol introduced; existing SDK27.1 Duo guards remain. Optional scroll same-size crop/frame ordering remains a physical acceptance risk because configuration completion alone does not prove sample cutover.
