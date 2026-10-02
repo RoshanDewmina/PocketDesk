@@ -450,11 +450,23 @@ struct ViewportCaptureRequest: Equatable {
                        height: Double(rect.height), pixelWidth: pixelWidth, pixelHeight: pixelHeight, zoom: zoom)
     }
 
-    /// The same centre showing `factor` times the width and height, kept on the display. Zoom and pixels
-    /// stay as they are: the Mac reads them only to tell a magnified view from a reduced one.
-    func widened(by factor: CGFloat) -> ViewportCaptureRequest {
+    /// A widened request covering this share of the display or more is the whole display to the Mac
+    /// (`ViewportCapturePolicy.wholeDisplayCoverage`), which it would leave again at the settle: two
+    /// encoder restarts and a stretched picture in between (b7-scroll NOTES, 2 Oct). Stay under it.
+    static let widenedCoverageLimit: CGFloat = 0.85
+
+    /// The same centre showing `factor` times the width and height, kept on the display and under
+    /// `widenedCoverageLimit` of it. Zoom and pixels stay as they are: the Mac reads them only to tell a
+    /// magnified view from a reduced one.
+    func widened(by factor: CGFloat, capped: Bool = WidenCapSwitch.isOn) -> ViewportCaptureRequest {
         let display = CGRect(origin: .zero, size: displaySize)
-        let width = min(rect.width * factor, display.width), height = min(rect.height * factor, display.height)
+        var width = min(rect.width * factor, display.width), height = min(rect.height * factor, display.height)
+        let limit = Self.widenedCoverageLimit * display.width * display.height
+        if capped, width * height >= limit, width > 0, height > 0 {
+            let shrink = (limit / (width * height)).squareRoot()
+            width = max(rect.width, width * shrink)
+            height = max(rect.height, height * shrink)
+        }
         let x = min(max(rect.midX - width / 2, 0), display.maxX - width)
         let y = min(max(rect.midY - height / 2, 0), display.maxY - height)
         return ViewportCaptureRequest(rect: CGRect(x: x, y: y, width: width, height: height),
@@ -571,6 +583,13 @@ extension ViewportTransform {
     private static func isFinite(_ rect: CGRect) -> Bool {
         rect.origin.x.isFinite && rect.origin.y.isFinite && rect.size.width.isFinite && rect.size.height.isFinite
     }
+}
+
+/// Kill switch for the widening cap (`defaults write <phone bundle id> PocketDeskWidenCap -bool NO`,
+/// then relaunch the app); read only while `PocketDeskScrollFixes` is on.
+enum WidenCapSwitch {
+    static let defaultsKey = "PocketDeskWidenCap"
+    static let isOn = ScrollFixesSwitch.isOn && (UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true)
 }
 
 /// Internal key for the baseline-Fill crop (`defaults write <phone bundle id> PocketDeskBaselineFillCrop

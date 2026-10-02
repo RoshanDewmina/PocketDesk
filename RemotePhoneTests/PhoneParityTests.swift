@@ -2,6 +2,69 @@ import XCTest
 import UIKit
 @testable import PocketDeskRemote
 
+final class SessionWindowLayoutTests: XCTestCase {
+    private let mac = CGSize(width: 1440, height: 900)
+
+    func testCompactWindowsAlwaysKeepThePhoneLayout() {
+        for window in [CGSize(width: 390, height: 844), CGSize(width: 600, height: 834)] {
+            XCTAssertFalse(SessionWindowLayout.stacked(regular: false, window: window, source: mac, wasStacked: true))
+        }
+    }
+
+    func testRegularWindowBandsFollowPictureCoverage() {
+        for window in [CGSize(width: 744, height: 1133), CGSize(width: 834, height: 1210),
+                       CGSize(width: 1032, height: 1376), CGSize(width: 683, height: 1032),
+                       CGSize(width: 680, height: 834)] {
+            XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: window, source: mac, wasStacked: false))
+            XCTAssertEqual(SessionWindowLayout.pictureSize(window: window, source: mac, stacked: true).height,
+                           window.width / 1.6, accuracy: 0.01)
+        }
+        for window in [CGSize(width: 1210, height: 834), CGSize(width: 1376, height: 1032),
+                       CGSize(width: 808, height: 834), CGSize(width: 900, height: 834),
+                       CGSize(width: 1920, height: 1080)] {
+            XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: window, source: mac, wasStacked: false))
+        }
+    }
+
+    func testResizingKeepsHysteresisAtBothBoundaries() {
+        func window(_ coverage: CGFloat) -> CGSize { CGSize(width: coverage * 1600, height: 1000) }
+        XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: window(0.599), source: mac, wasStacked: false))
+        XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: window(0.60), source: mac, wasStacked: false))
+        XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: window(0.63), source: mac, wasStacked: true))
+        XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: window(0.63), source: mac, wasStacked: false))
+        XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: window(0.66), source: mac, wasStacked: true))
+        XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: window(0.661), source: mac, wasStacked: true))
+    }
+
+    func testBigTextAspectAndInvalidGeometry() {
+        XCTAssertTrue(SessionWindowLayout.stacked(regular: true, window: CGSize(width: 834, height: 1210),
+                                                   source: CGSize(width: 1280, height: 832), wasStacked: false))
+        XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: .zero, source: mac, wasStacked: true))
+        XCTAssertFalse(SessionWindowLayout.stacked(regular: true, window: CGSize(width: 834, height: 1210), source: .zero, wasStacked: true))
+    }
+
+    func testPadZoomAnchorsClampToThePicture() {
+        XCTAssertEqual(SessionWindowLayout.zoomAnchor(CGPoint(x: 400, y: 1000), picture: CGSize(width: 834, height: 521)),
+                       CGPoint(x: 400, y: 521))
+        XCTAssertEqual(SessionWindowLayout.zoomAnchor(CGPoint(x: -10, y: 40), picture: CGSize(width: 834, height: 521)),
+                       CGPoint(x: 0, y: 40))
+    }
+
+    func testTopDockLeavesThePictureBelowItAvailableForPointerFollow() {
+        let safe = CGRect(x: 0, y: 0, width: 834, height: 521)
+        let canvas = CGRect(x: 0, y: 20, width: 834, height: 1210)
+        let dock = CGRect(x: 137, y: 60, width: 560, height: 250)
+        let usable = PointerFollowLayout.usableRect(safeRect: safe, canvasFrame: canvas, dockFrame: dock, topAnchor: true)
+        XCTAssertEqual(usable.minY, 302)
+        XCTAssertEqual(usable.maxY, safe.maxY)
+        XCTAssertEqual(PointerFollowLayout.usableRect(safeRect: safe, canvasFrame: canvas, dockFrame: .zero, topAnchor: true), safe)
+        let bottomDock = CGRect(x: 0, y: 400, width: 834, height: 200)
+        let phone = PointerFollowLayout.usableRect(safeRect: safe, canvasFrame: canvas, dockFrame: bottomDock)
+        XCTAssertEqual(phone.minY, 0)
+        XCTAssertEqual(phone.maxY, 368)
+    }
+}
+
 /// Phone-side glue for hardware keyboards, direct touch and the display picker. The shared
 /// logic behind these (key map, remaps, repeat, pointer router, mapping) is tested on macOS.
 @MainActor
@@ -222,5 +285,86 @@ final class DirectTouchModelTests: XCTestCase {
         XCTAssertNotNil(ordinal)
         overlay.localWarp(ordinal: ordinal, to: CGPoint(x: 700, y: 420))
         XCTAssertEqual(overlay.render?.point, CGPoint(x: 700, y: 420))
+    }
+}
+
+
+/// The actual chrome branches use this policy so narrow windows retain their phone behavior.
+final class SessionChromePolicyTests: XCTestCase {
+    @MainActor
+    func testLocalActivityExtendsTheExactIdleDeadline() {
+        let clock = SessionPillActivityClock()
+        clock.note(at: 10)
+        XCTAssertEqual(clock.remaining(at: 11), 1)
+        clock.note(at: 11.5)
+        XCTAssertEqual(clock.remaining(at: 12.2), 1.3, accuracy: 0.0001)
+        XCTAssertEqual(clock.remaining(at: 13.5), 0)
+        XCTAssertEqual(clock.remaining(at: 15), 0)
+    }
+    func testFormsAndCameraCapRespectWidthAndRollback() {
+        for regular in [false, true] {
+            for enabled in [false, true] {
+                let form = regular && enabled
+                XCTAssertEqual(SessionChromePolicy.form(regular: regular, enabled: enabled), form)
+                XCTAssertEqual(SessionChromePolicy.cameraMaxHeight(regular: regular, enabled: enabled), form ? nil : 340)
+            }
+        }
+    }
+
+    func testOnlyRegularHardwareKeyboardsHideTheKeyBar() {
+        XCTAssertTrue(SessionChromePolicy.keyboardBar(regular: false, hardware: false))
+        XCTAssertTrue(SessionChromePolicy.keyboardBar(regular: false, hardware: true), "Compact windows keep the phone key bar")
+        XCTAssertTrue(SessionChromePolicy.keyboardBar(regular: true, hardware: false))
+        XCTAssertFalse(SessionChromePolicy.keyboardBar(regular: true, hardware: true), "The text field remains; only the keys hide")
+    }
+
+    func testKeyboardRefitsOnlyTheRegularFullBleedPicture() {
+        let canvas = CGRect(x: 0, y: 20, width: 1210, height: 834)
+        let bar = CGRect(x: 0, y: 554, width: 1210, height: 80)
+        for regular in [false, true] {
+            for stacked in [false, true] {
+                for couch in [false, true] {
+                    for open in [false, true] {
+                        let expected: CGFloat = regular && !stacked && !couch && open ? 300 : 0
+                        XCTAssertEqual(SessionChromePolicy.keyboardBottom(regular: regular, stacked: stacked, couch: couch,
+                                                                          keyboardOpen: open, barFrame: bar, canvas: canvas), expected)
+                    }
+                }
+            }
+        }
+        XCTAssertEqual(SessionChromePolicy.keyboardBottom(regular: true, stacked: false, couch: false,
+                                                          keyboardOpen: true, barFrame: .zero, canvas: canvas), 0)
+        XCTAssertEqual(SessionChromePolicy.keyboardBottom(regular: true, stacked: false, couch: false, keyboardOpen: true,
+                                                          barFrame: CGRect(x: 0, y: 900, width: 1210, height: 80), canvas: canvas), 0)
+    }
+
+    func testStatePillsRemainVisibleAndCoveredRequiresConnection() {
+        func persistent(_ state: Int?, connected: Bool = true) -> Bool {
+            SessionChromePolicy.persistent(reconnecting: state == 0, reconnectBack: state == 1, busy: state == 2,
+                                           bigText: state == 3, notice: state == 4, pan: state == 5,
+                                           viewOnly: state == 6, connected: connected, covered: state == 7)
+        }
+        XCTAssertFalse(persistent(nil))
+        for state in 0...7 { XCTAssertTrue(persistent(state), "State \(state) must never collapse") }
+        XCTAssertFalse(persistent(7, connected: false), "A stale curtain state alone is not a live session state")
+        XCTAssertTrue(persistent(0, connected: false), "Reconnect status stays visible without a connection")
+    }
+
+    func testIdleCollapseNeedsAnUnobstructedConnectedPillAndUsesTwoSeconds() {
+        XCTAssertEqual(SessionChromePolicy.idleInterval, 2)
+        for regular in [false, true] {
+            for controlsCollapsed in [false, true] {
+                for showControls in [false, true] {
+                    for keyboardOpen in [false, true] {
+                        for persistent in [false, true] {
+                            XCTAssertEqual(SessionChromePolicy.mayCollapse(regular: regular, controlsCollapsed: controlsCollapsed,
+                                                                          showControls: showControls, keyboardOpen: keyboardOpen,
+                                                                          persistent: persistent),
+                                           regular && controlsCollapsed && !showControls && !keyboardOpen && !persistent)
+                        }
+                    }
+                }
+            }
+        }
     }
 }

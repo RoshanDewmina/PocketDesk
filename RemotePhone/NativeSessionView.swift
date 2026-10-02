@@ -12,6 +12,8 @@ struct NativeSessionView: View {
                                                     canvasSize: .zero, mode: ViewportPreference.stored())
     @State private var virtualDisplayPreviousMode: ViewportMode?
     @State private var canvasFrame: CGRect = .zero
+    @State private var stackedPicture = false
+    @State private var padTouched = false
     @State private var dataWarningTop: CGFloat = 0
     @State private var safeFrame: CGRect = .zero
     @State private var dockFrame: CGRect = .zero
@@ -31,6 +33,10 @@ struct NativeSessionView: View {
     @State private var showClipboardRow = false
     @State private var primingMicrophone = false
     @State private var dockHintVisible = false
+    @State private var sessionPillCollapsed = false
+    @State private var sessionPillActivity = SessionPillActivityClock()
+    /// Internal rollback only; compact windows always retain their original chrome.
+    @AppStorage("ipadSessionLayoutEnabled") private var ipadSessionLayoutEnabled = true
     @State private var lockVisible = false
     /// A live session that dropped just came back: "Back" shows for a moment (D38).
     @State private var reconnectBack = false
@@ -88,8 +94,9 @@ struct NativeSessionView: View {
             LockedMousePresenter(requested: $lockedMouseRequested,
                 eligible: model.canControl && scenePhase == .active && !showControls && !showVoiceInput && !keyboardOpen && !panMode,
                 revision: model.inputRevision &+ revision, gain: Double(sensitivity), remapShortcuts: remapShortcuts,
-                send: { model.gesture($0) }, key: { model.hardwareKey($0, modifiers: $1) },
-                modifiers: { model.hardwareModifiers = $0 }, cleanup: { model.cancelInput() }, ended: { message in
+                send: { command in noteSessionPillActivity(); return model.gesture(command) },
+                key: { key, modifiers in noteSessionPillActivity(); return model.hardwareKey(key, modifiers: modifiers) },
+                modifiers: { noteSessionPillActivity(); model.hardwareModifiers = $0 }, cleanup: { model.cancelInput() }, ended: { message in
                     lockedMouseNotice = message
                 }).frame(width: 0, height: 0)
 
@@ -106,7 +113,7 @@ struct NativeSessionView: View {
             centerNotices
         }
         .overlay {
-            if !couch && !controlsCollapsed && !keyboardOpen && !showControls {
+            if !regularSessionLayout && !couch && !controlsCollapsed && !keyboardOpen && !showControls {
                 FarsideDotScreen()
                     .ignoresSafeArea()
                     .transition(.opacity)
@@ -127,17 +134,20 @@ struct NativeSessionView: View {
         }
         #endif
         .overlay(alignment: .bottom) {
-            if !keyboardOpen && !(showControls && controlsAsOverlay) {
+            if !regularSessionLayout && !keyboardOpen && !(showControls && controlsAsOverlay) {
                 dock.onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { dockFrame = $0 }
                     .padding(.trailing, couchSideTiles ? Self.couchColumnWidth : 0)
                 if couchSideTiles { couchTileColumn }
             }
         }
         .overlay(alignment: .bottom) {
-            if showControls && controlsAsOverlay {
+            if !regularSessionLayout && showControls && controlsAsOverlay {
                 overlayControls
                     .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if regularSessionLayout && couchSideTiles && !keyboardOpen && !showControls { couchTileColumn }
         }
         .overlay(alignment: .bottomTrailing) {
             if miniMap.shown && miniMapEligible {
@@ -149,8 +159,9 @@ struct NativeSessionView: View {
         }
         .overlay {
             if keyboardOpen {
-                KeyboardLayoutDock(onFrame: { keyboardBarFrame = $0 }) { keyboardBar }
-                    .onDisappear { keyboardBarFrame = .zero }
+                KeyboardLayoutDock(containerOnlySafeArea: keyboardContainerAreaProbe,
+                                   onFrame: { keyboardBarFrame = $0; scheduleGeometry() }) { keyboardDockContent }
+                    .onDisappear { keyboardBarFrame = .zero; scheduleGeometry() }
                     // SwiftUI must not also move the dock for the keyboard. UIKit's keyboard
                     // layout guide owns that one offset and updates it on first presentation,
                     // interactive dismissal and rotation.
@@ -238,11 +249,12 @@ struct NativeSessionView: View {
             if status == .accepted { showVoiceInput = false }
         }
         .onChange(of: couch, initial: true) { wasCouch, isCouch in
+            scheduleGeometry()
             if isCouch {
                 couchTouched = false
                 couchClickBaseline = model.acceptedClicks
                 setInteractionMode(false)
-                controlsCollapsed = false
+                controlsCollapsed = !regularSessionLayout ? false : true
             } else if wasCouch {
                 collapseControls()
             }
@@ -327,6 +339,29 @@ struct NativeSessionView: View {
                                               manualViewportRevision: manualViewportRevision,
                                               preview: offlineLayoutCheck))
         .onChange(of: model.sourceSize) { _, _ in scheduleGeometry() }
+        .onChange(of: horizontalSizeClass, initial: true) { _, sizeClass in
+            guard sizeClass != nil else { return }
+            let mode = ViewportPreference.initialize(regularWidth: regularSessionLayout)
+            if LaunchOptions.viewportOverride == nil && mode != viewport.mode { viewport.setMode(mode) }
+            noteSessionPillActivity()
+            scheduleGeometry()
+        }
+        .onChange(of: regularSessionLayout) { _, _ in noteSessionPillActivity(); scheduleGeometry() }
+        .onChange(of: keyboardOpen) { _, _ in noteSessionPillActivity(); scheduleGeometry() }
+        .onChange(of: controlsCollapsed) { _, _ in noteSessionPillActivity() }
+        .onChange(of: showControls) { _, _ in noteSessionPillActivity() }
+        .task(id: sessionPillIdleKey) {
+            guard SessionChromePolicy.mayCollapse(regular: regularSessionLayout, controlsCollapsed: controlsCollapsed,
+                                                 showControls: showControls, keyboardOpen: keyboardOpen, persistent: sessionPillPersistent),
+                  !sessionPillCollapsed else { return }
+            while !Task.isCancelled {
+                let remaining = sessionPillActivity.remaining()
+                if remaining <= 0 { break }
+                do { try await Task.sleep(for: .seconds(remaining)) } catch { return }
+            }
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : Farside.Motion.easeOut()) { sessionPillCollapsed = true }
+        }
         .onAppear {
             if !offlineLayoutCheck && !model.fresh { lockVisible = true }
             #if DEBUG
@@ -431,15 +466,33 @@ struct NativeSessionView: View {
             if couch {
                 couchRestCard
             } else {
-                videoLayer
-                if lockVisible {
-                    ResolutionLockView(connected: connection.connected || offlineLayoutCheck, videoTrack: connection.remoteVideo != nil, pictureReady: model.fresh,
-                                       fixedStage: LaunchOptions.value("--ui-lock-stage=").flatMap(Int.init)) {
-                        lockVisible = false
+                VStack(spacing: 0) {
+                    ZStack {
+                        videoLayer
+                        if lockVisible {
+                            ResolutionLockView(connected: connection.connected || offlineLayoutCheck, videoTrack: connection.remoteVideo != nil, pictureReady: model.fresh,
+                                               fixedStage: LaunchOptions.value("--ui-lock-stage=").flatMap(Int.init)) {
+                                lockVisible = false
+                            }
+                            .transition(.opacity)
+                        }
                     }
-                    .transition(.opacity)
+                    .frame(height: stackedPicture ? pictureSize.height : nil)
+                    .clipped()
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Mac picture")
+                    .accessibilityIdentifier("remote.picture")
+                    if stackedPicture {
+                        GeometryReader { pad in
+                            stackedRestCard
+                                .padding(.bottom, keyboardOpen && keyboardBarFrame.height > 0
+                                         ? min(pad.size.height, max(0, canvasFrame.maxY - keyboardBarFrame.minY)) : 0)
+                        }
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
+            // One native input view survives resizing; gestures work on picture and pad.
             inputSurface
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
@@ -458,14 +511,16 @@ struct NativeSessionView: View {
         .onReceive(model.pointerLocator.followUpdates, perform: follow)
         .onReceive(model.pointerOverlay.followUpdates, perform: follow)
         .task(id: model.dragging) { await runDragAutoPan() }
+        .modifier(SessionFileDrop(model: model, regularWidth: regularSessionLayout))
         .privacySensitive()
     }
 
     private var inputSurface: some View {
             NativeTrackpadSurface(enabled: model.canControl && !panMode && !controlsBlockInput && !showVoiceInput,
                                   panMode: panMode && !couch,
-                                  direct: directTouch && !couch, coalescedFingerMotion: couch,
-                                  precision: couch ? .off : precisionTrigger,
+                                  direct: directTouch && !couch && !regularSessionLayout,
+                                  coalescedFingerMotion: couch,
+                                  precision: couch || stackedPicture ? .off : precisionTrigger,
                                   revision: model.inputRevision &+ revision,
                                   sensitivity: CGFloat(couch ? sensitivity * CouchTuning.speed : sensitivity),
                                   pointerScale: couch ? 1 : viewport.scale, doubleClickInterval: model.doubleClickInterval,
@@ -478,6 +533,7 @@ struct NativeSessionView: View {
                                     && !controlsBlockInput && !showVoiceInput,
                                   pencilEnabled: !couch && model.pencilEnabled && model.pencilSupported,
                                   onPencil: { point, frame in
+                                      noteSessionPillActivity()
                                       guard let source = DirectTouchMapping.sourcePoint(for: point, in: viewport) else {
                                           guard frame.phase == .ended || frame.phase == .cancelled else { return false }
                                           // A lift outside the picture still releases its exact contact; never warp there.
@@ -490,8 +546,8 @@ struct NativeSessionView: View {
                                   remapShortcuts: remapShortcuts,
                                   onCommand: handle,
                                   onPointerMotionEnded: { model.pointerLocator.stopFollowing() },
-                                  onHardwareKey: { key, modifiers in model.hardwareKey(key, modifiers: modifiers) },
-                                  onHardwareModifiers: { model.hardwareModifiers = $0 },
+                                  onHardwareKey: { key, modifiers in noteSessionPillActivity(); return model.hardwareKey(key, modifiers: modifiers) },
+                                  onHardwareModifiers: { noteSessionPillActivity(); model.hardwareModifiers = $0 },
                                   onKeyDiagnostic: keyDiagnostic)
                 .accessibilityIdentifier("remote.canvas")
                 .allowsHitTesting(!controlsBlockInput && !showVoiceInput && !model.privacyShield && !model.contentConcealed)
@@ -507,6 +563,30 @@ struct NativeSessionView: View {
     /// Direct touch needs a Mac that places the pointer absolutely; otherwise touches stay a trackpad.
     private var directTouch: Bool { touchMode == .direct && model.absolutePointerSupported }
 
+    private var pictureSize: CGSize {
+        SessionWindowLayout.pictureSize(window: canvasFrame.size, source: model.sourceSize, stacked: stackedPicture)
+    }
+
+    private var stackedRestCard: some View {
+        RoundedRectangle(cornerRadius: 20, style: .continuous)
+            .strokeBorder(Farside.Palette.line, lineWidth: 1)
+            .overlay {
+                VStack(spacing: 8) {
+                    Text("Look up. This is your Mac’s trackpad.")
+                        .font(.title3.weight(.semibold)).foregroundStyle(Farside.Palette.bone)
+                    Text(CouchCopy.restDeadpan)
+                        .font(.footnote).foregroundStyle(Farside.Palette.ash)
+                }
+                .multilineTextAlignment(.center).padding(.horizontal, 24)
+                .opacity(padTouched ? 0 : 1)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("remote.stacked.pad")
+    }
+
     // MARK: - Couch
 
     private var couch: Bool {
@@ -521,7 +601,7 @@ struct NativeSessionView: View {
     /// The whole stage is the trackpad; the card only says so. Insets keep it clear of the top line and the dock.
     private var couchRestCard: some View {
         let insets = viewport.safeInsets
-        let dockCover = dockFrame.height > 0 && !keyboardOpen ? max(0, canvasFrame.maxY - dockFrame.minY) : 0
+        let dockCover = !regularSessionLayout && dockFrame.height > 0 && !keyboardOpen ? max(0, canvasFrame.maxY - dockFrame.minY) : 0
         return RoundedRectangle(cornerRadius: 20, style: .continuous)
             .strokeBorder(Farside.Palette.line, lineWidth: 1)
             .overlay {
@@ -545,7 +625,7 @@ struct NativeSessionView: View {
                                   kind: ContactRipple.Kind(action: model.lastAcceptedClick))
                 }
             }
-            .padding(EdgeInsets(top: insets.top + 40, leading: insets.left + 12,
+            .padding(EdgeInsets(top: insets.top + (regularSessionLayout ? 48 : 40), leading: insets.left + 12,
                                 bottom: max(insets.bottom, dockCover) + 12,
                                 trailing: insets.right + 12 + (couchSideTiles ? Self.couchColumnWidth : 0)))
             .allowsHitTesting(false)
@@ -595,7 +675,7 @@ struct NativeSessionView: View {
             .buttonStyle(FarsideTileButtonStyle())
             .frame(maxWidth: wide ? CGFloat.infinity : nil)
             .disabled(model.pendingModeSwitch != nil)
-            .accessibilityHint("Shows your Mac’s screen on this iPhone")
+            .accessibilityHint(DeviceWord.copy("Shows your Mac’s screen on this iPhone"))
             .accessibilityIdentifier("remote.couch.picture")
         Button { openControls() } label: { Label("Controls", systemImage: "slider.horizontal.3") }
             .buttonStyle(FarsideTileButtonStyle())
@@ -631,20 +711,20 @@ struct NativeSessionView: View {
                 if model.showsInlinePiPSource {
                     // Auto-start PiP needs its source inline: the same live picture, behind the visible one.
                     // Kept while concealed so a started PiP keeps its layer; the shield and concealment overlays cover it.
-                    let picture = viewport.picturePlacement(for: model.captureRegion)
+                    let picture = viewport.picturePlacement(for: model.placementRegion)
                     LivePiPPreview(layer: model.livePiP.displayLayer, inline: true)
                         .frame(width: picture.width, height: picture.height)
                         .offset(x: picture.minX, y: picture.minY)
                         .accessibilityHidden(true)
                 }
                 if let track = connection.remoteVideo, !model.contentConcealed {
-                    let picture = viewport.picturePlacement(for: model.captureRegion)
+                    let picture = viewport.picturePlacement(for: model.placementRegion)
                     RemoteVideoSurface(track: track, counters: connection.media?.counters,
                                        statistics: streamStatsEnabled && markerReadingEnabled,
-                                       sourceSize: streamStatsEnabled && model.captureRegion == nil
+                                       sourceSize: streamStatsEnabled && model.placementRegion == nil
                                         ? model.sourceSize : .zero,
                                        displayedPixelWidth: streamStatsEnabled ? rect.width * displayScale : 0,
-                                       fillsFrame: model.captureRegion != nil,
+                                       fillsFrame: model.placementRegion != nil,
                                        smoothMotion: legacyPictureSettings ? smoothMotion : model.pictureMode.smoothMotion,
                                        smoothMotionUpscale: smoothMotionUpscale,
                                        admission: model.inlinePresentationAdmission,
@@ -654,6 +734,9 @@ struct NativeSessionView: View {
                                        onSourcePresented: model.hostFeatures.contains(SessionFeature.virtualDisplay) && model.virtualDisplayActive ? { [weak model] source in
                                            Task { @MainActor in model?.rotationSourcePresented(source) }
                                        } : nil,
+                                       onFrameDrawn: { [weak model] envelope in
+                                           MainActor.assumeIsolated { model?.frameDrawn(envelope) }
+                                       },
                                        videoFeedback: connection.media?.videoFeedback,
                                        frameTiming: connection.media?.frameTimingReceiver?.log,
                                        onFrame: model.frameReceived)
@@ -726,25 +809,51 @@ struct NativeSessionView: View {
 
     @ViewBuilder private var topPills: some View {
         VStack(spacing: 8) {
-            if connection.connected && model.awayState == .covered {
+            if connection.connected && model.awayState == .covered && !regularSessionLayout {
                 Text("Mac covered · requests a lock if touched")
                     .font(.footnote).foregroundStyle(Farside.Palette.bone)
                     .padding(.horizontal, 12).padding(.vertical, 8)
                     .farsidePlate(Farside.Radius.card, fill: Farside.Palette.panel, stroke: Farside.Palette.line)
                     .accessibilityIdentifier("remote.awayCovered")
             }
-            if couch { couchTopLine }
-            if (!offlineLayoutCheck && !connection.connected) || LaunchOptions.has("--ui-reconnecting") {
-                ReconnectPill(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "your Mac",
-                              end: model.disconnect)
-                    .transition(.opacity)
-            } else if reconnectBack || LaunchOptions.has("--ui-reconnect-back") {
-                ReconnectBackPill(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "your Mac",
-                                  diagnostics: LaunchOptions.has("--ui-reconnect-back") ? Self.previewDiagnostics : connection.diagnostics)
-            }
-            if connection.connected, let busy = model.busy, busy.isVisible {
-                MacBusyPill(state: busy, device: UIDevice.current.model)
-                    .transition(.opacity)
+            if regularSessionLayout {
+                regularSessionPill
+                if !offlineLayoutCheck || LaunchOptions.has("--ui-arrival") {
+                    SessionRouteToast(macName: macName,
+                                      diagnostics: LaunchOptions.has("--ui-arrival") ? Self.previewDiagnostics : connection.diagnostics,
+                                      pictureReady: model.fresh || LaunchOptions.has("--ui-arrival"))
+                }
+                if !keyboardOpen {
+                    if model.dragging { holdChip.transition(.opacity) }
+                    if dockHintVisible && !model.dragging {
+                        Text("Tap the pill for controls · double tap to type")
+                            .farsideCaption(Farside.Palette.bone)
+                            .padding(.horizontal, 12).padding(.vertical, 7)
+                            .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.void.opacity(0.92), stroke: Farside.Palette.line2)
+                            .allowsHitTesting(false)
+                    }
+                    if showControls && controlsAsOverlay {
+                        overlayControls
+                            .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+                    } else {
+                        regularDock
+                            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { dockFrame = $0 }
+                    }
+                }
+            } else {
+                if couch { couchTopLine }
+                if (!offlineLayoutCheck && !connection.connected) || LaunchOptions.has("--ui-reconnecting") {
+                    ReconnectPill(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "your Mac",
+                                  end: model.disconnect)
+                        .transition(.opacity)
+                } else if reconnectBack || LaunchOptions.has("--ui-reconnect-back") {
+                    ReconnectBackPill(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "your Mac",
+                                      diagnostics: LaunchOptions.has("--ui-reconnect-back") ? Self.previewDiagnostics : connection.diagnostics)
+                }
+                if connection.connected, let busy = model.busy, busy.isVisible {
+                    MacBusyPill(state: busy, device: UIDevice.current.model)
+                        .transition(.opacity)
+                }
             }
             if !model.privacyShield && !model.contentConcealed {
                 ConnectionQualityBanner(content: QualityBannerContent.make(connected: connection.connected,
@@ -772,7 +881,7 @@ struct NativeSessionView: View {
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
             }
-            if panMode {
+            if panMode && !regularSessionLayout {
                 HStack(spacing: 10) {
                     Image(systemName: "hand.draw").accessibilityHidden(true)
                     Text("View · drag or pinch").font(.subheadline.weight(.medium))
@@ -790,8 +899,8 @@ struct NativeSessionView: View {
             }
             FileTransferCapsule(files: model.files, inbox: model.sendToMac, hidesNotice: showControls)
             clipboardStatus
-            bigTextStatus
-            if let notice = model.sessionNotice {
+            if !regularSessionLayout { bigTextStatus }
+            if let notice = model.sessionNotice, !regularSessionLayout {
                 FarsideNotice(message: notice, tone: .info)
                     .frame(maxWidth: 420)
                     .padding(.horizontal, 16)
@@ -811,7 +920,7 @@ struct NativeSessionView: View {
             }
         }
         .overlay(alignment: .top) {
-            if !offlineLayoutCheck || LaunchOptions.has("--ui-arrival") {
+            if !regularSessionLayout && (!offlineLayoutCheck || LaunchOptions.has("--ui-arrival")) {
                 SessionRouteToast(macName: connection.invitation?.name ?? LaunchOptions.demoMacName ?? "Your Mac",
                                   diagnostics: LaunchOptions.has("--ui-arrival") ? Self.previewDiagnostics : connection.diagnostics,
                                   pictureReady: model.fresh || LaunchOptions.has("--ui-arrival"))
@@ -819,7 +928,98 @@ struct NativeSessionView: View {
         }
         .background { ReconnectWatcher(connected: connection.connected, back: $reconnectBack) }
         .animation(Farside.Motion.easeOut(), value: reconnectBack)
-        .padding(.top, 8)
+        .padding(.top, regularSessionLayout ? 6 : 8)
+    }
+
+    private var regularSessionLayout: Bool { horizontalSizeClass == .regular && ipadSessionLayoutEnabled }
+
+    private var sessionPillReconnecting: Bool {
+        (!offlineLayoutCheck && !connection.connected) || LaunchOptions.has("--ui-reconnecting")
+    }
+
+    private var sessionPillBusy: BusyPresentation? {
+        #if DEBUG
+        if offlineLayoutCheck && LaunchOptions.has("--ui-mac-busy") {
+            return BusyPresentation(BusyState(level: .busy, fps: 30, longEdge: 1440, reason: "encoding"), device: UIDevice.current.model)
+        }
+        #endif
+        guard connection.connected, let busy = model.busy else { return nil }
+        return BusyPresentation(busy, device: UIDevice.current.model)
+    }
+
+    private var sessionPillBigText: String? {
+        #if DEBUG
+        if offlineLayoutCheck && LaunchOptions.has("--ui-big-text-changing") { return "Making text bigger…" }
+        #endif
+        return model.bigText.pendingTarget.map { $0 == 0 ? "Restoring text size…" : "Making text bigger…" }
+    }
+
+    private var sessionPillPersistent: Bool {
+        SessionChromePolicy.persistent(reconnecting: sessionPillReconnecting,
+            reconnectBack: reconnectBack || LaunchOptions.has("--ui-reconnect-back"), busy: sessionPillBusy != nil,
+            bigText: sessionPillBigText != nil, notice: model.sessionNotice != nil, pan: panMode,
+            viewOnly: model.captureScopeViewOnly, connected: connection.connected, covered: model.awayState == .covered)
+    }
+
+    private var sessionPillIdleKey: String {
+        "\(regularSessionLayout)-\(sessionPillCollapsed)-\(sessionPillPersistent)-\(controlsCollapsed)-\(keyboardOpen)-\(showControls)"
+    }
+
+    /// One semantic anchor. State rows belong to the same plate and retain their original IDs;
+    /// End and Control remain separate buttons, reachable by Full Keyboard Access and VoiceOver.
+    private var regularSessionPill: some View {
+        SessionPill(macName: macName, caption: couch ? couchCaption : regularPillCaption,
+                    live: handleLive, liveState: liveState,
+                    collapsed: sessionPillCollapsed && !sessionPillPersistent && controlsCollapsed && !showControls,
+                    expandedDock: !controlsCollapsed || showControls,
+                    reconnecting: sessionPillReconnecting,
+                    back: reconnectBack || LaunchOptions.has("--ui-reconnect-back")
+                        ? "Back · \(SessionRouteCaption.parse(LaunchOptions.has("--ui-reconnect-back") ? Self.previewDiagnostics : connection.diagnostics).text ?? macName)" : nil,
+                    busy: sessionPillBusy, bigText: sessionPillBigText,
+                    notice: connection.connected && model.awayState == .covered
+                        ? "Mac covered · requests a lock if touched" : model.sessionNotice,
+                    noticeID: connection.connected && model.awayState == .covered ? "remote.awayCovered" : "remote.session.notice",
+                    viewOnly: panMode || model.captureScopeViewOnly, canReturnToControl: panMode,
+                    toggle: {
+                        recordChromeHitProbe("pill toggle")
+                        noteSessionPillActivity()
+                        if showControls { closeControls() }
+                        else { controlsCollapsed ? revealControls() : collapseControls() }
+                    }, keyboard: openKeyboard, end: model.disconnect,
+                    control: { setInteractionMode(false) })
+            .frame(maxWidth: 560)
+            .padding(.horizontal, 8)
+    }
+
+    private var regularPillCaption: String {
+        var parts = [macName]
+        if let rtt = model.link?.roundTripMs { parts.append("\(rtt) ms") }
+        return parts.joined(separator: " · ")
+    }
+
+    private var regularDock: some View {
+        VStack(spacing: 10) {
+            if unifiedClipboard && model.clipboardAvailable && model.clipboard.showsPasteChip {
+                pasteToMacButton.labelStyle(.titleAndIcon).buttonBorderShape(.capsule)
+            }
+            if !controlsCollapsed {
+                dockPanel
+                    .background {
+                        FarsideDotScreen()
+                            .padding(.vertical, -24)
+                            .allowsHitTesting(false)
+                    }
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(maxWidth: 560)
+    }
+
+    private func noteSessionPillActivity() {
+        guard regularSessionLayout else { return }
+        sessionPillActivity.note()
+        if sessionPillCollapsed { sessionPillCollapsed = false }
     }
 
     private var dataWarningContent: DataWarningContent? {
@@ -834,7 +1034,7 @@ struct NativeSessionView: View {
 
     /// The notice can scroll, but must leave the measured dock and its End action uncovered.
     private var dataWarningAvailableHeight: CGFloat {
-        let bottom = dockFrame.height > 0 ? min(safeFrame.maxY, dockFrame.minY) : safeFrame.maxY
+        let bottom = !regularSessionLayout && dockFrame.height > 0 ? min(safeFrame.maxY, dockFrame.minY) : safeFrame.maxY
         return max(0, bottom - max(safeFrame.minY + 8, dataWarningTop) - 12)
     }
 
@@ -932,14 +1132,14 @@ struct NativeSessionView: View {
             if adaptiveLayout && compactHeight && !couch && !showVoiceInput && !showClipboardRow {
                 // Use landscape width to preserve a scrollable notice above all dock controls.
                 HStack(alignment: .top, spacing: 16) {
-                    VStack(spacing: 10) { grabHandle; tilesRow }
+                    VStack(spacing: 10) { if !regularSessionLayout { grabHandle }; tilesRow }
                         .frame(maxWidth: .infinity)
                     VStack(spacing: 10) { segmentsRow; dockFooter }
                         .frame(maxWidth: .infinity)
                 }
             } else {
                 VStack(spacing: compactHeight ? 10 : 14) {
-                    if !couch { grabHandle }
+                    if !couch && !regularSessionLayout { grabHandle }
                     if !couchSideTiles { tilesRow }
                     if showVoiceInput {
                         dictationRow
@@ -1078,7 +1278,7 @@ struct NativeSessionView: View {
                 .accessibilityShowsLargeContentViewer()
                 .disabled(!voiceEntryAvailable)
                 .accessibilityLabel("Voice input")
-                .accessibilityHint("Speak on this iPhone, then tap Done to insert text on your Mac")
+                .accessibilityHint(DeviceWord.copy("Speak on this iPhone, then tap Done to insert text on your Mac"))
         }
     }
 
@@ -1257,7 +1457,7 @@ struct NativeSessionView: View {
                     }
                     .buttonStyle(FarsideSecondaryButtonStyle(height: 44, fullWidth: false))
                     .disabled(!model.canControl || !model.clipboardAvailable || model.clipboard.isBusy)
-                    .accessibilityHint("Presses Command-C on your Mac, then copies the selection to this iPhone")
+                    .accessibilityHint(DeviceWord.copy("Presses Command-C on your Mac, then copies the selection to this iPhone"))
                 }
                 HStack {
                     Text("Text · 256 KB max").farsideCaption()
@@ -1265,7 +1465,7 @@ struct NativeSessionView: View {
                     Button("Get Mac clipboard") { model.fetchMacClipboard() }
                         .buttonStyle(FarsideLinkButtonStyle())
                         .disabled(!model.clipboardAvailable || model.clipboard.isBusy)
-                        .accessibilityHint("Copies what is already on your Mac’s clipboard to this iPhone")
+                        .accessibilityHint(DeviceWord.copy("Copies what is already on your Mac’s clipboard to this iPhone"))
                 }
                 Divider().overlay(Farside.Palette.line)
             }
@@ -1278,73 +1478,123 @@ struct NativeSessionView: View {
 
     // MARK: - Keyboard
 
+    private var keyboardKeys: some View {
+        HStack(spacing: 0) {
+            modifierButton("Command", "command", "command")
+            modifierButton("Option", "option", "option")
+            modifierButton("Control", "control", "control")
+            modifierButton("Shift", "shift", "shift")
+            keySeparator
+            keyButton("Escape", "escape", "escape")
+            keyButton("Tab", "arrow.right.to.line", "tab")
+            keySeparator
+            keyButton("Left arrow", "arrow.left", "left")
+            keyButton("Down arrow", "arrow.down", "down")
+            keyButton("Up arrow", "arrow.up", "up")
+            keyButton("Right arrow", "arrow.right", "right")
+            keySeparator
+            keyButton("Delete", "delete.left", "delete")
+            keyButton("Return", "return", "return")
+            if !unifiedClipboard && showsClipboard {
+                keySeparator
+                pasteToMacButton
+                    .labelStyle(.iconOnly)
+                    .buttonBorderShape(.circle)
+                    .padding(.horizontal, 4)
+                iconButton("Copy from Mac", "doc.on.doc", enabled: model.canControl && !model.clipboard.isBusy,
+                           action: model.copySelectionFromMac)
+                    .accessibilityHint(DeviceWord.copy("Presses Command-C on your Mac, then copies the selection to this iPhone"))
+            }
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private var regularHardwareKeyboard: Bool {
+        guard regularSessionLayout else { return false }
+        #if DEBUG
+        if offlineLayoutCheck && LaunchOptions.has("--ui-hardware-keyboard") { return true }
+        if offlineLayoutCheck && LaunchOptions.has("--ui-software-keyboard") { return false }
+        #endif
+        return peripherals.keyboardConnected
+    }
+
+    private var keyboardContainerAreaProbe: Bool {
+        #if DEBUG
+        regularSessionLayout && offlineLayoutCheck && LaunchOptions.has("--ui-keyboard-container-area")
+        #else
+        false
+        #endif
+    }
+
+    @ViewBuilder private var keyboardDockContent: some View {
+        #if DEBUG
+        if regularSessionLayout && offlineLayoutCheck && LaunchOptions.has("--ui-keyboard-ax-contain") {
+            keyboardBar.accessibilityElement(children: .contain)
+                .accessibilityIdentifier("remote.keyboard.dock")
+        } else {
+            keyboardBar
+        }
+        #else
+        keyboardBar
+        #endif
+    }
+
     private var keyboardBar: some View {
         VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 0) {
-                        modifierButton("Command", "command", "command")
-                        modifierButton("Option", "option", "option")
-                        modifierButton("Control", "control", "control")
-                        modifierButton("Shift", "shift", "shift")
-                        keySeparator
-                        keyButton("Escape", "escape", "escape")
-                        keyButton("Tab", "arrow.right.to.line", "tab")
-                        keySeparator
-                        keyButton("Left arrow", "arrow.left", "left")
-                        keyButton("Down arrow", "arrow.down", "down")
-                        keyButton("Up arrow", "arrow.up", "up")
-                        keyButton("Right arrow", "arrow.right", "right")
-                        keySeparator
-                        keyButton("Delete", "delete.left", "delete")
-                        keyButton("Return", "return", "return")
-                        if !unifiedClipboard && showsClipboard {
-                            keySeparator
-                            pasteToMacButton
-                                .labelStyle(.iconOnly)
-                                .buttonBorderShape(.circle)
-                                .padding(.horizontal, 4)
-                            iconButton("Copy from Mac", "doc.on.doc", enabled: model.canControl && !model.clipboard.isBusy,
-                                       action: model.copySelectionFromMac)
-                                .accessibilityHint("Presses Command-C on your Mac, then copies the selection to this iPhone")
+            if SessionChromePolicy.keyboardBar(regular: regularSessionLayout, hardware: regularHardwareKeyboard) {
+                HStack(spacing: 8) {
+                    Group {
+                        if regularSessionLayout {
+                            keyboardKeys.frame(maxWidth: .infinity)
+                        } else {
+                            ScrollView(.horizontal) { keyboardKeys }
+                                .scrollIndicators(.hidden)
                         }
                     }
-                    .padding(.horizontal, 6)
-                }
-                .scrollIndicators(.hidden)
-                .frame(height: 46)
-                .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
-                .clipShape(.capsule)
-                .accessibilityIdentifier("remote.keys")
+                    .frame(height: 46)
+                    .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
+                    .clipShape(.capsule)
+                    .accessibilityIdentifier("remote.keys")
 
-                if unifiedClipboard && model.clipboardAvailable && model.clipboard.showsPasteChip {
-                    pasteToMacButton
-                        .labelStyle(.titleAndIcon)
-                        .buttonBorderShape(.capsule)
-                }
-                if model.dragging {
-                    Button { model.cancelInput() } label: {
-                        Image(systemName: "hand.raised.fill").frame(width: 46, height: 46)
+                    if unifiedClipboard && model.clipboardAvailable && model.clipboard.showsPasteChip {
+                        pasteToMacButton
+                            .labelStyle(.titleAndIcon)
+                            .buttonBorderShape(.capsule)
+                    }
+                    if model.dragging {
+                        Button { model.cancelInput() } label: {
+                            Image(systemName: "hand.raised.fill").frame(width: 46, height: 46)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Farside.Palette.ink)
+                        .background(Farside.Palette.bone, in: .circle)
+                        .accessibilityLabel("Release")
+                        .accessibilityHint("Drops the held item on your Mac")
+                    }
+                    Button { closeKeyboard() } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                            .foregroundStyle(Farside.Palette.bone)
+                            .frame(width: 46, height: 46)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(Farside.Palette.ink)
-                    .background(Farside.Palette.bone, in: .circle)
-                    .accessibilityLabel("Release")
-                    .accessibilityHint("Drops the held item on your Mac")
+                    .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
+                    .accessibilityLabel("Hide keyboard")
+                    .accessibilityIdentifier("remote.keyboard.hide")
                 }
-                Button { closeKeyboard() } label: {
-                    Image(systemName: "keyboard.chevron.compact.down")
-                        .foregroundStyle(Farside.Palette.bone)
-                        .frame(width: 46, height: 46)
-                }
-                .buttonStyle(.plain)
-                .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
-                .accessibilityLabel("Hide keyboard")
-                .accessibilityIdentifier("remote.keyboard.hide")
             }
-
             HStack(alignment: .center, spacing: 8) {
                 textField
+                if regularHardwareKeyboard {
+                    Button { closeKeyboard() } label: {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                            .foregroundStyle(Farside.Palette.bone)
+                            .frame(width: 46, height: 46)
+                    }
+                    .buttonStyle(.plain)
+                    .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.97), stroke: Farside.Palette.line2)
+                    .accessibilityLabel("Hide keyboard")
+                    .accessibilityIdentifier("remote.keyboard.hide")
+                }
                 Button(action: openVoiceInput) {
                     Image(systemName: "mic.fill")
                         .foregroundStyle(Farside.Palette.bone)
@@ -1376,7 +1626,7 @@ struct NativeSessionView: View {
         .padding(.horizontal, 10)
         .padding(.bottom, 6)
         .padding(.top, 6)
-        .frame(maxWidth: 640)
+        .frame(maxWidth: regularSessionLayout ? .infinity : 640)
     }
 
     private var keySeparator: some View {
@@ -2021,7 +2271,7 @@ struct NativeSessionView: View {
 
     private func curtainCaption(_ state: PrivacyCurtainState) -> String {
         switch state {
-        case .off: "Covers your Mac’s displays"
+        case .off: "Off · anyone at the Mac can watch"
         case .pending: "Covers once the picture is live"
         case .up: "Covered · Esc three times at the Mac lifts it"
         case .liftedLocally: "Lifted at your Mac"
@@ -2075,7 +2325,7 @@ struct NativeSessionView: View {
         .padding(12)
         .farsidePlate(Farside.Radius.sheet, fill: Farside.Palette.void2.opacity(0.97), stroke: Farside.Palette.line2)
         .padding(.horizontal, 8)
-        .padding(.bottom, 6)
+        .padding(.bottom, regularSessionLayout ? 0 : 6)
         .frame(maxWidth: 860)
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { panelFrame = $0 }
         .onAppear { if model.displays.isEmpty { model.requestDisplays() } }
@@ -2198,6 +2448,7 @@ struct NativeSessionView: View {
     }
 
     private func openControls() {
+        recordChromeHitProbe("open Controls")
         cancelGesture()
         controlsPath = []
         showOverlaySettings = false
@@ -2385,9 +2636,6 @@ struct NativeSessionView: View {
                     .disabled(!peripherals.mouseConnected || !model.canControl)
                     .accessibilityIdentifier("remote.mouse.lock")
                 if !lockedMouseNotice.isEmpty { Text(lockedMouseNotice).font(.footnote) }
-                Toggle("Apple Pencil input", isOn: $model.pencilEnabled)
-                    .disabled(!model.pencilSupported)
-                    .accessibilityIdentifier("remote.pencil.enabled")
                 Text(model.pencilSupported ? "Pencil places the pointer, presses with pressure and ignores resting fingers during contact. Drawing support depends on the Mac app." : "Pencil input needs a compatible Mac and a live picture session.")
                     .font(.footnote)
             }
@@ -2438,7 +2686,7 @@ struct NativeSessionView: View {
                 }
             } footer: {
                 Text(model.automaticClipboardSupported
-                     ? "Mac text copies arrive here automatically while you control it. Paste sends iPhone text only when you tap. Text only, up to 256 KB; items marked as passwords are never shared."
+                     ? DeviceWord.copy("Mac text copies arrive here automatically while you control it. Paste sends iPhone text only when you tap. Text only, up to 256 KB; items marked as passwords are never shared.")
                      : "Send and copy from the dock’s Clip button. Text only, up to 256 KB. Farside reads your Mac’s clipboard only when you ask, and never shares items marked as passwords.")
                     .foregroundStyle(Farside.Palette.ash)
             }
@@ -2740,7 +2988,7 @@ struct NativeSessionView: View {
                 .toggleStyle(FarsideSwitchStyle())
                 .listRowBackground(Farside.Palette.panel)
             if streamStatsEnabled {
-                Text("Shows per-stage timing over the picture and records it on this iPhone for export.")
+                Text(DeviceWord.copy("Shows per-stage timing over the picture and records it on this iPhone for export."))
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .listRowBackground(Farside.Palette.panel)
                 Toggle("Read bench marker", isOn: $markerReadingEnabled)
@@ -2804,7 +3052,7 @@ struct NativeSessionView: View {
 
     private func macCurtainFooter(_ state: PrivacyCurtainState) -> String {
         switch state {
-        case .off: "Covers your Mac’s displays while you’re connected. You still see the desktop here."
+        case .off: "Off, so anyone at the Mac can watch what you do. On covers its displays while you’re connected; you still see everything here."
         case .pending: "Your Mac covers its screen once the picture is live."
         case .up: "Your Mac’s screen is covered. Anyone at the Mac can press Esc three times to lift it."
         case .liftedLocally: "Someone at your Mac lifted the curtain for this session."
@@ -2834,7 +3082,7 @@ struct NativeSessionView: View {
         } header: {
             sectionHeader("Feel")
         } footer: {
-            Text("Your iPhone draws the Mac pointer at every zoom level, larger when Larger Text is on. An older Mac companion shows its streamed pointer instead. While zoomed in, the picture eases after the pointer near an edge.")
+            Text(DeviceWord.copy("Your iPhone draws the Mac pointer at every zoom level, larger when Larger Text is on. An older Mac companion shows its streamed pointer instead. While zoomed in, the picture eases after the pointer near an edge."))
                 .foregroundStyle(Farside.Palette.ash)
         }
     }
@@ -2848,7 +3096,9 @@ struct NativeSessionView: View {
     // MARK: - Behaviour
 
     private func handle(_ command: NativeGestureCommand) -> Bool {
+        noteSessionPillActivity()
         guard !controlsBlockInput, !showVoiceInput, !model.privacyShield, !model.contentConcealed else { return false }
+        if stackedPicture && !padTouched { padTouched = true }
         if couch {
             // No picture to look around or aim at.
             switch command {
@@ -2865,7 +3115,7 @@ struct NativeSessionView: View {
             model.pointerLocator.clear()
             pinchRevision &+= 1
             withAnimation(reduceMotion ? nil : .smooth(duration: 0.36, extraBounce: 0)) {
-                viewport.toggleZoom(anchoredAt: anchor)
+                viewport.toggleZoom(anchoredAt: pictureAnchor(anchor))
             }
             reportSettledViewport()
             showZoomBadge()
@@ -2876,7 +3126,7 @@ struct NativeSessionView: View {
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
+                viewport.setZoom(viewport.zoom * factor, anchoredAt: pictureAnchor(anchor))
                 viewport.pan(by: translation)
             }
             showZoomBadge()
@@ -2887,7 +3137,7 @@ struct NativeSessionView: View {
             var transaction = Transaction(animation: nil)
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                viewport.setZoom(viewport.zoom * factor, anchoredAt: anchor)
+                viewport.setZoom(viewport.zoom * factor, anchoredAt: pictureAnchor(anchor))
             }
             showZoomBadge()
             return true
@@ -2926,7 +3176,7 @@ struct NativeSessionView: View {
     private var followUsableRect: CGRect {
         // With Controls open, the pointer stays clear of the panel rather than the dock.
         PointerFollowLayout.usableRect(safeRect: viewport.safeRect, canvasFrame: canvasFrame,
-                                       dockFrame: showControls ? panelFrame : dockFrame)
+                                       dockFrame: showControls ? panelFrame : dockFrame, topAnchor: regularSessionLayout)
     }
 
     private var followAllowed: Bool {
@@ -3042,7 +3292,7 @@ struct NativeSessionView: View {
     }
 
     @ViewBuilder private func miniMapThumbnail(_ size: CGSize) -> some View {
-        if let track = connection.remoteVideo, !model.contentConcealed, let region = model.captureRegion {
+        if let track = connection.remoteVideo, !model.contentConcealed, let region = model.placementRegion {
             let placement = ViewportTransform.placement(of: region.rect, displaySize: model.sourceSize,
                                                         in: CGRect(origin: .zero, size: size))
             ZStack(alignment: .topLeading) {
@@ -3075,16 +3325,32 @@ struct NativeSessionView: View {
     /// other bottom obstructions only change the safe insets.
     private func applyGeometry() {
         guard canvasFrame.width > 0, canvasFrame.height > 0, safeFrame.width > 0, safeFrame.height > 0 else { return }
-        let insets = ViewportInsets(top: max(0, safeFrame.minY - canvasFrame.minY),
+        let nextStacked = !couch && SessionWindowLayout.stacked(regular: regularSessionLayout,
+            window: canvasFrame.size, source: model.sourceSize, wasStacked: stackedPicture)
+        if nextStacked != stackedPicture {
+            withAnimation(reduceMotion ? nil : Farside.Motion.windowLayout) {
+                stackedPicture = nextStacked
+                padTouched = false
+            }
+        }
+        let size = SessionWindowLayout.pictureSize(window: canvasFrame.size, source: model.sourceSize, stacked: nextStacked)
+        let keyboardBottom = SessionChromePolicy.keyboardBottom(regular: regularSessionLayout, stacked: nextStacked,
+            couch: couch, keyboardOpen: keyboardOpen, barFrame: keyboardBarFrame, canvas: canvasFrame)
+        // The keyboard takes space from the pad; the top Fit picture stays fixed.
+        let insets = nextStacked ? ViewportInsets.zero : ViewportInsets(top: max(0, safeFrame.minY - canvasFrame.minY),
                                     left: max(0, safeFrame.minX - canvasFrame.minX),
-                                    bottom: max(0, canvasFrame.maxY - safeFrame.maxY),
+                                    bottom: max(keyboardBottom, max(0, canvasFrame.maxY - safeFrame.maxY)),
                                     right: max(0, canvasFrame.maxX - safeFrame.maxX))
-        if viewport.canvasSize != canvasFrame.size || viewport.sourceSize != model.sourceSize {
+        if viewport.canvasSize != size || viewport.sourceSize != model.sourceSize {
             cancelGesture()
-            viewport.resize(sourceSize: model.sourceSize, canvasSize: canvasFrame.size, safeInsets: insets)
+            viewport.resize(sourceSize: model.sourceSize, canvasSize: size, safeInsets: insets)
         } else if viewport.safeInsets != insets {
             withAnimation(reduceMotion ? nil : .snappy) { viewport.updateSafeInsets(insets) }
         }
+    }
+
+    private func pictureAnchor(_ point: CGPoint) -> CGPoint {
+        stackedPicture ? SessionWindowLayout.zoomAnchor(point, picture: pictureSize) : point
     }
 
     /// Only a view of the display the model is streaming counts; a stale canvas mid-resize does not.
@@ -3128,6 +3394,13 @@ struct NativeSessionView: View {
         withAnimation(reduceMotion ? nil : .snappy) { panMode = viewMode }
     }
 
+    private func recordChromeHitProbe(_ action: String) {
+        #if DEBUG
+        guard offlineLayoutCheck, LaunchOptions.has("--ui-keyboard-hit-probe") else { return }
+        NSLog("%@", "[B7 chromeHit] \(action) regular=\(regularSessionLayout) couch=\(couch) collapsed=\(controlsCollapsed) controls=\(showControls) keyboard=\(keyboardOpen) voiceLocked=\(voiceLocked)")
+        #endif
+    }
+
     private func cancelGesture() {
         pinchRevision &+= 1
         model.cancelInput()
@@ -3135,13 +3408,15 @@ struct NativeSessionView: View {
     }
 
     private func revealControls() {
+        recordChromeHitProbe("reveal dock")
         guard controlsCollapsed else { return }
         cancelGesture()
         withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : Farside.Motion.sheetSpring) { controlsCollapsed = false }
     }
 
     private func collapseControls() {
-        guard !couch, !controlsCollapsed, !voiceLocked else { return }
+        recordChromeHitProbe("collapse dock")
+        guard (!couch || regularSessionLayout), !controlsCollapsed, !voiceLocked else { return }
         cancelGesture()
         if showVoiceInput { cancelVoiceInput() }
         withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : Farside.Motion.sheetSpring) {
@@ -3151,6 +3426,7 @@ struct NativeSessionView: View {
     }
 
     private func openKeyboard() {
+        recordChromeHitProbe("open keyboard")
         cancelGesture()
         if showVoiceInput {
             guard !voiceLocked else { return }
@@ -3160,6 +3436,7 @@ struct NativeSessionView: View {
     }
 
     private func closeKeyboard() {
+        recordChromeHitProbe("close keyboard")
         dismissedAutoKeyboardRevision = model.autoKeyboardRevision
         cancelGesture()
         keyboardOpen = false
@@ -3185,7 +3462,13 @@ private struct QuietInputProbe: View {
 /// Keeps automatic pointer follow above the dock without reserving permanent
 /// screen space when the controls are collapsed.
 enum PointerFollowLayout {
-    static func usableRect(safeRect: CGRect, canvasFrame: CGRect, dockFrame: CGRect) -> CGRect {
+    static func usableRect(safeRect: CGRect, canvasFrame: CGRect, dockFrame: CGRect, topAnchor: Bool = false) -> CGRect {
+        if topAnchor {
+            let top = dockFrame.height > 0 && canvasFrame.intersects(dockFrame)
+                ? min(safeRect.maxY - 1, max(safeRect.minY, dockFrame.maxY - canvasFrame.minY + 12))
+                : safeRect.minY
+            return CGRect(x: safeRect.minX, y: top, width: safeRect.width, height: max(1, safeRect.maxY - top))
+        }
         let measuredTop = dockFrame.minY - canvasFrame.minY - 12
         let bottom = dockFrame.height > 0 && canvasFrame.intersects(dockFrame) &&
             measuredTop > safeRect.minY
@@ -3193,6 +3476,130 @@ enum PointerFollowLayout {
             : safeRect.maxY - 34
         return CGRect(x: safeRect.minX, y: safeRect.minY,
                       width: safeRect.width, height: max(1, bottom - safeRect.minY))
+    }
+}
+
+/// Regular-window chrome is a real Button for keyboard navigation; its status/actions share
+/// one top plate. It accepts taps only, keeping the system's top-edge gestures unclaimed.
+private struct SessionPill: View {
+    let macName: String
+    let caption: String
+    let live: Bool
+    let liveState: LiveDot.State
+    let collapsed: Bool
+    let expandedDock: Bool
+    let reconnecting: Bool
+    let back: String?
+    let busy: BusyPresentation?
+    let bigText: String?
+    let notice: String?
+    let noticeID: String
+    let viewOnly: Bool
+    let canReturnToControl: Bool
+    let toggle: () -> Void
+    let keyboard: () -> Void
+    let end: () -> Void
+    let control: () -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var hasState: Bool { reconnecting || back != nil || busy != nil || bigText != nil || notice != nil || viewOnly }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 8) {
+                Button(action: toggle) {
+                    Group {
+                        if collapsed {
+                            HandleDots(live: live)
+                        } else {
+                            HStack(spacing: 7) {
+                                LiveDot(state: liveState, size: 7)
+                                if !hasState { Text(caption).lineLimit(1).minimumScaleFactor(0.8) }
+                                else { stateCaption }
+                            }
+                            .padding(.horizontal, 12)
+                        }
+                    }
+                    .frame(height: dynamicTypeSize.isAccessibilitySize ? 36 : 28)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .highPriorityGesture(TapGesture(count: 2).exclusively(before: TapGesture(count: 1)).onEnded { result in
+                    switch result {
+                    case .first: keyboard()
+                    case .second: toggle()
+                    }
+                })
+                .accessibilityIdentifier(primaryIdentifier)
+                .accessibilityLabel(expandedDock ? "Hide controls" : "Show controls")
+                .accessibilityValue(spokenStatus)
+                .accessibilityHint("Tap for controls. Double-tap to type.")
+                .accessibilityAction(named: Text("Show keyboard")) { keyboard() }
+                if reconnecting {
+                    Button("End", action: end)
+                        .buttonStyle(FarsideEndButtonStyle(height: 24))
+                        .fixedSize()
+                        .accessibilityLabel("End session")
+                        .padding(.trailing, 4)
+                } else if canReturnToControl {
+                    Button("Control", action: control)
+                        .buttonStyle(FarsidePrimaryButtonStyle(height: 24))
+                        .fixedSize()
+                        .accessibilityLabel("Control desktop")
+                        .padding(.trailing, 4)
+                }
+            }
+            // Simultaneous states must stay visible too (for example busy during a Big Text change).
+            if reconnecting, let back { status(back, id: "remote.back") }
+            if let busy, reconnecting || back != nil { status(busy.title, id: "remote.macBusy", spoken: busy.accessibilityLabel) }
+            if let bigText, reconnecting || back != nil || busy != nil { status(bigText, id: "remote.bigText.pill") }
+            if let notice, reconnecting || back != nil || busy != nil || bigText != nil { status(notice, id: noticeID) }
+            if viewOnly && (reconnecting || back != nil || busy != nil || bigText != nil || notice != nil) {
+                status("View only", id: "remote.viewOnly")
+            }
+        }
+        .font(Farside.Typeface.caption(.footnote))
+        .foregroundStyle(Farside.Palette.bone)
+        .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.void.opacity(0.92), stroke: Farside.Palette.line2)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("remote.session.pill")
+        .accessibilityValue(collapsed ? "Collapsed" : "Expanded")
+    }
+
+    private var spokenStatus: String {
+        if reconnecting { return "Reconnecting to \(macName)…" }
+        if let back { return back }
+        if let busy { return busy.accessibilityLabel }
+        if let bigText { return bigText }
+        if let notice { return notice }
+        return viewOnly ? "\(caption) · View only" : caption
+    }
+
+    private var primaryIdentifier: String {
+        if reconnecting { return "remote.reconnecting" }
+        if back != nil { return "remote.back" }
+        if busy != nil { return "remote.macBusy" }
+        if bigText != nil { return "remote.bigText.pill" }
+        if notice != nil { return noticeID }
+        return viewOnly ? "remote.viewOnly" : "remote.session.pill.toggle"
+    }
+
+    @ViewBuilder private var stateCaption: some View {
+        if reconnecting { status("Reconnecting to \(macName)…", id: "remote.reconnecting") }
+        else if let back { status(back, id: "remote.back") }
+        else if let busy { status([busy.title, busy.detail].compactMap { $0 }.joined(separator: " · "), id: "remote.macBusy", spoken: busy.accessibilityLabel) }
+        else if let bigText { status(bigText, id: "remote.bigText.pill") }
+        else if let notice { status(notice, id: noticeID) }
+        else { status("\(caption) · View only", id: "remote.viewOnly") }
+    }
+
+    private func status(_ text: String, id: String, spoken: String? = nil) -> some View {
+        Text(text)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .accessibilityLabel(spoken ?? text)
+            .accessibilityIdentifier(id)
     }
 }
 

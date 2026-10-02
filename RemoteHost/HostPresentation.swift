@@ -631,7 +631,11 @@ enum HostMenuBarIconCopy {
 
 enum HostCurtainCopy {
     static func subtitle(for state: HostViewState) -> String {
+        if state.captureScopeViewOnly { return "Not used while sharing a single window or app" }
         if state.curtainNeedsAccessibility { return "Needs Accessibility, so Esc can always lift it" }
-        return state.curtainStatus ?? "Covers the screen while your iPhone is connected"
+        if let status = state.curtainStatus { return status }
+        return state.privacyCurtain
+            ? "On by default. Your phone still sees everything. Esc three times at this Mac shows it"
+            : "Off: anyone at the Mac can watch what the phone does"
     }
 }

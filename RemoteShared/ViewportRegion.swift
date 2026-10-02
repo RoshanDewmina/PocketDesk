@@ -34,6 +34,19 @@ struct ViewportRegion: Codable, Equatable {
     }
 }
 
+/// The b7-scroll package (2 Oct 2026: crop-gain and keep-band rules on the Mac; placing frames by their
+/// own region, the View-mode zoom dead band and the widening cap on the phone) ships OFF until Roshan's
+/// device A/B shows it at least as stable as viewport capture off. `defaults write <bundle id>
+/// PocketDeskScrollFixes -bool YES` on each side, then relaunch, turns the whole package on; each part
+/// keeps its own key, read only when this one is on.
+enum ScrollFixesSwitch {
+    static let defaultsKey = "PocketDeskScrollFixes"
+    // NSArgumentDomain stores launch overrides as strings (YES/NO), unlike defaults write.
+    // Foundation's Boolean accessor handles both; absent remains off.
+    static func enabled(defaults: UserDefaults = .standard) -> Bool { defaults.bool(forKey: defaultsKey) }
+    static let isOn = enabled()
+}
+
 /// Mac → phone on `capture` status: what the stream covers now. `epoch` 0 means the whole desktop
 /// (also what an old Mac implies by never sending one). The rect is in Mac points and includes the
 /// pan margin; `outputWidth × outputHeight` is the applied stream size. It stays steady for small

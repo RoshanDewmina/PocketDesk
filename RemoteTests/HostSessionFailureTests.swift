@@ -5,6 +5,24 @@ import Foundation
 /// phone's attempt. The Mac stays registered and Ready; only Stop Sharing or a fatal error stops it.
 @MainActor
 final class HostSessionFailureTests: XCTestCase {
+    func testResetRejectsRetirementControlAndNestedReset() {
+        let phone = RemoteCoordinator(isHost: false, store: MemoryPairStore(), retryLimit: 0)
+        defer { phone.onPresentationInvalidated = nil; phone.stop() }
+        phone.startInputFixtureForTesting(session: "retirement-fixture")
+        var sent = 0
+        var retirements = 0
+        phone.inputPacketSenderForTesting = { _ in sent += 1; return true }
+        phone.onPresentationInvalidated = {
+            retirements += 1
+            XCTAssertFalse(phone.sendControl(RemoteAction(action: "heartbeat", epoch: 1)))
+            phone.stop()
+        }
+        phone.stop()
+        XCTAssertEqual(retirements, 1)
+        XCTAssertEqual(sent, 0, "Retired-session callbacks must not transmit")
+        XCTAssertFalse(phone.connected)
+    }
+
     @MainActor private final class LocalRouteBridge {
         let host = ScriptedSignaling()
         let phone = ScriptedSignaling()

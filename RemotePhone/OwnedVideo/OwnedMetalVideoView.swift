@@ -10,6 +10,10 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     let mailbox = NewestFrameMailbox<VideoFrameEnvelope>()
     var counters: StreamCounters?
     var beforeDraw: ((MTKView) -> Void)?
+    /// Main thread, after each fenced draw that acquired a drawable: the envelope just encoded for
+    /// presentation (b7-scroll). The model places the picture by this frame's own capture region.
+    var onFrameDrawn: ((VideoFrameEnvelope) -> Void)?
+    private var drawnEnvelope: VideoFrameEnvelope?
     var fillsFrame = false
     var videoFeedback: VideoFeedbackContext?
     /// Only an actual original source drawable presentation may report this receipt.
@@ -159,7 +163,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     func invalidate() {
         fence.invalidate(); mailbox.invalidate()
         wakeLock.lock(); closed = true; wakeLock.unlock()
-        beforeDraw = nil; timingAvailable = false
+        beforeDraw = nil; onFrameDrawn = nil; drawnEnvelope = nil; timingAvailable = false
         videoFeedback = nil
         sourcePresented = nil
         originalSourcePresented = nil // The terminal fence already drained any earlier callback.
@@ -179,6 +183,10 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             guard fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime, { () -> Void in
                 drawAdmitted(in: view)
             }) != nil else { invalidate(); return }
+        }
+        if let drawn = drawnEnvelope {
+            drawnEnvelope = nil
+            onFrameDrawn?(drawn) // Outside the fence: the model may update SwiftUI state.
         }
         if StreamTuning.current.idleVideoRefresh {
             refresh.drew(at: ProcessInfo.processInfo.systemUptime, framePending: mailbox.hasPending)
@@ -234,6 +242,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
             mailbox.completed(submission.id); showFallbackIfAdmitted(envelope); return
         }
         fallback?.removeFromSuperview(); fallback = nil; redraw = false
+        drawnEnvelope = envelope // From here the frame is presented.
         #if targetEnvironment(simulator)
         timingAvailable = false // Simulator SDK does not expose actual presented handlers.
         #else
@@ -349,6 +358,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
     private func showFallback(_ envelope: VideoFrameEnvelope) {
         timingAvailable = false
+        drawnEnvelope = envelope // The compatibility view shows this frame; its region places it too.
         var buffer = envelope.frame.buffer
         if let cv = buffer as? RTCCVPixelBuffer, HEVC444PixelTransfer.isFullColor(cv.pixelBuffer) {
             // Pinned M153 stock/crop/toI420 paths do not support raw 444. Public declared-color

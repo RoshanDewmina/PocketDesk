@@ -213,7 +213,12 @@ final class ComparisonEnrollmentCoordinatorTests: XCTestCase {
         XCTAssertNil(rig.phoneStore.data)
         let fresh = try ComparisonEnrollmentRig(); defer { fresh.stop() }
         fresh.host.approve()
-        XCTAssertFalse(fresh.host.isRunning)
+        XCTAssertTrue(fresh.host.isRunning, "Allow without a candidate preserves the registered listener")
+        XCTAssertTrue(fresh.host.hostRegistered)
+        XCTAssertFalse(fresh.host.awaitingApproval)
+        XCTAssertNil(fresh.host.pairingComparisonCode)
+        XCTAssertNil(fresh.host.media)
+        XCTAssertNil(fresh.phoneStore.data)
         XCTAssertFalse(try XCTUnwrap(fresh.hostStore.read(HostPair.self)).paired)
     }
     func testDeclineRetiresTheQRAndBothCodesWithoutSavingPhoneTrust() throws {

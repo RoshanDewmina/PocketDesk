@@ -3,7 +3,11 @@ import Foundation
 
 final class MemoryPairStore: PairPersistence {
     var data: Data?
-    func save<T: Encodable>(_ value: T) throws { data = try JSONEncoder().encode(value) }
+    var refuseSave = false
+    func save<T: Encodable>(_ value: T) throws {
+        if refuseSave { throw RemoteError.keychain(-25308) }
+        data = try JSONEncoder().encode(value)
+    }
     func read<T: Decodable>(_ type: T.Type) throws -> T? { try data.map { try JSONDecoder().decode(type, from: $0) } }
     func delete() throws { data = nil }
 }
@@ -84,7 +88,8 @@ final class ManualScheduler: RenewalScheduler, @unchecked Sendable {
 }
 
 @MainActor
-final class ScriptedSignaling: SignalingTransport {
+final class ScriptedSignaling: MultiDeviceSignalingTransport {
+    var clientTokenHashes: [String]?
     struct Connect {
         let invitation: PairInvitation
         let hostToken: String?

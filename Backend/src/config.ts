@@ -80,7 +80,7 @@ export function loadConfig(env: Env): Config {
     stunUrls,
     turnTtlSeconds,
     leaseMs: leaseSeconds * 1000,
-    maxDevices: parseIntegerVar(env.MAX_DEVICES_PER_ENTITLEMENT, 3, 1, 10),
+    maxDevices: parseIntegerVar(env.MAX_DEVICES_PER_ENTITLEMENT, 5, 1, 10),
     testForceRelay,
     allowUnentitledRelay,
     devRelayRooms,

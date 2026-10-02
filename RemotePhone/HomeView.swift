@@ -88,6 +88,9 @@ struct PhoneRemoteView: View {
             if !connection.connected && MacStatus(status).tone != .busy { sessionHeld = false }
         }
         .modifier(E2EStateProbeModifier())
+        #if DEBUG
+        .modifier(SimulatedSessionWindow())
+        #endif
     }
 }
 
@@ -144,6 +147,7 @@ struct HomeView: View {
     @State private var pairedInSheet = false
     @State private var contactRipples: [HalftoneRipple] = []
     @State private var artSize: CGSize = .zero
+    @State private var regularIntroHeight: CGFloat = 302
     /// When the current connect started waiting; drives the "still trying" rings (D38).
     @State private var searchStart: Date?
     /// The art's reaction to a known failure, shown briefly before the error cover.
@@ -174,7 +178,10 @@ struct HomeView: View {
 
     var body: some View {
         GeometryReader { proxy in
-            if verticalSizeClass == .compact {
+            if FarsideShellLayout.twoColumns(horizontal: horizontalSizeClass, typeSize: typeSize,
+                                            enabled: FarsideShellLayout.enabled) {
+                regularHome(windowWidth: proxy.size.width)
+            } else if verticalSizeClass == .compact && !(horizontalSizeClass == .regular && typeSize.isAccessibilitySize && FarsideShellLayout.enabled) {
                 // Landscape phone: art on the left, the Mac and Connect always in view on the right.
                 HStack(alignment: .top, spacing: Farside.Space.l) {
                     VStack(alignment: .leading, spacing: 0) {
@@ -210,6 +217,10 @@ struct HomeView: View {
             }
         }
         .background(FarsideBackground())
+        .onChange(of: horizontalSizeClass, initial: true) { _, sizeClass in
+            guard let sizeClass else { return }
+            ViewportPreference.initialize(regularWidth: sizeClass == .regular)
+        }
         .sheet(item: $model.pairingEntry, onDismiss: pairingDismissed) { entry in
             PairingSheet(model: model, entry: entry, replacing: connection.invitation?.name) { pairedInSheet = true }
         }
@@ -228,7 +239,7 @@ struct HomeView: View {
             AnywherePaywallView(store: anywhere, access: AnywhereAccess.shared)
                 .farsideSheet()
         }
-        .sheet(isPresented: $showLegal) { LegalNoticesView() }
+        .sheet(isPresented: $showLegal) { LegalNoticesView().farsideRegularSheet() }
         .sheet(isPresented: $showSecurity) { SecuritySettingsSheet() }
         .sheet(isPresented: $showPairedMacs) { PairedMacSelectionSheet(model: model).farsideSheet() }
         .sheet(isPresented: $showServerData) {
@@ -310,7 +321,49 @@ struct HomeView: View {
         .padding(.top, Farside.Space.xs)
     }
 
-    @ViewBuilder private var homeColumn: some View {
+    private func regularHome(windowWidth: CGFloat) -> some View {
+        let columns = FarsideShellLayout.columns(windowWidth: windowWidth)
+        return HStack(alignment: .top, spacing: 20) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        header
+                        gapArt(fullBleed: false)
+                    }
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { regularIntroHeight = $0 }
+                    homePrimary
+                }
+                .padding(.bottom, Farside.Space.m)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(width: columns.leading)
+            .accessibilityIdentifier("home.leading")
+            ScrollView {
+                if macName != nil || savedMacState == .choose {
+                    homeUtilities
+                        .padding(.top, regularIntroHeight)
+                        .padding(.bottom, Farside.Space.m)
+                }
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(width: columns.trailing)
+            .accessibilityIdentifier("home.trailing")
+        }
+        .padding(.horizontal, 20)
+        .frame(maxWidth: 1040)
+        .frame(maxWidth: .infinity)
+        .accessibilityIdentifier("phone.home")
+    }
+
+    private var homeColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            homePrimary
+            Spacer(minLength: verticalSizeClass == .compact ? Farside.Space.l : Farside.Space.xl)
+            homeUtilities
+        }
+    }
+
+    @ViewBuilder private var homePrimary: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let macName {
                 MacCard(name: macName, status: status, health: health, checking: checking,
@@ -335,7 +388,11 @@ struct HomeView: View {
                 FarsideNotice(message: model.error, tone: .caution)
                     .padding(.top, Farside.Space.m)
             }
-            Spacer(minLength: verticalSizeClass == .compact ? Farside.Space.l : Farside.Space.xl)
+        }
+    }
+
+    private var homeUtilities: some View {
+        VStack(alignment: .leading, spacing: 0) {
             if macName != nil || savedMacState == .choose { homeList }
             AnywherePlanRow(store: anywhere) { showPaywall = true }
                 .padding(.top, Farside.Space.m)
@@ -427,7 +484,7 @@ struct HomeView: View {
                     .buttonStyle(ConnectPillStyle())
                     .disabled(checking)
                     .accessibilityLabel("Connect")
-                    .accessibilityHint("Closes the gap: opens your Mac’s screen on this iPhone")
+                    .accessibilityHint("Closes the gap: opens your Mac’s screen on this \(DeviceWord.current)")
                     .accessibilityIdentifier("home.connect")
                 VStack(spacing: 6) {
                     Button(CouchCopy.entryTitle) { connect(mode: .couch) }
@@ -739,7 +796,7 @@ struct MacStatus: Equatable {
         case "Ready to connect", "Disconnected", "Not connected":
             self.init(text: "Paired · ready when you are", tone: .idle)
         case "Approve this phone on your Mac":
-            self.init(text: "Approve this iPhone on your Mac", tone: .busy, needsApproval: true, inContact: true, progress: 2)
+            self.init(text: "Approve this \(DeviceWord.current) on your Mac", tone: .busy, needsApproval: true, inContact: true, progress: 2)
         case "new", "checking", "connected", "completed":
             self.init(text: "Opening the picture", tone: .busy, inContact: true, progress: 3)
         case "disconnected", "failed", "closed":
@@ -803,7 +860,7 @@ struct MacCard: View {
                         .font(.title2.weight(.semibold))
                         .foregroundStyle(Farside.Palette.bone)
                         .fixedSize(horizontal: false, vertical: true)
-                    Text("Paired with this iPhone")
+                    Text("Paired with this \(DeviceWord.current)")
                         .font(.subheadline)
                         .foregroundStyle(Farside.Palette.ash)
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1038,7 +1095,7 @@ private struct ConnectionDetailsSheet: View {
             }
         }
         .tint(Farside.Palette.bone)
-        .presentationDetents([.medium, .large])
+        .farsideCompactDetents([.medium, .large])
         .farsideSheet()
     }
 }

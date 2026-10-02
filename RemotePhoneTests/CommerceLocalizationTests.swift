@@ -8,7 +8,7 @@ final class CommerceLocalizationTests: XCTestCase {
         let price = CommerceLocalization.text("PRICE_YEAR", "%@ a year", "59,99 $", bundle: french, locale: Locale(identifier: "fr_CA"))
         XCTAssertEqual(price, "59,99 $ par an")
         let disclosure = CommerceLocalization.text("DISCLOSURE_TRIAL_YEAR", "fallback", "7 jours", "59,99 $", bundle: french, locale: Locale(identifier: "fr_CA"))
-        for part in ["7 jours", "59,99 $ par an", "24 heures", "Compte Apple", "trois", "réseau local vérifié"] {
+        for part in ["7 jours", "59,99 $ par an", "24 heures", "Compte Apple", "cinq", "réseau local vérifié"] {
             XCTAssertTrue(disclosure.contains(part), part)
         }
         XCTAssertFalse(disclosure.contains("a year")); XCTAssertFalse(disclosure.contains("%@"))

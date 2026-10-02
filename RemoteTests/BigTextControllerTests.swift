@@ -113,6 +113,25 @@ final class BigTextControllerTests: XCTestCase {
         XCTAssertEqual(keeper.settled, 1)
     }
 
+    func testDeliberateEndRestoreStartsInsidePrivacyCurtainDetectionWindow() async {
+        await apply(1280)
+        let endedAt = clock
+        var startedAt: TimeInterval?
+        switcher.onApply = { [unowned self] mode, display in
+            if mode == self.base { startedAt = self.clock }
+            self.controller.observe(DisplayReconfigurationEvent(display: display, flags: [.setModeFlag]))
+        }
+        // This is the explicit-End HostModel path, rather than unexpected-disconnect grace.
+        controller.sessionEnded(.sessionEnded)
+        await controller.drain()
+        XCTAssertNotNil(startedAt)
+        XCTAssertLessThan((startedAt ?? .infinity) - endedAt, PrivacyCurtainPolicy.restoreHoldDetect)
+        XCTAssertEqual(switcher.currentByDisplay[1], base)
+        XCTAssertFalse(controller.isEngaged)
+        XCTAssertTrue(PrivacyCurtainPolicy.restoreHoldShouldEnd(observed: true,
+            engaged: controller.isEngaged, changing: controller.isChanging, needsRefresh: false))
+    }
+
     func testChangingIsReportedWhileTheModeSwitches() async {
         var sawChanging = false
         switcher.onApply = { [unowned self] _, display in

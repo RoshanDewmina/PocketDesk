@@ -1,5 +1,27 @@
 import SwiftUI
 
+/// Device copy follows the hardware even when an iPad window is compact.
+/// Phone strings remain byte-for-byte identical.
+enum DeviceWord {
+    static var current: String { name(for: UIDevice.current.userInterfaceIdiom) }
+    static func name(for idiom: UIUserInterfaceIdiom) -> String { idiom == .pad ? "iPad" : "iPhone" }
+    static func copy(_ phoneCopy: String, idiom: UIUserInterfaceIdiom = UIDevice.current.userInterfaceIdiom) -> String {
+        idiom == .pad ? phoneCopy.replacingOccurrences(of: "iPhone", with: "iPad") : phoneCopy
+    }
+}
+
+/// Internal rollback for the regular-width shell; no user-facing setting.
+enum FarsideShellLayout {
+    static var enabled: Bool { UserDefaults.standard.object(forKey: "ipad.shellEnabled") as? Bool ?? true }
+    static func twoColumns(horizontal: UserInterfaceSizeClass?, typeSize: DynamicTypeSize, enabled: Bool) -> Bool {
+        enabled && horizontal == .regular && !typeSize.isAccessibilitySize
+    }
+    static func columns(windowWidth: CGFloat) -> (leading: CGFloat, trailing: CGFloat) {
+        let available = max(0, min(1040, windowWidth) - 40 - 20)
+        return (min(560, available * 560 / 960), min(400, available * 400 / 960))
+    }
+}
+
 extension Farside.Palette {
     /// Ink for text and glyphs on bone surfaces.
     static let ink = Color(red: 10 / 255, green: 10 / 255, blue: 10 / 255)
@@ -155,8 +177,47 @@ extension View {
     }
 
     func farsideSheet() -> some View {
-        presentationBackground(Farside.Palette.void2)
+        modifier(FarsideSheetModifier())
+    }
+
+    /// For presentations that had no Farside plate on compact-width phones.
+    func farsideRegularSheet() -> some View {
+        modifier(FarsideSheetModifier(regularOnly: true))
+    }
+
+    /// Compact presentations retain their existing detents; regular forms use their natural size.
+    func farsideCompactDetents(_ detents: Set<PresentationDetent>) -> some View {
+        modifier(FarsideCompactDetentsModifier(detents: detents))
+    }
+}
+
+private struct FarsideCompactDetentsModifier: ViewModifier {
+    var detents: Set<PresentationDetent>
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    @ViewBuilder func body(content: Content) -> some View {
+        if SessionChromePolicy.form(regular: horizontalSizeClass == .regular, enabled: FarsideShellLayout.enabled) {
+            content
+        } else {
+            content.presentationDetents(detents)
+        }
+    }
+}
+
+private struct FarsideSheetModifier: ViewModifier {
+    var regularOnly = false
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    @ViewBuilder func body(content: Content) -> some View {
+        let plate = content.presentationBackground(Farside.Palette.void2)
             .presentationCornerRadius(Farside.Radius.sheet)
+        if SessionChromePolicy.form(regular: horizontalSizeClass == .regular, enabled: FarsideShellLayout.enabled) {
+            plate.presentationSizing(.form)
+        } else if regularOnly {
+            content
+        } else {
+            plate
+        }
     }
 }
 

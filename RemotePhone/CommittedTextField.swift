@@ -6,22 +6,26 @@ import UIKit
 /// proposal when the contained editor becomes first responder immediately after insertion.
 struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
     private let content: Content
+    private let containerOnlySafeArea: Bool
     /// The panel's frame in window coordinates, after each layout pass that moves it with the keyboard.
     private let onFrame: ((CGRect) -> Void)?
 
-    init(onFrame: ((CGRect) -> Void)? = nil, @ViewBuilder content: () -> Content) {
+    init(containerOnlySafeArea: Bool = false, onFrame: ((CGRect) -> Void)? = nil, @ViewBuilder content: () -> Content) {
         self.content = content()
+        self.containerOnlySafeArea = containerOnlySafeArea
         self.onFrame = onFrame
     }
 
     func makeUIViewController(context: Context) -> Controller {
         let controller = Controller(content: content)
+        controller.setContainerOnlySafeArea(containerOnlySafeArea)
         controller.onFrame = onFrame
         return controller
     }
 
     func updateUIViewController(_ controller: Controller, context: Context) {
         controller.onFrame = onFrame
+        controller.setContainerOnlySafeArea(containerOnlySafeArea)
         controller.update(content)
     }
 
@@ -30,6 +34,9 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
         private let host: UIHostingController<Content>
         var onFrame: ((CGRect) -> Void)?
         private var reportedFrame: CGRect?
+        #if DEBUG
+        private var probedFrame: CGRect?
+        #endif
 
         init(content: Content) {
             host = UIHostingController(rootView: content)
@@ -65,6 +72,9 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
 
         override func viewDidLayoutSubviews() {
             super.viewDidLayoutSubviews()
+            #if DEBUG
+            recordHitTestProbe()
+            #endif
             guard let onFrame, view.window != nil else { return }
             let frame = host.view.convert(host.view.bounds, to: nil)
             guard frame != reportedFrame else { return }
@@ -72,9 +82,35 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
             DispatchQueue.main.async { onFrame(frame) }
         }
 
+        #if DEBUG
+        /// Opt-in fixture diagnostics; no editor contents or remote input is recorded or sent.
+        private func recordHitTestProbe() {
+            guard LaunchOptions.layoutCheck, LaunchOptions.has("--ui-keyboard-hit-probe"), let window = view.window else { return }
+            let frame = host.view.convert(host.view.bounds, to: window)
+            guard frame != probedFrame else { return }
+            probedFrame = frame
+            NSLog("%@", "[B7 keyboardHit] parent=\(view.bounds) host=\(host.view.bounds) frame=\(frame) enabled=\(host.view.isUserInteractionEnabled) alpha=\(host.view.alpha)")
+            for fraction in [CGFloat(0.5), 0.7, 0.83, 0.96] {
+                let local = CGPoint(x: host.view.bounds.width * fraction, y: min(24, host.view.bounds.height / 2))
+                let parent = host.view.convert(local, to: view)
+                let global = host.view.convert(local, to: window)
+                let target = window.hitTest(global, with: nil)
+                let targetClass = target.map { String(describing: type(of: $0)) } ?? "nil"
+                let keyboardTarget = target === host.view || target?.isDescendant(of: host.view) == true
+                NSLog("%@", "[B7 keyboardHit] point=\(global) hostInside=\(host.view.point(inside: local, with: nil)) parentInside=\(view.point(inside: parent, with: nil)) keyboardTarget=\(keyboardTarget) parentTarget=\(target === view) target=\(targetClass.prefix(100))")
+            }
+        }
+        #endif
+
         func update(_ content: Content) {
             host.rootView = content
             host.view.invalidateIntrinsicContentSize()
+        }
+
+        func setContainerOnlySafeArea(_ enabled: Bool) {
+            let regions: SafeAreaRegions = enabled ? .container : .all
+            guard host.safeAreaRegions != regions else { return }
+            host.safeAreaRegions = regions
         }
     }
 }

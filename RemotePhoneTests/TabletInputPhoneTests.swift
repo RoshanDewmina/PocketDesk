@@ -3,6 +3,15 @@ import XCTest
 
 @MainActor
 final class TabletInputPhoneTests: XCTestCase {
+    func testPencilWorksWithoutAnOptInSetting() {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        XCTAssertTrue(model.pencilEnabled)
+        XCTAssertFalse(model.pencilSupported, "Default availability never bypasses the peer handshake")
+        XCTAssertFalse(model.pencil(at: CGPoint(x: 30, y: 40),
+                                    frame: PencilFrame(stream: String(repeating: "a", count: 32), phase: .began,
+                                                       pressure: 0.5, tiltX: 0, tiltY: 0)),
+                       "No Pencil input may leave a disconnected session")
+    }
     func testActualPublicControllerRequestsButDoesNotAssumeSceneLockAndEndsOnce() {
         var actions = 0, ends = 0
         let controller = LockedMouseController(revision: 7, gain: 1, send: { _ in actions += 1; return true }, key: { _, _ in true }, modifiers: { _ in })

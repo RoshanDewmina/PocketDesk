@@ -137,6 +137,15 @@ final class RemoteHostModel: ObservableObject {
     private var curtainRaising = false
     private var curtainLocallyDismissed = false
     private var curtainRaiseFailed = false
+    /// Privacy mode bookkeeping for the session's diagnostic report and the end-of-session hold.
+    private var curtainCoveredThisSession = false
+    private var curtainRestoreHold = false
+    /// A Big Text restore was seen running during the hold; the hold is for restores, not for
+    /// the reconnect grace that precedes one after a dropped connection.
+    private var curtainRestoreObserved = false
+    private var curtainRestoreHoldTask: Task<Void, Never>?
+    private var heldScale: (display: CGDirectDisplayID, width: Double, requestID: String?)?
+    private var scaleHoldTask: Task<Void, Never>?
     private var captureUnhealthySince: TimeInterval?
     /// Registered without Screen Recording only so the paired phone learns why it cannot connect.
     private var listeningWithoutSharing = false
@@ -419,7 +428,7 @@ final class RemoteHostModel: ObservableObject {
         HostInputAccess(postEvents: InputCadenceTrace.permission("post", probe: CGPreflightPostEventAccess) ? .granted : .denied,
                         accessibility: InputCadenceTrace.permission("AX", probe: AXIsProcessTrusted) ? .granted : .denied)
     }
-    var hasPairedPhone: Bool { connection.hostPair?.paired == true }
+    var hasPairedPhone: Bool { !connection.pairedDevices.isEmpty }
     var serviceAddress: String? {
         HostPreferences.resolveServiceAddress(
             saved: connection.invitation?.server,
@@ -453,8 +462,7 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private var pairingInProgress: Bool {
-        !pairingCode.isEmpty && !pairingExpired && connection.hostPair?.paired == false
-            && (connection.hostPair?.invitation.expires ?? .distantPast) > Date()
+        !pairingCode.isEmpty && !pairingExpired && connection.pendingPairInvitation != nil
     }
 
     var status: HostStatus {
@@ -477,10 +485,8 @@ final class RemoteHostModel: ObservableObject {
 
     var pairingState: HostPairingState {
         if connection.awaitingApproval { return .awaitingApproval }
-        if !pairingCode.isEmpty, let pair = connection.hostPair, !pair.paired {
-            // Rejection, timeout and malformed enrollment retire the invitation immediately.
-            let expires = pair.invitation.expires
-            return pairingExpired || expires <= Date() ? .expired : .showingCode(pairingCode, expires: expires)
+        if !pairingCode.isEmpty, connection.pendingPairInvitation != nil, let pairingExpires {
+            return pairingExpired ? .expired : .showingCode(pairingCode, expires: pairingExpires)
         }
         if serviceAddress == nil { return .needsService }
         if hasPairedPhone && pairingRequested { return .confirmReplace }
@@ -507,6 +513,11 @@ final class RemoteHostModel: ObservableObject {
             status: status,
             setupStep: setupStep,
             hasPairedPhone: hasPairedPhone,
+            pairedDevices: connection.pairedDevices.map { device in
+                HostPairedDeviceRow(id: device.id, name: PhoneDisplayName.display(device.phoneName),
+                                    lastUsed: device.lastUsed,
+                                    connected: connection.connected && connection.invitation == device.invitation)
+            },
             pairingRequested: pairingRequested,
             pairing: pairingState,
             pairingComparisonCode: connection.pairingComparisonCode,
@@ -922,6 +933,15 @@ final class RemoteHostModel: ObservableObject {
 
     func cancelPairing() {
         pairingRequested = false
+        guard connection.pendingPairInvitation != nil else { return }
+        let resume = wantsSharing
+        if connection.cancelPendingPairing() {
+            clearPairingCode()
+            if resume, hasPairedPhone { resumeSharing() }
+        } else {
+            wantsSharing = false; preferences.sharingEnabled = false
+            detail = "Couldn’t cancel the pairing code. Sharing is off; unlock this Mac and retry."
+        }
     }
 
     func setServiceAddress(_ value: String) {
@@ -941,6 +961,10 @@ final class RemoteHostModel: ObservableObject {
             bundled: Bundle.main.object(forInfoDictionaryKey: "PocketDeskServiceURL") as? String
         ) else { objectWillChange.send(); return }
         guard !browserSession.controller.running else { detail = "Browser access is on. Stop it before pairing a phone."; return }
+        guard !connection.connected, connection.media == nil, !connection.awaitingApproval,
+              !captureApproval.isPending, !consentPending else {
+            detail = HostDeviceLimitError.busy.localizedDescription; return
+        }
         guard canPair, let display = validatedSelectedDisplay() else {
             detail = "Farside needs Screen Recording and a display to share before pairing."
             return
@@ -980,7 +1004,11 @@ final class RemoteHostModel: ObservableObject {
 
     func declinePhone() {
         connection.reject()
-        pairingExpired = true
+        clearPairingCode(); pairingRequested = false
+        detail = hasPairedPhone ? "Device wasn’t added. Your other devices stay paired." : "Pairing was declined."
+        if connection.pairingRemovalFailure != nil {
+            wantsSharing = false; preferences.sharingEnabled = false
+        }
     }
 
     func removeServerRoom() {
@@ -1107,6 +1135,23 @@ final class RemoteHostModel: ObservableObject {
         pairingRequested = false
     }
 
+    func removePairedDevice(_ id: String) {
+        guard removalAllowsSharing else { return }
+        let resume = wantsSharing
+        cancelTimedPause()
+        if !browserSession.controller.running { stop() }
+        let removed = connection.removePairedDevice(id)
+        localPairRemovalMessage = removed
+            ? "Device removed. Your other devices stay paired."
+            : "Couldn’t confirm removal. Sharing is off. Unlock this Mac and retry Remove."
+        clearPairingCode(); pairingRequested = false
+        if removed, resume, hasPairedPhone { resumeSharing() }
+        else if !hasPairedPhone || !removed {
+            wantsSharing = false; preferences.sharingEnabled = false
+        }
+        objectWillChange.send()
+    }
+
     private func clearPairingCode() {
         pairingCode = ""
         pairingExpires = nil
@@ -1118,7 +1163,7 @@ final class RemoteHostModel: ObservableObject {
         recordServiceTransition()
         refreshAgentPushRelay()
         if hasPairedPhone { clearDeferredPairing() }
-        guard !pairingCode.isEmpty, hasPairedPhone else { return }
+        guard !pairingCode.isEmpty, connection.pendingPairInvitation == nil, hasPairedPhone else { return }
         clearPairingCode()
         pairingRequested = false
     }
@@ -1245,7 +1290,8 @@ final class RemoteHostModel: ObservableObject {
         away.refresh()
         bigText.retryPendingRestore()
         switch connection.peerRequestedMode {
-        case .picture: beginCapture()
+        // A reconnect during the post-session hold keeps the curtain and its exclusions.
+        case .picture: beginCapture(keepingExclusions: curtain.phase == .up)
         case .couch:
             if let refusal = CouchAdmission.decide(couchAdmissionInputs) { beginRefused(refusal) } else { beginCouch() }
         }
@@ -1392,9 +1438,9 @@ final class RemoteHostModel: ObservableObject {
             return self.hasPairedPhone && !self.serverRemovalPending && !self.serverRemovalReadFailed && !self.serverRemovalBusy
         }
         agentAlerts.pushIdentity = { [weak self] in
-            guard let self, let pair = self.connection.hostPair, pair.paired,
+            guard let self, let root = self.connection.hostPair, let primary = root.approvedDevices.first,
                   !self.serverRemovalPending, !self.serverRemovalReadFailed, !self.serverRemovalBusy else { return nil }
-            return SecureRandom.digest(pair.hostToken + "|" + pair.invitation.token + "|" + pair.invitation.server)
+            return SecureRandom.digest(root.hostToken + "|" + primary.invitation.token + "|" + primary.invitation.server)
         }
         agentAlerts.record = { [weak self] text in self?.events.record(.session, text) }
         refreshAgentPushRelay()
@@ -1403,8 +1449,11 @@ final class RemoteHostModel: ObservableObject {
     }
 
     private func refreshAgentPushRelay() {
-        let pair = connection.hostPair?.paired == true && !serverRemovalPending && !serverRemovalReadFailed && !serverRemovalBusy
-            ? connection.hostPair : nil
+        let pair: HostPair?
+        if let root = connection.hostPair, let primary = root.approvedDevices.first,
+           !serverRemovalPending, !serverRemovalReadFailed, !serverRemovalBusy {
+            pair = root.selecting(primary)
+        } else { pair = nil }
         if pair?.hostToken == agentPushPair?.hostToken &&
             pair?.invitation == agentPushPair?.invitation && pair?.paired == agentPushPair?.paired { return }
         agentPushPair = pair
@@ -1859,6 +1908,9 @@ final class RemoteHostModel: ObservableObject {
     private func reconcileCurtain() {
         applyAwayCurtainSettings()
         let now = ProcessInfo.processInfo.systemUptime
+        if curtainRestoreHold, PrivacyCurtainPolicy.restoreHoldShouldEnd(
+            observed: curtainRestoreObserved, engaged: bigText.isEngaged, changing: bigText.isChanging,
+            needsRefresh: bigTextNeedsRefresh) { endCurtainRestoreHold() }
         let inputs = PrivacyCurtainInputs(
             preference: !captureScopeViewOnly && curtainPreference,
             sessionLive: active && connection.connected && !terminating,
@@ -1866,6 +1918,9 @@ final class RemoteHostModel: ObservableObject {
             unhealthyFor: captureUnhealthySince.map { now - $0 } ?? 0,
             displayAsleep: displayAsleep,
             phonePaused: phonePause.isPaused,
+            pausedFor: phonePause.since.map { now - $0 } ?? 0,
+            phoneSilentFor: sessionState == .picture ? (lastPhoneHeartbeatAt.map { now - $0 } ?? 0) : 0,
+            restoreHold: curtainRestoreHold,
             screenLocked: screenLocked,
             accessibilityGranted: inputAccess.accessibility.isGranted,
             locallyDismissed: curtainLocallyDismissed,
@@ -1895,20 +1950,37 @@ final class RemoteHostModel: ObservableObject {
     private func raiseCurtain() {
         curtainRaising = true
         let raisingAway = away.wantsCover && awayMarkerCommitted
+        let attempt = captureAttempt
         let hooks = raisingAway ? awayCoverHooks : PrivacyCurtainController.CaptureHooks(
             exclude: { [weak self] ids in await self?.capture.excludeWindows(ids) ?? false },
-            signature: { [weak self] in await self?.capture.lumaSignature() }
+            // A stream that restarted since the raise began (Big Text's switch lands inside the
+            // 500 ms check) cannot prove anything about this curtain; nil skips the check.
+            signature: { [weak self] in
+                guard let self, self.captureAttempt == attempt else { return nil }
+                return await self.capture.lumaSignature()
+            }
         )
         Task { @MainActor [weak self] in
             guard let self else { return }
             let result = await self.curtain.raise(hooks: hooks)
             self.curtainRaising = false
+            // The stream restarting underneath a raise (Big Text, display switch, audio) is not a
+            // failure; the next reconcile simply tries again against the new stream.
+            let overtaken = !raisingAway && self.captureAttempt != attempt
             switch result {
             case .raised:
+                if !raisingAway { self.curtainCoveredThisSession = true }
                 self.events.record(.curtain, "Curtain up on \(NSScreen.screens.count) display(s)")
             case .exclusionFailed, .verificationFailed, .noScreens:
-                if raisingAway { self.awayCoverRaiseFailed = true } else { self.curtainRaiseFailed = true }
-                self.events.record(.error, "Cover could not be prepared: \(result)")
+                if overtaken && result != .noScreens {
+                    self.events.record(.curtain, "Cover attempt overtaken by a capture restart")
+                } else if raisingAway {
+                    self.awayCoverRaiseFailed = true
+                    self.events.record(.error, "Cover could not be prepared: \(result)")
+                } else {
+                    self.curtainRaiseFailed = true
+                    self.events.record(.error, "Cover could not be prepared: \(result)")
+                }
             case .cancelled:
                 break
             }
@@ -1916,17 +1988,117 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
-    private func curtainLiftedLocally() {
-        curtainLocallyDismissed = true
-        events.record(.curtain, "Lifted at the Mac with Esc ×3")
-    }
-
-    /// Lifts synchronously; used where sharing ends, before anything else is torn down.
-    private func liftCurtain() {
-        if curtain.phase != .down && !away.wantsCover { curtain.lift() }
+    /// Lifts synchronously; used where sharing ends, before anything else is torn down. At a
+    /// session end with Big Text still applied, the curtain instead stays up (bounded) until the
+    /// restore finishes, so the person at the Mac never watches the mode flip and windows jump.
+    private func liftCurtain(holdingForRestore: Bool = false) {
+        if holdingForRestore, curtain.phase == .up, !away.wantsCover, !terminating, bigText.isEngaged {
+            beginCurtainRestoreHold()
+        } else if curtain.phase != .down && !away.wantsCover {
+            curtain.lift()
+        }
         let covered = curtain.phase != .down
         watchdog?.setCurtainUp(covered)
         updateHangWatchdog(curtainUp: covered)
+    }
+
+    /// Keyed off a restore actually running, not off a fixed end path: a deliberate End restores
+    /// at once (b7-bigtext's explicit-End signal), a dropped connection waits out a grace first.
+    /// If no restore has started within `restoreHoldDetect`, the hold ends; otherwise it lasts
+    /// until the restore finishes or `restoreHoldLimit`.
+    private func beginCurtainRestoreHold() {
+        guard !curtainRestoreHold else { return }
+        curtainRestoreHold = true
+        curtainRestoreObserved = bigText.isChanging || bigTextNeedsRefresh
+        events.record(.curtain, "Staying covered while the Mac’s own size comes back")
+        curtainRestoreHoldTask?.cancel()
+        curtainRestoreHoldTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(PrivacyCurtainPolicy.restoreHoldDetect))
+            guard let self, !Task.isCancelled else { return }
+            if self.curtainRestoreObserved {
+                try? await Task.sleep(for: .seconds(PrivacyCurtainPolicy.restoreHoldLimit - PrivacyCurtainPolicy.restoreHoldDetect))
+                guard !Task.isCancelled else { return }
+            } else {
+                self.events.record(.curtain, "No restore started; uncovering")
+            }
+            self.endCurtainRestoreHold()
+            self.reconcileCurtain()
+        }
+    }
+
+    private func endCurtainRestoreHold() {
+        guard curtainRestoreHold else { return }
+        curtainRestoreHold = false
+        curtainRestoreObserved = false
+        curtainRestoreHoldTask?.cancel(); curtainRestoreHoldTask = nil
+    }
+
+    /// Restarts the picture stream inside a session. A half-raised curtain is cancelled first and a
+    /// raised one keeps its windows and exclusions, so a restart never uncovers the Mac.
+    private func restartCapture() {
+        curtain.cancelRaise()
+        beginCapture(keepingExclusions: curtain.phase == .up)
+    }
+
+    /// Privacy mode: the first Big Text change waits briefly for the curtain, so the mode switch
+    /// and the window shuffle happen under it rather than in view of the person at the Mac.
+    private var curtainWillCoverSoon: Bool {
+        PrivacyCurtainPolicy.scaleShouldWait(
+            curtainUp: curtain.phase == .up,
+            expected: curtainPreference && !captureScopeViewOnly && inputAccess.accessibility.isGranted
+                && !crashLoopStopped && !screenLocked,
+            raiseFailed: curtainRaiseFailed, liftedLocally: curtainLocallyDismissed,
+            paused: phonePause.isPaused, bigTextEngaged: bigText.isEngaged)
+    }
+
+    private func holdScaleRequest(display: CGDirectDisplayID, width: Double, requestID: String?) {
+        if let held = heldScale, held.requestID == requestID { scaleHoldTask?.cancel(); heldScale = nil } else { cancelHeldScale() }
+        heldScale = (display, width, requestID)
+        scaleHoldTask?.cancel()
+        let epoch = inputEpoch.value
+        let deadline = ProcessInfo.processInfo.systemUptime + PrivacyCurtainPolicy.scaleHoldLimit
+        scaleHoldTask = Task { @MainActor [weak self] in
+            while true {
+                guard let self, !Task.isCancelled, self.curtainWillCoverSoon,
+                      ProcessInfo.processInfo.systemUptime < deadline else { break }
+                try? await Task.sleep(for: .milliseconds(50))
+            }
+            guard let self, !Task.isCancelled, let held = self.heldScale else { return }
+            self.heldScale = nil
+            self.scaleHoldTask = nil
+            guard PrivacyCurtainPolicy.heldScaleMayApply(connected: self.connection.connected, sharing: self.active,
+                    picture: self.sessionState == .picture, viewOnly: self.liveViewOnly || self.captureScopeViewOnly,
+                    paused: self.phonePause.isPaused, refused: self.sessionRefused,
+                    ending: self.deliberatePeerEnding || self.away.isLocking,
+                    sameEpoch: epoch == self.inputEpoch.value),
+                  held.display == self.selected, held.display == self.capturedDisplayID else {
+                return self.sendDisplayList(scaleError: .busy, scaleRequestID: held.requestID)
+            }
+            self.events.record(.curtain, self.curtain.phase == .up ? "Big Text applied under the curtain"
+                                                                   : "Big Text applied before the curtain was ready")
+            self.bigText.request(display: held.display, looksLikeWidth: held.width, allowed: self.preferences.allowBigText,
+                                 accessibilityGranted: self.inputAccess.accessibility.isGranted, requestID: held.requestID)
+        }
+    }
+
+    /// A held request that will never be applied is answered `busy`, so the phone does not sit
+    /// out its 8 s timeout.
+    private func cancelHeldScale() {
+        scaleHoldTask?.cancel(); scaleHoldTask = nil
+        if let held = heldScale { sendDisplayList(scaleError: .busy, scaleRequestID: held.requestID) }
+        heldScale = nil
+    }
+
+    /// Esc ×3 during a live session lifts for that session. During the post-session hold it only
+    /// ends the hold; it must not pre-dismiss the next session's curtain.
+    private func curtainLiftedLocally() {
+        if active && connection.connected {
+            curtainLocallyDismissed = true
+            events.record(.curtain, "Lifted at the Mac with Esc ×3")
+        } else {
+            events.record(.curtain, "Uncovered at the Mac with Esc ×3 after the session")
+        }
+        endCurtainRestoreHold()
     }
 
     private static func curtainStatus(_ state: PrivacyCurtainState, displays: Int) -> String? {
@@ -1957,7 +2129,7 @@ final class RemoteHostModel: ObservableObject {
         retireVirtualDisplay()
         guests.endAll()
         bigText.sessionEnded(.sessionEnded)
-        liftCurtain()
+        liftCurtain(holdingForRestore: true)
         invalidateTextFocus()
         unavailabilityTeardown?.cancel(); unavailabilityTeardown = nil
         browserSession.stop()
@@ -2307,6 +2479,7 @@ final class RemoteHostModel: ObservableObject {
             events.record(.session, "Phone connected")
         }
         captureUnhealthySince = nil
+        endCurtainRestoreHold()
         peer.onSenderStatistics = { [weak self, weak peer] report in
             guard let self, let peer, self.connection.media === peer else { return }
             self.diagnosticRecorder.observe(report, at: ProcessInfo.processInfo.systemUptime)
@@ -2418,6 +2591,7 @@ final class RemoteHostModel: ObservableObject {
                 self.reconcileAutomaticClipboard()
                 if self.phonePause.isPaused {
                     if self.phonePause.isExpired(at: ProcessInfo.processInfo.systemUptime) { self.expirePhonePause() }
+                    else { self.reconcileCurtain() }
                     return
                 }
                 self.input.expireMomentum()
@@ -2570,14 +2744,20 @@ final class RemoteHostModel: ObservableObject {
             try? diagnosticStore.save(diagnosticRecorder.finish(at: ProcessInfo.processInfo.systemUptime, additional: [
                 .init(.hostScreenRecording, CGPreflightScreenCaptureAccess() ? 1 : 0),
                 .init(.hostPostEvents, CGPreflightPostEventAccess() ? 1 : 0),
-                .init(.hostAccessibility, inputAccess.accessibility.isGranted ? 1 : 0)]))
+                .init(.hostAccessibility, inputAccess.accessibility.isGranted ? 1 : 0),
+                .init(.curtainOn, !captureScopeViewOnly && curtainPreference ? 1 : 0),
+                .init(.curtainCovered, curtainCoveredThisSession ? 1 : 0),
+                .init(.curtainLiftedAtMac, curtainLocallyDismissed ? 1 : 0),
+                .init(.curtainFailed, curtainRaiseFailed ? 1 : 0)]))
             diagnosticReports = diagnosticStore.load()
         }
         diagnosticRecorder = DiagnosticSessionRecorder()
         cancelPictureRefresh()
-        liftCurtain()
+        cancelHeldScale()
+        liftCurtain(holdingForRestore: true)
         curtainLocallyDismissed = false
         curtainRaiseFailed = false
+        curtainCoveredThisSession = false
         captureUnhealthySince = nil
         if let sessionStartedAt {
             lastSessionDuration = Date().timeIntervalSince(sessionStartedAt)
@@ -2611,7 +2791,9 @@ final class RemoteHostModel: ObservableObject {
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
         guests.endAll()
-        _ = capture.stop()
+        // A held curtain keeps its exclusions: nothing streams now, and the next capture start
+        // either keeps or drops them itself.
+        _ = capture.stop(keepingExclusions: curtainRestoreHold)
         couchHUD.hide()
         sessionState = .picture
         couchHealthy = false
@@ -3643,7 +3825,7 @@ final class RemoteHostModel: ObservableObject {
             return
         }
         events.record(.session, "Phone switched to the picture")
-        beginCapture()
+        restartCapture()
     }
 
     // MARK: Session extensions
@@ -3674,7 +3856,7 @@ final class RemoteHostModel: ObservableObject {
             invalidateTextFocus(); clipboard.reset(); fileTransfer.reset()
             // Restore only the Mac owner's existing producer consent when leaving live PiP.
             // Phone playback remains muted until the person explicitly enables it again.
-            if next { phoneAudioRequested = false }
+            if next { cancelHeldScale(); phoneAudioRequested = false }
             reconcileSystemAudio()
             applyControlState(notifyPhone: true)
             sendCaptureHealth(sessionHealthy, viewOnlyRequestID: action.liveViewOnlyRequestID)
@@ -3686,7 +3868,7 @@ final class RemoteHostModel: ObservableObject {
             }
             // Suspension retired the old capture audio epoch; enabling consent cannot revive it.
             // A real transition back starts a newly scoped stream/epoch, with owner consent intact.
-            if wasViewOnly && systemAudioAllowedNow { beginCapture() }
+            if wasViewOnly && systemAudioAllowedNow { restartCapture() }
         case "sessionEnd":
             // The control envelope already binds this to the authenticated current peer. A display
             // reconfiguration may advance the geometry epoch while End travels; close is still valid.
@@ -3767,6 +3949,12 @@ final class RemoteHostModel: ObservableObject {
                   displays.contains(where: { $0.displayID == requested }) else {
                 return sendDisplayList(scaleError: .unsupported, scaleRequestID: action.scaleRequestID)
             }
+            // A newer valid selection (including Off) supersedes the curtain-delayed request.
+            if heldScale?.requestID != action.scaleRequestID || width <= 0 { cancelHeldScale() }
+            if width > 0, !bigText.isEngaged, curtainWillCoverSoon {
+                holdScaleRequest(display: requested, width: width, requestID: action.scaleRequestID)
+                return
+            }
             bigText.request(display: requested, looksLikeWidth: width, allowed: preferences.allowBigText,
                             accessibilityGranted: inputAccess.accessibility.isGranted, requestID: action.scaleRequestID)
         default:
@@ -3778,10 +3966,10 @@ final class RemoteHostModel: ObservableObject {
     /// follow, so input meant for the old display can never land on the new one.
     private func switchSessionDisplay(to id: CGDirectDisplayID) {
         if virtualDisplayWasUsed { virtualDisplayBlocked = true; retireVirtualDisplay() }
+        cancelHeldScale()
         bigText.sessionEnded(.displaySwitched)
-        liftCurtain()
         selected = id
-        beginCapture()
+        restartCapture()
         sendDisplayList()
     }
 
@@ -3815,8 +4003,12 @@ final class RemoteHostModel: ObservableObject {
         if virtualDisplayWasUsed { retireVirtualDisplay() }
         cancelPictureRefresh()
         guard !phonePause.isPaused && (ending || !liveViewOnly) else { return }
-        liftCurtain()
         phoneAudioRequested = false
+        cancelHeldScale()
+        // Privacy mode: a quick app switch or lock on the phone must not uncover the Mac. A raised
+        // curtain keeps its windows and their capture exclusions through the pause (bounded by
+        // PrivacyCurtainPolicy.pausedHold); a half-raised one is cancelled before the stream stops.
+        curtain.cancelRaise()
         phonePause.begin(at: ProcessInfo.processInfo.systemUptime)
         reconcileSystemAudio()
         clipboard.reset()
@@ -3833,7 +4025,7 @@ final class RemoteHostModel: ObservableObject {
         captureTask?.cancel(); captureTask = nil
         endLoadMonitor()
         guests.endAll()
-        _ = capture.stop()
+        _ = capture.stop(keepingExclusions: curtain.phase == .up)
         couchHealthy = false
         updatePowerAssertions()
         reconcileCurtain()
@@ -3849,10 +4041,12 @@ final class RemoteHostModel: ObservableObject {
         bigTextEndedForLifecycle = false
         phonePause.clear()
         acceptedPhonePauseEpoch = nil
+        // Heartbeats paused with the phone; the silence rule must not count the pause.
+        lastPhoneHeartbeatAt = ProcessInfo.processInfo.systemUptime
         if sessionState == .couch { beginCouch() } else {
             connection.media?.counters.beginResumeCapture()
             connection.media?.rearmBandwidthSeed()
-            beginCapture()
+            restartCapture()
         }
     }
 
@@ -4171,6 +4365,7 @@ extension RemoteHostModel: BigTextHost {
 
     func bigTextStateChanged() {
         if bigText.isChanging {
+            if curtainRestoreHold { curtainRestoreObserved = true }
             prepareCurtainForBigTextChange()
             bigTextScreenSnapshot = nil
             bigTextNeedsRefresh = true

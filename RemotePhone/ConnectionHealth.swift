@@ -132,8 +132,8 @@ struct ConnectionHealth: Equatable {
                                     nextStep: "Try again in a moment.", action: .checkAgain)
         case .serviceUnreachable:
             return ConnectionHealth(state: .serviceUnreachable, title: "Can’t reach Farside’s service",
-                                    detail: "Farside’s connection service didn’t answer this iPhone.",
-                                    nextStep: "Check that this iPhone is online.", action: .checkAgain)
+                                    detail: "Farside’s connection service didn’t answer this \(DeviceWord.current).",
+                                    nextStep: "Check that this \(DeviceWord.current) is online.", action: .checkAgain)
         }
     }
 
@@ -157,7 +157,7 @@ struct ConnectionHealth: Equatable {
         /// The Mac's latest vitals, nil when stale or from a Mac that does not report them.
         var vitals: MacVitals? = nil
         var quality: ConnectionQualityVerdict? = nil
-        var device = "iPhone"
+        var device = DeviceWord.current
     }
 
     /// Nil while nothing is wrong. Order matters: a dropped connection explains a stalled picture,

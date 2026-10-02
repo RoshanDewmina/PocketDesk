@@ -10,7 +10,7 @@ struct ConnectPromptSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: Farside.Space.m) {
             FarsideHeading("Connect to \(macName)?", size: 30)
-            Text("Opens your Mac’s screen on this iPhone. Nothing reaches your Mac until you tap Connect.")
+            Text("Opens your Mac’s screen on this \(DeviceWord.current). Nothing reaches your Mac until you tap Connect.")
                 .font(.body)
                 .foregroundStyle(Farside.Palette.ash)
                 .fixedSize(horizontal: false, vertical: true)
@@ -18,7 +18,7 @@ struct ConnectPromptSheet: View {
             VStack(spacing: Farside.Space.xs) {
                 Button("Connect", action: connect)
                     .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
-                    .accessibilityHint("Opens your Mac’s screen on this iPhone")
+                    .accessibilityHint("Opens your Mac’s screen on this \(DeviceWord.current)")
                     .accessibilityIdentifier("connectPrompt.connect")
                 Button("Not now", action: close)
                     .buttonStyle(FarsideLinkButtonStyle())

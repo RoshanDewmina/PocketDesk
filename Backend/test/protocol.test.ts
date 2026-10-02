@@ -40,6 +40,19 @@ describe("register parsing", () => {
     expect(parseAuthenticatedFrame({ type: "register" }).kind).toBe("invalid");
   });
 
+  it("bounds multi-device host authorization and requires its capability and scalar primary", () => {
+    const hashes = [hash, "d".repeat(64), "e".repeat(64), "f".repeat(64), "1".repeat(64)];
+    const multi = { ...host, features: ["devices.1"], clientTokenHashes: hashes };
+    expect(parseRegister(multi)?.clientTokenHashes).toEqual(hashes);
+    expect(parseRegister({ ...multi, features: [] })).toBeUndefined();
+    expect(parseRegister({ ...multi, role: "client" })).toBeUndefined();
+    expect(parseRegister({ ...multi, clientTokenHash: undefined })).toBeUndefined();
+    for (const invalid of [[], [hash, hash], ["d".repeat(64)], [hash, "invalid"], [...hashes, "2".repeat(64)], hash]) {
+      expect(parseRegister({ ...multi, clientTokenHashes: invalid })).toBeUndefined();
+    }
+    expect(parseRegister(host)?.clientTokenHashes).toBeUndefined();
+  });
+
   it("bounds JSON frames", () => {
     expect(parseJsonFrame("{")).toBeUndefined();
     expect(parseJsonFrame("[]")).toBeUndefined();
@@ -143,6 +156,8 @@ describe("configuration guards", () => {
     expect(config.roots).toHaveLength(1);
     expect([...config.allowedProductIds]).toEqual(["com.roshan.PocketDesk.remote.monthly", "com.roshan.PocketDesk.remote.yearly"]);
     expect(config.leaseMs).toBe(1800 * 1000);
+    expect(config.maxDevices).toBe(5);
+    expect(loadConfig({ ...testEnv, MAX_DEVICES_PER_ENTITLEMENT: undefined } as unknown as Env).maxDevices).toBe(5);
   });
 
   it("preserves disabled quiet replacement on public deployments", () => {

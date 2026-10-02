@@ -38,6 +38,34 @@ final class MacParityPhoneTests: XCTestCase {
         XCTAssertEqual(model.curtainState, .off, "Unknown future states read as off")
     }
 
+    func testAMacThatCannotHideItsScreenSaysSoOncePerSessionAcrossCaptureRestarts() throws {
+        let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+        model.connection.inputPacketSenderForTesting = { _ in true }
+        model.connection.startInputFixtureForTesting(session: "curtain-unavailable-fixture")
+        defer { model.connection.stop() }
+
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 1, features: SessionFeature.host,
+                                 curtain: PrivacyCurtainState.unavailable.rawValue), to: model)
+        XCTAssertEqual(model.curtainState, .unavailable)
+        XCTAssertEqual(model.sessionNotice, PhoneSessionNotice.curtainUnavailable)
+
+        // Every capture start (Big Text step, audio toggle, display switch, resume) sends a
+        // preflight status without features, which momentarily reads as "no curtain".
+        try deliver(RemoteAction(action: "capture", x: 0, epoch: 2), to: model)
+        XCTAssertNil(model.curtainState)
+        let shown = model.sessionNoticeGeneration
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 2, features: SessionFeature.host,
+                                 curtain: PrivacyCurtainState.unavailable.rawValue), to: model)
+        XCTAssertEqual(model.curtainState, .unavailable)
+        XCTAssertEqual(model.sessionNoticeGeneration, shown, "The Accessibility explanation is not repeated after a restart")
+
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 2, features: SessionFeature.host,
+                                 curtain: PrivacyCurtainState.up.rawValue), to: model)
+        try deliver(RemoteAction(action: "capture", x: 1, epoch: 2, features: SessionFeature.host,
+                                 curtain: PrivacyCurtainState.liftedLocally.rawValue), to: model)
+        XCTAssertEqual(model.sessionNoticeGeneration, shown + 1, "A lift at the Mac is still news every time")
+    }
+
     func testDisconnectedAndStoppedCallbacksCannotAdoptCurtainStatus() throws {
         let model = PhoneRemoteModel(background: FakeBackgroundExecution())
         // Incoming status can legitimately cause outgoing display/release traffic.

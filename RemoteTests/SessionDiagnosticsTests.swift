@@ -1,6 +1,28 @@
 import XCTest
 
 final class SessionDiagnosticsTests: XCTestCase {
+    func testAReportWithMetricsFromANewerBuildLoadsWithoutThem() throws {
+        let report = SessionDiagnosticReport(kind: .session, outcome: .sessionEnded, seconds: 12, samples: 3,
+                                             facts: [DiagnosticFact(.videoKbps, 200), DiagnosticFact(.curtainCovered, 1)])
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(report)) as? [String: Any])
+        var facts = try XCTUnwrap(json["facts"] as? [[String: Any]])
+        facts.append(["metric": "somethingFromNextYear", "value": 4, "source": "observed"])
+        json["facts"] = facts
+        let decoded = try JSONDecoder().decode(SessionDiagnosticReport.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertEqual(decoded.facts.map(\.metric), [.videoKbps, .curtainCovered], "Unknown metrics are dropped, not fatal")
+        XCTAssertEqual(decoded.id, report.id)
+        XCTAssertNoThrow(try decoded.validate())
+        let roundTrip = try JSONDecoder().decode(SessionDiagnosticReport.self, from: JSONEncoder().encode(report))
+        XCTAssertEqual(roundTrip, report)
+
+        // A fact that is not even an object cannot be skipped; the report is corrupt, never a hang.
+        for junk in [NSNull(), 7, "text"] as [Any] {
+            json["facts"] = facts + [junk]
+            XCTAssertThrowsError(try JSONDecoder().decode(SessionDiagnosticReport.self,
+                                                          from: JSONSerialization.data(withJSONObject: json)))
+        }
+    }
+
     func testProbeBoundedSpacingBindingDuplicatesCancelAndTimeout() {
         let session = UUID(); var run = DiagnosticProbeRun(session: session, epoch: 7, full: false, at: 10)
         XCTAssertNotNil(run.next(session: session, epoch: 7, authorized: true, at: 10, stampMs: 10000))

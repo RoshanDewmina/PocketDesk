@@ -504,6 +504,32 @@ final class HostExactVideoTimingLog {
     func reset() { pushes.removeAll() }
 }
 
+/// Host side: the capture region each pushed buffer was captured under, keyed by the buffer like the
+/// timing lane (the video source rewrites timestamps, so the buffer is the only identity that reaches the
+/// encoder). A re-pushed buffer (the idle re-send) carries the region of its latest push.
+final class HostFrameRegionLog {
+    private final class Entry {
+        weak var buffer: CVPixelBuffer?
+        let region: CaptureRegion
+        let pushedAtMs: Double
+        init(_ buffer: CVPixelBuffer, _ region: CaptureRegion, atMs: Double) {
+            self.buffer = buffer; self.region = region; pushedAtMs = atMs
+        }
+    }
+    private var pushes: [Entry] = [] // Context's lock owns this bounded lane.
+    static let capacity = 16
+    func pushed(_ region: CaptureRegion, buffer: CVPixelBuffer, atMs: Double = MachClock.nowMs()) {
+        pushes.removeAll { $0.buffer == nil || $0.buffer === buffer || atMs < $0.pushedAtMs || atMs - $0.pushedAtMs > 5_000 }
+        pushes.append(Entry(buffer, region, atMs: atMs))
+        if pushes.count > Self.capacity { pushes.removeFirst() }
+    }
+    func submitted(buffer: CVPixelBuffer) -> CaptureRegion? {
+        guard let index = pushes.firstIndex(where: { $0.buffer === buffer }) else { return nil }
+        return pushes.remove(at: index).region
+    }
+    func reset() { pushes.removeAll() }
+}
+
 
 extension StreamStatsReport {
     mutating func applyExactVideoTiming(_ value: ExactVideoTimingReceiver.Drain) {

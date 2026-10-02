@@ -5,6 +5,7 @@ import Foundation
 /// services and old apps keep working message for message.
 enum SignalingFeature {
     static let route = "route.1"
+    static let devices = "devices.1"
     static let renewal = "renew.1"
     /// Phone: understands `registered.access` and a non-closing `entitlement_required`
     /// (Backend/ENTITLEMENT-CONTRACT.md §4).

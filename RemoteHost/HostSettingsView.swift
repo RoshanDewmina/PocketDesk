@@ -4,6 +4,7 @@ struct HostSettingsView: View {
     let state: HostViewState
     let actions: HostActions
     @State private var confirmingRemoval = false
+    @State private var deviceToRemove: HostPairedDeviceRow?
     @State private var confirmingServerRemoval = false
     @State private var showingNotices = false
     @State private var confirmingStop = false
@@ -84,15 +85,19 @@ struct HostSettingsView: View {
         } message: {
             Text("It disconnects right away. You can share again from the menu bar.")
         }
-        .confirmationDialog("Remove your paired phone locally?", isPresented: $confirmingRemoval) {
-            Button("Remove Phone", role: .destructive, action: actions.removePhone)
+        .confirmationDialog("Remove this paired device locally?", isPresented: $confirmingRemoval) {
+            Button("Remove Device", role: .destructive) {
+                if let deviceToRemove { actions.removePairedDevice(deviceToRemove.id) }
+                else { actions.removePhone() }
+                deviceToRemove = nil
+            }
         } message: {
             Text("It will no longer be able to connect. This removes local pairing, not server records. Use Server Data for server removal. It doesn’t cancel an Apple subscription.")
         }
     }
 
     private var phoneSection: some View {
-        HostSettingsSection("Phone", footer: state.localPairRemovalMessage) {
+        HostSettingsSection("Devices", footer: state.localPairRemovalMessage) {
             phoneRow
             HostSettingsRow("Local network only", subtitle: "Enable on both devices to connect without internet. Changing it ends the current connection; sharing stays on.") {
                 HostSwitch(label: "Local network only", isOn: state.localOnly, set: actions.setLocalOnly)
@@ -119,7 +124,7 @@ struct HostSettingsView: View {
     }
 
     private var sharingSection: some View {
-        HostSettingsSection("While your iPhone is connected", footer: sessionFooter) {
+        HostSettingsSection("While your phone is connected", footer: sessionFooter) {
             HostSettingsRow("Allow control", subtitle: state.controlNeedsAccessibility
                             ? "Needs Accessibility first" : "Off means view only") {
                 HostSwitch(label: "Allow control", isOn: state.allowControl, set: actions.setAllowControl)
@@ -384,23 +389,33 @@ struct HostSettingsView: View {
 
     @ViewBuilder
     private var phoneRow: some View {
-        if state.hasPairedPhone {
-            HostSettingsRow("Your iPhone", subtitle: state.status.isSessionLive ? "Paired · connected now" : "Paired") {
-                HStack(spacing: 8) {
-                    Button("Pair New Phone…", action: actions.pairNewPhone)
-                        .accessibilityIdentifier("farside.settings.pairNewPhone")
-                    Button("Remove…") { confirmingRemoval = true }
-                        .accessibilityIdentifier("farside.settings.removePhone")
+        if !state.pairedDevices.isEmpty {
+            ForEach(state.pairedDevices) { device in
+                HostSettingsRow(device.name, subtitle: deviceSubtitle(device)) {
+                    Button("Remove…") { deviceToRemove = device; confirmingRemoval = true }
+                        .accessibilityLabel("Remove \(device.name)")
+                        .accessibilityIdentifier("farside.settings.removeDevice.\(device.id)")
+                        .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
                 }
-                .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
             }
+            Button("Pair Another Device…", action: actions.pairNewPhone)
+                .accessibilityIdentifier("farside.settings.pairNewPhone")
+                .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+            Text("Up to five devices. Disconnect one before connecting another.")
+                .font(.system(size: 12)).foregroundStyle(Farside.Palette.ash)
         } else {
-            HostSettingsRow("No phone paired", subtitle: "Pairing takes about a minute") {
-                Button("Pair a Phone…", action: actions.pairNewPhone)
+            HostSettingsRow("No device paired", subtitle: "Pairing takes about a minute") {
+                Button("Pair a Device…", action: actions.pairNewPhone)
                     .buttonStyle(HostButtonStyle(kind: .primary, height: 30))
                     .accessibilityIdentifier("farside.settings.pairNewPhone")
             }
         }
+    }
+
+    private func deviceSubtitle(_ device: HostPairedDeviceRow) -> String {
+        if device.connected { return "Paired · connected now" }
+        guard let date = device.lastUsed else { return "Paired" }
+        return "Last used " + date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private var generalFooter: String? {

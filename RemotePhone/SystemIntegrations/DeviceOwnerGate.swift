@@ -71,7 +71,7 @@ struct DeviceOwnerGate {
         var reason: String {
             switch self {
             case .connect(let name): "Connect to \(name ?? "your Mac")"
-            case .forgetMac: "Forget this Mac on this iPhone"
+            case .forgetMac: "Forget this Mac on this \(DeviceWord.current)"
             case .changeSetting: "Change who can connect to your Mac"
             }
         }
@@ -121,7 +121,7 @@ struct DeviceOwnerGate {
             return purpose == .forgetMac ? "\(biometryName) didn’t confirm it’s you, so this Mac is still paired."
                 : "\(biometryName) didn’t confirm it’s you, so nothing was sent to your Mac."
         case .unavailable:
-            return "Set a passcode on this iPhone, or turn off Require \(biometryName) in Settings → Security."
+            return "Set a passcode on this \(DeviceWord.current), or turn off Require \(biometryName) in Settings → Security."
         }
     }
 }

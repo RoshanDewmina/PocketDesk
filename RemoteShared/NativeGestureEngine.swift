@@ -151,12 +151,24 @@ final class NativeGestureEngine {
     private var gestureSensitivity: CGFloat = 1
     private var gestureScale: CGFloat = 1
 
+    /// View-mode two-finger navigation changes the zoom only once the fingers have moved apart or
+    /// together by `zoomDeadband` (the same 5.5 % that recognises a pinch in Control mode); until then a
+    /// two-finger scroll is a pure pan. Every span wobble used to reach the viewport, and each one re-cropped
+    /// the Mac's capture (b7-scroll NOTES, 2 Oct). `NavigateZoomDeadbandSwitch` restores the old behaviour.
+    static let zoomDeadband: CGFloat = 0.055
+    private let zoomDeadbandEnabled: Bool
+    /// A View-mode navigation that may not have zoomed yet still ends with `.zoomEnded`, so the
+    /// viewport settles and reports exactly as before the dead band.
+    private var navigating = false
+
     init(enabled: Bool, panMode: Bool, revision: UInt64, sensitivity: CGFloat,
          pointerScale: CGFloat, doubleClickInterval: TimeInterval, direct: Bool = false,
+         zoomDeadband: Bool = NavigateZoomDeadbandSwitch.isOn,
          onCommand: @escaping (NativeGestureCommand) -> Bool) {
         self.enabled = enabled
         self.panMode = panMode
         self.direct = direct
+        self.zoomDeadbandEnabled = zoomDeadband
         self.revision = revision
         self.sensitivity = Self.safeSensitivity(sensitivity)
         self.pointerScale = Self.safeScale(pointerScale)
@@ -554,7 +566,13 @@ final class NativeGestureEngine {
             let previousCenter = starting ? multiStartCenter : multiLastCenter
             let previousSpan = starting ? multiStartDistance : multiLastDistance
             mode = .zoom
-            let factor = span / max(previousSpan, 1)
+            navigating = true
+            var factor = span / max(previousSpan, 1)
+            if zoomDeadbandEnabled, !zoomActive {
+                // The span is re-based at the crossing, so the zoom starts from the fingers' current
+                // distance instead of jumping by the dead band.
+                if scaleChange >= Self.zoomDeadband && abs(span - multiStartDistance) >= 5 { zoomActive = true } else { factor = 1 }
+            }
             if factor.isFinite && factor > 0 {
                 if abs(factor - 1) > 0.001 { zoomActive = true }
                 _ = onCommand(.navigate(factor: factor, anchor: previousCenter,
@@ -841,8 +859,9 @@ final class NativeGestureEngine {
             _ = onCommand(.dragEnded(id: id))
             dragID = nil
         }
-        if zoomActive {
+        if zoomActive || navigating {
             zoomActive = false
+            navigating = false
             _ = onCommand(.zoomEnded)
         }
         if precisionActive {
@@ -875,4 +894,11 @@ final class NativeGestureEngine {
 private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat { hypot(a.x - b.x, a.y - b.y) }
 private func midpoint(_ a: CGPoint, _ b: CGPoint) -> CGPoint {
     CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+}
+
+/// Kill switch for the View-mode zoom dead band (`defaults write <phone bundle id>
+/// PocketDeskNavigateZoomDeadband -bool NO`, then relaunch the app).
+enum NavigateZoomDeadbandSwitch {
+    static let defaultsKey = "PocketDeskNavigateZoomDeadband"
+    static let isOn = ScrollFixesSwitch.isOn && (UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true)
 }
