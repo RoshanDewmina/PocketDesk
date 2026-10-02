@@ -27,10 +27,12 @@ final class ViewportCaptureTests: XCTestCase {
                               pixelWidth: 2622, pixelHeight: 1206, zoom: zoom)
     }
 
+    /// `phoneNative: false` is the rule before the phone-native crop, kept behind `CropPhoneNativeSwitch`.
     private func region(_ viewport: ViewportRegion?, on display: DisplayGeometry? = nil,
                         output: CapturePixelDimensions, tuning: StreamTuning = .tuned,
-                        previous: CaptureRegion? = nil) -> CaptureRegion {
-        Policy.region(for: viewport, display: display ?? asus, output: output, tuning: tuning, previous: previous)
+                        previous: CaptureRegion? = nil, phoneNative: Bool = true) -> CaptureRegion {
+        Policy.region(for: viewport, display: display ?? asus, output: output, tuning: tuning, previous: previous,
+                      phoneNative: phoneNative)
     }
 
     private func size(_ width: Int, _ height: Int) -> CapturePixelDimensions {
@@ -77,13 +79,25 @@ final class ViewportCaptureTests: XCTestCase {
 
     func testCropThatWouldCoverNearlyTheWholeDisplayIsTheWholeDisplay() throws {
         let whole = try output(asus, fps: 120)
-        XCTAssertTrue(region(centered(zoom: 1.1, on: asus), output: whole).isWholeDisplay, "wider than the display")
+        XCTAssertTrue(region(centered(zoom: 1.1, on: asus), output: whole, phoneNative: false).isWholeDisplay,
+                      "wider than the display")
         // 70 % of the display, but 2512x1424 (97 %) once the margin and the output's aspect are added.
         let wide = ViewportRegion(epoch: 1, x: 200, y: 120, width: 2160, height: 1200,
                                   pixelWidth: 2622, pixelHeight: 1456, zoom: 1.2)
-        XCTAssertTrue(region(wide, output: whole).isWholeDisplay)
+        XCTAssertTrue(region(wide, output: whole, phoneNative: false).isWholeDisplay)
         let nearlyAll = ViewportRegion(epoch: 1, x: 24, y: 14, width: 2512, height: 1412,
                                        pixelWidth: 2622, pixelHeight: 1474, zoom: 1.04)
+        XCTAssertTrue(region(nearlyAll, output: whole, phoneNative: false).isWholeDisplay)
+
+        // Phone-native: the crop keeps the viewport's aspect and spans the display's width instead of
+        // giving up, so both lighter zooms now crop; only a crop of 95 % or more is still the whole display.
+        XCTAssertEqual(region(centered(zoom: 1.1, on: asus), output: whole),
+                       CaptureRegion(epoch: 1, x: 88, y: 166, width: 2384, height: 1104,
+                                     outputWidth: 2256, outputHeight: 1040))
+        XCTAssertEqual(region(wide, output: whole),
+                       CaptureRegion(epoch: 1, x: 200, y: 120, width: 2160, height: 1200,
+                                     outputWidth: 2048, outputHeight: 1136),
+                       "the margin yields to the 2048x1152 budget before the visible rect does")
         XCTAssertTrue(region(nearlyAll, output: whole).isWholeDisplay)
     }
 
@@ -92,7 +106,7 @@ final class ViewportCaptureTests: XCTestCase {
     func testReadingZoomOnTheASUSCropsOneToOneOnMacroblocksAndEchoesTheEpoch() throws {
         let whole = try output(asus, fps: 120)
         // 1311x603 pt visible, +8 % a side is 1521x700, widened to 16:9 is 1521x856, aligned 1536x864.
-        let crop = region(centered(zoom: 2, on: asus, epoch: 7), output: whole)
+        let crop = region(centered(zoom: 2, on: asus, epoch: 7), output: whole, phoneNative: false)
         XCTAssertEqual(crop, CaptureRegion(epoch: 7, x: 512, y: 288, width: 1536, height: 864,
                                            outputWidth: 1536, outputHeight: 864))
         XCTAssertNoThrow(try crop.validate())
@@ -100,7 +114,7 @@ final class ViewportCaptureTests: XCTestCase {
 
     func testLightZoomKeepsTheWholeDisplayOutputSize() throws {
         let whole = try output(asus, fps: 120)
-        let crop = region(centered(zoom: 1.25, on: asus), output: whole)
+        let crop = region(centered(zoom: 1.25, on: asus), output: whole, phoneNative: false)
         XCTAssertEqual(crop, CaptureRegion(epoch: 1, x: 56, y: 32, width: 2448, height: 1376,
                                            outputWidth: 2048, outputHeight: 1152),
                        "the crop has more pixels than the output, so the encoder's frame size is unchanged")
@@ -110,28 +124,32 @@ final class ViewportCaptureTests: XCTestCase {
         let at120 = try output(air, fps: 120)
         // 2940 x (2048 / 2940) evaluates to 2047.99..., which CapturePixelDimensions rounds down to 2046.
         XCTAssertEqual(at120, size(2046, 1330))
-        XCTAssertTrue(region(centered(zoom: 2, on: air), on: air, output: at120).isWholeDisplay,
+        XCTAssertTrue(region(centered(zoom: 2, on: air), on: air, output: at120, phoneNative: false).isWholeDisplay,
                       "1311 pt of a 1470 pt display is a 3041 px crop, wider than the panel")
-        XCTAssertEqual(region(centered(zoom: 2.5, on: air), on: air, output: at120),
+        XCTAssertEqual(region(centered(zoom: 2, on: air), on: air, output: at120),
+                       CaptureRegion(epoch: 1, x: 79, y: 174, width: 1312, height: 608,
+                                     outputWidth: 2416, outputHeight: 1120),
+                       "phone-native: the margin is trimmed to fit the 2046x1330 budget, so it crops")
+        XCTAssertEqual(region(centered(zoom: 2.5, on: air), on: air, output: at120, phoneNative: false),
                        CaptureRegion(epoch: 1, x: 123, y: 82, width: 1224, height: 792,
                                      outputWidth: 2046, outputHeight: 1330))
-        XCTAssertEqual(region(centered(zoom: 3, on: air), on: air, output: at120),
+        XCTAssertEqual(region(centered(zoom: 3, on: air), on: air, output: at120, phoneNative: false),
                        CaptureRegion(epoch: 1, x: 227, y: 146, width: 1016, height: 664,
                                      outputWidth: 2032, outputHeight: 1328))
 
         let at60 = try output(air, fps: 60)
         XCTAssertEqual(at60, size(2560, 1664))
-        XCTAssertEqual(region(centered(zoom: 2.5, on: air), on: air, output: at60),
+        XCTAssertEqual(region(centered(zoom: 2.5, on: air), on: air, output: at60, phoneNative: false),
                        CaptureRegion(epoch: 1, x: 123, y: 82, width: 1224, height: 792,
                                      outputWidth: 2448, outputHeight: 1584))
     }
 
     func testPanInsideTheMarginKeepsTheCropAndEchoesTheNewEpoch() throws {
         let whole = try output(asus, fps: 120)
-        let first = region(centered(zoom: 2, on: asus, epoch: 1), output: whole)
+        let first = region(centered(zoom: 2, on: asus, epoch: 1), output: whole, phoneNative: false)
         var panned = centered(zoom: 2, on: asus, epoch: 2)
         panned.x += 50
-        let second = region(panned, output: whole, previous: first)
+        let second = region(panned, output: whole, previous: first, phoneNative: false)
         XCTAssertEqual(second, CaptureRegion(epoch: 2, x: 512, y: 288, width: 1536, height: 864,
                                              outputWidth: 1536, outputHeight: 864))
         XCTAssertFalse(Policy.needsReconfiguration(from: first, to: second))
@@ -139,10 +157,10 @@ final class ViewportCaptureTests: XCTestCase {
 
     func testPanPastTheMarginReCropsAtTheSameOutputSize() throws {
         let whole = try output(asus, fps: 120)
-        let first = region(centered(zoom: 2, on: asus, epoch: 1), output: whole)
+        let first = region(centered(zoom: 2, on: asus, epoch: 1), output: whole, phoneNative: false)
         var panned = centered(zoom: 2, on: asus, epoch: 2)
         panned.x += 200
-        let second = region(panned, output: whole, previous: first)
+        let second = region(panned, output: whole, previous: first, phoneNative: false)
         XCTAssertEqual(second, CaptureRegion(epoch: 2, x: 712, y: 288, width: 1536, height: 864,
                                              outputWidth: 1536, outputHeight: 864))
         XCTAssertTrue(Policy.needsReconfiguration(from: first, to: second))
@@ -152,19 +170,19 @@ final class ViewportCaptureTests: XCTestCase {
         let whole = try output(asus, fps: 120)
         var right = centered(zoom: 2, on: asus)
         right.x = 2000
-        XCTAssertEqual(region(right, output: whole),
+        XCTAssertEqual(region(right, output: whole, phoneNative: false),
                        CaptureRegion(epoch: 1, x: 1312, y: 368, width: 1248, height: 704,
                                      outputWidth: 1248, outputHeight: 704))
         var left = centered(zoom: 2, on: asus)
         left.x = -300
-        XCTAssertEqual(region(left, output: whole),
+        XCTAssertEqual(region(left, output: whole, phoneNative: false),
                        CaptureRegion(epoch: 1, x: 0, y: 368, width: 1248, height: 704,
                                      outputWidth: 1248, outputHeight: 704))
     }
 
     func testCropIsNeverSmallerThanAQuarterOfTheDisplayLongEdge() throws {
         let whole = try output(asus, fps: 120)
-        XCTAssertEqual(region(centered(zoom: 10, on: asus), output: whole),
+        XCTAssertEqual(region(centered(zoom: 10, on: asus), output: whole, phoneNative: false),
                        CaptureRegion(epoch: 1, x: 960, y: 536, width: 640, height: 368,
                                      outputWidth: 640, outputHeight: 368))
     }
@@ -181,7 +199,7 @@ final class ViewportCaptureTests: XCTestCase {
                         var viewport = centered(zoom: zoom, on: display)
                         viewport.x = (Double(display.size.width) - viewport.width) * fractionX
                         viewport.y = (Double(display.size.height) - viewport.height) * fractionY
-                        let crop = region(viewport, on: display, output: whole)
+                        let crop = region(viewport, on: display, output: whole, phoneNative: false)
                         let label = "\(display.size)@\(scale) \(fps) fps zoom \(zoom) at \(fractionX),\(fractionY)"
                         XCTAssertNoThrow(try crop.validate(), label)
                         guard !crop.isWholeDisplay else { continue }
@@ -251,15 +269,347 @@ final class ViewportCaptureTests: XCTestCase {
         for zoom: Double? in [2, 2.1, 2, 2.5, 2.1, 1.25, nil] {
             epoch += 1
             let viewport = zoom.map { centered(zoom: $0, on: asus, epoch: epoch) }
-            let next = region(viewport, output: whole, previous: previous)
+            let next = region(viewport, output: whole, previous: previous, phoneNative: false)
             sizes.append(size(next.outputWidth, next.outputHeight))
             previous = next
         }
         XCTAssertEqual(sizes, [size(1536, 864), size(1536, 864), size(1536, 864), size(1232, 688),
                                size(1456, 816), whole, whole])
         XCTAssertEqual(previous?.isWholeDisplay, true)
-        XCTAssertEqual(region(centered(zoom: 2.1, on: asus), output: whole, previous: nil).outputWidth, 1456,
+        XCTAssertEqual(region(centered(zoom: 2.1, on: asus), output: whole, previous: nil, phoneNative: false).outputWidth,
+                       1456,
                        "without a previous region (quality change, restart) nothing is held")
+    }
+
+    // MARK: Phone-native crop
+
+    /// The M4 Air panel at "More Space": 1920x1243 pt @2x, captured 3840x2486 px.
+    private let moreSpace = DisplayGeometry(size: CGSize(width: 1920, height: 1243), pointPixelScale: 2)
+
+    /// An iPhone 17 (2622x1206 px, 874x402 pt at 3x) showing the display's centre at `zoom` px per point.
+    private func iPhone17(zoom: Double, portrait: Bool, on display: DisplayGeometry,
+                          epoch: UInt64 = 1) -> ViewportRegion {
+        let pixelWidth = portrait ? 1206 : 2622
+        let pixelHeight = portrait ? 2622 : 1206
+        let width = Double(pixelWidth) / zoom
+        let height = Double(pixelHeight) / zoom
+        return ViewportRegion(epoch: epoch, x: (Double(display.size.width) - width) / 2,
+                              y: (Double(display.size.height) - height) / 2, width: width, height: height,
+                              pixelWidth: pixelWidth, pixelHeight: pixelHeight, zoom: zoom)
+    }
+
+    /// Fit asks for the whole display, as `ViewportTransform.captureRequest` does at the mode's own size.
+    private func iPhone17Fit(portrait: Bool, on display: DisplayGeometry) -> ViewportRegion {
+        let canvas = portrait ? CGSize(width: 402, height: 874) : CGSize(width: 874, height: 402)
+        let points = min(canvas.width / display.size.width, canvas.height / display.size.height)
+        return ViewportRegion(epoch: 1, x: 0, y: 0, width: Double(display.size.width),
+                              height: Double(display.size.height), pixelWidth: portrait ? 1206 : 2622,
+                              pixelHeight: portrait ? 2622 : 1206, zoom: (Double(points) * 3 * 10_000).rounded() / 10_000)
+    }
+
+    private func sharpness(_ region: CaptureRegion, _ viewport: ViewportRegion,
+                           on display: DisplayGeometry) throws -> Double {
+        try XCTUnwrap(Policy.deliveredSharpness(region: region, viewport: viewport, display: display))
+    }
+
+    func testIPhone17OnMoreSpaceCropsWheneverItWouldUpscaleAndGetsPhoneNativePixels() throws {
+        let whole = try output(moreSpace, fps: 60)
+        XCTAssertEqual(whole, size(2560, 1656))
+        let wholePerPoint = Double(whole.width) / Double(moreSpace.size.width)
+        var lines: [String] = []
+        for portrait in [false, true] {
+            for zoom: Double? in [nil, 1.3, 1.5, 2, 3] {
+                let viewport = zoom.map { iPhone17(zoom: $0, portrait: portrait, on: moreSpace) }
+                    ?? iPhone17Fit(portrait: portrait, on: moreSpace)
+                let crop = region(viewport, on: moreSpace, output: whole)
+                let old = region(viewport, on: moreSpace, output: whole, phoneNative: false)
+                let after = try sharpness(crop, viewport, on: moreSpace)
+                let before = try sharpness(old, viewport, on: moreSpace)
+                let label = "\(portrait ? "portrait" : "landscape") zoom \(viewport.zoom)"
+                lines.append(String(format: "%@: before %.3f (%ldx%ld%@) after %.3f (%ldx%ld%@)", label, before,
+                                    old.outputWidth, old.outputHeight, old.isWholeDisplay ? " whole" : " crop", after,
+                                    crop.outputWidth, crop.outputHeight, crop.isWholeDisplay ? " whole" : " crop"))
+                XCTAssertNoThrow(try crop.validate(), label)
+                XCTAssertGreaterThanOrEqual(after, min(before, 1) - 1e-9, label)
+                if viewport.zoom > wholePerPoint { XCTAssertFalse(crop.isWholeDisplay, "the phone would upscale: \(label)") }
+                guard !crop.isWholeDisplay else {
+                    XCTAssertLessThanOrEqual(viewport.zoom, 1, label)
+                    continue
+                }
+                XCTAssertGreaterThanOrEqual(after, min(1, moreSpace.pointPixelScale / viewport.zoom) - 1e-9, label)
+                XCTAssertLessThanOrEqual(crop.outputWidth * crop.outputHeight, whole.width * whole.height, label)
+                XCTAssertEqual(crop.outputWidth % 16, 0, label)
+                XCTAssertEqual(crop.outputHeight % 16, 0, label)
+                XCTAssertEqual(crop.outputHeight > crop.outputWidth, portrait, label)
+                XCTAssertLessThan(abs(Double(crop.outputWidth) / Double(crop.outputHeight) / (crop.width / crop.height) - 1),
+                                  0.01, "no stretch: \(label)")
+                XCTAssertTrue(crop.rect.contains(viewport.rect.intersection(moreSpace.bounds)), label)
+            }
+        }
+        print("iPhone 17 on 1920x1243 @2x, 2560x1656 budget\n" + lines.joined(separator: "\n"))
+
+        func phoneNative(_ zoom: Double, portrait: Bool) -> CaptureRegion {
+            region(iPhone17(zoom: zoom, portrait: portrait, on: moreSpace), on: moreSpace, output: whole)
+        }
+        XCTAssertEqual(phoneNative(1.5, portrait: false), CaptureRegion(epoch: 1, x: 0, y: 153, width: 1920, height: 936,
+                                                                 outputWidth: 2880, outputHeight: 1408),
+                       "spans the display's width at 1.5x, downscaled to the phone's 1.5 px per point")
+        XCTAssertEqual(phoneNative(2, portrait: false), CaptureRegion(epoch: 1, x: 204, y: 273, width: 1512, height: 696,
+                                                               outputWidth: 3024, outputHeight: 1392),
+                       "1:1, its margin trimmed from 8 % to fit the 2560x1656 budget")
+        XCTAssertEqual(phoneNative(3, portrait: false), CaptureRegion(epoch: 1, x: 452, y: 385, width: 1016, height: 472,
+                                                               outputWidth: 2032, outputHeight: 944))
+        XCTAssertEqual(phoneNative(1.5, portrait: true), CaptureRegion(epoch: 1, x: 492, y: 0, width: 936, height: 1243,
+                                                                outputWidth: 1408, outputHeight: 1872),
+                       "the full 2486 px height, the output still in macroblocks")
+        XCTAssertEqual(phoneNative(2, portrait: true), CaptureRegion(epoch: 1, x: 608, y: 0, width: 704, height: 1243,
+                                                              outputWidth: 1408, outputHeight: 2496),
+                       "taller than the whole output's 1656: only its area is capped")
+        XCTAssertEqual(phoneNative(3, portrait: true), CaptureRegion(epoch: 1, x: 724, y: 113, width: 472, height: 1016,
+                                                              outputWidth: 944, outputHeight: 2032))
+    }
+
+    func testKillSwitchKeepsThePreviousCropAndOutputRules() throws {
+        XCTAssertEqual(CropPhoneNativeSwitch.defaultsKey, "PocketDeskCropPhoneNative")
+        XCTAssertTrue(CropPhoneNativeSwitch.isOn, "on unless the defaults key says NO")
+        let whole = try output(moreSpace, fps: 60)
+        func old(_ zoom: Double, portrait: Bool, output: CapturePixelDimensions? = nil) -> CaptureRegion {
+            region(iPhone17(zoom: zoom, portrait: portrait, on: moreSpace), on: moreSpace, output: output ?? whole,
+                   phoneNative: false)
+        }
+        for zoom in [1.3, 1.5] { XCTAssertTrue(old(zoom, portrait: false).isWholeDisplay, "\(zoom)") }
+        XCTAssertEqual(old(2, portrait: false), CaptureRegion(epoch: 1, x: 196, y: 129, width: 1528, height: 984,
+                                                              outputWidth: 2560, outputHeight: 1656))
+        XCTAssertEqual(old(3, portrait: false), CaptureRegion(epoch: 1, x: 452, y: 293, width: 1016, height: 656,
+                                                              outputWidth: 2032, outputHeight: 1312))
+        for zoom in [1.3, 1.5, 2] { XCTAssertTrue(old(zoom, portrait: true).isWholeDisplay, "\(zoom)") }
+        XCTAssertEqual(old(3, portrait: true), CaptureRegion(epoch: 1, x: 176, y: 113, width: 1568, height: 1016,
+                                                             outputWidth: 2560, outputHeight: 1656))
+
+        // Today's device evidence: a 1760x1120 px crop sent at 1280x816 at a 0.5 size rung.
+        let rung = RemoteCaptureConfiguration.scaled(whole, by: 0.5)
+        XCTAssertEqual(rung, size(1280, 816))
+        XCTAssertEqual(Policy.outputSize(source: size(1760, 1120), whole: rung, held: nil), size(1280, 816))
+        let viewport = iPhone17(zoom: 2, portrait: false, on: moreSpace)
+        let before = old(2, portrait: false, output: rung)
+        XCTAssertEqual(before, CaptureRegion(epoch: 1, x: 196, y: 133, width: 1528, height: 976,
+                                             outputWidth: 1280, outputHeight: 816))
+        let after = region(viewport, on: moreSpace, output: rung)
+        XCTAssertEqual(after, CaptureRegion(epoch: 1, x: 304, y: 317, width: 1312, height: 608,
+                                            outputWidth: 1488, outputHeight: 688),
+                       "the same budget spent on the visible rect: the margin yields first")
+        XCTAssertLessThanOrEqual(after.outputWidth * after.outputHeight, rung.width * rung.height)
+        XCTAssertEqual(try sharpness(before, viewport, on: moreSpace), 0.419, accuracy: 0.001)
+        XCTAssertEqual(try sharpness(after, viewport, on: moreSpace), 0.567, accuracy: 0.001)
+    }
+
+    func testDeliveredSharpnessIsStreamPixelsPerPhonePixel() throws {
+        let fit = iPhone17Fit(portrait: false, on: moreSpace)
+        XCTAssertEqual(fit.zoom, 0.9702)
+        let whole = Policy.wholeDisplay(moreSpace, output: size(2560, 1656))
+        XCTAssertEqual(try sharpness(whole, fit, on: moreSpace), 2560.0 / 1920 / 0.9702, accuracy: 1e-12)
+        XCTAssertNil(Policy.deliveredSharpness(region: whole, viewport: nil, display: moreSpace))
+        let crop = CaptureRegion(epoch: 3, x: 204, y: 273, width: 1512, height: 696, outputWidth: 3024, outputHeight: 1392)
+        XCTAssertEqual(try sharpness(crop, iPhone17(zoom: 2, portrait: false, on: moreSpace), on: moreSpace), 1)
+        XCTAssertEqual(try sharpness(crop, iPhone17(zoom: 3, portrait: false, on: moreSpace), on: moreSpace),
+                       2.0 / 3, accuracy: 1e-12)
+        let live = CaptureRegion(epoch: 9, x: 100, y: 100, width: 880, height: 560, outputWidth: 1280, outputHeight: 816)
+        XCTAssertEqual(try sharpness(live, iPhone17(zoom: 2, portrait: false, on: moreSpace), on: moreSpace),
+                       1280.0 / 880 / 2, accuracy: 1e-12)
+        var broken = fit
+        for zoom in [0, -1, Double.nan, Double.infinity] {
+            broken.zoom = zoom
+            XCTAssertNil(Policy.deliveredSharpness(region: crop, viewport: broken, display: moreSpace), "\(zoom)")
+        }
+
+        XCTAssertNoThrow(try HostStreamSummary(sharpness: 1.25).validate())
+        XCTAssertNoThrow(try HostStreamSummary(sharpness: 0).validate())
+        XCTAssertNoThrow(try HostStreamSummary(sharpness: 1000).validate())
+        for bad in [-0.01, 1000.5, Double.nan, Double.infinity] {
+            XCTAssertThrowsError(try HostStreamSummary(sharpness: bad).validate(), "\(bad)")
+        }
+        var report = StreamStatsReport(role: "host", previous: nil, current: StreamStatsSample(entries: []), counters: nil)
+        report.sharpness = 1.003
+        XCTAssertEqual(report.hostSummary.sharpness, 1.003)
+        XCTAssertNoThrow(try report.hostSummary.validate())
+        report.sharpness = .nan
+        XCTAssertNil(report.hostSummary.sharpness)
+        report.sharpness = 5000
+        XCTAssertEqual(report.hostSummary.sharpness, 1000)
+    }
+
+    /// The rule: phone-native, held while the new size is within 90 %...110 % of the held one on both
+    /// sides, fits the budget and is in whole macroblocks.
+    func testPhoneNativeOutputHoldsWithinTheBandAndNeverOverTheBudget() {
+        let budget = size(2560, 1656)
+        func output(_ source: CapturePixelDimensions, zoom: Double = 2, budget: CapturePixelDimensions? = nil,
+                    held: CapturePixelDimensions? = nil) -> CapturePixelDimensions {
+            Policy.phoneNativeOutputSize(source: source, zoom: zoom, display: moreSpace, budget: budget ?? self.size(2560, 1656),
+                                         held: held)
+        }
+        XCTAssertEqual(output(size(1408, 2496)), size(1408, 2496), "1:1 at 2 px per point, portrait kept")
+        XCTAssertEqual(output(size(3840, 1872), zoom: 1.5), size(2880, 1408), "0.75 of the crop, rounded up")
+        XCTAssertEqual(output(size(3840, 1872), zoom: 3), size(2944, 1424), "1:1 is 7.2 Mpx: scaled to the budget")
+        XCTAssertEqual(output(size(3056, 1408)), size(3024, 1392), "4.30 Mpx over the 4.24 Mpx budget")
+        XCTAssertEqual(output(size(4800, 400)), size(4096, 336), "the encoders' 4096 edge")
+        XCTAssertEqual(output(size(2486, 1408)), size(2496, 1408), "a full-height crop rounds up to macroblocks")
+        XCTAssertLessThanOrEqual(output(size(3840, 1872), zoom: 3).width * output(size(3840, 1872), zoom: 3).height,
+                                 budget.width * budget.height)
+
+        let held = size(3024, 1392)
+        XCTAssertEqual(output(size(2912, 1344), held: held), held)
+        XCTAssertEqual(output(size(3040, 1408), zoom: 1.9, held: held), held)
+        XCTAssertEqual(output(size(2560, 1184), held: held), size(2560, 1184), "below 90 %: shrinks")
+        XCTAssertEqual(output(size(3840, 1872), zoom: 1.5, held: size(2560, 1184)), size(2880, 1408),
+                       "never held more than 10 % under phone-native")
+
+        let edge = size(1600, 800)
+        XCTAssertEqual(output(size(1440, 720), held: edge), edge, "exactly 90 % holds")
+        XCTAssertEqual(output(size(1424, 720), held: edge), size(1424, 720))
+        XCTAssertEqual(output(size(1744, 864), held: edge), edge)
+        XCTAssertEqual(output(size(1760, 864), held: edge), size(1760, 864), "exactly 110 % grows")
+        XCTAssertEqual(output(size(1600, 880), held: edge), size(1600, 880), "either side leaving the band")
+
+        XCTAssertEqual(output(size(1600, 816), budget: size(1280, 816), held: edge), size(1424, 720),
+                       "a held size over a smaller budget is dropped")
+        XCTAssertEqual(output(size(2048, 1328), held: size(2046, 1330)), size(2048, 1328),
+                       "a held size not in macroblocks is dropped")
+    }
+
+    func testPhoneNativeZoomSequenceStaysWithinTheBandOfPhoneNative() throws {
+        let whole = try output(moreSpace, fps: 60)
+        var previous: CaptureRegion?
+        var epoch: UInt64 = 0
+        var sizes: [CapturePixelDimensions] = []
+        for zoom in [2, 2.1, 2.05, 2.25, 1.9, 1.5, 3] {
+            epoch += 1
+            let viewport = iPhone17(zoom: zoom, portrait: false, on: moreSpace, epoch: epoch)
+            let next = region(viewport, on: moreSpace, output: whole, previous: previous)
+            sizes.append(size(next.outputWidth, next.outputHeight))
+            XCTAssertGreaterThanOrEqual(try sharpness(next, viewport, on: moreSpace),
+                                        min(1, 2 / zoom) / Policy.growFrom - 1e-9, "\(zoom)")
+            XCTAssertLessThanOrEqual(next.outputWidth * next.outputHeight, whole.width * whole.height)
+            previous = next
+        }
+        XCTAssertEqual(sizes, [size(3024, 1392), size(3024, 1392), size(3024, 1392), size(2704, 1248),
+                               size(3008, 1392), size(3008, 1392), size(2032, 944)])
+    }
+
+    func testPhoneNativeGeometryOnTheASUS() throws {
+        let whole = try output(asus, fps: 120)
+        let first = region(centered(zoom: 2, on: asus, epoch: 1), output: whole)
+        XCTAssertEqual(first, CaptureRegion(epoch: 1, x: 512, y: 368, width: 1536, height: 704,
+                                            outputWidth: 1536, outputHeight: 704),
+                       "1311x603 pt, +8 % a side, at the viewport's own aspect, 1:1 on a 1x display")
+        var panned = centered(zoom: 2, on: asus, epoch: 2)
+        panned.x += 50
+        let inside = region(panned, output: whole, previous: first)
+        XCTAssertEqual(inside, CaptureRegion(epoch: 2, x: 512, y: 368, width: 1536, height: 704,
+                                             outputWidth: 1536, outputHeight: 704))
+        XCTAssertFalse(Policy.needsReconfiguration(from: first, to: inside))
+        panned.x += 150
+        let past = region(panned, output: whole, previous: first)
+        XCTAssertEqual(past, CaptureRegion(epoch: 2, x: 712, y: 368, width: 1536, height: 704,
+                                           outputWidth: 1536, outputHeight: 704))
+        XCTAssertTrue(Policy.needsReconfiguration(from: first, to: past))
+
+        var right = centered(zoom: 2, on: asus)
+        right.x = 2000
+        XCTAssertEqual(region(right, output: whole), CaptureRegion(epoch: 1, x: 1904, y: 368, width: 656, height: 704,
+                                                                   outputWidth: 656, outputHeight: 704))
+        var left = centered(zoom: 2, on: asus)
+        left.x = -300
+        XCTAssertEqual(region(left, output: whole), CaptureRegion(epoch: 1, x: 0, y: 368, width: 1184, height: 704,
+                                                                  outputWidth: 1184, outputHeight: 704))
+        XCTAssertEqual(region(centered(zoom: 10, on: asus), output: whole),
+                       CaptureRegion(epoch: 1, x: 960, y: 568, width: 640, height: 304,
+                                     outputWidth: 640, outputHeight: 304), "a quarter of the long edge")
+
+        var previous: CaptureRegion?
+        var epoch: UInt64 = 0
+        var sizes: [CapturePixelDimensions] = []
+        for zoom: Double? in [2, 2.1, 2, 2.5, 2.1, 1.25, nil] {
+            epoch += 1
+            let next = region(zoom.map { centered(zoom: $0, on: asus, epoch: epoch) }, output: whole, previous: previous)
+            sizes.append(size(next.outputWidth, next.outputHeight))
+            previous = next
+        }
+        XCTAssertEqual(sizes, [size(1536, 704), size(1536, 704), size(1536, 704), size(1232, 560),
+                               size(1456, 672), size(2256, 1040), whole])
+    }
+
+    func testEveryPhoneNativeCropIsAlignedFitsTheEncodersAndIsAsSharpAsTheBudgetAllows() throws {
+        let hevc = try XCTUnwrap(OwnedHEVCConfiguration(parameters: ["profile-id": "1", "tier-flag": "1",
+                                                                      "level-id": "153", "tx-mode": "SRST"]))
+        func macroblocks(_ width: Int, _ height: Int) -> Int { ((width + 15) / 16) * ((height + 15) / 16) }
+        var crops = 0
+        var budgetBound = 0
+        for (display, fps) in [(asus, 120), (asus, 60), (air, 120), (air, 60), (moreSpace, 60), (moreSpace, 120)] {
+            let full = try output(display, fps: fps)
+            let scale = display.pointPixelScale
+            for budget in [full, RemoteCaptureConfiguration.scaled(full, by: 0.5)] {
+                let budgetArea = budget.width * budget.height
+                let sender = SenderOutputFormat.make(width: budget.width, height: budget.height, budget: .level(52),
+                                                     targetFPS: fps, ladder: nil)
+                XCTAssertEqual(sender, SenderOutputFormat(width: budget.width, height: budget.height, fps: fps))
+                for portrait in [false, true] {
+                    for zoom in [1.2, 1.5, 2, 2.5, 3, 4, 6, 10, 20] {
+                        for fractionX in [0.0, 0.25, 0.5, 0.75, 1.0] {
+                            for fractionY in [0.0, 0.5, 1.0] {
+                                var viewport = iPhone17(zoom: zoom, portrait: portrait, on: display)
+                                viewport.x = (Double(display.size.width) - viewport.width) * fractionX
+                                viewport.y = (Double(display.size.height) - viewport.height) * fractionY
+                                let crop = region(viewport, on: display, output: budget)
+                                let label = "\(display.size)@\(scale) \(fps) fps budget \(budget) "
+                                    + "\(portrait ? "portrait" : "landscape") zoom \(zoom) at \(fractionX),\(fractionY)"
+                                XCTAssertNoThrow(try crop.validate(), label)
+                                guard !crop.isWholeDisplay else { continue }
+                                crops += 1
+                                let x = crop.x * scale, y = crop.y * scale
+                                let width = crop.width * scale, height = crop.height * scale
+                                XCTAssertEqual(x, x.rounded(), label)
+                                XCTAssertEqual(y, y.rounded(), label)
+                                XCTAssertEqual(Int(x) % 2, 0, label)
+                                XCTAssertEqual(Int(y) % 2, 0, label)
+                                XCTAssertTrue(Int(width) % 16 == 0 || width == display.pixelWidth, label)
+                                XCTAssertTrue(Int(height) % 16 == 0 || height == display.pixelHeight, label)
+                                XCTAssertTrue(display.bounds.contains(crop.rect), label)
+                                let visible = viewport.rect.intersection(display.bounds)
+                                XCTAssertTrue(crop.rect.insetBy(dx: -1e-9, dy: -1e-9).contains(visible), label)
+                                XCTAssertLessThan(width * height, 0.95 * display.pixelWidth * display.pixelHeight, label)
+                                let longEdge = max(display.pixelWidth, display.pixelHeight)
+                                XCTAssertGreaterThanOrEqual(max(width, height), 0.25 * longEdge - 1e-9, label)
+                                if width < display.pixelWidth, height < display.pixelHeight {
+                                    XCTAssertLessThan(abs((width / height) / (visible.width / visible.height) - 1), 0.05,
+                                                      "the viewport's aspect: \(label)")
+                                }
+                                let out = size(crop.outputWidth, crop.outputHeight)
+                                XCTAssertEqual(out.width % 16, 0, label)
+                                XCTAssertEqual(out.height % 16, 0, label)
+                                XCTAssertLessThan(abs(Double(out.width) / Double(out.height) / (width / height) - 1), 0.05,
+                                                  label)
+                                XCTAssertLessThanOrEqual(out.width * out.height, budgetArea, label)
+                                XCTAssertLessThanOrEqual(macroblocks(out.width, out.height),
+                                                         macroblocks(budget.width, budget.height), label)
+                                XCTAssertTrue(H264LevelPolicy.fits(width: out.width, height: out.height, fps: fps), label)
+                                XCTAssertTrue(hevc.fits(width: out.width, height: out.height, fps: fps), label)
+                                XCTAssertEqual(SenderOutputFormat.make(width: out.width, height: out.height,
+                                                                       budget: .level(52), targetFPS: fps, ladder: nil),
+                                               SenderOutputFormat(width: out.width, height: out.height, fps: fps),
+                                               "the sender never rescales it: \(label)")
+                                let delivered = try sharpness(crop, viewport, on: display)
+                                let native = delivered >= min(1, scale / zoom) - 1e-9
+                                if !native { budgetBound += 1 }
+                                XCTAssertTrue(native || Double(out.width * out.height) >= 0.9 * Double(budgetArea),
+                                              "\(delivered) without spending the budget: \(label)")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        XCTAssertGreaterThan(crops, 1000)
+        XCTAssertGreaterThan(budgetBound, 0)
     }
 
     // MARK: Restart, reconfiguration, coalescing

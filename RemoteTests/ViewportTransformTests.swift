@@ -525,25 +525,60 @@ final class ViewportCaptureGeometryTests: XCTestCase {
             for display in displays {
                 for mode in [ViewportMode.fit, .fill] {
                     let context = "\(device.name) \(mode) \(display)"
-                    let view = ViewportTransform(sourceSize: display, canvasSize: device.canvas, mode: mode,
+                    var view = ViewportTransform(sourceSize: display, canvasSize: device.canvas, mode: mode,
                                                  safeInsets: device.insets)
+                    view.baselineFillCrop = true
                     let safe = safeRect(device)
                     let scale = mode == .fit
                         ? min(safe.width / display.width, safe.height / display.height)
                         : max(device.canvas.width / display.width, device.canvas.height / display.height)
                     let request = try XCTUnwrap(view.captureRequest(displayScale: device.displayScale), context)
-                    XCTAssertTrue(view.requestsWholeDisplay, context)
-                    XCTAssertEqual(request.rect, CGRect(origin: .zero, size: display), context)
+                    let visible = view.visibleSourceRect
+                    let share = visible.width * visible.height / (display.width * display.height)
+                    var stock = view
+                    stock.baselineFillCrop = false
+                    XCTAssertTrue(stock.requestsWholeDisplay, "with the key off every baseline asks for the whole display, \(context)")
+                    if mode == .fill, share < ViewportTransform.wholeDisplayShare {
+                        XCTAssertFalse(view.requestsWholeDisplay, "under half on screen asks for its rect, \(context)")
+                        XCTAssertTrue(CGRect(origin: .zero, size: display).contains(request.rect), context)
+                        XCTAssertEqual(Double(request.pixelWidth), Double(device.canvas.width * device.displayScale),
+                                       accuracy: 0.500_001, context)
+                        XCTAssertEqual(Double(request.pixelHeight), Double(device.canvas.height * device.displayScale),
+                                       accuracy: 0.500_001, context)
+                    } else {
+                        XCTAssertTrue(view.requestsWholeDisplay, context)
+                        XCTAssertEqual(request.rect, CGRect(origin: .zero, size: display), context)
+                        XCTAssertEqual(Double(request.pixelWidth), Double(display.width * scale * device.displayScale),
+                                       accuracy: 0.500_001, context)
+                        XCTAssertEqual(Double(request.pixelHeight), Double(display.height * scale * device.displayScale),
+                                       accuracy: 0.500_001, context)
+                    }
                     XCTAssertEqual(request.displaySize, display, context)
-                    XCTAssertEqual(Double(request.pixelWidth), Double(display.width * scale * device.displayScale),
-                                   accuracy: 0.500_001, context)
-                    XCTAssertEqual(Double(request.pixelHeight), Double(display.height * scale * device.displayScale),
-                                   accuracy: 0.500_001, context)
                     XCTAssertEqual(request.zoom, Double(scale * device.displayScale), accuracy: 0.000_051, context)
                     XCTAssertNoThrow(try request.region(epoch: 1).validate(), context)
                 }
             }
         }
+    }
+
+    func testPortraitFillAsksForItsVisibleRectAndLandscapeFillForTheWholeDisplay() throws {
+        let display = CGSize(width: 1920, height: 1243)
+        var portrait = ViewportTransform(sourceSize: display, canvasSize: CGSize(width: 402, height: 874), mode: .fill,
+                                         safeInsets: ViewportInsets(top: 62, bottom: 34))
+        XCTAssertTrue(portrait.requestsWholeDisplay, "off by default until the device check")
+        portrait.baselineFillCrop = true
+        XCTAssertFalse(portrait.requestsWholeDisplay, "30 % of the display at 2.1 px per point")
+        let request = try XCTUnwrap(portrait.captureRequest(displayScale: 3))
+        XCTAssertEqual(Double(request.rect.width), 402 / Double(portrait.scale), accuracy: 0.02)
+        XCTAssertEqual(Double(request.rect.height), 1243, accuracy: 0.02)
+        XCTAssertEqual(request.zoom, Double(portrait.scale * 3), accuracy: 0.000_051)
+        var landscape = ViewportTransform(sourceSize: display, canvasSize: CGSize(width: 874, height: 402), mode: .fill,
+                                          safeInsets: ViewportInsets(left: 62, bottom: 21, right: 62))
+        landscape.baselineFillCrop = true
+        XCTAssertTrue(landscape.requestsWholeDisplay, "71 % of the display: the whole display, as before")
+        var zoomedOut = portrait
+        zoomedOut.setZoom(0.8, anchoredAt: CGPoint(x: 201, y: 437))
+        XCTAssertFalse(zoomedOut.requestsWholeDisplay, "still under half on screen")
     }
 
     func testZoomedFillAsksForExactlyTheVisiblePartAtTheScreensPixels() throws {
@@ -684,12 +719,18 @@ final class ViewportCaptureGeometryTests: XCTestCase {
 
     func testExtremeDisplaysStillMakeAValidRegion() throws {
         let screen = CGSize(width: 402, height: 874)
-        let strip = ViewportTransform(sourceSize: CGSize(width: 20_000, height: 1_000), canvasSize: screen,
+        var strip = ViewportTransform(sourceSize: CGSize(width: 20_000, height: 1_000), canvasSize: screen,
                                       mode: .fill)
+        strip.baselineFillCrop = false
         let wide = try XCTUnwrap(strip.captureRequest(displayScale: 3))
         XCTAssertEqual(wide.pixelWidth, 16_384, "52,440 px is capped to the largest size the Mac accepts")
         XCTAssertEqual(wide.pixelHeight, 2_622)
         XCTAssertNoThrow(try wide.region(epoch: 1).validate())
+        strip.baselineFillCrop = true
+        let cropped = try XCTUnwrap(strip.captureRequest(displayScale: 3))
+        XCTAssertFalse(strip.requestsWholeDisplay, "2 % of the strip is on screen")
+        XCTAssertEqual(cropped.pixelWidth, 1_206, "its visible rect at the screen's pixels")
+        XCTAssertNoThrow(try cropped.region(epoch: 1).validate())
 
         let huge = ViewportTransform(sourceSize: CGSize(width: 16_000, height: 9_000), canvasSize: screen, mode: .fit)
         let small = try XCTUnwrap(huge.captureRequest(displayScale: 1))

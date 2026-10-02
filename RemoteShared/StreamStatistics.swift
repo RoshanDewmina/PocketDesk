@@ -231,6 +231,8 @@ struct HostStreamSummary: Codable, Equatable {
     var ladder: LadderState?
     var busy: BusyState?
     var captureRegion: CaptureRegion?
+    /// G4: stream pixels per displayed phone pixel (`ViewportCapturePolicy.deliveredSharpness`).
+    var sharpness: Double?
     // Per-frame timing (perf pack 4a; older phones ignore these): display → encoded, and the newest records.
     var frameHostP50Ms: Double?
     var frameHostP95Ms: Double?
@@ -285,7 +287,8 @@ struct HostStreamSummary: Codable, Equatable {
               (transportPriorityRequested?.utf8.count ?? 0) <= Self.transportPriorityBytes,
               (senderQueueGovernor?.utf8.count ?? 0) <= Self.governorStatusBytes,
               framesEncodedTotal.map({ (0...Self.maximumFrameTotal).contains($0) }) ?? true,
-              macLink.map({ $0.utf8.count <= MacNetworkLink.maximumBytes && MacNetworkLink(rawValue: $0) != nil }) ?? true else {
+              macLink.map({ $0.utf8.count <= MacNetworkLink.maximumBytes && MacNetworkLink(rawValue: $0) != nil }) ?? true,
+              sharpness.map({ $0.isFinite && (0...1000).contains($0) }) ?? true else {
             throw RemoteError.invalidMessage
         }
         guard [phoneSendToArrivalP50Ms, phoneSendToArrivalP95Ms, phoneSendToArrivalMaxMs].compactMap({ $0 })
@@ -334,6 +337,8 @@ struct StreamStatsReport: Codable, Equatable {
     var nackReceived: Int?
     var pliReceived: Int?
     var remoteLossPercent: Double?
+    /// The RTCP receiver report's round trip (about once a second); `rttMs` is the candidate pair's STUN one.
+    var rtcpRttMs: Double?
 
     var receivedFPS: Double?
     var decodedFPS: Double?
@@ -474,9 +479,14 @@ struct StreamStatsReport: Codable, Equatable {
     var ladder: LadderState?
     var busy: BusyState?
     var captureRegion: CaptureRegion?
+    var sharpness: Double?
     var transportPriorityRequested: String?
     var bweCeilingKbps: Double?
     var lanCeilingApplied: Bool?
+    /// `LANTrustTracker`'s verdict this second (host only); the ladder reads it from here.
+    var lanTrusted: Bool?
+    /// The `LANBitrateFloor` under the estimate this second, nil while the link is not trusted.
+    var lanFloorKbps: Double?
     var senderQueueMs: Double?
     var networkQueueMs: Double?
     var backlogDrainMs: Double?
@@ -529,6 +539,7 @@ struct StreamStatsReport: Codable, Equatable {
             receivedHeight = inbound.number("frameHeight").map { Int($0) }
         }
         remoteLossPercent = Self.round(current.remoteInbound?.number("fractionLost").map { $0 * 100 })
+        rtcpRttMs = Self.round(current.remoteInbound?.number("roundTripTime").map { $0 * 1000 })
 
         var sentBytes: Double?
         if let previous, current.timestamp > previous.timestamp {
@@ -733,6 +744,7 @@ struct StreamStatsReport: Codable, Equatable {
                           ladder: ladder.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           busy: busy.flatMap { (try? $0.validate()) == nil ? nil : $0 },
                           captureRegion: captureRegion.flatMap { (try? $0.validate()) == nil ? nil : $0 },
+                          sharpness: sharpness.flatMap { $0.isFinite ? min(max(0, $0), 1000) : nil },
                           uniqueSourceFPS: uniqueSourceFPS.map { min($0, 10_000_000) },
                           resendFPS: captureResendFPS.map { min($0, 10_000_000) },
                           transportPriorityRequested: transportPriorityRequested.map {

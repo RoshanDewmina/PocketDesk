@@ -645,6 +645,7 @@ final class RemoteHostModel: ObservableObject {
         capture.onCaptureRegion = { [weak self] region in
             guard let self else { return }
             self.connection.media?.captureRegion = region
+            self.connection.media?.captureSharpness = self.capture.deliveredSharpness
             self.sendCaptureHealth(self.sessionHealthy)
         }
         let workspaceEvents: [(Notification.Name, HostSleepPolicy.Event)] = [
@@ -2566,6 +2567,7 @@ final class RemoteHostModel: ObservableObject {
                 // A regular heartbeat without a viewport means the phone can no longer describe its
                 // visible area. Return to the whole display instead of retaining an old crop.
                 capture.setViewport(action.viewport)
+                connection.media?.captureSharpness = capture.deliveredSharpness
             }
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value {
                 phoneLoad = action.phoneLoad
@@ -3334,6 +3336,7 @@ final class RemoteHostModel: ObservableObject {
         phonePause.clear()
         if sessionState == .couch { beginCouch() } else {
             connection.media?.counters.beginResumeCapture()
+            connection.media?.rearmBandwidthSeed()
             beginCapture()
         }
     }

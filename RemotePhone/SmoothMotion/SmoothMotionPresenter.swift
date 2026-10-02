@@ -13,6 +13,8 @@ final class SmoothMotionPresenter<Payload>: @unchecked Sendable {
         let spacing: TimeInterval
         /// When the source frame reached the phone; nil for a midpoint.
         let arrival: TimeInterval?
+        /// A midpoint not shown by then is dropped, so its source frame is not held behind it.
+        var deadline: TimeInterval? = nil
     }
 
     struct Delivery {
@@ -79,12 +81,14 @@ final class SmoothMotionPresenter<Payload>: @unchecked Sendable {
     }
 
     /// Called at the start of each video view draw. Hands over at most one entry: the newest one
-    /// that is due, dropping due entries behind it. `tick` is the display frame interval.
+    /// that is due, dropping due entries behind it and any midpoint past its deadline. `tick` is
+    /// the display frame interval.
     @discardableResult
     func pump(at now: TimeInterval, tick: TimeInterval) -> Delivery? {
         lock.lock(); defer { lock.unlock() }
         var chosen: Int?
         for (index, entry) in queue.enumerated() {
+            if let deadline = entry.deadline, now > deadline { continue }
             let reference = chosen.map { _ in now } ?? lastShownAt
             guard now + tick / 2 >= reference + entry.spacing else { break }
             chosen = index
@@ -114,6 +118,15 @@ final class SmoothMotionPresenter<Payload>: @unchecked Sendable {
         lastShownAt = now
         deliver(entry.payload)
         return Delivery(order: entry.order, addedDelay: entry.arrival.map { max(0, now - $0) })
+    }
+
+    /// A newer source frame arrived: a midpoint still queued would now show a picture two frames
+    /// old, so it is dropped and its source frame goes on the next draw.
+    func dropMidpoints() {
+        lock.lock(); defer { lock.unlock() }
+        let before = queue.count
+        queue.removeAll { $0.arrival == nil }
+        droppedTotal += before - queue.count
     }
 
     func reset() {

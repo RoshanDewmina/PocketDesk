@@ -993,7 +993,8 @@ final class PeerMedia: NSObject {
         appliedRate = rate
         if tuning.qualityBitrates {
             let maximum = bandwidthCeilingBps
-            _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: nil, maxBitrateBps: NSNumber(value: maximum))
+            _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: $0) }, currentBitrateBps: nil,
+                                                 maxBitrateBps: NSNumber(value: maximum))
             appliedBweMaxBps = maximum
         }
     }
@@ -1019,8 +1020,32 @@ final class PeerMedia: NSObject {
               !closed, remoteDescriptionReady else { return }
         let maximum = bandwidthCeilingBps
         guard maximum != appliedBweMaxBps else { return }
-        _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: nil, maxBitrateBps: NSNumber(value: maximum))
+        _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: $0) }, currentBitrateBps: nil,
+                                             maxBitrateBps: NSNumber(value: maximum))
         appliedBweMaxBps = maximum
+    }
+
+    /// The `LANBitrateFloor` in force, nil while the link is not trusted. Every bitrate-settings call
+    /// carries the floor and the ceiling together: libwebrtc keeps the last settings as a whole.
+    private var lanFloorBps: Int?
+    private var lanTrust = LANTrustTracker()
+
+    /// Judges the link once a second (RTCP round trip when there is one, the STUN one otherwise) and
+    /// publishes the verdict; the floor is on while trusted and back to libwebrtc's own minimum the
+    /// sample it is not, never above the ceiling, and follows a changed start rate.
+    private func followLANFloor(_ stats: inout StreamStatsReport) {
+        guard isHost, nativeDesktopCodecs, !closed else { return }
+        let trusted = lanTrust.observe(provenLocalLink: provenLocalLinkActive, lossPercent: stats.remoteLossPercent,
+                                       rttMs: stats.rtcpRttMs ?? stats.rttMs, pacerDelayMs: stats.pacerDelayMs)
+        stats.lanTrusted = trusted
+        guard tuning.qualityBitrates, remoteDescriptionReady,
+              var floor = LANBitrateFloor.bps(startBitrateBps: streamQuality.startBitrateBps(for: .lan)) else { return }
+        if let maximum = appliedBweMaxBps { floor = min(floor, maximum) }
+        let next = trusted ? floor : nil
+        guard next != lanFloorBps else { return }
+        _ = connection?.setBweMinBitrateBps(NSNumber(value: next ?? 0), currentBitrateBps: nil,
+                                             maxBitrateBps: appliedBweMaxBps.map { NSNumber(value: $0) })
+        lanFloorBps = next
     }
 
     /// G5: the capture session's target rate and display. Written on the main queue under
@@ -1036,6 +1061,7 @@ final class PeerMedia: NSObject {
     var senderQueueGovernorStatus: String?
     var senderQueueGovernorShedding = false
     var captureRegion: CaptureRegion?
+    var captureSharpness: Double?
 
     private var currentSenderRate: SenderRateParameters {
         SenderRateParameters.make(targetFPS: targetFPS, tuning: tuning, ladderFPS: ladderState?.fps)
@@ -1098,6 +1124,15 @@ final class PeerMedia: NSObject {
         configureNativeSender()
     }
 
+    /// A resume after the phone's background pause starts the estimate near libwebrtc's minimum
+    /// (1 Oct 2026: target 33 kbps, a 3.1 s pacer queue, 2-9 sent fps for 12 s), and both seed
+    /// attempts were spent at session start. Arms the seed again for the resumed stream on a proven
+    /// local link only: off the LAN the seed rate could exceed the path.
+    func rearmBandwidthSeed() {
+        guard BandwidthSeedRearmSwitch.isOn, provenLocalLinkActive else { return }
+        bandwidthSeed = BandwidthSeedPolicy()
+    }
+
     /// Seed the bandwidth estimate once the selected route is known (see `BandwidthSeedPolicy`).
     /// Without `routeAwareSeed`, only "Direct" routes are seeded, at the mode's rate, and relay keeps
     /// libwebrtc's ramp; with it, LAN, internet P2P and relay each get their own start rate.
@@ -1110,8 +1145,8 @@ final class PeerMedia: NSObject {
         guard bandwidthSeed.observe(eligible: seedRoute != nil, estimateKbps: stats.availableOutgoingKbps,
                                     lossPercent: stats.remoteLossPercent, seedKbps: Double(seedBps) / 1000) else { return }
         let maximum = bandwidthCeilingBps
-        _ = connection?.setBweMinBitrateBps(nil, currentBitrateBps: NSNumber(value: seedBps),
-                                             maxBitrateBps: NSNumber(value: maximum))
+        _ = connection?.setBweMinBitrateBps(lanFloorBps.map { NSNumber(value: min($0, seedBps)) },
+                                             currentBitrateBps: NSNumber(value: seedBps), maxBitrateBps: NSNumber(value: maximum))
         appliedBweMaxBps = maximum
     }
 
@@ -1332,17 +1367,20 @@ final class PeerMedia: NSObject {
                 stats.ladder = ladderState
                 stats.busy = busyState
                 stats.captureRegion = captureRegion
+                stats.sharpness = captureSharpness
                 stats.senderQueueGovernor = senderQueueGovernorStatus
             }
             stats.maxKbps = appliedSenderMaxKbps
             if nativeDesktopCodecs { stats.transportPriorityRequested = transportPriority.summary }
             followCeilingRoute(detail: sample.routeDetail, rttMs: stats.rttMs)
             seedBandwidthEstimate(stats, route: sample.route, detail: sample.routeDetail)
+            followLANFloor(&stats)
             stats.networkQueueMs = SenderQueueEstimate.networkQueueMs(rttMs: stats.rttMs, baselineRTTMs: transportRate.baselineRTT)
                 .map { ($0 * 10).rounded() / 10 }
             if nativeDesktopCodecs && tuning.qualityBitrates {
                 stats.bweCeilingKbps = appliedBweMaxBps.map { Double($0) / 1000 }
                 stats.lanCeilingApplied = lanCeilingApplied
+                stats.lanFloorKbps = lanFloorBps.map { Double($0) / 1000 }
             }
             let frameTiming = frameTimingLog?.drain()
             if let frameTiming { stats.applyHostFrameTiming(frameTiming) }

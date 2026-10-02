@@ -43,6 +43,8 @@ public struct ViewportTransform {
     public private(set) var safeInsets: ViewportInsets
     public private(set) var mode: ViewportMode
     public private(set) var zoom: CGFloat
+    /// `BaselineFillCropSwitch` (read once per process; tests set it per transform).
+    var baselineFillCrop = BaselineFillCropSwitch.isOn
     public private(set) var offset: CGPoint
     private var insetReturn: InsetReturn?
 
@@ -519,9 +521,22 @@ extension ViewportTransform {
         return viewRect(fromSource: region.rect)
     }
 
-    /// Fit, and any zoom at or below the mode's own size, asks for the whole display; so does a zoom
-    /// that still shows all of it.
-    var requestsWholeDisplay: Bool { zoom <= 1 || !isCropped }
+    /// A zoom that shows all of the display asks for the whole display, and so does a zoom at or below
+    /// the mode's own size. With `baselineFillCrop` on, a baseline Fill that shows less than
+    /// `wholeDisplayShare` of the display (portrait on a 1920x1243 pt display shows 30 %) asks for its
+    /// visible rect instead, which the Mac streams at the phone's own pixels (ViewportCapturePolicy)
+    /// rather than a third of them; off until a device check, because a pan at that zoom then re-crops
+    /// and can show the void at the edges until the new crop arrives.
+    var requestsWholeDisplay: Bool {
+        guard isCropped else { return true }
+        guard zoom <= 1 else { return false }
+        guard baselineFillCrop else { return true }
+        let visible = visibleSourceRect
+        let share = (visible.width * visible.height) / (sourceSize.width * sourceSize.height)
+        return share >= Self.wholeDisplayShare
+    }
+
+    static let wholeDisplayShare: CGFloat = 0.5
 
     /// What to ask the Mac to capture now; nil until the viewport has a display, a canvas and a scale.
     func captureRequest(displayScale: CGFloat) -> ViewportCaptureRequest? {
@@ -547,7 +562,7 @@ extension ViewportTransform {
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
-    private static func capturePixels(_ value: CGFloat) -> Int {
+    static func capturePixels(_ value: CGFloat) -> Int {
         let range = ViewportRegion.pixelRange
         guard value.isFinite else { return range.lowerBound }
         return Int(min(max(value.rounded(), CGFloat(range.lowerBound)), CGFloat(range.upperBound)))
@@ -556,4 +571,11 @@ extension ViewportTransform {
     private static func isFinite(_ rect: CGRect) -> Bool {
         rect.origin.x.isFinite && rect.origin.y.isFinite && rect.size.width.isFinite && rect.size.height.isFinite
     }
+}
+
+/// Internal key for the baseline-Fill crop (`defaults write <phone bundle id> PocketDeskBaselineFillCrop
+/// -bool YES`, then relaunch the app). Off by default until the device check of pans at that zoom.
+enum BaselineFillCropSwitch {
+    static let defaultsKey = "PocketDeskBaselineFillCrop"
+    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
 }
