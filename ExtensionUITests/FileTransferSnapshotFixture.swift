@@ -183,3 +183,30 @@ struct FileTransferCapsule: View {
         }
     }
 }
+
+// TEST-ONLY component copy of NativeSessionView.bigTextStatus (lines 801–817).
+// Source file SHA-256: f7f34af270ad88f727dfc9764abc45ddaa1ab651b35ee4915904dbd6f2cd3143
+// The sole source substitution is model.bigText.pendingTarget -> pendingTarget; this immutable
+// input makes the two transient labels render-only and never touches a session model or probe.
+struct BigTextPendingStatusFixture: View {
+    let pendingTarget: Double?
+
+    var body: some View { bigTextStatus }
+
+    @ViewBuilder private var bigTextStatus: some View {
+        if let target = pendingTarget {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small).tint(Farside.Palette.bone)
+                Text(target == 0 ? "Restoring text size…" : "Making text bigger…")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(Farside.Palette.bone)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 9)
+            .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
+            .transition(.opacity)
+            .allowsHitTesting(false)
+            .accessibilityElement(children: .combine)
+            .accessibilityIdentifier("remote.bigText.pill")
+        }
+    }
+}

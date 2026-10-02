@@ -112,6 +112,22 @@ final class FileTransferSurfaceTests: XCTestCase {
 
     }
 
+    func testBigTextPendingStatusComponents() throws {
+        let names = [
+            "big-text-making-portrait-component",
+            "big-text-making-landscape-component",
+            "big-text-restoring-portrait-component",
+            "big-text-restoring-landscape-component"
+        ]
+        let plan = XCTAttachment(string: names.joined(separator: "\n"))
+        plan.name = "capture-plan"
+        plan.lifetime = .keepAlways
+        add(plan)
+
+        try capture(BigTextPendingStatusFixture(pendingTarget: 1280), name: "big-text-making")
+        try capture(BigTextPendingStatusFixture(pendingTarget: 0), name: "big-text-restoring")
+    }
+
     private func capture<V: View>(_ content: V, name: String, file: StaticString = #filePath, line: UInt = #line) throws {
         let screen = UIScreen.main.bounds
         for landscape in [false, true] {
