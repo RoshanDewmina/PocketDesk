@@ -339,14 +339,14 @@ final class FarsideScreenshotTour: XCTestCase {
                   tap(app.buttons["remote.settings.picture"].firstMatch, in: app),
                   require(app.navigationBars["Picture"], "Big Text picture settings") else { return false }
             let off = app.buttons["remote.bigText.off"]
-            guard reveal(off, in: app) else { return false }
+            guard revealBigText(off, in: app) else { return false }
             if !off.isSelected {
                 off.tap()
                 guard selected(off) else { return false }
                 _ = app.descendants(matching: .any)["remote.bigText.pill"].firstMatch.waitForNonExistence(timeout: 3)
             }
             let step = app.buttons["remote.bigText.step.0"]
-            guard tap(step, in: app) else { return false }
+            guard revealBigText(step, in: app), tap(step, in: app, scroll: false) else { return false }
             let pill = app.descendants(matching: .any)["remote.bigText.pill"].firstMatch
             if shot.name == "big-text-pending" {
                 // Show the canvas pill rather than a progress element hidden behind Settings.
@@ -418,6 +418,30 @@ final class FarsideScreenshotTour: XCTestCase {
     @MainActor
     private func require(_ element: XCUIElement, _ description: String, timeout: TimeInterval = 4) -> Bool {
         element.waitForExistence(timeout: timeout) || missing("Missing \(description)")
+    }
+
+    @MainActor
+    private func revealBigText(_ target: XCUIElement, in app: XCUIApplication) -> Bool {
+        let page = element("remote.controls.page", in: app)
+        guard require(page, "Big Text settings scroll page") else { return false }
+        for _ in 0..<20 {
+            if target.exists && target.isHittable { return true }
+            let frame = page.frame
+            guard frame.height > 0 else { return missing("Big Text settings page has no usable scroll area") }
+            let passedTarget: Bool
+            if target.exists {
+                passedTarget = target.frame.maxY <= frame.minY
+            } else {
+                let laterSection = app.staticTexts["Smooth motion"].firstMatch
+                passedTarget = laterSection.exists && laterSection.isHittable
+            }
+            // A full swipe can fling the short landscape form past the whole Big Text section.
+            // Short press-drags advance a small part of the viewport, checking after each move.
+            let distance = min(120, max(44, frame.height * 0.18))
+            let start = page.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: passedTarget ? 0.32 : 0.72))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: passedTarget ? distance : -distance)))
+        }
+        return target.exists && target.isHittable || missing("Big Text option unavailable after bounded short scrolling")
     }
 
     @MainActor
