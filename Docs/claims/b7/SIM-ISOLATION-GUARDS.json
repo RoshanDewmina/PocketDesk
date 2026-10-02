@@ -1,5 +1,5 @@
 {
-  "checks": 7,
+  "checks": 8,
   "cases": [
     "Native Xcode matching destination detected; wrapper/other destination ignored",
     "Own PID excluded",
@@ -7,7 +7,8 @@
     "Unavailable required runtime rejected without creation",
     "Correct dedicated name/runtime/device type reused",
     "Wrong dedicated device type rejected",
-    "Duplicate dedicated name rejected"
+    "Duplicate dedicated name rejected",
+    "Native post-execution75 maps to80;0/65/79 preserved, preventing helper retry"
   ],
   "result": "passed",
   "scope": "synthetic harness selection/conflict checks, not app acceptance"

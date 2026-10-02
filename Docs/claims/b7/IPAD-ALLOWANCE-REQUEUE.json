@@ -1,0 +1,8 @@
+{
+  "utc": "2026-10-02T16:30:51.719468+00:00",
+  "old_log": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T161709.211963Z/ipad-tests.log",
+  "bytes": 2332,
+  "native_descendants": [],
+  "action": "Own helper frozen and verified no native child, then own parent/helper/sleep canceled before execution; requeue same dedicated iPad with7200 default+maximum per-method allowance.",
+  "reason": "Observed phone AX inventory28/55 after2225s; protect large iPad inventory from avoidable one-hour truncation."
+}

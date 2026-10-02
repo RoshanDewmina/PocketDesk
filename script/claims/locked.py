@@ -2,7 +2,7 @@
 """Check gates and binary/source identity under lock; cleanup stays under that lock."""
 import os,pathlib,shutil,subprocess,sys
 from identity import verify
-from simulators import active_conflicts
+from simulators import active_conflicts,native_exit_code
 p=pathlib.Path('/Users/roshansilva/Documents/Codex/2026-10-01/testing')
 if any((p/x).exists() for x in ['PAUSE-BUILDS','PRIORITY-BUILD']) or list(p.glob('QUIET-GRANTED-*')):
     print('Shared gate appeared while waiting; releasing lock (exit 75).',flush=True)
@@ -25,7 +25,9 @@ if dd:
     except RuntimeError as e: print(str(e),flush=True); sys.exit(78)
 code=0
 try:
-    code=subprocess.call(args)
+    native_code=subprocess.call(args)
+    code=native_exit_code(native_code)
+    if native_code==75: print('Native command returned75 after execution; mapped to80 to prevent slot-helper repetition.',flush=True)
     if dd:
         try: verify(dd)
         except RuntimeError as e: print('Receipt invalidated: '+str(e),flush=True); code=78

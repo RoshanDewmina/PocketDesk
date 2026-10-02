@@ -5,6 +5,11 @@ RUNTIME = 'com.apple.CoreSimulator.SimRuntime.iOS-27-0'
 TYPES = {'phone': 'com.apple.CoreSimulator.SimDeviceType.iPhone-17',
          'ipad': 'com.apple.CoreSimulator.SimDeviceType.iPad-mini-A17-Pro'}
 
+def native_exit_code(code):
+    # 75 is reserved for lock/gate refusal before native execution. The canonical
+    # slot helper consumes it; never let it repeat an already-executed command.
+    return 80 if code==75 else code
+
 def select(family, requested=None):
     devices = json.loads(subprocess.check_output(['xcrun','simctl','list','devices','-j'], text=True))['devices']
     if requested:

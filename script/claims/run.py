@@ -9,19 +9,28 @@ p.add_argument('--dd', default='/Volumes/Studio/Development/Caches/b7-claims/DD'
 p.add_argument('--phone', help='Explicit lane-owned simulator override; default is a dedicated claims iPhone')
 p.add_argument('--ipad', help='Explicit lane-owned simulator override; default is a dedicated claims iPad')
 p.add_argument('--duo', default='663C5184-F544-4CAE-B9C3-A683C26500CE')
+p.add_argument('--ui-timeout',type=int,default=7200,help='Per-method default and maximum allowance for the full screen inventories')
 a = p.parse_args()
 OUT = pathlib.Path(a.output); OUT.mkdir(parents=True, exist_ok=True)
 LOG = OUT / 'logs' / datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ'); LOG.mkdir(parents=True)
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 from identity import source_identity, artifact_identity, verify
+from simulators import select
 selected_devices = {}
 def device(family):
     if family not in selected_devices:
         record=LOG/(family+'-device.json')
         requested=getattr(a,family)
-        code=run('select-'+family,[sys.executable,str(ROOT/'script/claims/simulators.py'),family,str(record)]+([requested] if requested else []),True)
-        if code: raise SystemExit('Dedicated simulator selection failed; no test started.')
-        selected_devices[family] = json.loads(record.read_text())
+        if requested:
+            gate()
+            # Read-only UUID validation cannot create a duplicate device. It need
+            # not queue behind an unrelated build before taking the free slot.
+            selected_devices[family]=select(family,requested)
+            record.write_text(json.dumps(selected_devices[family],indent=2)+'\n')
+        else:
+            code=run('select-'+family,[sys.executable,str(ROOT/'script/claims/simulators.py'),family,str(record)],True,primary=True)
+            if code: raise SystemExit('Dedicated simulator selection failed; no test started.')
+            selected_devices[family] = json.loads(record.read_text())
         (LOG/'selected-devices.json').write_text(json.dumps(selected_devices,indent=2))
         print('Dedicated '+family+': '+selected_devices[family]['udid'],flush=True)
     return selected_devices[family]['udid']
@@ -31,11 +40,12 @@ def gate():
         print('Waiting for shared build/quiet gate', flush=True); time.sleep(60)
     if __import__('shutil').disk_usage('/').free < 10 * 1024**3:
         raise SystemExit('Internal disk below 10 GiB: no builds/tests started')
-def run(name, args, locked=False, timeout=None, manifest=False, shutdown=None):
+def run(name, args, locked=False, timeout=None, manifest=False, shutdown=None, primary=False):
     if locked:
         gate()
         flags=(['--manifest',manifest if isinstance(manifest,str) else a.dd] if manifest else [])+(['--shutdown-simulator',shutdown] if shutdown else [])
-        args = ['/usr/bin/lockf','-k','/tmp/farside-xcodebuild.lock',sys.executable,str(ROOT/'script/claims/locked.py'),*flags,*args]
+        prefix=['/usr/bin/lockf','-k','/tmp/farside-xcodebuild.lock'] if primary else [str(pathlib.Path.home()/'bin/farside-lock')]
+        args = prefix+[sys.executable,str(ROOT/'script/claims/locked.py'),*flags,*args]
     print(name + ': ' + ' '.join(args), flush=True)
     with (LOG / (name+'.log')).open('a') as f:
         try:
@@ -86,7 +96,7 @@ def test(label, device, supplemental=False):
     else:
         selectors=['RemotePhoneUITests/ClaimsVerificationUITests','RemotePhoneUITests/FarsideRedesignUITests/testKeyboardBarPutsCommandFirstAndInReachInPortrait','RemotePhoneUITests/SessionLayoutTests/testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording']
         if label=='phone': selectors += ['RemotePhoneTests/'+c for c in ['FarsideDesignTests','SessionLifecycleTests','VoiceInputTests','CommittedTextTests','ExactTextTraitsTests','TabletInputPhoneTests','IndirectInputTests','ViewportPreferenceTests','ViewportCaptureTests','ScreenRecordingApprovalPhoneTests']]
-    run(label+'-tests',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device,'ARCHS=arm64','test-without-building','-parallel-testing-enabled','NO','-collect-test-diagnostics','never','-test-timeouts-enabled','YES','-default-test-execution-time-allowance','3600','-maximum-test-execution-time-allowance','3600','-resultBundlePath',str(LOG/(label+'.xcresult'))]+['-only-testing:'+s for s in selectors],True,manifest=True,shutdown=device)
+    run(label+'-tests',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device,'ARCHS=arm64','test-without-building','-parallel-testing-enabled','NO','-collect-test-diagnostics','never','-test-timeouts-enabled','YES','-default-test-execution-time-allowance',str(a.ui_timeout),'-maximum-test-execution-time-allowance',str(a.ui_timeout),'-resultBundlePath',str(LOG/(label+'.xcresult'))]+['-only-testing:'+s for s in selectors],True,manifest=True,shutdown=device)
     bundle=LOG/(label+'.xcresult')
     if bundle.exists():
         # Read-only report extraction also runs after a failing audit. Raw .xcresult remains

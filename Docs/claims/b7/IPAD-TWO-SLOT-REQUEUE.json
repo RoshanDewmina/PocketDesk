@@ -1,0 +1,7 @@
+{
+  "utc": "2026-10-02T16:17:23.322185+00:00",
+  "old_log": "logs/20261002T152947.776179Z",
+  "old_log_bytes": 0,
+  "action": "Only own childless primary-slot waiter canceled before native execution; use approved farside-lock first-free-slot helper with same dedicated iPad and frozen artifacts.",
+  "helper_verified": "/usr/bin/lockf -k -t 0 on only the two canonical lock files; never deletes either"
+}
