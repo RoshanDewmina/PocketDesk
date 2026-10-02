@@ -264,16 +264,9 @@ final class FarsideScreenshotTour: XCTestCase {
             }
             return require(app.navigationBars[choices[shot.name]!], choices[shot.name]!)
         case "home-session-check", "home-session-support":
-            let captureOrientation = XCUIDevice.shared.orientation
-            let portraitNavigation = captureOrientation == .landscapeLeft || captureOrientation == .landscapeRight
-            if portraitNavigation { XCUIDevice.shared.orientation = .portrait }
-            defer {
-                if portraitNavigation && XCUIDevice.shared.orientation != captureOrientation {
-                    XCUIDevice.shared.orientation = captureOrientation
-                }
-            }
+            // UsefulSessionEntry owns its sheet state inside Home's orientation-specific tree.
+            // Keep that presenter alive by navigating in the requested capture orientation.
             guard tap(app.buttons["Session check"], in: app) else { return false }
-            if portraitNavigation { XCUIDevice.shared.orientation = captureOrientation }
             guard require(app.navigationBars["Session check"], "Useful-session progress") else { return false }
             return shot.name == "home-session-check" || reveal(app.buttons["Copy a safe support summary"], in: app)
         case "pairing-malformed-code":
@@ -435,6 +428,10 @@ final class FarsideScreenshotTour: XCTestCase {
             if page.exists { page.swipeUp() }
             else if app.tables.firstMatch.exists { app.tables.firstMatch.swipeUp() }
             else if app.collectionViews.firstMatch.exists { app.collectionViews.firstMatch.swipeUp() }
+            else if app.scrollViews["phone.home"].firstMatch.exists && app.scrollViews["phone.home"].firstMatch.isHittable {
+                // Landscape Home scrolls only its right column; a centered app swipe hits art.
+                app.scrollViews["phone.home"].firstMatch.swipeUp()
+            }
             else { app.swipeUp() }
         }
         return target.exists && target.isHittable || missing("Cannot reveal requested navigation control")
