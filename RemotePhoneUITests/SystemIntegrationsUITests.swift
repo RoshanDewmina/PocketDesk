@@ -345,6 +345,7 @@ final class NativeContainerSurfaceUITests: XCTestCase {
         try XCTSkipUnless(ipadSimulatorIDs.contains(requestedID),
                           "This native windowing attempt is restricted to the b7 iPad Pro 11/13 simulators")
         XCUIDevice.shared.orientation = .landscapeLeft
+        defer { XCUIDevice.shared.orientation = .portrait }
         let app = XCUIApplication()
         app.launchArguments = ["--ui-demo-mac", "--ui-last-reached", "--ui-x"]
         app.launch()
@@ -355,6 +356,12 @@ final class NativeContainerSurfaceUITests: XCTestCase {
             return
         }
 
+        guard waitForOrientation(of: app, landscape: true, timeout: 5) else {
+            missing("landscape-ipad-windowing-menu", "Farside did not reach an observed landscape app frame before native menu capture")
+            missing("landscape-ipad-compact-window", "A verified landscape baseline was unavailable for measuring native tile geometry")
+            return
+        }
+        let baselineWidth = app.frame.width
         let controlLabels = ["Window Controls", "Show Multitasking Menu",
                              "Multitasking Controls", "Window menu"]
         let controlPredicate = NSPredicate(format: "label IN %@", controlLabels)
@@ -386,7 +393,7 @@ final class NativeContainerSurfaceUITests: XCTestCase {
         while Date() < deadline {
             let frame = app.frame
             compact = app.buttons["home.agentAlerts"].exists
-                && frame.width < UIScreen.main.bounds.width * 0.80
+                && frame.width < baselineWidth * 0.80
                 && frame.width < frame.height
             if compact { break }
             Thread.sleep(forTimeInterval: 0.25)

@@ -305,7 +305,21 @@ final class FarsideScreenshotTour: XCTestCase {
                     guard cameraText.exists || alert.label.localizedCaseInsensitiveContains("camera") else {
                         return missing("Camera fixture interrupted by a different system alert")
                     }
-                    attach((orientation == .portrait ? "portrait-" : "landscape-") + "system-camera-permission")
+                    let permissionName = (orientation == .portrait ? "portrait-" : "landscape-") + "system-camera-permission"
+                    let deadline = Date().addingTimeInterval(3)
+                    var matchesOrientation = false
+                    repeat {
+                        let frame = app.frame
+                        matchesOrientation = orientation == .portrait ? frame.height > frame.width : frame.width > frame.height
+                        if matchesOrientation { break }
+                        Thread.sleep(forTimeInterval: 0.25)
+                    } while Date() < deadline
+                    if matchesOrientation && alert.exists && (cameraText.exists || alert.label.localizedCaseInsensitiveContains("camera")) {
+                        attach(permissionName)
+                    } else {
+                        _ = missing("Native camera permission did not retain its verified root in the requested orientation")
+                        attach("missing-" + permissionName)
+                    }
                 }
                 XCUIDevice.shared.orientation = .portrait
                 guard alert.waitForExistence(timeout: 2) else { return missing("Camera permission alert did not return in portrait") }
