@@ -196,7 +196,7 @@ final class SessionLayoutTests: XCTestCase {
     @MainActor
     func testOfflineControlsPortraitLandscapeAndKeyboard() {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill"]
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "--ui-software-keyboard"]
         launchOfflineFixture(app)
 
         let showControls = app.buttons["Show controls"]
@@ -206,7 +206,8 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertFalse(app.buttons["Release"].exists, "No disabled release control should cover the resting stream")
         attachScreenshot("Default immersive - offline layout")
 
-        showControls.swipeUp()
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists { showControls.tap() }
+        else { showControls.swipeUp() }
         let hideControls = app.buttons["Hide controls"]
         XCTAssertTrue(hideControls.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Keyboard"].waitForExistence(timeout: 3))
@@ -219,7 +220,8 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertTrue(fitWholeDisplay.waitForExistence(timeout: 3))
         attachScreenshot("Revealed dock - offline layout")
 
-        hideControls.swipeDown()
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists { hideControls.tap() }
+        else { hideControls.swipeDown() }
         XCTAssertTrue(showControls.waitForExistence(timeout: 5), "Downward dock swipe must restore the immersive canvas")
         XCTAssertFalse(app.buttons["End session"].exists)
         showControls.doubleTap()
@@ -247,7 +249,8 @@ final class SessionLayoutTests: XCTestCase {
         let landscapeHandle = app.buttons["Show controls"]
         XCTAssertTrue(landscapeHandle.waitForExistence(timeout: 5))
         attachScreenshot("Immersive landscape after keyboard dismissal - offline layout")
-        landscapeHandle.swipeUp()
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists { landscapeHandle.tap() }
+        else { landscapeHandle.swipeUp() }
         let controls = app.buttons["Controls"].firstMatch
         XCTAssertTrue(controls.waitForExistence(timeout: 5))
         controls.tap()
@@ -380,6 +383,92 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 3))
     }
 
+    @MainActor
+    func testRegularSessionPillDockAndKeysShareTopAnchor() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-demo-mac"]
+        launchOfflineFixture(app)
+        try requireRegularPill(app)
+        let pill = app.descendants(matching: .any)["remote.session.pill"].firstMatch
+        let canvas = app.descendants(matching: .any)["remote.canvas"].firstMatch
+        XCTAssertGreaterThanOrEqual(pill.frame.minY, canvas.frame.minY)
+        XCTAssertLessThan(pill.frame.minY - canvas.frame.minY, 60)
+        app.buttons["Show controls"].tap()
+        let dock = app.descendants(matching: .any)["remote.dock"].firstMatch
+        XCTAssertTrue(dock.waitForExistence(timeout: 3))
+        XCTAssertGreaterThanOrEqual(dock.frame.minY, pill.frame.maxY)
+        XCTAssertLessThanOrEqual(dock.frame.width, 560.5)
+        app.buttons["Controls"].firstMatch.tap()
+        let keys = app.descendants(matching: .any)["remote.controls.content"].firstMatch
+        XCTAssertTrue(keys.waitForExistence(timeout: 3))
+        XCTAssertGreaterThanOrEqual(keys.frame.minY, pill.frame.maxY)
+        XCTAssertLessThan(keys.frame.maxY, app.windows.firstMatch.frame.maxY - 120)
+        attachScreenshot("Regular session top pill dock and keys")
+    }
+
+    @MainActor
+    func testRegularPersistentStatesStayInsidePillAfterIdle() throws {
+        for (argument, identifier) in [("--ui-reconnecting", "remote.reconnecting"),
+                                       ("--ui-reconnect-back", "remote.back"),
+                                       ("--ui-mac-busy", "remote.macBusy"),
+                                       ("--ui-big-text-changing", "remote.bigText.pill")] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", argument]
+            launchOfflineFixture(app)
+            try requireRegularPill(app)
+            let pill = app.descendants(matching: .any)["remote.session.pill"].firstMatch
+            let state = app.descendants(matching: .any)[identifier].firstMatch
+            XCTAssertTrue(state.waitForExistence(timeout: 3))
+            let idle = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Expanded'"), object: pill)
+            XCTAssertEqual(XCTWaiter.wait(for: [idle], timeout: 3), .completed)
+            // Check after the two-second connected-presentation timeout, without touching the stage.
+            Thread.sleep(forTimeInterval: 2.2)
+            XCTAssertEqual(pill.value as? String, "Expanded")
+            XCTAssertTrue(pill.frame.insetBy(dx: -1, dy: -1).contains(state.frame))
+            if argument == "--ui-reconnecting" { XCTAssertTrue(app.buttons["End session"].isHittable) }
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testRegularConnectedPillCollapsesAndDoubleTapOpensKeyboard() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard"]
+        launchOfflineFixture(app)
+        try requireRegularPill(app)
+        let pill = app.descendants(matching: .any)["remote.session.pill"].firstMatch
+        let idle = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Collapsed'"), object: pill)
+        XCTAssertEqual(XCTWaiter.wait(for: [idle], timeout: 5), .completed)
+        app.buttons["Show controls"].doubleTap()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Command"].exists)
+        XCTAssertTrue(app.buttons["Return"].isHittable, "The regular keyboard row must expose its final key without scrolling")
+        XCTAssertFalse(app.descendants(matching: .any)["remote.keys"].firstMatch.scrollViews.firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any)["remote.dock"].firstMatch.exists)
+    }
+
+    @MainActor
+    func testRegularHardwareKeyboardShowsTextFieldWithoutKeyBar() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-hardware-keyboard"]
+        launchOfflineFixture(app)
+        try requireRegularPill(app)
+        app.buttons["Show controls"].doubleTap()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["remote.keys"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["Command"].exists)
+        XCTAssertTrue(app.buttons["Hide keyboard"].isHittable)
+        XCTAssertFalse(app.buttons["Send text"].isEnabled)
+    }
+
+    @MainActor
+    private func requireRegularPill(_ app: XCUIApplication) throws {
+        guard app.windows.firstMatch.frame.width >= 680 else {
+            throw XCTSkip("Regular-width iPad simulator check")
+        }
+        XCTAssertTrue(app.descendants(matching: .any)["remote.session.pill"].firstMatch.waitForExistence(timeout: 5))
+    }
+
     /// Controls › Settings › one page, by the summary row's identifier (picture, view, …).
     @MainActor
     private func openSettingsPage(_ app: XCUIApplication, _ page: String) {
@@ -395,7 +484,8 @@ final class SessionLayoutTests: XCTestCase {
     private func revealDock(_ app: XCUIApplication) {
         let handle = app.buttons["Show controls"]
         XCTAssertTrue(handle.waitForExistence(timeout: 5))
-        handle.swipeUp()
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists { handle.tap() }
+        else { handle.swipeUp() }
         XCTAssertTrue(app.buttons["Hide controls"].waitForExistence(timeout: 5))
     }
 
