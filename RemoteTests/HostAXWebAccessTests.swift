@@ -7,40 +7,40 @@ final class HostAXWebAccessTests: XCTestCase {
     func testWebTextRolesSeenInChromiumAndElectronAreEditable() {
         // Claude, Cursor and Codex composers and Chrome inputs: text role, settable value, no AXIsEditable.
         for role in [kAXTextFieldRole, kAXTextAreaRole, kAXComboBoxRole, "AXSearchField"] as [String] {
-            XCTAssertTrue(HostTextFocusPolicy.isEditable(role: role, enabled: true, editable: nil,
+            XCTAssertTrue(HostTextFocusPolicy.isLegacyEditable(role: role, enabled: true, editable: nil,
                                                          valueSettable: true, selectionSettable: true,
                                                          editableRoot: true), role)
         }
-        XCTAssertTrue(HostTextFocusPolicy.isEditable(role: kAXTextFieldRole, subrole: kAXSearchFieldSubrole,
+        XCTAssertTrue(HostTextFocusPolicy.isLegacyEditable(role: kAXTextFieldRole, subrole: kAXSearchFieldSubrole,
                                                      enabled: true, editable: nil, valueSettable: true))
     }
 
     func testSelectableReadOnlyTextIsNotEditable() {
-        XCTAssertFalse(HostTextFocusPolicy.isEditable(role: kAXTextAreaRole, enabled: true, editable: nil,
+        XCTAssertFalse(HostTextFocusPolicy.isLegacyEditable(role: kAXTextAreaRole, enabled: true, editable: nil,
                                                       valueSettable: false, selectionSettable: true))
-        XCTAssertFalse(HostTextFocusPolicy.isEditable(role: kAXTextAreaRole, enabled: true, editable: false,
+        XCTAssertFalse(HostTextFocusPolicy.isLegacyEditable(role: kAXTextAreaRole, enabled: true, editable: false,
                                                       valueSettable: true))
-        XCTAssertFalse(HostTextFocusPolicy.isEditable(role: kAXTextFieldRole, enabled: false, editable: nil,
+        XCTAssertFalse(HostTextFocusPolicy.isLegacyEditable(role: kAXTextFieldRole, enabled: false, editable: nil,
                                                       valueSettable: true))
     }
 
     func testContentEditableContainerNeedsEditableRootAndSettableSelectionOrValue() {
         for role in [kAXGroupRole, "AXWebArea"] as [String] {
-            XCTAssertTrue(HostTextFocusPolicy.isEditable(role: role, enabled: true, editable: nil, valueSettable: nil,
+            XCTAssertTrue(HostTextFocusPolicy.isLegacyEditable(role: role, enabled: true, editable: nil, valueSettable: nil,
                                                          selectionSettable: true, editableRoot: true), role)
-            XCTAssertTrue(HostTextFocusPolicy.isEditable(role: role, enabled: true, editable: nil, valueSettable: true,
+            XCTAssertTrue(HostTextFocusPolicy.isLegacyEditable(role: role, enabled: true, editable: nil, valueSettable: true,
                                                          selectionSettable: nil, editableRoot: true), role)
-            XCTAssertFalse(HostTextFocusPolicy.isEditable(role: role, enabled: true, editable: nil, valueSettable: nil,
+            XCTAssertFalse(HostTextFocusPolicy.isLegacyEditable(role: role, enabled: true, editable: nil, valueSettable: nil,
                                                           selectionSettable: true, editableRoot: false), role)
-            XCTAssertFalse(HostTextFocusPolicy.isEditable(role: role, enabled: true, editable: nil, valueSettable: nil,
+            XCTAssertFalse(HostTextFocusPolicy.isLegacyEditable(role: role, enabled: true, editable: nil, valueSettable: nil,
                                                           selectionSettable: true, editableRoot: nil), role)
-            XCTAssertFalse(HostTextFocusPolicy.isEditable(role: role, enabled: true, editable: nil, valueSettable: false,
+            XCTAssertFalse(HostTextFocusPolicy.isLegacyEditable(role: role, enabled: true, editable: nil, valueSettable: false,
                                                           selectionSettable: false, editableRoot: true), role)
         }
         // A focused web button or link is never a text target, whatever else it reports.
-        XCTAssertFalse(HostTextFocusPolicy.isEditable(role: kAXButtonRole, enabled: true, editable: true,
+        XCTAssertFalse(HostTextFocusPolicy.isLegacyEditable(role: kAXButtonRole, enabled: true, editable: true,
                                                       valueSettable: true, selectionSettable: true, editableRoot: true))
-        XCTAssertFalse(HostTextFocusPolicy.isEditable(role: nil, enabled: true, editable: true, valueSettable: true))
+        XCTAssertFalse(HostTextFocusPolicy.isLegacyEditable(role: nil, enabled: true, editable: true, valueSettable: true))
     }
 
     func testRoleClassNamesOnlyTheKind() {
@@ -174,16 +174,20 @@ final class HostAXWebAccessTests: XCTestCase {
     private final class Writes: @unchecked Sendable {
         private let lock = NSLock()
         private var items: [(HostAXWebAttribute, pid_t)] = []
+        private var readItems: [HostAXWebAttribute] = []
         func add(_ attribute: HostAXWebAttribute, _ pid: pid_t) { lock.lock(); items.append((attribute, pid)); lock.unlock() }
+        func addRead(_ attribute: HostAXWebAttribute) { lock.lock(); readItems.append(attribute); lock.unlock() }
         var attributes: [HostAXWebAttribute] { lock.lock(); defer { lock.unlock() }; return items.map(\.0) }
+        var reads: [HostAXWebAttribute] { lock.lock(); defer { lock.unlock() }; return readItems }
         var pids: [pid_t] { lock.lock(); defer { lock.unlock() }; return items.map(\.1) }
     }
 
-    private func prewarm(engine: HostAppEngine, writes: Writes, manual: HostAXSetOutcome = .applied) -> HostAXWebPrewarm {
+    private func prewarm(engine: HostAppEngine, writes: Writes, manual: HostAXSetOutcome = .applied,
+                         manualOnly: Bool = true) -> HostAXWebPrewarm {
         HostAXWebPrewarm(activator: HostAXWebActivator(classify: { _ in engine }),
                          broker: HostAXBroker(label: "test.ax.prewarm.\(UUID().uuidString)"),
                          set: { attribute, _, pid, _ in writes.add(attribute, pid); return attribute == .manual ? manual : .applied },
-                         isOn: { _, _, _ in .off }, trusted: { true })
+                         isOn: { _, _, _ in .off }, trusted: { true }, manualOnly: manualOnly)
     }
 
     private let app = URL(fileURLWithPath: "/Applications/Example.app")
@@ -218,12 +222,17 @@ final class HostAXWebAccessTests: XCTestCase {
         XCTAssertEqual(writes.attributes, [])
     }
 
-    func testChromeActivationFallsBackToEnhancedUserInterface() async {
+    func testChromePrewarmWithUnsupportedManualAttributeDoesNotReadOrWriteEnhanced() async {
         let writes = Writes()
-        let warm = prewarm(engine: .chromium, writes: writes, manual: .unsupported)
+        var warm = prewarm(engine: .chromium, writes: writes, manual: .unsupported)
+        warm.isOn = { attribute, _, _ in
+            writes.addRead(attribute)
+            return .off
+        }
         let outcome = await warm.appActivated(pid: 4245, launched: 100, bundleURL: app, sessionActive: true)
-        XCTAssertEqual(outcome, .requested(HostAXWebActivation(attribute: .enhanced, outcome: .applied)))
-        XCTAssertEqual(writes.attributes, [.manual, .enhanced])
+        XCTAssertEqual(outcome, .requested(HostAXWebActivation(attribute: .manual, outcome: .unsupported)))
+        XCTAssertEqual(writes.attributes, [.manual])
+        XCTAssertEqual(writes.reads, [])
     }
 
     func testPrewarmAndProbeShareTheOncePerProcessClaim() async {
@@ -231,7 +240,7 @@ final class HostAXWebAccessTests: XCTestCase {
         let activator = HostAXWebActivator(classify: { _ in .electron })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.prewarm.shared"),
                                     set: { attribute, _, pid, _ in writes.add(attribute, pid); return .applied },
-                                    isOn: { _, _, _ in .off }, trusted: { true })
+                                    isOn: { _, _, _ in .off }, trusted: { true }, manualOnly: true)
         _ = await warm.appActivated(pid: 4246, launched: 7, bundleURL: app, sessionActive: true)
         XCTAssertNil(activator.activateIfNeeded(HostAXProcessKey(pid: 4246, launched: 7), engine: .electron,
                                                 set: { _ in .applied }, isOn: { _ in .off }),
@@ -246,7 +255,7 @@ final class HostAXWebAccessTests: XCTestCase {
         _ = await hog.value
         let warm = HostAXWebPrewarm(activator: activator, broker: broker,
                                     set: { attribute, _, pid, _ in writes.add(attribute, pid); return .applied },
-                                    isOn: { _, _, _ in .off }, trusted: { true })
+                                    isOn: { _, _, _ in .off }, trusted: { true }, manualOnly: true)
         let outcome = await warm.appActivated(pid: 4247, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(outcome, .laneBusy)
         XCTAssertEqual(writes.attributes, [])
@@ -268,6 +277,28 @@ final class HostAXWebAccessTests: XCTestCase {
         XCTAssertEqual(writes.pids, [5150])
         let nobody = await warm.controlStarted(frontmost: nil)
         XCTAssertEqual(nobody, .native)
+    }
+
+    func testPrewarmDoesNotWriteToAnAppThatAlreadyReportsAccessibleFocus() async {
+        let writes = Writes()
+        let warm = HostAXWebPrewarm(activator: HostAXWebActivator(classify: { _ in .electron }),
+            broker: HostAXBroker(label: "test.ax.already-accessible"),
+            set: { attribute, _, pid, _ in writes.add(attribute, pid); return .applied },
+            trusted: { true }, reportsFocus: { _, _ in true }, manualOnly: true)
+        let result = await warm.appActivated(pid: 94, launched: 1, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(result, .alreadyAccessible)
+        XCTAssertEqual(writes.attributes, [])
+    }
+
+    func testQueuedPrewarmThatLostSessionOrFrontmostOwnershipDoesNothing() async {
+        let writes = Writes()
+        let warm = HostAXWebPrewarm(activator: HostAXWebActivator(classify: { _ in .electron }),
+            broker: HostAXBroker(label: "test.ax.stale-activation"),
+            set: { attribute, _, pid, _ in writes.add(attribute, pid); return .applied },
+            trusted: { true }, sessionIsCurrent: { false }, manualOnly: true)
+        let result = await warm.appActivated(pid: 95, launched: 1, bundleURL: app, sessionActive: true)
+        XCTAssertEqual(result, .noSession)
+        XCTAssertEqual(writes.attributes, [])
     }
 
     // MARK: Review fixes: unsent requests, session-end revert
@@ -296,7 +327,8 @@ final class HostAXWebAccessTests: XCTestCase {
     func testUnsentPrewarmLeavesTheProcessAskable() async {
         let activator = HostAXWebActivator(classify: { _ in .electron })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.prewarm.unsent"),
-                                    set: { _, _, _, _ in .notAttempted }, isOn: { _, _, _ in .off }, trusted: { true })
+                                    set: { _, _, _, _ in .notAttempted }, isOn: { _, _, _ in .off }, trusted: { true },
+                                    manualOnly: true)
         let outcome = await warm.appActivated(pid: 64, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(outcome, .notSent)
         XCTAssertFalse(activator.isClaimed(HostAXProcessKey(pid: 64, launched: 1)))
@@ -324,7 +356,8 @@ final class HostAXWebAccessTests: XCTestCase {
         let activator = HostAXWebActivator(classify: { _ in .chromium })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.revert"),
                                     set: { attribute, value, pid, _ in flags.set(attribute, value, pid) },
-                                    isOn: { _, pid, _ in flags.read(pid) }, trusted: { true }, isAlive: { _ in true })
+                                    isOn: { _, pid, _ in flags.read(pid) }, trusted: { true }, isAlive: { _ in true },
+                                    manualOnly: false)
         let ours = await warm.appActivated(pid: 70, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(ours, .requested(HostAXWebActivation(attribute: .enhanced, outcome: .applied)))
         let theirs = await warm.appActivated(pid: 71, launched: 1, bundleURL: app, sessionActive: true)
@@ -402,7 +435,7 @@ final class HostAXWebAccessTests: XCTestCase {
         let activator = HostAXWebActivator(classify: { _ in .electron })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.untrusted"),
                                     set: { attribute, _, pid, _ in writes.add(attribute, pid); return .failed },
-                                    isOn: { _, _, _ in .off }, trusted: { false })
+                                    isOn: { _, _, _ in .off }, trusted: { false }, manualOnly: true)
         let outcome = await warm.appActivated(pid: 92, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(outcome, .notTrusted)
         XCTAssertEqual(writes.attributes, [])
@@ -413,7 +446,7 @@ final class HostAXWebAccessTests: XCTestCase {
         let activator = HostAXWebActivator(classify: { _ in .electron })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: "test.ax.overrun"),
                                     set: { _, _, _, _ in Thread.sleep(forTimeInterval: 0.4); return .failed },
-                                    isOn: { _, _, _ in .off }, trusted: { true })
+                                    isOn: { _, _, _ in .off }, trusted: { true }, manualOnly: true)
         let outcome = await warm.appActivated(pid: 93, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(outcome, .timedOut)
         try? await Task.sleep(for: .milliseconds(300))
@@ -427,7 +460,8 @@ final class HostAXWebAccessTests: XCTestCase {
         let activator = HostAXWebActivator(classify: { _ in .chromium })
         let warm = HostAXWebPrewarm(activator: activator, broker: HostAXBroker(label: label),
                                     set: { attribute, value, pid, _ in flags.set(attribute, value, pid) },
-                                    isOn: { _, pid, _ in flags.read(pid) }, trusted: { true }, isAlive: { _ in true })
+                                    isOn: { _, pid, _ in flags.read(pid) }, trusted: { true }, isAlive: { _ in true },
+                                    manualOnly: false)
         let outcome = await warm.appActivated(pid: pid, launched: 1, bundleURL: app, sessionActive: true)
         XCTAssertEqual(outcome, .requested(HostAXWebActivation(attribute: .enhanced, outcome: .applied)))
         return (warm, activator)

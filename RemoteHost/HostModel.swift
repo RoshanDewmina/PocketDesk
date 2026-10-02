@@ -214,6 +214,7 @@ final class RemoteHostModel: ObservableObject {
     private var inputFreshness = NativeInputFreshness()
     private var textFocusRevision: UInt64 = 0
     private var textFocusTask: Task<Void, Never>?
+    private let textFocusCursor = HostCursorShapeSampler()
     private var axPrewarmEdge = HostAXPrewarmEdge()
     private let axSessionGeneration = HostAXSessionGeneration()
     private var captureHealthy = false
@@ -2337,6 +2338,7 @@ final class RemoteHostModel: ObservableObject {
     private func endCapture() {
         away.refresh()
         axPrewarmEdge = HostAXPrewarmEdge()
+        HostTextFocusChanges.shared.setSessionActive(false)
         let generation = axSessionGeneration, ended = generation.current
         let voiceOver = NSWorkspace.shared.isVoiceOverEnabled
         Task.detached(priority: .utility) {
@@ -2675,7 +2677,9 @@ final class RemoteHostModel: ObservableObject {
            (action.action == "click" || action.action == "double"),
            HostTextFocusProbe.isValidID(action.textFocusProbe),
            let probe = action.textFocusProbe, let point = outcome.clickPoint {
-            scheduleTextFocusProbe(probe, point: point, geometry: action.textFocusGeometry == true, issuedAt: now)
+            scheduleTextFocusProbe(probe, point: point, geometry: action.textFocusGeometry == true,
+                issuedAt: HostTextFocusTicket.postedAt(receivedAt: now, postingStartedMs: startedMs,
+                                                       clockNowMs: MachClock.nowMs()))
         } else if upgraded, outcome.accepted, action.action == "text" || action.action == "key",
                   action.textFocusGeometry == true, HostTextFocusProbe.isValidID(action.textFocusProbe),
                   let probe = action.textFocusProbe {
@@ -2697,8 +2701,9 @@ final class RemoteHostModel: ObservableObject {
                                          revision: textFocusRevision, issuedAt: issuedAt)
         let displayFrame = geometry ? input.displayBounds : nil
         log.info("probe scheduled click=\(point != nil, privacy: .public) geometry=\(displayFrame != nil, privacy: .public)")
+        let tapFocus = point != nil && HostTextFocusTapPolicy.enabled
         textFocusTask = Task { [weak self] in
-            do { try await Task.sleep(for: .milliseconds(100)) } catch {
+            do { try await Task.sleep(for: .milliseconds(tapFocus ? 40 : 100)) } catch {
                 log.info("probe dropped reason=cancelledBeforeQuery")
                 return
             }
@@ -2707,7 +2712,35 @@ final class RemoteHostModel: ObservableObject {
                 log.info("probe dropped reason=staleBeforeQuery")
                 return
             }
-            let focus = await HostTextFocusProbe.focus(at: point, geometry: displayFrame != nil)
+            var focus: HostTextFocusResult
+            if tapFocus {
+                let deadline = issuedAt + HostTextFocusTapPolicy.window
+                focus = .unfocused
+                while ProcessInfo.processInfo.systemUptime < deadline {
+                    guard self.textFocusIsCurrent(ticket, peer: peer), !Task.isCancelled else { return }
+                    let remaining = deadline - ProcessInfo.processInfo.systemUptime
+                    guard remaining > 0.005 else { break }
+                    focus = await HostTextFocusProbe.focus(at: point, geometry: displayFrame != nil,
+                        tapIssuedAt: issuedAt, tapFocus: true, budget: min(0.12, remaining))
+                    let now = ProcessInfo.processInfo.systemUptime
+                    focus.editable = HostTextFocusTapPolicy.shouldOpen(tapIssuedAt: issuedAt, now: now,
+                        ax: { focus }, cursor: {
+                            // Sample only when AX needs a fallback, at the admitted tap point.
+                            guard let tap = point, let cursorPoint = CGEvent(source: nil)?.location,
+                                  hypot(cursorPoint.x - tap.x, cursorPoint.y - tap.y) <= 2 else { return nil }
+                            return self.textFocusCursor.actualSystemShape()
+                        })
+                    if focus.editable {
+                        focus.editable = ProcessInfo.processInfo.systemUptime <= deadline
+                        break
+                    }
+                    guard deadline - now > 0.025 else { break }
+                    do { try await Task.sleep(for: .milliseconds(25)) } catch { return }
+                }
+            } else {
+                focus = await HostTextFocusProbe.focus(at: point, geometry: displayFrame != nil,
+                                                        tapFocus: HostTextFocusTapPolicy.enabled)
+            }
             let secure = await HostSecureFocus.isSecureNow()
             guard !Task.isCancelled else {
                 log.info("probe dropped reason=cancelledDuringQuery")
@@ -2741,10 +2774,14 @@ final class RemoteHostModel: ObservableObject {
 
     /// Checked on the 4 Hz lifecycle tick: when control becomes effective, ask the app already in front.
     private func reconcileAXPrewarm() {
+        HostTextFocusChanges.shared.setSessionActive(axPrewarmSessionActive && HostTextFocusTapPolicy.enabled)
         guard axPrewarmEdge.update(active: axPrewarmSessionActive) else { return }
         let front = NSWorkspace.shared.frontmostApplication
         Task.detached(priority: .utility) {
-            _ = await HostAXWebPrewarm().controlStarted(frontmost: front)
+            let pid = front?.processIdentifier
+            _ = await HostAXWebPrewarm(sessionIsCurrent: {
+                (!HostTextFocusTapPolicy.enabled || HostTextFocusChanges.shared.sessionIsActive) && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+            }).controlStarted(frontmost: front)
         }
     }
 
@@ -2754,8 +2791,9 @@ final class RemoteHostModel: ObservableObject {
         let bundleURL = app.bundleURL
         let sessionActive = axPrewarmSessionActive
         Task.detached(priority: .utility) {
-            _ = await HostAXWebPrewarm().appActivated(pid: pid, launched: launched, bundleURL: bundleURL,
-                                                      sessionActive: sessionActive)
+            _ = await HostAXWebPrewarm(sessionIsCurrent: {
+                (!HostTextFocusTapPolicy.enabled || HostTextFocusChanges.shared.sessionIsActive) && NSWorkspace.shared.frontmostApplication?.processIdentifier == pid
+            }).appActivated(pid: pid, launched: launched, bundleURL: bundleURL, sessionActive: sessionActive)
         }
     }
 

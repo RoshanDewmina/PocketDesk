@@ -145,6 +145,17 @@ final class HostCursorShapeSampler {
         usingFallback = false
     }
 
+    /// Real displayed cursor only. The keyboard fallback must not reuse the AX-derived shape.
+    func actualSystemShape() -> PointerShape? {
+        guard let cursor = NSCursor.currentSystem else { return nil }
+        let image = cursor.image
+        if let cache, cache.image === image, cache.hotSpot == cursor.hotSpot { return cache.shape }
+        let shape = CursorFingerprint(image: image, hotSpot: cursor.hotSpot)
+            .map { CursorShapeClassifier.classify($0, references: references) } ?? .unknown
+        cache = (image, cursor.hotSpot, shape)
+        return shape
+    }
+
     /// `globalPoint` is only used by the Accessibility fallback.
     func currentShape(at globalPoint: CGPoint?, now: TimeInterval) -> PointerShape {
         if let cursor = NSCursor.currentSystem {
