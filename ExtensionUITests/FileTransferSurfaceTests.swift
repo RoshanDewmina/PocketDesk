@@ -144,11 +144,8 @@ final class FileTransferSurfaceTests: XCTestCase {
                 ?? bundle.url(forResource: resource, withExtension: "ttf", subdirectory: "Fonts") else {
                 throw XCTSkip("Connect prompt component needs production font resource \(resource).ttf")
             }
-            let descriptors = CTFontManagerCreateFontDescriptorsFromURL(url as CFURL) as? [CTFontDescriptor] ?? []
-            let sourceFaces = descriptors.compactMap { CTFontDescriptorCopyAttribute($0, kCTFontNameAttribute) as? String }
-            guard sourceFaces.contains(face) else {
-                throw XCTSkip("Connect prompt source font \(resource).ttf does not contain PostScript face \(face)")
-            }
+            // CoreText can synthesize Doto's named variable instances during registration.
+            // Verify the exact resolved face below instead of requiring descriptor enumeration.
             var registrationError: Unmanaged<CFError>?
             let registered = CTFontManagerRegisterFontsForURL(url as CFURL, .process, &registrationError)
             let error = registrationError?.takeRetainedValue()
