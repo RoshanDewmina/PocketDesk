@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.roshan.Farside.UnlockPrototype.agent</string>
+<key>ProgramArguments</key><array><string>/Library/Application Support/FarsideUnlockPrototype/UnlockAgent.app/Contents/MacOS/UnlockAgent</string></array>
+<key>LimitLoadToSessionType</key><array><string>Aqua</string><string>LoginWindow</string></array>
+<key>RunAtLoad</key><true/>
+<key>ProcessType</key><string>Interactive</string>
+<key>Umask</key><integer>63</integer>
+</dict></plist>
