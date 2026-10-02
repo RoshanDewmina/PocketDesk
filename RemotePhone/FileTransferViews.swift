@@ -2,6 +2,18 @@ import SwiftUI
 import PhotosUI
 import UniformTypeIdentifiers
 
+struct SessionFileDrop: ViewModifier {
+    let model: PhoneRemoteModel
+    let regularWidth: Bool
+
+    func body(content: Content) -> some View {
+        // Keep the mounted input/video subtree stable while a window changes width class.
+        content.dropDestination(for: PickedMediaFile.self) { items, _ in
+            model.sendDroppedFiles(items, regularWidth: regularWidth)
+        }
+    }
+}
+
 /// Send file · Photo · From Mac, under the clipboard actions in the dock's Clip row.
 struct FileTransferRow: View {
     @ObservedObject var model: PhoneRemoteModel

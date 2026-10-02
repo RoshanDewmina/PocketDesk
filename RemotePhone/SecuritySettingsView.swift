@@ -36,7 +36,7 @@ struct SecuritySettingsSheet: View {
             }
         }
         .tint(Farside.Palette.bone)
-        .presentationDetents([.medium, .large])
+        .farsideCompactDetents([.medium, .large])
         .farsideSheet()
     }
 
@@ -46,7 +46,7 @@ struct SecuritySettingsSheet: View {
         Task { @MainActor in
             let changed = await gate.setRequired(on)
             required = gate.preferences.requireOwnerToConnect
-            note = changed ? nil : (on ? "This iPhone needs a passcode first, or the check didn’t pass." : "The check didn’t pass, so it stays on.")
+            note = changed ? nil : (on ? "This \(DeviceWord.current) needs a passcode first, or the check didn’t pass." : "The check didn’t pass, so it stays on.")
             changing = false
         }
     }

@@ -2,6 +2,7 @@ import SwiftUI
 import WebRTC
 import AVFoundation
 import Combine
+import OSLog
 
 @main
 struct RemotePhoneApp: App {
@@ -1121,7 +1122,7 @@ final class PhoneRemoteModel: ObservableObject {
     }
 
     /// The Mac accepts `moveTo`, triple-click counts and hardware modifier flags on pointer actions.
-    @Published var pencilEnabled = false { didSet { if !pencilEnabled { cancelInput() } } }
+    @Published var pencilEnabled = true { didSet { if !pencilEnabled { cancelInput() } } }
     var pencilSupported: Bool { sessionMode == .picture && supports(SessionFeature.pencilInput) && absolutePointerSupported && connection.causalInputNegotiated }
     @discardableResult
     func pencil(at point: CGPoint, frame: PencilFrame) -> Bool {
@@ -1820,7 +1821,7 @@ final class PhoneRemoteModel: ObservableObject {
     func pasteToMac(_ strings: [String], sourceChangeCount: Int? = nil) {
         guard clipboardAvailable else { clipboard.postUnavailable(clipboardUnavailableMessage); return }
         guard let text = strings.first(where: { !$0.isEmpty }) else {
-            clipboard.postUnavailable("Your iPhone clipboard has no text to send.")
+            clipboard.postUnavailable("Your \(DeviceWord.current) clipboard has no text to send.")
             return
         }
         clipboard.send(text, pasteAfter: automaticClipboardSupported ? true : nil, sourceChangeCount: sourceChangeCount)
@@ -1859,17 +1860,32 @@ final class PhoneRemoteModel: ObservableObject {
         return "File transfer is unavailable right now."
     }
 
-    func sendFileToMac(_ url: URL, securityScoped: Bool, release: @escaping () -> Void = {}) {
+    @discardableResult
+    func sendFileToMac(_ url: URL, securityScoped: Bool, release: @escaping () -> Void = {}) -> Bool {
         guard fileTransferAvailable else {
             release()
             files.postUnavailable(fileTransferUnavailableMessage)
-            return
+            return false
         }
         let scoped = securityScoped && url.startAccessingSecurityScopedResource()
-        _ = files.send(fileAt: url) {
+        return files.send(fileAt: url) {
             if scoped { url.stopAccessingSecurityScopedResource() }
             release()
+        } == nil
+    }
+
+    /// A drop is an explicit send, with the same peer, scope and file-channel admission as
+    /// the picker. Never retain a refused imported copy or silently send one of many items.
+    func sendDroppedFiles(_ items: [PickedMediaFile], regularWidth: Bool) -> Bool {
+        guard !items.isEmpty else { return false }
+        guard regularWidth, items.count == 1, sceneIsActive, fileTransferAvailable, !files.isBusy else {
+            items.forEach { $0.discard() }
+            files.postUnavailable(items.count > 1 ? "Send one file at a time."
+                                  : files.isBusy ? "Wait for the current file transfer to finish." : fileTransferUnavailableMessage)
+            return false
         }
+        let picked = items[0]
+        return sendFileToMac(picked.url, securityScoped: false) { picked.discard() }
     }
 
     func requestFileFromMac() {
@@ -2369,6 +2385,13 @@ let now = ProcessInfo.processInfo.systemUptime
     /// is active again. `.background` conceals the screen, releases input and pauses video; a
     /// live session is held briefly for a quick return, then closed and resumed on return.
     func sceneChanged(_ phase: ScenePhase) {
+        #if DEBUG
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            // Measurement only. Do not relax shielding/audio/PiP based on simulator focus.
+            Logger(subsystem: "com.roshan.PocketDesk", category: "iPadFocus")
+                .info("iPad scenePhase=\(String(describing: phase), privacy: .public)")
+        }
+        #endif
         PhoneIdleTimer.shared.setForeground(phase == .active)
         if phase == .active { files.refreshIdleTimer() }
         defer { refreshIdleTimer(at: ProcessInfo.processInfo.systemUptime) }

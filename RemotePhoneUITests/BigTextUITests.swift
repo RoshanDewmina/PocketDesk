@@ -50,13 +50,30 @@ final class BigTextUITests: XCTestCase {
         XCTAssertTrue(pill.waitForNonExistence(timeout: 5))
         tapDone(app)
         openControls(app)
-        XCTAssertTrue(row.waitForExistence(timeout: 5))
-        XCTAssertTrue(row.isHittable, "The panel grows by one row, so nothing in it scrolls")
-        XCTAssertEqual(row.value as? String, "1")
-        attachScreenshot("Big Text - panel row")
+        let regular = app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists
+        let toggle: XCUIElement
+        let initialValue: String
+        let finalValue: String
+        if regular {
+            // The regular key overlay is deliberately the existing landscape row, without
+            // portrait quick rows. Its Picture settings expose the same session override.
+            openSettingsPage(app, "picture")
+            toggle = app.switches["remote.bigText.sessionOff"]
+            scrollControls(app, to: toggle)
+            initialValue = "0"
+            finalValue = "1"
+        } else {
+            toggle = row
+            initialValue = "1"
+            finalValue = "0"
+        }
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5))
+        XCTAssertTrue(toggle.isHittable, "The saved-level session override must be reachable")
+        XCTAssertEqual(toggle.value as? String, initialValue)
+        attachScreenshot("Big Text - session override")
         let mark = probeMark(app)
-        row.tap()
-        let off = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == '0'"), object: row)
+        toggle.tap()
+        let off = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", finalValue), object: toggle)
         XCTAssertEqual(XCTWaiter().wait(for: [off], timeout: 3), .completed)
         var sent = false
         for _ in 0..<20 where !sent {
@@ -100,6 +117,11 @@ final class BigTextUITests: XCTestCase {
         XCTAssertTrue(handle.waitForExistence(timeout: 5))
         waitUntilStill(handle)
         XCTAssertTrue(handle.isHittable)
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists {
+            handle.tap()
+            XCTAssertTrue(app.buttons["Hide controls"].waitForExistence(timeout: 5))
+            return
+        }
         let start = handle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -80)))
         let hide = app.buttons["Hide controls"]

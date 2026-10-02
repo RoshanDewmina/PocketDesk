@@ -1,3 +1,11 @@
+# Universal 1.0 iPad decision — 2 October 2026
+
+Roshan's latest direction is a universal iPhone/iPad 1.0 around **27 October**. This supersedes the older launch dates and dedicated-iPad deferrals below for this scoped candidate. The reviewed design is `/Users/roshansilva/Documents/Codex/2026-10-01/ipad-design/IPAD-DESIGN-SPEC.md`. Regular windows use the two-column Home, top session pill and coverage-based picture/trackpad stack with hysteresis. Compact-width windows retain the iPhone layout; no user-facing setting is added. Pencil works without its opt-in toggle; explicit mouse lock, shortcut remapping and Mini map remain.
+
+Owner defaults: the collapsed pill uses the iPhone five-dot glyph; the 13-inch screenshot set comes from the simulator; **Make this app available on Mac is OFF** for the App Store checklist. No portal mutation is authorized by this lane. The design's focus policy remains measure-first on a real iPad; retain current privacy/audio/background behavior until that evidence exists.
+
+Authorization is source implementation and simulator verification on `claude/b7-ipad` from `20aded1`. No installed-host operation, real-device installation/testing, main merge or submission occurs here. The [15-minute hands test](testing/IPAD-TEST-PLAN.md) is for later integrated hardware acceptance.
+
 # Morning simplification decisions — 2 October 2026
 
 D57–D61 below record Roshan’s current direction: universal iPhone+iPad 1.0 with a dedicated iPad layout in progress, Apple silicon host, phone-owned Listen with a Mac privacy veto, a pairing comparison at the existing approval moment, and no Session check UI. This lane prepares source, tests and builds only; the batch orchestrator integrates and installs. No deployment, installation, release or physical acceptance is implied.

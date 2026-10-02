@@ -52,6 +52,41 @@ final class ViewportCaptureTests: XCTestCase {
         return String(decoding: try encoder.encode(action), as: UTF8.self)
     }
 
+    // MARK: First window chooses the one shared viewport preference
+
+    func testFirstRegularWindowStoresFitOnceAndCompactReadsIt() throws {
+        let suite = "ViewportCaptureTests.regular.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(ViewportPreference.initialize(regularWidth: true, in: defaults), .fit)
+        XCTAssertEqual(defaults.string(forKey: ViewportPreference.key), ViewportMode.fit.rawValue)
+        XCTAssertEqual(ViewportPreference.initialize(regularWidth: false, in: defaults), .fit)
+    }
+
+    func testFirstCompactWindowStoresFillAndRegularNeverOverwritesIt() throws {
+        let suite = "ViewportCaptureTests.compact.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertEqual(ViewportPreference.initialize(regularWidth: false, in: defaults), .fill)
+        XCTAssertEqual(defaults.string(forKey: ViewportPreference.key), ViewportMode.fill.rawValue)
+        XCTAssertEqual(ViewportPreference.initialize(regularWidth: true, in: defaults), .fill)
+        ViewportPreference.store(.fit, in: defaults)
+        XCTAssertEqual(ViewportPreference.initialize(regularWidth: false, in: defaults), .fit)
+    }
+
+    func testRegularFirstRunPreservesExistingAndInvalidStoredValues() throws {
+        let suite = "ViewportCaptureTests.existing.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        for stored in ["fill", "fit", "stretch"] {
+            defaults.set(stored, forKey: ViewportPreference.key)
+            XCTAssertEqual(ViewportPreference.initialize(regularWidth: true, in: defaults),
+                           stored == "fit" ? .fit : .fill)
+            XCTAssertEqual(defaults.string(forKey: ViewportPreference.key), stored,
+                           "First-run selection must not repair or replace an existing preference")
+        }
+    }
+
     // MARK: When a change leaves
 
     private func send(_ reporter: inout ViewportReporter, settled: Bool = false, coverage: CGRect? = nil,

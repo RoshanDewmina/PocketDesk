@@ -100,7 +100,7 @@ struct AnywherePaywallView: View {
     private var benefits: some View {
         VStack(alignment: .leading, spacing: Farside.Space.s) {
             benefit("antenna.radiowaves.left.and.right", CommerceLocalization.text("BENEFIT_ROUTE", "On cellular or any Wi-Fi, away from home"))
-            benefit("lock", CommerceLocalization.text("BENEFIT_ENCRYPTION", "Encrypted between your iPhone and your Mac, even through our relay"))
+            benefit("lock", DeviceWord.copy(CommerceLocalization.text("BENEFIT_ENCRYPTION", "Encrypted between your iPhone and your Mac, even through our relay")))
             benefit("slider.horizontal.3", CommerceLocalization.text("BENEFIT_SETUP", "No VPN, no port forwarding, nothing to set up"))
         }
     }

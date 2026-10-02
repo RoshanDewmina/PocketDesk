@@ -9,7 +9,7 @@ struct MacBusyPill: View {
     var device: String
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(state: BusyState, isVisible: Bool? = nil, device: String = "iPhone") {
+    init(state: BusyState, isVisible: Bool? = nil, device: String = DeviceWord.current) {
         self.state = state
         self.isVisible = isVisible ?? state.isVisible
         self.device = device

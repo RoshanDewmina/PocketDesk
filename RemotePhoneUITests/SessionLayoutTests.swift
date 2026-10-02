@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class SessionLayoutTests: XCTestCase {
     @MainActor
@@ -17,6 +18,83 @@ final class SessionLayoutTests: XCTestCase {
         app.buttons["Skip"].tap()
     }
 
+    @MainActor
+    func testRegularUpsideDownPortraitKeepsThePicturePadAndTopPill() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires an iPad simulator")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit"]
+        launchOfflineFixture(app)
+        rotate(app, to: .portraitUpsideDown)
+        try requireRegularPill(app)
+        let picture = app.descendants(matching: .any)["remote.picture"].firstMatch
+        let pad = app.descendants(matching: .any)["remote.stacked.pad"].firstMatch
+        XCTAssertTrue(pad.waitForExistence(timeout: 5))
+        XCTAssertEqual(picture.frame.height, picture.frame.width / 1.6, accuracy: 2)
+        XCTAssertLessThanOrEqual(picture.frame.maxY, pad.frame.minY + 14)
+        XCTAssertTrue(app.buttons["Show controls"].isHittable)
+        attachScreenshot("iPad upside-down portrait picture and top pill")
+    }
+
+    @MainActor
+    func testRegularInputSettingsHaveNoPencilOptIn() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires an iPad simulator")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-controls-settings", "--ui-controls-page=keyboard"]
+        app.launch()
+        XCTAssertTrue(app.buttons["remote.mouse.lock"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.switches["remote.pencil.enabled"].exists)
+        XCTAssertTrue(app.switches["remote.hardware.remap"].exists)
+        attachScreenshot("Pencil always available with explicit mouse lock and shortcut remap")
+    }
+    @MainActor
+    func testRegularPortraitPictureStacksOverPadAndSurvivesKeyboard() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires an iPad simulator")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard", "--ui-keyboard-hit-probe"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["remote.session.pill"].firstMatch.waitForExistence(timeout: 5),
+                      "Regular iPad must expose the pill")
+        let picture = app.descendants(matching: .any)["remote.picture"].firstMatch
+        let pad = app.descendants(matching: .any)["remote.stacked.pad"].firstMatch
+        XCTAssertTrue(pad.waitForExistence(timeout: 5))
+        XCTAssertTrue(picture.exists)
+        XCTAssertEqual(picture.frame.height, picture.frame.width / 1.6, accuracy: 2)
+        XCTAssertLessThanOrEqual(picture.frame.maxY, pad.frame.minY + 14)
+        let before = picture.frame
+        app.buttons["Show controls"].doubleTap()
+        XCTAssertTrue(app.buttons["remote.keyboard.hide"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(picture.frame.minY, before.minY, accuracy: 1)
+        XCTAssertEqual(picture.frame.height, before.height, accuracy: 1)
+        attachScreenshot("iPad stack with soft keyboard in pad")
+        app.buttons["remote.keyboard.hide"].tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.textViews.firstMatch.waitForNonExistence(timeout: 5))
+        rotate(app, to: .landscapeLeft)
+        XCTAssertTrue(pad.waitForNonExistence(timeout: 5))
+        XCTAssertGreaterThan(picture.frame.width, picture.frame.height)
+        attachScreenshot("iPad rotated full-bleed picture")
+    }
+
+    @MainActor
+    func testRegular690PointBandStacksAndCompactBandKeepsHandle() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "Requires an iPad simulator")
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-window-width=690", "--ui-window-height=1032"]
+        app.launch()
+        XCTAssertTrue(app.descendants(matching: .any)["remote.session.pill"].firstMatch.waitForExistence(timeout: 5))
+        let picture = app.descendants(matching: .any)["remote.picture"].firstMatch
+        XCTAssertTrue(app.descendants(matching: .any)["remote.stacked.pad"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertEqual(picture.frame.width, 690, accuracy: 2)
+        XCTAssertEqual(picture.frame.height, 690 / 1.6, accuracy: 2)
+        app.terminate()
+        app.launchArguments = ["--ui-layout-check", "--ui-window-width=390", "--ui-window-height=834", "--ui-width-class=compact"]
+        app.launch()
+        XCTAssertTrue(app.buttons["Show controls"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any)["remote.stacked.pad"].firstMatch.exists)
+        attachScreenshot("Compact iPad band retains phone chrome")
+    }
     /// Opt-in only: uses the owner's existing pairing without typing or clicking on the Mac.
     /// Simulator fixture tests cannot catch the physical-device Swift metadata stack limit.
     @MainActor
@@ -215,7 +293,7 @@ final class SessionLayoutTests: XCTestCase {
     @MainActor
     func testOfflineControlsPortraitLandscapeAndKeyboard() {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill"]
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fill", "--ui-software-keyboard"]
         launchOfflineFixture(app)
 
         let showControls = app.buttons["Show controls"]
@@ -225,7 +303,8 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertFalse(app.buttons["Release"].exists, "No disabled release control should cover the resting stream")
         attachScreenshot("Default immersive - offline layout")
 
-        showControls.swipeUp()
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists { showControls.tap() }
+        else { showControls.swipeUp() }
         let hideControls = app.buttons["Hide controls"]
         XCTAssertTrue(hideControls.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Keyboard"].waitForExistence(timeout: 3))
@@ -238,7 +317,8 @@ final class SessionLayoutTests: XCTestCase {
         XCTAssertTrue(fitWholeDisplay.waitForExistence(timeout: 3))
         attachScreenshot("Revealed dock - offline layout")
 
-        hideControls.swipeDown()
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists { hideControls.tap() }
+        else { hideControls.swipeDown() }
         XCTAssertTrue(showControls.waitForExistence(timeout: 5), "Downward dock swipe must restore the immersive canvas")
         XCTAssertFalse(app.buttons["End session"].exists)
         showControls.doubleTap()
@@ -268,10 +348,13 @@ final class SessionLayoutTests: XCTestCase {
         let handleReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "isHittable == true"), object: landscapeHandle)
         XCTAssertEqual(XCTWaiter().wait(for: [handleReady], timeout: 5), .completed)
         attachScreenshot("Immersive landscape after keyboard dismissal - offline layout")
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists { landscapeHandle.tap() }
+        else {
         // Use a definite vertical drag after the keyboard transition. A synthesized
         // swipe on the 44-point handle can be too short to cross its drag threshold.
         let start = landscapeHandle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         start.press(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 0, dy: -100)))
+        }
         let controls = app.buttons["Controls"].firstMatch
         XCTAssertTrue(controls.waitForExistence(timeout: 5))
         controls.tap()
@@ -430,6 +513,142 @@ final class SessionLayoutTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testRegularSessionPillDockAndKeysShareTopAnchor() throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-demo-mac"]
+        launchOfflineFixture(app)
+        try requireRegularPill(app)
+        let pill = app.descendants(matching: .any)["remote.session.pill"].firstMatch
+        let canvas = app.descendants(matching: .any)["remote.canvas"].firstMatch
+        XCTAssertGreaterThanOrEqual(pill.frame.minY, canvas.frame.minY)
+        XCTAssertLessThan(pill.frame.minY - canvas.frame.minY, 60)
+        app.buttons["Show controls"].tap()
+        let dock = app.descendants(matching: .any)["remote.dock"].firstMatch
+        XCTAssertTrue(dock.waitForExistence(timeout: 3))
+        XCTAssertGreaterThanOrEqual(dock.frame.minY, pill.frame.maxY)
+        XCTAssertLessThanOrEqual(dock.frame.width, 560.5)
+        app.buttons["Controls"].firstMatch.tap()
+        let keys = app.descendants(matching: .any)["remote.controls.content"].firstMatch
+        XCTAssertTrue(keys.waitForExistence(timeout: 3))
+        XCTAssertGreaterThanOrEqual(keys.frame.minY, pill.frame.maxY)
+        XCTAssertLessThan(keys.frame.maxY, app.windows.firstMatch.frame.maxY - 120)
+        attachScreenshot("Regular session top pill dock and keys")
+    }
+
+    @MainActor
+    func testRegularPersistentStatesStayInsidePillAfterIdle() throws {
+        for (argument, identifier) in [("--ui-reconnecting", "remote.reconnecting"),
+                                       ("--ui-reconnect-back", "remote.back"),
+                                       ("--ui-mac-busy", "remote.macBusy"),
+                                       ("--ui-big-text-changing", "remote.bigText.pill")] {
+            let app = XCUIApplication()
+            app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", argument]
+            launchOfflineFixture(app)
+            try requireRegularPill(app)
+            let pill = app.descendants(matching: .any)["remote.session.pill"].firstMatch
+            let state = app.descendants(matching: .any)[identifier].firstMatch
+            XCTAssertTrue(state.waitForExistence(timeout: 3))
+            let idle = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Expanded'"), object: pill)
+            XCTAssertEqual(XCTWaiter.wait(for: [idle], timeout: 3), .completed)
+            // Check after the two-second connected-presentation timeout, without touching the stage.
+            Thread.sleep(forTimeInterval: 2.2)
+            XCTAssertEqual(pill.value as? String, "Expanded")
+            XCTAssertTrue(pill.frame.insetBy(dx: -1, dy: -1).contains(state.frame))
+            if argument == "--ui-reconnecting" { XCTAssertTrue(app.buttons["End session"].isHittable) }
+            app.terminate()
+        }
+    }
+
+    @MainActor
+    func testRegularConnectedPillCollapsesAndDoubleTapOpensKeyboard() throws {
+        try checkRegularSoftwareKeyboard(probe: "--ui-keyboard-ax-contain")
+    }
+
+    @MainActor
+    func testRegularSoftwareKeyboardWithContainerSafeArea() throws {
+        try checkRegularSoftwareKeyboard(probe: "--ui-keyboard-container-area")
+    }
+
+    @MainActor
+    private func checkRegularSoftwareKeyboard(probe: String) throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-software-keyboard", "--ui-input-probe", "--ui-keyboard-hit-probe", probe]
+        launchOfflineFixture(app)
+        try requireRegularPill(app)
+        let pill = app.descendants(matching: .any)["remote.session.pill"].firstMatch
+        let idle = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == 'Collapsed'"), object: pill)
+        XCTAssertEqual(XCTWaiter.wait(for: [idle], timeout: 5), .completed)
+        app.buttons["Show controls"].doubleTap()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Command"].exists)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        let returnKey = app.buttons.matching(NSPredicate(format: "identifier == 'remote.keys' AND label == 'Return'")).firstMatch
+        attachKeyboardHitDiagnostics(app, name: "Regular software keyboard hit testing " + probe)
+        XCTAssertTrue(returnKey.isEnabled)
+        let reportedHittable = returnKey.isHittable
+        XCTAssertFalse(app.descendants(matching: .any)["remote.keys"].firstMatch.scrollViews.firstMatch.exists)
+        XCTAssertFalse(app.descendants(matching: .any)["remote.dock"].firstMatch.exists)
+        // Independently exercise the physical target while retaining the AX hittability gate.
+        returnKey.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let input = app.descendants(matching: .any)["remote.inputProbe"].firstMatch
+        let action = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS 'key return'"), object: input)
+        XCTAssertEqual(XCTWaiter.wait(for: [action], timeout: 5), .completed,
+                       "The displayed Return target must reach the admitted input probe")
+        let hide = app.buttons["remote.keyboard.hide"]
+        hide.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.textViews.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(reportedHittable, "The regular keyboard row must expose its final key without scrolling")
+    }
+
+    @MainActor
+    func testRegularHardwareKeyboardShowsTextFieldWithoutKeyBar() throws {
+        try checkRegularHardwareKeyboard(probe: "--ui-keyboard-ax-contain")
+    }
+
+    @MainActor
+    func testRegularHardwareKeyboardWithContainerSafeArea() throws {
+        try checkRegularHardwareKeyboard(probe: "--ui-keyboard-container-area")
+    }
+
+    @MainActor
+    private func checkRegularHardwareKeyboard(probe: String) throws {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check", "--ui-viewport-fit", "--ui-hardware-keyboard", "--ui-keyboard-hit-probe", probe]
+        launchOfflineFixture(app)
+        try requireRegularPill(app)
+        app.buttons["Show controls"].doubleTap()
+        XCTAssertTrue(app.textViews.firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any)["remote.keys"].firstMatch.exists)
+        XCTAssertFalse(app.buttons["Command"].exists)
+        attachKeyboardHitDiagnostics(app, name: "Regular hardware-field dismissal hit testing " + probe)
+        let hide = app.buttons["remote.keyboard.hide"]
+        let reportedHittable = hide.isHittable
+        XCTAssertFalse(app.buttons["Send text"].isEnabled)
+        hide.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.textViews.firstMatch.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(reportedHittable)
+    }
+
+    @MainActor
+    private func attachKeyboardHitDiagnostics(_ app: XCUIApplication, name: String) {
+        attachScreenshot(name)
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = name + " hierarchy"
+        hierarchy.lifetime = .keepAlways
+        add(hierarchy)
+    }
+
+    @MainActor
+    private func requireRegularPill(_ app: XCUIApplication) throws {
+        guard app.windows.firstMatch.frame.width >= 680 else {
+            throw XCTSkip("Regular-width iPad simulator check")
+        }
+        XCTAssertTrue(app.descendants(matching: .any)["remote.session.pill"].firstMatch.waitForExistence(timeout: 5))
+    }
+
     /// Controls › Settings › one page, by the summary row's identifier (picture, view, …).
     @MainActor
     private func openSettingsPage(_ app: XCUIApplication, _ page: String) {
@@ -445,7 +664,8 @@ final class SessionLayoutTests: XCTestCase {
     private func revealDock(_ app: XCUIApplication) {
         let handle = app.buttons["Show controls"]
         XCTAssertTrue(handle.waitForExistence(timeout: 5))
-        handle.swipeUp()
+        if app.descendants(matching: .any)["remote.session.pill"].firstMatch.exists { handle.tap() }
+        else { handle.swipeUp() }
         XCTAssertTrue(app.buttons["Hide controls"].waitForExistence(timeout: 5))
     }
 

@@ -1,6 +1,54 @@
 import SwiftUI
 
+/// The window, not the device or its orientation, decides whether the picture needs a pad.
+enum SessionWindowLayout {
+    static func stacked(regular: Bool, window: CGSize, source: CGSize, wasStacked: Bool) -> Bool {
+        guard regular, valid(window), valid(source) else { return false }
+        let coverage = (window.width * source.height / source.width) / window.height
+        return wasStacked ? coverage <= 0.66 : coverage < 0.60
+    }
+
+    static func pictureSize(window: CGSize, source: CGSize, stacked: Bool) -> CGSize {
+        guard stacked, valid(window), valid(source) else { return window }
+        return CGSize(width: window.width, height: min(window.height, window.width * source.height / source.width))
+    }
+
+    static func zoomAnchor(_ point: CGPoint, picture: CGSize) -> CGPoint {
+        CGPoint(x: min(max(0, point.x), picture.width), y: min(max(0, point.y), picture.height))
+    }
+
+    private static func valid(_ size: CGSize) -> Bool {
+        size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0
+    }
+}
+
+#if DEBUG
+/// Screenshot fixtures constrain SwiftUI's window and explicitly supply its width class.
+/// These exercise layout bands; they do not emulate system multitasking or scene focus.
+struct SimulatedSessionWindow: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if let width = LaunchOptions.value("--ui-window-width=").flatMap(Double.init), width.isFinite, width > 0 {
+            GeometryReader { proxy in
+                let height = LaunchOptions.value("--ui-window-height=").flatMap(Double.init)
+                ZStack { content }
+                    .frame(width: min(CGFloat(width), proxy.size.width),
+                           height: height.map { $0.isFinite && $0 > 0 ? min(CGFloat($0), proxy.size.height) : proxy.size.height }
+                            ?? proxy.size.height)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("ui.simulated.window")
+                    .environment(\.horizontalSizeClass, LaunchOptions.value("--ui-width-class=") == "compact" ? .compact : .regular)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            }
+            .background(Farside.Palette.void)
+        } else {
+            content
+        }
+    }
+}
+#endif
+
 extension Farside.Motion {
+    static let windowLayout = Animation.easeInOut(duration: 0.32)
     /// Sheets and the dock: a quick spring that settles without wobble.
     static let sheetSpring = Animation.spring(response: 0.42, dampingFraction: 0.8)
 }
@@ -243,5 +291,50 @@ extension FarsideArt {
                 }
             }
         }
+    }
+}
+
+
+/// Pure decisions shared by the session chrome and regular-width sheet presentations.
+/// Callers supply the effective width/rollback state; no device idiom or UIKit state is read here.
+enum SessionChromePolicy {
+    static let idleInterval: TimeInterval = 2
+
+    static func form(regular: Bool, enabled: Bool) -> Bool { regular && enabled }
+
+    static func cameraMaxHeight(regular: Bool, enabled: Bool) -> CGFloat? {
+        form(regular: regular, enabled: enabled) ? nil : 340
+    }
+
+    /// Whether the special-key row appears; the text field remains in both cases.
+    static func keyboardBar(regular: Bool, hardware: Bool) -> Bool { !(regular && hardware) }
+
+    static func keyboardBottom(regular: Bool, stacked: Bool, couch: Bool, keyboardOpen: Bool,
+                               barFrame: CGRect, canvas: CGRect) -> CGFloat {
+        guard regular, !stacked, !couch, keyboardOpen, barFrame.height > 0 else { return 0 }
+        return max(0, canvas.maxY - barFrame.minY)
+    }
+
+    static func persistent(reconnecting: Bool, reconnectBack: Bool, busy: Bool, bigText: Bool,
+                           notice: Bool, pan: Bool, viewOnly: Bool, connected: Bool, covered: Bool) -> Bool {
+        reconnecting || reconnectBack || busy || bigText || notice || pan || viewOnly || (connected && covered)
+    }
+
+    /// The idle task restarts on activity; state and open controls never enter its delay.
+    static func mayCollapse(regular: Bool, controlsCollapsed: Bool, showControls: Bool,
+                            keyboardOpen: Bool, persistent: Bool) -> Bool {
+        regular && controlsCollapsed && !showControls && !keyboardOpen && !persistent
+    }
+}
+
+/// High-rate input renews a monotonic deadline without publishing a view-state change
+/// or spawning a task for each motion sample. Only showing/hiding the pill changes state.
+@MainActor
+final class SessionPillActivityClock {
+    private var lastActivity = ProcessInfo.processInfo.systemUptime
+
+    func note(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) { lastActivity = now }
+    func remaining(at now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> TimeInterval {
+        max(0, lastActivity + SessionChromePolicy.idleInterval - now)
     }
 }

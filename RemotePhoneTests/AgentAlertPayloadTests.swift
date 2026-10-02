@@ -192,7 +192,7 @@ final class AgentAlertPayloadTests: XCTestCase {
         XCTAssertEqual(String(format: NSLocalizedString("AGENT_NEEDS_YOU_TITLE", comment: ""), "Claude Code"), "A task on your Mac needs you",
                        "A stray name from an older service has nowhere to go")
         XCTAssertEqual(NSLocalizedString("AGENT_NEEDS_YOU_BODY", comment: ""),
-                       "Stuck on something only a human can click. Open Farside on your iPhone to look.")
+                       "Stuck on something only a human can click. Open Farside to look.")
         XCTAssertFalse(NSLocalizedString("AGENT_NEEDS_YOU_BODY", comment: "").contains("Tap"), "On a Watch, a tap leads nowhere")
         XCTAssertEqual(NSLocalizedString("AGENT_REMINDER_BODY", comment: ""), "Still waiting on you.")
         for key in ["AGENT_NEEDS_YOU_BODY", "AGENT_TEST_BODY", "AGENT_REMINDER_BODY"] {

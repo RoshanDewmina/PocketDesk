@@ -8,6 +8,16 @@ enum ViewportPreference {
         defaults.string(forKey: key).flatMap(ViewportMode.init(rawValue:)) ?? .fill
     }
 
+    /// The first window chooses one shared value. Resizing or a later regular window never
+    /// replaces the person's selection (or a compact first launch's Fill).
+    @discardableResult
+    static func initialize(regularWidth: Bool, in defaults: UserDefaults = .standard) -> ViewportMode {
+        if defaults.object(forKey: key) == nil {
+            store(regularWidth ? .fit : .fill, in: defaults)
+        }
+        return stored(in: defaults)
+    }
+
     static func store(_ mode: ViewportMode, in defaults: UserDefaults = .standard) {
         defaults.set(mode.rawValue, forKey: key)
     }
