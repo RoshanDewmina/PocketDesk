@@ -188,7 +188,7 @@ final class FarsideScreenshotTour: XCTestCase {
                 var geometry: [String: Any] = ["shot": shot.name, "arguments": app.launchArguments,
                                                "synthetic": shot.name.hasPrefix("debug-"),
                                                "outer_window": rectangle(app.windows.firstMatch.frame)]
-                for identifier in ["phone.home", "remote.canvas", "remote.picture", "remote.stacked.pad",
+                for identifier in ["ui.simulated.window", "phone.home", "remote.canvas", "remote.picture", "remote.stacked.pad",
                                    "remote.session.pill", "remote.dock", "remote.controls.content"] {
                     let element = app.descendants(matching: .any)[identifier].firstMatch
                     if element.exists { geometry[identifier] = rectangle(element.frame) }
