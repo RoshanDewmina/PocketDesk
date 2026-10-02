@@ -182,7 +182,7 @@ final class VirtualDisplayWindowKeeper: @unchecked Sendable {
             if matches.count == 1 {
                 updated.records[index].applied = matches[0].frame
                 if !VirtualDisplayWindowPolicy.fits(matches[0].frame, in: bounds) { succeeded = false }
-                if actualFrames.contains(where: { VirtualDisplayWindowPolicy.close($0, matches[0].frame) }) { succeeded = false }
+                if actualFrames.contains(where: { VirtualDisplayWindowPolicy.sameOrigin($0, matches[0].frame) }) { succeeded = false }
                 actualFrames.append(matches[0].frame)
             } else { succeeded = false }
         }

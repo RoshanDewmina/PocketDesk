@@ -117,6 +117,10 @@ final class VirtualDisplayWindowTests: XCTestCase {
 
     func testAppForcedCoincidentFramesRollBackUsingKnownBindings() async {
         let (keeper, access, _) = fixture()
+        let firstSettled = CGRect(x: target.minX, y: target.minY, width: 603, height: 700)
+        let secondSettled = CGRect(x: target.minX, y: target.minY, width: 587, height: 700)
+        XCTAssertTrue(VirtualDisplayWindowPolicy.sameOrigin(firstSettled, secondSettled))
+        XCTAssertFalse(VirtualDisplayWindowPolicy.distinctFrames([firstSettled, secondSettled]))
         var second = access.windows[0]
         second.identity.windowID += 1
         second.frame.origin = CGPoint(x: 120, y: 100)

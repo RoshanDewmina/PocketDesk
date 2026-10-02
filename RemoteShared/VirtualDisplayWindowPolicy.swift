@@ -45,8 +45,14 @@ enum VirtualDisplayWindowPolicy {
 
     static func distinctFrames(_ frames: [CGRect]) -> Bool {
         frames.indices.allSatisfy { index in
-            frames.indices.filter { $0 < index }.allSatisfy { !close(frames[index], frames[$0]) }
+            frames.indices.filter { $0 < index }.allSatisfy { !sameOrigin(frames[index], frames[$0]) }
         }
+    }
+
+    /// Width/height differences do not make windows stacked at the same corner useful placement.
+    /// Keep full-frame comparison separate for identity attribution and restore verification.
+    static func sameOrigin(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.minX - b.minX) <= tolerance && abs(a.minY - b.minY) <= tolerance
     }
 
     static func isDefinitivelyClosed(_ identity: VirtualDisplayWindowIdentity, processExists: Bool,
