@@ -150,6 +150,7 @@ struct HomeView: View {
     @State private var contactRipples: [HalftoneRipple] = []
     @State private var artSize: CGSize = .zero
     @State private var regularIntroHeight: CGFloat = 302
+    @State private var regularContentHeight: CGFloat = 640
     /// When the current connect started waiting; drives the "still trying" rings (D38).
     @State private var searchStart: Date?
     /// The art's reaction to a known failure, shown briefly before the error cover.
@@ -191,7 +192,7 @@ struct HomeView: View {
         GeometryReader { proxy in
             if FarsideShellLayout.twoColumns(horizontal: horizontalSizeClass, typeSize: typeSize,
                                             enabled: FarsideShellLayout.enabled) {
-                regularHome(windowWidth: proxy.size.width)
+                regularHome(windowWidth: proxy.size.width, windowHeight: proxy.size.height)
             } else if verticalSizeClass == .compact && !(horizontalSizeClass == .regular && typeSize.isAccessibilitySize && FarsideShellLayout.enabled) {
                 // Landscape phone: art on the left, the Mac and Connect always in view on the right.
                 HStack(alignment: .top, spacing: Farside.Space.l) {
@@ -314,21 +315,27 @@ struct HomeView: View {
             FarsideWordmark(size: 28)
             Spacer()
             Menu {
-                Button { showPairedMacs = true } label: { Label("Your Macs", systemImage: "laptopcomputer") }
-                Button { onboarding.replayCoach() } label: { Label("How to steer", systemImage: "hand.draw") }
-                Button { showTroubleshoot = true } label: { Label("Trouble connecting?", systemImage: "questionmark.circle") }
-                Button { model.pairingEntry = .paste } label: { Label("Paste Pairing Code", systemImage: "doc.on.clipboard") }
-                Button { showDetails = true } label: { Label("Connection Details", systemImage: "network") }
-                Button { showPaywall = true } label: { Label("Farside Anywhere", systemImage: "globe") }
+                Section {
+                    Button { showSecurity = true } label: { Label("Settings", systemImage: "gearshape") }
+                    Button { showPairedMacs = true } label: { Label("Your Macs", systemImage: "laptopcomputer") }
+                    Button { model.pairingEntry = .paste } label: { Label("Paste Pairing Code", systemImage: "doc.on.clipboard") }
+                }
+                Section {
+                    Button { onboarding.replayCoach() } label: { Label("How to steer", systemImage: "hand.draw") }
+                    Button { showTroubleshoot = true } label: { Label("Trouble connecting?", systemImage: "questionmark.circle") }
+                    Button { showDetails = true } label: { Label("Connection Details", systemImage: "network") }
+                }
                 if !showsLaterOptions, connection.invitation != nil {
                     Button(CouchCopy.entryTitle) { connect(mode: .couch) }
                     Toggle("Local network only", isOn: Binding(get: { connection.localOnly }, set: { model.setLocalOnly($0) }))
                         .disabled(!connection.localOnly && connection.invitation?.hasOwnerLocalIdentity != true)
                     Button("Alerts & Lock Screen") { AgentAlertCenter.shared.showsSettings = true }
                 }
-                Button { showLegal = true } label: { Label("Third-Party Notices", systemImage: "doc.text") }
-                Button { showServerData = true } label: { Label("Server Data", systemImage: "externaldrive") }
-                Button { showSecurity = true } label: { Label("Settings", systemImage: "gearshape") }
+                Section {
+                    Button { showPaywall = true } label: { Label("Farside Anywhere", systemImage: "globe") }
+                    Button { showServerData = true } label: { Label("Server Data", systemImage: "externaldrive") }
+                    Button { showLegal = true } label: { Label("Third-Party Notices", systemImage: "doc.text") }
+                }
                 if connection.invitation != nil {
                     Divider()
                     Button(role: .destructive) { confirmForget = true } label: {
@@ -336,9 +343,9 @@ struct HomeView: View {
                     }
                 }
             } label: {
-                Text("?")
+                Image(systemName: "ellipsis")
                     .font(.headline)
-                    .foregroundStyle(Farside.Palette.ash)
+                    .foregroundStyle(Farside.Palette.bone)
                     .frame(width: 38, height: 38)
                     .overlay(Circle().strokeBorder(Farside.Palette.line2, lineWidth: 1))
                     .frame(width: 44, height: 44)
@@ -349,8 +356,11 @@ struct HomeView: View {
         .padding(.top, Farside.Space.xs)
     }
 
-    private func regularHome(windowWidth: CGFloat) -> some View {
+    private func regularHome(windowWidth: CGFloat, windowHeight: CGFloat) -> some View {
         let columns = FarsideShellLayout.columns(windowWidth: windowWidth)
+        // A tall iPad window otherwise leaves the bottom half empty; both columns share one inset
+        // so the Mac card and the list stay level.
+        let centerInset = max(0, (windowHeight - regularContentHeight) / 2 - Farside.Space.xl)
         return HStack(alignment: .top, spacing: 20) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
@@ -362,6 +372,8 @@ struct HomeView: View {
                     homePrimary
                 }
                 .padding(.bottom, Farside.Space.m)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { regularContentHeight = $0 }
+                .padding(.top, centerInset)
             }
             .scrollBounceBehavior(.basedOnSize)
             .frame(width: columns.leading)
@@ -369,7 +381,7 @@ struct HomeView: View {
             ScrollView {
                 if macName != nil || savedMacState == .choose {
                     homeUtilities
-                        .padding(.top, regularIntroHeight)
+                        .padding(.top, regularIntroHeight + centerInset)
                         .padding(.bottom, Farside.Space.m)
                 }
             }
@@ -519,15 +531,15 @@ struct HomeView: View {
                 if showsLaterOptions {
                 VStack(spacing: 6) {
                     Button(CouchCopy.entryTitle) { connect(mode: .couch) }
-                        .buttonStyle(FarsideSecondaryButtonStyle(height: 52))
+                        .buttonStyle(FarsideSecondaryButtonStyle(height: 46))
                         .accessibilityIdentifier("home.couch")
-                    // The caption style uppercases; the label keeps the sentence as written.
                     Text(CouchCopy.entryCaption)
-                        .farsideCaption()
+                        .font(.footnote)
+                        .foregroundStyle(Farside.Palette.ash)
                         .multilineTextAlignment(.center)
-                        .accessibilityLabel(CouchCopy.entryCaption)
                 }
                 .frame(maxWidth: .infinity)
+                .padding(.top, 2)
                 }
             }
         }
@@ -920,66 +932,68 @@ struct MacCard: View {
                     Text("Paired with this \(DeviceWord.current)")
                         .font(.subheadline)
                         .foregroundStyle(Farside.Palette.ash)
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        LiveDot(state: dotState)
-                            .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
-                        Text(statusLine)
-                            .farsideCaption(Farside.Palette.bone)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .padding(.top, 10)
-                    .accessibilityElement(children: .combine)
-                    .accessibilityLabel("Status: \(statusLine)")
-                    if let health, status.tone != .busy {
-                        Text(health.nextStep)
-                            .font(.footnote)
-                            .foregroundStyle(Farside.Palette.ash)
-                            .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                if !typeSize.isAccessibilitySize, let kind = MacKind.guess(fromName: name) {
+                    FarsideHalftone(style: HalftoneStyle(cell: 3.2, dotScale: 1.2, dust: 0), animated: false,
+                                    scene: FarsideArt.macDevice(kind))
+                        .frame(width: 92, height: 64)
+                        .accessibilityHidden(true)
+                }
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    LiveDot(state: dotState)
+                        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 4 }
+                    Text(statusLine)
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(Farside.Palette.bone)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Status: \(statusLine)")
+                if let health, status.tone != .busy {
+                    Text(health.nextStep)
+                        .font(.footnote)
+                        .foregroundStyle(Farside.Palette.ash)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 16)
+                        .accessibilityLabel("Next step: \(health.nextStep)")
+                        .accessibilityIdentifier("home.health.next")
+                    if let title = cardActionTitle(health.action) {
+                        Button(checking ? "Checking…" : title) { act(health.action) }
+                            .buttonStyle(FarsideLinkButtonStyle())
+                            .disabled(checking)
                             .padding(.leading, 16)
-                            .accessibilityLabel("Next step: \(health.nextStep)")
-                            .accessibilityIdentifier("home.health.next")
-                        if let title = cardActionTitle(health.action) {
-                            Button(checking ? "Checking…" : title) { act(health.action) }
-                                .buttonStyle(FarsideLinkButtonStyle())
-                                .disabled(checking)
-                                .padding(.leading, 16)
-                                .accessibilityIdentifier("home.health.action")
-                        }
-                    }
-                    if let vitalsNote {
-                        Text(vitalsNote)
-                            .font(.footnote)
-                            .foregroundStyle(Farside.Palette.ash)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.top, 6)
-                            .padding(.leading, 16)
-                            .accessibilityIdentifier("home.vitals")
-                    }
-                    if let vitalsCause {
-                        Text(vitalsCause)
-                            .font(.footnote)
-                            .foregroundStyle(Farside.Palette.ash)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.leading, 16)
-                            .accessibilityIdentifier("home.vitals.cause")
+                            .accessibilityIdentifier("home.health.action")
                     }
                 }
-                if !typeSize.isAccessibilitySize {
-                    Spacer(minLength: 0)
-                    FarsideHalftone(style: HalftoneStyle(cell: 2.5, dotScale: 1.15, dust: 0), animated: false,
-                                    scene: FarsideArt.macThumbnail)
-                        .frame(width: 104, height: 66)
-                        .background(Color.black)
-                        .clipShape(.rect(cornerRadius: 10, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Farside.Palette.line2, lineWidth: 1))
+                if let vitalsNote {
+                    Text(vitalsNote)
+                        .font(.footnote)
+                        .foregroundStyle(Farside.Palette.ash)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 6)
+                        .padding(.leading, 16)
+                        .accessibilityIdentifier("home.vitals")
+                }
+                if let vitalsCause {
+                    Text(vitalsCause)
+                        .font(.footnote)
+                        .foregroundStyle(Farside.Palette.ash)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 16)
+                        .accessibilityIdentifier("home.vitals.cause")
                 }
             }
             Rectangle().fill(Farside.Palette.line).frame(height: 1)
             HStack(alignment: .firstTextBaseline) {
-                Text(lastReachedText).farsideCaption()
+                Text(lastReachedText)
                 Spacer(minLength: 8)
-                if lastReached != nil { Text("We won’t ask why").farsideCaption() }
+                if lastReached != nil { Text("We won’t ask why") }
             }
+            .font(.footnote)
+            .foregroundStyle(Farside.Palette.ash)
             .accessibilityElement(children: .combine)
         }
         .padding(18)
@@ -1015,27 +1029,23 @@ struct MacCard: View {
     }
 }
 
-/// "Connect · Closes the gap" with the ember arrow in an ink circle.
+/// "Connect" with the ember arrow in an ink circle.
 private struct ConnectPillLabel: View {
     var body: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Connect")
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(Farside.Palette.ink)
-                Text("Closes the gap")
-                    .farsideCaption(Farside.Palette.inkMuted)
-            }
+            Text("Connect")
+                .font(.title3.weight(.semibold))
+                .foregroundStyle(Farside.Palette.ink)
             Spacer(minLength: 8)
             Image(systemName: "arrow.right")
                 .font(.title3.weight(.semibold))
                 .foregroundStyle(Farside.Palette.ember)
-                .frame(width: 60, height: 60)
+                .frame(width: 52, height: 52)
                 .background(Farside.Palette.ink, in: .circle)
         }
         .padding(.leading, 28)
-        .padding(.trailing, 9)
-        .frame(maxWidth: .infinity, minHeight: 78)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity, minHeight: 68)
     }
 }
 

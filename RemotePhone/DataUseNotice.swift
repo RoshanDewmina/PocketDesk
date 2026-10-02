@@ -169,7 +169,7 @@ struct DataWarningCard: View {
                     .foregroundStyle(Farside.Palette.bone)
                     .accessibilityAddTraits(.isHeader)
                 Text(content.message)
-                    .font(Farside.Typeface.caption(.footnote))
+                    .font(.footnote)
                     .foregroundStyle(Farside.Palette.ash)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityLabel(content.spoken)

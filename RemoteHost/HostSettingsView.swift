@@ -11,6 +11,7 @@ struct HostSettingsView: View {
     @State private var showingWakeRegistration = false
     @State private var confirmingAwayMode = false
     @State private var choosingBackground = false
+    @State private var showingAdvanced = false
 
     var body: some View {
         let presentation = HostPopoverPresentation.make(for: state)
@@ -39,7 +40,7 @@ struct HostSettingsView: View {
                         permissionsSection
                         generalSection
                         availabilitySection
-                        TransportPreferenceRows()
+                        advancedSection
                     }
                     .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
@@ -291,27 +292,56 @@ struct HostSettingsView: View {
                 Button("View Notices…") { showingNotices = true }
                     .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
             }
-            HostSettingsRow("Diagnostics", subtitle: "No screen content, typed text, clipboard, tokens or IP addresses") {
-                Button("Copy Diagnostics", action: actions.copyDiagnostics)
-                    .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
-                    .accessibilityIdentifier("farside.settings.copyDiagnostics")
+        }
+    }
+
+    /// Troubleshooting and experimental controls, collapsed so everyday choices come first.
+    @ViewBuilder private var advancedSection: some View {
+        Button {
+            withAnimation(Farside.Motion.easeOut()) { showingAdvanced.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Text("Advanced").hostCaption()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Farside.Palette.ash)
+                    .rotationEffect(.degrees(showingAdvanced ? 90 : 0))
+                Spacer()
             }
-            ForEach(state.diagnosticReports) { report in
-                DisclosureGroup("Local report · \(report.outcome.rawValue)") {
-                    Text(report.preview).font(.footnote).textSelection(.enabled)
-                    ShareLink(item: report.preview) { Label("Export this preview", systemImage: "square.and.arrow.up") }
-                    Button("Delete report", role: .destructive) { actions.deleteDiagnosticReport(report.id) }
-                }.accessibilityIdentifier("farside.settings.localReport")
+            .padding(.horizontal, 4)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Advanced")
+        .accessibilityValue(showingAdvanced ? "Expanded" : "Collapsed")
+        .accessibilityIdentifier("farside.settings.advanced")
+        if showingAdvanced {
+            HostSettingsSection {
+                HostSettingsRow("Diagnostics", subtitle: "No screen content, typed text, clipboard, tokens or IP addresses") {
+                    Button("Copy Diagnostics", action: actions.copyDiagnostics)
+                        .buttonStyle(HostButtonStyle(kind: .plate, height: 30))
+                        .accessibilityIdentifier("farside.settings.copyDiagnostics")
+                }
+                ForEach(state.diagnosticReports) { report in
+                    DisclosureGroup("Local report · \(report.outcome.rawValue)") {
+                        Text(report.preview).font(.footnote).textSelection(.enabled)
+                        ShareLink(item: report.preview) { Label("Export this preview", systemImage: "square.and.arrow.up") }
+                        Button("Delete report", role: .destructive) { actions.deleteDiagnosticReport(report.id) }
+                    }.accessibilityIdentifier("farside.settings.localReport")
+                }
+                Text("Local reports expire after 7 days, up to 10 reports. Nothing is uploaded automatically.").font(.footnote)
+                    .foregroundStyle(Farside.Palette.ash)
+                    .padding(.horizontal, 14).padding(.vertical, 10)
+                HostSettingsRow("Compatibility video encoder", subtitle: "Use the previous encoder if the new picture has trouble. Applies to your next connection") {
+                    HostSwitch(label: "Compatibility video encoder", isOn: state.compatibilityVideoEncoder, set: actions.setCompatibilityVideoEncoder)
+                        .accessibilityIdentifier("farside.settings.compatibilityVideoEncoder")
+                }
+                HostSettingsRow("Newest frame wins", subtitle: "Skip a frame the encoder can’t take yet instead of queueing it. Lower lag on a busy Mac") {
+                    HostSwitch(label: "Newest frame wins", isOn: state.newestFrameWins, set: actions.setNewestFrameWins)
+                        .accessibilityIdentifier("farside.settings.newestFrameWins")
+                }
             }
-            Text("Local reports expire after 7 days, up to 10 reports. Nothing is uploaded automatically.").font(.footnote)
-            HostSettingsRow("Compatibility video encoder", subtitle: "Use the previous encoder if the new picture has trouble. Applies to your next connection") {
-                HostSwitch(label: "Compatibility video encoder", isOn: state.compatibilityVideoEncoder, set: actions.setCompatibilityVideoEncoder)
-                    .accessibilityIdentifier("farside.settings.compatibilityVideoEncoder")
-            }
-            HostSettingsRow("Newest frame wins", subtitle: "Skip a frame the encoder can’t take yet instead of queueing it. Lower lag on a busy Mac") {
-                HostSwitch(label: "Newest frame wins", isOn: state.newestFrameWins, set: actions.setNewestFrameWins)
-                    .accessibilityIdentifier("farside.settings.newestFrameWins")
-            }
+            TransportPreferenceRows()
         }
     }
 

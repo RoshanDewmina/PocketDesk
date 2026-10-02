@@ -13,6 +13,7 @@ struct NativeSessionView: View {
     @State private var canvasFrame: CGRect = .zero
     @State private var stackedPicture = false
     @State private var padTouched = false
+    @State private var deckKeysHeight: CGFloat = 0
     @State private var dataWarningTop: CGFloat = 0
     @State private var safeFrame: CGRect = .zero
     @State private var dockFrame: CGRect = .zero
@@ -129,7 +130,8 @@ struct NativeSessionView: View {
         }
         .overlay {
             if !regularSessionLayout && !couch && !controlsCollapsed && !keyboardOpen && !showControls {
-                FarsideDotScreen()
+                // Light enough that the Mac stays readable while the dock is open.
+                FarsideDotScreen(dotOpacity: 0.32, wash: 0.0...0.5)
                     .ignoresSafeArea()
                     .transition(.opacity)
             }
@@ -480,6 +482,7 @@ struct NativeSessionView: View {
                     if stackedPicture {
                         GeometryReader { pad in
                             stackedRestCard
+                                .padding(.top, showsDeckKeys ? deckKeysHeight + 12 : 0)
                                 .padding(.bottom, keyboardOpen && keyboardBarFrame.height > 0
                                          ? min(pad.size.height, max(0, canvasFrame.maxY - keyboardBarFrame.minY)) : 0)
                         }
@@ -489,6 +492,12 @@ struct NativeSessionView: View {
             }
             // One native input view survives resizing; gestures work on picture and pad.
             inputSurface
+            if showsDeckKeys {
+                deckKeys
+                    .padding(.top, pictureSize.height + 12)
+                    .frame(maxWidth: .infinity)
+                    .transition(.opacity)
+            }
         }
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
             canvasFrame = frame
@@ -562,9 +571,48 @@ struct NativeSessionView: View {
         SessionWindowLayout.pictureSize(window: canvasFrame.size, source: model.sourceSize, stacked: stackedPicture)
     }
 
+    /// Stacked iPad (and the Duo laptop pose): a row of keys above the trackpad, like a laptop deck.
+    private var showsDeckKeys: Bool {
+        stackedPicture && !keyboardOpen && controlsCollapsed && !showControls
+            && UserDefaults.standard.object(forKey: "ipad.deckKeys") as? Bool ?? true
+    }
+
+    private var deckKeys: some View {
+        HStack(alignment: .top, spacing: 0) {
+            Button { openKeyboard() } label: { Label("Keyboard", systemImage: "keyboard") }
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel("Keyboard")
+            Button { revealControls(); openVoiceInput() } label: { Label("Dictate", systemImage: "mic.fill") }
+                .frame(maxWidth: .infinity)
+                .disabled(!voiceEntryAvailable)
+                .accessibilityLabel("Voice input")
+            Button {
+                revealControls()
+                if !showClipboardRow { toggleClipboardRow() }
+            } label: {
+                Label(unifiedClipboard ? "Files" : "Clipboard", systemImage: unifiedClipboard ? "folder" : "list.clipboard")
+            }
+            .frame(maxWidth: .infinity)
+            .disabled(!(unifiedClipboard ? model.fileTransferSupported : showsClipboard))
+            .accessibilityLabel(unifiedClipboard ? "Files" : "Clipboard")
+            Button { openControls() } label: { Label("Controls", systemImage: "command") }
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel("Controls")
+        }
+        .buttonStyle(FarsideTileButtonStyle())
+        .labelStyle(.titleAndIcon)
+        .frame(maxWidth: 520)
+        .padding(.vertical, 12)
+        .padding(.horizontal, 8)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { deckKeysHeight = $0 }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("remote.stacked.keys")
+    }
+
     private var stackedRestCard: some View {
-        RoundedRectangle(cornerRadius: 20, style: .continuous)
-            .strokeBorder(Farside.Palette.line, lineWidth: 1)
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
+            .fill(Farside.Palette.void2)
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Farside.Palette.line2, lineWidth: 1))
             .overlay {
                 VStack(spacing: 8) {
                     Text("Look up. This is your Mac’s trackpad.")
@@ -649,9 +697,9 @@ struct NativeSessionView: View {
         .accessibilityLabel(linkAccessibility)
     }
 
-    /// Keys · Mic · Clip · Picture · Controls. The row stretches; the side column keeps each key at its own width.
+    /// Keyboard · Dictate · Files · Picture · Controls. The row stretches; the side column keeps each key at its own width.
     @ViewBuilder private func couchTiles(wide: Bool) -> some View {
-        Button { openKeyboard() } label: { Label("Keys", systemImage: "keyboard") }
+        Button { openKeyboard() } label: { Label("Keyboard", systemImage: "keyboard") }
             .buttonStyle(FarsideTileButtonStyle())
             .frame(maxWidth: wide ? CGFloat.infinity : nil)
             .accessibilityLabel("Keyboard")
@@ -659,7 +707,7 @@ struct NativeSessionView: View {
         micOrReleaseTile
             .frame(maxWidth: wide ? CGFloat.infinity : nil)
             .accessibilityIdentifier("remote.couch.mic")
-        Button(action: toggleClipboardRow) { Label(unifiedClipboard ? "Files" : "Clip", systemImage: unifiedClipboard ? "folder" : "list.clipboard") }
+        Button(action: toggleClipboardRow) { Label(unifiedClipboard ? "Files" : "Clipboard", systemImage: unifiedClipboard ? "folder" : "list.clipboard") }
             .buttonStyle(FarsideTileButtonStyle(selected: showClipboardRow))
             .frame(maxWidth: wide ? CGFloat.infinity : nil)
             .disabled(!(unifiedClipboard ? model.fileTransferSupported : showsClipboard) || showVoiceInput)
@@ -672,7 +720,7 @@ struct NativeSessionView: View {
             .disabled(model.pendingModeSwitch != nil)
             .accessibilityHint(DeviceWord.copy("Shows your Mac’s screen on this device"))
             .accessibilityIdentifier("remote.couch.picture")
-        Button { openControls() } label: { Label("Controls", systemImage: "slider.horizontal.3") }
+        Button { openControls() } label: { Label("Controls", systemImage: "command") }
             .buttonStyle(FarsideTileButtonStyle())
             .frame(maxWidth: wide ? CGFloat.infinity : nil)
             .accessibilityIdentifier("remote.couch.controls")
@@ -1103,7 +1151,8 @@ struct NativeSessionView: View {
                 if model.dragging { holdChip.transition(.opacity) }
                 if dockHintVisible && !model.dragging {
                     Text("Swipe up for controls · double tap to type")
-                        .farsideCaption(Farside.Palette.bone)
+                        .font(.footnote.weight(.medium))
+                        .foregroundStyle(Farside.Palette.bone)
                         .padding(.horizontal, 12).padding(.vertical, 7)
                         .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.void.opacity(0.92), stroke: Farside.Palette.line2)
                         .transition(.opacity)
@@ -1204,55 +1253,25 @@ struct NativeSessionView: View {
 
     private var pictureTilesRow: some View {
         HStack(alignment: .top, spacing: 0) {
-            Button { openKeyboard() } label: { Label("Keys", systemImage: "keyboard") }
+            Button { openKeyboard() } label: { Label("Keyboard", systemImage: "keyboard") }
                 .buttonStyle(FarsideTileButtonStyle())
                 .accessibilityShowsLargeContentViewer()
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel("Keyboard")
             micOrReleaseTile.frame(maxWidth: .infinity)
-            Button(action: toggleClipboardRow) { Label(unifiedClipboard ? "Files" : "Clip", systemImage: unifiedClipboard ? "folder" : "list.clipboard") }
+            Button(action: toggleClipboardRow) { Label(unifiedClipboard ? "Files" : "Clipboard", systemImage: unifiedClipboard ? "folder" : "list.clipboard") }
                 .buttonStyle(FarsideTileButtonStyle(selected: showClipboardRow))
                 .accessibilityShowsLargeContentViewer()
                 .frame(maxWidth: .infinity)
                 .disabled(!(unifiedClipboard ? model.fileTransferSupported : showsClipboard) || showVoiceInput)
                 .accessibilityLabel(unifiedClipboard ? "Files" : "Clipboard")
                 .accessibilityHint(unifiedClipboard ? "Send a file or photo, or get a file from your Mac" : "Paste to or copy from your Mac")
-            Button { toggleMode() } label: {
-                Label("Fit", systemImage: viewport.mode == .fill ? "arrow.down.right.and.arrow.up.left"
-                                                                 : "arrow.up.left.and.arrow.down.right")
-            }
-            .buttonStyle(FarsideTileButtonStyle())
+            Button { openControls() } label: { Label("Controls", systemImage: "command") }
+                .buttonStyle(FarsideTileButtonStyle())
                 .accessibilityShowsLargeContentViewer()
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel(viewport.mode == .fill ? "Fit whole display" : "Fill screen")
-            modeTile
-        }
-    }
-
-    /// A tap still toggles View and Control; holding offers Couch mode when this link can carry it.
-    @ViewBuilder private var modeTile: some View {
-        if model.couchSwitchAvailable {
-            Menu {
-                Button("Couch mode", systemImage: "sofa") { _ = model.requestMode(.couch) }
-                    .accessibilityIdentifier("remote.mode.couch")
-            } label: {
-                Label("Mode", systemImage: panMode ? "cursorarrow.motionlines" : "hand.draw")
-            } primaryAction: {
-                setInteractionMode(!panMode)
-            }
-            .menuStyle(.button)
-            .buttonStyle(FarsideTileButtonStyle())
-                .accessibilityShowsLargeContentViewer()
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel(panMode ? "Control desktop" : "Move view")
-        } else {
-            Button { setInteractionMode(!panMode) } label: {
-                Label("Mode", systemImage: panMode ? "cursorarrow.motionlines" : "hand.draw")
-            }
-            .buttonStyle(FarsideTileButtonStyle())
-                .accessibilityShowsLargeContentViewer()
-            .frame(maxWidth: .infinity)
-            .accessibilityLabel(panMode ? "Control desktop" : "Move view")
+                .frame(maxWidth: .infinity)
+                .accessibilityLabel("Controls")
+                .accessibilityHint("Right-click, Mission Control, Spaces and more")
         }
     }
 
@@ -1263,12 +1282,12 @@ struct NativeSessionView: View {
                 .accessibilityLabel("Drop")
                 .accessibilityHint("Lets go of the mouse button on your Mac")
         } else if showVoiceInput {
-            Button { cancelVoiceInput() } label: { Label("Mic", systemImage: "waveform") }
+            Button { cancelVoiceInput() } label: { Label("Dictate", systemImage: "waveform") }
                 .buttonStyle(FarsideTileButtonStyle(on: voiceInput.phase == .listening))
                 .disabled(voiceInput.phase == .finishing || model.voiceDeliveryStatus == .waiting)
                 .accessibilityLabel("Cancel voice input")
         } else {
-            Button(action: openVoiceInput) { Label("Mic", systemImage: "mic.fill") }
+            Button(action: openVoiceInput) { Label("Dictate", systemImage: "mic.fill") }
                 .buttonStyle(FarsideTileButtonStyle())
                 .accessibilityShowsLargeContentViewer()
                 .disabled(!voiceEntryAvailable)
@@ -1279,12 +1298,16 @@ struct NativeSessionView: View {
 
     private var segmentsRow: some View {
         HStack(spacing: 8) {
+            FarsideSegmented(label: "Touch mode",
+                             options: [(false, "Control"), (true, "View")],
+                             selection: Binding(get: { panMode }, set: { setInteractionMode($0) }),
+                             spokenTitles: [false: "Control desktop", true: "Move view"],
+                             symbols: [false: "cursorarrow", true: "hand.draw"])
             FarsideSegmented(label: "Screen size",
                              options: [(ViewportMode.fit, "Fit"), (ViewportMode.fill, "Fill")],
-                             selection: Binding(get: { viewport.mode }, set: { setMode($0) }))
-            FarsideSegmented(label: "Touch mode",
-                             options: [(true, "View"), (false, "Control")],
-                             selection: Binding(get: { panMode }, set: { setInteractionMode($0) }))
+                             selection: Binding(get: { viewport.mode }, set: { setMode($0) }),
+                             spokenTitles: [.fit: "Fit whole display", .fill: "Fill screen"],
+                             symbols: [.fit: "arrow.down.right.and.arrow.up.left", .fill: "arrow.up.left.and.arrow.down.right"])
         }
     }
 
@@ -1295,7 +1318,8 @@ struct NativeSessionView: View {
                     HStack(spacing: 7) {
                         LiveDot(state: liveState, size: 7)
                         Text(linkCaption)
-                            .farsideCaption(Farside.Palette.bone)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(Farside.Palette.bone)
                             .lineLimit(1)
                             .minimumScaleFactor(0.8)
                     }
@@ -1317,13 +1341,7 @@ struct NativeSessionView: View {
             .accessibilityElement(children: .combine)
             .accessibilityLabel(offlineLayoutCheck ? "Offline layout check. No Mac is connected." : [linkAccessibility, model.captureScopeDescription, status, lockedMouseNotice.isEmpty ? nil : lockedMouseNotice].compactMap { $0 }.joined(separator: ". "))
             Spacer(minLength: 4)
-            if !couch {
-                Button { openControls() } label: {
-                    Image(systemName: "slider.horizontal.3")
-                }
-                .buttonStyle(FarsideRoundButtonStyle(diameter: PhoneCommandAccessibility.target(40, enabled: PhoneCommandAccessibility.targetsEnabled)))
-                .accessibilityLabel("Controls")
-            }
+
             Button("End session") { model.disconnect() }
                 .buttonStyle(FarsideEndButtonStyle())
                 .fixedSize()
@@ -1962,7 +1980,12 @@ struct NativeSessionView: View {
 
     private var showsBigTextRow: Bool { model.bigTextSupported && model.bigText.savedWidth != nil }
 
-    private var showsSessionRows: Bool { showsCurtainRow || showsDisplayRow || showsBigTextRow || model.awaySupported }
+    /// Couch moved here from the old Mode tile's long-press menu.
+    private var showsCouchRow: Bool { !couch && model.couchSwitchAvailable }
+
+    private var showsSessionRows: Bool {
+        showsCurtainRow || showsDisplayRow || showsBigTextRow || showsCouchRow || model.awaySupported
+    }
 
     /// Header, two rows of keys and up to three session rows. Nothing in the panel scrolls.
     private var panelHeight: CGFloat {
@@ -1972,6 +1995,7 @@ struct NativeSessionView: View {
         if showsCurtainRow { height += 61 }
         if showsDisplayRow { height += showsCurtainRow ? 53 : 52 }
         if showsBigTextRow { height += showsCurtainRow || showsDisplayRow ? 53 : 52 }
+        if showsCouchRow { height += showsCurtainRow || showsDisplayRow || showsBigTextRow ? 53 : 52 }
         return height
     }
 
@@ -2027,7 +2051,7 @@ struct NativeSessionView: View {
                                     .minimumScaleFactor(caption == words.captions.last ? 0.75 : 1)
                             }
                         }
-                        .font(Farside.Typeface.caption(.caption2))
+                        .font(.footnote)
                         .foregroundStyle(words.isWarning ? Farside.Palette.bone : Farside.Palette.ash)
                         .accessibilityElement(children: .combine)
                         .accessibilityAddTraits(.isStaticText)
@@ -2213,12 +2237,37 @@ struct NativeSessionView: View {
             if showsDisplayRow { displayPanelRow }
             if showsBigTextRow && (showsCurtainRow || showsDisplayRow) { sessionRowDivider }
             if showsBigTextRow { bigTextPanelRow }
+            if showsCouchRow && (showsCurtainRow || showsDisplayRow || showsBigTextRow) { sessionRowDivider }
+            if showsCouchRow { couchPanelRow }
         }
         .farsidePlate(Farside.Radius.card, fill: Farside.Palette.panel, stroke: Farside.Palette.line)
     }
 
     private var sessionRowDivider: some View {
         Rectangle().fill(Farside.Palette.line).frame(height: 1).padding(.leading, 50)
+    }
+
+    private var couchPanelRow: some View {
+        Button { _ = model.requestMode(.couch) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "sofa")
+                    .foregroundStyle(Farside.Palette.ash)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                Text("Switch to Couch mode").foregroundStyle(Farside.Palette.bone)
+                Spacer(minLength: 8)
+                Text(CouchCopy.entryCaption)
+                    .font(.footnote)
+                    .foregroundStyle(Farside.Palette.ash)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .padding(.horizontal, 14)
+            .frame(minHeight: 52)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("remote.mode.couch")
     }
 
     private var bigTextPanelRow: some View {

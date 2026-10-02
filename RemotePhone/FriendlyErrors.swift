@@ -313,13 +313,14 @@ struct FriendlyErrorView: View {
     var close: () -> Void
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @State private var appeared = false
+    @State private var visibleHeight: CGFloat = 0
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 FarsideHalftone(style: HalftoneStyle(cell: 5, dust: 0.04), scene: error.scene)
-                    .frame(height: verticalSizeClass == .compact ? 150 : 260)
-                    .padding(.horizontal, -Farside.Space.l)
+                    .frame(height: verticalSizeClass == .compact ? 150 : 250)
+                    .padding(.top, verticalSizeClass == .compact ? 0 : Farside.Space.xl)
                 FarsideHeading("\(error.headline).", accent: error.accent, size: 34)
                     .padding(.top, Farside.Space.xs)
                 messageText
@@ -337,10 +338,18 @@ struct FriendlyErrorView: View {
                 }
             }
             .padding(.horizontal, Farside.Space.l)
+            .padding(.bottom, Farside.Space.xl)
             .frame(maxWidth: 560, alignment: .leading)
             .frame(maxWidth: .infinity)
+            // Short messages sit in the middle of the space above the button instead of ending halfway down.
+            .frame(minHeight: visibleHeight, alignment: .center)
         }
         .scrollBounceBehavior(.basedOnSize)
+        .onScrollGeometryChange(for: CGFloat.self) { geometry in
+            geometry.containerSize.height - geometry.contentInsets.top - geometry.contentInsets.bottom
+        } action: { _, height in
+            visibleHeight = max(0, height)
+        }
         .safeAreaInset(edge: .bottom) {
             VStack(spacing: Farside.Space.s) {
                 Button(primaryTitle ?? error.action.title, action: primary)
@@ -352,7 +361,7 @@ struct FriendlyErrorView: View {
                         .accessibilityIdentifier("error.secondary")
                 }
                 if let footnote = error.footnote {
-                    Text(footnote).farsideCaption().multilineTextAlignment(.center)
+                    Text(footnote).font(.footnote).foregroundStyle(Farside.Palette.ash).multilineTextAlignment(.center)
                 }
             }
             .padding(.horizontal, Farside.Space.l)

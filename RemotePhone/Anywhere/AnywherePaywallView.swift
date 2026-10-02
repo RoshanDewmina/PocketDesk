@@ -172,10 +172,10 @@ struct AnywherePaywallView: View {
                         }
                     }
                     Text(offer.pricePhrase)
-                        .font(.subheadline).foregroundStyle(Farside.Palette.bone)
+                        .font(.title3.weight(.semibold)).foregroundStyle(Farside.Palette.bone)
                     if let detail = [offer.freeTrialPhrase, offer.monthlyEquivalent]
                         .compactMap({ $0 }).joined(separator: " · ").nonEmpty {
-                        Text(detail).farsideCaption()
+                        Text(detail).font(.footnote).foregroundStyle(Farside.Palette.ash)
                     }
                 }
                 Spacer(minLength: 0)
@@ -360,7 +360,7 @@ struct AnywherePlanRow: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(AnywhereCopy.name).font(.body).foregroundStyle(Farside.Palette.bone)
-                    Text(AnywhereCopy.homeCaption(store.entitlement)).farsideCaption()
+                    Text(AnywhereCopy.homeCaption(store.entitlement)).font(.footnote).foregroundStyle(Farside.Palette.ash)
                 }
                 Spacer()
                 Image(systemName: "arrow.up.right")

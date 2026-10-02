@@ -261,7 +261,8 @@ struct AgentAlertsSettingsSheet: View {
                     .farsidePlate()
 
                     Text("Alerts reach you while a session is open. To reach a locked phone, Farside needs its push service, which is not switched on yet. Alerts never contain what is on your screen.")
-                        .farsideCaption()
+                        .font(.footnote)
+                        .foregroundStyle(Farside.Palette.ash)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("agent.settings.beta")
 
