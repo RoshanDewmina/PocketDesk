@@ -6,6 +6,7 @@ import Foundation
 enum SessionFeature {
   static let liveViewOnly = "viewOnlyLive.2"
     static let extendedFeatureList = "features.32"
+    static let phoneAudio = "audio.listen.1"
     static let causalInput = "input.causal.1"
     static let lanWake = "wake.helper.1"
     static let inputReceipt = "input.receipt.1"
@@ -55,7 +56,7 @@ enum SessionFeature {
   static let legacyHost = [clipboardText, backgroundPause, displayWake, privacyCurtain,
                        absolutePointer, middleButton, extendedKeys, displaySelection, viewportCapture, ladder,
                        momentumScroll, auxiliaryButtons, secureFocus, fileTransfer, focusGeometry, macVitals]
-    static let host = [clipboardSync, causalInput, liveViewOnly, captureScope, inputReceipt, pencilInput, videoLTR, videoRefinement, exactVideoTiming, hostMomentum] + legacyHost
+    static let host = [phoneAudio, clipboardSync, causalInput, liveViewOnly, captureScope, inputReceipt, pencilInput, videoLTR, videoRefinement, exactVideoTiming, hostMomentum] + legacyHost
 }
 
 /// Availability the Mac itself reports on `capture` status. The phone states only these as
@@ -278,5 +279,28 @@ struct BackgroundContinuity {
 
     mutating func reset() {
         phase = .foreground
+    }
+}
+
+/// New peers need phone consent and the Mac veto; old phones keep explicit producer opt-in.
+enum HostPhoneAudioPolicy {
+    static func permits(negotiated: Bool, phoneRequested: Bool, macAllowed: Bool, legacyAllowed: Bool,
+                        currentPicture: Bool, suspended: Bool, narrowScope: Bool) -> Bool {
+        currentPicture && !suspended && !narrowScope &&
+            (negotiated ? phoneRequested && macAllowed : legacyAllowed)
+    }
+}
+
+/// Capture-queue-owned PCM admission, independent of whether an SCK update succeeds.
+struct HostAudioCaptureEpoch {
+    private(set) var epoch: UInt64?
+    mutating func arm(allowed: Bool, begin: () -> UInt64) {
+        guard allowed, epoch == nil else { return }
+        let next = begin()
+        epoch = next == 0 ? nil : next
+    }
+    mutating func retire(end: (UInt64) -> Void) {
+        if let epoch { end(epoch) }
+        epoch = nil
     }
 }

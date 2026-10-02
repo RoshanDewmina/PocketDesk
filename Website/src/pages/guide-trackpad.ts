@@ -79,7 +79,7 @@ export function trackpadGuidePage(assets: Assets) {
     </ul>
 
     <h2 id="start">Get started</h2>
-    <p>You need a Mac on ${R.mac} with the free Farside helper, and an iPhone on ${R.iphone} (or an iPad on ${R.ipad}). The <a href="/control-mac-from-iphone">setup guide</a> walks through it: install the helper, allow two permissions, scan a code, tap Connect.</p>
+    <p>You need ${R.mac} with the free Farside helper, and an iPhone on ${R.iphone} (or an iPad on ${R.ipad}). The <a href="/control-mac-from-iphone">setup guide</a> walks through it: install the helper, allow two permissions, scan a code, tap Connect.</p>
 
     <h2 id="faq">Questions</h2>
     ${faqList(QAS)}
@@ -106,7 +106,7 @@ ${ctaBand()}`;
         howTo(PATH, {
           name: "How to use your iPhone as a trackpad for your Mac",
           description: DESC,
-          tools: ["Mac with macOS 26 or later", "iPhone with iOS 26 or later", "Farside helper for Mac", "Farside app for iPhone"],
+          tools: ["Mac with macOS 26 or later and Apple silicon (M1 or later)", "iPhone with iOS 26 or later", "Farside helper for Mac", "Farside app for iPhone"],
           steps: [
             { name: "Set up Farside", text: "Install the free Farside helper on your Mac, allow Screen Recording and Accessibility, and pair your iPhone by scanning the QR code." },
             { name: "Connect", text: "Tap Connect in the Farside app. The whole iPhone screen becomes a trackpad for your Mac." },

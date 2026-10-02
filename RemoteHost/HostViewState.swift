@@ -59,6 +59,8 @@ struct HostViewState: Equatable {
     var hasPairedPhone = false
     var pairingRequested = false
     var pairing: HostPairingState = .idle
+    var pairingComparisonCode: String? = nil
+    var pendingPairingPhoneName: String? = nil
     var canBeginPairing = false
     var allowControl = true
     var keepAwake = false

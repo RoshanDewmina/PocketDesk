@@ -215,6 +215,7 @@ final class SimulatedRenewalService {
 
 @MainActor
 final class RenewalRig {
+    let store = MemoryPairStore()
     let scheduler = ManualScheduler()
     let signaling = ScriptedSignaling()
     let service: SimulatedRenewalService
@@ -226,7 +227,7 @@ final class RenewalRig {
         offersRenewal = serviceOffersRenewal
         service = SimulatedRenewalService(signaling: signaling, scheduler: scheduler, leaseSeconds: leaseSeconds,
                                    credentialSeconds: credentialSeconds)
-        coordinator = RemoteCoordinator(isHost: isHost, store: MemoryPairStore(), retryLimit: 3,
+        coordinator = RemoteCoordinator(isHost: isHost, store: store, retryLimit: 3,
                                         retryBaseNanoseconds: 10_000_000, registrationStableNanoseconds: 50_000_000,
                                         signaling: signaling, renewalScheduler: scheduler,
                                         advertisesRenewal: advertisesRenewal)
@@ -242,16 +243,22 @@ final class RenewalRig {
     }
 
     func startHost() async throws {
-        _ = try coordinator.createPair(server: "ws://127.0.0.1:9/signal", name: "Test Mac")
+        // The simulated service exercises saved-session renewal; it performs no enrollment handshake.
+        let pair = try HostPair.create(server: "ws://127.0.0.1:9/signal", name: "Test Mac").rotated()
+        try store.save(pair)
+        coordinator.restore()
+        XCTAssertEqual(coordinator.hostPair?.paired, true)
+        XCTAssertEqual(coordinator.invitation?.version, 1)
         coordinator.start()
         await scheduler.settle()
     }
 
     func startPhone() async throws {
-        let mac = RemoteCoordinator(isHost: true, store: MemoryPairStore())
-        mac.allowLegacyPrivateRoute = true
-        let invitation = try mac.createPair(server: "ws://127.0.0.1:9/signal", name: "Test Mac")
-        try coordinator.enroll(invitation.code())
+        let invitation = try HostPair.create(server: "ws://127.0.0.1:9/signal", name: "Test Mac").rotated().invitation
+        try store.save(invitation)
+        coordinator.restore()
+        XCTAssertEqual(coordinator.invitation?.version, 1)
+        coordinator.start()
         await scheduler.settle()
     }
 

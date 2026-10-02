@@ -226,6 +226,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost
         # D35: Apple silicon only (M1 or later), in every configuration.
         ARCHS: arm64
+        EXCLUDED_ARCHS: x86_64
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Farside
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
@@ -258,6 +259,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.roshan.PocketDesk.RemoteHost.watchdog
         ARCHS: arm64
+        EXCLUDED_ARCHS: x86_64
         CODE_SIGNING_ALLOWED: YES
         CODE_SIGN_IDENTITY: Apple Development
         DEVELOPMENT_TEAM: 39HM2X8GS6

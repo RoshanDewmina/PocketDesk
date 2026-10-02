@@ -245,7 +245,7 @@ const QAS: QA[] = [
   },
   {
     q: "What do I need?",
-    a: html`<p>A Mac running ${R.mac} with the free Farside helper, and an iPhone on ${R.iphone} or an iPad on ${R.ipad} with the Farside app. These are the planned requirements; we’ll confirm them at launch. The <a href="/control-mac-from-iphone">setup guide</a> walks through it.</p>`,
+    a: html`<p>You need ${R.mac} with the free Farside helper, and an iPhone on ${R.iphone} or an iPad on ${R.ipad} with the Farside app. These are the planned requirements; we’ll confirm them at launch. The <a href="/control-mac-from-iphone">setup guide</a> walks through it.</p>`,
   },
   {
     q: "Do I have to make an account?",

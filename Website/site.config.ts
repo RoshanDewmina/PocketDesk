@@ -92,7 +92,7 @@ export const config = {
 
   /** Planned minimum OS versions (STORE-LISTING.md). */
   requirements: {
-    mac: "macOS 26 or later",
+    mac: "macOS 26 or later on a Mac with Apple silicon (M1 or later)",
     iphone: "iOS 26 or later",
     ipad: "iPadOS 26 or later",
   },

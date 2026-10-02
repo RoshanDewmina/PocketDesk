@@ -19,7 +19,7 @@ struct PairInvitation: Codable, Equatable {
     var hasOwnerLocalIdentity: Bool { durableHostID != nil && ownerPairID != nil && localServiceName != nil }
 
     func validate(now: Date = Date(), enrollment: Bool = true) throws {
-        guard version == 1, SecureRandom.isToken(room), SecureRandom.isToken(token), key.count == 32,
+        guard (version == 1 || version == PairEnrollment.version), SecureRandom.isToken(room), SecureRandom.isToken(token), key.count == 32,
               !name.isEmpty, name.utf8.count <= 128,
               !enrollment || (expires > now && expires.timeIntervalSince(now) <= 180),
               Self.validServer(server) else { throw RemoteError.invalidPairing }
@@ -116,7 +116,7 @@ struct HostPair: Codable {
 
     static func create(server: String, name: String, identity: HostIdentityRecord? = nil) throws -> Self {
         let token = try SecureRandom.token()
-        return HostPair(hostToken: token, invitation: PairInvitation(server: server,
+        return HostPair(hostToken: token, invitation: PairInvitation(version: PairEnrollment.version, server: server,
             room: SecureRandom.digest(token), token: try SecureRandom.token(), key: try SecureRandom.bytes(),
             expires: Date().addingTimeInterval(120), name: String(name.prefix(100)),
             durableHostID: identity?.hostID, ownerPairID: identity == nil ? nil : try SecureRandom.token(),
@@ -124,6 +124,7 @@ struct HostPair: Codable {
     }
     func rotated() throws -> Self {
         var next = self
+        next.invitation.version = 1
         next.invitation.token = try SecureRandom.token()
         next.invitation.key = try SecureRandom.bytes()
         next.invitation.expires = .distantFuture
@@ -146,10 +147,11 @@ enum SecureRandom {
 }
 
 enum RemoteError: Error, LocalizedError {
-    case invalidPairing, localPairingRefreshRequired, random, invalidMessage, stale, keychain(OSStatus), backpressure
+    case invalidPairing, pairingUpgradeRequired, localPairingRefreshRequired, random, invalidMessage, stale, keychain(OSStatus), backpressure
     var errorDescription: String? {
         switch self {
         case .invalidPairing: "The pairing code is invalid or expired. Open Pair Phone on your Mac."
+        case .pairingUpgradeRequired: "Update Farside on both your Mac and phone, then create a fresh pairing code."
         case .localPairingRefreshRequired: "Local network only requires a fresh owner-approved QR code from your Mac. Connect normally or re-pair to enable it."
         case .random: "Secure pairing could not be created. Try again."
         case .invalidMessage: "The connection could not be authenticated. Pair again on your Mac."
@@ -193,6 +195,133 @@ struct SignalCipher {
         guard result.version == 1, SecureRandom.isToken(result.request),
               result.session.isEmpty || SecureRandom.isToken(result.session) else { throw RemoteError.invalidMessage }
         return result
+    }
+}
+
+/// New enrollment alone uses commit/reveal key agreement. QR possession starts an attempt;
+/// it never supplies its saved trust key. The phone commits BEFORE the Mac reveals its key,
+/// preventing an active QR holder from adapting an ephemeral key to grind a matching short code.
+/// Roles, exact QR, request/session, name, features and both fresh key/nonces bind the transcript.
+enum PairEnrollment {
+    static let version = 2
+    static let disabledKey = "farsideDisableComparisonEnrollment"
+    struct Reveal: Codable, Equatable {
+        let publicKey: Data
+        let nonce: Data
+    }
+    struct Ephemeral {
+        let privateKey: Curve25519.KeyAgreement.PrivateKey
+        let reveal: Reveal
+        init() throws {
+            privateKey = Curve25519.KeyAgreement.PrivateKey()
+            reveal = Reveal(publicKey: privateKey.publicKey.rawRepresentation, nonce: try SecureRandom.bytes())
+        }
+    }
+    struct Request: Codable {
+        var version = PairEnrollment.version
+        let commitment: Data
+        let handshake: MacShareBlocker.Handshake
+        let phoneName: String?
+    }
+    struct Challenge: Codable {
+        var version = PairEnrollment.version
+        let reveal: Reveal
+    }
+    struct Proof: Codable {
+        let reveal: Reveal
+        let confirmation: Data
+        #if DEBUG
+        /// Existing private E2E enrollment authorization; absent from Release wire encoding.
+        var e2eApproval: Data? = nil
+        #endif
+    }
+    struct Keys {
+        let sessionKey: Data
+        let trustKey: Data
+        let trustToken: String
+        let comparisonCode: String
+        private let confirmationKey: SymmetricKey
+        private let transcriptHash: Data
+        func confirmation(role: String) -> Data {
+            Data(HMAC<SHA256>.authenticationCode(for: PairEnrollment.canonical([
+                Data("Farside-enrollment-v2-confirm".utf8), Data(role.utf8), transcriptHash]), using: confirmationKey))
+        }
+        func confirms(_ value: Data, role: String) -> Bool {
+            HMAC<SHA256>.isValidAuthenticationCode(value, authenticating: PairEnrollment.canonical([
+                Data("Farside-enrollment-v2-confirm".utf8), Data(role.utf8), transcriptHash]), using: confirmationKey)
+        }
+        fileprivate init(secret: SharedSecret, transcript: Data) throws {
+            let hash = Data(SHA256.hash(data: transcript))
+            func derive(_ label: String) -> Data {
+                secret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: hash,
+                    sharedInfo: Data("Farside-enrollment-v2|\(label)".utf8), outputByteCount: 32)
+                    .withUnsafeBytes { Data($0) }
+            }
+            transcriptHash = hash
+            sessionKey = derive("session-cipher")
+            trustKey = derive("saved-trust-key")
+            trustToken = derive("saved-service-token").map { String(format: "%02x", $0) }.joined()
+            confirmationKey = SymmetricKey(data: derive("key-confirmation"))
+            // Rejection sampling avoids modulo bias; this is six decimal digits (one in a million
+            // per fixed online attempt), not a proof unless the owner compares both screens.
+            let bytes = [UInt8](derive("comparison-code"))
+            var number: UInt32?
+            for offset in stride(from: 0, to: bytes.count, by: 4) {
+                let value = bytes[offset..<offset + 4].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+                if value < 4_294_000_000 { number = value % 1_000_000; break }
+            }
+            guard let number else { throw RemoteError.invalidMessage }
+            comparisonCode = String(format: "%03u %03u", number / 1000, number % 1000)
+        }
+    }
+    static func encoded<T: Encodable>(_ value: T) throws -> Data {
+        let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(value)
+    }
+    static func decode<T: Decodable>(_ type: T.Type, body: Data?) throws -> T {
+        guard let body, body.count <= 4096 else { throw RemoteError.invalidMessage }
+        return try JSONDecoder().decode(type, from: body)
+    }
+    private static func canonical(_ parts: [Data]) -> Data {
+        var result = Data()
+        for part in parts {
+            var length = UInt32(part.count).bigEndian
+            withUnsafeBytes(of: &length) { result.append(contentsOf: $0) }
+            result.append(part)
+        }
+        return result
+    }
+    static func commitment(invitation: PairInvitation, requestID: String, reveal: Reveal,
+                           handshake: MacShareBlocker.Handshake, phoneName: String?) throws -> Data {
+        Data(SHA256.hash(data: canonical([Data("Farside-enrollment-v2-phone-commit".utf8),
+            try encoded(invitation), Data(requestID.utf8), try encoded(reveal), try encoded(handshake),
+            try encoded(phoneName)])))
+    }
+    static func validate(_ request: Request) throws {
+        guard request.version == version, request.commitment.count == 32,
+              request.handshake.features.count <= 8,
+              (request.handshake.options?.count ?? 0) <= MacShareBlocker.Handshake.maximumOptions,
+              request.handshake.features.allSatisfy({ (1...32).contains($0.utf8.count) }),
+              request.phoneName == nil || request.phoneName.map({ PhoneIdentity.sanitized($0) == $0 }) == true else { throw RemoteError.invalidMessage }
+    }
+    static func derive(invitation: PairInvitation, requestID: String, sessionID: String,
+                       request: Request, challenge: Challenge, phone: Reveal,
+                       ephemeral: Ephemeral, isHost: Bool) throws -> Keys {
+        try invitation.validate()
+        try validate(request)
+        guard invitation.version == version, challenge.version == version,
+              SecureRandom.isToken(requestID), SecureRandom.isToken(sessionID),
+              phone.publicKey.count == 32, phone.nonce.count == 32,
+              challenge.reveal.publicKey.count == 32, challenge.reveal.nonce.count == 32,
+              ephemeral.reveal == (isHost ? challenge.reveal : phone),
+              request.commitment == (try commitment(invitation: invitation, requestID: requestID,
+                  reveal: phone, handshake: request.handshake, phoneName: request.phoneName)) else { throw RemoteError.invalidMessage }
+        let peer = try Curve25519.KeyAgreement.PublicKey(rawRepresentation: isHost ? phone.publicKey : challenge.reveal.publicKey)
+        let secret = try ephemeral.privateKey.sharedSecretFromKeyAgreement(with: peer)
+        guard secret.withUnsafeBytes({ $0.contains(where: { $0 != 0 }) }) else { throw RemoteError.invalidMessage }
+        let transcript = canonical([Data("Farside-enrollment-v2|phone|host".utf8), try encoded(invitation),
+            Data(requestID.utf8), Data(sessionID.utf8), try encoded(request), try encoded(challenge), try encoded(phone)])
+        return try Keys(secret: secret, transcript: transcript)
     }
 }
 

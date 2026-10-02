@@ -6,6 +6,7 @@ struct NativeSessionView: View {
     @ObservedObject var model: PhoneRemoteModel
     @ObservedObject var connection: RemoteCoordinator
     let offlineLayoutCheck: Bool
+    let replayCoach: @MainActor () -> Void
 
     @State private var viewport = ViewportTransform(sourceSize: CGSize(width: 1440, height: 900),
                                                     canvasSize: .zero, mode: ViewportPreference.stored())
@@ -2413,6 +2414,13 @@ struct NativeSessionView: View {
                    + (model.middleButtonSupported ? " Tap with three fingers to middle-click." : ""))
                 .foregroundStyle(Farside.Palette.bone)
                 .listRowBackground(Farside.Palette.panel)
+            Button(CommerceLocalization.text("REPLAY_COACH", "Practice gestures again")) {
+                model.usefulSession.count("coachReplay")
+                closeControls()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { replayCoach() }
+            }
+            .frame(minHeight: 44)
+            .listRowBackground(Farside.Palette.panel)
         } header: {
             sectionHeader("Gestures")
         }
@@ -2479,7 +2487,7 @@ struct NativeSessionView: View {
                                                        set: { model.setMacAudioMuted(!$0) }))
                 .accessibilityIdentifier("remote.macAudio")
                 .disabled(model.captureScopeViewOnly)
-            Text(model.captureScopeViewOnly ? "Audio is off while sharing an app or window." : "Requires Share Mac audio on your Mac. Sound may come from every app. Stops when you leave Farside or dictate.")
+            Text(model.captureScopeViewOnly ? "Audio is off while sharing an app or window." : model.phoneAudioRequestSupported ? "Sound may come from every Mac app. Stops when you leave Farside or dictate. Your Mac can block listening in Settings." : "Requires Share Mac audio on your Mac. Sound may come from every app. Stops when you leave Farside or dictate.")
                 .font(.footnote).foregroundStyle(Farside.Palette.ash)
         } header: { sectionHeader("Mac audio") }
     }

@@ -210,12 +210,19 @@ final class SessionIntegrationTests: XCTestCase {
     @MainActor
     func testDuplicateTransportLossKeepsPendingRetryAlive() async throws {
         let (service, url) = try service(); defer { service.terminate() }
-        let host = RemoteCoordinator(isHost: true, store: MemoryTrust(),
+        // Retry belongs to saved trust. Fresh comparison enrollment intentionally retires its QR
+        // on transport loss, so initialize an already paired v1 record rather than createPair.
+        let hostStore = MemoryTrust()
+        let saved = try HostPair.create(server: url, name: "Retry Host").rotated()
+        try hostStore.save(saved)
+        let host = RemoteCoordinator(isHost: true, store: hostStore,
                                      retryLimit: 2, retryBaseNanoseconds: 200_000_000,
                                      registrationStableNanoseconds: 100_000_000)
         host.allowLegacyPrivateRoute = true
         defer { host.stop() }
-        _ = try host.createPair(server: url, name: "Retry Host")
+        host.restore()
+        XCTAssertEqual(host.hostPair?.paired, true)
+        XCTAssertEqual(host.invitation?.version, 1)
         host.start()
         try await waitFor("host registered") { host.hostRegistered }
 
@@ -233,6 +240,10 @@ final class SessionIntegrationTests: XCTestCase {
         XCTAssertTrue(host.status.contains("retrying"),
                       "Separate healthy host registrations must replenish the bounded retry budget")
         try await waitFor("host re-registered a third time") { host.hostRegistered }
+        XCTAssertFalse(host.awaitingApproval, "Saved-trust retries never restart comparison enrollment")
+        XCTAssertEqual(host.invitation, saved.invitation)
+        XCTAssertEqual(try hostStore.read(HostPair.self)?.invitation, saved.invitation,
+                       "Duplicate and separate outages preserve the existing saved grant")
     }
 
     @MainActor
@@ -295,11 +306,14 @@ final class SessionIntegrationTests: XCTestCase {
         XCTAssertFalse(host.hostRegistered, "A terminal failure must immediately hide the pairing code")
         XCTAssertFalse(host.connected); XCTAssertFalse(phone.connected); XCTAssertNil(phoneStore.data)
         phone.stop()
+        XCTAssertLessThan(try XCTUnwrap(host.invitation).expires, Date(), "Declining retires the exposed QR")
+        let replacement = try host.createPair(server: url, name: "Test")
         host.start(); try await waitFor("host re-registered") { host.status == "Ready for your paired phone" }
-        try phone.enroll(invitation.code()); try await waitFor("approval pending again") { host.awaitingApproval }
+        try phone.enroll(replacement.code()); try await waitFor("approval pending again") { host.awaitingApproval }
         hostStore.refuseSave = true; host.approve()
         XCTAssertFalse(host.connected); XCTAssertNil(phoneStore.data)
-        XCTAssertEqual(host.invitation, invitation)
+        XCTAssertEqual(host.invitation?.key, replacement.key)
+        XCTAssertLessThan(try XCTUnwrap(host.invitation).expires, Date(), "A save failure also retires enrollment")
     }
 
     @MainActor

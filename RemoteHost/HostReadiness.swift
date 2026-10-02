@@ -273,10 +273,16 @@ struct HostPreferences {
         nonmutating set { defaults.set(newValue, forKey: Key.chimeOnConnect) }
     }
 
-    /// Off unless the owner turns it on; the choice survives relaunch.
+    /// Default-allowed veto for phone-requested audio; explicit prior choices survive relaunch.
     var allowSystemAudio: Bool {
-        get { defaults.bool(forKey: Key.allowSystemAudio) }
+        get { (defaults.object(forKey: Key.allowSystemAudio) as? Bool) ?? true }
         nonmutating set { defaults.set(newValue, forKey: Key.allowSystemAudio) }
+    }
+
+    /// Old phones cannot request audio. They retain the old explicit Mac opt-in.
+    var legacySystemAudioAllowed: Bool { defaults.bool(forKey: Key.allowSystemAudio) }
+    func systemAudioPermission(phoneRequests: Bool) -> Bool {
+        phoneRequests ? allowSystemAudio : legacySystemAudioAllowed
     }
 
     /// Local network only: the route choice, never whether sharing is on.

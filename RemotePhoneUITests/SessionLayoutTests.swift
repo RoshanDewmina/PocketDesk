@@ -1,6 +1,22 @@
 import XCTest
 
 final class SessionLayoutTests: XCTestCase {
+    @MainActor
+    func testSessionHasNoChecklistAndSettingsReplaysGestureCoach() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-layout-check"]
+        launchOfflineFixture(app)
+        XCTAssertFalse(app.buttons["Session check"].exists)
+        app.buttons["Show controls"].swipeUp()
+        app.buttons["Controls"].tap()
+        openSettingsPage(app, "steer")
+        let practice = app.buttons["Practice gestures again"]
+        XCTAssertTrue(practice.waitForExistence(timeout: 5))
+        practice.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["coach"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["Skip"].tap()
+    }
+
     /// Opt-in only: uses the owner's existing pairing without typing or clicking on the Mac.
     /// Simulator fixture tests cannot catch the physical-device Swift metadata stack limit.
     @MainActor

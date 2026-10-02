@@ -404,6 +404,7 @@ final class PhoneRemoteModel: ObservableObject {
         guard !macAudioMuted else { return }
         macAudioSuspended = true
         connection.media?.setRemoteAudioMuted(true)
+        sendMacAudioRequest()
     }
     private func resumeMacAudioIfAllowed() {
         guard macAudioSuspended else { return }
@@ -412,6 +413,12 @@ final class PhoneRemoteModel: ObservableObject {
               connection.presentationDeadline(at: ProcessInfo.processInfo.systemUptime) != nil else { return }
         macAudioSuspended = false
         connection.media?.setRemoteAudioMuted(false)
+        sendMacAudioRequest()
+    }
+    var phoneAudioRequestSupported: Bool { hostFeatures.contains(SessionFeature.phoneAudio) }
+    private func sendMacAudioRequest() {
+        guard connection.connected, phoneAudioRequestSupported else { return }
+        _ = connection.sendControl(heartbeatAction())
     }
     func setMacAudioMuted(_ muted: Bool) {
         if !muted {
@@ -435,6 +442,7 @@ final class PhoneRemoteModel: ObservableObject {
             macAudioConsent = nil; macAudioSuspended = false
             macAudioPlayback.end()
         }
+        sendMacAudioRequest()
     }
     @Published private(set) var privacyShield = false { willSet { if newValue { invalidatePresentation(keepingPiP: mayKeepLivePiP || autoPiPMayStart || pipBackground && mayHoldBackgroundPiP) } } }
     private var hasBeenActive = false
@@ -1549,7 +1557,7 @@ final class PhoneRemoteModel: ObservableObject {
         let viewport = viewportCaptureSupported ? viewportReporter.region(forDisplay: sourceSize) : nil
         let load = hostFeatures.contains(SessionFeature.ladder) &&
             phoneLoadReportedAt.map({ now >= $0 && now - $0 <= 2.5 }) == true ? phoneLoad : nil
-        return RemoteAction(action: "heartbeat", epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
+        return RemoteAction(action: "heartbeat", macAudioRequested: phoneAudioRequestSupported ? currentMacAudioConsent() && !macAudioSuspended : nil, epoch: geometryEpoch, pointerSync: pointerOverlay.advertisement(),
                             streamQuality: appliedStreamQuality == nil ? nil : streamQuality, clock: clock,
                             screenPixels: screenPixels(), viewport: viewport, phoneLoad: load)
     }

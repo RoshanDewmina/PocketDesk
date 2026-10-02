@@ -12,6 +12,13 @@ final class RemoteCoordinator: ObservableObject {
         }
     }
     @Published var awaitingApproval = false
+    @Published private(set) var pairingComparisonCode: String?
+    @Published private(set) var pendingPairingPhoneName: String?
+    @Published private(set) var enrollmentPending = false
+    private var enrollmentEphemeral: PairEnrollment.Ephemeral?
+    private var enrollmentRequest: PairEnrollment.Request?
+    private var enrollmentChallenge: PairEnrollment.Challenge?
+    private var enrollmentKeys: PairEnrollment.Keys?
     @Published var connected = false
     @Published private(set) var hostRegistered = false
     /// The signaling connection dropped and a retry is pending or in flight; cleared once the
@@ -746,6 +753,7 @@ final class RemoteCoordinator: ObservableObject {
         } catch { status = error.localizedDescription }
     }
     func createPair(server: String, name: String) throws -> PairInvitation {
+        guard !UserDefaults.standard.bool(forKey: PairEnrollment.disabledKey) else { throw RemoteError.pairingUpgradeRequired }
         stop()
         let pair = try HostPair.create(server: server, name: name, identity: hostIdentityStore?.loadOrCreate())
         try pair.invitation.validate()
@@ -756,6 +764,8 @@ final class RemoteCoordinator: ObservableObject {
     func enroll(_ code: String, replacementApproval: PhoneTrustReplacementApproval? = nil) throws {
         guard !isHost else { throw RemoteError.invalidPairing }
         let parsed = try PairInvitation.parse(code)
+        guard parsed.version == PairEnrollment.version,
+              !UserDefaults.standard.bool(forKey: PairEnrollment.disabledKey) else { throw RemoteError.pairingUpgradeRequired }
         if let phone = store as? PhonePairPersistence {
             let required = try phone.trust.replacementRequest(for: parsed)
             guard required == replacementApproval?.request,
@@ -784,13 +794,17 @@ final class RemoteCoordinator: ObservableObject {
         guard let invitation else { status = "Pair with your Mac first"; return }
         do {
             if let scannedEnrollment { try scannedEnrollment.validate(enrollment: true) }
-            if isHost, let pair = hostPair, !pair.paired { try invitation.validate() }
-            else { try invitation.validate(enrollment: false) }
+            if isHost, let pair = hostPair, !pair.paired {
+                guard invitation.version == PairEnrollment.version,
+                      !UserDefaults.standard.bool(forKey: PairEnrollment.disabledKey) else { throw RemoteError.pairingUpgradeRequired }
+                try invitation.validate()
+            } else { try invitation.validate(enrollment: false) }
             if resetRetryBudget { retryCount = 0; recoveringLiveSession = false; reconnecting = false }
             stopped = false
             retry?.cancel(); retry = nil
             cancelRenewal()
             resetSession()
+            enrollmentPending = scannedEnrollment != nil
             cipher = try SignalCipher(key: invitation.key, room: invitation.room)
             status = "Connecting securely…"
             registeredInvitation = invitation
@@ -816,11 +830,15 @@ final class RemoteCoordinator: ObservableObject {
         } catch { fail(error.localizedDescription) }
     }
     func approve() {
-        guard isHost, awaitingApproval, proofReceived, (hostPair?.invitation.expires ?? .distantPast) > Date() else { fail("Pairing expired. Create a fresh code."); return }
+        guard isHost, awaitingApproval, proofReceived, enrollmentKeys != nil,
+              pairingComparisonCode != nil, (hostPair?.invitation.expires ?? .distantPast) > Date() else { fail("Pairing expired. Create a fresh code."); return }
         awaitingApproval = false
         acceptSession()
     }
-    func reject() { fail("Pairing was declined on the Mac") }
+    func reject() {
+        if awaitingApproval, enrollmentKeys != nil { send(kind: "enrollmentDeclined", handshake: true) }
+        fail("Pairing was declined on the Mac. Create a fresh code.")
+    }
     @discardableResult
     func revoke(expectedInvitation: PairInvitation? = nil) -> Bool {
         pairingRemovalFailure = nil
@@ -954,6 +972,8 @@ final class RemoteCoordinator: ObservableObject {
         clearReliableCheckpoint(); inputRecoveryPending = false
         inputRecoveryTimeout?.cancel(); inputRecoveryTimeout = nil
         request = ""; session = ""; sequence = 0; guardState = nil; proofReceived = false
+        enrollmentEphemeral = nil; enrollmentRequest = nil; enrollmentChallenge = nil; enrollmentKeys = nil
+        pairingComparisonCode = nil; pendingPairingPhoneName = nil; enrollmentPending = false
         peerFeatures = []
         requestedFeatures = []
         peerRequestedMode = .picture
@@ -1021,7 +1041,17 @@ final class RemoteCoordinator: ObservableObject {
                         let handshake = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(),
                                                                                mode: sessionModeRequest == .couch ? SessionMode.couch.rawValue : nil)
                         requestedFeatures = handshake.requested
-                        send(kind: "request", body: try? JSONEncoder().encode(handshake), handshake: true)
+                        if let scannedEnrollment {
+                            let ephemeral = try PairEnrollment.Ephemeral()
+                            let name = localDisplayName.flatMap(PhoneIdentity.sanitized)
+                            let commit = try PairEnrollment.commitment(invitation: scannedEnrollment, requestID: request,
+                                reveal: ephemeral.reveal, handshake: handshake, phoneName: name)
+                            let enrollment = PairEnrollment.Request(commitment: commit, handshake: handshake, phoneName: name)
+                            enrollmentEphemeral = ephemeral; enrollmentRequest = enrollment; enrollmentPending = true
+                            send(kind: "enrollmentRequest", body: try PairEnrollment.encoded(enrollment), handshake: true)
+                        } else {
+                            send(kind: "request", body: try? JSONEncoder().encode(handshake), handshake: true)
+                        }
                         status = "Authenticating your Mac…"; setTimeout()
                     }
                 } else { peerDisconnected() }
@@ -1069,7 +1099,12 @@ final class RemoteCoordinator: ObservableObject {
         } catch { sessionFailed("Secure connection failed. Reconnect or pair again on your Mac.") }
     }
     private func receiveProtected(_ message: ProtectedMessage) throws {
+        if message.kind.hasPrefix("enrollment") {
+            try receiveEnrollment(message)
+            return
+        }
         if isHost, message.kind == "request" {
+            guard hostPair?.paired == true else { throw RemoteError.pairingUpgradeRequired }
             guard request.isEmpty, message.session.isEmpty, message.sequence == 0,
                   let pair = hostPair, pair.paired || pair.invitation.expires > Date() else { throw RemoteError.stale }
             request = message.request; session = try SecureRandom.token()
@@ -1079,6 +1114,7 @@ final class RemoteCoordinator: ObservableObject {
             send(kind: "challenge", handshake: true); setTimeout(); return
         }
         if !isHost, message.kind == "challenge" {
+            guard scannedEnrollment == nil else { throw RemoteError.pairingUpgradeRequired }
             guard message.request == request, session.isEmpty, !message.session.isEmpty, message.sequence == 0 else { throw RemoteError.stale }
             session = message.session; guardState = SessionReplayGuard(request: request, session: session)
             #if DEBUG
@@ -1120,9 +1156,16 @@ final class RemoteCoordinator: ObservableObject {
             localLinkProof?.setPeer(endpoint)
         case "accepted" where !isHost:
             guard media == nil else { throw RemoteError.stale }
+            if scannedEnrollment != nil {
+                guard enrollmentKeys != nil, pairingComparisonCode != nil, message.body != nil else { throw RemoteError.invalidMessage }
+            }
             if let body = message.body {
                 let next = try JSONDecoder().decode(PairInvitation.self, from: body)
                 try next.validate(enrollment: false)
+                if scannedEnrollment != nil {
+                    guard let keys = enrollmentKeys, next.version == 1,
+                          next.key == keys.trustKey, next.token == keys.trustToken else { throw RemoteError.invalidMessage }
+                }
                 guard next.room == invitation?.room, next.server == invitation?.server,
                       next.durableHostID == invitation?.durableHostID,
                       next.ownerPairID == invitation?.ownerPairID,
@@ -1155,12 +1198,91 @@ final class RemoteCoordinator: ObservableObject {
         default: throw RemoteError.invalidMessage
         }
     }
+    private func receiveEnrollment(_ message: ProtectedMessage) throws {
+        guard message.sequence == 0 else { throw RemoteError.stale }
+        if isHost, message.kind == "enrollmentRequest" {
+            guard request.isEmpty, message.session.isEmpty, let pair = hostPair, !pair.paired,
+                  pair.invitation.version == PairEnrollment.version else { throw RemoteError.stale }
+            try pair.invitation.validate()
+            let incoming = try PairEnrollment.decode(PairEnrollment.Request.self, body: message.body)
+            try PairEnrollment.validate(incoming)
+            let ephemeral = try PairEnrollment.Ephemeral()
+            request = message.request; session = try SecureRandom.token()
+            guardState = SessionReplayGuard(request: request, session: session)
+            enrollmentEphemeral = ephemeral; enrollmentRequest = incoming
+            let challenge = PairEnrollment.Challenge(reveal: ephemeral.reveal)
+            enrollmentChallenge = challenge
+            let handshakeBody = try PairEnrollment.encoded(incoming.handshake)
+            peerFeatures = MacShareBlocker.Handshake.features(in: handshakeBody)
+            peerRequestedMode = MacShareBlocker.Handshake.requestedMode(in: handshakeBody)
+            send(kind: "enrollmentChallenge", body: try PairEnrollment.encoded(challenge), handshake: true)
+            setTimeout(); return
+        }
+        guard message.request == request, !request.isEmpty else { throw RemoteError.stale }
+        if !isHost, message.kind == "enrollmentChallenge" {
+            guard session.isEmpty, !message.session.isEmpty, let invitation = scannedEnrollment,
+                  let ephemeral = enrollmentEphemeral, let enrollmentRequest else { throw RemoteError.stale }
+            let challenge = try PairEnrollment.decode(PairEnrollment.Challenge.self, body: message.body)
+            let keys = try PairEnrollment.derive(invitation: invitation, requestID: request, sessionID: message.session,
+                request: enrollmentRequest, challenge: challenge, phone: ephemeral.reveal, ephemeral: ephemeral, isHost: false)
+            session = message.session; guardState = SessionReplayGuard(request: request, session: session)
+            enrollmentChallenge = challenge; enrollmentKeys = keys
+            var proof = PairEnrollment.Proof(reveal: ephemeral.reveal, confirmation: keys.confirmation(role: "phone"))
+            #if DEBUG
+            proof.e2eApproval = e2eEnrolling ? e2eEnrollmentProof : nil
+            #endif
+            send(kind: "enrollmentProof", body: try PairEnrollment.encoded(proof), handshake: true)
+            cipher = try SignalCipher(key: keys.sessionKey, room: invitation.room)
+            enrollmentEphemeral = nil
+            setTimeout(); return
+        }
+        guard message.session == session, !session.isEmpty else { throw RemoteError.stale }
+        if isHost, message.kind == "enrollmentProof" {
+            guard !proofReceived, let pair = hostPair, !pair.paired,
+                  let ephemeral = enrollmentEphemeral, let enrollmentRequest, let enrollmentChallenge else { throw RemoteError.stale }
+            let proof = try PairEnrollment.decode(PairEnrollment.Proof.self, body: message.body)
+            let keys = try PairEnrollment.derive(invitation: pair.invitation, requestID: request, sessionID: session,
+                request: enrollmentRequest, challenge: enrollmentChallenge, phone: proof.reveal, ephemeral: ephemeral, isHost: true)
+            guard keys.confirms(proof.confirmation, role: "phone") else { throw RemoteError.invalidMessage }
+            enrollmentKeys = keys; enrollmentEphemeral = nil; proofReceived = true
+            cipher = try SignalCipher(key: keys.sessionKey, room: pair.invitation.room)
+            if peerRequestedMode != .couch, let blocker = shareBlocker?() { refuseSession(blocker); return }
+            pendingPairingPhoneName = enrollmentRequest.phoneName
+            pairingComparisonCode = keys.comparisonCode; awaitingApproval = true
+            send(kind: "enrollmentReady", body: keys.confirmation(role: "host"), handshake: true)
+            #if DEBUG
+            if let approver = e2eProofApprover, approver(proof.e2eApproval) {
+                awaitingApproval = false
+                acceptSession()
+                return
+            }
+            #endif
+            status = "Compare the codes, then allow this phone on your Mac"
+            setTimeout(nanoseconds: UInt64(max(0, min(60, pair.invitation.expires.timeIntervalSinceNow)) * 1_000_000_000))
+            return
+        }
+        if !isHost, message.kind == "enrollmentReady" {
+            guard let keys = enrollmentKeys, pairingComparisonCode == nil, let body = message.body,
+                  keys.confirms(body, role: "host"), let scannedEnrollment else { throw RemoteError.invalidMessage }
+            try scannedEnrollment.validate()
+            pairingComparisonCode = keys.comparisonCode
+            status = "Compare this code with your Mac, then choose Allow there"
+            setTimeout(nanoseconds: UInt64(max(0, min(60, scannedEnrollment.expires.timeIntervalSinceNow)) * 1_000_000_000))
+            return
+        }
+        if !isHost, message.kind == "enrollmentDeclined", enrollmentKeys != nil {
+            fail("Pairing was declined on the Mac. Scan a fresh code."); return
+        }
+        throw RemoteError.stale
+    }
+
     private func persistAcceptedInvitation(_ next: PairInvitation) throws {
         if let phone = store as? PhonePairPersistence {
             try phone.trust.saveApproved(next, scannedEnrollment: scannedEnrollment,
                                          replacementApproval: pendingPhoneReplacementApproval)
         } else { try store.save(next) }
         invitation = next
+        pairingComparisonCode = nil; enrollmentPending = false
         scannedEnrollment = nil
         pendingPhoneReplacementApproval = nil
         #if DEBUG
@@ -1180,10 +1302,17 @@ final class RemoteCoordinator: ObservableObject {
             if !hostPair.paired {
                 // Persist before publishing new trust. An interrupted enrollment may require
                 // a fresh QR, but can never reconnect using the exposed enrollment key.
-                let next = try hostPair.rotated()
+                guard let keys = enrollmentKeys, pairingComparisonCode != nil,
+                      hostPair.invitation.version == PairEnrollment.version else { throw RemoteError.invalidMessage }
+                var next = hostPair
+                next.invitation.version = 1
+                next.invitation.key = keys.trustKey; next.invitation.token = keys.trustToken
+                next.invitation.expires = .distantFuture; next.paired = true
+                next.phoneName = pendingPairingPhoneName
                 try store.save(next)
                 self.hostPair = next; invitation = next.invitation
                 send(kind: "accepted", body: try JSONEncoder().encode(next.invitation))
+                pairingComparisonCode = nil; pendingPairingPhoneName = nil
             } else { send(kind: "accepted") }
             status = "Connecting live desktop…"; setTimeout()
         } catch { fail(error.localizedDescription) }
@@ -1392,6 +1521,10 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func peerDisconnected() {
+        if isHost, hostPair?.paired == false, invitation?.version == PairEnrollment.version {
+            fail("Pairing was interrupted. Create a fresh code.")
+            return
+        }
         SessionLog.log.error("peerDisconnected (connected=\(self.connected, privacy: .public))")
         routeExpiry?.cancel(); routeExpiry = nil; onGuestAuthorityEnded?(); routePolicy = nil; routeArmed = false; ownerLocalEpoch = nil
         if localOnly { connectionLost(); return }
@@ -1425,7 +1558,7 @@ final class RemoteCoordinator: ObservableObject {
     private func connectionLost(finalStatus: String = "Connection lost. Tap Connect to try again.") {
         SessionLog.log.error("connectionLost: \(finalStatus, privacy: .public) signaling=\(self.relay.lastCloseReason ?? "nil", privacy: .public) stopped=\(self.stopped, privacy: .public) retry=\(self.retryCount, privacy: .public)")
         guard !stopped else { return }
-        if scannedEnrollment != nil {
+        if scannedEnrollment != nil || (isHost && hostPair?.paired == false && invitation?.version == PairEnrollment.version) {
             fail("Pairing was interrupted. Scan a fresh QR to try again.")
             return
         }
@@ -1471,6 +1604,13 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     private func fail(_ message: String) {
+        // An unsuccessful candidate cannot leave the photographed invitation reusable.
+        // New Code is the existing exceptional recovery action; reconnect never resumes enrollment.
+        if isHost, var pair = hostPair, !pair.paired, pair.invitation.version == PairEnrollment.version {
+            pair.invitation.expires = .distantPast
+            hostPair = pair; invitation = pair.invitation
+            try? store.save(pair)
+        }
         cancelEnrollment()
         SessionLog.log.error("fail: \(message, privacy: .public)")
         stopped = true; retry?.cancel(); retry = nil; recoveringLiveSession = false

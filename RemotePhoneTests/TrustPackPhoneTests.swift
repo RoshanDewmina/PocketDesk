@@ -33,6 +33,7 @@ final class ScreenRecordingApprovalPhoneTests: XCTestCase {
         XCTAssertEqual(modern.features.count, 7, "The exact advertised list contains no duplicate names")
         let noClipboard = UserDefaults(suiteName: "TrustPackPhoneTests.\(UUID().uuidString)")!
         noClipboard.set(true, forKey: "clipboardAutoSyncDisabled")
+        noClipboard.set(true, forKey: "phoneAudioRequestDisabled")
         let optIn = MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(sharpen: true, textClarity: true, fullColor: false), defaults: noClipboard)
         XCTAssertEqual(Set(optIn.features), expected.union(["video.refine.1"]))
         XCTAssertLessThanOrEqual(optIn.features.count, 8, "Refinement stays inside the eight-name bound")
@@ -40,7 +41,7 @@ final class ScreenRecordingApprovalPhoneTests: XCTestCase {
         XCTAssertEqual(MacShareBlocker.Handshake.features(in: try JSONEncoder().encode(optIn)), expected.union(["video.refine.1", "video.clarity.1"]))
         XCTAssertEqual(MacShareBlocker.Handshake.phoneRequest(StillTextPreferences.requestedFeatures(sharpen: false, textClarity: false, fullColor: false), defaults: noClipboard), modern)
         let withClipboard = MacShareBlocker.Handshake.phoneRequest([], defaults: UserDefaults(suiteName: "TrustPackPhoneTests.\(UUID().uuidString)")!)
-        XCTAssertEqual(withClipboard.options, [SessionFeature.clipboardSync], "Clipboard sync is a default option, outside the eight-name feature bound")
+        XCTAssertEqual(withClipboard.options, [SessionFeature.clipboardSync, SessionFeature.phoneAudio], "Clipboard sync and audio request are default options, outside the eight-name feature bound")
         XCTAssertEqual(withClipboard.features, modern.features)
         let modernBody = try JSONEncoder().encode(modern)
         XCTAssertLessThanOrEqual(modernBody.count, 1024)

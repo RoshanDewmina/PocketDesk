@@ -116,7 +116,7 @@ const ROWS: Row[] = [
   },
   {
     label: "Requirements",
-    cells: [planned("macOS 26, iOS or iPadOS 26"), "macOS 15, iOS or iPadOS 26", NL, NL, NL],
+    cells: [planned("macOS 26 on Apple silicon, iOS or iPadOS 26"), "macOS 15, iOS or iPadOS 26", NL, NL, NL],
   },
   {
     label: "AI agent features",

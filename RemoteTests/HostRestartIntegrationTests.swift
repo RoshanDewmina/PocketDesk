@@ -73,9 +73,7 @@ final class HostRestartIntegrationTests: XCTestCase {
     @MainActor
     func testOrdinaryConnectFailuresKeepTheShortRetryWindow() async throws {
         let (service, url) = try service(); defer { service.terminate() }
-        let host = RemoteCoordinator(isHost: true, store: SharedTrust())
-        host.allowLegacyPrivateRoute = true
-        let invitation = try host.createPair(server: url, name: "Absent Mac")
+        let invitation = try HostPair.create(server: url, name: "Absent Mac").rotated().invitation
         let phoneTrust = SharedTrust()
         try phoneTrust.save(invitation)
         let phone = RemoteCoordinator(isHost: false, store: phoneTrust, retryBaseNanoseconds: 50_000_000,
@@ -83,6 +81,7 @@ final class HostRestartIntegrationTests: XCTestCase {
         phone.allowLegacyPrivateRoute = true
         defer { phone.stop() }
         phone.restore()
+        XCTAssertEqual(phone.invitation?.version, 1, "Ordinary connect uses saved trust rather than fresh enrollment")
         phone.start()
         try await waitFor("a Mac that never answered is reported within the normal window", seconds: 6) {
             !phone.isRunning
@@ -97,7 +96,11 @@ final class HostRestartIntegrationTests: XCTestCase {
         let predecessor = RemoteCoordinator(isHost: true, store: trust)
         predecessor.allowLegacyPrivateRoute = true
         defer { predecessor.stop() }
-        _ = try predecessor.createPair(server: url, name: "Predecessor")
+        let saved = try HostPair.create(server: url, name: "Predecessor").rotated()
+        try trust.save(saved)
+        predecessor.restore()
+        XCTAssertEqual(predecessor.hostPair?.paired, true)
+        XCTAssertEqual(predecessor.invitation?.version, 1)
         predecessor.start()
         try await waitFor("predecessor registered") { predecessor.hostRegistered }
 
@@ -112,5 +115,7 @@ final class HostRestartIntegrationTests: XCTestCase {
         XCTAssertTrue(relaunched.isRunning)
         predecessor.stop()
         try await waitFor("relaunched host registered once the old room closed") { relaunched.hostRegistered }
+        XCTAssertFalse(relaunched.awaitingApproval)
+        XCTAssertEqual(relaunched.invitation, saved.invitation)
     }
 }

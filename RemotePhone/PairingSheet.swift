@@ -5,6 +5,7 @@ import AVFoundation
 /// pinned above the keyboard at every text size. Wrong or expired codes say so right away.
 struct PairingSheet: View {
     @ObservedObject var model: PhoneRemoteModel
+    @ObservedObject private var connection: RemoteCoordinator
     let replacing: String?
     let onPaired: () -> Void
     @State private var entry: PairingEntry
@@ -12,6 +13,7 @@ struct PairingSheet: View {
     @State private var problem: PairingCodeProblem?
     @State private var problemSerial = 0
     @State private var burst = false
+    @State private var waitingForApproval = false
     @State private var showsReplacementConfirmation = false
     @FocusState private var codeFocused: Bool
     @Environment(\.dismiss) private var dismiss
@@ -21,6 +23,7 @@ struct PairingSheet: View {
 
     init(model: PhoneRemoteModel, entry: PairingEntry, replacing: String? = nil, onPaired: @escaping () -> Void = {}) {
         self.model = model
+        _connection = ObservedObject(wrappedValue: model.connection)
         self.replacing = replacing
         self.onPaired = onPaired
         _entry = State(initialValue: entry)
@@ -42,22 +45,24 @@ struct PairingSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: Farside.Space.l) {
                     FarsideHeading("Pair your Mac.", accent: "your", size: 30)
-                    FarsideSegmented(label: "Pairing method",
-                                     options: [(PairingEntry.scan, "Scan"), (PairingEntry.paste, "Paste Code")],
-                                     selection: $entry, accessibilityStacked: true)
+                    if waitingForApproval { approvalWaiting } else {
+                        FarsideSegmented(label: "Pairing method",
+                                         options: [(PairingEntry.scan, "Scan"), (PairingEntry.paste, "Paste Code")],
+                                         selection: $entry, accessibilityStacked: true)
 
-                    if entry == .scan { scanner } else { pasteField }
+                        if entry == .scan { scanner } else { pasteField }
 
-                    if let problem {
-                        FarsideNotice(message: problem.message, tone: .caution)
-                            .transition(.opacity)
-                            .id(problemSerial)
-                            .accessibilityIdentifier("pairing.feedback")
-                    } else if !model.error.isEmpty {
-                        FarsideNotice(message: model.error, tone: .caution)
+                        if let problem {
+                            FarsideNotice(message: problem.message, tone: .caution)
+                                .transition(.opacity)
+                                .id(problemSerial)
+                                .accessibilityIdentifier("pairing.feedback")
+                        } else if !model.error.isEmpty {
+                            FarsideNotice(message: model.error, tone: .caution)
+                        }
+
+                        steps
                     }
-
-                    steps
 
                     if let replacing {
                         Text("Add another Mac. \(replacing) stays paired with this iPhone.")
@@ -75,11 +80,14 @@ struct PairingSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel", systemImage: "xmark") { dismiss() }
+                    Button("Cancel", systemImage: "xmark") {
+                        if waitingForApproval { connection.stop() }
+                        dismiss()
+                    }
                 }
             }
             .safeAreaBar(edge: .bottom) {
-                if entry == .paste {
+                if entry == .paste && !waitingForApproval {
                     Button(action: pair) {
                         Text("Pair Mac")
                     }
@@ -96,10 +104,10 @@ struct PairingSheet: View {
         }
         .tint(Farside.Palette.bone)
         .farsideSheet()
-        .interactiveDismissDisabled(burst)
+        .interactiveDismissDisabled(burst || waitingForApproval)
         .confirmationDialog("Replace this Mac pairing?", isPresented: $showsReplacementConfirmation,
                             titleVisibility: .visible, presenting: model.pendingPairReplacement) { pending in
-            Button("Replace pairing") { if model.confirmPairReplacement(pending) { celebrate() } }
+            Button("Replace pairing") { if model.confirmPairReplacement(pending) { waitingForApproval = true } }
             Button("Cancel", role: .cancel) { model.cancelPairReplacement(); entry = .paste }
         } message: { pending in
             Text("Replace the saved pairing for \(pending.oldName) with this QR for \(pending.approval.enrollment.name)? The current session ends first. Your Mac must still approve this iPhone.")
@@ -108,7 +116,16 @@ struct PairingSheet: View {
         .onChange(of: showsReplacementConfirmation) { _, shown in
             if !shown, model.pendingPairReplacement != nil { model.cancelPairReplacement(); entry = .paste }
         }
-        .onDisappear { model.cancelPairReplacement() }
+        .onDisappear {
+            model.cancelPairReplacement()
+            if waitingForApproval, connection.enrollmentPending { connection.stop() }
+        }
+        .onChange(of: connection.enrollmentPending) { _, pending in
+            if waitingForApproval, !pending, connection.invitation?.version == 1, connection.isRunning {
+                waitingForApproval = false
+                celebrate()
+            }
+        }
         .animation(Farside.Motion.easeOut(), value: problemSerial)
         .animation(Farside.Motion.easeOut(Farside.Motion.micro), value: burst)
         .sensoryFeedback(.warning, trigger: problemSerial)
@@ -127,6 +144,33 @@ struct PairingSheet: View {
             #endif
         }
         .accessibilityIdentifier("pairing.sheet")
+    }
+
+    private var approvalWaiting: some View {
+        VStack(alignment: .leading, spacing: Farside.Space.m) {
+            if let code = connection.pairingComparisonCode {
+                Text("Check your Mac.")
+                    .font(.headline)
+                Text(verbatim: code)
+                    .font(.system(size: 36, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Farside.Palette.bone)
+                    .privacySensitive()
+                    .accessibilityLabel("Comparison code: \(code)")
+                    .accessibilityIdentifier("pairing.comparisonCode")
+                Text("If your Mac shows this same code, choose Allow on the Mac to finish. If the codes differ, choose Decline there and scan a new code.")
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                if connection.enrollmentPending { ProgressView().tint(Farside.Palette.bone) }
+                Text(connection.status)
+                    .font(.subheadline)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(Farside.Space.l)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .farsidePlate()
+        .accessibilityIdentifier("pairing.waiting")
     }
 
     @ViewBuilder private var scanner: some View {
@@ -181,7 +225,7 @@ struct PairingSheet: View {
                 ScannerView(onCode: { code in
                     if burst { return true }
                     let paired = model.enroll(code)
-                    if paired { celebrate() }
+                    if paired { waitingForApproval = true }
                     return paired
                 }, onRejected: { reason in
                     problem = reason
@@ -252,7 +296,7 @@ struct PairingSheet: View {
             step(1, "On your Mac, open Farside and choose Pair a phone.")
             step(2, entry == .scan ? "Point this iPhone at the code within two minutes."
                                    : "Paste the copied code within two minutes.")
-            step(3, "Choose Allow on your Mac to finish.", last: true)
+            step(3, "Check that both screens show the same code, then choose Allow on your Mac.", last: true)
         }
         .farsidePlate(Farside.Radius.card, fill: .clear)
     }
@@ -279,7 +323,7 @@ struct PairingSheet: View {
         .accessibilityElement(children: .combine)
     }
 
-    /// The code dissolves into the mark, then the sheet closes while the Mac asks for approval.
+    /// Celebrate only after the Mac has approved this exact handshake and trust is saved.
     private func celebrate() {
         codeFocused = false
         burst = true
@@ -290,7 +334,7 @@ struct PairingSheet: View {
     private func pair() {
         let code = model.pairingCode
         if model.enroll(code) {
-            celebrate()
+            waitingForApproval = true
         } else if model.pendingPairReplacement == nil {
             problem = PairingCodeProblem(code: code)
             problemSerial &+= 1
