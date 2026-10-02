@@ -23,6 +23,7 @@ final class LiveActivityUITests: XCTestCase {
     ]
 
     private var springboard: XCUIApplication { XCUIApplication(bundleIdentifier: "com.apple.springboard") }
+    private var requestedLockScreenOrientation: UIDeviceOrientation = .portrait
 
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -120,13 +121,14 @@ final class LiveActivityUITests: XCTestCase {
             }
             return
         }
-        let name = allow.label == "Always Allow"
-            ? "system-live-activity-always-permission" : "system-live-activity-permission"
+        let landscape = requestedLockScreenOrientation == .landscapeLeft || requestedLockScreenOrientation == .landscapeRight
+        let name = (landscape ? "landscape-" : "") + (allow.label == "Always Allow"
+            ? "system-live-activity-always-permission" : "system-live-activity-permission")
         let frame = springboard.frame
-        if frame.height > frame.width {
+        if landscape ? frame.width > frame.height : frame.height > frame.width {
             attach(name)
         } else {
-            let reason = XCTAttachment(string: "Verified Farside Live Activity question did not have a portrait SpringBoard frame")
+            let reason = XCTAttachment(string: "Verified Farside Live Activity question did not match requested \(landscape ? "landscape" : "portrait") SpringBoard frame")
             reason.name = "missing-state-reason"
             reason.lifetime = .keepAlways
             add(reason)
@@ -209,14 +211,58 @@ final class LiveActivityUITests: XCTestCase {
 
     @MainActor
     func testTheLockScreenShowsEveryStateWithTheRightButton() throws {
-        attachPlan(states.map { "\($0.phase)-lockscreen" })
-        for state in states {
-            start(state.phase)
-            showLockScreen()
-            attachValidated("\(state.phase)-lockscreen", valid: assertButtons(for: state, where: "Lock Screen"))
-            attachTree("\(state.phase)-lockscreen-tree")
-            springboard.swipeUp()
-            Thread.sleep(forTimeInterval: 1.5)
+        let environment = ProcessInfo.processInfo.environment
+        let allOrientations = environment["FARSIDE_LIVE_ACTIVITY_ALL_ORIENTATIONS"] == "1"
+        if allOrientations {
+            #if targetEnvironment(simulator)
+            let allowed = ["A69BA21A-8F6A-48BD-972B-FFCCA74036DD", "419A9E16-E7F7-4269-8690-BD2E4DD4437C"]
+            let requestedID = environment["FARSIDE_NATIVE_SIMULATOR_ID"] ?? ""
+            try XCTSkipUnless(allowed.contains(requestedID) && environment["SIMULATOR_UDID"] == requestedID,
+                              "Landscape Lock Screen capture requires an allowed iPad simulator ID matching actual SIMULATOR_UDID")
+            #else
+            throw XCTSkip("Landscape Lock Screen capture is simulator-only")
+            #endif
+        }
+        let orientations: [UIDeviceOrientation] = allOrientations ? [.portrait, .landscapeLeft] : [.portrait]
+        attachPlan(orientations.flatMap { orientation in
+            states.map { (orientation == .landscapeLeft ? "landscape-" : "") + "\($0.phase)-lockscreen" }
+        })
+        defer {
+            requestedLockScreenOrientation = .portrait
+            XCUIDevice.shared.orientation = .portrait
+        }
+        for orientation in orientations {
+            requestedLockScreenOrientation = orientation
+            XCUIDevice.shared.orientation = orientation
+            for state in states {
+                let name = (orientation == .landscapeLeft ? "landscape-" : "") + "\(state.phase)-lockscreen"
+                start(state.phase)
+                showLockScreen()
+                var valid = assertButtons(for: state, where: "Lock Screen")
+                if orientation == .landscapeLeft {
+                    let deadline = ProcessInfo.processInfo.systemUptime + 4
+                    var frame = springboard.frame
+                    while frame.width <= frame.height && ProcessInfo.processInfo.systemUptime < deadline {
+                        Thread.sleep(forTimeInterval: 0.1)
+                        frame = springboard.frame
+                    }
+                    let titleVisible = springboard.staticTexts[state.title].exists && springboard.staticTexts[state.title].isHittable
+                    let actionsVisible = (!state.hasEnd || (springboard.buttons["End session"].exists && springboard.buttons["End session"].isHittable))
+                        && (!state.hasReconnect || (springboard.buttons["Reconnect"].exists && springboard.buttons["Reconnect"].isHittable))
+                    let landscapeVisible = frame.width > frame.height && titleVisible && actionsVisible
+                    if !landscapeVisible {
+                        let reason = XCTAttachment(string: "Landscape Lock Screen \(state.phase) was not verified: SpringBoard frame \(frame.width) × \(frame.height), phase visible=\(titleVisible), expected actions visible=\(actionsVisible)")
+                        reason.name = "missing-state-reason"
+                        reason.lifetime = .keepAlways
+                        add(reason)
+                    }
+                    valid = valid && landscapeVisible
+                }
+                attachValidated(name, valid: valid)
+                attachTree(name + "-tree")
+                springboard.swipeUp()
+                Thread.sleep(forTimeInterval: 1.5)
+            }
         }
     }
 
