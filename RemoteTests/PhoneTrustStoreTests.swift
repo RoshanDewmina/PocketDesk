@@ -515,6 +515,40 @@ extension HostMultiDeviceTests {
         XCTAssertEqual(try store.read(HostPair.self)?.approvedDevices, host.pairedDevices)
     }
 
+    func testFailedAdditionalApprovalRetirementPreservesCatalogAndRequiresFreshQR() throws {
+        let store = MemoryPairStore(), saved = try catalog(count: 1)
+        try store.save(saved)
+        let transport = ScriptedSignaling()
+        let host = RemoteCoordinator(isHost: true, store: store, signaling: transport)
+        host.allowLegacyPrivateRoute = true
+        host.restore()
+        let exposed = try host.createPair(server: saved.invitation.server, name: "Mac")
+        host.start(); defer { host.stop() }
+        transport.deliver(RelayMessage(type: "registered", features: [SignalingFeature.devices]))
+        _ = try comparisonEnrollment(exposed, host: host, transport: transport)
+        store.refuseSave = true
+        host.approve()
+        XCTAssertFalse(host.isRunning)
+        XCTAssertNil(host.pendingPairInvitation)
+        XCTAssertEqual(try store.read(HostPair.self)?.approvedDevices, saved.approvedDevices)
+        let registrations = transport.connects.count
+        store.refuseSave = false
+        host.restore(); host.start()
+        XCTAssertEqual(transport.connects.count, registrations)
+        XCTAssertFalse(host.isRunning)
+        let fresh = try host.createPair(server: saved.invitation.server, name: "Mac")
+        XCTAssertEqual(fresh.room, exposed.room)
+        XCTAssertNotEqual(fresh.key, exposed.key)
+        XCTAssertNotEqual(fresh.token, exposed.token)
+        host.start()
+        transport.deliver(RelayMessage(type: "registered", features: [SignalingFeature.devices]))
+        _ = try comparisonEnrollment(fresh, host: host, transport: transport)
+        host.approve()
+        XCTAssertEqual(host.pairedDevices.count, 2)
+        XCTAssertEqual(host.pairedDevices.first, saved.approvedDevices.first)
+        XCTAssertNil(host.pendingPairInvitation)
+    }
+
     func testKillSwitchAdvertisesOnlyOneDeviceWithoutDeletingCatalog() throws {
         let store = MemoryPairStore(), saved = try catalog()
         try store.save(saved)
