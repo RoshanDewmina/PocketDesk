@@ -568,7 +568,7 @@ final class ViewportCaptureTests: XCTestCase {
             model.framePlacement(tag: nil, width: 1600, height: 640)
             XCTAssertEqual(model.placementRegion, c, "no size match: the echo")
             // A Mac that stops tagging for half a second hands the placement back to the fallbacks.
-            model.framePlacement(tag: tag(a), width: 2432, height: 1200)
+            model.framePlacement(tag: tag(a, geometry: 5), width: 2432, height: 1200)
             XCTAssertEqual(model.placementRegion, byFrame ? a : c)
             for _ in 0..<(PhoneRemoteModel.untaggedRunLimit - 1) { model.framePlacement(tag: nil, width: 2416, height: 976) }
             XCTAssertEqual(model.placementRegion, byFrame ? a : c)
