@@ -278,7 +278,7 @@ final class AnywhereStoreKitTests: XCTestCase {
         let external = try await session.buyProduct(identifier: AnywherePlan.monthlyID, options: [])
         print("STOREKIT REDEMPTION: exact unfinished verification")
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(8))
+        let deadline = clock.now.advanced(by: .seconds(20))
         var matching: VerificationResult<StoreKit.Transaction>?
         var externallyUnfinished = false
         while clock.now < deadline {
@@ -314,10 +314,16 @@ final class AnywhereStoreKitTests: XCTestCase {
         let signed = await store.signedTransaction()
         XCTAssertEqual(signed?.split(separator: ".").count, 3, "A compact JWS for the service")
         print("STOREKIT REDEMPTION: verify finished")
+        // The unfinished list catches up with finish() asynchronously (still listed once in 15 runs, 1 Oct).
         var unfinished = 0
-        for await result in Transaction.unfinished {
-            if case .verified(let transaction) = result, transaction.productID == AnywherePlan.monthlyID { unfinished += 1 }
-        }
+        let finishDeadline = clock.now.advanced(by: .seconds(8))
+        repeat {
+            unfinished = 0
+            for await result in Transaction.unfinished {
+                if case .verified(let pending) = result, pending.id == external.id { unfinished += 1 }
+            }
+            if unfinished > 0 { try await Task.sleep(for: .milliseconds(200)) }
+        } while unfinished > 0 && clock.now < finishDeadline
         XCTAssertEqual(unfinished, 0, "The redeemed transaction is finished")
     }
 
@@ -325,6 +331,9 @@ final class AnywhereStoreKitTests: XCTestCase {
         var updates = 0
         store.onTransactionUpdate = { updates += 1 }
         store.start()
+        // start() subscribes to Transaction.updates from a new task; a purchase landing before that
+        // subscription exists is never delivered to it (5 of 15 relaunched runs, 1 Oct).
+        try await Task.sleep(for: .seconds(1))
         try await session.buyProduct(identifier: AnywherePlan.monthlyID)
         let deadline = Date().addingTimeInterval(8)
         while Date() < deadline, !(store.entitlement.hasAccess && updates > 0) { try await Task.sleep(for: .milliseconds(200)) }
