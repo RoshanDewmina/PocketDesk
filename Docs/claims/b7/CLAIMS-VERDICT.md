@@ -10,6 +10,8 @@ The ordinary trackpad/slide/tap, code scan, app-switcher privacy and same-Wi-Fi 
 
 Replace “nothing connects until you approve” with “the Mac pairs only with a phone you approve on it.” Signaling transport connects before approval and approved devices reconnect normally; the initial new-owner pairing gate is source verified. This is wording precision, not a discovered unauthorized desktop admission.
 
+The Supplemental Materials URL gate is now satisfied narrowly: `https://getfarside.com` can be proposed again as the live homepage link, based on HTTPS200 HEAD/GET at13:26UTC. This does not add “notarized companion download,” open beta, App Store availability or launch-readiness proof. No store field was edited.
+
 ## Sentence decisions for the submitted Block A
 
 | Submitted sentence | Decision on this baseline |
@@ -57,7 +59,7 @@ This table is a copy decision with explicit scopes. It does not turn older-build
 
 ## Copy budget and proposed trims
 
-`BLOCK-A-GATED.txt` is a reviewable **677-character** draft with **323 remaining**. It removes the unsupported split/fold paragraph and Duo launch promise, omits C11's unapproved reference, replaces the absolute connection wording, and says iPhone/iPad launch is planned. It retains normal feature claims with the open device gates above. `BLOCK-A-CONSERVATIVE.txt` is a shorter **515-character** draft with **485 remaining**; it omits pinch and privacy pending their exact-build receipts. Neither file was pasted to ASC.
+`BLOCK-A-GATED.txt` is a reviewable **677-character** draft with **323 remaining**. It removes the unsupported split/fold paragraph and Duo launch promise, omits C11's unapproved reference, replaces the absolute connection wording, and says iPhone/iPad launch is planned. It retains normal feature claims with the open device gates above. `BLOCK-A-CONSERVATIVE.txt` is a shorter **519-character** draft with **481 remaining**; it omits pinch and privacy pending their exact-build receipts. Both are proposed copy with open gates, not ship-ready acceptance: even the conservative draft retains live-control and scan descriptions awaiting current-device validation. Neither file was pasted to ASC.
 
 | Addition, only after its gate passes | Characters |
 |---|---:|
@@ -72,7 +74,7 @@ This table is a copy decision with explicit scopes. It does not turn older-build
 
 ## Fresh execution receipts
 
-Pending controlled execution; final evidence addendum follows. Build source is 20aded1 with verification-only tests/scripts, no production behavior changes. Source + simulator + physical + provider acceptance are independent. Review and script checks alone do not constitute a compiled test pass.
+AUTO execution is complete; controlled iPhone/iPad UI execution is pending the shared priority gate. Build source is 20aded1 with verification-only tests/scripts, no production behavior changes. Source + simulator + physical + provider acceptance are independent. Review and script checks alone do not constitute a compiled test pass.
 
 - Duo single boot attempt: FAILED infrastructure, despite simctl exit 0. Terminal bootstatus is Data Migration Failed at 36 seconds (logs/20261002T104318Z/duo-boot-status.log; BOOT-ACCEPTANCE.json). No retry, no Duo app acceptance. This is an infrastructure failure, not an observed app layout defect; missing fold layout is independently source-verified.
 

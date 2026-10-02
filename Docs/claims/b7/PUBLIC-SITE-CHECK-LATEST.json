@@ -21,5 +21,10 @@
     "sha256": "1525d56b5b1e17861b38bb56a2d70bf720ccc987480fb95dd215b2c70e4885ef",
     "title": "Farside: Control your Mac from your iPhone or iPad"
   },
-  "web_reader": "Unavailable; curl verified HTTP200 HEAD and GET from this Mac."
+  "web_reader": "Unavailable; curl verified HTTP200 HEAD and GET from this Mac.",
+  "page_scope": {
+    "observed": "Beta coming soon; TestFlight beta not open yet; App Store to follow",
+    "download_link": "No anchor URL containing download/dmg/pkg/zip found in homepage HTML",
+    "limitation": "Homepage read is not artifact/notarization or ASC-upload verification"
+  }
 }

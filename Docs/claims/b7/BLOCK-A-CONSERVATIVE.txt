@@ -2,7 +2,7 @@ Farside puts the Mac you already own in your hand, designed for touch first.
 
 Use your iPhone screen as your Mac's trackpad: slide to move the pointer and tap to click.
 
-There is no Farside account. The free Mac companion shows a code; scan it and approve the phone on the Mac before connecting.
+There is no Farside account. The free Mac companion shows a code; scan it and approve the phone on the Mac before controlling it.
 
 Farside is free on the same Wi-Fi. Farside Anywhere, an optional subscription for use away from home, is coming soon. It needs a Mac with Apple silicon on macOS 26 or later.
 
