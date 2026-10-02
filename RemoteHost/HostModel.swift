@@ -3237,6 +3237,7 @@ final class RemoteHostModel: ObservableObject {
         phonePause.clear()
         if sessionState == .couch { beginCouch() } else {
             connection.media?.counters.beginResumeCapture()
+            connection.media?.rearmBandwidthSeed()
             beginCapture()
         }
     }

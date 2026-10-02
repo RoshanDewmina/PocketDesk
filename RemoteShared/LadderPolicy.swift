@@ -42,7 +42,7 @@ enum LadderTrigger: CaseIterable {
         // The bandwidth estimate is not evidence on a proven LAN with a clean round trip and no loss:
         // it collapses to the sent rate of a still screen (1 Oct 2026, .4: 25,000 -> 3,720 -> 2,395 kbps
         // at rtt 6-8 ms, loss 0, sent 1 Mbps), and the next key frame's pacer wait then stepped the size.
-        if lanTrustRules, isNetwork, LANTrustPolicy.trusted(inputs) { return false }
+        if lanTrustRules, isNetwork, inputs.lanTrusted { return false }
         switch self {
         case .hostThermal:
             return (LadderPolicy.thermalLevel(inputs.hostThermalState) ?? 0) >= LadderPolicy.seriousThermalLevel
@@ -128,8 +128,36 @@ enum LANTrustPolicy {
         return (lossPercent ?? 0) < lossLimitPercent
     }
 
-    static func trusted(_ inputs: LadderInputs) -> Bool {
-        trusted(provenLocalLink: inputs.provenLocalLink, lossPercent: inputs.remoteLossPercent, rttMs: inputs.rttMs)
+}
+
+/// `LANTrustPolicy` with memory. A pacer wait over `inflationLimitMs` in `strikeSamples` samples in a
+/// row while trusted means the link is not draining the floor rate (congestion the round trip has not
+/// shown yet): trust is withdrawn, and returns after `recoverySamples` clean samples in a row. The
+/// host monitor and the media layer each run one on the same per-second report.
+struct LANTrustTracker: Equatable {
+    static let inflationLimitMs = 250.0
+    static let strikeSamples = 2
+    static let recoverySamples = 5
+
+    private var strikes = 0
+    private var clean = 0
+    private(set) var withdrawn = false
+    private(set) var trusted = false
+
+    @discardableResult
+    mutating func observe(provenLocalLink: Bool, lossPercent: Double?, rttMs: Double?, pacerDelayMs: Double?) -> Bool {
+        let base = LANTrustPolicy.trusted(provenLocalLink: provenLocalLink, lossPercent: lossPercent, rttMs: rttMs)
+        let inflated = (pacerDelayMs ?? 0) > Self.inflationLimitMs
+        strikes = base && inflated ? strikes + 1 : 0
+        if strikes >= Self.strikeSamples {
+            withdrawn = true
+            clean = 0
+        } else if withdrawn {
+            clean = base && !inflated ? clean + 1 : 0
+            if clean >= Self.recoverySamples { withdrawn = false }
+        }
+        trusted = base && !withdrawn
+        return trusted
     }
 }
 

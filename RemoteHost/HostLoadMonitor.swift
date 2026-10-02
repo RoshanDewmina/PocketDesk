@@ -58,6 +58,7 @@ struct HostLoadMonitor {
     private(set) var busy = BusyPolicy()
     private(set) var longEdge = 0
     private(set) var governor: SenderQueueGovernor?
+    private(set) var lanTrust = LANTrustTracker()
     let applyGovernor: Bool
     private(set) var applied: LadderState
 
@@ -80,7 +81,7 @@ struct HostLoadMonitor {
         return feedback
     }
 
-    static func inputs(from sample: HostLoadSample) -> LadderInputs {
+    static func inputs(from sample: HostLoadSample, lanTrusted: Bool = false) -> LadderInputs {
         LadderInputs(targetFPS: sample.targetFPS, captureFPS: sample.captureFPS,
                      captureLatencyP90Ms: sample.captureLatencyP90Ms, encodedFPS: sample.encodedFPS,
                      encodeLatencyP90Ms: sample.encodeLatencyP90Ms, encodeInFlightMax: sample.encodeInFlightMax,
@@ -93,15 +94,15 @@ struct HostLoadMonitor {
                      phonePresentedFPS: sample.phoneLoad?.presentedFPS,
                      phoneThermalState: sample.phoneLoad?.thermalState.map(String.init),
                      phoneLowPowerMode: sample.phoneLoad?.lowPowerMode, sentFPS: sample.sentFPS,
-                     encoderSessionAgeS: sample.encoderSessionAgeS, sourceFPS: sample.sourceFPS,
-                     provenLocalLink: sample.provenLocalLink, rttMs: sample.rttMs,
-                     remoteLossPercent: sample.remoteLossPercent)
+                     encoderSessionAgeS: sample.encoderSessionAgeS, sourceFPS: sample.sourceFPS, lanTrusted: lanTrusted)
     }
 
     /// The new rung to apply and the new busy state to send, each nil when unchanged.
     mutating func tick(sample: HostLoadSample, at time: TimeInterval) -> (ladder: LadderState?, busy: BusyState?) {
         if let edge = sample.longEdge, edge > 0 { longEdge = edge }
-        let inputs = Self.inputs(from: sample)
+        let trusted = lanTrust.observe(provenLocalLink: sample.provenLocalLink, lossPercent: sample.remoteLossPercent,
+                                       rttMs: sample.rttMs, pacerDelayMs: sample.pacerDelayMs)
+        let inputs = Self.inputs(from: sample, lanTrusted: trusted)
         _ = ladder.evaluate(inputs, at: time)
         _ = governor?.observe(SenderQueueGovernor.Window(route: sample.routeDetail, availableKbps: sample.availableKbps,
             sentKbps: sample.sentKbps, senderQueueMs: sample.senderQueueMs, networkQueueMs: sample.networkQueueMs,

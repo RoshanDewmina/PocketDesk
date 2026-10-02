@@ -984,7 +984,7 @@ final class LadderPolicyTests: XCTestCase {
 
     /// Rows 4219-4222: a half-still LAN screen, the estimate collapsed to 2.4 Mb/s, a 204 kB key frame
     /// waiting 299 ms in the pacer, round trip 6 ms, no loss.
-    private func collapsedLAN(pacer: Double, rtt: Double? = 6, loss: Double? = 0, proven: Bool = true) -> LadderInputs {
+    private func collapsedLAN(pacer: Double, trusted: Bool = true) -> LadderInputs {
         var inputs = calm(targetFPS: 60)
         inputs.captureFPS = 34
         inputs.sourceFPS = 30
@@ -996,16 +996,47 @@ final class LadderPolicyTests: XCTestCase {
         inputs.pacerDelayMs = pacer
         inputs.availableKbps = 2_449
         inputs.targetKbps = 1_846
-        inputs.provenLocalLink = proven
-        inputs.rttMs = rtt
-        inputs.remoteLossPercent = loss
+        inputs.lanTrusted = trusted
         return inputs
+    }
+
+    func testTrustNeedsAProvenLocalLinkWithoutLossOrALongRoundTrip() {
+        XCTAssertTrue(LANTrustPolicy.trusted(provenLocalLink: true, lossPercent: 0, rttMs: 6))
+        XCTAssertTrue(LANTrustPolicy.trusted(provenLocalLink: true, lossPercent: nil, rttMs: 100))
+        XCTAssertTrue(LANTrustPolicy.trusted(provenLocalLink: true, lossPercent: 1.9, rttMs: 97), "under libwebrtc's own no-change band")
+        XCTAssertFalse(LANTrustPolicy.trusted(provenLocalLink: false, lossPercent: 0, rttMs: 6), "an unproven link is judged as before")
+        XCTAssertFalse(LANTrustPolicy.trusted(provenLocalLink: true, lossPercent: 2, rttMs: 6), "loss ends the trust")
+        XCTAssertFalse(LANTrustPolicy.trusted(provenLocalLink: true, lossPercent: 0, rttMs: 100.5), "so does a long round trip")
+        XCTAssertFalse(LANTrustPolicy.trusted(provenLocalLink: true, lossPercent: 0, rttMs: nil), "no round trip, no trust")
+    }
+
+    func testTrustIsWithdrawnWhenThePacerStaysInflatedAndReturnsAfterFiveCleanSamples() {
+        var tracker = LANTrustTracker()
+        XCTAssertTrue(tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 299.4),
+                      "one key frame's wait is not congestion")
+        XCTAssertTrue(tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 0))
+        XCTAssertTrue(tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 300))
+        XCTAssertFalse(tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 310),
+                       "two inflated samples in a row: the link is not draining the floor rate")
+        XCTAssertTrue(tracker.withdrawn)
+        for second in 0..<4 {
+            XCTAssertFalse(tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 1), "clean \(second)")
+        }
+        XCTAssertTrue(tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 1), "fifth clean sample")
+        XCTAssertFalse(tracker.withdrawn)
+        _ = tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 300)
+        _ = tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 300)
+        for _ in 0..<3 { _ = tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 1) }
+        XCTAssertFalse(tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 150, pacerDelayMs: 1),
+                       "an untrusted sample restarts the recovery count")
+        for _ in 0..<4 { _ = tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 1) }
+        XCTAssertTrue(tracker.withdrawn)
+        XCTAssertTrue(tracker.observe(provenLocalLink: true, lossPercent: 0, rttMs: 6, pacerDelayMs: 1))
     }
 
     func testACollapsedEstimateOnATrustedLANIsNotEvidence() {
         let rungTwo = LadderPolicy.ladder(targetFPS: 60)[2]
         let row4220 = collapsedLAN(pacer: 299.4)
-        XCTAssertTrue(LANTrustPolicy.trusted(row4220))
         XCTAssertEqual(LadderTrigger.firing(row4220, at: rungTwo), [])
         XCTAssertEqual(LadderTrigger.firing(row4220, at: rungTwo, lanTrustRules: false), [.pacerDelay])
         var limited = row4220
@@ -1015,13 +1046,7 @@ final class LadderPolicyTests: XCTestCase {
         XCTAssertEqual(LadderTrigger.firing(limited, at: rungTwo), [], "every network trigger is covered")
         XCTAssertEqual(LadderTrigger.firing(limited, at: rungTwo, lanTrustRules: false),
                        [.pacerDelay, .lowEstimate, .bandwidthLimited])
-        XCTAssertEqual(LadderTrigger.firing(collapsedLAN(pacer: 299.4, proven: false), at: rungTwo), [.pacerDelay],
-                       "an unproven link is judged as before")
-        XCTAssertEqual(LadderTrigger.firing(collapsedLAN(pacer: 299.4, loss: 2), at: rungTwo), [.pacerDelay], "loss ends the trust")
-        XCTAssertEqual(LadderTrigger.firing(collapsedLAN(pacer: 299.4, loss: 1.9), at: rungTwo), [], "under libwebrtc's own no-change band")
-        XCTAssertEqual(LadderTrigger.firing(collapsedLAN(pacer: 299.4, rtt: 100.5), at: rungTwo), [.pacerDelay], "so does a long round trip")
-        XCTAssertEqual(LadderTrigger.firing(collapsedLAN(pacer: 299.4, rtt: 100), at: rungTwo), [])
-        XCTAssertEqual(LadderTrigger.firing(collapsedLAN(pacer: 299.4, rtt: nil), at: rungTwo), [.pacerDelay], "no round trip, no trust")
+        XCTAssertEqual(LadderTrigger.firing(collapsedLAN(pacer: 299.4, trusted: false), at: rungTwo), [.pacerDelay])
         var slowEncoder = row4220
         slowEncoder.encodeLatencyP90Ms = 70
         XCTAssertEqual(LadderTrigger.firing(slowEncoder, at: rungTwo), [.encodeLatency, .droppedBeforeEncode],
@@ -1046,6 +1071,36 @@ final class LadderPolicyTests: XCTestCase {
             XCTAssertNil(busy.evaluate(ladder: floor, inputs: collapsedLAN(pacer: 299.4), longEdge: 2560, at: TimeInterval(second)),
                          "no connection pill at the floor on a trusted LAN")
         }
+    }
+
+    func testTheMonitorJudgesTrustFromTheSampleAndWithdrawsItOnABacklog() {
+        var monitor = HostLoadMonitor(targetFPS: 60)
+        var collapsed = sample
+        collapsed.targetFPS = 60
+        collapsed.captureFPS = 34
+        collapsed.sourceFPS = 30
+        collapsed.encodedFPS = 28
+        collapsed.sentFPS = 28
+        collapsed.encodeLatencyP90Ms = 21.4
+        collapsed.droppedBeforeEncode = 2
+        collapsed.encoderSessionAgeS = 8.9
+        collapsed.availableKbps = 2_449
+        collapsed.targetKbps = 1_846
+        collapsed.provenLocalLink = true
+        collapsed.rttMs = 6
+        collapsed.remoteLossPercent = 0
+        for (second, pacer) in [(0, 0.0), (1, 299.4), (2, 135.2), (3, 0), (4, 104.9), (5, 0)] {
+            collapsed.pacerDelayMs = pacer
+            XCTAssertNil(monitor.tick(sample: collapsed, at: TimeInterval(second)).ladder, "second \(second)")
+        }
+        XCTAssertTrue(monitor.lanTrust.trusted)
+        var backlog: [(ladder: LadderState?, busy: BusyState?)] = []
+        for second in 6...9 {
+            collapsed.pacerDelayMs = 1_300
+            backlog.append(monitor.tick(sample: collapsed, at: TimeInterval(second)))
+        }
+        XCTAssertTrue(monitor.lanTrust.withdrawn, "a queue that does not drain is congestion")
+        XCTAssertEqual(backlog.compactMap(\.ladder).first?.reason, "network", "then the old rule steps")
     }
 
     func testTheLANFloorFollowsTheSwitch() {
@@ -1075,8 +1130,8 @@ final class LadderPolicyTests: XCTestCase {
                                     pacerDelayMs: 0.4, targetKbps: 18_000, availableKbps: 30_000,
                                     qualityLimitation: "none", hostThermalState: "fair", hostLowPowerMode: false,
                                     phoneSupersededPerSecond: nil, phoneDecodeMs: nil, phonePresentedFPS: nil,
-                                    phoneThermalState: nil, phoneLowPowerMode: nil, sourceFPS: 116,
-                                    provenLocalLink: true, rttMs: 7, remoteLossPercent: 0))
+                                    phoneThermalState: nil, phoneLowPowerMode: nil, sourceFPS: 116))
+        XCTAssertTrue(HostLoadMonitor.inputs(from: sample, lanTrusted: true).lanTrusted)
     }
 
     func testReplacementPressureUsesActualCounterWindowInsteadOfRawCount() throws {

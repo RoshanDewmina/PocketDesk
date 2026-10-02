@@ -354,6 +354,13 @@ struct BandwidthSeedPolicy {
     }
 }
 
+/// Kill switch for seeding again on every resume after a phone background pause
+/// (`defaults write <bundle id> PocketDeskSeedRearmOnResume -bool NO`, then relaunch the host).
+enum BandwidthSeedRearmSwitch {
+    static let defaultsKey = "PocketDeskSeedRearmOnResume"
+    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+}
+
 /// Route classes the seed policy tells apart (G15/G16): the "Direct" label covers both a LAN pair
 /// (host candidates on both ends) and internet P2P through STUN, whose uplink a 10 Mb/s seed can flood.
 enum SeedRoute: String, Equatable {

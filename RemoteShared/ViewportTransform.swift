@@ -519,9 +519,18 @@ extension ViewportTransform {
         return viewRect(fromSource: region.rect)
     }
 
-    /// Fit, and any zoom at or below the mode's own size, asks for the whole display; so does a zoom
-    /// that still shows all of it.
-    var requestsWholeDisplay: Bool { zoom <= 1 || !isCropped }
+    /// A zoom that shows all of the display asks for the whole display, and so does a zoom at or below
+    /// the mode's own size while at least `wholeDisplayShare` of it is on screen. A baseline Fill that
+    /// shows less (portrait on a 1920x1243 pt display shows 30 %) asks for its visible rect, which the
+    /// Mac streams at the phone's own pixels (ViewportCapturePolicy) instead of a third of them.
+    var requestsWholeDisplay: Bool {
+        guard isCropped else { return true }
+        let visible = visibleSourceRect
+        let share = (visible.width * visible.height) / (sourceSize.width * sourceSize.height)
+        return zoom <= 1 && share >= Self.wholeDisplayShare
+    }
+
+    static let wholeDisplayShare: CGFloat = 0.5
 
     /// What to ask the Mac to capture now; nil until the viewport has a display, a canvas and a scale.
     func captureRequest(displayScale: CGFloat) -> ViewportCaptureRequest? {
@@ -547,7 +556,7 @@ extension ViewportTransform {
         return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
-    private static func capturePixels(_ value: CGFloat) -> Int {
+    static func capturePixels(_ value: CGFloat) -> Int {
         let range = ViewportRegion.pixelRange
         guard value.isFinite else { return range.lowerBound }
         return Int(min(max(value.rounded(), CGFloat(range.lowerBound)), CGFloat(range.upperBound)))

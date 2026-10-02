@@ -996,13 +996,14 @@ final class PeerMedia: NSObject {
     /// The `LANBitrateFloor` in force, nil while the link is not trusted. Every bitrate-settings call
     /// carries the floor and the ceiling together: libwebrtc keeps the last settings as a whole.
     private var lanFloorBps: Int?
+    private var lanTrust = LANTrustTracker()
 
-    /// On while the link is trusted (`LANTrustPolicy`), back to libwebrtc's own minimum the sample it is not.
+    /// On while the link is trusted (`LANTrustTracker`), back to libwebrtc's own minimum the sample it is not.
     private func followLANFloor(_ stats: StreamStatsReport) {
         guard isHost, nativeDesktopCodecs, tuning.qualityBitrates, !closed, remoteDescriptionReady,
               let floor = LANBitrateFloor.bps(startBitrateBps: streamQuality.startBitrateBps(for: .lan)) else { return }
-        let trusted = LANTrustPolicy.trusted(provenLocalLink: provenLocalLinkActive, lossPercent: stats.remoteLossPercent,
-                                             rttMs: stats.rttMs)
+        let trusted = lanTrust.observe(provenLocalLink: provenLocalLinkActive, lossPercent: stats.remoteLossPercent,
+                                       rttMs: stats.rttMs, pacerDelayMs: stats.pacerDelayMs)
         guard trusted != (lanFloorBps != nil) else { return }
         _ = connection?.setBweMinBitrateBps(NSNumber(value: trusted ? floor : 0), currentBitrateBps: nil,
                                              maxBitrateBps: appliedBweMaxBps.map { NSNumber(value: $0) })
@@ -1083,6 +1084,14 @@ final class PeerMedia: NSObject {
         streamQuality = quality
         guard !closed, remoteDescriptionReady else { return }
         configureNativeSender()
+    }
+
+    /// A resume after the phone's background pause starts the estimate near libwebrtc's minimum
+    /// (1 Oct 2026: target 33 kbps, a 3.1 s pacer queue, 2-9 sent fps for 12 s), and both seed
+    /// attempts were spent at session start. Arms the seed again for the resumed stream.
+    func rearmBandwidthSeed() {
+        guard BandwidthSeedRearmSwitch.isOn else { return }
+        bandwidthSeed = BandwidthSeedPolicy()
     }
 
     /// Seed the bandwidth estimate once the selected route is known (see `BandwidthSeedPolicy`).

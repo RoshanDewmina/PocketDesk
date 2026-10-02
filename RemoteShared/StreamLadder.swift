@@ -95,10 +95,8 @@ struct LadderInputs: Equatable {
     /// Frames offered to the encoder in the window, after the rate thinning (a 30 fps rung on a 60 Hz
     /// capture offers half of `captureFPS`). nil on an older report.
     var sourceFPS: Double? = nil
-    /// The link, for `LANTrustPolicy`: a proven local link, the last round trip and the remote loss.
-    var provenLocalLink = false
-    var rttMs: Double? = nil
-    var remoteLossPercent: Double? = nil
+    /// `LANTrustTracker`'s verdict on the link this second (HostLoadMonitor).
+    var lanTrusted = false
 
     var frameIntervalMs: Double { 1000 / Double(max(1, targetFPS)) }
 }
