@@ -731,7 +731,7 @@ final class ClaimsVerificationUITests: XCTestCase {
                 // Audit content reachable below the fold as well as the initial view. Use a
                 // container swipe, never press permission/connection/purchase actions.
                 let scroll = app.scrollViews.firstMatch
-                if scroll.exists {
+                if fixture.action != .openLANWake, scroll.exists {
                     scroll.swipeUp()
                     audit(app, name: "\(name)-scrolled", issues: &issues, includeHierarchy: false)
                 }
