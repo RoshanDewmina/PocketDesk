@@ -1,6 +1,30 @@
 import Foundation
 import os
 
+/// Internal, process-lifetime instrumentation switch. Explicit NO restores the earlier counters/logs.
+/// No UI setting: set before process launch. Tests inject the resolved value into each collector.
+enum DetailedDiagnostics {
+    static let defaultsKey = "PocketDeskDetailedDiagnostics"
+    static let enabled = isEnabled(defaults: .standard)
+    static let maximumStageMs: Double = 10_000
+    static let feedbackAllowlist: Set<String> = ["nack", "nack pli", "ccm fir", "goog-remb", "transport-cc"]
+
+    static func isEnabled(defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: defaultsKey) == nil || defaults.bool(forKey: defaultsKey)
+    }
+
+    static func relayProtocol(_ value: String?) -> String? {
+        guard let value, value.utf8.count <= 3 else { return nil }
+        let normalized = value.lowercased()
+        return ["udp", "tcp", "tls"].contains(normalized) ? normalized : nil
+    }
+
+    static func stage(_ value: Double?) -> Double? {
+        guard let value, value.isFinite, (0...maximumStageMs).contains(value) else { return nil }
+        return value
+    }
+}
+
 struct StreamStatsEntry {
     let id: String
     let type: String
@@ -31,8 +55,10 @@ struct StreamStatsSample {
     var pair: StreamStatsEntry?
     var route = "Route pending"
     var routeDetail: String?
+    /// Selected candidate's explicit TURN leg only; ICE `protocol`/URLs never establish this.
+    var relayProtocol: String?
 
-    init(entries: [StreamStatsEntry]) {
+    init(entries: [StreamStatsEntry], detailedDiagnosticsEnabled: Bool = DetailedDiagnostics.enabled) {
         var byID: [String: StreamStatsEntry] = [:]
         for entry in entries { byID[entry.id] = entry }
         outbound = entries.first { $0.type == "outbound-rtp" && $0.isVideo }
@@ -48,6 +74,17 @@ struct StreamStatsSample {
         let remote = selected?.string("remoteCandidateId").flatMap { byID[$0] }?.string("candidateType")
         route = MediaRoute.classify(selected: selected != nil, local: local, remote: remote)
         routeDetail = MediaRoute.detail(selected: selected != nil, local: local, remote: remote)
+        if detailedDiagnosticsEnabled, selected?.type == "candidate-pair" {
+            // W3C only requires local relayProtocol; a native implementation may expose the remote
+            // candidate's evidence too. Accept only explicit, allowlisted values on the selected pair.
+            for candidateID in [selected?.string("localCandidateId"), selected?.string("remoteCandidateId")] {
+                guard let candidateID, let candidate = byID[candidateID],
+                      ["local-candidate", "remote-candidate"].contains(candidate.type),
+                      candidate.string("candidateType") == "relay",
+                      let protocolName = DetailedDiagnostics.relayProtocol(candidate.string("relayProtocol")) else { continue }
+                relayProtocol = protocolName; break
+            }
+        }
         timestamp = (outbound ?? inbound ?? selected ?? entries.first)?.timestamp ?? 0
     }
 }
@@ -163,6 +200,11 @@ struct StreamCounterSnapshot {
     /// Largest clock uncertainty among samples in this window (path asymmetry bound, not measured error).
     var phoneSendToArrivalUncertaintyMs: Double?
     var phoneSendToArrivalSamples: Int?
+    /// Owned encoder only: admitted preparation (including pixel conversion) and synchronous VT call.
+    var encodePreparationP95Ms: Double?
+    var encodePreparationSamples: Int?
+    var encodeSubmitP95Ms: Double?
+    var encodeSubmitSamples: Int?
 }
 
 /// Compact sender-side stages the Mac forwards to the phone overlay once per statistics sample.
@@ -256,6 +298,14 @@ struct HostStreamSummary: Codable, Equatable {
     /// X17: the governor's mode and cap ("shadow, would cap: 30 fps", "LAN, inactive", "off").
     var senderQueueGovernor: String?
 
+    var relayProtocol: String?
+    /// Nil means unknown. RTCCodecStats in the pinned WebRTC API does not expose negotiated feedback.
+    var negotiatedFeedback: [String]?
+    var encodePreparationP95Ms: Double?
+    var encodePreparationSamples: Int?
+    var encodeSubmitP95Ms: Double?
+    var encodeSubmitSamples: Int?
+
     static let maximumFrameTotal = 1_000_000_000_000
     static let fpsRange = 1...240
     static let refreshRange = 0.0...1_000
@@ -265,6 +315,13 @@ struct HostStreamSummary: Codable, Equatable {
     static let governorStatusBytes = 40
 
     func validate() throws {
+        guard relayProtocol.map({ DetailedDiagnostics.relayProtocol($0) == $0 }) ?? true,
+              negotiatedFeedback.map({ !$0.isEmpty && $0.count <= DetailedDiagnostics.feedbackAllowlist.count
+                  && Set($0).count == $0.count && $0.allSatisfy { DetailedDiagnostics.feedbackAllowlist.contains($0) } }) ?? true,
+              [encodePreparationP95Ms, encodeSubmitP95Ms].compactMap({ $0 })
+                  .allSatisfy({ DetailedDiagnostics.stage($0) != nil }),
+              [encodePreparationSamples, encodeSubmitSamples].compactMap({ $0 })
+                  .allSatisfy({ (1...LatencyWindow.capacity).contains($0) }) else { throw RemoteError.invalidMessage }
         let numbers = [captureFPS, captureLatencyMs, captureGapP90Ms, captureGapMaxMs, encodedFPS, encodeMs, pacerDelayMs,
                        sentFPS, sentKbps, targetKbps, maxKbps, qpAverage,
                        encodeLatencyMs, encodeLatencyP90Ms, encoderSessionAgeS, captureGapMedianMs,
@@ -514,9 +571,27 @@ struct StreamStatsReport: Codable, Equatable {
     var exactSourceToPresentP95Ms: Double?
     var exactClockUncertaintyMs: Double?
 
+    /// Present only when the added process-lifetime instrumentation is on; absent restores old logs.
+    var detailedDiagnosticsEnabled: Bool?
+    var relayProtocol: String?
+    /// Unknown with this pinned getStats API; counters, requested policy and SDP are not substitutes.
+    var negotiatedFeedback: [String]?
+    var encodePreparationP95Ms: Double?
+    var encodePreparationSamples: Int?
+    var encodeSubmitP95Ms: Double?
+    var encodeSubmitSamples: Int?
+    /// Encoded image receive observation → decoded output observation; includes work and scheduling.
+    /// This is not an isolated decoder queue-wait measurement.
+    var receiveToDecodedP95Ms: Double?
+    var receiveToDecodedSamples: Int?
+
     init(role: String, previous: StreamStatsSample?, current: StreamStatsSample,
-         counters: StreamCounterSnapshot?) {
+         counters: StreamCounterSnapshot?, detailedDiagnosticsEnabled: Bool = DetailedDiagnostics.enabled) {
         self.role = role
+        if detailedDiagnosticsEnabled {
+            self.detailedDiagnosticsEnabled = true
+            relayProtocol = current.relayProtocol
+        }
         route = current.route
         routeDetail = current.routeDetail
         codec = current.codec?.string("mimeType")
@@ -602,6 +677,12 @@ struct StreamStatsReport: Codable, Equatable {
                 encodeLatencyP90Ms = Self.round(counters.encodeLatencyP90Ms)
                 encodeLatencyMaxMs = Self.round(counters.encodeLatencyMaxMs)
                 encodeVTP90Ms = Self.round(counters.encodeVTP90Ms)
+                if detailedDiagnosticsEnabled {
+                    encodePreparationP95Ms = Self.round(DetailedDiagnostics.stage(counters.encodePreparationP95Ms))
+                    encodePreparationSamples = counters.encodePreparationSamples
+                    encodeSubmitP95Ms = Self.round(DetailedDiagnostics.stage(counters.encodeSubmitP95Ms))
+                    encodeSubmitSamples = counters.encodeSubmitSamples
+                }
                 encodeInFlightMax = counters.encodeInFlightMax
                 encodeBytesP50 = counters.encodeBytesP50
                 keyFrameBytesMax = counters.keyFrameBytesMax
@@ -759,7 +840,20 @@ struct StreamStatsReport: Codable, Equatable {
                           backlogDrainMs: backlogDrainMs.flatMap { $0.isFinite ? min(max(0, $0), 10_000_000) : nil },
                           senderQueueGovernor: senderQueueGovernor.map {
                               Self.truncated($0, bytes: HostStreamSummary.governorStatusBytes)
-                          })
+                          },
+                          relayProtocol: detailedDiagnosticsEnabled == true ? DetailedDiagnostics.relayProtocol(relayProtocol) : nil,
+                          negotiatedFeedback: detailedDiagnosticsEnabled == true ? negotiatedFeedback.flatMap {
+                              !$0.isEmpty && $0.count <= DetailedDiagnostics.feedbackAllowlist.count && Set($0).count == $0.count
+                                  && $0.allSatisfy { DetailedDiagnostics.feedbackAllowlist.contains($0) } ? $0 : nil
+                          } : nil,
+                          encodePreparationP95Ms: detailedDiagnosticsEnabled == true ? DetailedDiagnostics.stage(encodePreparationP95Ms) : nil,
+                          encodePreparationSamples: detailedDiagnosticsEnabled == true ? encodePreparationSamples.flatMap {
+                              (1...LatencyWindow.capacity).contains($0) ? $0 : nil
+                          } : nil,
+                          encodeSubmitP95Ms: detailedDiagnosticsEnabled == true ? DetailedDiagnostics.stage(encodeSubmitP95Ms) : nil,
+                          encodeSubmitSamples: detailedDiagnosticsEnabled == true ? encodeSubmitSamples.flatMap {
+                              (1...LatencyWindow.capacity).contains($0) ? $0 : nil
+                          } : nil)
     }
 
     private static func inputTimingValue(_ value: Double?, maximum: Double = InputSendTiming.maximumLatencyMs) -> Double? {
@@ -797,7 +891,15 @@ struct StreamStatsReport: Codable, Equatable {
     var logLine: String {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let json = (try? encoder.encode(self)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        var exported = self
+        // A newer host may still send the added fields to a phone running with its switch off.
+        // Keep that phone's persisted stream log at the prior instrumentation surface too.
+        if detailedDiagnosticsEnabled != true {
+            exported.host?.relayProtocol = nil; exported.host?.negotiatedFeedback = nil
+            exported.host?.encodePreparationP95Ms = nil; exported.host?.encodePreparationSamples = nil
+            exported.host?.encodeSubmitP95Ms = nil; exported.host?.encodeSubmitSamples = nil
+        }
+        let json = (try? encoder.encode(exported)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         return "PDSTATS " + json
     }
 
@@ -861,6 +963,19 @@ struct StreamStatsReport: Codable, Equatable {
         }
         let refresh = displayMaxFPS.map { " · \($0)Hz" } ?? ""
         var lines = ["\(route ?? "Route pending") · \(codec ?? "codec?") \(h264ProfileLevel ?? "") · RTT \(value(rttMs, "ms"))\(refresh)"]
+        if detailedDiagnosticsEnabled == true {
+            lines.append("relay transport \(relayProtocol?.uppercased() ?? "unknown") · negotiated feedback \(negotiatedFeedback?.joined(separator: ", ") ?? "unknown")")
+        }
+        let preparation = role == "host" ? encodePreparationP95Ms : host?.encodePreparationP95Ms
+        let preparationCount = role == "host" ? encodePreparationSamples : host?.encodePreparationSamples
+        let submit = role == "host" ? encodeSubmitP95Ms : host?.encodeSubmitP95Ms
+        let submitCount = role == "host" ? encodeSubmitSamples : host?.encodeSubmitSamples
+        if detailedDiagnosticsEnabled == true, preparationCount != nil || submitCount != nil {
+            lines.append("encode preparation p95 \(value(preparation, "ms")) (n \(preparationCount ?? 0)) · synchronous VT submit p95 \(value(submit, "ms")) (n \(submitCount ?? 0))")
+        }
+        if detailedDiagnosticsEnabled == true, let count = receiveToDecodedSamples {
+            lines.append("receive → decoded completion p95 \(value(receiveToDecodedP95Ms, "ms")) · n \(count) (includes decoding; queue wait unknown)")
+        }
         if let connectionQuality {
             lines.append("picture \(connectionQuality) · missed \(value(frameHealthPercent, "%")) · RTT spread \(value(rttStdDevMs, "ms"))")
         }
@@ -1113,12 +1228,15 @@ enum PhoneRenderTimingMetric: CaseIterable, Hashable, Sendable {
 final class StreamCounters: @unchecked Sendable {
     private let lock = NSLock()
     private let phoneRenderTimingEnabled: Bool
+    let detailedDiagnosticsEnabled: Bool
     private var phoneRenderWindows: [PhoneRenderTimingMetric: LatencyWindow] = [:]
     private var displayLinkAt120 = 0
     private var displayLinkIntervals = 0
 
-    init(phoneRenderTimingEnabled: Bool = PhoneRenderTiming.enabled) {
+    init(phoneRenderTimingEnabled: Bool = PhoneRenderTiming.enabled,
+         detailedDiagnosticsEnabled: Bool = DetailedDiagnostics.enabled) {
         self.phoneRenderTimingEnabled = phoneRenderTimingEnabled
+        self.detailedDiagnosticsEnabled = detailedDiagnosticsEnabled
     }
 
     func phoneDecodeTrace(_ trace: PhoneDecodeTrace) {
@@ -1153,6 +1271,8 @@ final class StreamCounters: @unchecked Sendable {
     private var inputToPhoton = LatencyWindow()
     private var encodeLatency = LatencyWindow()
     private var encodeVTLatency = LatencyWindow()
+    private var encodePreparation = LatencyWindow()
+    private var encodeSubmit = LatencyWindow()
     private var encodeBytes = LatencyWindow()
     private var lastPresentedMs: Double?
     private var lastMarkerTime: UInt32?
@@ -1327,6 +1447,19 @@ final class StreamCounters: @unchecked Sendable {
         if isKeyFrame { keyFrameBytesMax = max(keyFrameBytesMax, bytes) }
     }
 
+    func encoderPreparation(milliseconds: Double) {
+        guard detailedDiagnosticsEnabled, let milliseconds = DetailedDiagnostics.stage(milliseconds) else { return }
+        lock.lock(); defer { lock.unlock() }
+        encodePreparation.record(milliseconds)
+    }
+
+    /// Duration of the synchronous public VT call, regardless of accepted/error status.
+    func encoderSubmit(milliseconds: Double) {
+        guard detailedDiagnosticsEnabled, let milliseconds = DetailedDiagnostics.stage(milliseconds) else { return }
+        lock.lock(); defer { lock.unlock() }
+        encodeSubmit.record(milliseconds)
+    }
+
     func encoderRateUpdated() {
         lock.lock(); rateUpdates += 1; lock.unlock()
     }
@@ -1454,6 +1587,12 @@ final class StreamCounters: @unchecked Sendable {
         result.encodeLatencyP90Ms = encode.p90
         result.encodeLatencyMaxMs = encode.max
         result.encodeVTP90Ms = encodeVTLatency.drainPercentiles().p90
+        let preparation = encodePreparation.drainPercentiles()
+        result.encodePreparationP95Ms = preparation.p95
+        result.encodePreparationSamples = preparation.count > 0 ? preparation.count : nil
+        let submit = encodeSubmit.drainPercentiles()
+        result.encodeSubmitP95Ms = submit.p95
+        result.encodeSubmitSamples = submit.count > 0 ? submit.count : nil
         result.encodeInFlightMax = encode.count > 0 ? encodeInFlightMax : nil
         result.encodeBytesP50 = encodeBytes.drainPercentiles().p50.map { Int($0) }
         result.keyFrameBytesMax = keyFrameBytesMax > 0 ? keyFrameBytesMax : nil

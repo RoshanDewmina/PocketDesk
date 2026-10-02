@@ -1,5 +1,32 @@
 import Foundation
 
+struct DiagnosticAttempt {
+    private let started: Double
+    private(set) var summary: DiagnosticAttemptSummary
+    init(started: Double) {
+        self.started = started
+        summary = .init(events: [.init(stage: .requested, seconds: 0)], reason: nil)
+    }
+    mutating func record(_ stage: DiagnosticAttemptSummary.Stage, at now: Double) {
+        guard summary.reason == nil, now.isFinite, started.isFinite, now >= started,
+              stage != .requested, summary.events.last?.stage != stage else { return }
+        let seconds = min(86400, now - started)
+        guard seconds >= (summary.events.last?.seconds ?? 0) else { return }
+        if summary.events.count >= DiagnosticAttemptSummary.maximumEvents { summary.events.remove(at: 1) }
+        summary.events.append(.init(stage: stage, seconds: seconds))
+    }
+    mutating func finish(_ reason: DiagnosticAttemptSummary.Reason, at now: Double) {
+        guard summary.reason == nil else { return }
+        record(.ended, at: now)
+        // Invalid clocks never create invalid reports or imply a measured duration.
+        if summary.events.last?.stage != .ended {
+            if summary.events.count >= DiagnosticAttemptSummary.maximumEvents { summary.events.remove(at: 1) }
+            summary.events.append(.init(stage: .ended, seconds: summary.events.last?.seconds ?? 0))
+        }
+        summary.reason = reason
+    }
+}
+
 /// Never changes media/control authority. A test is bound to the exact authenticated peer/epoch.
 struct DiagnosticProbeRun {
     enum State: Equatable { case running, completed, cancelled, timedOut }
@@ -41,6 +68,7 @@ struct DiagnosticSessionRecorder {
     private var facts: [DiagnosticFact] = []
     private var bytes = DiagnosticByteLedger()
     private var estimate: DataUseEstimate?
+    private var transport: DiagnosticTransportSummary?
     mutating func observe(_ report: StreamStatsReport, at now: TimeInterval, estimate: DataUseEstimate? = nil) {
         guard now.isFinite else { return }; if started == nil { started = now }; samples = min(1000000, samples + 1)
         if let estimate { self.estimate = estimate }
@@ -53,6 +81,16 @@ struct DiagnosticSessionRecorder {
         }
         let host = report.role == "host" ? report : nil
         let remote = (report.hostSummaryAgeMs ?? .infinity) <= 2500 ? report.host : nil
+        if report.detailedDiagnosticsEnabled == true {
+            // A phone's remote candidate may omit TURN-leg details. Fresh host stats are an
+            // independent observed witness, used only while this selected route is a relay.
+            let relay = report.relayProtocol ?? (report.route == "Relay" ? remote?.relayProtocol : nil)
+            transport = .init(relayProtocol: relay.flatMap(DiagnosticTransportSummary.RelayProtocol.init(rawValue:)),
+                negotiatedFeedback: (report.negotiatedFeedback ?? remote?.negotiatedFeedback).flatMap { raw in
+                    let known = raw.compactMap(DiagnosticTransportSummary.Feedback.init(rawValue:))
+                    return known.count == raw.count && Set(known).count == known.count && known.count <= 5 ? known : nil
+                }, relayEvidence: relay == nil ? nil : report.relayProtocol != nil ? .thisPeerStats : .freshHostStats)
+        } else { transport = nil }
         let video = report.role == "host" ? report.sentKbps : report.receivedKbps
         facts = [.init(.videoKbps, video), .init(.videoGBPerHour, video.map(DataUseEstimate.gigabytesPerHour(kbps:)), source: .inferred), .init(.networkRoundTripMs, report.rttMs),
             .init(.roundTripSpreadMs, report.rttStdDevMs), .init(.missedFramePercent, report.frameHealthPercent),
@@ -65,6 +103,14 @@ struct DiagnosticSessionRecorder {
             .init(.hostLowPower, (host?.lowPowerMode ?? remote?.lowPowerMode).map { $0 ? 1 : 0 }),
             .init(.routeDirect, report.route == "Direct" ? 1 : report.route == "Relay" ? 0 : nil),
             .init(.routeRelay, report.route == "Relay" ? 1 : report.route == "Direct" ? 0 : nil)]
+        if report.detailedDiagnosticsEnabled == true {
+            facts += [.init(.encodePreparationP95Ms, host?.encodePreparationP95Ms ?? remote?.encodePreparationP95Ms),
+                      .init(.encodePreparationSamples, (host?.encodePreparationSamples ?? remote?.encodePreparationSamples).map(Double.init)),
+                      .init(.encodeSubmitP95Ms, host?.encodeSubmitP95Ms ?? remote?.encodeSubmitP95Ms),
+                      .init(.encodeSubmitSamples, (host?.encodeSubmitSamples ?? remote?.encodeSubmitSamples).map(Double.init)),
+                      .init(.receiveToDecodeP95Ms, report.receiveToDecodedP95Ms),
+                      .init(.receiveToDecodeSamples, report.receiveToDecodedSamples.map(Double.init))]
+        }
     }
     func finish(kind: SessionDiagnosticReport.Kind = .session, outcome: SessionDiagnosticReport.Outcome = .sessionEnded,
                 at now: TimeInterval, additional: [DiagnosticFact] = []) -> SessionDiagnosticReport {
@@ -74,7 +120,7 @@ struct DiagnosticSessionRecorder {
         let supplemental = additional + (bytes.facts + estimated).filter { fact in !additional.contains { $0.metric == fact.metric } }
         let override = Set(supplemental.map(\.metric))
         return SessionDiagnosticReport(kind: kind, outcome: outcome, seconds: now - (started ?? now), samples: samples,
-            facts: facts.filter { !override.contains($0.metric) } + supplemental + unknown.filter { !override.contains($0) }.map { DiagnosticFact($0, nil) })
+            facts: facts.filter { !override.contains($0.metric) } + supplemental + unknown.filter { !override.contains($0) }.map { DiagnosticFact($0, nil) }, transport: transport)
     }
 }
 

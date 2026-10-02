@@ -324,6 +324,7 @@ targets:
       - RemoteHost/Availability/LANMagicPacketSender.swift
       - RemoteHost/Availability/WakeTargetRegistrationView.swift
       - RemoteShared/SessionDiagnosticReport.swift
+      - RemoteShared/CrashDiagnostics.swift
       - RemoteHost/TransportPreferenceRows.swift
       - RemoteShared/HEVC444Policy.swift
       - RemoteShared/LegalNoticesView.swift
