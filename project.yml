@@ -340,6 +340,8 @@ targets:
       - FarsideWidgets/SessionLiveActivity.swift
       - RemotePhone/ActivityShared
       - RemotePhone/ShareShared/SendToMac.swift
+      - RemotePhone/SystemIntegrations/ConnectPrompt.swift
+      - RemotePhone/Fonts
       - RemotePhone/FarsideUI.swift
       - RemoteShared/FarsideTheme.swift
     dependencies:
