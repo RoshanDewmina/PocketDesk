@@ -114,7 +114,7 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
     private var callback: RTCVideoDecoderCallback?
     private let deliveryMailbox = NSLock()
     private let deliveryQueue = DispatchQueue(label: "farside.hevc.decoded-delivery")
-    private var deliveryPending: (RTCVideoFrame, UUID)?
+    private var deliveryPending: (RTCVideoFrame, UUID, (submitMs: Double, callbackMs: Double, ownershipMs: Double)?)?
     private var deliveryScheduled = false
     private weak var timing: PhoneFrameTimingLog?
     private let configuration: OwnedHEVCConfiguration
@@ -188,9 +188,15 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                 pending.remove(ticket); fail(injected); return injected == noErr ? 0 : -1
             }
             #endif
+            // Apple public output-handler decode API (official docs checked 1 October 2026);
+            // timestamp at entry before the ownership hop.
+            // https://developer.apple.com/documentation/videotoolbox/vtdecompressionsessiondecodeframe(_:samplebuffer:flags:infoflagsout:outputhandler:)
+            let submitMs = timing?.renderTimingEnabled == true ? MachClock.nowMs() : nil
             let result = VTDecompressionSessionDecodeFrame(session, sampleBuffer: sample, flags: [._EnableAsynchronousDecompression], infoFlagsOut: nil) { [weak self] status, flags, pixels, _, _ in
+                let callbackMs = submitMs != nil ? MachClock.nowMs() : nil
                 guard let self else { return }
                 self.queue.async { [weak self] in
+                    let ownershipMs = submitMs != nil ? MachClock.nowMs() : nil
                     guard let self, self.generation == epoch, self.pending.remove(ticket) != nil else { return }
                     guard status == noErr, !flags.contains(.frameDropped), let pixels else {
                         if status != noErr { self.fail(status) }
@@ -200,7 +206,11 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
                     let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: pixels), rotation: rotation, timeStampNs: capture * 1_000_000)
                     frame.timeStamp = Int32(bitPattern: rtp)
                     self.timing?.decoded(rtp: frame.timeStamp, atMs: MachClock.nowMs())
-                    self.offerDecoded(frame, epoch: epoch)
+                    let decodeTimes: (submitMs: Double, callbackMs: Double, ownershipMs: Double)?
+                    if let submitMs, let callbackMs, let ownershipMs {
+                        decodeTimes = (submitMs, callbackMs, ownershipMs)
+                    } else { decodeTimes = nil }
+                    self.offerDecoded(frame, epoch: epoch, decodeTimes: decodeTimes)
 
                 }
             }
@@ -208,10 +218,10 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
             return result == noErr ? 0 : -1
         }
     }
-    private func offerDecoded(_ frame: RTCVideoFrame, epoch: UUID) {
+    private func offerDecoded(_ frame: RTCVideoFrame, epoch: UUID, decodeTimes: (submitMs: Double, callbackMs: Double, ownershipMs: Double)?) {
         // Decoded pixels are independent: one newest pending plus one delivery.
         // No outward callback fence acquisition on the decoder ownership queue.
-        deliveryMailbox.lock(); deliveryPending = (frame, epoch)
+        deliveryMailbox.lock(); deliveryPending = (frame, epoch, decodeTimes)
         let schedule = !deliveryScheduled; deliveryScheduled = true; deliveryMailbox.unlock()
         if schedule { deliveryQueue.async { [weak self] in self?.deliverDecoded() } }
     }
@@ -222,7 +232,14 @@ final class OwnedHEVCDecoder: NSObject, RTCVideoDecoder {
             guard let next = deliveryPending else { deliveryScheduled = false; deliveryMailbox.unlock(); lock.unlock(); return }
             deliveryPending = nil; deliveryMailbox.unlock()
             let current = serialized { opened && generation == next.1 }
-            if current { callback?(next.0) }
+            if current, let callback {
+                if let times = next.2 {
+                    timing?.decodedDelivery(rtp: next.0.timeStamp, timeStampNs: next.0.timeStampNs,
+                        trace: PhoneDecodeTrace(submitMs: times.submitMs, callbackMs: times.callbackMs,
+                                                ownershipMs: times.ownershipMs, deliveryMs: MachClock.nowMs()))
+                }
+                callback(next.0)
+            }
             lock.unlock()
         }
     }

@@ -85,6 +85,62 @@ struct SendToMacReceipt: Codable, Equatable {
     var message: String
 }
 
+/// The app's filesystem work shares one ordered lane. Resolve the App Group container on that
+/// lane too; constructing the inbox on main must not ask the filesystem for its container.
+final class SendToMacFileIO {
+    static let disabledKey = "sendToMacBackgroundIODisabled"
+    static let queue = DispatchQueue(label: "com.roshan.PocketDesk.sendToMac.files", qos: .utility)
+    private let rootProvider: () -> URL?
+    private let background: Bool
+    private let queue: DispatchQueue
+
+    convenience init(root: URL? = nil, useBackgroundIO: Bool? = nil, queue: DispatchQueue = SendToMacFileIO.queue) {
+        self.init(rootProvider: { root ?? SendToMacOutbox.root }, useBackgroundIO: useBackgroundIO, queue: queue)
+    }
+
+    init(rootProvider: @escaping () -> URL?, useBackgroundIO: Bool? = nil, queue: DispatchQueue = SendToMacFileIO.queue) {
+        self.rootProvider = rootProvider
+        background = useBackgroundIO ?? !UserDefaults.standard.bool(forKey: Self.disabledKey)
+        self.queue = queue
+    }
+
+    func write(_ operation: @escaping (URL?) -> Void) {
+        let work = { operation(self.rootProvider()) }
+        if background { queue.async(execute: work) } else { work() }
+    }
+
+    @MainActor
+    func read<Value>(_ operation: @escaping (URL?) -> Value, completion: @escaping @MainActor (Value) -> Void) {
+        if background {
+            queue.async {
+                let value = operation(self.rootProvider())
+                DispatchQueue.main.async { completion(value) }
+            }
+        } else {
+            completion(operation(rootProvider()))
+        }
+    }
+
+    /// The main actor supplies an immutable authority snapshot. FIFO writes preserve End/selection
+    /// changes, and an I/O backlog can only shorten (never renew) the snapshot's live lifetime.
+    func updateBeacon(_ snapshot: SendToMacBeacon?) {
+        write { root in
+            guard let snapshot else { SendToMacOutbox.storeBeacon(nil, root: root); return }
+            let old = SendToMacOutbox.loadBeacon(root: root)
+            var beacon = old.flatMap { $0.destination == snapshot.destination ? $0 : nil } ?? snapshot
+            beacon.macName = snapshot.macName
+            beacon.destination = snapshot.destination
+            beacon.liveSessionID = snapshot.liveSessionID
+            beacon.liveUntil = snapshot.liveUntil
+            if let connected = snapshot.lastConnected {
+                beacon.lastConnected = connected
+                beacon.filesSupported = snapshot.filesSupported
+            }
+            SendToMacOutbox.storeBeacon(beacon, root: root)
+        }
+    }
+}
+
 enum SendToMacOutbox {
     static let appGroup = "group.com.roshan.PocketDesk"
     static let outboxNotification = "com.roshan.PocketDesk.sendToMac.outbox"

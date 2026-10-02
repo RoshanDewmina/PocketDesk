@@ -185,6 +185,132 @@ final class OwnedVideoLifecycleTests: XCTestCase {
         box.completed(second.id); box.completed(third.id)
         XCTAssertNil(box.take()); XCTAssertFalse(try XCTUnwrap(box.take(redraw: true)).isNew)
     }
+    @MainActor
+    func testRendererKillSwitchesAreIndependentAndDefaultOn() throws {
+        let name = "OwnedVideoLifecycleTests." + UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        func make() -> OwnedMetalVideoView {
+            OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission), defaults: defaults)
+        }
+        let enabled = make(); defer { enabled.invalidate() }
+        XCTAssertTrue(enabled.renderOptimizations.unfencedDrawable); XCTAssertTrue(enabled.renderOptimizations.promptSourceDraw)
+        defaults.set(true, forKey: "phoneUnfencedDrawableDisabled")
+        let fenced = make(); defer { fenced.invalidate() }
+        XCTAssertFalse(fenced.renderOptimizations.unfencedDrawable); XCTAssertTrue(fenced.renderOptimizations.promptSourceDraw)
+        defaults.set(false, forKey: "phoneUnfencedDrawableDisabled")
+        defaults.set(true, forKey: "phoneImmediateSourceDrawDisabled")
+        let paced = make(); defer { paced.invalidate() }
+        XCTAssertTrue(paced.renderOptimizations.unfencedDrawable); XCTAssertFalse(paced.renderOptimizations.promptSourceDraw)
+    }
+    func testMailboxPresentationOccupancySurvivesGPUCompletionInEitherOrder() throws {
+        let box = NewestFrameMailbox<Int>()
+        box.offer(1); let first = try XCTUnwrap(box.take(holdUntilPresented: true))
+        box.offer(2); let second = try XCTUnwrap(box.take(holdUntilPresented: true))
+        box.gpuCompleted(first.id); box.gpuCompleted(second.id)
+        box.offer(3); box.offer(4)
+        XCTAssertNil(box.take(holdUntilPresented: true), "GPU completion alone cannot admit a third drawable")
+        box.presented(first.id)
+        let newest = try XCTUnwrap(box.take(holdUntilPresented: true)); XCTAssertEqual(newest.frame, 4)
+        box.presented(newest.id)
+        box.offer(5)
+        XCTAssertNil(box.take(holdUntilPresented: true), "presentation before GPU completion still retains GPU ownership")
+        box.gpuCompleted(newest.id)
+        XCTAssertEqual(try XCTUnwrap(box.take(holdUntilPresented: true)).frame, 5)
+        box.completed(second.id)
+    }
+    func testFailedAcquisitionRequeuesOnlyWithoutANewerArrivalAndCloseIsTerminal() throws {
+        let box = NewestFrameMailbox<Int>()
+        box.offer(1); let first = try XCTUnwrap(box.take(holdUntilPresented: true))
+        box.offer(2); box.requeue(first.id, frame: first.frame, wasNew: first.isNew)
+        XCTAssertEqual(try XCTUnwrap(box.take(holdUntilPresented: true)).frame, 2)
+        box.invalidate(); box.completed(first.id); box.presented(first.id)
+        XCTAssertFalse(box.offer(3)); XCTAssertNil(box.take(redraw: true))
+    }
+    @MainActor
+    func testDrawableAcquisitionAllowsDecodedDeliveryAndPrivacyRetirement() throws {
+        let id = identity()
+        let admission = VideoPresentationAdmission(identity: id, validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let fence = VideoPresentationFence(admission)
+        let view = OwnedMetalVideoView(admission: admission, fence: fence)
+        defer { view.invalidate() }
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA,
+            [kCVPixelBufferIOSurfacePropertiesKey: [:]] as CFDictionary, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        CVBufferSetAttachment(buffer, kCVImageBufferColorPrimariesKey, kCVImageBufferColorPrimaries_ITU_R_709_2, .shouldPropagate)
+        CVBufferSetAttachment(buffer, kCVImageBufferTransferFunctionKey, kCVImageBufferTransferFunction_ITU_R_709_2, .shouldPropagate)
+        let envelope = VideoFrameEnvelope(receiptID: UUID(), identity: id,
+            frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: 1),
+            arrivalMs: 1, marker: nil, originalSource: true)
+        view.offer(envelope)
+        view.frame = CGRect(x: 0, y: 0, width: 64, height: 64)
+        view.setNeedsLayout(); view.layoutIfNeeded()
+        let actualAcquirer = view.drawableAcquirer
+        var acquired = false
+        view.drawableAcquirer = { metal in
+            acquired = true
+            let drawable = actualAcquirer(metal)
+            XCTAssertNotNil(drawable, "test needs a successful preparation to exercise the final admission recheck")
+            let delivered = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async {
+                view.offer(envelope)
+                admission.lifetime.retire()
+                delivered.signal()
+            }
+            XCTAssertEqual(delivered.wait(timeout: .now() + 1), .success,
+                           "delivery or privacy retirement blocked on drawable acquisition")
+            return drawable
+        }
+        view.draw(in: view.metal)
+        view.drawableAcquirer = actualAcquirer // Break the test hook's view capture.
+        XCTAssertTrue(acquired)
+        XCTAssertEqual(view.drawsPresented, 0)
+        XCTAssertNil(fence.withAdmission(id, at: ProcessInfo.processInfo.systemUptime) { true })
+    }
+    @MainActor
+    func testActivePassThroughWakesCoalesceAndSkipSourcesConsumedByATick() async throws {
+        let admission = VideoPresentationAdmission(identity: identity(), validUntil: ProcessInfo.processInfo.systemUptime + 100)
+        let view = OwnedMetalVideoView(admission: admission, fence: VideoPresentationFence(admission))
+        defer { view.drawRequester = { $0.draw() }; view.invalidate() }
+        view.metal.isPaused = true
+        var pixels: CVPixelBuffer?
+        XCTAssertEqual(CVPixelBufferCreate(nil, 64, 64, kCVPixelFormatType_32BGRA, nil, &pixels), kCVReturnSuccess)
+        let buffer = try XCTUnwrap(pixels)
+        func envelope(_ stamp: Int64, prompt: Bool) -> VideoFrameEnvelope {
+            VideoFrameEnvelope(receiptID: UUID(), identity: admission.identity,
+                frame: RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: buffer), rotation: ._0, timeStampNs: stamp),
+                arrivalMs: MachClock.nowMs(), marker: nil, originalSource: true, promptDraw: prompt)
+        }
+        var requests = 0
+        view.drawRequester = { _ in
+            requests += 1
+            if let frame = view.mailbox.take() { view.mailbox.completed(frame.id) }
+        }
+        func drainMain() async {
+            await withCheckedContinuation { continuation in DispatchQueue.main.async { continuation.resume() } }
+        }
+        view.offer(envelope(1, prompt: true)); view.offer(envelope(2, prompt: true))
+        await drainMain()
+        XCTAssertEqual(requests, 1, "active arrivals coalesce into one prompt request")
+        view.offer(envelope(3, prompt: true))
+        let tick = try XCTUnwrap(view.mailbox.take()); view.mailbox.completed(tick.id)
+        await drainMain()
+        XCTAssertEqual(requests, 1, "a display tick consuming the source cancels its redundant queued wake")
+        view.offer(envelope(4, prompt: false)); await drainMain()
+        XCTAssertEqual(requests, 1, "paced interpolation output does not request an active immediate draw")
+    }
+    func testPromptPendingIsConsumedOnceAndPacedOutputDoesNotWake() throws {
+        let box = NewestFrameMailbox<(Int, Bool)>()
+        box.offer((1, true)); box.offer((2, true))
+        XCTAssertTrue(box.hasPending(where: { $0.1 }))
+        let source = try XCTUnwrap(box.take()); XCTAssertEqual(source.frame.0, 2)
+        XCTAssertFalse(box.hasPending(where: { $0.1 }), "queued wake after a tick must not submit again")
+        XCTAssertNil(box.take())
+        box.completed(source.id); box.offer((3, false))
+        XCTAssertFalse(box.hasPending(where: { $0.1 }), "interpolator outputs remain paced")
+    }
     func testMailboxParallelArrivalsRemainBoundedAndCloseRejectsLateCompletion() {
         let box = NewestFrameMailbox<Int>()
         DispatchQueue.concurrentPerform(iterations: 2000) { _ = box.offer($0) }

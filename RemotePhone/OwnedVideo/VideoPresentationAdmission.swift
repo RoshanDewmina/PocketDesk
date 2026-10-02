@@ -103,6 +103,7 @@ final class NewestFrameMailbox<Frame>: @unchecked Sendable {
     private var pending: Frame?
     private var shown: Frame?
     private var flights: Set<UInt64> = []
+    private var presentationFlights: Set<UInt64> = []
     private var sequence: UInt64 = 0
     private var closed = false
     @discardableResult
@@ -114,29 +115,36 @@ final class NewestFrameMailbox<Frame>: @unchecked Sendable {
         pending = frame
         return replaced
     }
-    func take(redraw: Bool = false) -> (id: UInt64, frame: Frame, isNew: Bool)? {
+    func take(redraw: Bool = false, holdUntilPresented: Bool = false) -> (id: UInt64, frame: Frame, isNew: Bool)? {
         lock.lock(); defer { lock.unlock() }
-        guard !closed, flights.count < 2, let frame = pending ?? (redraw ? shown : nil) else { return nil }
+        guard !closed, flights.union(presentationFlights).count < 2, let frame = pending ?? (redraw ? shown : nil) else { return nil }
         let isNew = pending != nil
         pending = nil; shown = frame
         sequence &+= 1; flights.insert(sequence)
+        if holdUntilPresented { presentationFlights.insert(sequence) }
         return (sequence, frame, isNew)
     }
     func completed(_ id: UInt64) {
-        lock.lock(); flights.remove(id); lock.unlock()
+        lock.lock(); flights.remove(id); presentationFlights.remove(id); lock.unlock()
     }
+    /// GPU resources and drawable occupancy have independent completion edges.
+    func gpuCompleted(_ id: UInt64) { lock.lock(); flights.remove(id); lock.unlock() }
+    func presented(_ id: UInt64) { lock.lock(); presentationFlights.remove(id); lock.unlock() }
     /// A taken frame that could not be drawn (no drawable this tick) goes back as pending unless a
     /// newer frame arrived, so its receipt and newness survive the retry.
     func requeue(_ id: UInt64, frame: Frame, wasNew: Bool) {
         lock.lock(); defer { lock.unlock() }
-        flights.remove(id)
+        flights.remove(id); presentationFlights.remove(id)
         guard !closed, wasNew, pending == nil else { return }
         pending = frame
+    }
+    func hasPending(where predicate: (Frame) -> Bool) -> Bool {
+        lock.lock(); defer { lock.unlock() }; return pending.map(predicate) ?? false
     }
     var hasPending: Bool { lock.lock(); defer { lock.unlock() }; return pending != nil }
     var retainedSlots: Int {
         lock.lock(); defer { lock.unlock() }
-        return (pending == nil ? 0 : 1) + (shown == nil ? 0 : 1) + flights.count
+        return (pending == nil ? 0 : 1) + (shown == nil ? 0 : 1) + flights.union(presentationFlights).count
     }
     func invalidate() {
         lock.lock(); closed = true; pending = nil; shown = nil; lock.unlock()

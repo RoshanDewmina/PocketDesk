@@ -146,7 +146,8 @@ final class OwnedHEVCCodecTests: XCTestCase {
     func testPublicHardwareHEVCEncodeDecodePreservesTimestampAndCanRetireInCallback() throws {
         let config = try XCTUnwrap(OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters))
         let encoder = ResilientVTEncoder(configuration: config, counters: nil, frameTiming: nil)
-        let decoder = OwnedHEVCDecoder(configuration: config)
+        let timing = PhoneFrameTimingLog(renderTimingEnabled: true)
+        let decoder = OwnedHEVCDecoder(configuration: config, timing: timing)
         defer { _ = encoder.release(); _ = decoder.release() }
         let settings = RTCVideoEncoderSettings()
         settings.name = "H265"; settings.width = 256; settings.height = 128
@@ -156,6 +157,14 @@ final class OwnedHEVCCodecTests: XCTestCase {
         decoder.setCallback { frame in
             XCTAssertEqual(frame.width, 256); XCTAssertEqual(frame.height, 128)
             XCTAssertEqual(UInt32(bitPattern: frame.timeStamp), 123456)
+            XCTAssertNil(timing.takeDecodeTrace(rtp: frame.timeStamp, timeStampNs: frame.timeStampNs + 1))
+            let trace = timing.takeDecodeTrace(rtp: frame.timeStamp, timeStampNs: frame.timeStampNs)
+            XCTAssertNotNil(trace, "Owned output carries observed VT entry, ownership and outward-delivery stamps")
+            if let trace {
+                XCTAssertTrue(trace.isValid)
+                XCTAssertLessThanOrEqual(trace.deliveryMs, MachClock.nowMs())
+            }
+            XCTAssertNil(timing.takeDecodeTrace(rtp: frame.timeStamp, timeStampNs: frame.timeStampNs))
             XCTAssertEqual(decoder.release(), 0, "No decode queue inversion")
             decoded.fulfill()
         }

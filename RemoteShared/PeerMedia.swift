@@ -655,7 +655,7 @@ final class PeerMedia: NSObject {
         tuning = nativeDesktopCodecs ? StreamTuning.current : .legacy
         frameTimingLog = isHost && nativeDesktopCodecs && (FrameTimingSwitch.override ?? tuning.frameTiming)
             ? HostFrameTimingLog() : nil
-        frameTimingReceiver = !isHost && nativeDesktopCodecs && tuning.frameTiming
+        frameTimingReceiver = !isHost && nativeDesktopCodecs && (tuning.frameTiming || PhoneRenderTiming.enabled)
             ? FrameTimingReceiver(log: PhoneFrameTimingLog()) : nil
         super.init()
         if isHost {

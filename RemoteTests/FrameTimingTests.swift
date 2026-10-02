@@ -259,6 +259,42 @@ final class FrameTimingTests: XCTestCase {
                        ["frame host p50 12.0ms p95 20.0ms max 25.0ms"])
     }
 
+    func testOwnedDecodeTraceUsesExactIdentityOnceIndependentOfHostTiming() {
+        let log = PhoneFrameTimingLog(renderTimingEnabled: true)
+        log.isActive = false
+        let first = PhoneDecodeTrace(submitMs: 10, callbackMs: 12, ownershipMs: 13, deliveryMs: 15)
+        let second = PhoneDecodeTrace(submitMs: 20, callbackMs: 22, ownershipMs: 23, deliveryMs: 25)
+        let rtp = Int32(bitPattern: UInt32.max)
+        log.decodedDelivery(rtp: rtp, timeStampNs: 100, trace: first)
+        log.decodedDelivery(rtp: rtp, timeStampNs: 200, trace: second)
+        XCTAssertNil(log.takeDecodeTrace(rtp: rtp, timeStampNs: 300))
+        XCTAssertNil(log.takeDecodeTrace(rtp: 0, timeStampNs: 100))
+        XCTAssertEqual(log.takeDecodeTrace(rtp: rtp, timeStampNs: 200), second)
+        XCTAssertEqual(log.takeDecodeTrace(rtp: rtp, timeStampNs: 100), first)
+        XCTAssertNil(log.takeDecodeTrace(rtp: rtp, timeStampNs: 100), "a redraw cannot borrow an earlier delivery")
+        XCTAssertTrue(log.snapshot().isEmpty, "local trace leaves disabled heuristic timing empty")
+    }
+
+    func testOwnedDecodeTraceIsBoundedRejectsInvalidStagesAndCanBeDisabled() {
+        let trace = PhoneDecodeTrace(submitMs: 1, callbackMs: 2, ownershipMs: 3, deliveryMs: 4)
+        let log = PhoneFrameTimingLog(renderTimingEnabled: true)
+        for index in 0...PhoneFrameTimingLog.capacity {
+            log.decodedDelivery(rtp: Int32(index), timeStampNs: Int64(index), trace: trace)
+        }
+        XCTAssertNil(log.takeDecodeTrace(rtp: 0, timeStampNs: 0), "oldest trace is evicted")
+        XCTAssertEqual(log.takeDecodeTrace(rtp: Int32(PhoneFrameTimingLog.capacity),
+            timeStampNs: Int64(PhoneFrameTimingLog.capacity)), trace)
+        log.decodedDelivery(rtp: -1, timeStampNs: 1,
+            trace: PhoneDecodeTrace(submitMs: 1, callbackMs: 2, ownershipMs: 1.5, deliveryMs: 3))
+        log.decodedDelivery(rtp: -2, timeStampNs: 1,
+            trace: PhoneDecodeTrace(submitMs: 1, callbackMs: .nan, ownershipMs: 2, deliveryMs: 3))
+        XCTAssertNil(log.takeDecodeTrace(rtp: -1, timeStampNs: 1))
+        XCTAssertNil(log.takeDecodeTrace(rtp: -2, timeStampNs: 1))
+        let disabled = PhoneFrameTimingLog(renderTimingEnabled: false)
+        disabled.decodedDelivery(rtp: 1, timeStampNs: 1, trace: trace)
+        XCTAssertNil(disabled.takeDecodeTrace(rtp: 1, timeStampNs: 1))
+    }
+
     // MARK: Phone
 
     func testPhoneLogMatchesDecodesByWireTimestampAcrossTheSignBit() {

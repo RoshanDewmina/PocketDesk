@@ -10,6 +10,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     let smoothMotion = SmoothMotionController()
     private let motionGate = VideoMotionGate()
     let legibility = LegibilityProbe()
+    private var frameTiming: PhoneFrameTimingLog?
     private var videoFeedback: VideoFeedbackContext?
     private var readsMarkers = false
     private var lastNotification: TimeInterval = 0
@@ -18,8 +19,10 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         let id = UUID()
         let arrivalMs: Double
         let tag: VideoFrameTag?
-        init(_ frame: RTCVideoFrame, at now: Double, tag: VideoFrameTag?) { self.frame = frame; arrivalMs = now; self.tag = tag }
+        let decodeTrace: PhoneDecodeTrace?
+        init(_ frame: RTCVideoFrame, at now: Double, tag: VideoFrameTag?, decodeTrace: PhoneDecodeTrace?) { self.frame = frame; arrivalMs = now; self.tag = tag; self.decodeTrace = decodeTrace }
     }
+    private var receivingReceiptID: UUID? // Protected by the presentation fence.
     private var sources: [SourceReceipt] = []
     private let onFrame: () -> Void
     private var sourceCrop: CGRect?
@@ -52,7 +55,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     }
     func configure(admission: VideoPresentationAdmission, counters: StreamCounters?, statistics: Bool,
                    sourceSize: CGSize, displayedPixelWidth: CGFloat, fillsFrame: Bool,
-                   mode: SmoothMotionMode, upscale: Bool, onSourceFrame: ((VideoFrameEnvelope) -> Void)?, videoFeedback: VideoFeedbackContext? = nil, sourceCrop: CGRect? = nil) {
+                   mode: SmoothMotionMode, upscale: Bool, onSourceFrame: ((VideoFrameEnvelope) -> Void)?, videoFeedback: VideoFeedbackContext? = nil, sourceCrop: CGRect? = nil, frameTiming: PhoneFrameTimingLog? = nil) {
         guard !stopped, fence.renew(admission) else { invalidate(); return }
         expiryTimer?.invalidate()
         let timer = Timer(timeInterval: max(0.001, admission.validUntil - ProcessInfo.processInfo.systemUptime), repeats: false) { [weak self] _ in self?.invalidate() }
@@ -61,6 +64,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
             view.counters = counters; view.fillsFrame = fillsFrame; readsMarkers = statistics
             self.onSourceFrame = onSourceFrame
             self.sourceCrop = sourceCrop
+            self.frameTiming = frameTiming
             self.videoFeedback = videoFeedback; view.videoFeedback = videoFeedback
             legibility.configure(enabled: statistics, counters: counters, sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth)
             return true
@@ -72,14 +76,18 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
     func setSize(_ size: CGSize) {} // Actual public buffer dimensions/crop/rotation determine geometry.
     func renderFrame(_ frame: RTCVideoFrame?) {
         guard let frame else { return }
+        let rendererEntryMs = MachClock.nowMs()
         let receipt = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) {
             let now = MachClock.nowMs()
-            sources.append(SourceReceipt(frame, at: now, tag: videoFeedback?.tag(for: frame)))
+            view.counters?.phoneRenderTiming(.rendererFenceWait, milliseconds: now - rendererEntryMs)
+            let trace = frameTiming?.takeDecodeTrace(rtp: frame.timeStamp, timeStampNs: frame.timeStampNs)
+            if let trace { view.counters?.phoneDecodeTrace(trace) }
+            sources.append(SourceReceipt(frame, at: now, tag: videoFeedback?.tag(for: frame), decodeTrace: trace))
             if sources.count > 8 { sources.removeFirst(sources.count - 8) }
             let decoded = readsMarkers ? (frame.buffer as? RTCCVPixelBuffer).flatMap { DecodedLuma($0) } : nil
             let marker = decoded?.readMarker()
             let source = VideoFrameEnvelope(receiptID: sources.last!.id, identity: admissionIdentity, frame: frame,
-                arrivalMs: now, marker: marker, originalSource: true, videoTag: sources.last?.tag)
+                arrivalMs: now, marker: marker, originalSource: true, decodeTrace: trace, videoTag: sources.last?.tag)
             if let decoded { legibility.frameArrived(decoded.pixelBuffer, visible: decoded.visible, marker: marker) }
             let uptime = ProcessInfo.processInfo.systemUptime
             var notify = false
@@ -91,7 +99,11 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         }
         guard let (source, callback, notify) = receipt else { return }
         callback?(source) // The derivative sink independently rechecks its terminal admission.
-        motionGate.perform { smoothMotion.receive(frame, marker: source.marker) }
+        motionGate.perform {
+            _ = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) { receivingReceiptID = source.receiptID }
+            smoothMotion.receive(frame, marker: source.marker)
+            _ = fence.withAdmission(admissionIdentity, at: ProcessInfo.processInfo.systemUptime) { receivingReceiptID = nil }
+        }
         if notify {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.fence.withAdmission(self.admissionIdentity, at: ProcessInfo.processInfo.systemUptime, { true }) == true else { return }
@@ -110,7 +122,7 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
             } else { displayed = frame }
             view.offer(VideoFrameEnvelope(receiptID: source?.id ?? UUID(), identity: admissionIdentity,
                 frame: displayed, arrivalMs: source?.arrivalMs ?? MachClock.nowMs(), marker: readsMarkers ? marker : nil,
-                originalSource: source != nil, videoTag: source?.tag))
+                originalSource: source != nil, promptDraw: source?.id == receivingReceiptID && source != nil, decodeTrace: source?.decodeTrace, videoTag: source?.tag))
         }
     }
     /// Main thread: immediately cover/clear; only then detach and drain the old motion pipeline.

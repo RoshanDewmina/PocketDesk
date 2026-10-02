@@ -1,6 +1,66 @@
 import XCTest
 
 final class StreamStatisticsTests: XCTestCase {
+    func testPhoneRenderStagesExposeObservedPercentilesCountsAndDrain() throws {
+        let counters = StreamCounters(phoneRenderTimingEnabled: true)
+        for index in 1...100 {
+            let ms = Double(index)
+            counters.phoneDecodeTrace(PhoneDecodeTrace(submitMs: 100, callbackMs: 100 + ms,
+                ownershipMs: 100 + ms * 2, deliveryMs: 100 + ms * 3))
+            for metric in [PhoneRenderTimingMetric.decodedToPresented, .deliveryToPresented,
+                           .drawableAcquire, .rendererFenceWait, .displayLinkInterval, .leadingMotionLatency] {
+                counters.phoneRenderTiming(metric, milliseconds: ms)
+            }
+        }
+        counters.phoneRenderTiming(.drawableAcquire, milliseconds: .nan)
+        counters.phoneRenderTiming(.displayLinkInterval, milliseconds: -1)
+        counters.phoneDecodeTrace(PhoneDecodeTrace(submitMs: 4, callbackMs: 3, ownershipMs: 5, deliveryMs: 6))
+        var snapshot = counters.drain(inputBufferedBytes: nil)
+        snapshot.interval = 1
+        let report = StreamStatsReport(role: "phone", previous: nil, current: StreamStatsSample(entries: []), counters: snapshot)
+        XCTAssertEqual(report.decodeVTP95Ms, 95)
+        XCTAssertEqual(report.decodeVTSamples, 100)
+        XCTAssertEqual(report.ownershipDelayP99Ms, 99)
+        XCTAssertEqual(report.ownershipDelaySamples, 100)
+        XCTAssertEqual(report.deliveryDelayP99Ms, 198, "delivery delay starts at callback entry")
+        XCTAssertEqual(report.deliveryDelaySamples, 100)
+        XCTAssertEqual(report.decodedToPresentedP95Ms, 95)
+        XCTAssertEqual(report.decodedToPresentedSamples, 100)
+        XCTAssertEqual(report.deliveryToPresentedP95Ms, 95)
+        XCTAssertEqual(report.deliveryToPresentedSamples, 100)
+        XCTAssertEqual(report.drawableAcquireP99Ms, 99)
+        XCTAssertEqual(report.drawableAcquireSamples, 100)
+        XCTAssertEqual(report.rendererFenceWaitP99Ms, 99)
+        XCTAssertEqual(report.rendererFenceWaitSamples, 100)
+        XCTAssertEqual(report.displayLinkIntervalP50Ms, 50)
+        XCTAssertEqual(report.displayLinkIntervalP95Ms, 95)
+        XCTAssertEqual(report.displayLinkIntervalSamples, 100)
+        XCTAssertEqual(report.displayLinkAt120Share, 0.09)
+        XCTAssertEqual(report.leadingMotionLatencyP95Ms, 95)
+        XCTAssertEqual(report.leadingMotionLatencySamples, 100)
+        XCTAssertEqual(try JSONDecoder().decode(StreamStatsReport.self, from: JSONEncoder().encode(report)), report)
+        let next = counters.drain(inputBufferedBytes: nil)
+        XCTAssertNil(next.decodeVTP95Ms)
+        XCTAssertNil(next.decodeVTSamples)
+        XCTAssertNil(next.displayLinkIntervalSamples)
+        XCTAssertNil(next.displayLinkAt120Share)
+    }
+
+    func testPhoneRenderTimingDisabledLeavesUnknownStagesAndCapsCadenceSampleDenominator() {
+        let disabled = StreamCounters(phoneRenderTimingEnabled: false)
+        disabled.phoneDecodeTrace(PhoneDecodeTrace(submitMs: 1, callbackMs: 2, ownershipMs: 3, deliveryMs: 4))
+        disabled.phoneRenderTiming(.decodedToPresented, milliseconds: 5)
+        let absent = disabled.drain(inputBufferedBytes: nil)
+        XCTAssertNil(absent.decodeVTSamples)
+        XCTAssertNil(absent.decodedToPresentedP95Ms)
+        let bounded = StreamCounters(phoneRenderTimingEnabled: true)
+        for _ in 0..<LatencyWindow.capacity { bounded.phoneRenderTiming(.displayLinkInterval, milliseconds: 8) }
+        for _ in 0..<10 { bounded.phoneRenderTiming(.displayLinkInterval, milliseconds: 50) }
+        let snapshot = bounded.drain(inputBufferedBytes: nil)
+        XCTAssertEqual(snapshot.displayLinkIntervalSamples, LatencyWindow.capacity)
+        XCTAssertEqual(snapshot.displayLinkAt120Share, 1, "share and percentiles cover the same bounded samples")
+    }
+
     func testHostSummaryCarriesObservedMaximumGapAndOlderMissingFieldRemainsUnknown() throws {
         let previous = StreamStatsSample(entries: senderEntries(at: 1, encoded: 0, sent: 0, bytes: 0, encodeTime: 0, qp: 0))
         let current = StreamStatsSample(entries: senderEntries(at: 2, encoded: 66, sent: 66, bytes: 100_000, encodeTime: 0.1, qp: 100))
