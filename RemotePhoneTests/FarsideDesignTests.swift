@@ -167,6 +167,33 @@ final class FarsideDesignTests: XCTestCase {
     }
 
     @MainActor
+    func testCoachZoomAcceptsTheRealFingerPinchCommand() {
+        let key = "accessibility.adaptiveLayoutsEnabled"
+        let saved = UserDefaults.standard.object(forKey: key)
+        UserDefaults.standard.set(true, forKey: key)
+        defer {
+            if let saved { UserDefaults.standard.set(saved, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        let coach = GestureCoachModel()
+        coach.layout(CGSize(width: 350, height: 300))
+        coach.start()
+        for _ in 0..<4 { coach.advance() }
+        let input = NativeGestureEngine(enabled: true, panMode: false, revision: 4, sensitivity: 1,
+                                        pointerScale: 1, doubleClickInterval: 0.5, onCommand: coach.handle)
+        func fingers(_ left: CGFloat, _ right: CGFloat) -> [NativeGestureEngine.Touch] {
+            [.init(id: 1, point: CGPoint(x: left, y: 150)),
+             .init(id: 2, point: CGPoint(x: right, y: 150))]
+        }
+        input.update(fingers(125, 225), at: 1)
+        input.update(fingers(75, 275), at: 1.1)
+        input.update(fingers(50, 300), at: 1.2)
+        input.update([], at: 1.3)
+        XCTAssertTrue(coach.passed, "Finger pinches must unlock Finish through the production engine")
+        XCTAssertEqual(coach.zoom, 2.5, accuracy: 0.01)
+    }
+
+    @MainActor
     func testCoachLessonsRunOnALocalPadAndAdvanceInOrder() {
         let coach = GestureCoachModel()
         coach.layout(CGSize(width: 350, height: 392))

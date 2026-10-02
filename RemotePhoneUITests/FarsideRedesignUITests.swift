@@ -85,8 +85,131 @@ final class FarsideRedesignUITests: XCTestCase {
         XCTAssertTrue(next.waitForExistence(timeout: 3), "Lesson 1 passes with real touches on the practice pad")
         attach("Gesture coach - move lesson passed")
         next.tap()
-        XCTAssertTrue(app.staticTexts["Lesson 2 of 5 · Click"].waitForExistence(timeout: 3)
-                      || app.descendants(matching: .any)["coach"].firstMatch.exists, "Advances to the click lesson")
+        let lesson = app.staticTexts["coach.lesson"]
+        let advanced = XCTNSPredicateExpectation(predicate: NSPredicate(format: "label CONTAINS[c] %@", "Lesson 2 of 5 · Click"),
+                                                 object: lesson)
+        XCTAssertEqual(XCTWaiter.wait(for: [advanced], timeout: 3), .completed,
+                       "Next must advance to the click lesson (caption is visually uppercase)")
+    }
+
+    @MainActor
+    func testAccessibilityXXXLCoachCompletionDoneIsReachable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-coach", "--ui-coach-lesson=5",
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        let done = app.buttons["coach.done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 5))
+        XCTAssertTrue(done.isHittable && app.windows.firstMatch.frame.contains(done.frame))
+        attach("AX-XXXL coach completion")
+        done.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["coach"].firstMatch.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testAccessibilityXXXLCoachCanScrollAndSkipInLandscape() {
+        XCUIDevice.shared.orientation = .landscapeLeft
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-coach", "-UIPreferredContentSizeCategoryName",
+                               "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        let coach = app.descendants(matching: .any)["coach"].firstMatch
+        XCTAssertTrue(coach.waitForExistence(timeout: 5))
+        let scroll = coach.scrollViews.firstMatch
+        XCTAssertTrue(scroll.waitForExistence(timeout: 5), "The lesson words must scroll, independently of Home")
+        scroll.swipeUp()
+        let skip = app.buttons["Skip"]
+        XCTAssertTrue(skip.isHittable && app.windows.firstMatch.frame.contains(skip.frame))
+        attach("AX-XXXL coach landscape scrolled")
+        skip.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["coach"].firstMatch.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testAccessibilityXXXLCanSkipEveryLessonInBothOrientations() {
+        let app = XCUIApplication()
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            for lesson in 0..<5 {
+                app.launchArguments = ["--ui-coach", "--ui-coach-lesson=\(lesson)",
+                                       "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+                app.launch()
+                let coach = app.descendants(matching: .any)["coach"].firstMatch
+                XCTAssertTrue(coach.waitForExistence(timeout: 5))
+                let skip = app.buttons["Skip"]
+                XCTAssertTrue(skip.isHittable && app.windows.firstMatch.frame.contains(skip.frame))
+                skip.tap()
+                XCTAssertTrue(coach.waitForNonExistence(timeout: 5), "Skip closes lesson \(lesson + 1)")
+                app.terminate()
+            }
+        }
+    }
+
+    @MainActor
+    func testAccessibilityXXXLZoomLessonFinishAndDoneAreReachable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-coach", "--ui-coach-lesson=4",
+                               "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+        app.launch()
+        let pad = app.descendants(matching: .any)["coach.pad"].firstMatch
+        XCTAssertTrue(pad.waitForExistence(timeout: 5))
+        for _ in 0..<4 where !app.buttons["coach.next"].exists {
+            pad.pinch(withScale: 2, velocity: 1)
+        }
+        let finish = app.buttons["coach.next"]
+        XCTAssertTrue(finish.waitForExistence(timeout: 3))
+        XCTAssertTrue(finish.isHittable && app.windows.firstMatch.frame.contains(finish.frame))
+        attach("AX-XXXL zoom lesson passed")
+        finish.tap()
+        let done = app.buttons["coach.done"]
+        XCTAssertTrue(done.waitForExistence(timeout: 3) && done.isHittable)
+        done.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["coach"].firstMatch.waitForNonExistence(timeout: 5))
+    }
+
+    @MainActor
+    func testAccessibilityXXXLPrimingContinueStaysOnScreen() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication()
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            for kind in ["network", "mic", "camera", "notifications"] {
+                app.launchArguments = ["--ui-priming-\(kind)", "-UIPreferredContentSizeCategoryName",
+                                       "UICTContentSizeCategoryAccessibilityXXXL"]
+                app.launch()
+                // SwiftUI propagates the primer root identifier onto its safe-area button.
+                let next = app.buttons["Continue"]
+                XCTAssertTrue(next.waitForExistence(timeout: 5))
+                XCTAssertTrue(next.isHittable && app.windows.firstMatch.frame.contains(next.frame),
+                              "\(kind) Continue must remain fully on screen in \(orientation)")
+                attach("AX-XXXL \(kind) primer \(orientation)")
+                app.terminate()
+            }
+        }
+    }
+
+    @MainActor
+    func testAccessibilityXXXLPairingMethodsAndCancelAreReachable() {
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication()
+        for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+            XCUIDevice.shared.orientation = orientation
+            app.launchArguments = ["--ui-pairing-scan", "--ui-camera-priming",
+                                   "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"]
+            app.launch()
+            let cancel = app.buttons["Cancel"]
+            XCTAssertTrue(cancel.waitForExistence(timeout: 5) && cancel.isHittable)
+            let paste = app.buttons["Paste Code"]
+            for _ in 0..<4 where !paste.isHittable { app.scrollViews.containing(.button, identifier: "Paste Code").firstMatch.swipeUp() }
+            XCTAssertTrue(paste.isHittable)
+            paste.tap()
+            XCTAssertTrue(app.buttons["Pair Mac"].waitForExistence(timeout: 3))
+            XCTAssertTrue(app.windows.firstMatch.frame.contains(app.buttons["Pair Mac"].frame))
+            attach("AX-XXXL pairing paste")
+            cancel.tap()
+            XCTAssertFalse(app.buttons["Pair Mac"].exists)
+            app.terminate()
+        }
     }
 
     @MainActor

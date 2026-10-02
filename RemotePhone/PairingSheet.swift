@@ -44,7 +44,7 @@ struct PairingSheet: View {
                     FarsideHeading("Pair your Mac.", accent: "your", size: 30)
                     FarsideSegmented(label: "Pairing method",
                                      options: [(PairingEntry.scan, "Scan"), (PairingEntry.paste, "Paste Code")],
-                                     selection: $entry)
+                                     selection: $entry, accessibilityStacked: true)
 
                     if entry == .scan { scanner } else { pasteField }
 

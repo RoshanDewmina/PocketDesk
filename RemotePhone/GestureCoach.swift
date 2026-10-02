@@ -247,7 +247,9 @@ final class GestureCoachModel: ObservableObject {
             if folderFrame.insetBy(dx: -18, dy: -18).contains(file) { pass() }
             else { note = "Almost. Drop it right on the folder." }
             return true
-        case .zoom(let factor, _):
+        // Finger pinches emit navigation; hardware trackpads still emit zoom.
+        case .zoom(let factor, _), .navigate(let factor, _, _):
+            if case .navigate = command, !FarsideAccessibilityLayout.enabled { return false }
             guard lesson == .zoom, !passed else { return true }
             zoom = min(3, max(1, zoom * factor))
             if zoom >= 2.2 { pass() }
@@ -267,7 +269,7 @@ final class GestureCoachModel: ObservableObject {
         case .clipboardPaste:
             note = "Three-finger spread pastes to your Mac. Practice only here."
             return true
-        case .zoomToggle, .navigate, .pan, .pointTo, .auxiliaryClick, .precision:
+        case .zoomToggle, .pan, .pointTo, .auxiliaryClick, .precision:
             return false
         }
     }
@@ -380,13 +382,27 @@ struct GestureCoachView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private var adaptiveLayout: Bool { dynamicTypeSize.isAccessibilitySize && FarsideAccessibilityLayout.enabled }
 
     var body: some View {
         Group {
             if voiceOver {
                 GestureSummaryView(onFinish: onFinish)
             } else if coach.finished {
-                completion
+                if adaptiveLayout {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: Farside.Space.m) { completionContent }
+                            .padding(Farside.Space.l)
+                            .frame(maxWidth: 560)
+                            .frame(maxWidth: .infinity)
+                    }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .safeAreaInset(edge: .bottom) { completionButton.padding(Farside.Space.l) }
+                } else {
+                    completion
+                }
             } else {
                 lessonLayout
             }
@@ -409,7 +425,9 @@ struct GestureCoachView: View {
     /// Wide screens (landscape phone, landscape iPad) put the pad beside the words; tall ones stack.
     private var lessonLayout: some View {
         GeometryReader { proxy in
-            if proxy.size.width > proxy.size.height * 1.1 {
+            if adaptiveLayout {
+                accessibleLesson(wide: proxy.size.width > proxy.size.height * 1.1)
+            } else if proxy.size.width > proxy.size.height * 1.1 {
                 HStack(alignment: .top, spacing: Farside.Space.l) {
                     VStack(alignment: .leading, spacing: Farside.Space.m) {
                         topBar
@@ -440,6 +458,41 @@ struct GestureCoachView: View {
         }
     }
 
+    /// Keep navigation outside the scrolling words and local touch pad. Pad gestures stay local.
+    private func accessibleLesson(wide: Bool) -> some View {
+        Group {
+            if wide {
+                HStack(alignment: .top, spacing: Farside.Space.l) {
+                    ScrollView { instructions.padding(.vertical, Farside.Space.s) }
+                        .frame(maxWidth: .infinity)
+                    pad.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+                .padding(.horizontal, Farside.Space.l)
+            } else {
+                VStack(alignment: .leading, spacing: Farside.Space.m) {
+                    ScrollView { instructions.padding(.vertical, Farside.Space.s) }
+                    pad.frame(height: 300)
+                }
+                .padding(.horizontal, Farside.Space.l)
+                .frame(maxWidth: 640)
+                .frame(maxWidth: .infinity)
+            }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+        .safeAreaInset(edge: .top) {
+            topBar
+                .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+                .padding(.horizontal, Farside.Space.l)
+                .padding(.vertical, Farside.Space.xs)
+                .background(Farside.Palette.void)
+        }
+        .safeAreaInset(edge: .bottom) {
+            footer.padding(.horizontal, Farside.Space.l)
+                .padding(.vertical, Farside.Space.s)
+                .background(Farside.Palette.void)
+        }
+    }
+
     private var instructions: some View {
         VStack(alignment: .leading, spacing: Farside.Space.m) {
             FarsideHeading(coach.lesson.heading, size: 30)
@@ -452,11 +505,13 @@ struct GestureCoachView: View {
             HStack {
                 Text("Lesson \(coach.lesson.rawValue + 1) of 5 · \(coach.lesson.name)")
                     .farsideCaption()
+                    .accessibilityIdentifier("coach.lesson")
                     .accessibilityAddTraits(.isHeader)
                 Spacer()
                 Button("Skip", action: onFinish)
                     .buttonStyle(FarsideSecondaryButtonStyle(height: 36, fullWidth: false))
                     .accessibilityHint("Closes the lessons. You can replay them from Home.")
+                    .accessibilityShowsLargeContentViewer()
             }
             HStack(spacing: 6) {
                 ForEach(GestureCoachModel.Lesson.allCases) { lesson in
@@ -499,14 +554,17 @@ struct GestureCoachView: View {
     private var footer: some View {
         HStack(alignment: .center) {
             Text("Practice only · nothing reaches your Mac").farsideCaption()
+                .dynamicTypeSize(...(adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize))
             Spacer(minLength: Farside.Space.s)
             if coach.passed {
                 Button(coach.lesson == .zoom ? "Finish" : "Next") { advance() }
                     .buttonStyle(FarsidePrimaryButtonStyle(height: 40))
-                    .frame(width: 108)
+                    .frame(width: adaptiveLayout ? nil : 108)
+                    .fixedSize(horizontal: adaptiveLayout, vertical: false)
                     .accessibilityIdentifier("coach.next")
             } else {
                 Text("\(coach.lesson.rawValue + 1)/5").farsideCaption(Farside.Palette.bone)
+                    .dynamicTypeSize(...(adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize))
             }
         }
     }
@@ -526,6 +584,8 @@ struct GestureCoachView: View {
                                       radius: max(s.width, s.height) * 0.6, from: 0.13, to: 0)
                 }
                 lessonContent
+                    // The pretend Mac is a fixed-size illustration; the instructions scale and scroll beside it.
+                    .dynamicTypeSize(...(adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize))
                 PointerGlyphView(shape: coach.carrying ? .closedHand : .arrow, arrowHeight: 30)
                     .position(PointerGlyphMetrics.cached(shape: coach.carrying ? .closedHand : .arrow, arrowHeight: 30)
                         .center(forHotSpotAt: coach.pointer))
@@ -554,7 +614,7 @@ struct GestureCoachView: View {
             .onAppear { coach.layout(proxy.size) }
             .onChange(of: proxy.size) { _, size in coach.layout(size) }
         }
-        .frame(minHeight: 300)
+        .frame(minHeight: adaptiveLayout ? 180 : 300)
         .clipShape(.rect(cornerRadius: 30, style: .continuous))
         .background(Color.black, in: .rect(cornerRadius: 30, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 30, style: .continuous).strokeBorder(Farside.Palette.line, lineWidth: 1))
@@ -736,23 +796,32 @@ struct GestureCoachView: View {
     private var completion: some View {
         VStack(alignment: .leading, spacing: Farside.Space.m) {
             Spacer(minLength: 0)
-            FarsideHalftone(style: HalftoneStyle(cell: 5), scene: FarsideArt.reach(gap: 0, contact: 1))
-                .frame(height: 220)
-                .padding(.horizontal, -Farside.Space.l)
-            FarsideHeading("You’re ready.", accent: "ready", size: 34)
-            Text("Slide to point, tap to click, two fingers to scroll, double tap and hold to drag, pinch to zoom. Swipe up on the handle for everything else.")
-                .font(.body)
-                .foregroundStyle(Farside.Palette.ash)
-                .fixedSize(horizontal: false, vertical: true)
+            completionContent
             Spacer(minLength: 0)
-            Button("Done", action: onFinish)
-                .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
-                .accessibilityIdentifier("coach.done")
+            completionButton
         }
         .padding(Farside.Space.l)
         .frame(maxWidth: 560)
         .frame(maxWidth: .infinity)
     }
+
+    @ViewBuilder private var completionContent: some View {
+        FarsideHalftone(style: HalftoneStyle(cell: 5), scene: FarsideArt.reach(gap: 0, contact: 1))
+            .frame(height: 220)
+            .padding(.horizontal, -Farside.Space.l)
+        FarsideHeading("You’re ready.", accent: "ready", size: 34)
+        Text("Slide to point, tap to click, two fingers to scroll, double tap and hold to drag, pinch to zoom. Swipe up on the handle for everything else.")
+            .font(.body)
+            .foregroundStyle(Farside.Palette.ash)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var completionButton: some View {
+        Button("Done", action: onFinish)
+            .buttonStyle(FarsidePrimaryButtonStyle(height: 60))
+            .accessibilityIdentifier("coach.done")
+    }
+
 }
 
 /// VoiceOver version of the coach: the same actions as a list, with where to find each one.

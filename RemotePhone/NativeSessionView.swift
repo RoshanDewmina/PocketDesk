@@ -10,6 +10,7 @@ struct NativeSessionView: View {
     @State private var viewport = ViewportTransform(sourceSize: CGSize(width: 1440, height: 900),
                                                     canvasSize: .zero, mode: ViewportPreference.stored())
     @State private var canvasFrame: CGRect = .zero
+    @State private var dataWarningTop: CGFloat = 0
     @State private var safeFrame: CGRect = .zero
     @State private var dockFrame: CGRect = .zero
     @State private var geometryPending = false
@@ -57,6 +58,7 @@ struct NativeSessionView: View {
     @AppStorage(PointerSizePreference.key) private var storedPointerSize: PointerSizePreference?
     @AppStorage(PointerFollowStyle.key) private var followStyle: PointerFollowStyle = .smooth
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    private var adaptiveLayout: Bool { dynamicTypeSize.isAccessibilitySize && FarsideAccessibilityLayout.enabled }
     private var pointerSize: PointerSizePreference {
         PointerSizePreference.resolved(stored: storedPointerSize, largerText: dynamicTypeSize.isAccessibilitySize)
     }
@@ -683,8 +685,10 @@ struct NativeSessionView: View {
                     verdict: model.qualityVerdict, stall: model.wifiStallTip,
                     dismissed: model.dismissedQualityBanners, device: UIDevice.current.model), dismiss: model.dismissQualityBanner)
             }
-            if let warning = model.dataWarning {
+            if let warning = dataWarningContent {
                 DataWarningCard(content: warning, useLessData: model.useLessData, keep: model.keepDataQuality)
+                    .frame(maxHeight: adaptiveLayout ? dataWarningAvailableHeight : nil, alignment: .top)
+                    .onGeometryChange(for: CGFloat.self) { $0.frame(in: .global).minY } action: { dataWarningTop = $0 }
                     .transition(.opacity)
             }
             if streamStatsEnabled && !model.streamSummaryLines.isEmpty {
@@ -710,8 +714,10 @@ struct NativeSessionView: View {
                         .buttonStyle(FarsidePrimaryButtonStyle(height: 34))
                         .fixedSize()
                         .accessibilityLabel("Control desktop")
+                        .accessibilityShowsLargeContentViewer()
                 }
                 .foregroundStyle(Farside.Palette.bone)
+                .dynamicTypeSize(...(adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize))
                 .padding(.leading, 16).padding(.trailing, 5).padding(.vertical, 5)
                 .farsidePlate(Farside.Radius.pill, fill: Farside.Palette.panel.opacity(0.96), stroke: Farside.Palette.line2)
                 .transition(.opacity)
@@ -748,6 +754,22 @@ struct NativeSessionView: View {
         .background { ReconnectWatcher(connected: connection.connected, back: $reconnectBack) }
         .animation(Farside.Motion.easeOut(), value: reconnectBack)
         .padding(.top, 8)
+    }
+
+    private var dataWarningContent: DataWarningContent? {
+        #if DEBUG
+        if offlineLayoutCheck && LaunchOptions.has("--ui-data-warning-lower"), model.dataWarning != nil {
+            // Layout-only fixture: no negotiated preset or Mac input is fabricated.
+            return DataWarningContent.make(quality: .sharp, audio: true, canLower: true)
+        }
+        #endif
+        return model.dataWarning
+    }
+
+    /// The notice can scroll, but must leave the measured dock and its End action uncovered.
+    private var dataWarningAvailableHeight: CGFloat {
+        let bottom = dockFrame.height > 0 ? min(safeFrame.maxY, dockFrame.minY) : safeFrame.maxY
+        return max(0, bottom - max(safeFrame.minY + 8, dataWarningTop) - 12)
     }
 
     /// A measured route for offline layout checks and screenshots.
@@ -834,24 +856,36 @@ struct NativeSessionView: View {
         }
         .padding(.horizontal, 8)
         .padding(.bottom, controlsCollapsed && !couch ? 0 : 6)
-        .frame(maxWidth: compactHeight ? 620 : 560)
+        .frame(maxWidth: adaptiveLayout && compactHeight ? .infinity : (compactHeight ? 620 : 560))
     }
 
     private var compactHeight: Bool { verticalSizeClass == .compact }
 
     private var dockPanel: some View {
-        VStack(spacing: compactHeight ? 10 : 14) {
-            if !couch { grabHandle }
-            if !couchSideTiles { tilesRow }
-            if showVoiceInput {
-                dictationRow
-            } else if showClipboardRow {
-                clipboardRow
+        Group {
+            if adaptiveLayout && compactHeight && !couch && !showVoiceInput && !showClipboardRow {
+                // Use landscape width to preserve a scrollable notice above all dock controls.
+                HStack(alignment: .top, spacing: 16) {
+                    VStack(spacing: 10) { grabHandle; tilesRow }
+                        .frame(maxWidth: .infinity)
+                    VStack(spacing: 10) { segmentsRow; dockFooter }
+                        .frame(maxWidth: .infinity)
+                }
+            } else {
+                VStack(spacing: compactHeight ? 10 : 14) {
+                    if !couch { grabHandle }
+                    if !couchSideTiles { tilesRow }
+                    if showVoiceInput {
+                        dictationRow
+                    } else if showClipboardRow {
+                        clipboardRow
+                    }
+                    if !couch && (!compactHeight || !(showVoiceInput || showClipboardRow)) {
+                        segmentsRow
+                    }
+                    dockFooter
+                }
             }
-            if !couch && (!compactHeight || !(showVoiceInput || showClipboardRow)) {
-                segmentsRow
-            }
-            dockFooter
         }
         .padding(.horizontal, 16)
         .padding(.top, couch ? 16 : 6)
@@ -869,6 +903,8 @@ struct NativeSessionView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("remote.dock")
+        // Compact chrome must leave a touchable desktop even with AX-XXXL text.
+        .dynamicTypeSize(...(adaptiveLayout ? DynamicTypeSize.xxxLarge : dynamicTypeSize))
     }
 
     private var grabHandle: some View {
@@ -909,11 +945,13 @@ struct NativeSessionView: View {
         HStack(alignment: .top, spacing: 0) {
             Button { openKeyboard() } label: { Label("Keys", systemImage: "keyboard") }
                 .buttonStyle(FarsideTileButtonStyle())
+                .accessibilityShowsLargeContentViewer()
                 .frame(maxWidth: .infinity)
                 .accessibilityLabel("Keyboard")
             micOrReleaseTile.frame(maxWidth: .infinity)
             Button(action: toggleClipboardRow) { Label(unifiedClipboard ? "Files" : "Clip", systemImage: unifiedClipboard ? "folder" : "list.clipboard") }
                 .buttonStyle(FarsideTileButtonStyle(selected: showClipboardRow))
+                .accessibilityShowsLargeContentViewer()
                 .frame(maxWidth: .infinity)
                 .disabled(!(unifiedClipboard ? model.fileTransferSupported : showsClipboard) || showVoiceInput)
                 .accessibilityLabel(unifiedClipboard ? "Files" : "Clipboard")
@@ -923,6 +961,7 @@ struct NativeSessionView: View {
                                                                  : "arrow.up.left.and.arrow.down.right")
             }
             .buttonStyle(FarsideTileButtonStyle())
+                .accessibilityShowsLargeContentViewer()
             .frame(maxWidth: .infinity)
             .accessibilityLabel(viewport.mode == .fill ? "Fit whole display" : "Fill screen")
             modeTile
@@ -942,6 +981,7 @@ struct NativeSessionView: View {
             }
             .menuStyle(.button)
             .buttonStyle(FarsideTileButtonStyle())
+                .accessibilityShowsLargeContentViewer()
             .frame(maxWidth: .infinity)
             .accessibilityLabel(panMode ? "Control desktop" : "Move view")
         } else {
@@ -949,6 +989,7 @@ struct NativeSessionView: View {
                 Label("Mode", systemImage: panMode ? "cursorarrow.motionlines" : "hand.draw")
             }
             .buttonStyle(FarsideTileButtonStyle())
+                .accessibilityShowsLargeContentViewer()
             .frame(maxWidth: .infinity)
             .accessibilityLabel(panMode ? "Control desktop" : "Move view")
         }
@@ -968,6 +1009,7 @@ struct NativeSessionView: View {
         } else {
             Button(action: openVoiceInput) { Label("Mic", systemImage: "mic.fill") }
                 .buttonStyle(FarsideTileButtonStyle())
+                .accessibilityShowsLargeContentViewer()
                 .disabled(!voiceEntryAvailable)
                 .accessibilityLabel("Voice input")
                 .accessibilityHint("Speak on this iPhone, then tap Done to insert text on your Mac")
@@ -1025,6 +1067,7 @@ struct NativeSessionView: View {
                 .buttonStyle(FarsideEndButtonStyle())
                 .fixedSize()
                 .accessibilityLabel("End session")
+                .accessibilityShowsLargeContentViewer()
         }
     }
 
@@ -2400,6 +2443,23 @@ struct NativeSessionView: View {
     }
 
     @ViewBuilder private var pictureSection: some View {
+        if adaptiveLayout {
+            pictureQualitySection
+            macAudioSection
+        } else {
+            macAudioSection
+            pictureQualitySection
+        }
+        bigTextSection
+        Section { FullColorSettingRows() } header: { sectionHeader("Experimental full color") }
+        Section {
+            SmoothMotionPictureRows(mode: $smoothMotion)
+        } header: {
+            sectionHeader("Smooth motion")
+        }
+    }
+
+    private var macAudioSection: some View {
         Section {
             if model.pipAdmission != nil {
                 LivePiPPreview(layer: model.livePiP.displayLayer)
@@ -2422,10 +2482,13 @@ struct NativeSessionView: View {
             Text(model.captureScopeViewOnly ? "Audio is off while sharing an app or window." : "Requires Share Mac audio on your Mac. Sound may come from every app. Stops when you leave Farside or dictate.")
                 .font(.footnote).foregroundStyle(Farside.Palette.ash)
         } header: { sectionHeader("Mac audio") }
+    }
+
+    private var pictureQualitySection: some View {
         Section {
             FarsideSegmented(label: "Picture quality",
                              options: StreamQuality.allCases.map { (value: $0, title: $0.title) },
-                             selection: $model.streamQuality)
+                             selection: $model.streamQuality, accessibilityStacked: true)
                 .disabled(model.appliedStreamQuality == nil && !offlineLayoutCheck)
                 .listRowBackground(Color.clear)
                 .listRowInsets(EdgeInsets(top: 6, leading: 0, bottom: 6, trailing: 0))
@@ -2459,13 +2522,6 @@ struct NativeSessionView: View {
             }
         } header: {
             sectionHeader("Quality")
-        }
-        bigTextSection
-        Section { FullColorSettingRows() } header: { sectionHeader("Experimental full color") }
-        Section {
-            SmoothMotionPictureRows(mode: $smoothMotion)
-        } header: {
-            sectionHeader("Smooth motion")
         }
     }
 
