@@ -6,6 +6,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     let metal: MTKView
     let fence: VideoPresentationFence
     let identity: VideoPresentationIdentity
+    private let presentationLifetime: VideoPresentationLifetime
     let mailbox = NewestFrameMailbox<VideoFrameEnvelope>()
     var counters: StreamCounters?
     var beforeDraw: ((MTKView) -> Void)?
@@ -13,6 +14,11 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     var videoFeedback: VideoFeedbackContext?
     /// Only an actual original source drawable presentation may report this receipt.
     /// Consumers enqueue owner-validated work; they must not synchronously hop to main.
+    private var sourcePresented: ((VideoPresentedSource) -> Void)?
+    var onSourcePresented: ((VideoPresentedSource) -> Void)? {
+        get { fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { sourcePresented } ?? nil }
+        set { _ = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { sourcePresented = newValue } }
+    }
     private var originalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
     var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)? {
         get { fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) { originalSourcePresented } ?? nil }
@@ -44,7 +50,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     }
 
     init(admission: VideoPresentationAdmission, fence: VideoPresentationFence, defaults: UserDefaults = .standard) {
-        self.fence = fence; identity = admission.identity
+        self.fence = fence; identity = admission.identity; presentationLifetime = admission.lifetime
         unfencedPreparation = !defaults.bool(forKey: "phoneUnfencedDrawableDisabled")
         immediateSourceDraw = !defaults.bool(forKey: "phoneImmediateSourceDrawDisabled")
         let device = MTLCreateSystemDefaultDevice()
@@ -155,6 +161,7 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         wakeLock.lock(); closed = true; wakeLock.unlock()
         beforeDraw = nil; timingAvailable = false
         videoFeedback = nil
+        sourcePresented = nil
         originalSourcePresented = nil // The terminal fence already drained any earlier callback.
         metal.isPaused = true; metal.isHidden = true
         fallback?.isEnabled = false; fallback?.removeFromSuperview(); fallback = nil
@@ -266,8 +273,13 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
         // Capture this drawable's exact envelope, not whichever frame is newest at callback time.
         #if !targetEnvironment(simulator)
         if submission.isNew || unfencedPreparation {
-            let callback = onOriginalSourcePresented // Short admission snapshot, no layer access under it.
-            let receipt = submission.isNew ? presentedReceipt(envelope, callback: callback) : nil
+            let callbacks = fence.withAdmission(identity, at: ProcessInfo.processInfo.systemUptime) {
+                (originalSourcePresented, sourcePresented)
+            } // One short admission snapshot; no layer access under it.
+            let callback = callbacks?.0
+            let sourceCallback = callbacks?.1
+            let receipt = submission.isNew ? presentedReceipt(envelope, callback: callback, sourceCallback: sourceCallback,
+                refinementPixels: sourceCallback == nil ? nil : refinementPixels) : nil
             let mailbox = mailbox, id = submission.id
             drawable.addPresentedHandler { shown in
                 // Core Animation holds its private lock: enqueue before taking ANY local lock.
@@ -304,8 +316,11 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
     /// only enqueues; admission is rechecked off Core Animation's thread.
     static let presentedReceiptQueue = DispatchQueue(label: "farside.owned-video.presented", qos: .userInteractive)
     func presentedReceipt(_ envelope: VideoFrameEnvelope,
-                          callback: ((VideoPresentationIdentity, UUID) -> Void)?) -> (CFTimeInterval) -> Void {
-        { [weak self] presentedTime in
+                          callback: ((VideoPresentationIdentity, UUID) -> Void)?,
+                          sourceCallback: ((VideoPresentedSource) -> Void)? = nil,
+                          refinementPixels: CVPixelBuffer? = nil) -> (CFTimeInterval) -> Void {
+        let sourceLifetime = sourceCallback == nil ? nil : presentationLifetime
+        return { [weak self] presentedTime in
             guard presentedTime.isFinite, presentedTime > 0 else { return }
             Self.presentedReceiptQueue.async {
                 guard let self else { return }
@@ -319,7 +334,12 @@ final class OwnedMetalVideoView: UIView, MTKViewDelegate {
                     self.videoFeedback?.presentedTiming(envelope.videoTag, originalSource: envelope.originalSource,
                         newSubmission: true, presentedTime: presentedTime,
                         clock: clock?.estimate, observedAtMs: clock?.atMs)
-                    if envelope.originalSource { callback?(envelope.identity, envelope.receiptID) }
+                    if envelope.originalSource {
+                        callback?(envelope.identity, envelope.receiptID)
+                        if let sourceCallback, let sourceLifetime {
+                            sourceCallback(VideoPresentedSource(lifetime: sourceLifetime, envelope: envelope, presentedAt: presentedTime, refinementPixels: refinementPixels))
+                        }
+                    }
                 }
             }
         }

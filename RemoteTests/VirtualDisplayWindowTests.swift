@@ -300,6 +300,138 @@ final class VirtualDisplayWindowTests: XCTestCase {
         XCTAssertEqual(access.windows[0].frame, original)
     }
 
+    func testColdRecoveryRestoresArbitraryPhysicalReflowAndRetainsFailedOriginals() async throws {
+        let (keeper, access, store) = fixture()
+        try await keeper.moveFrontmostWindows(to: target)
+        let reflow = CGRect(x: 270, y: 90, width: 580, height: 860)
+        access.windows[0].frame = reflow // Display destruction may choose another physical anchor/size.
+        let recovery = VirtualDisplayWindowKeeper(access: access, store: store)
+        access.alwaysRefuse = true
+        let refused = await recovery.recover()
+        XCTAssertFalse(refused)
+        XCTAssertTrue(recovery.hasPendingRestore)
+        XCTAssertNotNil(store.journal)
+        access.alwaysRefuse = false
+        let restored = await recovery.recover()
+        XCTAssertTrue(restored)
+        XCTAssertEqual(access.windows[0].frame, original)
+        XCTAssertNil(store.journal)
+    }
+
+    func testDisplayPresenceRequiresExactPositiveOrThreeInventoryAbsenceEvidence() {
+        func classify(constructed: Bool = true, known: Bool = true, online: Bool? = true,
+                      matches: Bool = true, main: Bool = false, mirrored: Bool = false,
+                      absent: Bool = false, current: Bool = true) -> SessionVirtualDisplayPresence {
+            SessionVirtualDisplayPresencePolicy.classify(constructed: constructed, knownIdentity: known,
+                online: online, identityMatches: matches, isMain: main, isMirrored: mirrored,
+                absenceConfirmed: absent, operationCurrent: current)
+        }
+        XCTAssertEqual(classify(), .present)
+        XCTAssertEqual(classify(online: false, absent: true), .confirmedRemoved)
+        XCTAssertEqual(classify(constructed: false, known: false, online: nil), .neverCreated)
+        for result in [classify(known: false), classify(online: nil, absent: true), classify(matches: false),
+                       classify(main: true), classify(mirrored: true), classify(online: false),
+                       classify(online: false, absent: true, current: false), classify(constructed: false, current: false)] {
+            XCTAssertEqual(result, .unknown)
+        }
+        // Clearing the public ID cannot discard retained identity; reuse cannot adopt a foreign display.
+        XCTAssertEqual(classify(online: false, absent: true), .confirmedRemoved)
+        XCTAssertEqual(classify(online: true, matches: false, absent: true), .unknown)
+    }
+
+    func testRestorationPolicyRequiresKnownTopologyOrNeverCreatedPreparation() {
+        for presence in [SessionVirtualDisplayPresence.present, .confirmedRemoved] {
+            XCTAssertEqual(VirtualDisplayRestorationPolicy.action(presence: presence,
+                physicalTopologyUnchanged: true, journalIsPrepared: false), .restoreOriginals)
+            XCTAssertEqual(VirtualDisplayRestorationPolicy.action(presence: presence,
+                physicalTopologyUnchanged: false, journalIsPrepared: true), .retainJournal)
+        }
+        XCTAssertEqual(VirtualDisplayRestorationPolicy.action(presence: .neverCreated,
+            physicalTopologyUnchanged: false, journalIsPrepared: true), .restoreOriginals)
+        XCTAssertEqual(VirtualDisplayRestorationPolicy.action(presence: .neverCreated,
+            physicalTopologyUnchanged: true, journalIsPrepared: false), .retainJournal)
+        XCTAssertEqual(VirtualDisplayRestorationPolicy.action(presence: .unknown,
+            physicalTopologyUnchanged: true, journalIsPrepared: true), .retainJournal)
+    }
+
+    func testSameInstanceConfirmedRemovalRestoresArbitraryReflowAndRetriesRefusal() async throws {
+        let (keeper, access, store) = fixture()
+        try await keeper.moveFrontmostWindows(to: target)
+        access.windows[0].frame = CGRect(x: 270, y: 90, width: 580, height: 860)
+        access.alwaysRefuse = true
+        let refused = await keeper.restore(after: .confirmedRemoved, physicalTopologyUnchanged: true)
+        XCTAssertFalse(refused); XCTAssertTrue(keeper.hasPendingRestore); XCTAssertNotNil(store.journal)
+        access.alwaysRefuse = false
+        let restored = await keeper.restore(after: .confirmedRemoved, physicalTopologyUnchanged: true)
+        XCTAssertTrue(restored); XCTAssertEqual(access.windows[0].frame, original); XCTAssertNil(store.journal)
+    }
+
+    func testUnknownOrChangedPhysicalTopologyRetainsJournalWithoutAnyAXWork() async throws {
+        for (presence, topology) in [(SessionVirtualDisplayPresence.unknown, true), (.present, false), (.confirmedRemoved, false)] {
+            let (keeper, access, store) = fixture()
+            try await keeper.moveFrontmostWindows(to: target)
+            access.windows[0].frame = CGRect(x: 270, y: 90, width: 580, height: 860)
+            let snapshots = access.snapshotCount, writes = access.setCount, persisted = store.writes
+            let restored = await keeper.restore(after: presence, physicalTopologyUnchanged: topology)
+            XCTAssertFalse(restored); XCTAssertTrue(keeper.hasPendingRestore); XCTAssertNotNil(store.journal)
+            XCTAssertEqual(access.snapshotCount, snapshots); XCTAssertEqual(access.setCount, writes)
+            XCTAssertEqual(store.writes, persisted)
+        }
+    }
+
+    func testPresentOwnedDisplayTeardownReturnsEnrolledPhysicalDragToSavedOriginal() async throws {
+        let (keeper, access, store) = fixture()
+        try await keeper.moveFrontmostWindows(to: target)
+        access.windows[0].frame = CGRect(x: 200, y: 250, width: 400, height: 300)
+        let restored = await keeper.restore(after: .present, physicalTopologyUnchanged: true)
+        XCTAssertTrue(restored); XCTAssertEqual(access.windows[0].frame, original); XCTAssertNil(store.journal)
+    }
+
+    func testNeverCreatedAdmitsPreparedOriginalsButCannotConsumeAlreadyMigratedJournal() async throws {
+        let (prepared, preparedAccess, preparedStore) = fixture()
+        try await prepared.prepareFrontmostWindows()
+        preparedAccess.windows[0].frame = CGRect(x: 20, y: 40, width: 500, height: 600)
+        let restored = await prepared.restore(after: .neverCreated, physicalTopologyUnchanged: false)
+        XCTAssertTrue(restored); XCTAssertEqual(preparedAccess.windows[0].frame, original); XCTAssertNil(preparedStore.journal)
+        let (migrated, access, store) = fixture()
+        try await migrated.moveFrontmostWindows(to: target)
+        let snapshots = access.snapshotCount, writes = access.setCount
+        let rejected = await migrated.restore(after: .neverCreated, physicalTopologyUnchanged: true)
+        XCTAssertFalse(rejected); XCTAssertTrue(migrated.hasPendingRestore); XCTAssertNotNil(store.journal)
+        XCTAssertEqual(access.snapshotCount, snapshots); XCTAssertEqual(access.setCount, writes)
+    }
+
+    func testApplyFailureAndPostMoveSaveFailureRestoreOriginalAfterSuccessivePhysicalReflows() async {
+        for failsSave in [false, true] {
+            let (keeper, access, store) = fixture()
+            if failsSave { store.failWriteNumber = 2 }
+            access.beforeSet = {
+                if access.setCount == 0 {
+                    access.forcedNextAppliedFrame = CGRect(x: 270, y: 90, width: 580, height: 860)
+                    access.reflowAfterNextSnapshot = CGRect(x: 370, y: 190, width: 490, height: 690)
+                }
+            }
+            do { try await keeper.moveFrontmostWindows(to: target); XCTFail("outside-virtual settled frame must fail") } catch {}
+            XCTAssertEqual(access.windows[0].frame, original)
+            XCTAssertFalse(keeper.hasPendingRestore); XCTAssertNil(store.journal)
+        }
+    }
+
+    func testRollbackRefusalAfterArbitraryPhysicalReflowsRetainsOriginalForEvidenceRetry() async {
+        let (keeper, access, store) = fixture()
+        access.beforeSet = {
+            if access.setCount == 0 {
+                access.forcedNextAppliedFrame = CGRect(x: 270, y: 90, width: 580, height: 860)
+                access.reflowAfterNextSnapshot = CGRect(x: 370, y: 190, width: 490, height: 690)
+            } else { access.alwaysRefuse = true }
+        }
+        do { try await keeper.moveFrontmostWindows(to: target); XCTFail("outside-virtual settled frame must fail") } catch {}
+        XCTAssertTrue(keeper.hasPendingRestore); XCTAssertEqual(store.journal?.records.first?.original, original)
+        access.beforeSet = nil; access.alwaysRefuse = false
+        let restored = await keeper.restore(after: .confirmedRemoved, physicalTopologyUnchanged: true)
+        XCTAssertTrue(restored); XCTAssertEqual(access.windows[0].frame, original); XCTAssertNil(store.journal)
+    }
+
     func testIncompleteEnumerationAndStageManagerDoNotConsumeJournal() async throws {
         let (keeper, access, _) = fixture()
         try await keeper.moveFrontmostWindows(to: target)
@@ -339,6 +471,9 @@ private final class FakeVirtualWindowAccess: VirtualDisplayWindowAccess, @unchec
     var stageManager = false
     var closedIdentities: Set<VirtualDisplayWindowIdentity> = []
     var setCount = 0
+    var snapshotCount = 0
+    var forcedNextAppliedFrame: CGRect?
+    var reflowAfterNextSnapshot: CGRect?
     var refuseNext = false
     var refuseWindowIDOnce: UInt32?
     var alwaysRefuse = false
@@ -346,7 +481,12 @@ private final class FakeVirtualWindowAccess: VirtualDisplayWindowAccess, @unchec
     var forcedVirtualFrame: CGRect?
     var beforeSet: (() -> Void)?
     func snapshot(frontmostOnly: Bool, identities: [VirtualDisplayWindowIdentity], budget: HostAXBudget) -> VirtualDisplayWindowSnapshot {
-        .init(windows: windows, complete: complete, stageManagerEnabled: stageManager, closedIdentities: closedIdentities)
+        snapshotCount += 1
+        let result = VirtualDisplayWindowSnapshot(windows: windows, complete: complete, stageManagerEnabled: stageManager, closedIdentities: closedIdentities)
+        if let reflow = reflowAfterNextSnapshot, !windows.isEmpty {
+            windows[0].frame = reflow; reflowAfterNextSnapshot = nil
+        }
+        return result
     }
     func setFrame(_ frame: CGRect, identity: VirtualDisplayWindowIdentity, budget: HostAXBudget) -> Bool {
         beforeSet?()
@@ -362,6 +502,9 @@ private final class FakeVirtualWindowAccess: VirtualDisplayWindowAccess, @unchec
         windows[index].frame = frame
         if let forcedVirtualFrame, frame.minX >= forcedVirtualFrame.minX { windows[index].frame = forcedVirtualFrame }
         windows[index].frame.size.width = max(frame.width, minimumWidth)
+        if let forcedNextAppliedFrame {
+            windows[index].frame = forcedNextAppliedFrame; self.forcedNextAppliedFrame = nil
+        }
         return true
     }
 }

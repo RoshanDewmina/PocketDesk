@@ -68,3 +68,19 @@ struct VideoFrameEnvelope {
                       conversion: VideoColorConversion(matrix: matrix, fullRange: format == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange || format == kCVPixelFormatType_444YpCbCr8BiPlanarFullRange), bgra: false, transfer: transfer)
     }
 }
+
+/// Immutable payload from the exact original-source drawable's presented handler.
+struct VideoPresentedSource {
+    /// The originating renderer's terminal authority, retained across asynchronous owner delivery.
+    let lifetime: VideoPresentationLifetime
+    let envelope: VideoFrameEnvelope
+    let presentedAt: TimeInterval
+    let refinementPixels: CVPixelBuffer?
+    var rotationProof: RotationPresentedSource? {
+        guard envelope.originalSource, let tag = envelope.videoTag, (try? tag.validate()) != nil,
+              let geometry = envelope.geometry, presentedAt.isFinite, presentedAt > 0 else { return nil }
+        return RotationPresentedSource(identity: envelope.identity, tagGeometry: tag.geometryEpoch, tagScope: tag.scopeEpoch,
+            pixelWidth: Int(geometry.displaySize.width), pixelHeight: Int(geometry.displaySize.height),
+            presentedAt: presentedAt, originalSource: true)
+    }
+}

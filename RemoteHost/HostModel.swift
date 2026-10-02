@@ -201,6 +201,10 @@ final class RemoteHostModel: ObservableObject {
     private var virtualDisplayLastRestoreRetry: TimeInterval = 0
     private var virtualDisplayAcceptedRequest: VirtualDisplaySpecification?
     private var virtualDisplayNegotiationDeadline: Task<Void, Never>?
+    private var virtualDisplayResizeHoldSupported = false
+    private var virtualDisplayResizeBegin: VirtualDisplayResizeBegin?
+    private weak var virtualDisplayResizePeer: PeerMedia?
+    private var virtualDisplayResizeDeadline: TimeInterval = 0
     private var usesVirtualDisplay: Bool { virtualDisplaySource != nil }
     private var virtualDisplaySourceResumable: Bool {
         guard let source = virtualDisplaySource,
@@ -635,11 +639,14 @@ final class RemoteHostModel: ObservableObject {
             self?.virtualDisplayNegotiationDeadline?.cancel()
             self?.virtualDisplayNegotiationDeadline = nil
             self?.virtualDisplayBlocked = false
+            self?.virtualDisplayResizeHoldSupported = false
+            self?.cancelVirtualDisplayResizeHold()
             self?.bigTextEndedForLifecycle = false
             self?.deliberatePeerEnding = false
             self?.acceptedPhonePauseEpoch = nil
-            if let self, self.virtualDisplayWasUsed, !self.virtualDisplaySourceResumable,
-               self.virtualDisplayTask == nil { self.retireVirtualDisplay(resume: .picture) }
+            // Each authenticated peer must advertise its own current canvas. Restore the
+            // retained workspace before physical-first capability/viewport renegotiation.
+            if let self, self.virtualDisplayWasUsed { self.retireVirtualDisplay(resume: .picture) }
             self?.phoneConnected()
         }
         connection.onEnded = { [weak self] in
@@ -2345,9 +2352,11 @@ final class RemoteHostModel: ObservableObject {
                     beforeStart: { [weak self] geometry in
                         guard let self else { return false }
                         let preflight = [
-                            RemoteAction(action: "geometry", x: geometry.size.width, y: geometry.size.height, epoch: self.inputEpoch.value),
+                            RemoteAction(action: "geometry", x: geometry.size.width, y: geometry.size.height, epoch: self.inputEpoch.value,
+                                virtualDisplayResizeToken: self.currentVirtualDisplayResizeToken(peer: peer)),
                             RemoteAction(action: "viewing", x: self.sessionControlAllowed && self.controlPermission.isGranted ? 1 : 0, epoch: self.inputEpoch.value),
-                            RemoteAction(action: "capture", x: 0, epoch: self.inputEpoch.value, captureScope: self.captureScopeStatus)
+                            RemoteAction(action: "capture", x: 0, epoch: self.inputEpoch.value,
+                                virtualDisplayResizeToken: self.currentVirtualDisplayResizeToken(peer: peer), captureScope: self.captureScopeStatus)
                         ]
                         return CaptureStartPreflight.send(preflight,
                             whileCurrent: { [weak self] in self?.captureStartIsCurrent(attempt, peer: peer) == true },
@@ -2362,6 +2371,9 @@ final class RemoteHostModel: ObservableObject {
                         self.waitForVirtualDisplayViewport()
                     } else { self.bigText.sessionResumed() }
                 }
+                // A successful stream owns the actual successor epoch. The phone independently
+                // releases its frozen pixels only after that tagged source physically presents.
+                self.clearVirtualDisplayResizeHold()
                 self.excludeCoverFromCapture()
                 self.away.refresh()
                 self.beginLoadMonitor(peer: peer)
@@ -2373,6 +2385,10 @@ final class RemoteHostModel: ObservableObject {
                 self.events.record(.error, "Capture could not start (\(Self.captureErrorCode(error)))")
                 if CaptureStopReason.classify(error) == .needsApproval {
                     self.captureNeedsApproval()
+                    return
+                }
+                if self.virtualDisplayWasUsed && !self.virtualDisplayRetirementPending {
+                    self.virtualDisplayFallback()
                     return
                 }
                 self.stop()
@@ -2743,8 +2759,12 @@ final class RemoteHostModel: ObservableObject {
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, let pixels = action.screenPixels {
                 capture.setClientPixels(pixels)
             }
-            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value,
-               let viewport = action.virtualDisplayViewport { requestVirtualDisplay(viewport) }
+            if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, action.isRegularPhoneHeartbeat {
+                virtualDisplayResizeHoldSupported = action.virtualDisplayResizeHoldSupported == true
+                    && action.virtualDisplayViewport != nil && action.virtualDisplayViewportUnavailable != true
+                    && advertisedFeatures.contains(SessionFeature.virtualDisplay)
+                if let viewport = action.virtualDisplayViewport { requestVirtualDisplay(viewport) }
+            }
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value,
                action.virtualDisplayViewportUnavailable == true && virtualDisplayWasUsed { virtualDisplayFallback() }
             if connection.connected, sessionState == .picture, action.epoch == inputEpoch.value, !captureScopeViewOnly, !usesVirtualDisplay, StreamTuning.current.viewportCapture,
@@ -3243,6 +3263,23 @@ final class RemoteHostModel: ObservableObject {
             controlAllowed: sessionControlAllowed, accessibilityGranted: controlPermission.isGranted,
             captureApprovalPending: sessionState == .picture && captureApproval.isPending,
             phoneUnderstandsApproval: features.contains(MacShareBlocker.approvalFeature))
+        // A routine unhealthy tick is not a different capture route. During this bounded,
+        // explicitly authorized resize the tagged preflight carries retirement instead.
+        // Every blocker/state boundary cancels before the ordinary status is delivered.
+        if !healthy, let begin = virtualDisplayResizeBegin {
+            let now = ProcessInfo.processInfo.systemUptime
+            if virtualDisplayChanging, now < virtualDisplayResizeDeadline,
+               presence == nil, state == nil, viewOnlyRequestID == nil,
+               connection.media === virtualDisplayResizePeer, active, !terminating,
+               !screenLocked, !phonePause.isPaused, !liveViewOnly, !away.isLocking,
+               awayPictureClear, !captureApproval.isPending, sessionState == .picture,
+               captureScopeKind == .display, captureScopeEpoch == begin.scopeEpoch,
+               virtualDisplayEnabled, !virtualDisplayRetirementPending,
+               virtualDisplay.displayID == begin.display, virtualDisplay.physicalTopologyUnchanged {
+                return
+            }
+            cancelVirtualDisplayResizeHold()
+        }
       let capability = !liveViewOnly && !away.isLocking && !captureScopeViewOnly && sessionState.issuesTokens(healthy: healthy) ? inputFreshness.capability(
             epoch: inputEpoch.value,
             now: ProcessInfo.processInfo.systemUptime,
@@ -3303,6 +3340,10 @@ final class RemoteHostModel: ObservableObject {
             return
         }
         virtualDisplayNegotiationDeadline?.cancel(); virtualDisplayNegotiationDeadline = nil
+        if let begin = virtualDisplayResizeBegin,
+           begin.pixelWidth != spec.width || begin.pixelHeight != spec.height {
+            cancelVirtualDisplayResizeHold() // Cancel immediately, including while an await is in flight.
+        }
         virtualDisplayRequested = spec
         if virtualDisplayTask != nil { return } // One owner drains size changes; newest request wins.
         if usesVirtualDisplay && virtualDisplayAcceptedRequest == spec { return }
@@ -3323,9 +3364,18 @@ final class RemoteHostModel: ObservableObject {
                     !self.liveViewOnly && !self.captureScopeViewOnly
             }
             var failed = false
+            var resizeHoldAttempted = !self.usesVirtualDisplay
             do {
                 while current(), let wanted = self.virtualDisplayRequested {
                     let first = !self.usesVirtualDisplay
+                    if let begin = self.virtualDisplayResizeBegin,
+                       begin.pixelWidth != wanted.width || begin.pixelHeight != wanted.height {
+                        self.cancelVirtualDisplayResizeHold() // Coalescing cannot renew frozen authority.
+                    }
+                    if !first, !resizeHoldAttempted {
+                        resizeHoldAttempted = true
+                        self.beginVirtualDisplayResizeHold(wanted, peer: peer)
+                    }
                     self.input.enabled = false
                     self.releaseRemoteInput(notifyPhone: true)
                     self.captureHealthy = false
@@ -3346,6 +3396,9 @@ final class RemoteHostModel: ObservableObject {
                         display = try await self.virtualDisplay.prepare(wanted.at60Hz, whileCurrent: current)
                     }
                     guard current() else { break }
+                    if let begin = self.virtualDisplayResizeBegin, begin.display != display.displayID {
+                        self.cancelVirtualDisplayResizeHold()
+                    }
                     if first { try await self.virtualWindows.moveFrontmostWindows(to: display.frame) }
                     else { try await self.virtualWindows.resize(to: display.frame) }
                     guard current() else { break }
@@ -3375,10 +3428,66 @@ final class RemoteHostModel: ObservableObject {
         }
     }
 
+    private func beginVirtualDisplayResizeHold(_ wanted: VirtualDisplaySpecification, peer: PeerMedia) {
+        guard virtualDisplayResizeHoldSupported, virtualDisplayEnabled,
+              let source = virtualDisplaySource, virtualDisplay.isReady(for: source),
+              connection.media === peer, connection.connected, sessionState == .picture,
+              active, !terminating, !virtualDisplayRetirementPending,
+              !captureScopeViewOnly, !liveViewOnly, !screenLocked, !phonePause.isPaused,
+              !displayAsleep, !away.isLocking, awayPictureClear, !captureApproval.isPending,
+              screenRecordingPermission.isGranted, inputAccess.accessibility.isGranted,
+              let display = virtualDisplaySource?.displayID else { return }
+        let begin = VirtualDisplayResizeBegin(token: UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(),
+            display: display, fromEpoch: inputEpoch.value, scopeEpoch: captureScopeEpoch,
+            pixelWidth: wanted.width, pixelHeight: wanted.height)
+        guard (try? begin.validate()) != nil,
+              connection.sendControl(RemoteAction(action: "virtualDisplayResizeBegin", epoch: inputEpoch.value,
+                  virtualDisplayResizeBegin: begin)) else { return }
+        virtualDisplayResizeBegin = begin
+        virtualDisplayResizePeer = peer
+        virtualDisplayResizeDeadline = ProcessInfo.processInfo.systemUptime + 2
+    }
+
+    private func currentVirtualDisplayResizeToken(peer: PeerMedia) -> String? {
+        guard let begin = virtualDisplayResizeBegin else { return nil }
+        guard connection.media === peer, virtualDisplayResizePeer === peer,
+              ProcessInfo.processInfo.systemUptime < virtualDisplayResizeDeadline,
+              connection.connected, active, !terminating, sessionState == .picture,
+              !virtualDisplayRetirementPending, !virtualDisplayBlocked, virtualDisplayEnabled,
+              !screenLocked, !phonePause.isPaused, !liveViewOnly, !displayAsleep,
+              !away.isLocking, awayPictureClear, !captureApproval.isPending,
+              screenRecordingPermission.isGranted, inputAccess.accessibility.isGranted,
+              usesVirtualDisplay, virtualDisplaySource?.displayID == begin.display,
+              virtualDisplay.specification?.width == begin.pixelWidth,
+              virtualDisplay.specification?.height == begin.pixelHeight,
+              captureScopeKind == .display, captureScopeEpoch == begin.scopeEpoch,
+              inputEpoch.value > begin.fromEpoch else {
+            cancelVirtualDisplayResizeHold()
+            return nil
+        }
+        return begin.token
+    }
+
+    private func clearVirtualDisplayResizeHold() {
+        virtualDisplayResizeBegin = nil
+        virtualDisplayResizePeer = nil
+        virtualDisplayResizeDeadline = 0
+    }
+
+    private func cancelVirtualDisplayResizeHold() {
+        guard let begin = virtualDisplayResizeBegin else { return }
+        clearVirtualDisplayResizeHold()
+        if connection.connected {
+            _ = connection.sendControl(RemoteAction(action: "virtualDisplayResizeCancel", epoch: inputEpoch.value,
+                virtualDisplayResizeToken: begin.token))
+        }
+    }
+
     /// Capture/input retire synchronously. Window restoration must finish before display removal.
     private func retireVirtualDisplay(afterGrace: Bool = false, resume: SessionMode? = nil) {
         virtualDisplayNegotiationDeadline?.cancel(); virtualDisplayNegotiationDeadline = nil
         virtualDisplayGrace?.cancel(); virtualDisplayGrace = nil
+        cancelVirtualDisplayResizeHold()
         guard virtualDisplayWasUsed else { return }
         if afterGrace {
             virtualDisplayGrace = Task { [weak self] in
@@ -3411,7 +3520,13 @@ final class RemoteHostModel: ObservableObject {
             await previous?.value
             await stopped?.value
             guard let self else { return }
-            if await self.virtualWindows.restore() {
+            guard self.virtualDisplayGeneration == generation else { return }
+            // A false readiness probe is not proof of removal. Preserve originals until
+            // current ownership/absence and the protected physical topology are known.
+            let presence = await self.virtualDisplay.retirementPresence()
+            guard self.virtualDisplayGeneration == generation else { return }
+            if await self.virtualWindows.restore(after: presence,
+                physicalTopologyUnchanged: self.virtualDisplay.physicalTopologyUnchanged) {
                 do { try await self.virtualDisplay.stop() }
                 catch { self.events.record(.error, "Phone-sized display removal needs retry") }
             }

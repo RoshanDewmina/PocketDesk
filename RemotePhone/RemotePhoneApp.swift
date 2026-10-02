@@ -464,8 +464,11 @@ final class PhoneRemoteModel: ObservableObject {
     @Published var modifiers: Set<String> = []
     @Published var controlAllowed = false
     @Published var fresh = false
-    @Published var captureHealthy = false { willSet { if !newValue { invalidatePresentation() } } }
-    @Published var geometryEpoch: UInt64 = 0 { willSet { if newValue != geometryEpoch { retireContentPresentation() } } }
+    @Published var captureHealthy = false { willSet { if !newValue { invalidatePresentation(preserveRotationHold: rotationCaptureRetirement) } } }
+    private var rotationGeometryRetirement = false
+    private var rotationCaptureRetirement = false
+    let virtualDisplayRotationHold = VirtualDisplayRotationHold()
+    @Published var geometryEpoch: UInt64 = 0 { willSet { if newValue != geometryEpoch { retireContentPresentation(preserveRotationHold: rotationGeometryRetirement) } } }
     @Published var textStatus = ""
     @Published private(set) var voiceDeliveryStatus: VoiceDeliveryStatus = .idle
     @Published private(set) var voiceRetryTranscript = ""
@@ -602,15 +605,16 @@ final class PhoneRemoteModel: ObservableObject {
               host.invitation == invitation else { return }
         presentationHost = host
     }
-    private func retireContentPresentation() {
+    private func retireContentPresentation(preserveRotationHold: Bool = false) {
         diagnostics.cancel()
         pipTransitional = false
-        invalidatePresentation()
+        invalidatePresentation(preserveRotationHold: preserveRotationHold)
         presentationContentEpoch &+= 1
         setMacAudioMuted(true)
         finishPiPRestore(false)
     }
-    private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true) {
+    private func invalidatePresentation(keepingPiP: Bool = false, requestHostExit: Bool = true, preserveRotationHold: Bool = false) {
+        if !preserveRotationHold { virtualDisplayRotationHold.clear() }
         PhoneIdleTimer.shared.endSession()
         if pendingWake != nil { wakeStatus = "The helper session changed. No new wake result can be confirmed." }
         pendingWake = nil; wakeTimeout?.cancel(); wakeTimeout = nil
@@ -654,6 +658,22 @@ final class PhoneRemoteModel: ObservableObject {
                 contentEpoch: presentationContentEpoch, geometryEpoch: geometryEpoch)
         }
         let blocked = pendingLockMac != nil || host?.invitation != connection.invitation || hostPresence == .locked || hostPresence == .switchedUser
+        if virtualDisplayRotationHold.isHolding {
+            let old = virtualDisplayRotationHold.policy.oldIdentity
+            let sameWorkspace = identity.map { value in
+                value.hostRecordID == old?.hostRecordID && value.ownerPairID == old?.ownerPairID &&
+                    value.sessionID == old?.sessionID && value.trackID == old?.trackID
+            } ?? false
+            if !sameWorkspace || blocked || sessionBlocker != nil || !sceneIsActive || privacyShield || contentConcealed || sessionMode != .picture ||
+                !hostFeatures.contains(SessionFeature.virtualDisplay) || !virtualDisplayActive || captureScopeViewOnly ||
+                viewOnlyConfirmed || pendingViewOnlyStart || awaitingViewOnlyExit ||
+                currentDisplayID != virtualDisplayRotationHold.policy.begin?.display ||
+                sharedCaptureScope?.epoch != virtualDisplayRotationHold.policy.begin?.scopeEpoch ||
+                connection.presentationDeadline(at: now) == nil || !connection.connected {
+                virtualDisplayRotationHold.clear()
+            }
+            virtualDisplayRotationHold.expire(at: now)
+        }
         var proof = PresentationLeasePolicy.admission(identity: identity, routeDeadline: connection.presentationDeadline(at: now),
             captureHealthAt: lastCaptureHealth, healthy: captureHealthy, picture: sessionMode == .picture,
             trackPresent: connection.remoteVideo != nil, blocked: blocked, now: now)
@@ -713,6 +733,31 @@ final class PhoneRemoteModel: ObservableObject {
             lastUsefulPresentationUpdate = now; refreshUsefulSession(at: now)
         }
     }
+    func rotationSourcePresented(_ source: VideoPresentedSource) {
+        let now = ProcessInfo.processInfo.systemUptime
+        virtualDisplayRotationHold.expire(at: now)
+        guard hostFeatures.contains(SessionFeature.virtualDisplay), virtualDisplayActive,
+              sceneIsActive, !privacyShield, !contentConcealed, sessionMode == .picture,
+              !captureScopeViewOnly, !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit,
+              pendingLockMac == nil, sessionBlocker == nil, hostPresence != .locked, hostPresence != .switchedUser,
+              connection.connected, let admission = inlinePresentationAdmission,
+              let scope = sharedCaptureScope, scope.kind == .display, !scope.viewOnly,
+              let display = currentDisplayID, connection.presentationDeadline(at: now) != nil else { return }
+        virtualDisplayRotationHold.record(source, admission: admission, scope: scope.epoch, display: display, now: now)
+    }
+    private func beginRotationHold(_ request: VirtualDisplayResizeBegin) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard hostFeatures.contains(SessionFeature.virtualDisplay), virtualDisplayActive,
+              sceneIsActive, !privacyShield, !contentConcealed, sessionMode == .picture,
+              !captureScopeViewOnly, !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit,
+              pendingLockMac == nil, sessionBlocker == nil, hostPresence != .locked, hostPresence != .switchedUser,
+              connection.connected, fresh, captureHealthy, let admission = inlinePresentationAdmission,
+              let scope = sharedCaptureScope, scope.kind == .display, !scope.viewOnly,
+              let display = currentDisplayID, let route = connection.presentationDeadline(at: now) else { return }
+        if virtualDisplayRotationHold.begin(request, admission: admission, scope: scope.epoch, display: display, routeDeadline: route, now: now) {
+            cancelInput(); pointerOverlay.reset(sourceSize: sourceSize)
+        }
+    }
     private func usefulPictureDeadline(at now: TimeInterval) -> TimeInterval? {
         guard sessionMode == .picture, fresh, lastFrame > 0,
               inlinePresentationAdmission?.permits(at: now) == true,
@@ -762,6 +807,7 @@ final class PhoneRemoteModel: ObservableObject {
         usefulSession.applied(context: context, now: now)
     }
     func startPictureInPicture() {
+        virtualDisplayRotationHold.clear()
         guard sceneIsActive, !privacyShield, !contentConcealed, !awaitingViewOnlyExit, pipState == .ready,
               hostFeatures.contains(SessionFeature.liveViewOnly), pipAdmission?.permits(at: ProcessInfo.processInfo.systemUptime) == true else { return }
         livePiP.automaticStartAllowed = false; autoPiPStarted = false // The button owns this start.
@@ -913,6 +959,7 @@ final class PhoneRemoteModel: ObservableObject {
             guard let self else { completion(false); return }
             self.requestPiPRestore(completion)
         }
+        virtualDisplayRotationHold.onChange = { [weak self] in self?.objectWillChange.send() }
         connection.onPresentationInvalidated = { [weak self] in self?.retireContentPresentation() }
         if preferences.bool(forKey: Self.localOnlyKey) { connection.setLocalOnly(true) }
         connection.restore()
@@ -1016,6 +1063,7 @@ final class PhoneRemoteModel: ObservableObject {
     #endif
 
     var canControl: Bool {
+        guard !virtualDisplayRotationHold.isHolding else { return false }
         guard pendingLockMac == nil else { return false }
         guard !captureScopeViewOnly, bigText.pendingTarget == nil, !viewOnlyConfirmed, !pendingViewOnlyStart, !awaitingViewOnlyExit, !pipBackground else { return false }
         #if DEBUG
@@ -1159,7 +1207,7 @@ final class PhoneRemoteModel: ObservableObject {
     /// The Mac's displays, when it lists them (`SessionFeature.displaySelection`).
     @Published private(set) var displays: [DisplayDescriptor] = []
     /// The display the Mac is streaming now.
-    @Published private(set) var currentDisplayID: UInt32?
+    @Published private(set) var currentDisplayID: UInt32? { willSet { if newValue != currentDisplayID { virtualDisplayRotationHold.clear() } } }
     /// A switch the phone asked for and the Mac has not confirmed yet.
     @Published private(set) var pendingDisplayID: UInt32?
     private var displaysRequested = false
@@ -1280,6 +1328,9 @@ final class PhoneRemoteModel: ObservableObject {
 
     /// On the first list of a session, return to the display chosen last time for this Mac.
     private func applyRememberedDisplay() {
+        // A saved physical preference cannot retire an offered/owned phone workspace.
+        // Explicit display selection retains its established physical fallback behavior.
+        guard !hostFeatures.contains(SessionFeature.virtualDisplay), !virtualDisplayActive else { return }
         guard !rememberedDisplayApplied, let room = connection.invitation?.room, canControl else { return }
         rememberedDisplayApplied = true
         guard let wanted = DisplayMemory.match(displayMemory.choice(forRoom: room), in: displays),
@@ -1609,6 +1660,7 @@ final class PhoneRemoteModel: ObservableObject {
                             screenPixels: screenPixels(),
                             virtualDisplayViewport: hostFeatures.contains(SessionFeature.virtualDisplay) ? virtualDisplayViewport : nil,
                             virtualDisplayViewportUnavailable: hostFeatures.contains(SessionFeature.virtualDisplay) && virtualDisplayViewport == nil ? true : nil,
+                            virtualDisplayResizeHoldSupported: hostFeatures.contains(SessionFeature.virtualDisplay) && virtualDisplayViewport != nil ? true : nil,
                             viewport: viewport, phoneLoad: load)
     }
 
@@ -2348,6 +2400,7 @@ let now = ProcessInfo.processInfo.systemUptime
             resumeMacAudioIfAllowed()
             completePiPRestoreIfCurrent()
         case .inactive:
+            virtualDisplayRotationHold.clear()
             diagnostics.cancel()
             pipTransitional = mayKeepLivePiP || autoPiPMayStart
             if autoPiPMayStart { livePiP.prepareForLeaving() }
@@ -2367,6 +2420,7 @@ let now = ProcessInfo.processInfo.systemUptime
                 // Release input and shield the snapshot, but only .background starts a hold timer.
             }
         case .background:
+            virtualDisplayRotationHold.clear()
             sceneWasBackground = true
             sceneIsActive = false
             privacyShield = false
@@ -2654,7 +2708,7 @@ let now = ProcessInfo.processInfo.systemUptime
         case "wakeReply": receiveWakeReply(action)
         case "viewing":
             controlAllowed = !captureScopeViewOnly && action.x == 1
-            if !controlAllowed { pointerLocator.clear(); release() }
+            if !controlAllowed { virtualDisplayRotationHold.clear(); pointerLocator.clear(); release() }
         case "heartbeat":
             if let clock = action.clock {
                 diagnostics.receive(clock, session: connection.presentationSessionID, epoch: action.epoch,
@@ -2764,7 +2818,24 @@ let now = ProcessInfo.processInfo.systemUptime
                 tokenReceivedAt = ProcessInfo.processInfo.systemUptime
                 if let interval = interaction.doubleClickInterval { doubleClickInterval = interval }
             }
+            if virtualDisplayRotationHold.isHolding {
+                if action.x == 1 {
+                    let same = action.epoch == virtualDisplayRotationHold.policy.targetEpoch &&
+                        action.display == virtualDisplayRotationHold.policy.begin?.display &&
+                        action.virtualDisplayActive == true && action.features?.contains(SessionFeature.virtualDisplay) == true &&
+                        sessionBlocker == nil && hostPresence != .locked && hostPresence != .switchedUser && !captureScopeViewOnly &&
+                        sharedCaptureScope?.kind == .display && sharedCaptureScope?.epoch == virtualDisplayRotationHold.policy.begin?.scopeEpoch
+                    if !same { virtualDisplayRotationHold.clear() }
+                }
+                rotationCaptureRetirement = action.x == 0 && action.features == nil && sessionBlocker == nil &&
+                    hostPresence != .locked && hostPresence != .switchedUser && !captureScopeViewOnly &&
+                    !viewOnlyConfirmed && !pendingViewOnlyStart && !awaitingViewOnlyExit &&
+                    virtualDisplayRotationHold.policy.permitsPreflight(
+                    token: action.virtualDisplayResizeToken, epoch: action.epoch,
+                    scope: sharedCaptureScope?.epoch ?? 0, now: ProcessInfo.processInfo.systemUptime)
+            }
             captureHealthy = action.x == 1
+            rotationCaptureRetirement = false
             lastCaptureHealth = captureHealthy ? ProcessInfo.processInfo.systemUptime : 0
             if !captureHealthy { pointerLocator.clear(); release() }
             // A status without a feature list (the host's capture-start preflight) says nothing about the mode.
@@ -2807,6 +2878,10 @@ let now = ProcessInfo.processInfo.systemUptime
             ladder = action.ladder
             connection.media?.observeLadder(action.ladder)
             sendViewportChange(settled: false, at: ProcessInfo.processInfo.systemUptime)
+        case "virtualDisplayResizeBegin":
+            if let request = action.virtualDisplayResizeBegin, action.epoch == geometryEpoch { beginRotationHold(request) }
+        case "virtualDisplayResizeCancel":
+            virtualDisplayRotationHold.cancel(token: action.virtualDisplayResizeToken)
         case "geometry":
             lastHostStatusAt = ProcessInfo.processInfo.systemUptime
             guard action.epoch != geometryEpoch else { return }
@@ -2818,7 +2893,14 @@ let now = ProcessInfo.processInfo.systemUptime
             }
             pointerOverlay.reset(sourceSize: sourceSize)
             displayTickInput.cancel()
+            let preservesRotation = inlinePresentationAdmission.map { admission in
+                virtualDisplayRotationHold.bind(token: action.virtualDisplayResizeToken, epoch: action.epoch,
+                    scope: sharedCaptureScope?.epoch ?? 0, display: currentDisplayID ?? 0, current: admission.identity)
+            } ?? false
+            if !preservesRotation { virtualDisplayRotationHold.clear() }
+            rotationGeometryRetirement = preservesRotation
             geometryEpoch = action.epoch
+            rotationGeometryRetirement = false
             couchAck.reset()
             couchStalled = false
             captureRegion = nil
@@ -2826,7 +2908,9 @@ let now = ProcessInfo.processInfo.systemUptime
             ladder = nil
             connection.media?.observeLadder(nil)
             fresh = false
+            rotationCaptureRetirement = preservesRotation
             captureHealthy = false
+            rotationCaptureRetirement = false
             lastFrame = 0
             lastCaptureHealth = 0
         case "inputApplied":
@@ -3316,6 +3400,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
     /// Raw decoded source callback; must be thread-safe (LivePiPController.offer is thread-safe).
     var onSourceFrame: ((VideoFrameEnvelope) -> Void)?
     var onOriginalSourcePresented: ((VideoPresentationIdentity, UUID) -> Void)?
+    var onSourcePresented: ((VideoPresentedSource) -> Void)?
     var videoFeedback: VideoFeedbackContext?
     var frameTiming: PhoneFrameTimingLog?
     var sourceCrop: CGRect?
@@ -3350,6 +3435,7 @@ struct RemoteVideoSurface: UIViewRepresentable {
                 view.topAnchor.constraint(equalTo: container.topAnchor), view.bottomAnchor.constraint(equalTo: container.bottomAnchor)])
         }
         context.coordinator.session?.onOriginalSourcePresented = onOriginalSourcePresented
+        context.coordinator.session?.onSourcePresented = onSourcePresented
         context.coordinator.session?.configure(admission: admission, counters: counters, statistics: statistics,
             sourceSize: sourceSize, displayedPixelWidth: displayedPixelWidth, fillsFrame: fillsFrame,
             mode: smoothMotion, upscale: smoothMotionUpscale, onSourceFrame: onSourceFrame, videoFeedback: videoFeedback, sourceCrop: sourceCrop, frameTiming: frameTiming)

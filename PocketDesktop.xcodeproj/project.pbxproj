@@ -1239,6 +1239,14 @@
 		FF61DDB698B640415763DE77 /* MacVitalsNotices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8F3994558043A0D771F0487E /* MacVitalsNotices.swift */; };
 		FF843112E960BF2C145F2DDF /* BenchMarker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D03425079F7912BA639EC982 /* BenchMarker.swift */; };
 		FFF0101A026733453DEA6C34 /* HEVC444Policy.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA7C297B15EC54A11AEB045F /* HEVC444Policy.swift */; };
+		BEC6D6E27E5E207A4329E1B4 /* VirtualDisplayRotationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BDB06D6429E4FFB15728971 /* VirtualDisplayRotationPolicy.swift */; };
+		3883516436C4A667ED036BF5 /* VirtualDisplayRotationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BDB06D6429E4FFB15728971 /* VirtualDisplayRotationPolicy.swift */; };
+		CBE5543989D2173BAC1E292B /* VirtualDisplayRotationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BDB06D6429E4FFB15728971 /* VirtualDisplayRotationPolicy.swift */; };
+		5A2E70F258C63AC56B88B7CC /* VirtualDisplayRotationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BDB06D6429E4FFB15728971 /* VirtualDisplayRotationPolicy.swift */; };
+		5D2902B5E17A6369FE1F859B /* VirtualDisplayRotationPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5BDB06D6429E4FFB15728971 /* VirtualDisplayRotationPolicy.swift */; };
+		20CF042FEFE332E73562860C /* VirtualDisplayRotationHold.swift in Sources */ = {isa = PBXBuildFile; fileRef = EABB353EC85830EB3349E3AE /* VirtualDisplayRotationHold.swift */; };
+		4F060BCBC61DEC3F1674E68F /* VirtualDisplayRotationPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCB191DCDE8A7CE411E9D239 /* VirtualDisplayRotationPolicyTests.swift */; };
+		34B37580C42EB211542EC350 /* VirtualDisplayRotationHoldTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A399D687CC076D14D910B7BA /* VirtualDisplayRotationHoldTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -1973,6 +1981,10 @@
 		FF3A651C995C7EB2A15EDA11 /* AgentAlertGate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentAlertGate.swift; sourceTree = "<group>"; };
 		FF529B59A989F9DD102F040B /* BigTextModes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BigTextModes.swift; sourceTree = "<group>"; };
 		FFE4ADC42F9E53923E64E0B6 /* VideoToolboxProbeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoToolboxProbeTests.swift; sourceTree = "<group>"; };
+		5BDB06D6429E4FFB15728971 /* VirtualDisplayRotationPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualDisplayRotationPolicy.swift; sourceTree = "<group>"; };
+		EABB353EC85830EB3349E3AE /* VirtualDisplayRotationHold.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualDisplayRotationHold.swift; sourceTree = "<group>"; };
+		FCB191DCDE8A7CE411E9D239 /* VirtualDisplayRotationPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualDisplayRotationPolicyTests.swift; sourceTree = "<group>"; };
+		A399D687CC076D14D910B7BA /* VirtualDisplayRotationHoldTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VirtualDisplayRotationHoldTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -2118,6 +2130,7 @@
 				51F3446A6B5D8BC362AEEB81 /* SessionDiagnostics.swift */,
 				3FFA4B68F5D8B2568395C232 /* SessionRenewal.swift */,
 				FE5998CB25D3D1B07AA95891 /* SessionVirtualDisplayPolicy.swift */,
+				5BDB06D6429E4FFB15728971 /* VirtualDisplayRotationPolicy.swift */,
 				FBF68CF461262875104D5944 /* SharedCaptureScope.swift */,
 				412B04FA6976C7A9157CAECE /* SignalingClient.swift */,
 				63BD565389B3DA4F2A9D2122 /* SignalingKeepalive.swift */,
@@ -2524,6 +2537,7 @@
 				99BE207FB127F805AC3EC932 /* ViewportTransformTests.swift */,
 				A03CA473886E64B3A1682CCA /* VirtualDisplayPrototypePolicyTests.swift */,
 				8D5DCBF7B701796F2FCA0343 /* VirtualDisplayWindowTests.swift */,
+				FCB191DCDE8A7CE411E9D239 /* VirtualDisplayRotationPolicyTests.swift */,
 				A9A7ABD6CBA79EEDC321211A /* WatchdogE2ETests.swift */,
 				FDE103764B22966479AEA9A4 /* WatchdogTests.swift */,
 			);
@@ -2543,6 +2557,7 @@
 			children = (
 				28D92B6AD7D41A4908CB80B9 /* OwnedMetalVideoView.swift */,
 				8ACE562249808722A5D37ACC /* VideoFrameEnvelope.swift */,
+				EABB353EC85830EB3349E3AE /* VirtualDisplayRotationHold.swift */,
 				1CAB0AA6E53D8944C5B17B28 /* VideoPixelGeometry.swift */,
 				53F26F1ADF91A721763FC5D6 /* VideoPresentationAdmission.swift */,
 				41D87AB64659D121B6EAE885 /* VideoPresentationSession.swift */,
@@ -2699,6 +2714,7 @@
 				D24D8450DD763CD08A744B6C /* AnywhereEntitlementTests.swift */,
 				2E57A75F4FB698B857CC6F42 /* AnywhereStoreKitTests.swift */,
 				0A8565BB0C76E555D3CA43B9 /* BigTextPhoneTests.swift */,
+				A399D687CC076D14D910B7BA /* VirtualDisplayRotationHoldTests.swift */,
 				2CE11B4EDD008996DCD0E95A /* CommerceLocalizationTests.swift */,
 				35CC0B33A0853F5CB3C47A3D /* CommittedTextTests.swift */,
 				4AE353537C61E11F8DAF7D97 /* ConnectionHealthTests.swift */,
@@ -3581,6 +3597,7 @@
 				D83DBB47009397D4E118F4D2 /* SessionDiagnostics.swift in Sources */,
 				181C7D3EEF630B117EDF41E6 /* SessionRenewal.swift in Sources */,
 				12AE2571115BDD8A3258CC02 /* SessionVirtualDisplayPolicy.swift in Sources */,
+				3883516436C4A667ED036BF5 /* VirtualDisplayRotationPolicy.swift in Sources */,
 				934CC775C6BFD7B1D7BED288 /* SharedCaptureScope.swift in Sources */,
 				B8B6AF345E0BB96720DEF475 /* SignalingClient.swift in Sources */,
 				B38CCCFFF27B2903E9C6F58B /* SignalingKeepalive.swift in Sources */,
@@ -3774,6 +3791,7 @@
 				9303A2C8BF7F71039822F945 /* SessionDiagnostics.swift in Sources */,
 				B4B92C3287E3EFE97DC5C5B2 /* SessionRenewal.swift in Sources */,
 				6248CE77C59904429B239D23 /* SessionVirtualDisplayPolicy.swift in Sources */,
+				5A2E70F258C63AC56B88B7CC /* VirtualDisplayRotationPolicy.swift in Sources */,
 				2E5E2E3280A01D660D336760 /* SharedCaptureScope.swift in Sources */,
 				B895D3DFB0EF0C38E1AC8AA6 /* SignalingClient.swift in Sources */,
 				D588E93F3EFCBD8F9EA0744A /* SignalingKeepalive.swift in Sources */,
@@ -3990,6 +4008,7 @@
 				905C26C7806623C8CB67ACD1 /* SessionVirtualDisplayHarness.swift in Sources */,
 				0F76BDCA4DFEE9796EF45407 /* SessionVirtualDisplayHarnessWindowGuard.swift in Sources */,
 				E49CBC0F85A6C4A41332A726 /* SessionVirtualDisplayPolicy.swift in Sources */,
+				5D2902B5E17A6369FE1F859B /* VirtualDisplayRotationPolicy.swift in Sources */,
 				5FC26BB5750C9EA49F819B70 /* SharedCaptureScope.swift in Sources */,
 				ABDB435608503C3232F5CAAC /* SignalingClient.swift in Sources */,
 				45BE9A04BB4B24534C2F76CD /* SignalingKeepalive.swift in Sources */,
@@ -4036,6 +4055,7 @@
 				439323D9CDA3B605B7B1B9CF /* AnywhereEntitlementTests.swift in Sources */,
 				274119C8D79C44696F016432 /* AnywhereStoreKitTests.swift in Sources */,
 				32469336DE90779EFE154FA6 /* BigTextPhoneTests.swift in Sources */,
+				34B37580C42EB211542EC350 /* VirtualDisplayRotationHoldTests.swift in Sources */,
 				F5ADC2613AFC8F2B5C13D574 /* CommerceLocalizationTests.swift in Sources */,
 				1445B77C93CE0CCDE6367589 /* CommittedTextTests.swift in Sources */,
 				8EC4BE8D86032EC4564135F2 /* ConnectionHealthTests.swift in Sources */,
@@ -4377,6 +4397,7 @@
 				F8B97EB595D1D9513BC14877 /* SessionRenewalTests.swift in Sources */,
 				87F82DF3A04EC3F5A66A38D3 /* SessionVirtualDisplay.swift in Sources */,
 				1123BE1FA0548DC8B6DD6F15 /* SessionVirtualDisplayPolicy.swift in Sources */,
+				BEC6D6E27E5E207A4329E1B4 /* VirtualDisplayRotationPolicy.swift in Sources */,
 				1CCA22B5AF2B7B9B57B9D316 /* SessionVirtualDisplayPolicyTests.swift in Sources */,
 				B79E952AFB88CF14B74B47DE /* SharedCaptureScope.swift in Sources */,
 				6353DF12295E09B1BA7D1AE4 /* SharedCaptureScopeTests.swift in Sources */,
@@ -4430,6 +4451,7 @@
 				E79C557B3C227E607BDFC92E /* VirtualDisplayPrototypePolicyTests.swift in Sources */,
 				6C1842E7C27876991954E94A /* VirtualDisplayWindowPolicy.swift in Sources */,
 				1477933164E1684F38BB1B4B /* VirtualDisplayWindowTests.swift in Sources */,
+				4F060BCBC61DEC3F1674E68F /* VirtualDisplayRotationPolicyTests.swift in Sources */,
 				D8DC0AFEFCF68CCB4C18CD81 /* VirtualDisplayWindows.swift in Sources */,
 				63EEB7F081B63168813C8CA6 /* WakeRequest.swift in Sources */,
 				3AE8F27B46F5AD62B327C393 /* WatchdogE2E.swift in Sources */,
@@ -4632,6 +4654,7 @@
 				7DD75199CB2D486581E88A39 /* SessionRenewal.swift in Sources */,
 				AB17FF01D4F307889A660181 /* SessionResumeCapsule.swift in Sources */,
 				5D93F157DB1A7567614EBD81 /* SessionVirtualDisplayPolicy.swift in Sources */,
+				CBE5543989D2173BAC1E292B /* VirtualDisplayRotationPolicy.swift in Sources */,
 				DB5BD4F90C2B7941C629EB9B /* SharedCaptureScope.swift in Sources */,
 				0440A8D3B2DF1D0165E67650 /* SignalingClient.swift in Sources */,
 				A57A1DD289CFB4652C7CCDD2 /* SignalingKeepalive.swift in Sources */,
@@ -4663,6 +4686,7 @@
 				EB2B9913B99690BD35FA00F4 /* VideoFeedback.swift in Sources */,
 				FE41A8E109079FF1D2D40E19 /* VideoFrameCrop.swift in Sources */,
 				DA3A770F6276131EB9F9E106 /* VideoFrameEnvelope.swift in Sources */,
+				20CF042FEFE332E73562860C /* VirtualDisplayRotationHold.swift in Sources */,
 				10C7EE0DF73424B296390E2A /* VideoPixelGeometry.swift in Sources */,
 				D45A3C739C981FAB52557AC9 /* VideoPresentationAdmission.swift in Sources */,
 				1807760027D676543608E3B6 /* VideoPresentationProbe.swift in Sources */,

@@ -182,3 +182,78 @@ struct VideoColorConversion: Equatable, Sendable {
                 l + 2 * (1 - kb) * u)
     }
 }
+
+/// Evidence supplied only by the original source's actual drawable-presented callback.
+struct RotationPresentedSource: Equatable {
+    let identity: VideoPresentationIdentity
+    let tagGeometry: UInt64
+    let tagScope: UInt64
+    let pixelWidth: Int
+    let pixelHeight: Int
+    let presentedAt: TimeInterval
+    let originalSource: Bool
+}
+
+/// A frozen picture has separate terminal authority; this never renews an old live admission.
+struct VirtualDisplayRotationPolicy {
+    private(set) var begin: VirtualDisplayResizeBegin?
+    private(set) var oldIdentity: VideoPresentationIdentity?
+    private(set) var targetEpoch: UInt64?
+    private(set) var deadline: TimeInterval?
+    private var beganAt: TimeInterval?
+    private var retiredTokens: [String] = []
+    var isHolding: Bool { begin != nil }
+    mutating func start(_ request: VirtualDisplayResizeBegin, frame: RotationPresentedSource,
+                        current: VideoPresentationIdentity, scope: UInt64, display: UInt32,
+                        routeDeadline: TimeInterval, now: TimeInterval) -> Bool {
+        guard !isHolding, !retiredTokens.contains(request.token), (try? request.validate()) != nil,
+              current == frame.identity, current.geometryEpoch == request.fromEpoch,
+              scope == request.scopeEpoch, display == request.display,
+              frame.originalSource, frame.tagGeometry == request.fromEpoch, frame.tagScope == scope,
+              now.isFinite, routeDeadline.isFinite, routeDeadline > now,
+              frame.presentedAt.isFinite, frame.presentedAt > 0, frame.presentedAt <= now,
+              now - frame.presentedAt < 2 else { return false }
+        begin = request; oldIdentity = current; targetEpoch = nil; beganAt = now
+        deadline = min(routeDeadline, now + 2)
+        return true
+    }
+    mutating func bind(token: String?, epoch: UInt64, scope: UInt64, display: UInt32,
+                       current: VideoPresentationIdentity, now: TimeInterval) -> Bool {
+        guard active(at: now), let begin, let oldIdentity, token == begin.token,
+              epoch > begin.fromEpoch, scope == begin.scopeEpoch, display == begin.display,
+              current == oldIdentity, targetEpoch == nil else { clear(); return false }
+        targetEpoch = epoch
+        return true
+    }
+    func permitsPreflight(token: String?, epoch: UInt64, scope: UInt64, now: TimeInterval) -> Bool {
+        active(at: now) && token == begin?.token && epoch == targetEpoch && scope == begin?.scopeEpoch
+    }
+    mutating func presented(_ frame: RotationPresentedSource, current: VideoPresentationIdentity,
+                            scope: UInt64, display: UInt32, now: TimeInterval) -> Bool {
+        guard active(at: now), let begin, let oldIdentity, let targetEpoch, let beganAt,
+              frame.originalSource, frame.identity == current,
+              current.hostRecordID == oldIdentity.hostRecordID, current.ownerPairID == oldIdentity.ownerPairID,
+              current.sessionID == oldIdentity.sessionID, current.trackID == oldIdentity.trackID,
+              current.contentEpoch == oldIdentity.contentEpoch &+ 1, current.geometryEpoch == targetEpoch,
+              frame.tagGeometry == targetEpoch, frame.tagScope == begin.scopeEpoch,
+              scope == begin.scopeEpoch, display == begin.display,
+              frame.pixelWidth == begin.pixelWidth, frame.pixelHeight == begin.pixelHeight,
+              frame.presentedAt.isFinite, frame.presentedAt >= beganAt, frame.presentedAt <= now else { return false }
+        clear(); return true
+    }
+    func active(at now: TimeInterval) -> Bool {
+        guard isHolding, let deadline else { return false }
+        return now.isFinite && now < deadline
+    }
+    mutating func expire(at now: TimeInterval) -> Bool {
+        guard isHolding, !active(at: now) else { return false }
+        clear(); return true
+    }
+    mutating func clear() {
+        if let token = begin?.token {
+            retiredTokens.append(token)
+            if retiredTokens.count > 32 { retiredTokens.removeFirst(retiredTokens.count - 32) }
+        }
+        begin = nil; oldIdentity = nil; targetEpoch = nil; deadline = nil; beganAt = nil
+    }
+}

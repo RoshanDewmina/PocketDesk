@@ -56,6 +56,9 @@ struct RemoteAction: Codable {
     var virtualDisplayViewportUnavailable: Bool? = nil
     /// Host-applied display route, only on negotiated capture status.
     var virtualDisplayActive: Bool? = nil
+    var virtualDisplayResizeHoldSupported: Bool? = nil
+    var virtualDisplayResizeBegin: VirtualDisplayResizeBegin? = nil
+    var virtualDisplayResizeToken: String? = nil
     /// G4: the desktop region the phone shows, on heartbeats (only after `SessionFeature.viewportCapture`).
     var viewport: ViewportRegion? = nil
     /// G12: bounded receiver load from a phone that knows the host supports the ladder.
@@ -86,6 +89,7 @@ struct RemoteAction: Codable {
     var inputAppliedReceipt: InputAppliedReceipt? = nil
 
     func validate() throws {
+        try validateVirtualDisplayResize()
         try virtualDisplayViewport?.validate()
         guard virtualDisplayViewport == nil || action == "heartbeat",
               virtualDisplayViewportUnavailable == nil || action == "heartbeat",
@@ -166,7 +170,7 @@ try pencil?.validate(action: action, interaction: interaction)
         }
         guard pointerLocation == nil || (action == "heartbeat" && pointerProbe != nil),
               pointerLocatorSupported == nil || action == "capture" else { throw RemoteError.invalidMessage }
-        guard ["move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "scroll", "text", "key", "release", "heartbeat", "viewing", "geometry", "capture", "textResult", "holdRenew", "auxClick", "inputApplied"].contains(action),
+        guard ["move", "moveTo", "click", "right", "middle", "double", "dragDown", "dragUp", "scroll", "text", "key", "release", "heartbeat", "viewing", "geometry", "capture", "textResult", "holdRenew", "auxClick", "inputApplied", "virtualDisplayResizeBegin", "virtualDisplayResizeCancel"].contains(action),
               x.isFinite, y.isFinite, abs(x) <= 20000, abs(y) <= 20000,
               text.utf8.count <= 4096, text.utf16.count <= 1024, key.utf8.count <= 32, modifiers.count <= 4,
               modifiers.allSatisfy({ ["command", "shift", "option", "control"].contains($0) }) else { throw RemoteError.invalidMessage }
@@ -176,6 +180,34 @@ try pencil?.validate(action: action, interaction: interaction)
         guard action != "middle" || interaction == nil || interaction?.clickCount == 1 else { throw RemoteError.invalidMessage }
         guard action != "auxClick" || (AuxiliaryMouseButton(rawValue: key) != nil &&
             (interaction == nil || interaction?.clickCount == 1)) else { throw RemoteError.invalidMessage }
+    }
+}
+
+extension RemoteAction {
+    private func validateVirtualDisplayResize() throws {
+        guard virtualDisplayResizeHoldSupported == nil || action == "heartbeat",
+              virtualDisplayResizeHoldSupported != true || (virtualDisplayViewport != nil && virtualDisplayViewportUnavailable != true),
+              virtualDisplayResizeBegin == nil || action == "virtualDisplayResizeBegin" else { throw RemoteError.invalidMessage }
+        if let token = virtualDisplayResizeToken {
+            guard InputCausalEnvelope.validID(token), ["geometry", "capture", "virtualDisplayResizeCancel"].contains(action) else { throw RemoteError.invalidMessage }
+            if action == "capture" {
+                guard x == 0, features == nil, captureScope?.kind == .display, captureScope?.viewOnly == false else { throw RemoteError.invalidMessage }
+            }
+        }
+        if action == "virtualDisplayResizeBegin" {
+            guard let frame = virtualDisplayResizeBegin, epoch == frame.fromEpoch, virtualDisplayResizeToken == nil else { throw RemoteError.invalidMessage }
+            try frame.validate()
+        }
+        if action == "virtualDisplayResizeCancel" {
+            guard virtualDisplayResizeToken != nil, virtualDisplayResizeBegin == nil, epoch > 0 else { throw RemoteError.invalidMessage }
+        }
+        if ["virtualDisplayResizeBegin", "virtualDisplayResizeCancel"].contains(action) {
+            // Typed control-only messages may not smuggle another extension through an early validator return.
+            guard x == 0, y == 0, text.isEmpty, key.isEmpty, modifiers.isEmpty else { throw RemoteError.invalidMessage }
+            let keys = Set((try JSONSerialization.jsonObject(with: JSONEncoder().encode(self)) as? [String: Any])?.keys.map { $0 } ?? [])
+            let allowed: Set<String> = ["action", "x", "y", "text", "key", "modifiers", "epoch", "virtualDisplayResizeBegin", "virtualDisplayResizeToken"]
+            guard keys.isSubset(of: allowed) else { throw RemoteError.invalidMessage }
+        }
     }
 }
 

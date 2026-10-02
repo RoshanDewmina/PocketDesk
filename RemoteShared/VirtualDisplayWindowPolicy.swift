@@ -1,5 +1,38 @@
 import Foundation
 
+/// Negative readiness is not proof that an owned display disappeared.
+enum SessionVirtualDisplayPresence: Equatable, Sendable {
+    case present, confirmedRemoved, unknown, neverCreated
+}
+
+/// Pure classification of bounded public-inventory evidence; no foreign display is adopted.
+enum SessionVirtualDisplayPresencePolicy {
+    static func classify(constructed: Bool, knownIdentity: Bool, online: Bool?, identityMatches: Bool,
+                         isMain: Bool, isMirrored: Bool, absenceConfirmed: Bool,
+                         operationCurrent: Bool) -> SessionVirtualDisplayPresence {
+        guard operationCurrent else { return .unknown }
+        guard constructed else { return .neverCreated }
+        guard knownIdentity, let online else { return .unknown }
+        if online { return identityMatches && !isMain && !isMirrored ? .present : .unknown }
+        return absenceConfirmed ? .confirmedRemoved : .unknown
+    }
+}
+
+enum VirtualDisplayRestorationAction: Equatable, Sendable { case restoreOriginals, retainJournal }
+enum VirtualDisplayRestorationPolicy {
+    static func action(presence: SessionVirtualDisplayPresence, physicalTopologyUnchanged: Bool,
+                       journalIsPrepared: Bool) -> VirtualDisplayRestorationAction {
+        switch presence {
+        case .present, .confirmedRemoved:
+            return physicalTopologyUnchanged ? .restoreOriginals : .retainJournal
+        case .neverCreated:
+            return journalIsPrepared ? .restoreOriginals : .retainJournal
+        case .unknown:
+            return .retainJournal
+        }
+    }
+}
+
 /// Public CG window ID is scoped to the process launch, never just its reusable PID.
 struct VirtualDisplayWindowIdentity: Codable, Hashable, Sendable {
     var pid: Int32

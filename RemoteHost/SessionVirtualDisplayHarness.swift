@@ -9,6 +9,7 @@ import Foundation
 import ImageIO
 import ScreenCaptureKit
 import UniformTypeIdentifiers
+import WebRTC
 
 /// Isolated synthetic-content measurement entry point. Parent owns bootstrap/argument dispatch.
 /// This type does not initialize HostModel or access any user's app window.
@@ -55,6 +56,7 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
     private var signalSources: [DispatchSourceSignal] = []
     private let lastOutputTime = HarnessLockedValue<Double?>(nil)
     private var stopping = false
+    private var localHEVCEnabled = false
     private var adapterStopped = false
     private var adapterStopInFlight = false
     private var adapterStopWaiters: [CheckedContinuation<Void, Never>] = []
@@ -67,6 +69,7 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
     private var activeStreamStopWaiters: [CheckedContinuation<Void, Never>] = []
     private var activeStreamStopError: String?
     private var captureStopError: String?
+    private var activeCodecLoop: SessionVirtualDisplayHEVCLoop?
     private var report: [String: Any] = ["schema": 1, "harness": "synthetic-session-virtual-display"]
     private(set) var exitCode: Int32 = 0
 
@@ -88,15 +91,24 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
 
     private func measure() async {
         let started = Date()
+        let localHEVCEnabled = ProcessInfo.processInfo.environment["FARSIDE_VDISPLAY_LOCAL_HEVC"] == "1"
+        self.localHEVCEnabled = localHEVCEnabled
         report["startedAt"] = ISO8601DateFormatter().string(from: started)
-        report["requestedSeparately"] = ["captureDelivery": "ScreenCaptureKit output only", "encode": "not measured",
+        report["requestedSeparately"] = ["captureDelivery": "ScreenCaptureKit output only; local codec loop is reported separately",
+                                         "localEncode": localHEVCEnabled ? "production HEVC encoder callback" : "not requested; null",
+                                         "localDecode": localHEVCEnabled ? "production HEVC decoder callback" : "not requested; null",
                                          "networkDelivery": "not measured", "phonePresentation": "not measured"]
+        report["localHEVCMode"] = ["environmentVariable": "FARSIDE_VDISPLAY_LOCAL_HEVC",
+                                    "requested": localHEVCEnabled, "enabled": localHEVCEnabled,
+                                    "workload": localHEVCEnabled ? "combined capture plus strict local HEVC encode/decode" : "capture-only baseline",
+                                    "defaultMetrics": localHEVCEnabled ? "codec stages measured independently" : "codec stages unmeasured and null"]
         do {
             let tuning = StreamTuning.current
             report["streamTuning"] = tuning.liveSummary
-            report["representativeCaptureProfile"] = ["quality": StreamQuality.sharp.rawValue,
-                "codecBudget": "representative H.264 level 5.2", "level": 52, "targetFPS": 60,
-                "actuallyNegotiated": false, "encodedOrDelivered": false]
+            report["captureSizingProfile"] = ["quality": StreamQuality.sharp.rawValue,
+                "pixelSizingBudget": "representative H.264 level 5.2", "level": 52, "sizingFPS": 60,
+                "actuallyNegotiated": false, "encodedOrDelivered": false,
+                "localCodecMeasurement": localHEVCEnabled ? "optional combined HEVC Main level 153 encode/decode loop" : "optional loop disabled; unmeasured"]
             let phonePortrait = VirtualDisplayViewport(width: 402, height: 874, scale: 3, maximumFPS: 120)
             let phoneLandscape = VirtualDisplayViewport(width: 874, height: 402, scale: 3, maximumFPS: 120)
             let ipadPortrait = VirtualDisplayViewport(width: 820, height: 1180, scale: 2, maximumFPS: 60)
@@ -406,13 +418,74 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
                          fps: Int) async throws -> [String: Any] {
         let spec = VirtualDisplaySpecification(viewport: viewport)!
         let configuration = try virtualConfiguration(viewport, fps: fps, tuning: StreamTuning.current)
-        var result = try await capture(label: label,
-            filter: SCContentFilter(display: display, excludingWindows: []), displayID: display.displayID,
-            fps: fps, seconds: 5, stillName: nil, configuration: configuration,
-            width: spec.width, height: spec.height,
-            barcodeScaleX: Double(spec.width) / Double(spec.logicalWidth),
-            barcodeScaleY: Double(spec.height) / Double(spec.logicalHeight),
-            barcodeOriginX: Double(spec.logicalWidth) / 2 - 18, barcodeOriginY: 5)
+        let codec: SessionVirtualDisplayHEVCLoop?
+        if localHEVCEnabled {
+            var codecRequests = report["localHEVCRequests"] as? [String: Any] ?? [:]
+            codecRequests[label] = ["codec": "HEVC Main, tier 1, level 153", "pixels": [spec.width, spec.height],
+                "fps": fps, "bitrateKbps": 12_000, "hardwareEncoderRequired": true,
+                "hardwareDecoderRequired": true, "peerNegotiated": false, "softwareOrCodecFallback": false,
+                "maximumFramesInFlight": 4, "combinedMacCaptureEncodeDecodeWorkload": true]
+            report["localHEVCRequests"] = codecRequests
+            let requested = try SessionVirtualDisplayHEVCLoop(width: spec.width, height: spec.height, fps: fps,
+                barcodeScaleX: Double(spec.width) / Double(spec.logicalWidth),
+                barcodeScaleY: Double(spec.height) / Double(spec.logicalHeight),
+                barcodeOriginX: Double(spec.logicalWidth) / 2 - 18, barcodeOriginY: 5)
+            do { try requested.start() }
+            catch {
+                var failures = report["localHEVCStartupErrors"] as? [String: String] ?? [:]
+                failures[label] = String(describing: error)
+                report["localHEVCStartupErrors"] = failures
+                var measurements = report["localHEVCMeasurements"] as? [String: Any] ?? [:]
+                measurements[label] = ["status": "startup-failed", "passed": false,
+                    "errors": [String(describing: error)], "networkDeliveredFPS": NSNull(), "phonePresentedFPS": NSNull()]
+                report["localHEVCMeasurements"] = measurements
+                throw error
+            }
+            codec = requested
+        } else {
+            codec = nil
+        }
+        if let codec {
+            guard activeCodecLoop == nil else {
+                _ = await codec.finish()
+                throw HarnessFailure("local-hevc-loop-already-active")
+            }
+            activeCodecLoop = codec
+        }
+        var result: [String: Any]
+        do {
+            result = try await capture(label: label,
+                filter: SCContentFilter(display: display, excludingWindows: []), displayID: display.displayID,
+                fps: fps, seconds: 5, stillName: nil, configuration: configuration,
+                width: spec.width, height: spec.height,
+                barcodeScaleX: Double(spec.width) / Double(spec.logicalWidth),
+                barcodeScaleY: Double(spec.height) / Double(spec.logicalHeight),
+                barcodeOriginX: Double(spec.logicalWidth) / 2 - 18, barcodeOriginY: 5,
+                codecLoop: codec)
+        } catch {
+            if let codec {
+                let partial = await codec.finish()
+                report["localHEVCFailure-\(label)"] = partial
+                if activeCodecLoop === codec { activeCodecLoop = nil }
+            }
+            throw error
+        }
+        if let codec, activeCodecLoop === codec { activeCodecLoop = nil }
+        let codecMetrics = result.removeValue(forKey: "localHEVC") as? [String: Any] ?? [:]
+        if let codec {
+            var codecMeasurements = report["localHEVCMeasurements"] as? [String: Any] ?? [:]
+            codecMeasurements[label] = codecMetrics
+            report["localHEVCMeasurements"] = codecMeasurements
+            guard codecMetrics["passed"] as? Bool == true else {
+                throw HarnessFailure("local-hevc-loop-failed-\(label)")
+            }
+            result["localHEVC"] = codecMetrics
+        } else {
+            result["localHEVC"] = ["status": "not-requested", "requestedFPS": NSNull(),
+                "encoderCallbackFPS": NSNull(), "localDecodedCallbackFPS": NSNull(),
+                "distinctDecodedBarcodeFPS": NSNull(), "networkDeliveredFPS": NSNull(),
+                "phonePresentedFPS": NSNull()]
+        }
         let start = result["measurementStartMs"] as? Double ?? 0
         let end = result["measurementEndMs"] as? Double ?? start
         let ticks = fixture?.ticks(from: start, through: end) ?? 0
@@ -538,17 +611,31 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
                          configuration: SCStreamConfiguration, width: Int, height: Int,
                          barcodeScaleX: Double, barcodeScaleY: Double,
                          barcodeOriginX: Double = 34, barcodeOriginY: Double = 5,
-                         mustMatchImageAtURL: URL? = nil, requiresCornerMarkers: Bool = false) async throws -> [String: Any] {
+                         mustMatchImageAtURL: URL? = nil, requiresCornerMarkers: Bool = false,
+                         codecLoop: SessionVirtualDisplayHEVCLoop? = nil) async throws -> [String: Any] {
         guard hasLiveFixture(on: displayID),
               configuration.width == width, configuration.height == height,
               barcodeScaleX.isFinite, barcodeScaleX > 0, barcodeScaleY.isFinite, barcodeScaleY > 0,
               barcodeOriginX.isFinite, barcodeOriginY.isFinite else {
             throw HarnessFailure("capture-preflight-or-geometry-rejected-\(label)")
         }
+        let liveGrantPath = quietGrantURL.path
+        let grantLossSignaled = HarnessLockedValue(false)
         let output = SessionVirtualDisplayCaptureOutput(width: width, height: height,
             barcodeScaleX: barcodeScaleX, barcodeScaleY: barcodeScaleY,
             barcodeOriginX: barcodeOriginX, barcodeOriginY: barcodeOriginY,
-            onFrame: { [weak self] time in self?.lastOutputTime.value = time })
+            onFrame: { [weak self] time in self?.lastOutputTime.value = time },
+            onValidFrame: { [weak self, weak codecLoop] buffer, barcode, time in
+                guard FileManager.default.fileExists(atPath: liveGrantPath) else {
+                    codecLoop?.stopAccepting(reason: "quiet-grant-withdrawn-during-capture")
+                    if !grantLossSignaled.value {
+                        grantLossSignaled.value = true
+                        Task { @MainActor [weak self] in await self?.stop(reason: "quiet-grant-withdrawn") }
+                    }
+                    return
+                }
+                codecLoop?.offer(buffer, barcode: barcode, atMs: time)
+            })
         let stream = SCStream(filter: filter, configuration: configuration, delegate: output)
         try stream.addStreamOutput(output, type: .screen, sampleHandlerQueue: output.queue)
         let startupInclusive = stillName != nil
@@ -557,22 +644,35 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
             try await startOwnedCapture(stream)
         } catch {
             if startupInclusive { _ = output.end() }
+            if let codecLoop {
+                codecLoop.endMeasurement(at: MachClock.nowMs())
+                _ = await codecLoop.finish()
+            }
             throw error
         }
         guard hasLiveFixture(on: displayID) else {
-            output.end()
+            let abandonedMetrics = output.end()
+            codecLoop?.endMeasurement(at: abandonedMetrics.measurementEndMs ?? MachClock.nowMs())
+            if let codecLoop { _ = await codecLoop.finish() }
             try await retireActiveCapture()
             throw HarnessFailure("capture-cancelled-before-measurement-\(label)")
         }
-        if !startupInclusive { output.begin() }
+        if !startupInclusive {
+            let start = output.begin()
+            codecLoop?.beginMeasurement(at: start)
+        }
         do {
             try await Task.sleep(for: .seconds(seconds))
         } catch {
-            _ = output.end()
+            let interruptedMetrics = output.end()
+            codecLoop?.endMeasurement(at: interruptedMetrics.measurementEndMs ?? MachClock.nowMs())
+            if let codecLoop { _ = await codecLoop.finish() }
             try await retireActiveCapture()
             throw error
         }
         let metrics = output.end()
+        codecLoop?.endMeasurement(at: metrics.measurementEndMs ?? MachClock.nowMs())
+        let codecMetrics = await codecLoop?.finish()
         try await retireActiveCapture()
         guard !stopping, FileManager.default.fileExists(atPath: quietGrantURL.path) else {
             throw HarnessFailure("capture-result-invalidated-before-acceptance-\(label)")
@@ -593,6 +693,7 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
         result["streamError"] = output.delegateError as Any? ?? NSNull()
         result["measurementKind"] = startupInclusive ? "startup-inclusive-still-proof" : "steady-state-after-start"
         result["streamStartupIncluded"] = startupInclusive
+        if let codecMetrics { result["localHEVC"] = codecMetrics }
         if let stillName, let capturedImage = output.latestImage {
             if let mustMatchImageAtURL {
                 guard let comparison = image(at: mustMatchImageAtURL), samePixels(capturedImage, comparison) else {
@@ -651,6 +752,10 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
         if !stopping {
             stopping = true; timer?.cancel(); timer = nil
             report["stopReason"] = reason
+        }
+        if let activeCodecLoop {
+            _ = await activeCodecLoop.finish()
+            self.activeCodecLoop = nil
         }
         do {
             try await retireActiveCapture()
@@ -938,6 +1043,7 @@ private final class SessionVirtualDisplayCaptureOutput: NSObject, SCStreamOutput
     private let barcodeScaleX: Double, barcodeScaleY: Double
     private let barcodeOriginX: Double, barcodeOriginY: Double
     private let onFrame: (Double) -> Void
+    private let onValidFrame: (CVPixelBuffer, UInt32, Double) -> Void
     private let errorLock = NSLock()
     private var measuring = false
     private var stats = HarnessMeasurement()
@@ -949,17 +1055,20 @@ private final class SessionVirtualDisplayCaptureOutput: NSObject, SCStreamOutput
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
     init(width: Int, height: Int, barcodeScaleX: Double, barcodeScaleY: Double,
-         barcodeOriginX: Double, barcodeOriginY: Double, onFrame: @escaping (Double) -> Void) {
+         barcodeOriginX: Double, barcodeOriginY: Double, onFrame: @escaping (Double) -> Void,
+         onValidFrame: @escaping (CVPixelBuffer, UInt32, Double) -> Void) {
         self.width = width; self.height = height; self.barcodeScaleX = barcodeScaleX
         self.barcodeScaleY = barcodeScaleY; self.barcodeOriginX = barcodeOriginX
-        self.barcodeOriginY = barcodeOriginY; self.onFrame = onFrame
+        self.barcodeOriginY = barcodeOriginY; self.onFrame = onFrame; self.onValidFrame = onValidFrame
     }
-    func begin() {
+    @discardableResult
+    func begin() -> Double {
         queue.sync {
             stats = HarnessMeasurement()
             latestBuffer = nil
             stats.measurementStartMs = MachClock.nowMs()
             measuring = true
+            return stats.measurementStartMs!
         }
     }
     func end() -> HarnessMeasurement {
@@ -985,13 +1094,17 @@ private final class SessionVirtualDisplayCaptureOutput: NSObject, SCStreamOutput
               let status = SCFrameStatus(rawValue: raw) else { return }
         let buffer = sampleBuffer.imageBuffer
         let correct = buffer.map { CVPixelBufferGetWidth($0) == width && CVPixelBufferGetHeight($0) == height } ?? false
-        let barcode = correct && status == .complete ? buffer.flatMap(decodeBarcode) : nil
+        let barcode = correct && status == .complete ? buffer.flatMap {
+            SessionVirtualDisplayHarnessBarcodeReader.decode($0, width: width, height: height,
+                scaleX: barcodeScaleX, scaleY: barcodeScaleY, originX: barcodeOriginX, originY: barcodeOriginY)
+        } : nil
         let callback = MachClock.nowMs()
         let rawTime = (info[.displayTime] as? NSNumber)?.uint64Value
         if status == .complete, correct, barcode != nil {
             firstValidStreamCompleteCallbackMs = firstValidStreamCompleteCallbackMs ?? callback
             lastValidStreamCompleteCallbackMs = callback
             onFrame(callback)
+            if let buffer, let barcode { onValidFrame(buffer, barcode, callback) }
         }
         guard measuring else { return }
         stats.record(status: status, displayTime: rawTime, barcode: barcode,
@@ -1003,12 +1116,17 @@ private final class SessionVirtualDisplayCaptureOutput: NSObject, SCStreamOutput
         errorLock.lock(); storedError = String(describing: error); errorLock.unlock()
     }
 
-    private func decodeBarcode(_ buffer: CVPixelBuffer) -> UInt32? {
-        guard CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return nil }
+}
+
+private enum SessionVirtualDisplayHarnessBarcodeReader {
+    static func decode(_ buffer: CVPixelBuffer, width: Int, height: Int,
+                       scaleX: Double, scaleY: Double, originX: Double, originY: Double) -> UInt32? {
+        guard CVPixelBufferGetWidth(buffer) == width, CVPixelBufferGetHeight(buffer) == height,
+              CVPixelBufferLockBaseAddress(buffer, .readOnly) == kCVReturnSuccess else { return nil }
         defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
-        let y = max(0, min(height - 1, Int((barcodeOriginY + 3) * barcodeScaleY)))
+        let y = max(0, min(height - 1, Int((originY + 3) * scaleY)))
         return SessionVirtualDisplayBarcode.decode { slot in
-            let x = Int((barcodeOriginX + (Double(slot) + 0.5) * 1.5) * barcodeScaleX)
+            let x = Int((originX + (Double(slot) + 0.5) * 1.5) * scaleX)
             guard x >= 0, x < width else { return nil }
             let isWhite: Bool
             switch CVPixelBufferGetPixelFormatType(buffer) {
@@ -1030,6 +1148,368 @@ private final class SessionVirtualDisplayCaptureOutput: NSObject, SCStreamOutput
             }
             return isWhite
         }
+    }
+}
+
+/// A local production-codec loop. It never creates a peer connection or writes decoded pixels.
+private final class SessionVirtualDisplayHEVCLoop: @unchecked Sendable {
+    private struct FrameRecord {
+        let barcode: UInt32
+    }
+
+    private static let maximumInFlight = 4
+    private static let drainTimeoutMs = 1_500.0
+    private static let bitrateKbps: UInt32 = 12_000
+
+    private let lock = NSLock()
+    private let width: Int
+    private let height: Int
+    private let fps: Int
+    private let barcodeScaleX: Double
+    private let barcodeScaleY: Double
+    private let barcodeOriginX: Double
+    private let barcodeOriginY: Double
+    private let counters = StreamCounters()
+    private let encoderFactory: PocketDeskVideoEncoderFactory
+    private let decoderFactory: PocketDeskVideoDecoderFactory
+    private let encoder: any RTCVideoEncoder
+    private let decoder: any RTCVideoDecoder
+    private var codecStartMs: Double?
+    private var measurementStartMs: Double?
+    private var measurementEndMs: Double?
+    private var accepting = false
+    private var released = false
+    private var finishTask: Task<Void, Never>?
+    private var finishedJSON: [String: Any]?
+    private var records: [Int32: FrameRecord] = [:]
+    private var decoderQueue: [(RTCEncodedImage, (any RTCCodecSpecificInfo)?)] = []
+    private var decoderInFlightID: Int32?
+    private var nextFrameID: UInt32 = 0
+    private var inputCandidates = 0
+    private var admittedInputs = 0
+    private var droppedAtAdmission = 0
+    private var maximumObservedInFlight = 0
+    private var encodeSubmissionFailures = 0
+    private var encodedCallbacks = 0
+    private var encodedCallbacksInWindow = 0
+    private var encodedBytesInWindow = 0
+    private var encodedDimensionErrors = 0
+    private var decoderSubmissionsAccepted = 0
+    private var decoderKeyFrameRequests = 0
+    private var decoderSubmissionFailures = 0
+    private var decodedCallbacks = 0
+    private var decodedCallbacksInWindow = 0
+    private var decodedDimensionErrors = 0
+    private var decodedBarcodesMissing = 0
+    private var decodedBarcodeMismatches = 0
+    private var decodedBarcodeMatchesInWindow = 0
+    private var uniqueDecodedBarcodes = Set<UInt32>()
+    private var inputPixelFormats = Set<UInt32>()
+    private var firstEncodedCallbackMs: Double?
+    private var firstDecodedCallbackMs: Double?
+    private var startupCounters: StreamCounterSnapshot?
+    private var encoderImplementationName: String?
+    private var decoderImplementationName: String?
+    private var errors: [String] = []
+    private var encoderReleaseResult: Int?
+    private var decoderReleaseResult: Int?
+    private var outstandingAfterDrain = 0
+
+    init(width: Int, height: Int, fps: Int, barcodeScaleX: Double, barcodeScaleY: Double,
+         barcodeOriginX: Double, barcodeOriginY: Double) throws {
+        guard width > 0, height > 0, fps > 0, fps <= 120,
+              barcodeScaleX.isFinite, barcodeScaleX > 0, barcodeScaleY.isFinite, barcodeScaleY > 0,
+              barcodeOriginX.isFinite, barcodeOriginY.isFinite,
+              let configuration = OwnedHEVCConfiguration(parameters: OwnedHEVCConfiguration.codecInfo.parameters),
+              configuration.fits(width: width, height: height, fps: fps) else {
+            throw HarnessFailure("local-hevc-requested-format-not-admitted")
+        }
+        self.width = width; self.height = height; self.fps = fps
+        self.barcodeScaleX = barcodeScaleX; self.barcodeScaleY = barcodeScaleY
+        self.barcodeOriginX = barcodeOriginX; self.barcodeOriginY = barcodeOriginY
+        let nextEncoderFactory = PocketDeskVideoEncoderFactory(hevc: true, counters: counters)
+        let nextDecoderFactory = PocketDeskVideoDecoderFactory(hevc: true)
+        guard let encoder = nextEncoderFactory.createEncoder(OwnedHEVCConfiguration.codecInfo),
+              let decoder = nextDecoderFactory.createDecoder(OwnedHEVCConfiguration.codecInfo) else {
+            throw HarnessFailure("local-hevc-production-factory-refused-main153")
+        }
+        encoderFactory = nextEncoderFactory; decoderFactory = nextDecoderFactory
+        self.encoder = encoder; self.decoder = decoder
+    }
+
+    func start() throws {
+        decoder.setCallback { [weak self] frame in self?.decoded(frame) }
+        let decoderStart = decoder.startDecode(withNumberOfCores: 1)
+        guard decoderStart == 0 else {
+            _ = decoder.release()
+            throw HarnessFailure("local-hevc-hardware-decoder-start-\(decoderStart)")
+        }
+        encoder.setCallback { [weak self] image, info in self?.encoded(image, codecInfo: info) ?? false }
+        let settings = RTCVideoEncoderSettings()
+        settings.name = "H265"; settings.width = UInt16(width); settings.height = UInt16(height)
+        settings.startBitrate = Self.bitrateKbps; settings.maxBitrate = Self.bitrateKbps
+        settings.minBitrate = 1; settings.maxFramerate = UInt32(fps); settings.qpMax = 30; settings.mode = .screensharing
+        let encoderStart = encoder.startEncode(with: settings, numberOfCores: 1)
+        guard encoderStart == 0 else {
+            _ = encoder.release(); _ = decoder.release(); lock.lock(); released = true; lock.unlock()
+            throw HarnessFailure("local-hevc-hardware-encoder-start-\(encoderStart)")
+        }
+        let startSnapshot = counters.drain(inputBufferedBytes: nil)
+        let encoderName = encoder.implementationName(), decoderName = decoder.implementationName()
+        lock.lock(); codecStartMs = MachClock.nowMs(); startupCounters = startSnapshot
+        encoderImplementationName = encoderName; decoderImplementationName = decoderName; lock.unlock()
+    }
+
+    func beginMeasurement(at milliseconds: Double) {
+        lock.lock(); defer { lock.unlock() }
+        guard !released else { return }
+        measurementStartMs = milliseconds; accepting = true
+    }
+
+    func endMeasurement(at milliseconds: Double) {
+        lock.lock(); defer { lock.unlock() }
+        accepting = false
+        if measurementEndMs == nil { measurementEndMs = milliseconds }
+    }
+
+    func stopAccepting(reason: String) {
+        lock.lock(); defer { lock.unlock() }
+        accepting = false
+        recordErrorLocked(reason)
+    }
+
+    /// Called by the serialized SCK output queue. It reserves a bounded slot and submits without an unbounded queue.
+    func offer(_ pixels: CVPixelBuffer, barcode: UInt32, atMs: Double) {
+        let sequence: UInt32
+        let pixelFormat = CVPixelBufferGetPixelFormatType(pixels)
+        lock.lock()
+        guard accepting, !released else { lock.unlock(); return }
+        inputCandidates += 1
+        guard CVPixelBufferGetWidth(pixels) == width, CVPixelBufferGetHeight(pixels) == height else {
+            recordErrorLocked("SCK-input-dimensions-mismatch"); lock.unlock(); return
+        }
+        guard records.count < Self.maximumInFlight else {
+            droppedAtAdmission += 1; lock.unlock(); return
+        }
+        nextFrameID &+= 1
+        sequence = nextFrameID
+        let id = Int32(bitPattern: sequence)
+        guard records[id] == nil else {
+            recordErrorLocked("local-hevc-frame-id-collision"); lock.unlock(); return
+        }
+        records[id] = FrameRecord(barcode: barcode)
+        admittedInputs += 1; inputPixelFormats.insert(pixelFormat)
+        maximumObservedInFlight = max(maximumObservedInFlight, records.count)
+        lock.unlock()
+        submit(pixels, sequence: sequence, atMs: atMs)
+    }
+
+    func finish() async -> [String: Any] {
+        let task: Task<Void, Never>
+        lock.lock()
+        accepting = false
+        if measurementEndMs == nil { measurementEndMs = MachClock.nowMs() }
+        if let existing = finishTask { task = existing }
+        else {
+            let created = Task.detached { [self] in await drainAndRelease() }
+            finishTask = created; task = created
+        }
+        lock.unlock()
+        await task.value
+        lock.lock(); defer { lock.unlock() }
+        if let finishedJSON { return finishedJSON }
+        let result = jsonLocked()
+        finishedJSON = result
+        return result
+    }
+
+    private func submit(_ pixels: CVPixelBuffer, sequence: UInt32, atMs: Double) {
+        let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: pixels), rotation: ._0,
+                                  timeStampNs: Int64((atMs * 1_000_000).rounded()))
+        frame.timeStamp = Int32(bitPattern: sequence)
+        let result = encoder.encode(frame, codecSpecificInfo: nil,
+                                    frameTypes: [NSNumber(value: (sequence == 1 ? RTCFrameType.videoFrameKey : RTCFrameType.videoFrameDelta).rawValue)])
+        guard result == 0 else {
+            lock.lock(); encodeSubmissionFailures += 1; recordErrorLocked("encoder-submit-\(result)"); records.removeValue(forKey: frame.timeStamp); lock.unlock()
+            return
+        }
+    }
+
+    private func encoded(_ image: RTCEncodedImage, codecInfo: (any RTCCodecSpecificInfo)?) -> Bool {
+        let now = MachClock.nowMs()
+        let id = Int32(bitPattern: image.timeStamp)
+        lock.lock()
+        guard !released else { lock.unlock(); return false }
+        encodedCallbacks += 1
+        firstEncodedCallbackMs = firstEncodedCallbackMs ?? now
+        let within = isWithinWindowLocked(now)
+        if within { encodedCallbacksInWindow += 1; encodedBytesInWindow += image.buffer.count }
+        guard records[id] != nil else {
+            recordErrorLocked("encoder-output-with-unknown-frame-id"); lock.unlock(); return false
+        }
+        guard image.encodedWidth == Int32(width), image.encodedHeight == Int32(height) else {
+            encodedDimensionErrors += 1; recordErrorLocked("encoder-output-dimensions-mismatch")
+            records.removeValue(forKey: id); lock.unlock(); return false
+        }
+        lock.unlock()
+        lock.lock(); decoderQueue.append((image, codecInfo)); lock.unlock()
+        submitNextDecodeIfIdle()
+        return true
+    }
+
+    /// The production decoder has a newest-only callback mailbox. Keep only one decode submitted
+    /// until its callback arrives so the local loop cannot silently replace an earlier result.
+    private func submitNextDecodeIfIdle() {
+        let next: (RTCEncodedImage, (any RTCCodecSpecificInfo)?)
+        lock.lock()
+        guard !released, decoderInFlightID == nil, !decoderQueue.isEmpty else { lock.unlock(); return }
+        next = decoderQueue.removeFirst()
+        let id = Int32(bitPattern: next.0.timeStamp)
+        guard records[id] != nil else {
+            recordErrorLocked("decoder-queue-unknown-frame-id"); lock.unlock(); submitNextDecodeIfIdle(); return
+        }
+        decoderInFlightID = id
+        lock.unlock()
+
+        let status = decoder.decode(next.0, missingFrames: false, codecSpecificInfo: next.1, renderTimeMs: 0)
+        if status == 0 || status == OwnedHEVCDecoder.requestKeyFrameResult {
+            lock.lock(); decoderSubmissionsAccepted += 1
+            if status == OwnedHEVCDecoder.requestKeyFrameResult { decoderKeyFrameRequests += 1 }
+            lock.unlock(); return
+        }
+        lock.lock(); decoderInFlightID = nil; decoderSubmissionFailures += 1
+        recordErrorLocked("decoder-submit-\(status)"); records.removeValue(forKey: id); lock.unlock()
+        submitNextDecodeIfIdle()
+    }
+
+    private func decoded(_ frame: RTCVideoFrame) {
+        let now = MachClock.nowMs()
+        let id = frame.timeStamp
+        let cvBuffer = frame.buffer as? RTCCVPixelBuffer
+        lock.lock()
+        guard !released else { lock.unlock(); return }
+        decodedCallbacks += 1
+        firstDecodedCallbackMs = firstDecodedCallbackMs ?? now
+        let within = isWithinWindowLocked(now)
+        if within { decodedCallbacksInWindow += 1 }
+        guard let record = records.removeValue(forKey: id) else {
+            recordErrorLocked("decoder-output-with-unknown-frame-id")
+            if decoderInFlightID == id { decoderInFlightID = nil }
+            lock.unlock(); submitNextDecodeIfIdle(); return
+        }
+        if decoderInFlightID == id { decoderInFlightID = nil }
+        guard let cvBuffer, CVPixelBufferGetWidth(cvBuffer.pixelBuffer) == width,
+              CVPixelBufferGetHeight(cvBuffer.pixelBuffer) == height else {
+            decodedDimensionErrors += 1; recordErrorLocked("decoder-output-dimensions-mismatch")
+            lock.unlock(); submitNextDecodeIfIdle(); return
+        }
+        lock.unlock()
+        let barcode = SessionVirtualDisplayHarnessBarcodeReader.decode(cvBuffer.pixelBuffer, width: width, height: height,
+            scaleX: barcodeScaleX, scaleY: barcodeScaleY, originX: barcodeOriginX, originY: barcodeOriginY)
+        lock.lock()
+        guard !released else { lock.unlock(); return }
+        if let barcode {
+            if barcode == record.barcode {
+                if within { decodedBarcodeMatchesInWindow += 1; uniqueDecodedBarcodes.insert(barcode) }
+            } else { decodedBarcodeMismatches += 1 }
+        } else { decodedBarcodesMissing += 1 }
+        lock.unlock()
+        // OwnedHEVCDecoder invokes its callback while holding its own delivery lock. Defer the
+        // next decode submission until that callback has returned to avoid lock inversion.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in self?.submitNextDecodeIfIdle() }
+    }
+
+    private func drainAndRelease() async {
+        let deadline = MachClock.nowMs() + Self.drainTimeoutMs
+        while true {
+            lock.lock(); let pending = records.count; lock.unlock()
+            if pending == 0 || MachClock.nowMs() >= deadline { break }
+            try? await Task.sleep(for: .milliseconds(20))
+        }
+        lock.lock(); outstandingAfterDrain = records.count; lock.unlock()
+        // Neither encoder nor decoder release is called while the callback-state lock is held.
+        let encoderResult = encoder.release()
+        let decoderResult = decoder.release()
+        lock.lock()
+        encoderReleaseResult = encoderResult; decoderReleaseResult = decoderResult
+        if encoderResult != 0 { recordErrorLocked("encoder-release-\(encoderResult)") }
+        if decoderResult != 0 { recordErrorLocked("decoder-release-\(decoderResult)") }
+        if outstandingAfterDrain > 0 { recordErrorLocked("codec-drain-timeout-\(outstandingAfterDrain)-frames") }
+        released = true
+        lock.unlock()
+    }
+
+    private func isWithinWindowLocked(_ time: Double) -> Bool {
+        guard let start = measurementStartMs else { return false }
+        return time >= start && (measurementEndMs.map { time <= $0 } ?? true)
+    }
+
+    private func recordErrorLocked(_ error: String) {
+        if errors.count < 16 { errors.append(String(error.prefix(180))) }
+    }
+
+    private func jsonLocked() -> [String: Any] {
+        let elapsed = measurementStartMs.flatMap { start in measurementEndMs.map { max(0, ($0 - start) / 1_000) } } ?? 0
+        let liveCounters = counters.drain(inputBufferedBytes: nil)
+        let evidence = liveCounters.encoderEvidence ?? startupCounters?.encoderEvidence
+        func startupLatency(_ first: Double?) -> Any {
+            guard let first, let codecStartMs, first >= codecStartMs else { return NSNull() }
+            return first - codecStartMs
+        }
+        let ownedHardwarePathValid = evidence?.path == .ownedVideoToolbox && evidence?.hardwareRequired == true && evidence?.hardwareReported != false
+        let encoderLosses = (liveCounters.encoderSuperseded ?? 0) + (liveCounters.encoderRetired ?? 0) +
+            (liveCounters.encoderDropped ?? 0) + (liveCounters.encoderSilentDrops ?? 0) +
+            (liveCounters.encoderDeliveryDrops ?? 0)
+        if encoderLosses > 0 { recordErrorLocked("owned-encoder-reported-\(encoderLosses)-losses") }
+        if outstandingAfterDrain > 0 { recordErrorLocked("codec-drain-left-\(outstandingAfterDrain)-frames") }
+        let finalErrorsPresent = !errors.isEmpty || encoderReleaseResult != 0 || decoderReleaseResult != 0
+        let passed = ownedHardwarePathValid && encoderLosses == 0 && !finalErrorsPresent && outstandingAfterDrain == 0 && encodedCallbacksInWindow > 0 &&
+            decodedCallbacksInWindow > 0 && decodedBarcodeMatchesInWindow > 0 && uniqueDecodedBarcodes.count > 0 &&
+            encodedDimensionErrors == 0 && decodedDimensionErrors == 0 && decodedBarcodesMissing == 0 && decodedBarcodeMismatches == 0
+        return ["codec": "HEVC Main, tier 1, level 153", "codecProfileParameters": OwnedHEVCConfiguration.codecInfo.parameters,
+                "requestedPixels": [width, height], "requestedFPS": fps, "requestedBitrateKbps": Self.bitrateKbps,
+                "peerNegotiated": false, "softwareFallbackAllowed": false,
+                "encoderImplementation": encoderImplementationName as Any? ?? NSNull(),
+                "decoderImplementation": decoderImplementationName as Any? ?? NSNull(),
+                "encoderHardwareRequired": evidence?.hardwareRequired ?? true,
+                "encoderHardwareReported": evidence?.hardwareReported as Any? ?? NSNull(),
+                "encoderEvidence": evidence?.summary as Any? ?? NSNull(), "encoderOwnedHardwarePathValid": ownedHardwarePathValid,
+                "decoderHardwareRequired": true,
+                "ownedEncoderSubmitted": liveCounters.encoderSubmitted as Any? ?? NSNull(),
+                "ownedEncoderSuperseded": liveCounters.encoderSuperseded as Any? ?? NSNull(),
+                "ownedEncoderRetired": liveCounters.encoderRetired as Any? ?? NSNull(),
+                "ownedEncoderGateDropped": liveCounters.encoderDropped as Any? ?? NSNull(),
+                "ownedEncoderSilentDrops": liveCounters.encoderSilentDrops as Any? ?? NSNull(),
+                "ownedEncoderDeliveryDrops": liveCounters.encoderDeliveryDrops as Any? ?? NSNull(),
+                "ownedEncoderOutputs": liveCounters.encoderOutputs as Any? ?? NSNull(),
+                "encoderLossCountersZero": encoderLosses == 0,
+                "decoderSingleFlight": true,
+                "inputPixelFormats": inputPixelFormats.map { String(format: "0x%08X", $0) }.sorted(),
+                "measurementStartMs": measurementStartMs as Any? ?? NSNull(),
+                "measurementEndMs": measurementEndMs as Any? ?? NSNull(), "measurementSeconds": elapsed,
+                "inputCandidates": inputCandidates, "admittedEncoderInputs": admittedInputs,
+                "droppedAtFourFrameInFlightLimit": droppedAtAdmission, "maximumObservedInFlight": maximumObservedInFlight,
+                "encodeSubmissionFailures": encodeSubmissionFailures, "encodedCallbacks": encodedCallbacks,
+                "encodedCallbacksInWindow": encodedCallbacksInWindow,
+                "encodedCallbackFPS": elapsed > 0 ? Double(encodedCallbacksInWindow) / elapsed : 0,
+                "encodedBytesInWindow": encodedBytesInWindow,
+                "encodedAverageKbpsInWindow": elapsed > 0 ? Double(encodedBytesInWindow) * 8 / (elapsed * 1_000) : 0,
+                "encodedDimensionErrors": encodedDimensionErrors,
+                "decoderSubmissionsAccepted": decoderSubmissionsAccepted, "decoderKeyFrameRequests": decoderKeyFrameRequests,
+                "decoderSubmissionFailures": decoderSubmissionFailures, "decodedCallbacks": decodedCallbacks,
+                "decodedCallbacksInWindow": decodedCallbacksInWindow,
+                "localDecodedCallbackFPS": elapsed > 0 ? Double(decodedCallbacksInWindow) / elapsed : 0,
+                "decodedBarcodeMatchesInWindow": decodedBarcodeMatchesInWindow,
+                "distinctDecodedBarcodeFramesInWindow": uniqueDecodedBarcodes.count,
+                "distinctDecodedBarcodeFPS": elapsed > 0 ? Double(uniqueDecodedBarcodes.count) / elapsed : 0,
+                "decodedDimensionErrors": decodedDimensionErrors, "decodedBarcodesMissing": decodedBarcodesMissing,
+                "decodedBarcodeMismatches": decodedBarcodeMismatches,
+                "localLoopReadyToFirstEncodedCallbackMs": startupLatency(firstEncodedCallbackMs),
+                "localLoopReadyToFirstDecodedCallbackMs": startupLatency(firstDecodedCallbackMs),
+                "firstCallbackLatencyReference": "time from both local codecs ready (before SCK measurement/start) to respective first callback; not isolated encoder/decoder startup latency",
+                "outstandingFramesAfterDrain": outstandingAfterDrain,
+                "encoderReleaseResult": encoderReleaseResult as Any? ?? NSNull(), "decoderReleaseResult": decoderReleaseResult as Any? ?? NSNull(),
+                "errors": errors, "networkDeliveredFPS": NSNull(), "phonePresentedFPS": NSNull(), "passed": passed]
     }
 }
 

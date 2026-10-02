@@ -33,6 +33,15 @@ final class VideoPresentationSession: NSObject, RTCVideoRenderer {
         get { view.onOriginalSourcePresented }
         set { view.onOriginalSourcePresented = newValue }
     }
+    private var rotationCallbackEnabled = false
+    var onSourcePresented: ((VideoPresentedSource) -> Void)? {
+        get { view.onSourcePresented }
+        set {
+            guard newValue != nil || rotationCallbackEnabled else { return }
+            rotationCallbackEnabled = newValue != nil
+            view.onSourcePresented = newValue
+        }
+    }
     private var expiryTimer: Timer?
     private final class Registration { weak var value: VideoPresentationSession?; init(_ value: VideoPresentationSession) { self.value = value } }
     private static var registrations: [Registration] = []

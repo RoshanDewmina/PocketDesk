@@ -163,7 +163,21 @@ final class VirtualDisplayWindowKeeper: @unchecked Sendable {
     }
 
     func restore() async -> Bool { (try? await run { self.restoreOnQueue() }) ?? false }
-    func recover() async -> Bool { await restore() }
+    /// Host teardown always returns enrolled windows to saved originals, including manual drags.
+    /// Unknown display/topology evidence leaves the journal untouched and performs no AX work.
+    func restore(after evidence: SessionVirtualDisplayPresence, physicalTopologyUnchanged: Bool) async -> Bool {
+        (try? await run {
+            guard !self.loadFailed,
+                  VirtualDisplayRestorationPolicy.action(presence: evidence,
+                    physicalTopologyUnchanged: physicalTopologyUnchanged,
+                    journalIsPrepared: self.journal?.isPrepared == true) == .restoreOriginals else { return false }
+            return self.restoreOnQueue(recoverOriginals: true)
+        }) ?? false
+    }
+    /// A process-owned display disappearing can reflow surviving windows to any physical frame.
+    /// Recovery uses the persisted original after exact launch/CG/AX attribution. The standalone
+    /// ordinary restore helper retains its prior manual-drag behavior for its other callers.
+    func recover() async -> Bool { (try? await run { self.restoreOnQueue(recoverOriginals: true) }) ?? false }
 
     private func apply(bounds: CGRect, moving: Set<VirtualDisplayWindowIdentity>? = nil) throws {
         guard let journal else { return }
@@ -189,11 +203,11 @@ final class VirtualDisplayWindowKeeper: @unchecked Sendable {
         if !settled.complete { succeeded = false }
         // Retain updated in-memory attribution even if this second disk write fails.
         self.journal = updated
-        do { try store.save(updated) } catch { _ = restoreOnQueue(); throw error }
-        if !succeeded { _ = restoreOnQueue(); throw VirtualDisplayWindowError.unmovable }
+        do { try store.save(updated) } catch { _ = restoreOnQueue(recoverOriginals: true); throw error }
+        if !succeeded { _ = restoreOnQueue(recoverOriginals: true); throw VirtualDisplayWindowError.unmovable }
     }
 
-    private func restoreOnQueue() -> Bool {
+    private func restoreOnQueue(recoverOriginals: Bool = false) -> Bool {
         guard !loadFailed else { return false }
         guard var journal else { return true }
         let snapshot = access.snapshot(frontmostOnly: false, identities: journal.records.map(\.identity), budget: HostAXBudget(total: 1.5))
@@ -206,7 +220,8 @@ final class VirtualDisplayWindowKeeper: @unchecked Sendable {
             if matches.isEmpty && snapshot.closedIdentities.contains(record.identity) { continue }
             guard matches.count == 1 else { remaining.append(record); continue }
             let current = matches[0].frame
-            guard VirtualDisplayWindowPolicy.shouldRestore(record, current: current) else { continue }
+            guard VirtualDisplayWindowPolicy.valid(current) else { remaining.append(record); continue }
+            guard recoverOriginals || VirtualDisplayWindowPolicy.shouldRestore(record, current: current) else { continue }
             if VirtualDisplayWindowPolicy.close(current, record.original) { continue }
             guard access.setFrame(record.original, identity: record.identity, budget: budget) else { remaining.append(record); continue }
             toVerify.append(record)

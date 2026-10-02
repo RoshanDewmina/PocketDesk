@@ -24,6 +24,10 @@ final class SessionVirtualDisplay {
     private var preparing = false
     private var stopping = false
     private var serial: UInt32 = 0
+    private struct OwnedIdentity: Equatable { let id: CGDirectDisplayID; let serial: UInt32 }
+    // Survives verified stop's public-ID clearing; never reconstructed from a foreign inventory.
+    private var ownedIdentity: OwnedIdentity?
+    private var constructedInCycle = false
     private var physicalSnapshot: [CGDirectDisplayID: PhysicalMode]?
     private var retiredPhysicalSnapshot: [CGDirectDisplayID: PhysicalMode]?
 
@@ -32,6 +36,32 @@ final class SessionVirtualDisplay {
     var ownedDisplayPresent: Bool {
         guard let id = displayID, let ids = try? Self.onlineIDs() else { return false }
         return ids.contains(id) && matchesIdentity(id)
+    }
+    /// Restoration evidence is separate from readiness. Absence requires all three inventories,
+    /// a second CG/NSScreen check, and the same operation/owned identity across the SCK suspension.
+    func retirementPresence() async -> SessionVirtualDisplayPresence {
+        guard !preparing, !stopping, !Task.isCancelled else { return .unknown }
+        let token = generation
+        guard constructedInCycle else { return .neverCreated }
+        guard let proof = ownedIdentity, proof.id != 0, proof.serial != 0,
+              retainedIdentityConsistent(proof) else { return .unknown }
+        guard let ids = try? Self.onlineIDs() else { return .unknown }
+        if ids.contains(proof.id) {
+            return SessionVirtualDisplayPresencePolicy.classify(constructed: true, knownIdentity: true,
+                online: true, identityMatches: ownsScreenChanges && matchesIdentity(proof.id, serial: proof.serial),
+                isMain: CGDisplayIsMain(proof.id) != 0, isMirrored: CGDisplayIsInMirrorSet(proof.id) != 0,
+                absenceConfirmed: false, operationCurrent: generation == token && ownedIdentity == proof)
+        }
+        guard Self.screen(proof.id) == nil else { return .unknown }
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        guard let content = try? await discover(until: deadline),
+              generation == token, !preparing, !stopping, !Task.isCancelled, ownedIdentity == proof,
+              let second = try? Self.onlineIDs(), !second.contains(proof.id), Self.screen(proof.id) == nil,
+              !content.displays.contains(where: { $0.displayID == proof.id }),
+              ProcessInfo.processInfo.systemUptime < deadline else { return .unknown }
+        return SessionVirtualDisplayPresencePolicy.classify(constructed: true, knownIdentity: true,
+            online: false, identityMatches: false, isMain: false, isMirrored: false,
+            absenceConfirmed: true, operationCurrent: generation == token && ownedIdentity == proof)
     }
     /// Parent combines this with ownsScreenChanges when suppressing NSApp screen notifications.
     /// Physical hot-plug, mirroring, main-display and mode changes are never masked by our lease.
@@ -60,6 +90,8 @@ final class SessionVirtualDisplay {
         let token = generation
         defer { preparing = false }
         if lease == nil {
+            ownedIdentity = nil; constructedInCycle = false
+            retiredPhysicalSnapshot = nil
             guard CGPreflightScreenCaptureAccess() else { throw failure("screen recording permission unavailable") }
             try SessionPrivateDisplay.audit()
             lease = try SessionDisplayRuntimeLease.acquire()
@@ -74,8 +106,10 @@ final class SessionVirtualDisplay {
             serial = UInt32.random(in: 1...UInt32.max)
             // Ownership precedes identify/configure. Any later error leaves these resources held.
             display = try SessionPrivateDisplay.construct(spec, serial: serial)
+            constructedInCycle = true
             if let display { displayID = try SessionPrivateDisplay.displayID(display) }
             guard let id = displayID, id != 0 else { throw failure("constructed display has unknown identity") }
+            ownedIdentity = OwnedIdentity(id: id, serial: serial)
         }
         try requireCurrent(token, whileCurrent)
         // No display local is held across suspension: a concurrent stop can release the object.
@@ -129,11 +163,12 @@ final class SessionVirtualDisplay {
                    !(try Self.onlineIDs()).contains(id), Self.screen(id) == nil,
                    ProcessInfo.processInfo.systemUptime < deadline {
                     retiredPhysicalSnapshot = physicalSnapshot
+                    // Keep ownedIdentity/constructedInCycle for later restoration evidence.
                     displayID = nil; physicalSnapshot = nil; serial = 0
                     lease = nil; cleanupHold = nil
                     return
                 }
-            } else if displayID == nil && display == nil {
+            } else if displayID == nil && display == nil && !constructedInCycle {
                 // Construction threw before returning any retained display.
                 lease = nil; cleanupHold = nil; physicalSnapshot = nil
                 return
@@ -159,6 +194,13 @@ final class SessionVirtualDisplay {
         self.display = nil
     }
 
+    // Keep NSObject temporaries in a synchronous frame, not across removal discovery suspension.
+    private func retainedIdentityConsistent(_ proof: OwnedIdentity) -> Bool {
+        guard displayID == nil || displayID == proof.id,
+              serial == 0 || serial == proof.serial else { return false }
+        guard let display else { return true }
+        return (try? SessionPrivateDisplay.displayID(display)) == proof.id
+    }
     private func configureOwned(_ spec: VirtualDisplaySpecification) throws {
         guard let display, let id = displayID, id != 0, try SessionPrivateDisplay.displayID(display) == id else {
             throw failure("cannot configure unknown or replaced owned display")
@@ -173,8 +215,9 @@ final class SessionVirtualDisplay {
     private func requireCurrent(_ token: UInt64, _ current: () -> Bool) throws {
         guard generation == token, !stopping, current(), !Task.isCancelled else { throw failure("virtual display preparation superseded") }
     }
-    private func matchesIdentity(_ id: CGDirectDisplayID) -> Bool {
-        SessionPrivateDisplay.isSessionDisplay(id) && serial != 0 && CGDisplaySerialNumber(id) == serial
+    private func matchesIdentity(_ id: CGDirectDisplayID) -> Bool { matchesIdentity(id, serial: serial) }
+    private func matchesIdentity(_ id: CGDirectDisplayID, serial expectedSerial: UInt32) -> Bool {
+        SessionPrivateDisplay.isSessionDisplay(id) && expectedSerial != 0 && CGDisplaySerialNumber(id) == expectedSerial
     }
     private func ownedModeTarget(_ id: CGDirectDisplayID) throws -> Bool {
         guard let display else { return false }

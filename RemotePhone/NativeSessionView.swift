@@ -651,6 +651,9 @@ struct NativeSessionView: View {
                                        onOriginalSourcePresented: { [weak model] identity, receipt in
                                            Task { @MainActor in model?.originalSourcePresented(identity, receipt: receipt) }
                                        },
+                                       onSourcePresented: model.hostFeatures.contains(SessionFeature.virtualDisplay) && model.virtualDisplayActive ? { [weak model] source in
+                                           Task { @MainActor in model?.rotationSourcePresented(source) }
+                                       } : nil,
                                        videoFeedback: connection.media?.videoFeedback,
                                        frameTiming: connection.media?.frameTimingReceiver?.log,
                                        onFrame: model.frameReceived)
@@ -661,11 +664,18 @@ struct NativeSessionView: View {
                         .scaleEffect(viewport.scale, anchor: .topLeading)
                         .frame(width: rect.width, height: rect.height, alignment: .topLeading)
                 }
+                if model.hostFeatures.contains(SessionFeature.virtualDisplay) {
+                    VirtualDisplayRotationOverlay(owner: model.virtualDisplayRotationHold)
+                        .frame(width: rect.width, height: rect.height)
+                        .accessibilityHidden(true)
+                }
                 PointerOverlayView(model: model.pointerOverlay, viewport: viewport, size: pointerSize)
+                    .opacity(model.virtualDisplayRotationHold.isHolding ? 0 : 1)
                 PointerAccentView(model: model.pointerOverlay, viewport: viewport, size: pointerSize,
                                   acceptedClicks: model.acceptedClicks,
                                   clickKind: ContactRipple.Kind(action: model.lastAcceptedClick), holding: model.dragging,
                                   preview: offlineLayoutCheck && LaunchOptions.has("--ui-pointer-accent-preview"))
+                    .opacity(model.virtualDisplayRotationHold.isHolding ? 0 : 1)
             }
             .frame(width: rect.width, height: rect.height, alignment: .topLeading)
             .position(x: rect.midX, y: rect.midY)
