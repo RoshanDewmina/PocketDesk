@@ -41,7 +41,10 @@ struct ViewportRegion: Codable, Equatable {
 /// keeps its own key, read only when this one is on.
 enum ScrollFixesSwitch {
     static let defaultsKey = "PocketDeskScrollFixes"
-    static let isOn = UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? false
+    // NSArgumentDomain stores launch overrides as strings (YES/NO), unlike defaults write.
+    // Foundation's Boolean accessor handles both; absent remains off.
+    static func enabled(defaults: UserDefaults = .standard) -> Bool { defaults.bool(forKey: defaultsKey) }
+    static let isOn = enabled()
 }
 
 /// Mac → phone on `capture` status: what the stream covers now. `epoch` 0 means the whole desktop

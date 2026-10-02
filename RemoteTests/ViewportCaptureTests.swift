@@ -528,6 +528,22 @@ final class ViewportCaptureTests: XCTestCase {
                                  "covered pinch/pan must not repeatedly reconfigure and race region status against video")
     }
 
+    func testScrollFixesDefaultOffSupportsTemporaryBooleanLaunchOverrides() throws {
+        let name = "ScrollFixesTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name); defaults.removeVolatileDomain(forName: UserDefaults.argumentDomain) }
+        XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults))
+        defaults.set(true, forKey: ScrollFixesSwitch.defaultsKey)
+        XCTAssertTrue(ScrollFixesSwitch.enabled(defaults: defaults))
+        defaults.setVolatileDomain([ScrollFixesSwitch.defaultsKey: "NO"], forName: UserDefaults.argumentDomain)
+        XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults))
+        defaults.setVolatileDomain([ScrollFixesSwitch.defaultsKey: "YES"], forName: UserDefaults.argumentDomain)
+        XCTAssertTrue(ScrollFixesSwitch.enabled(defaults: defaults))
+        defaults.removeVolatileDomain(forName: UserDefaults.argumentDomain)
+        defaults.removeObject(forKey: ScrollFixesSwitch.defaultsKey)
+        XCTAssertFalse(ScrollFixesSwitch.enabled(defaults: defaults), "Ordinary launch returns to the stored default")
+    }
+
     func testGoldenCoveredPinchReplayRequiresTheOptInKeepBand() throws {
         let whole = try output(moreSpace, fps: 60)
         func changes(keepBand: Bool) -> Int {
