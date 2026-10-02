@@ -151,6 +151,15 @@ final class PointerOverlayTests: XCTestCase {
                        "A `defaults write pointerSize` still wins over Larger Text")
     }
 
+    func testTheSettleHaloIsOffUnlessTheInternalKeyTurnsItOn() {
+        let suite = "settle-halo-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        XCTAssertFalse(PointerAccentView.settleHaloEnabled(defaults))
+        defaults.set(true, forKey: PointerAccentView.settleHaloKey)
+        XCTAssertTrue(PointerAccentView.settleHaloEnabled(defaults))
+    }
+
     func testFollowStylesOfferSmoothRigidAndOff() {
         XCTAssertEqual(PointerFollowStyle.allCases, [.smooth, .rigid, .off])
         XCTAssertNotNil(PointerFollowStyle.smooth.animation(reduceMotion: false))

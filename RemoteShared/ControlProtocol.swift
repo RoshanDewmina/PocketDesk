@@ -166,6 +166,16 @@ try pencil?.validate(action: action, interaction: interaction)
     }
 }
 
+extension RemoteAction {
+    /// A heartbeat that states the phone's current capabilities (pointer envelope, viewport, screen
+    /// pixels). The phone also sends heartbeats that carry only a video-feedback packet, a pointer
+    /// probe or a focus probe; those say nothing about capability, and reading their missing fields
+    /// as withdrawals switched the captured cursor back on about every 2.25 s (1 Oct).
+    var isRegularPhoneHeartbeat: Bool {
+        action == "heartbeat" && videoFeedback == nil && pointerProbe == nil && textFocusProbe == nil
+    }
+}
+
 struct ControlPacket: Codable {
     var version = 1
     var session: String

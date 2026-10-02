@@ -2542,7 +2542,7 @@ final class RemoteHostModel: ObservableObject {
                     clock: ClockProbe(phoneMs: probe.phoneMs, hostReceivedMs: received, hostSentMs: MachClock.nowMs())
                 ))
             }
-            if action.pointerProbe == nil && action.textFocusProbe == nil {
+            if action.isRegularPhoneHeartbeat {
                 pointerTelemetry.phoneHeartbeat(action.pointerSync, epoch: action.epoch,
                                                 at: ProcessInfo.processInfo.systemUptime)
             }
