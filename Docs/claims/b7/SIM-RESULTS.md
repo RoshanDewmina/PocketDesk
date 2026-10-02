@@ -1,4 +1,59 @@
-# Simulator claims receipts — finalized incomplete runs
+# Simulator claims receipts — fresh phone selection completed, failed
+
+The finalized fresh phone receipt **completed all 113 selected cases: 93 passed, 20 failed, zero skipped**. The 89 selected unit methods passed. Of 24 UI methods, four passed; all 18 accessibility audits failed, the aggregate five-lesson coach stopped on unsupported pointer events, and session pinch left accessible zoom at **1.0 → 1.0**. This is complete execution of this exact selection, with failed acceptance; it is neither a clean accessibility pass nor proof of all five lessons or pinch. No new iPad result is established here.
+
+The receipt is `logs/20261002T171227.844702Z/phone-check.xcresult`, with finalized summary/tree and text exports alongside it. Its iPhone 17 / iOS 27.0 simulator was `8DF0EC6C-A302-4156-81A4-60D527FF69F2`, arm64, OS build `24A434`. Runtime ran **17:12:30.123–18:32:29.360 UTC**, 4799.237 seconds. The test environment reports macOS 27.0.1. Xcode also recorded the warning “Publishing changes from within view updates is not allowed, this will cause undefined behavior.” This warning is retained separately from test assertions.
+
+## Frozen source and cleanup identity
+
+`tested-build-manifest.json` captures 966 compiler-input files and 49 complete artifact files. The tested UI source SHA256 is `fdd7d14ffe826b79430da714f7208bfdd2d28fe9b457b838b376bbf57364b0f1`; it matches the file at checkpoint `67adf8d7dfe9d80c6761ac6a4ba16edd18ceb18d`. This is the 20aded1 product base with verification harness additions, not proof of a later integrated/uploaded batch-7 build. The current revised UI source has SHA256 `c8d833da440437b5c44bf35139815ffb40c50f6ab767b6a2746a13cca3691cbb`; those later fixture corrections need a fresh compile and runtime receipt.
+
+`PHONE-FINALIZATION-RECOVERY.json` records source and complete artifacts matching before the parent signaled its own Xcode process. All 113 tests had completed and the xcresult had finalized by 18:32:29 UTC. Xcode then stalled during exit-time simulator shutdown; the parent sent SIGTERM only to its own Xcode PID 79547 at 18:39:45 UTC. It later stopped only its own simulator shutdown waiter after more than two minutes. **The recorded native stage exit is 241**, retained independently of the completed, failed XCTest result. A clean native exit and final simulator Shutdown state are not established by this receipt. The cleanup event does not turn completed cases into canceled cases, nor make a failed selection pass. Summary, tree and text export commands returned zero; exact selection acceptance returned **1 / accepted false**.
+
+The fresh scope is **89 unit + 18 bounded audit + 4 claim feature + 2 historical UI methods = 113**. The current runner's revised 117-method phone selection uses five separate coach methods; that future selection did not execute in this receipt. The original eight-method monolithic claims class is still not accepted. Historical interrupted/canceled receipts remain below and in JSON under `historical_finalized_platform_receipts`.
+
+## Fresh accessibility coverage
+
+All nine groups ran at default and AX-XXXL: entry 7, session 11, help 6, coach 6, display 1, settings 9, errors1 8, errors2 7, Home utilities 9. All 18 methods finished their final assertions and failed. There were no exported `audit-error` exception receipts. Reached means the initial hierarchy contains the expected semantic marker and actual navigation-bar title where specified; it does not establish visible/hittable layout or VoiceOver usability.
+
+| Size | Original attempted / reached | Home attempted / reached | Total attempted / reached | Initial audit hierarchies | Audit slices | Callback occurrences |
+|---|---:|---:|---:|---:|---:|---:|
+| AX-XXXL | 55 / 54 | 9 / 5 | 64 / 59 | 60 | 109 | 372 |
+| Default | 55 / 54 | 9 / 9 | 64 / 63 | 64 | 124 | 579 |
+| Total | 110 / 108 | 18 / 14 | 128 / 122 | 124 | 233 | 951 |
+
+Both LAN wake attempts captured underlying Settings rather than the intended sheet. Each recorded three fixture/navigation errors: missing LAN wake row, missing owner target field and missing LAN wake navigation title. Their underlying audits are retained in callback/slice counts, but are not promoted to LAN wake coverage. AX-XXXL Home could not reach four menu actions: **Connection Details, Third-Party Notices, Server Data, Settings**. Missing-menu-item hierarchies describe the menu, not the destination. Default Home reached all nine intended contexts; successful reachability did not yield clean audits.
+
+The 18 inventory collectors total **961 entries = 951 callback occurrences + 10 fixture/navigation errors**. Individual callback issue files exactly match the raw issue attachment events; copied descriptions in inventory files are not counted again. The explicit text export contains **1175 files** across 22 test groups, including 951 issue receipts, 124 initial audit hierarchies and 18 completed audit inventories. The remaining files are planned inventories, diagnostic/query text, feature hierarchies and boundary/value receipts. Audit screenshots for 233 visible slices remain in xcresult; text export does not export screenshot images. The JSON preserves each attempted context, the expected marker/title, hierarchy filenames, per-group collectors, per-size counts and exact method outcomes.
+
+| Callback type / raw value | AX-XXXL | Default | Total |
+|---|---:|---:|---:|
+| Dynamic Type partly/fully unsupported / 65536 | 169 | 252 | 421 |
+| Contrast failed/nearly passed / 1 | 125 | 167 | 292 |
+| Text clipped / 131072 | 55 | 93 | 148 |
+| Potentially inaccessible text / 2 | 20 | 63 | 83 |
+| Label not human-readable / 8 | 2 | 2 | 4 |
+| Missing disabled trait / 262144 | 1 | 1 | 2 |
+| Hit area too small / 4 | 0 | 1 | 1 |
+
+Dynamic Type consists of 373 partly unsupported and 48 unsupported observations; contrast consists of 262 failed and 30 nearly passed observations. There are 217 unique surface/type pairs preserving size and 419 unique visible-slice/type pairs. These are repeated, unfiltered SDK `.all` observations, **not adjudicated unique product defects**. Broad C8/accessibility support and Accessibility Nutrition Label claims remain unproven; physical VoiceOver/navigation and usable Dynamic Type remain separate gates.
+
+## Fresh feature outcomes
+
+| Selected method | Result / scope |
+|---|---|
+| `testCoachLessonsUseSynthesizedGesturesAllFive` | Failed: **“Pointer events are not supported for this device.”** Move and Click advanced in the raw trace; lesson 3's public pointer-scroll synthesis raised the framework failure. Drag and Zoom did not execute. No five-lesson completion claim. |
+| `testSessionPinchChangesAccessibleZoom` | Failed strict numeric comparison: **before 1.0, after 1.0**. The frozen fixture did not admit offline input; the revised quiet input probe needs a fresh run. This receipt establishes a failing fixture, not the cause of physical product behavior. |
+| `testKeyboardAndNonRecordingDictationRemainReachable` | Passed default/AX-XXXL keyboard and nonrecording preview entry points at the selected sensitivity settings. No microphone recognition or remote key delivery. |
+| `testOfflineConcealmentFixtureAndHomeBackgroundForeground` | Passed offline concealed fixture and actual simulator Home background/foreground lifecycle. No physical live-session app-switcher thumbnail acceptance. |
+| `testKeyboardBarPutsCommandFirstAndInReachInPortrait` | Passed selected portrait keyboard bar layout. |
+| `testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording` | Passed selected portrait/landscape nonrecording preview layout. |
+
+The full 89-unit result is source/artifact scoped automated evidence. Haptic feel, real dictation, live Stop Sharing, live remote-key delivery, long-session behavior, physical pinch and actual iPad/Duo usability remain separate tests. No native/simulator/process/gate action was issued by this analysis; it read already-finalized receipts and edited only these two evidence files.
+
+---
+
+# Historical simulator claims receipts — finalized incomplete runs
 
 The dedicated phone result is finalized after the parent stopped its own Xcode run. **89 selected unit tests passed; only 2 of 8 claims methods started, both recorded Failed**: AX snapshot query timeout and default-size cancellation. The iPad runner failed before any claims method. Neither platform has full claims-class acceptance.
 

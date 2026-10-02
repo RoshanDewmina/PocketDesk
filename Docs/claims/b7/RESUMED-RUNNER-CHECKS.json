@@ -1,0 +1,7 @@
+{
+  "verification": "Six fabricated Duo/owned-cleanup safety tests PASS; all claims Python files parse; independent source review no P0/P1",
+  "receipt": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/DUO-RUNNER-SAFETY-FINAL.log",
+  "nativeDuoAttempt": "NOT_RUN; original marker retained",
+  "scope": "Verification-only runner; production identical20aded1",
+  "runnerReceiptLimit": "Preexisting native invocations lack new invocation/end script manifest; no retroactive assertion"
+}

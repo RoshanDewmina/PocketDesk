@@ -11,6 +11,7 @@ p.add_argument('--dd', default='/Volumes/Studio/Development/Caches/b7-claims/DD'
 p.add_argument('--phone', help='Explicit lane-owned simulator override; default is a dedicated claims iPhone')
 p.add_argument('--ipad', help='Explicit lane-owned simulator override; default is a dedicated claims iPad')
 p.add_argument('--duo', default='663C5184-F544-4CAE-B9C3-A683C26500CE')
+p.add_argument('--skip-duo', action='store_true', help='Reuse the recorded one-attempt Duo infrastructure result; do not boot it again')
 p.add_argument('--build-family', choices=['phone','ipad'], default='phone', help='Dedicated simulator used for build-for-testing; use a separate DD for concurrent platform runs')
 p.add_argument('--ui-timeout',type=int,default=7200,help='Per-method default and maximum allowance for the full screen inventories')
 p.add_argument('--audit-groups',type=parse_groups,default='all',metavar='GROUPS',help='Recovery groups: all or '+','.join(GROUPS))
@@ -29,6 +30,10 @@ physical_log.mkdir(parents=True) # Fail closed on collision, never overwrite an 
 LOG = OUT / 'logs' / stamp
 LOG.parent.mkdir(parents=True, exist_ok=True)
 LOG.symlink_to(physical_log, target_is_directory=True) # Public paths continue to identify raw receipts.
+def runner_identity():
+    return {str(path.relative_to(ROOT)):hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted((ROOT/'script/claims').glob('*.py'))}
+runner_before=runner_identity()
+(LOG/'runner-source-manifest.json').write_text(json.dumps(runner_before,indent=2)+'\n')
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 from identity import source_identity, artifact_identity, verify
 from simulators import select
@@ -56,10 +61,10 @@ def gate():
         print('Waiting for shared build/quiet gate', flush=True); time.sleep(60)
     if __import__('shutil').disk_usage('/').free < 10 * 1024**3:
         raise SystemExit('Internal disk below 10 GiB: no builds/tests started')
-def run(name, args, locked=False, timeout=None, manifest=False, shutdown=None, primary=False):
+def run(name, args, locked=False, timeout=None, manifest=False, shutdown=None, primary=False, require_shutdown=False):
     if locked:
         gate()
-        flags=(['--manifest',manifest if isinstance(manifest,str) else a.dd] if manifest else [])+(['--shutdown-simulator',shutdown] if shutdown else [])
+        flags=(['--manifest',manifest if isinstance(manifest,str) else a.dd] if manifest else [])+(['--shutdown-simulator',shutdown] if shutdown else [])+(['--require-shutdown-simulator'] if require_shutdown else [])
         prefix=['/usr/bin/lockf','-k','/tmp/farside-xcodebuild.lock'] if primary else [str(pathlib.Path.home()/'bin/farside-lock')]
         args = prefix+[sys.executable,str(ROOT/'script/claims/locked.py'),*flags,*args]
     print(name + ': ' + ' '.join(args), flush=True)
@@ -182,19 +187,15 @@ def backend():
     run('backend-renewal-route',['node',str(dep/'vitest/vitest.mjs'),'run','--root',str(ROOT/'Backend'),'--config',str(ROOT/'Backend/vitest.config.ts'),'test/renewal.test.ts','test/route.test.ts'])
     if source_identity()!=before: raise SystemExit('Source changed during backend checks; receipt invalid.')
 def duo():
-    gate()
-    run('duo-boot-once',['xcrun','simctl','boot',a.duo])
-    try:
-        code=run('duo-boot-status',['xcrun','simctl','bootstatus',a.duo,'-b'],timeout=180)
-        text=(LOG/'duo-boot-status.log').read_text()
-        states=json.loads(subprocess.check_output(['xcrun','simctl','list','devices','-j'],env=ENV,text=True))['devices']
-        device=next((d for group in states.values() for d in group if d['udid']==a.duo),{})
-        failed=code!=0 or 'Data Migration Failed' in text or device.get('state')!='Booted'
-        results.append({'name':'duo-boot-acceptance','exit':1 if failed else 0,'state':device.get('state'),'log':str(LOG/'duo-boot-status.log')})
-        (LOG/'results.json').write_text(json.dumps(results,indent=2))
-        print('Duo boot acceptance: '+('FAILED; no retry' if failed else 'completed'),flush=True)
-    finally:
-        run('duo-shutdown',['xcrun','simctl','shutdown',a.duo])
+    if a.skip_duo:
+        raise SystemExit('Explicit duo stage cannot use --skip-duo; no boot attempted.')
+    # Exact assigned UUID only; the lock wrapper checks active native conflicts,
+    # gates and disk, then performs bounded cleanup before releasing the slot.
+    select('duo', a.duo)
+    marker=OUT/'DUO-ATTEMPTED.json'
+    if marker.exists():
+        raise SystemExit('Duo attempt already recorded in this output folder; use all --skip-duo. No boot attempted.')
+    run('duo-boot-once',[sys.executable,str(ROOT/'script/claims/duo_probe.py'),a.duo,str(LOG/'duo-boot-acceptance.json'),str(marker)],True,shutdown=a.duo,require_shutdown=True,primary=True)
 if a.stage=='auto': auto()
 elif a.stage=='settings': settings()
 elif a.stage=='build': build()
@@ -213,7 +214,12 @@ elif a.stage=='core': core()
 elif a.stage=='backend': backend()
 elif a.stage=='host': host()
 else:
-    auto(); duo(); backend()
+    auto()
+    if a.skip_duo:
+        (LOG/'duo-not-rerun.json').write_text(json.dumps({'status':'NOT_RERUN','reason':'--skip-duo: retain the prior one-attempt receipt; no fresh Duo acceptance'},indent=2)+'\n')
+    else:
+        duo()
+    backend()
     if build()==0:
         # A future one-command pass covers bounded audits plus feature/unit selectors.
         # It does not rewrite the failed receipts of the original monolithic methods.
@@ -223,4 +229,10 @@ else:
             test(family+'-check',device(family),recovery_methods=check_methods(family))
     core(); host()
 print('Evidence: '+str(LOG),flush=True)
+runner_after=runner_identity()
+(LOG/'runner-source-after.json').write_text(json.dumps({'scripts':runner_after,'matchesInvocation':runner_after==runner_before},indent=2)+'\n')
+if runner_after!=runner_before:
+    print('Verification scripts changed during this invocation; rerun before accepting the whole stage.',flush=True)
+    results.append({'name':'runner-source-identity','exit':78,'log':str(LOG/'runner-source-after.json')})
+    (LOG/'results.json').write_text(json.dumps(results,indent=2)+'\n')
 sys.exit(1 if any(r['exit'] for r in results if not r['name'].endswith('-shutdown')) else 0)
