@@ -1,6 +1,39 @@
 import XCTest
 
 final class BigTextStepsTests: XCTestCase {
+    func testAutomaticLevelUsesPhonePixelsAndOnlyOfferedHiDPIModes() {
+        let cases: [(Int, Int, PixelSize, Double?)] = [
+            (1470, 956, PixelSize(width: 1179, height: 2556), 1280),
+            (1920, 1243, PixelSize(width: 1290, height: 2796), 1440),
+            (2560, 1440, PixelSize(width: 1206, height: 2622), 1280),
+            (1920, 1080, PixelSize(width: 750, height: 1334), 1280),
+            (1280, 832, PixelSize(width: 1179, height: 2556), nil)
+        ]
+        for (width, height, phone, expected) in cases {
+            let baseline = mode(width, height)
+            let modes = [1440, 1280, 1024].map { w in
+                mode(w, Int((Double(w) / baseline.aspect).rounded()))
+            } + [mode(1360, Int((1360 / baseline.aspect).rounded()), px: (1360, Int((1360 / baseline.aspect).rounded())))]
+            let steps = BigTextSteps.steps(baseline: baseline, modes: modes)
+            let picked = BigTextAutoLevel.choose(phonePixels: phone, baselineWidth: Double(width), steps: steps.map(\.step))
+            XCTAssertEqual(picked, expected, "baseline \(width), phone \(phone)")
+            XCTAssertEqual(picked, BigTextAutoLevel.choose(phonePixels: PixelSize(width: phone.height, height: phone.width),
+                                                         baselineWidth: Double(width), steps: steps.map(\.step)))
+            if let picked { XCTAssertTrue(steps.contains { Double($0.width) == picked && $0.isHiDPI }) }
+        }
+    }
+
+    func testAutomaticLevelEmptyInvalidAndTieCases() {
+        let phone = PixelSize(width: 1206, height: 2622)
+        XCTAssertNil(BigTextAutoLevel.choose(phonePixels: phone, baselineWidth: 1920, steps: []))
+        XCTAssertNil(BigTextAutoLevel.choose(phonePixels: PixelSize(width: 0, height: 2622), baselineWidth: 1920,
+                                            steps: [ScaleStep(width: 1280, height: 832)]))
+        let tied = [ScaleStep(width: 1280, height: 832), ScaleStep(width: 1440, height: 936)]
+        XCTAssertEqual(BigTextAutoLevel.choose(phonePixels: PixelSize(width: 1200, height: 2720),
+                                              baselineWidth: 1920, steps: tied), 1440)
+        XCTAssertNil(BigTextAutoLevel.choose(phonePixels: phone, baselineWidth: 1920,
+                                            steps: [ScaleStep(width: 2048, height: 1330)]))
+    }
     private func mode(_ w: Int, _ h: Int, px: (Int, Int)? = nil, hz: Double = 60, gui: Bool = true, id: Int32? = nil) -> DisplayModeInfo {
         let pixels = px ?? (w * 2, h * 2)
         return DisplayModeInfo(ioModeID: id ?? Int32(w * 10_000 + h), width: w, height: h, pixelWidth: pixels.0,

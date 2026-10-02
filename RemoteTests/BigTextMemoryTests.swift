@@ -64,7 +64,7 @@ final class BigTextMemoryTests: XCTestCase {
                      "two saved twins with new ids could be either monitor")
     }
 
-    func testOffForgetsOneDisplayAndForgetClearsTheMac() {
+    func testOffClearsOneDisplaysWidthAndForgetClearsTheMac() {
         let memory = BigTextMemory(defaults: defaults)
         memory.remember(1280, forRoom: "room-a", display: builtIn, among: [builtIn, studio])
         memory.remember(2048, forRoom: "room-a", display: studio, among: [builtIn, studio])
@@ -97,5 +97,17 @@ final class BigTextMemoryTests: XCTestCase {
     func testRoomIsHashed() {
         XCTAssertFalse(BigTextMemory.macKey(room: "room-a").contains("room-a"))
         XCTAssertNotEqual(BigTextMemory.macKey(room: "room-a"), DisplayMemory.macKey(room: "room-a"))
+    }
+
+    func testExplicitOffIsAChoiceAndForgetRemovesIt() {
+        let memory = BigTextMemory(defaults: defaults)
+        XCTAssertFalse(memory.hasSavedChoice(forRoom: "room-a", display: builtIn, among: [builtIn]))
+        memory.remember(nil, forRoom: "room-a", display: builtIn, among: [builtIn])
+        XCTAssertTrue(BigTextMemory(defaults: defaults).hasSavedChoice(forRoom: "room-a", display: builtIn, among: [builtIn]))
+        XCTAssertNil(memory.width(forRoom: "room-a", display: builtIn, among: [builtIn]), "existing Off UI still has no saved width")
+        let renumbered = DisplayDescriptor(id: 9, name: builtIn.name, width: 1470, height: 956)
+        XCTAssertTrue(memory.hasSavedChoice(forRoom: "room-a", display: renumbered, among: [renumbered]))
+        memory.forget(room: "room-a")
+        XCTAssertFalse(memory.hasSavedChoice(forRoom: "room-a", display: builtIn, among: [builtIn]))
     }
 }
