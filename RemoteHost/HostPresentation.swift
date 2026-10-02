@@ -97,6 +97,10 @@ enum HostPopoverPolicy {
         min(640, max(0, visibleHeight - 24))
     }
 
+    static func headerHeight(content: Double, actions: Double, maximum: Double) -> Double {
+        min(max(0, content), max(0, maximum - 96 - actions))
+    }
+
     static func detailHeight(content: Double, pinned: Double, maximum: Double) -> Double {
         min(max(0, content), max(0, maximum - pinned))
     }

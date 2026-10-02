@@ -118,6 +118,22 @@ final class HostPresentationTests: XCTestCase {
         XCTAssertEqual(HostPopoverPolicy.detailHeight(content: 1600, pinned: 500, maximum: 400), 0)
     }
 
+    func testBoundedPopoverLongScopeCannotConsumePinnedExitBudget() {
+        // A growth/screen-change pass uses this same header budget for the header and scroll.
+        let growingHeader = HostPopoverPolicy.headerHeight(content: 180, actions: 160, maximum: 456)
+        let remaining = HostPopoverPolicy.detailHeight(content: 1600, pinned: 96 + growingHeader + 160, maximum: 456)
+        XCTAssertEqual(96 + growingHeader + 160 + remaining, 456)
+        for height in [480.0, 600, 900] {
+            let maximum = HostPopoverPolicy.maximumHeight(visibleHeight: height)
+            let actions = 180.0
+            let header = HostPopoverPolicy.headerHeight(content: 1600, actions: actions, maximum: maximum)
+            let pinned = 96 + header + actions
+            XCTAssertLessThanOrEqual(pinned, maximum)
+            XCTAssertEqual(HostPopoverPolicy.detailHeight(content: 1600, pinned: pinned, maximum: maximum), 0)
+            XCTAssertEqual(HostPopoverPolicy.headerHeight(content: 80, actions: actions, maximum: maximum), 80)
+        }
+    }
+
     func testScopedPopoverNamesTheSelectedContentWithoutFallingBackToTheDisplay() {
         var scoped = state(.viewing)
         scoped.captureScopeViewOnly = true

@@ -26,12 +26,21 @@ struct HostPopoverView: View {
 
     var body: some View {
         let presentation = HostPopoverPresentation.make(for: state, now: now ?? Date())
+        let maximum = HostPopoverPolicy.maximumHeight(visibleHeight: visibleHeightOverride ?? visibleHeight)
+        // Retain a conservative reserve when Stop expands into confirmation; preferences arrive
+        // one layout pass later. Larger measured footers still increase the reserve.
+        let actionsHeight = max(measuredHeights["actions"] ?? 0, 240)
+        let headerHeight = HostPopoverPolicy.headerHeight(
+            content: measuredHeights["naturalWho"] ?? 100, actions: actionsHeight, maximum: maximum)
         VStack(alignment: .leading, spacing: 0) {
             HostPopoverStrip(presentation: presentation, activity: activity)
             if bounded {
                 who(presentation)
                     .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 12)
-                    .measurePopoverHeight("who")
+                    .fixedSize(horizontal: false, vertical: true)
+                    .measurePopoverHeight("naturalWho")
+                    .frame(height: headerHeight, alignment: .top)
+                    .clipped()
                 ScrollView {
                     details(presentation)
                         .padding(.horizontal, 16).padding(.bottom, 12)
@@ -39,8 +48,8 @@ struct HostPopoverView: View {
                 }
                 .frame(height: HostPopoverPolicy.detailHeight(
                     content: measuredHeights["details"] ?? 400,
-                    pinned: 96 + (measuredHeights["who"] ?? 100) + (measuredHeights["actions"] ?? 160),
-                    maximum: HostPopoverPolicy.maximumHeight(visibleHeight: visibleHeightOverride ?? visibleHeight)))
+                    pinned: 96 + headerHeight + actionsHeight,
+                    maximum: maximum))
                 .accessibilityIdentifier("farside.popover.details")
                 // Session exits and their confirmation remain outside the scrolling details.
                 VStack(alignment: .leading, spacing: 14) {
@@ -156,9 +165,11 @@ struct HostPopoverView: View {
             HostIconTile(systemImage: presentation.symbol)
             VStack(alignment: .leading, spacing: 4) {
                 Text(presentation.title)
+                    .lineLimit(bounded ? 2 : nil)
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Farside.Palette.bone)
-                if let caption = presentation.caption {
+                // In the bounded live surface the same measurements remain in the detail meters.
+                if let caption = presentation.caption, !bounded || !state.status.isSessionLive {
                     Text(caption)
                         .hostCaption(10.5)
                         .lineLimit(2)
@@ -166,6 +177,8 @@ struct HostPopoverView: View {
                 }
                 if HostPopoverPolicy.scopedControls, let caption = HostPopoverPolicy.scopeCaption(state) {
                     Text(caption).font(.system(size: 13)).foregroundStyle(Farside.Palette.ash)
+                        .lineLimit(bounded ? 2 : nil)
+                        .help(caption)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("farside.popover.captureScope")
                 }
