@@ -1,0 +1,1354 @@
+{
+  "schema_version": 6,
+  "analysis_status": "finalized_partial_phone_and_ipad_infrastructure_failure_no_class_acceptance",
+  "generated_at_utc": "2026-10-02T17:09:50.330228+00:00",
+  "expected_claims_methods": 8,
+  "expected_named_surfaces_per_size": {
+    "original": 55,
+    "home_supplement": 9,
+    "total": 64
+  },
+  "counts_are_runtime_only": true,
+  "production_base_reported_by_parent": "20aded1",
+  "checkpoint_reported_by_parent": "287b644",
+  "platforms": {
+    "phone": {
+      "parent_tool_session_id": 86127,
+      "run_directory": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T152929.742920Z",
+      "runtime_state": "finalized_partial_run_stopped_by_parent",
+      "selected_device": {
+        "udid": "B2CED284-1C7E-4FB2-9582-8E740D36E8F4",
+        "name": "Farside B7 Claims phone",
+        "runtime": "com.apple.CoreSimulator.SimRuntime.iOS-27-0",
+        "deviceType": "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
+        "created": true
+      },
+      "tested_ui_source_sha256": "99fb0550b9e207721df7ff5cffa9c9fc3b55548f785b41513f92a5307939adf2",
+      "tested_build_manifest_present": true,
+      "observed_test_log_present": true,
+      "observed_test_log_bytes": 1955083,
+      "report_summary_present": true,
+      "report_tests_present": true,
+      "xcresult_exists": true,
+      "claims_class_results": {
+        "expected_methods": 8,
+        "executed": 2,
+        "passed": 0,
+        "failed": 2,
+        "skipped": 0,
+        "query_timeout_failed_methods": 1,
+        "parent_canceled_methods": 1,
+        "result": "incomplete_failed",
+        "accepted": false,
+        "acceptance_basis": "Independent summary/tree scope: only 2 of 8 claims entries present, both Failed; six absent methods are not skips or passes.",
+        "missing_methods": [
+          "testAccessibilityAuditSupplementalHomeUtilitiesAccessibilityXXXL",
+          "testAccessibilityAuditSupplementalHomeUtilitiesDefaultSize",
+          "testCoachLessonsUseSynthesizedGesturesAllFive",
+          "testKeyboardAndNonRecordingDictationRemainReachable",
+          "testOfflineConcealmentFixtureAndHomeBackgroundForeground",
+          "testSessionPinchChangesAccessibleZoom"
+        ],
+        "methods": [
+          {
+            "name": "testAccessibilityAuditAllScreensAccessibilityXXXL",
+            "result": "Failed",
+            "duration_seconds": 3130.0556370019913,
+            "failure_messages": [
+              "Failed to get matching snapshots: Timed out while evaluating UI query."
+            ]
+          },
+          {
+            "name": "testAccessibilityAuditAllScreensDefaultSize",
+            "result": "Failed",
+            "duration_seconds": null,
+            "failure_messages": [
+              "Testing was canceled"
+            ]
+          }
+        ]
+      },
+      "overall_suite_results": {
+        "result": "Failed",
+        "framework_summary_total_test_count": 91,
+        "passed": 89,
+        "failed": 2,
+        "skipped": 0,
+        "expected_failures": 0,
+        "selected_phone_unit_suite": {
+          "executed": 89,
+          "passed": 89,
+          "failed": 0,
+          "skipped": 0
+        },
+        "claims_failed_entries": 2,
+        "historical_UI_methods_executed": 0,
+        "test_failures": [
+          {
+            "failureText": "Failed to get matching snapshots: Timed out while evaluating UI query.",
+            "targetName": "RemotePhoneUITests",
+            "testIdentifier": 90,
+            "testIdentifierString": "ClaimsVerificationUITests/testAccessibilityAuditAllScreensAccessibilityXXXL()",
+            "testIdentifierURL": "test://com.apple.xcode/PocketDesktop/RemotePhoneUITests/ClaimsVerificationUITests/testAccessibilityAuditAllScreensAccessibilityXXXL",
+            "testName": "testAccessibilityAuditAllScreensAccessibilityXXXL()"
+          },
+          {
+            "failureText": "Testing was canceled",
+            "targetName": "RemotePhoneUITests",
+            "testIdentifier": 91,
+            "testIdentifierString": "ClaimsVerificationUITests/testAccessibilityAuditAllScreensDefaultSize()",
+            "testIdentifierURL": "test://com.apple.xcode/PocketDesktop/RemotePhoneUITests/ClaimsVerificationUITests/testAccessibilityAuditAllScreensDefaultSize",
+            "testName": "testAccessibilityAuditAllScreensDefaultSize()"
+          }
+        ],
+        "scope": "Finalized partial receipt, not completed intended selection or a stage pass."
+      },
+      "surface_reachability": {
+        "attempted_surface_size_contexts": 75,
+        "confirmed_reached_surface_size_contexts": 72,
+        "by_size": {
+          "AX-XXXL": {
+            "attempted": 31,
+            "reached": 30,
+            "original_expected": 55,
+            "original_not_attempted": [
+              "settings-picture",
+              "settings-pointer",
+              "settings-touch",
+              "settings-view",
+              "settings-clipboard",
+              "settings-keyboard",
+              "settings-steer",
+              "settings-diagnostics",
+              "settings-lan-wake",
+              "error-napping",
+              "error-unreachable",
+              "error-busy",
+              "error-locked",
+              "error-needsPlan",
+              "error-codeRejected",
+              "error-declined",
+              "error-approvalTimedOut",
+              "error-verifyFailed",
+              "error-relayUnavailable",
+              "error-connectionLost",
+              "error-sessionGlitch",
+              "error-anywhereUnverified",
+              "error-couchNotLocal",
+              "error-couchControlOff"
+            ],
+            "supplement_expected": 9,
+            "supplement_attempted": 0,
+            "supplement_reached": 0,
+            "supplement_not_attempted": [
+              "help-and-more-menu",
+              "your-macs",
+              "connection-details",
+              "third-party-notices",
+              "server-data-disclosure",
+              "security-settings",
+              "alerts-lock-screen",
+              "useful-session-progress",
+              "connect-prompt"
+            ],
+            "unconfirmed_contexts": [
+              "AX-XXXL-settings-display"
+            ]
+          },
+          "default": {
+            "attempted": 44,
+            "reached": 42,
+            "original_expected": 55,
+            "original_not_attempted": [
+              "error-needsPlan",
+              "error-codeRejected",
+              "error-declined",
+              "error-approvalTimedOut",
+              "error-verifyFailed",
+              "error-relayUnavailable",
+              "error-connectionLost",
+              "error-sessionGlitch",
+              "error-anywhereUnverified",
+              "error-couchNotLocal",
+              "error-couchControlOff"
+            ],
+            "supplement_expected": 9,
+            "supplement_attempted": 0,
+            "supplement_reached": 0,
+            "supplement_not_attempted": [
+              "help-and-more-menu",
+              "your-macs",
+              "connection-details",
+              "third-party-notices",
+              "server-data-disclosure",
+              "security-settings",
+              "alerts-lock-screen",
+              "useful-session-progress",
+              "connect-prompt"
+            ],
+            "unconfirmed_contexts": [
+              "default-settings-lan-wake",
+              "default-error-locked"
+            ]
+          }
+        },
+        "context_receipts": [
+          {
+            "context": "AX-XXXL-home-empty",
+            "size": "AX-XXXL",
+            "surface": "home-empty",
+            "hierarchy_attachment": "C7EB9D7D-1444-470E-A1A4-FC957808588F.txt",
+            "expected_marker": "Paste a pairing code",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-home-demo",
+            "size": "AX-XXXL",
+            "surface": "home-demo",
+            "hierarchy_attachment": "1C721318-06C6-4F3A-B10E-7250090149C2.txt",
+            "expected_marker": "home.mac",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-home-connecting",
+            "size": "AX-XXXL",
+            "surface": "home-connecting",
+            "hierarchy_attachment": "C7A41F52-9260-4A9D-8669-79733CB9B377.txt",
+            "expected_marker": "phone.home",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-pairing-paste",
+            "size": "AX-XXXL",
+            "surface": "pairing-paste",
+            "hierarchy_attachment": "64AB2CB7-C041-4122-A8F8-77B608406EED.txt",
+            "expected_marker": "Pair Mac",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-pairing-expired",
+            "size": "AX-XXXL",
+            "surface": "pairing-expired",
+            "hierarchy_attachment": "756319AB-7D4A-4DD2-84CB-E30C242C7AB5.txt",
+            "expected_marker": "pairing.feedback",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-pairing-scan-permission",
+            "size": "AX-XXXL",
+            "surface": "pairing-scan-permission",
+            "hierarchy_attachment": "00FD25C6-0B26-4FBD-81D8-C75D0E2E20EC.txt",
+            "expected_marker": "Paste Code",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-pairing-scan-denied",
+            "size": "AX-XXXL",
+            "surface": "pairing-scan-denied",
+            "hierarchy_attachment": "99EA7BF2-AEAC-4254-88DC-F900CD7B4D71.txt",
+            "expected_marker": "Paste Code",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-session",
+            "size": "AX-XXXL",
+            "surface": "session",
+            "hierarchy_attachment": "3EC17377-B457-434F-AC3A-4CAA2D17E0F0.txt",
+            "expected_marker": "remote.canvas",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-session-dock",
+            "size": "AX-XXXL",
+            "surface": "session-dock",
+            "hierarchy_attachment": "D10DF8DD-DE81-4400-992A-01D4131BEB83.txt",
+            "expected_marker": "Hide controls",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-session-keyboard",
+            "size": "AX-XXXL",
+            "surface": "session-keyboard",
+            "hierarchy_attachment": "87EC8E01-DC25-4991-99EB-9B74E31AF923.txt",
+            "expected_marker": "remote.keyboard.hide",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-session-dictation",
+            "size": "AX-XXXL",
+            "surface": "session-dictation",
+            "hierarchy_attachment": "43FB6F54-816D-484B-B696-0AA94528ECE6.txt",
+            "expected_marker": "remote.voice.transcript",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-session-clipboard",
+            "size": "AX-XXXL",
+            "surface": "session-clipboard",
+            "hierarchy_attachment": "A9F495A8-8E0D-42C4-A312-6A9C01D34780.txt",
+            "expected_marker": "remote.clipboard.row",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-session-controls",
+            "size": "AX-XXXL",
+            "surface": "session-controls",
+            "hierarchy_attachment": "3D7B95F4-D68E-48F5-860A-4FB52186D3B1.txt",
+            "expected_marker": "remote.controls.content",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-session-settings",
+            "size": "AX-XXXL",
+            "surface": "session-settings",
+            "hierarchy_attachment": "CAFD41EF-0198-49A7-9A3E-905592CC908F.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "Settings",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-session-data-notice",
+            "size": "AX-XXXL",
+            "surface": "session-data-notice",
+            "hierarchy_attachment": "CFCD3815-47DA-40AD-B6E3-E00D73628401.txt",
+            "expected_marker": "remote.dataWarning",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-session-reconnecting",
+            "size": "AX-XXXL",
+            "surface": "session-reconnecting",
+            "hierarchy_attachment": "C5D20C23-B8DF-413D-905F-2724F5E06399.txt",
+            "expected_marker": "remote.reconnecting",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-session-sharing-stopped",
+            "size": "AX-XXXL",
+            "surface": "session-sharing-stopped",
+            "hierarchy_attachment": "0CD54612-2A68-4F45-97A1-890C04367194.txt",
+            "expected_marker": "remote.issue.screenSharingOff",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-concealed",
+            "size": "AX-XXXL",
+            "surface": "concealed",
+            "hierarchy_attachment": "DFB7E161-BAB7-4513-B81B-A3730E520E93.txt",
+            "expected_marker": "Return to Farside",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-paywall",
+            "size": "AX-XXXL",
+            "surface": "paywall",
+            "hierarchy_attachment": "BA329874-4783-4644-ACE4-571C9CA5E4BF.txt",
+            "expected_marker": "anywhere.paywall",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-troubleshoot",
+            "size": "AX-XXXL",
+            "surface": "troubleshoot",
+            "hierarchy_attachment": "F2ADB329-36B2-45DA-B83C-4723F33F9071.txt",
+            "expected_marker": "Close",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-primer-network",
+            "size": "AX-XXXL",
+            "surface": "primer-network",
+            "hierarchy_attachment": "6A0C26A2-46D8-4BE3-87BF-AA89F730270B.txt",
+            "expected_marker": "Continue",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-primer-mic",
+            "size": "AX-XXXL",
+            "surface": "primer-mic",
+            "hierarchy_attachment": "5DB29A17-38FA-4DA8-832C-6026128030C0.txt",
+            "expected_marker": "Continue",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-primer-camera",
+            "size": "AX-XXXL",
+            "surface": "primer-camera",
+            "hierarchy_attachment": "EAF49434-5C47-4454-8740-82BB44B8D15C.txt",
+            "expected_marker": "Continue",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-primer-notifications",
+            "size": "AX-XXXL",
+            "surface": "primer-notifications",
+            "hierarchy_attachment": "E09247A0-E776-45E4-A626-16FB525FE180.txt",
+            "expected_marker": "Continue",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-coach-lesson-1",
+            "size": "AX-XXXL",
+            "surface": "coach-lesson-1",
+            "hierarchy_attachment": "10389AF6-9C15-46CE-8122-FC304E852812.txt",
+            "expected_marker": "coach.pad",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-coach-lesson-2",
+            "size": "AX-XXXL",
+            "surface": "coach-lesson-2",
+            "hierarchy_attachment": "F646CECE-41EE-403E-A3B9-B6C11EE2D61C.txt",
+            "expected_marker": "coach.pad",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-coach-lesson-3",
+            "size": "AX-XXXL",
+            "surface": "coach-lesson-3",
+            "hierarchy_attachment": "2A3F2B6D-4AB3-4EB4-9E44-96069043BDBB.txt",
+            "expected_marker": "coach.pad",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-coach-lesson-4",
+            "size": "AX-XXXL",
+            "surface": "coach-lesson-4",
+            "hierarchy_attachment": "0F76B382-9033-47CC-B15C-10FF487026D1.txt",
+            "expected_marker": "coach.pad",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-coach-lesson-5",
+            "size": "AX-XXXL",
+            "surface": "coach-lesson-5",
+            "hierarchy_attachment": "177574EB-1FC3-4626-B2A2-8674D73464E1.txt",
+            "expected_marker": "coach.pad",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-coach-done",
+            "size": "AX-XXXL",
+            "surface": "coach-done",
+            "hierarchy_attachment": "FDD5448E-C66F-4A50-94C3-B88D4121C5CA.txt",
+            "expected_marker": "coach.done",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "AX-XXXL-settings-display",
+            "size": "AX-XXXL",
+            "surface": "settings-display",
+            "hierarchy_attachment": null,
+            "expected_marker": "remote.controls.page",
+            "marker_present": false,
+            "expected_navigation_title": "Display",
+            "navigation_title_present": false,
+            "confirmed_reached": false
+          },
+          {
+            "context": "default-home-empty",
+            "size": "default",
+            "surface": "home-empty",
+            "hierarchy_attachment": "6E5E8269-D9DD-49C6-B18C-BC5ED92802FC.txt",
+            "expected_marker": "Paste a pairing code",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-home-demo",
+            "size": "default",
+            "surface": "home-demo",
+            "hierarchy_attachment": "67653020-6715-4528-BEFC-448C0979DD7E.txt",
+            "expected_marker": "home.mac",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-home-connecting",
+            "size": "default",
+            "surface": "home-connecting",
+            "hierarchy_attachment": "A3249DA9-9CAD-442D-95A7-CACDCA2D00C9.txt",
+            "expected_marker": "phone.home",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-pairing-paste",
+            "size": "default",
+            "surface": "pairing-paste",
+            "hierarchy_attachment": "167FB42B-33F3-4AD0-B11D-72E954855563.txt",
+            "expected_marker": "Pair Mac",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-pairing-expired",
+            "size": "default",
+            "surface": "pairing-expired",
+            "hierarchy_attachment": "0501B7AF-5765-4C8D-BFC9-80D210740B61.txt",
+            "expected_marker": "pairing.feedback",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-pairing-scan-permission",
+            "size": "default",
+            "surface": "pairing-scan-permission",
+            "hierarchy_attachment": "EDA7EB76-6609-442F-874B-C5A74E3EFE24.txt",
+            "expected_marker": "Paste Code",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-pairing-scan-denied",
+            "size": "default",
+            "surface": "pairing-scan-denied",
+            "hierarchy_attachment": "504EB3E7-25FB-447A-8680-4C890518AC48.txt",
+            "expected_marker": "Paste Code",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-session",
+            "size": "default",
+            "surface": "session",
+            "hierarchy_attachment": "41C45FA7-DD09-46F7-AD90-8DFBCD3E4C9D.txt",
+            "expected_marker": "remote.canvas",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-session-dock",
+            "size": "default",
+            "surface": "session-dock",
+            "hierarchy_attachment": "24F1D61F-7866-47A8-A1E7-CCB7B83BE115.txt",
+            "expected_marker": "Hide controls",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-session-keyboard",
+            "size": "default",
+            "surface": "session-keyboard",
+            "hierarchy_attachment": "17855C69-23F9-481A-8B7B-05C5E2911194.txt",
+            "expected_marker": "remote.keyboard.hide",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-session-dictation",
+            "size": "default",
+            "surface": "session-dictation",
+            "hierarchy_attachment": "DF33DCBC-FD34-4615-91E4-3B915F52DC8F.txt",
+            "expected_marker": "remote.voice.transcript",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-session-clipboard",
+            "size": "default",
+            "surface": "session-clipboard",
+            "hierarchy_attachment": "E7EAE185-6B44-476E-9D57-BDFA5D669D91.txt",
+            "expected_marker": "remote.clipboard.row",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-session-controls",
+            "size": "default",
+            "surface": "session-controls",
+            "hierarchy_attachment": "3667743D-1AFF-4563-9053-4D163F280844.txt",
+            "expected_marker": "remote.controls.content",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-session-settings",
+            "size": "default",
+            "surface": "session-settings",
+            "hierarchy_attachment": "A96EDBE3-9531-4359-B3CB-613914223CB5.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "Settings",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-session-data-notice",
+            "size": "default",
+            "surface": "session-data-notice",
+            "hierarchy_attachment": "E185065E-871D-47C4-8D65-75EFBB22D7A7.txt",
+            "expected_marker": "remote.dataWarning",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-session-reconnecting",
+            "size": "default",
+            "surface": "session-reconnecting",
+            "hierarchy_attachment": "5B12FF47-7E15-4E99-B964-24CC03FB9132.txt",
+            "expected_marker": "remote.reconnecting",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-session-sharing-stopped",
+            "size": "default",
+            "surface": "session-sharing-stopped",
+            "hierarchy_attachment": "0CDD04AC-B2ED-40E2-98D2-A8C9F9CAE75F.txt",
+            "expected_marker": "remote.issue.screenSharingOff",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-concealed",
+            "size": "default",
+            "surface": "concealed",
+            "hierarchy_attachment": "E68DC43B-E24F-46AA-9F3C-6956CC4D4ED0.txt",
+            "expected_marker": "Return to Farside",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-paywall",
+            "size": "default",
+            "surface": "paywall",
+            "hierarchy_attachment": "A0C7F7A5-7421-4703-B173-F4B858A25C1A.txt",
+            "expected_marker": "anywhere.paywall",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-troubleshoot",
+            "size": "default",
+            "surface": "troubleshoot",
+            "hierarchy_attachment": "9EA113C6-AD7F-43AA-A4D7-BD5CD7E287C9.txt",
+            "expected_marker": "Close",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-primer-network",
+            "size": "default",
+            "surface": "primer-network",
+            "hierarchy_attachment": "ECF0C2A7-E079-469D-8BA0-113B292EBFD7.txt",
+            "expected_marker": "Continue",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-primer-mic",
+            "size": "default",
+            "surface": "primer-mic",
+            "hierarchy_attachment": "86E4C1A0-5A00-45D3-AC62-F908FB90B901.txt",
+            "expected_marker": "Continue",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-primer-camera",
+            "size": "default",
+            "surface": "primer-camera",
+            "hierarchy_attachment": "657504F7-91F5-4937-81B6-A3DBB1A8257E.txt",
+            "expected_marker": "Continue",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-primer-notifications",
+            "size": "default",
+            "surface": "primer-notifications",
+            "hierarchy_attachment": "CE090439-C24D-4E00-BCFE-A9B8DE1384BB.txt",
+            "expected_marker": "Continue",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-coach-lesson-1",
+            "size": "default",
+            "surface": "coach-lesson-1",
+            "hierarchy_attachment": "94422B0F-7EBD-4E7D-AF9F-CD320FDDA58C.txt",
+            "expected_marker": "coach.pad",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-coach-lesson-2",
+            "size": "default",
+            "surface": "coach-lesson-2",
+            "hierarchy_attachment": "95B5EBE5-D189-4BFE-B4E2-A4C658A03018.txt",
+            "expected_marker": "coach.pad",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-coach-lesson-3",
+            "size": "default",
+            "surface": "coach-lesson-3",
+            "hierarchy_attachment": "386B5C1A-0A0F-4CF4-90F6-448866694D59.txt",
+            "expected_marker": "coach.pad",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-coach-lesson-4",
+            "size": "default",
+            "surface": "coach-lesson-4",
+            "hierarchy_attachment": "5735BBC1-BEBF-4330-8932-D938FCEBF140.txt",
+            "expected_marker": "coach.pad",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-coach-lesson-5",
+            "size": "default",
+            "surface": "coach-lesson-5",
+            "hierarchy_attachment": "76CD9290-A87F-42D5-A1FD-C655FFAE1122.txt",
+            "expected_marker": "coach.pad",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-coach-done",
+            "size": "default",
+            "surface": "coach-done",
+            "hierarchy_attachment": "7C72F13E-4876-42AD-B16D-9D0971EC7F50.txt",
+            "expected_marker": "coach.done",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-settings-display",
+            "size": "default",
+            "surface": "settings-display",
+            "hierarchy_attachment": "95DD723C-1653-47E1-AA04-AE553C2526E5.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "Display",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-settings-picture",
+            "size": "default",
+            "surface": "settings-picture",
+            "hierarchy_attachment": "50FEDFCC-398E-43F9-B380-A8C676A65F40.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "Picture",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-settings-pointer",
+            "size": "default",
+            "surface": "settings-pointer",
+            "hierarchy_attachment": "990793B6-8DD4-4F09-8250-BE8B2108411D.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "Pointer",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-settings-touch",
+            "size": "default",
+            "surface": "settings-touch",
+            "hierarchy_attachment": "BD443D4B-254A-4BAE-B8D0-25DB0263A60B.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "Touch",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-settings-view",
+            "size": "default",
+            "surface": "settings-view",
+            "hierarchy_attachment": "2309E8C6-F5BC-4222-B893-1DD38F485894.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "View",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-settings-clipboard",
+            "size": "default",
+            "surface": "settings-clipboard",
+            "hierarchy_attachment": "258C71E3-9D00-4E24-9E76-6183ADF1DCF3.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "Clipboard",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-settings-keyboard",
+            "size": "default",
+            "surface": "settings-keyboard",
+            "hierarchy_attachment": "33B9ABAD-A474-4EFA-957A-A5B3849FB7C2.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "Keyboard and pointer",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-settings-steer",
+            "size": "default",
+            "surface": "settings-steer",
+            "hierarchy_attachment": "F2D8C10A-70F5-4258-965C-E261E3A4E144.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "How to steer",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-settings-diagnostics",
+            "size": "default",
+            "surface": "settings-diagnostics",
+            "hierarchy_attachment": "45514EDD-7A57-4296-A267-7AA7AB409D21.txt",
+            "expected_marker": "remote.controls.page",
+            "marker_present": true,
+            "expected_navigation_title": "Diagnostics",
+            "navigation_title_present": true,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-settings-lan-wake",
+            "size": "default",
+            "surface": "settings-lan-wake",
+            "hierarchy_attachment": "90F6B7AC-9D73-4D7B-A802-7C1C269A7D04.txt",
+            "expected_marker": "Owner-registered wake target ID",
+            "marker_present": false,
+            "expected_navigation_title": "LAN wake",
+            "navigation_title_present": false,
+            "confirmed_reached": false
+          },
+          {
+            "context": "default-error-napping",
+            "size": "default",
+            "surface": "error-napping",
+            "hierarchy_attachment": "B9CA3238-97A2-4351-B1DE-DACFF0A6903E.txt",
+            "expected_marker": "error.primary",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-error-unreachable",
+            "size": "default",
+            "surface": "error-unreachable",
+            "hierarchy_attachment": "D8AEDB6D-81DF-403C-B7F5-73D6828915BF.txt",
+            "expected_marker": "error.primary",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-error-busy",
+            "size": "default",
+            "surface": "error-busy",
+            "hierarchy_attachment": "5BA85BC4-C037-443E-AE25-450B9B81DD48.txt",
+            "expected_marker": "error.primary",
+            "marker_present": true,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": true
+          },
+          {
+            "context": "default-error-locked",
+            "size": "default",
+            "surface": "error-locked",
+            "hierarchy_attachment": null,
+            "expected_marker": "error.primary",
+            "marker_present": false,
+            "expected_navigation_title": null,
+            "navigation_title_present": null,
+            "confirmed_reached": false
+          }
+        ],
+        "marker_navigation_discrepancies": {
+          "default-settings-lan-wake": {
+            "missing_expected_marker": true,
+            "missing_expected_navigation_title": true,
+            "underlying_controls_screen_in_hierarchy": true,
+            "scope": "LAN wake intended sheet not reached; audit of underlying controls is not LAN wake coverage."
+          }
+        },
+        "no_capture_contexts": [
+          "AX-XXXL-settings-display",
+          "default-error-locked"
+        ],
+        "scope": "Reached means intended marker and any required actual NavigationBar title exist in exported initial hierarchy. It does not establish visibility, hit testing, usable layout, physical acceptance or defect-free audit."
+      },
+      "audit_issue_counts": {
+        "recorded_audit_slices": 119,
+        "audits_executed_inferred_from_sequential_trace": 119,
+        "raw_callback_occurrences": 525,
+        "unique_surface_type_pairs": 127,
+        "unique_visible_slice_type_pairs": 197,
+        "unique_surface_type_pairs_collapsing_size": 78,
+        "by_type": {
+          "1": 163,
+          "2": 21,
+          "4": 1,
+          "8": 4,
+          "65536": 257,
+          "131072": 77,
+          "262144": 2
+        },
+        "by_compact_description": {
+          "Contrast failed": 142,
+          "Label not human-readable": 4,
+          "Dynamic Type font sizes are partially unsupported": 209,
+          "Potentially inaccessible text": 21,
+          "Text clipped": 77,
+          "Dynamic Type font sizes are unsupported": 48,
+          "Contrast nearly passed": 21,
+          "Missing trait: UIAccessibilityTraitNotEnabled": 2,
+          "Hit area is too small": 1
+        },
+        "by_size": {
+          "AX-XXXL": {
+            "raw_callback_occurrences": 250,
+            "recorded_audit_slices": 52,
+            "slices_with_callback_findings": 45,
+            "unique_surface_type_pairs": 51,
+            "unique_visible_slice_type_pairs": 82,
+            "by_type": {
+              "1": 89,
+              "2": 3,
+              "8": 2,
+              "65536": 119,
+              "131072": 36,
+              "262144": 1
+            }
+          },
+          "default": {
+            "raw_callback_occurrences": 275,
+            "recorded_audit_slices": 67,
+            "slices_with_callback_findings": 59,
+            "unique_surface_type_pairs": 76,
+            "unique_visible_slice_type_pairs": 115,
+            "by_type": {
+              "1": 74,
+              "2": 18,
+              "4": 1,
+              "8": 2,
+              "65536": 138,
+              "131072": 41,
+              "262144": 1
+            }
+          }
+        },
+        "audit_execution_error_attachments": [],
+        "inventory_receipts_exported": 0,
+        "fixture_error_collector_total": null,
+        "scope": "525 individual issue text attachments match 525 raw issue-attachment events. No copied inventory text counted. Unique pairs include size unless explicitly collapsed, merge scrolled slices, and do not deduplicate elements into unique defects. 119 sequentially completed capture/control/audit slices include an audit of underlying controls in the failed LAN wake context. Missing marker/title collector messages were not finalized as inventory receipts; unknown collector total is not zero."
+      },
+      "raw_log_progress": {
+        "provisional_only": false,
+        "ax_method_terminal_result": "failed",
+        "ax_method_duration_seconds": 3130.056,
+        "ax_failure_kind": "Failed to get matching snapshots: Timed out while evaluating UI query",
+        "ax_failure_source_line": 555,
+        "ax_last_attempted_fixture": "AX-XXXL-settings-display",
+        "default_method_terminal_result": "framework_failed_due_to_parent_cancellation",
+        "default_last_attempted_fixture": "default-error-locked",
+        "default_last_activity_raw_seconds": 1707.0,
+        "last_attachment_name": "default-error-busy-scrolled-issue-1",
+        "scope": "Raw progress reconciled with finalized partial summary/tree and explicit text exports. Not class or stage acceptance."
+      },
+      "classification": "incomplete_claims_class_query_timeout_then_parent_cancellation",
+      "stop_basis": "Parent reports SIGINT to own Xcode PID 20716 at 17:03:31; raw log ends TEST EXECUTE INTERRUPTED. No other process or device action performed by this analysis.",
+      "xcresult_info_plist_present": true,
+      "post_stop_identity": {
+        "timestamp": "2026-10-02T17:04:25.556784+00:00",
+        "source_and_complete_artifact_identity_match": true,
+        "scope": "Independent post-stop identity check only; incomplete native result remains incomplete."
+      },
+      "exported_attachment_manifest_groups": 2,
+      "exported_text_attachment_count": 783,
+      "proof_boundaries": {
+        "coach_all_five": "not_executed; coach lesson/done audit fixtures seed states and do not prove gesture completion gates",
+        "session_pinch": "not_executed; no numeric zoom before/after gesture receipt",
+        "keyboard_dictation": "feature_method_not_executed; fixture hierarchies reach keyboard and nonrecording transcript only",
+        "concealment": "feature_method_not_executed; concealed audit fixture reached but no real Home background/foreground or app-switcher thumbnail proof"
+      },
+      "export_receipt_state": {
+        "summary": "readable_valid_JSON_parent_reported_success",
+        "tests": "readable_valid_JSON_parent_reported_success",
+        "text_attachments": "readable_manifest_and_all_783_referenced_text_files",
+        "selection_guard": "no_current_guard_export_observed; independent class acceptance is false",
+        "scope": "Export-file evidence, not invented command exit codes."
+      }
+    },
+    "ipad": {
+      "parent_tool_session_id": 72739,
+      "run_directory": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T163430.898388Z",
+      "runtime_state": "finalized_infrastructure_failure_before_claim_method_execution",
+      "classification": "test_runner_bootstrap_failure_not_product_assertion",
+      "runner_pid": 52775,
+      "runner_exit": 65,
+      "selected_device": {
+        "architecture": "arm64",
+        "deviceId": "6D27467D-762C-408E-A18A-B884C2B87CC9",
+        "deviceName": "Farside B7 Claims ipad",
+        "modelName": "iPad mini (A17 Pro)",
+        "osBuildNumber": "24A434",
+        "osVersion": "27.0",
+        "platform": "iOS Simulator"
+      },
+      "tested_ui_source_sha256": "99fb0550b9e207721df7ff5cffa9c9fc3b55548f785b41513f92a5307939adf2",
+      "tested_build_manifest_present": true,
+      "observed_test_log_present": true,
+      "observed_test_log_bytes": 3474,
+      "report_summary_present": true,
+      "report_tests_present": true,
+      "xcresult_exists": true,
+      "exported_attachment_manifest_entries": 0,
+      "overall_suite_results": {
+        "result": "Failed",
+        "framework_summary_total_test_count": 1,
+        "passed": 0,
+        "failed": 1,
+        "skipped": 0,
+        "expected_failures": 0,
+        "infrastructure_failure_count": 1,
+        "synthetic_system_failure_cases": [
+          {
+            "name": "RemotePhoneUITests-Runner (52775) encountered an error",
+            "result": "Failed",
+            "path": "/PocketDeskRemote//RemotePhoneUITests//System Failures//RemotePhoneUITests-Runner (52775) encountered an error/RemotePhoneUITests-Runner (52775) encountered an error"
+          }
+        ],
+        "failure_text": "Early unexpected exit, operation never finished bootstrapping - no restart will be attempted. (Underlying Error: The test runner crashed while preparing to run tests: RemotePhoneUITests-Runner at -[XCTWaiter(StallHandling) handleStalledWait:])",
+        "product_failure_assessment": "not_assessed_no_claim_method_or_UI_audit_executed"
+      },
+      "claims_class_results": {
+        "expected_methods": 8,
+        "executed": 0,
+        "passed": 0,
+        "failed": 0,
+        "skipped": 0,
+        "result": "not_executed",
+        "accepted": false,
+        "missing_methods": [
+          "testAccessibilityAuditAllScreensAccessibilityXXXL",
+          "testAccessibilityAuditAllScreensDefaultSize",
+          "testAccessibilityAuditSupplementalHomeUtilitiesAccessibilityXXXL",
+          "testAccessibilityAuditSupplementalHomeUtilitiesDefaultSize",
+          "testCoachLessonsUseSynthesizedGesturesAllFive",
+          "testKeyboardAndNonRecordingDictationRemainReachable",
+          "testOfflineConcealmentFixtureAndHomeBackgroundForeground",
+          "testSessionPinchChangesAccessibleZoom"
+        ],
+        "selection_guard_reason": "Incomplete, skipped, or failing claims class; not a pass."
+      },
+      "surface_reachability": {
+        "attempted_surface_size_contexts": 0,
+        "confirmed_reached_surface_size_contexts": 0,
+        "by_size": {
+          "default": {
+            "attempted": 0,
+            "reached": 0
+          },
+          "AX-XXXL": {
+            "attempted": 0,
+            "reached": 0
+          }
+        },
+        "missing_marker_or_navigation_checks": "not_executed",
+        "scope": "No claims test body started; this is zero measured coverage, not successful coverage."
+      },
+      "audit_issue_counts": {
+        "audits_executed": 0,
+        "raw_callback_occurrences": 0,
+        "unique_surface_type_pairs": 0,
+        "unique_visible_slice_type_pairs": 0,
+        "by_type": {},
+        "scope": "No audit executed. Zero callback occurrences do not establish zero product accessibility defects."
+      },
+      "proof_boundaries": {
+        "coach_all_five": "not_executed",
+        "session_pinch": "not_executed",
+        "keyboard_dictation": "not_executed",
+        "concealment": "not_executed"
+      },
+      "parent_export_exits": {
+        "ipad-tests": 65,
+        "ipad-report-summary": 0,
+        "ipad-report-tests": 0,
+        "ipad-text-attachments": 0,
+        "ipad-selection-acceptance": 1
+      }
+    }
+  },
+  "requeue_receipt": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/DEFAULT-ALLOWANCE-REQUEUE.json",
+  "current_ui_source_sha256_read_verified": "99fb0550b9e207721df7ff5cffa9c9fc3b55548f785b41513f92a5307939adf2",
+  "superseded_unstarted_runs": [
+    {
+      "platform": "phone",
+      "parent_tool_session_id": 60927,
+      "run_directory": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T125028Z",
+      "runtime_state": "canceled_before_xcode_execution",
+      "runner_exit": -15,
+      "observed_test_log_bytes": 0,
+      "xcresult_exists": false,
+      "tested_ui_source_sha256": "99fb0550b9e207721df7ff5cffa9c9fc3b55548f785b41513f92a5307939adf2",
+      "selection_acceptance_exit": 1,
+      "counts_as_executed_test_failure_or_skip": false
+    },
+    {
+      "platform": "ipad",
+      "parent_tool_session_id": 49184,
+      "run_directory": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T125029Z",
+      "runtime_state": "canceled_before_xcode_execution",
+      "runner_exit": -15,
+      "observed_test_log_bytes": 0,
+      "xcresult_exists": false,
+      "tested_ui_source_sha256": "99fb0550b9e207721df7ff5cffa9c9fc3b55548f785b41513f92a5307939adf2",
+      "selection_acceptance_exit": 1,
+      "counts_as_executed_test_failure_or_skip": false
+    },
+    {
+      "platform": "ipad",
+      "parent_tool_session_id": 44530,
+      "run_directory": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T132808.947212Z",
+      "runtime_state": "canceled_before_execution",
+      "runner_exit": null,
+      "runner_exit_basis": "no completed results.json available",
+      "observed_test_log_bytes": 0,
+      "xcresult_exists": false,
+      "cancellation_basis": "parent notification and SIM-COLLISION.json",
+      "counts_as_executed_test_failure_or_skip": false
+    },
+    {
+      "platform": "ipad",
+      "parent_tool_session_id": 1449,
+      "run_directory": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T152947.776179Z",
+      "runtime_state": "canceled_while_own_waiter_childless_before_execution",
+      "observed_test_log_bytes": 0,
+      "xcresult_exists": false,
+      "cancellation_basis": "parent notification; honor COMMON two-slot helper",
+      "counts_as_executed_test_failure_or_skip": false
+    },
+    {
+      "platform": "ipad",
+      "parent_tool_session_id": 83689,
+      "run_directory": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T161709.211963Z",
+      "runtime_state": "superseded_queue_snapshot_no_test_method_execution_observed",
+      "observed_test_log_bytes": 2332,
+      "xcresult_exists": false,
+      "superseded_by_session": 72739,
+      "counts_as_executed_test_failure_or_skip": false
+    }
+  ],
+  "replacement_execution_allowance_seconds": {
+    "default": 3600,
+    "maximum": 3600,
+    "basis": "parent-reported corrected replacement command"
+  },
+  "collision_receipt": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/SIM-COLLISION.json",
+  "interrupted_runs": [
+    {
+      "platform": "phone",
+      "parent_tool_session_id": 41999,
+      "run_directory": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T132757Z",
+      "runtime_state": "interrupted_after_shared_simulator_collision",
+      "simulator_udid": "C643B2C2-3248-4AE4-B234-8F54414F3A41",
+      "raw_log_bytes": 2117476,
+      "xcresult_exists": true,
+      "xcresult_info_plist_present": false,
+      "completed_exports_accepted": false,
+      "raw_observations_before_collision": {
+        "selected_phone_unit_suite": {
+          "executed": 89,
+          "failures": 0,
+          "basis": "raw log suite line; not completed xcresult export"
+        },
+        "original_ax_xxxl_audit": {
+          "method_terminal_result": "failed",
+          "duration_seconds": 1628.997,
+          "combined_issue_or_fixture_error_count": 305,
+          "scope": "original 55-fixture enumeration; not 55 confirmed reached surfaces",
+          "unique_audit_issue_count": null,
+          "audit_type_counts": null,
+          "confirmed_surface_reachability": null
+        }
+      },
+      "collision_affected_observations": {
+        "default_original_audit": {
+          "method_terminal_result": "failed",
+          "duration_seconds": 1155.177,
+          "app_loss_time_seconds_reported_by_parent": 1132.42,
+          "accepted_runtime_evidence": false
+        },
+        "supplemental_ax_xxxl": "launch stalled; not accepted",
+        "remaining_methods": "not accepted"
+      },
+      "collision_other_lane": {
+        "pid_reported_by_parent": 89441,
+        "lane": "b8-vdisplay",
+        "start_local_reported_by_parent": "2026-10-02 11:20:27 ET"
+      },
+      "claims_class_results": null,
+      "overall_suite_results": null,
+      "surface_reachability": null,
+      "audit_issue_counts": null
+    }
+  ],
+  "future_recovery_scope_reported_by_parent": "Separate bounded fresh compiler/run planned for all 89 units plus 18 audit fixtures and six feature methods; not executed evidence in this report."
+}

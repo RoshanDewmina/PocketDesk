@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-10-02T17:06:36.613170+00:00",
+  "device": {
+    "dataPath": "/Users/roshansilva/Library/Developer/CoreSimulator/Devices/B2CED284-1C7E-4FB2-9582-8E740D36E8F4/data",
+    "dataPathSize": 3168849920,
+    "logPath": "/Users/roshansilva/Library/Logs/CoreSimulator/B2CED284-1C7E-4FB2-9582-8E740D36E8F4",
+    "udid": "B2CED284-1C7E-4FB2-9582-8E740D36E8F4",
+    "lastUsedAt": "2026-10-02T15:38:43Z",
+    "isAvailable": true,
+    "logPathSize": 253952,
+    "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPhone-17",
+    "state": "Shutdown",
+    "name": "Farside B7 Claims phone"
+  },
+  "exit": 0,
+  "reason": "Only dedicated shutdown claims phone deleted after partialxcresult finalized/exportable and independent source+artifact post-stop verification. Preservedallresults; freesdiskforboundedretry."
+}

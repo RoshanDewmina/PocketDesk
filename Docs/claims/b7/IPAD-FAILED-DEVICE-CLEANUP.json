@@ -1,0 +1,17 @@
+{
+  "timestamp": "2026-10-02T16:53:33.542489+00:00",
+  "device": {
+    "dataPath": "/Users/roshansilva/Library/Developer/CoreSimulator/Devices/6D27467D-762C-408E-A18A-B884C2B87CC9/data",
+    "dataPathSize": 1360166912,
+    "logPath": "/Users/roshansilva/Library/Logs/CoreSimulator/6D27467D-762C-408E-A18A-B884C2B87CC9",
+    "udid": "6D27467D-762C-408E-A18A-B884C2B87CC9",
+    "lastUsedAt": "2026-10-02T16:36:27Z",
+    "isAvailable": true,
+    "logPathSize": 233472,
+    "deviceTypeIdentifier": "com.apple.CoreSimulator.SimDeviceType.iPad-mini-A17-Pro",
+    "state": "Shutdown",
+    "name": "Farside B7 Claims ipad"
+  },
+  "exit": 0,
+  "reason": "Only dedicated claims failed-bootstrap shutdown iPad deleted to reclaim internal space. Its finalized xcresult/logs are preserved. Future retry creates dedicated device anew."
+}
