@@ -192,10 +192,10 @@ struct OwnedEncoderOptions: Equatable {
         self.init(prioritizeSpeed: tuning.encoderPrioritizeSpeed, hevcLowLatency: tuning.hevcLowLatency, periodicKeyFrames: tuning.encoderPeriodicKeyFrames)
     }
     /// Far beyond any session; VideoToolbox treats 0 as "encoder decides", not "never". The duration
-    /// keeps one key frame a minute as the safety net for a decoder that failed silently (the owned
-    /// HEVC decoder swallows asynchronous BadData/ReferenceMissing errors and sends no PLI).
+    /// keeps one key frame every 10 s as the safety net for a phone that cannot ask (an older build
+    /// whose decoder swallowed asynchronous errors; current phones request one within 500 ms).
     static let requestedKeysOnlyInterval = 1_000_000
-    static let requestedKeysOnlyDurationSeconds = 60.0
+    static let requestedKeysOnlyDurationSeconds = 10.0
 }
 
 /// Public VideoToolbox encoder, with a per-peer callback and the newest-frame-wins bound.
