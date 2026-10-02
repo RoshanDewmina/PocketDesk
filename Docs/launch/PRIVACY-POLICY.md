@@ -62,6 +62,8 @@ Mac Release builds can check the configured signed-update feed using Sparkle. Au
 
 Copy Diagnostics creates a local report with fixed app/permission/connection status and excludes screen content, typed text, clipboard contents, pairing codes, tokens and network addresses. Optional stream statistics stay local unless you choose to share them. Backend security audit records contain fixed event metadata/fingerprints, not screen content. No advertising or tracking SDK is included. [CONFIRM: any final provider logs and support-email retention.]
 
+Our connection service keeps daily aggregate totals of successful host registrations, signaling readiness with local-only or Anywhere authorization, and positive or negative entitlement verification results. Each stored total contains only a UTC date, a fixed event name and a count. These totals contain no device, install, room, transaction or user identifiers, IP addresses, precise event times, or screen or input content. We do not use them to identify people or build individual usage histories. Totals are eligible for deletion after 90 days by our daily cleanup job. Farside includes no crash-reporting or analytics SDK.
+
 ### Retention and deletion
 
 The current application cleanup rules are listed below. These are eligibility thresholds serviced by scheduled cleanup, not promises of deletion at an exact wall-clock instant. Provider backups/logs and applicable legal obligations must be reviewed separately.
@@ -76,6 +78,7 @@ The current application cleanup rules are listed below. These are eligibility th
 | Agent alert registration | Removed on successful app opt-out/unpairing/server removal or invalid-token handling; stale registrations eligible after 365 days or inactive-room cleanup. |
 | Activity-ending addresses | Stale active addresses eligible after 24 hours; ended addresses eligible 15 minutes after end. End retries are bounded. |
 | Local trust/preferences/clipboard | Local trust removal must succeed; preferences and system clipboard have their own local lifecycle. Deleting/unlinking does not guarantee all system clipboard or provider records disappear. |
+| Anonymous connection-service daily totals | Older than 90 UTC days; eligible for daily cleanup. |
 | Provider logs/backups and support | [TO FILL: reviewed effective settings and confirmed retention.] |
 
 Stop Sharing ends remote access. Local Remove Phone removes the Mac's stored pairing only when its Keychain cleanup succeeds. The phone unlink and Mac Server Data controls use authenticated service endpoints; they preserve required proof while server deletion is pending and expose progress/retry. Completion means the requested server response and local cleanup have been confirmed. Security blocks, audit/purchase retention and pending relay revocations may remain as described above. Deleting server data does not cancel Apple billing.
@@ -100,6 +103,7 @@ Current phone/host manifests declare Device ID and Purchase History, linked for 
 | Device ID, linked, functionality | Pairing/install identities and APNs addresses persist for access and optional delivery. |
 | User ID | Review whether keyed subscription identity needs a distinct User ID declaration; do not treat hashing as proof it is unlinked. |
 | Product Interaction / other applicable event type, linked, functionality | Generic agent events and fixed action reports are retained beyond a single request. Final declaration/manifests must cover this beta behavior. |
+| Product Interaction / Other Usage Data, Analytics, not linked, no tracking | Daily connection-service event totals only: UTC day, fixed event and count, no identifiers or linkage. Confirm exact category and anonymity of provider processing before submission; do not claim Data Not Collected. |
 | Diagnostic / network metadata | Resolve from actual security records and provider log/analytics retention. Do not assume all metadata is unlinked or transient. |
 | Content and support | Screen/input/audio stay encrypted between devices; voice/camera processing is local. Separately review any support information voluntarily submitted and any provider-accessible retained content. |
 
