@@ -1,0 +1,26 @@
+{
+  "baseline": "20aded1554888a949943a837169a8e6de30144ea",
+  "verification_commits": [
+    "c297d34",
+    "c48b20d"
+  ],
+  "build": "20261002.2",
+  "build_seconds": 6.21,
+  "result": "TEST BUILD SUCCEEDED",
+  "build_log": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T170737.714219Z/phone-build.log",
+  "ui_source_sha256": "fdd7d14ffe826b79430da714f7208bfdd2d28fe9b457b838b376bbf57364b0f1",
+  "app_info_version": "1.0",
+  "app_info_build": "20261002.2",
+  "production_project_diff_from_baseline_empty": true,
+  "scope": "Verification-only bounded UI test compilation and source/full-artifact manifest; no runtime pass from build alone.",
+  "independent_ipad_build": {
+    "result": "TEST BUILD SUCCEEDED",
+    "build_seconds": 132.93,
+    "derived_data": "/Volumes/Studio/Development/Caches/b7-claims/DD-ipad",
+    "build_log": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T174009.224182Z/ipad-build.log",
+    "app_info_version": "1.0",
+    "app_info_build": "20261002.2",
+    "source_and_full_artifact_manifest": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T174009.224182Z/tested-build-manifest.json",
+    "scope": "Compilation only; native runtime acceptance pending."
+  }
+}

@@ -35,3 +35,29 @@ The runner uses one `test-without-building` invocation per combined stage with e
 Future `all` now calls one combined check per platform; individual original, partial-audit, feature-only and phone-unit stages remain available. The preflight source/full-artifact, shared gates, pre/post-lock disk floor, destination-conflict, owned shutdown and failing-result export path remain unchanged. Combining commands does not waive their pre-execution guards. This scripts-only follow-up does not require a second rebuild after the new Swift tests at 048d093 have been compiled, but the old pre-048 UI binary is not sufficient.
 
 No scripts, synthetic tests, compiler, native tests, cleanup, app or device operations were executed for this follow-up review. The worker's reported synthetic checks are not credited as independently rerun evidence. Root owns the later authorized fresh compile and native attempt after the disk floor is restored.
+
+## Verification-pipeline record
+
+```json
+{
+  "verdict": "approve",
+  "findings": [],
+  "reviewed_commit": "a8b62d0f646d375f5150d956654e5e9b2227a256",
+  "review_base": "a3c7463",
+  "checks": [
+    {"name": "source_scoped_diff", "status": "passed", "scope": "RemoteHost, RemoteShared, RemoteTests, RemotePhone, project.yml and PocketDesktop.xcodeproj/project.pbxproj unchanged from 20aded1"},
+    {"name": "read_inspection", "status": "passed", "scope": "048d093 base and a8b62d0 scripts-only follow-up"},
+    {"name": "native_build", "status": "not_run", "by": "reviewer"},
+    {"name": "native_ui", "status": "not_run", "by": "reviewer"}
+  ],
+  "limitations": ["Source-only approval of exact a8b62d0; no independent runtime acceptance.", "Root-owned build and ongoing UI results are separate evidence; finalized receipt review is pending."]
+}
+```
+
+## Build-family runner delta — source approved
+
+**Approve; findings `[]`.** Reviewed the ready, uncommitted two-file delta in main at HEAD `1dd537aa26c5ec7a220b1ec1d4548eaf87456281`: `script/claims/run.py` adds `--build-family {phone,ipad}` with default phone, and `build()` uses that family consistently for the build log label and dedicated destination. README documents the explicit separate `DD-ipad` build followed by `ipad-check`. No UI, selector inventory, result guard, identity/lock guard or compiler input changes are in this delta.
+
+The selected DD still controls both the build artifacts and their own complete manifest. The documented concurrent commands therefore do not rewrite the active phone DD. Default `all` still executes its platform checks sequentially in the supplied single DD; no third native command is launched automatically. Existing 113/24, original eight-method, 18-audit/64-surface, zero-finding and exact-result semantics are unchanged. The runner directory remains excluded from compiler source identity, so this runner-only change does not invalidate the frozen UI source receipt.
+
+Reviewed file SHA-256: runner `7b11b4f180437c609cd96f2d338fe6bc13ad20ccb3e01dcf3401754f75b556b1`; README `01d30148ad607661131fd043a393753546006cef59ce7a08db9051e27c2ce518`. Read-inspection passed. No AST/help/synthetic/native checks were rerun by this reviewer. Approval is source-only for these exact bytes and the documented separate-DD concurrent usage; root owns compilation and runtime evidence.
