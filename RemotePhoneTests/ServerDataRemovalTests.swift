@@ -201,6 +201,7 @@ final class ServerDataRemovalTests: XCTestCase {
         let original = pairing()
         var replacement = pairing(token: String(repeating: "d", count: 64))
         replacement.expires = Date().addingTimeInterval(60)
+        replacement.version = PairEnrollment.version // Explicit scanning uses the current enrollment protocol.
         try trust.save(original)
         let connection = RemoteCoordinator(isHost: false, store: trust)
         connection.restore()
@@ -232,6 +233,7 @@ final class ServerDataRemovalTests: XCTestCase {
         let original = pairing()
         var replacement = pairing(token: String(repeating: "d", count: 64))
         replacement.expires = Date().addingTimeInterval(60)
+        replacement.version = PairEnrollment.version // Explicit scanning uses the current enrollment protocol.
         try trust.save(original)
         try pending.save(AnywhereAccess.RemovalState(pending: nil, cleanup: .init(original)))
         let blocked = make(tokens, pending, Verifier())

@@ -403,6 +403,7 @@ final class RemoteHostModel: ObservableObject {
 
     private var pairingInProgress: Bool {
         !pairingCode.isEmpty && !pairingExpired && connection.hostPair?.paired == false
+            && (connection.hostPair?.invitation.expires ?? .distantPast) > Date()
     }
 
     var status: HostStatus {
@@ -425,8 +426,10 @@ final class RemoteHostModel: ObservableObject {
 
     var pairingState: HostPairingState {
         if connection.awaitingApproval { return .awaitingApproval }
-        if !pairingCode.isEmpty, connection.hostPair?.paired == false, let pairingExpires {
-            return pairingExpired ? .expired : .showingCode(pairingCode, expires: pairingExpires)
+        if !pairingCode.isEmpty, let pair = connection.hostPair, !pair.paired {
+            // Rejection, timeout and malformed enrollment retire the invitation immediately.
+            let expires = pair.invitation.expires
+            return pairingExpired || expires <= Date() ? .expired : .showingCode(pairingCode, expires: expires)
         }
         if serviceAddress == nil { return .needsService }
         if hasPairedPhone && pairingRequested { return .confirmReplace }
@@ -455,6 +458,8 @@ final class RemoteHostModel: ObservableObject {
             hasPairedPhone: hasPairedPhone,
             pairingRequested: pairingRequested,
             pairing: pairingState,
+            pairingComparisonCode: connection.pairingComparisonCode,
+            pendingPairingPhoneName: connection.pendingPairingPhoneName,
             canBeginPairing: canPair && serviceAddress != nil && !serverRemovalPending,
             allowControl: allowControl,
             keepAwake: keepAwakeEnabled,

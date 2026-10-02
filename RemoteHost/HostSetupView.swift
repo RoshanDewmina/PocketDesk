@@ -563,9 +563,25 @@ struct HostPairingPage: View {
     private var approval: some View {
         VStack(alignment: .leading, spacing: 0) {
             HostHeading(parts: [.display("Is this"), .accent(" your "), .display("phone"), .plain("?")])
+            HostSetupText.body("Check that the code below matches the code on the phone in your hand. Then choose Allow here. A device name alone doesn’t identify your phone.")
+                .padding(.top, 10)
+            if let code = state.pairingComparisonCode {
+                Text(verbatim: code)
+                    .font(.system(size: 36, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(Farside.Palette.bone)
+                    .privacySensitive()
+                    .textSelection(.disabled)
+                    .accessibilityLabel("Comparison code: \(code)")
+                    .accessibilityIdentifier("farside.setup.comparisonCode")
+                    .padding(.top, 16)
+                Text(state.pendingPairingPhoneName ?? "Phone requesting pairing")
+                    .font(.system(size: 13))
+                    .foregroundStyle(Farside.Palette.ash)
+                    .padding(.top, 6)
+            }
             HostSetupText.body(state.allowControl
-                ? "A phone just scanned your code. Once allowed, it can see this screen and use the mouse and keyboard. Allow it only if it’s the phone in your hand."
-                : "A phone just scanned your code. Once allowed, it can see this screen. Allow it only if it’s the phone in your hand.")
+                ? "Once allowed, this phone can see this screen and use the mouse and keyboard."
+                : "Once allowed, this phone can see this screen.")
                 .padding(.top, 10)
             HStack(spacing: 10) {
                 // Return declines (D39): approving an unknown phone always takes a deliberate click.
@@ -574,11 +590,12 @@ struct HostPairingPage: View {
                     .keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("farside.setup.declinePhone")
                 Button("Allow", action: actions.approvePhone)
+                    .disabled(state.pairingComparisonCode == nil)
                     .buttonStyle(HostButtonStyle(kind: .primary))
                     .accessibilityIdentifier("farside.setup.allowPhone")
             }
             .padding(.top, 22)
-            Text("Don’t recognize it? Decline, then make a new code.")
+            Text("Codes don’t match? Decline, then scan a new code.")
                 .font(.system(size: 12.5))
                 .foregroundStyle(Farside.Palette.ash)
                 .padding(.top, 14)
