@@ -5,7 +5,12 @@ import SwiftUI
 
 final class FarsideDesignTests: XCTestCase {
     func testBuiltBundleSupportsIPadMultitaskingWithoutChangingPhoneOrientations() throws {
-        let info = try XCTUnwrap(Bundle.main.infoDictionary)
+        // The runtime bundle dictionary resolves device variants; inspect the raw built artifact
+        // so an iPhone test host still checks the universal app's iPad-qualified declarations.
+        let data = try Data(contentsOf: Bundle.main.bundleURL.appendingPathComponent("Info.plist"))
+        let info = try XCTUnwrap(PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any])
+        let families = try XCTUnwrap(info["UIDeviceFamily"] as? [Int])
+        XCTAssertEqual(Set(families), [1, 2])
         let phone = try XCTUnwrap(info["UISupportedInterfaceOrientations"] as? [String])
         XCTAssertEqual(Set(phone), ["UIInterfaceOrientationPortrait", "UIInterfaceOrientationLandscapeLeft",
                                     "UIInterfaceOrientationLandscapeRight"])
