@@ -168,7 +168,7 @@ private final class SessionVirtualDisplayHarnessController: NSObject {
             report["portraitToLandscape"] = ["adapterObjectReused": true,
                 "lastOldToPrepareStartMs": oldOutput.map { resizeStarted - $0 } as Any? ?? NSNull(),
                 "prepareStartToFirstNewOutputMs": firstNewOutput.map { $0 - resizeStarted } as Any? ?? NSNull(),
-                "lastOldToFirstNewOutputMs": (oldOutput != nil && firstNewOutput != nil) ? firstNewOutput! - oldOutput! : NSNull(),
+                "lastOldToFirstNewOutputMs": (oldOutput != nil && firstNewOutput != nil) ? (firstNewOutput! - Double(oldOutput!)) as Any : NSNull(),
                 "landscape60": landscape60, "landscape120": landscape120]
 
             let ipadDisplay = try await prepare(ipadPortrait)
@@ -1025,7 +1025,7 @@ private final class SessionVirtualDisplayFixtureView: NSView {
     private var frozen = false
     private(set) var tickCount = 0
     private var tickTimesMs: [Double] = []
-    init(frame: NSRect) { super.init(frame: frame) }
+    override init(frame: NSRect) { super.init(frame: frame) }
     required init?(coder: NSCoder) { nil }
     override var isFlipped: Bool { true }
     override var isOpaque: Bool { true }

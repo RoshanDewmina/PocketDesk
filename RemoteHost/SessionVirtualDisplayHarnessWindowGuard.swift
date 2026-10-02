@@ -313,7 +313,7 @@ enum SessionVirtualDisplayHarnessWindowGuard {
             guard let mode = CGDisplayCopyDisplayMode(id) else { throw GuardFailure("display-mode-unavailable") }
             return Display(id: id, vendor: CGDisplayVendorNumber(id), product: CGDisplayModelNumber(id), serial: CGDisplaySerialNumber(id),
                 width: mode.width, height: mode.height, pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight,
-                modeID: CGDisplayModeGetIODisplayModeID(mode), modeFlags: CGDisplayModeGetIOFlags(mode), refresh: mode.refreshRate,
+                modeID: UInt32(bitPattern: mode.ioDisplayModeID), modeFlags: mode.ioFlags, refresh: mode.refreshRate,
                 main: CGDisplayIsMain(id) != 0, mirrored: CGDisplayIsInMirrorSet(id) != 0, mirrorTarget: CGDisplayMirrorsDisplay(id), bounds: CGDisplayBounds(id))
         }
         try check(budget)

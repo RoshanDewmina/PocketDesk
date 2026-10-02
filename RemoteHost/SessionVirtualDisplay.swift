@@ -227,7 +227,7 @@ final class SessionVirtualDisplay {
             guard let mode = CGDisplayCopyDisplayMode(id) else { throw failure("physical display mode unavailable") }
             result[id] = PhysicalMode(vendor: CGDisplayVendorNumber(id), product: CGDisplayModelNumber(id), serial: CGDisplaySerialNumber(id),
                 width: mode.width, height: mode.height, pixelWidth: mode.pixelWidth, pixelHeight: mode.pixelHeight,
-                modeID: CGDisplayModeGetIODisplayModeID(mode), modeFlags: CGDisplayModeGetIOFlags(mode),
+                modeID: UInt32(bitPattern: mode.ioDisplayModeID), modeFlags: mode.ioFlags,
                 mirrorTarget: CGDisplayMirrorsDisplay(id),
                 refresh: mode.refreshRate, main: CGDisplayIsMain(id) != 0, mirrored: CGDisplayIsInMirrorSet(id) != 0,
                 bounds: CGDisplayBounds(id))
