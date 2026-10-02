@@ -75,7 +75,7 @@ def test(label, device, supplemental=False):
     else:
         selectors=['RemotePhoneUITests/ClaimsVerificationUITests','RemotePhoneUITests/FarsideRedesignUITests/testKeyboardBarPutsCommandFirstAndInReachInPortrait','RemotePhoneUITests/SessionLayoutTests/testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording']
         if label=='phone': selectors += ['RemotePhoneTests/'+c for c in ['FarsideDesignTests','SessionLifecycleTests','VoiceInputTests','CommittedTextTests','ExactTextTraitsTests','TabletInputPhoneTests','IndirectInputTests','ViewportPreferenceTests','ViewportCaptureTests','ScreenRecordingApprovalPhoneTests']]
-    run(label+'-tests',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device,'ARCHS=arm64','test-without-building','-parallel-testing-enabled','NO','-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','3600','-resultBundlePath',str(LOG/(label+'.xcresult'))]+['-only-testing:'+s for s in selectors],True,manifest=True,shutdown=device)
+    run(label+'-tests',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device,'ARCHS=arm64','test-without-building','-parallel-testing-enabled','NO','-collect-test-diagnostics','never','-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','3600','-resultBundlePath',str(LOG/(label+'.xcresult'))]+['-only-testing:'+s for s in selectors],True,manifest=True,shutdown=device)
     bundle=LOG/(label+'.xcresult')
     if bundle.exists():
         # Read-only report extraction also runs after a failing audit. Raw .xcresult remains
@@ -83,8 +83,7 @@ def test(label, device, supplemental=False):
         for report in ['summary','tests']:
             run(label+'-report-'+report,['xcrun','xcresulttool','get','test-results',report,'--path',str(bundle)])
         run(label+'-text-attachments',['xcrun','xcresulttool','export','attachments','--path',str(bundle),'--output-path',str(LOG/(label+'-attachments')),'--filter','*.txt'])
-    if supplemental:
-        run(label+'-selection-acceptance',[sys.executable,str(ROOT/'script/claims/result_guard.py'),str(LOG/(label+'-report-summary.log')),str(LOG/(label+'-report-tests.log'))])
+    run(label+'-selection-acceptance',[sys.executable,str(ROOT/'script/claims/result_guard.py'),str(LOG/(label+'-report-summary.log')),str(LOG/(label+'-report-tests.log'))]+([] if supplemental else ['--all-claims']))
 def core():
     before=source_identity()
     ddcore=a.dd+'-core'

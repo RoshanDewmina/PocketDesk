@@ -680,3 +680,157 @@ final class ClaimsVerificationUITests: XCTestCase {
         add(attachment)
     }
 }
+
+
+// Integration: append this extension to FarsideRedesignUITests.swift AFTER its existing
+// ClaimsVerificationUITests declaration, only after the original simulator runs finish.
+// Keep it in that same source file so the private audit/capture/receipt helpers are accessible.
+// Do not add this staging file as another project source or rerun the original six methods.
+extension ClaimsVerificationUITests {
+    @objc @MainActor
+    func testAccessibilityAuditSupplementalHomeUtilitiesDefaultSize() {
+        supplementalAuditHomeUtilities(sizeArguments: [], sizeName: "default")
+    }
+
+    @objc @MainActor
+    func testAccessibilityAuditSupplementalHomeUtilitiesAccessibilityXXXL() {
+        supplementalAuditHomeUtilities(sizeArguments: accessibilityXXXL, sizeName: "AX-XXXL")
+    }
+
+    private enum SupplementalHomeEntry {
+        case menu(String)
+        case homeRow(String)
+        case connectPromptLink
+    }
+
+    private struct SupplementalHomeFixture {
+        let name: String
+        let entry: SupplementalHomeEntry
+        let title: String?
+        let marker: String?
+    }
+
+    @MainActor
+    private func supplementalAuditHomeUtilities(sizeArguments: [String], sizeName: String) {
+        let fixtures = [
+            SupplementalHomeFixture(name: "your-macs", entry: .menu("Your Macs"), title: "Your Macs", marker: nil),
+            SupplementalHomeFixture(name: "connection-details", entry: .menu("Connection Details"),
+                                    title: "Connection Details", marker: nil),
+            SupplementalHomeFixture(name: "third-party-notices", entry: .menu("Third-Party Notices"),
+                                    title: "Third-Party Notices", marker: nil),
+            SupplementalHomeFixture(name: "server-data-disclosure", entry: .menu("Server Data"),
+                                    title: "Server Data", marker: nil),
+            SupplementalHomeFixture(name: "security-settings", entry: .menu("Settings"),
+                                    title: "Settings", marker: "settings.security.requireOwner"),
+            SupplementalHomeFixture(name: "alerts-lock-screen", entry: .homeRow("home.agentAlerts"),
+                                    title: "Alerts & Lock Screen", marker: "agent.settings"),
+            SupplementalHomeFixture(name: "useful-session-progress", entry: .homeRow("Session check"),
+                                    title: "Session check", marker: nil),
+            SupplementalHomeFixture(name: "connect-prompt", entry: .connectPromptLink,
+                                    title: nil, marker: "connectPrompt")
+        ]
+        let quietDefaults = ["-agentAlerts.enabled", "NO", "-agentAlerts.breakThroughFocus", "NO",
+                             "-lockScreen.showMacName", "NO", "-lockScreen.sessionActivity", "YES"]
+        let app = XCUIApplication()
+        var issues = [String]()
+        var menuAudited = false
+        XCUIDevice.shared.orientation = .portrait
+        for fixture in fixtures {
+            let name = "supplemental-\(sizeName)-\(fixture.name)"
+            XCTContext.runActivity(named: "Accessibility audit \(name)") { _ in
+                // This existing seed is an in-memory pairing to loopback port 9. Never select,
+                // remove or change a real pairing; never press Connect or any network action.
+                app.launchArguments = ["--ui-seed-pairing=Claims Fixture Mac", "--ui-x"] + quietDefaults + sizeArguments
+                app.launch()
+                guard app.descendants(matching: .any)["phone.home"].firstMatch.waitForExistence(timeout: 5) else {
+                    issues.append("\(name): Home did not appear")
+                    capture(app, "\(name)-missing-home")
+                    app.terminate()
+                    return
+                }
+                switch fixture.entry {
+                case .menu(let label):
+                    guard supplementalTapReachable(app.buttons["Help and more"], in: app) else {
+                        issues.append("\(name): Help and more is not reachable")
+                        capture(app, "\(name)-missing-menu")
+                        app.terminate()
+                        return
+                    }
+                    if !menuAudited {
+                        audit(app, name: "supplemental-\(sizeName)-help-and-more-menu", issues: &issues)
+                        menuAudited = true
+                    }
+                    // Your Macs also appears in the Home list underneath the menu. Exclude
+                    // that row so this audit must follow the actual Help-and-more menu path.
+                    let item = app.buttons.matching(NSPredicate(format: "label == %@ AND identifier != %@",
+                                                               label, "home.pairedMacs")).firstMatch
+                    guard item.waitForExistence(timeout: 5), item.isHittable else {
+                        issues.append("\(name): expected menu action is unreachable: \(label)")
+                        capture(app, "\(name)-missing-menu-item")
+                        app.terminate()
+                        return
+                    }
+                    item.tap()
+                case .homeRow(let identifier):
+                    guard supplementalTapReachable(app.buttons[identifier], in: app) else {
+                        issues.append("\(name): Home row is not reachable: \(identifier)")
+                        capture(app, "\(name)-missing-home-row")
+                        app.terminate()
+                        return
+                    }
+                case .connectPromptLink:
+                    // The existing .openMac route only asks a question for this idle seeded
+                    // pairing. XCTest open(_:) is public on iOS 16.4+. Never press Connect.
+                    app.open(URL(string: "farside://open")!)
+                }
+                if let title = fixture.title, !app.navigationBars[title].waitForExistence(timeout: 5) {
+                    issues.append("\(name): expected destination title missing: \(title)")
+                }
+                if let identifier = fixture.marker,
+                   !app.descendants(matching: .any)[identifier].firstMatch.waitForExistence(timeout: 5) {
+                    issues.append("\(name): expected destination marker missing: \(identifier)")
+                }
+                if fixture.name == "connect-prompt" {
+                    for identifier in ["connectPrompt.connect", "connectPrompt.close"] {
+                        if !app.buttons[identifier].exists { issues.append("\(name): prompt control missing: \(identifier)") }
+                    }
+                    if app.descendants(matching: .any)["remote.canvas"].firstMatch.exists {
+                        issues.append("\(name): URL unexpectedly opened a session rather than the consent question")
+                    }
+                }
+                audit(app, name: name, issues: &issues)
+                // Inspect bounded additional visible slices. Swipe only a scroll container;
+                // no switches, picker options, remove/retry/send/Connect buttons are pressed.
+                for step in 1...3 {
+                    let scroll = app.scrollViews.firstMatch
+                    guard scroll.exists else { break }
+                    scroll.swipeUp()
+                    audit(app, name: "\(name)-scrolled-\(step)", issues: &issues)
+                }
+                app.terminate()
+            }
+        }
+        receipt("supplemental-\(sizeName)-audit-inventory",
+                "Eight Home destinations plus Help-and-more menu. Initial view and up to three visible scroll slices.\n"
+                + "This is a fixture/tree audit, not actual VoiceOver navigation or physical usability acceptance.\n"
+                + "No setting mutation, pairing selection/removal, network action, purchase, notification request/test, "
+                + "live activity preview or Connect button was exercised. Server Data disclosure was opened only.\n"
+                + "Recorded issues/errors: \(issues.count)\n" + issues.joined(separator: "\n\n"))
+        XCTAssertTrue(issues.isEmpty, "All supplemental .all findings and reachability errors are retained; "
+                      + "\(issues.count) issue(s). See per-screen and inventory attachments.")
+    }
+
+    @MainActor
+    private func supplementalTapReachable(_ button: XCUIElement, in app: XCUIApplication) -> Bool {
+        guard button.waitForExistence(timeout: 5) else { return false }
+        let home = app.descendants(matching: .any)["phone.home"].firstMatch
+        let scroll = home.elementType == .scrollView ? home : home.scrollViews.firstMatch
+        // Try the existing Home content in either direction; the header and lower rows can
+        // begin above or below the visible window, especially at AX-XXXL.
+        for _ in 0..<7 where !button.isHittable && scroll.exists { scroll.swipeUp() }
+        for _ in 0..<7 where !button.isHittable && scroll.exists { scroll.swipeDown() }
+        guard button.isHittable else { return false }
+        button.tap()
+        return true
+    }
+}
