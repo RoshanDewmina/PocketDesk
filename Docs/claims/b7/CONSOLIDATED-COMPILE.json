@@ -1,0 +1,12 @@
+{
+  "compilePass": true,
+  "buildSeconds": 58.359,
+  "buildLog": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T122556Z/phone-build.log",
+  "testSourceSha256": "99fb0550b9e207721df7ff5cffa9c9fc3b55548f785b41513f92a5307939adf2",
+  "app": "/Volumes/Studio/Development/Caches/b7-claims/DD/Build/Products/Debug-iphonesimulator/PocketDeskRemote.app",
+  "bundle": "com.roshan.PocketDesk.Remote",
+  "version": "1.0",
+  "build": "20261002.2",
+  "manifest": "/Volumes/Studio/Development/Caches/b7-claims/DD/claims-build-manifest.json",
+  "scope": "Fresh eight-method UI compile and manifest preflight only; no simulator test pass implied"
+}

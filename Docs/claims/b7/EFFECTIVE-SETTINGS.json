@@ -1,0 +1,22 @@
+[
+  {
+    "target": "PocketDeskRemoteHost",
+    "configuration": "Debug",
+    "ARCHS": "arm64",
+    "ONLY_ACTIVE_ARCH": "YES",
+    "MACOSX_DEPLOYMENT_TARGET": "26.0",
+    "SDKROOT": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk",
+    "PRODUCT_BUNDLE_IDENTIFIER": "com.roshan.PocketDesk.RemoteHost",
+    "sourceLog": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T113121Z/build-settings-Debug.log"
+  },
+  {
+    "target": "PocketDeskRemoteHost",
+    "configuration": "Release",
+    "ARCHS": "arm64",
+    "ONLY_ACTIVE_ARCH": "NO",
+    "MACOSX_DEPLOYMENT_TARGET": "26.0",
+    "SDKROOT": "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX27.0.sdk",
+    "PRODUCT_BUNDLE_IDENTIFIER": "com.roshan.PocketDesk.RemoteHost",
+    "sourceLog": "/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims/logs/20261002T113121Z/build-settings-Release.log"
+  }
+]

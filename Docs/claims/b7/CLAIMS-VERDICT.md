@@ -10,6 +10,24 @@ The ordinary trackpad/slide/tap, code scan, app-switcher privacy and same-Wi-Fi 
 
 Replace “nothing connects until you approve” with “the Mac pairs only with a phone you approve on it.” Signaling transport connects before approval and approved devices reconnect normally; the initial new-owner pairing gate is source verified. This is wording precision, not a discovered unauthorized desktop admission.
 
+## Sentence decisions for the submitted Block A
+
+| Submitted sentence | Decision on this baseline |
+|---|---|
+| “Farside puts the Mac you already own in your hand.” | Historical live-control proof; current-build physical gate remains. Positioning may remain in the gated draft. |
+| iPhone Mirroring / “reaches the other way” / touch-first sentence | Apple direction and source design supported; mention needs C11 owner decision, live control is older-build evidence. Trim to the supplied alternative until then. |
+| Whole-screen trackpad / slide / tap / pinch / any part sentence | Source supports trackpad and gesture math; real input is older-build evidence. Pinch and all-edge reachability remain current-build HANDS gates. |
+| “There is no Farside account.” | Keep: source/user-visible enrollment flow supports this exact scope. |
+| Free companion / shows code / scan / approval sentence | Keep price/approval policy, replace absolute “nothing connects” as below; exact-build camera/approval task remains HANDS. Public companion availability is a release gate. |
+| App-switcher privacy sentence | Historical pass only; fresh offline lifecycle test and physical live-thumbnail check are separate. Keep out of the conservative draft. |
+| “Farside is free on the same Wi-Fi.” | Keep as local-access product policy; current free-LAN media/enforcement acceptance remains separate. |
+| Anywhere optional subscription / coming soon sentence | Keep as future product intent. Do not replace with purchasable/working-away-from-home wording before C6. |
+| Apple silicon / macOS26 requirement sentence | Keep configured requirement; fresh Debug binary confirms both. Effective Release settings and macOS26 runtime remain separately recorded. |
+| iPad / Duo / lower-half trackpad / tiny-MacBook paragraph | Remove on20aded1: promised special layouts are absent. |
+| iPhone / Duo / iPad launch sentence | Use “Farside1.0 is planned for iPhone and iPad.” This states owner intent, not accepted upload/review; omit Duo commitment pending compatible layout/runtime. |
+
+This table is a copy decision with explicit scopes. It does not turn older-build source/fixture evidence into uploaded-binary physical acceptance. Block B’s founder facts are supplied by Roshan; technology use is directly source verified. Keep its ongoing-accessibility-work wording.
+
 ## Loud contradictions / incorrect claims
 
 - **NOT TRUE on 20aded1:** tall-iPad and half-folded-Duo lower halves becoming their trackpad, and the tiny-MacBook analogy that depends on those layouts. Remove that paragraph until the b7-ipad/Duo implementations land and pass their own checks. Generic universal targeting is insufficient.
@@ -66,3 +84,16 @@ Pending controlled execution; final evidence addendum follows. Build source is 2
 - Fresh phone build-for-testing PASSED, 173.332s, Xcode27/SDK27; `logs/20261002T104841Z/phone-build.log`. Source and full compiled app/test bundles match archived manifest. Verification-only UI tests compile; no simulator feature pass implied. iPhone and iPad test stages queued under shared lock.
 
 - Fresh isolated Mac companion Debug build PASSED, 134.923s; `logs/20261002T110026Z/host-build.log`. Built executable lipo=`arm64`; LC_BUILD_VERSION minos=`26.0`, sdk=`27.0`; Info.plist minimum=`26.0`. A20/A21/C12 Debug binary platform claim is PROVEN; Release effective settings and macOS26 physical acceptance remain separate. No launch/install. Production diff against20aded1 is empty; full post-build source/artifact receipt archived. This queued command predates future runner pre/post host guard, which is not claimed retroactively.
+
+- Fresh Apple Speech references checked2October via TLS-valid JSON (`speech-requires-on-device.json`, `speech-supports-on-device.json`): the audio-off-network policy requires both supportsOnDeviceRecognition=true and requiresOnDeviceRecognition=true. VoiceInputController checks support and sets request flag before recognition. C3b source policy remains PROVEN; actual hardware speech/transcript insertion remains HANDS. References: https://developer.apple.com/documentation/speech/sfspeechrecognitionrequest/requiresondevicerecognition and https://developer.apple.com/documentation/speech/sfspeechrecognizer/supportsondevicerecognition .
+
+- Fresh seven-class core selection PASSED **83/83**, 34.139s, `host-core-tests.log`. Includes scripted long virtual time and local Bun/WebRTC renewal/ICE-refresh fixtures (10s renewal;137 video frames across4 ICE restarts in separate refresh case). These are AUTO fixture proofs, not deployed Workers/real TURN, host-button live teardown, physical free LAN or>=35min elapsed media acceptance. C4/C5 HANDS gates remain open.
+
+- Conditional narrower C8 option, only after both platform inventories actually finish: ` Accessibility: I ran screen audits on iPhone and iPad simulators; label declarations await device checks.` (106characters; current B358 + 106 = 464/500, 36remaining). This describes performed screen audits even when they report issues; it does not claim a clean audit, full-app/VoiceOver acceptance or Supports labels. Do not insert while runtime remains pending.
+
+- Fresh additional eight-class core selection PASSED **110/110**, zero failures/skips,1.163s test time(1.174suitewall), `host-core-fixtures.log`. Synthetic native gestures, viewport/zoom geometry, fabricated crypto admission, UUID-scoped loopback lifecycle, scripted owner-local coordination and JSON applied-receipt roundtrips. Combined disjoint core selections: **193/193**. No real capture/input/installed host/phone hardware, full live LAN session or35-minute duration proof.
+
+- Copy identity note: this lane audits the user-supplied979-character Block A in NOMINATION-v3.md, identified by the user as submitted. The file header retains an older952-character submitted-version note and says ASC was not edited at authoring. No live ASC nomination/listing read-back occurred in this lane; final saved text/counters require the authorized store receipt. Budgets here apply exactly to the supplied979-character body and provided draft files.
+
+- Corrected effective shipping-host Debug **and Release** settings PASSED: ARCHSarm64, macOSdeployment26.0, bundlecom.roshan.PocketDesk.RemoteHost; ONLY_ACTIVE_ARCH YES/NO respectively (`EFFECTIVE-SETTINGS.json`, logs/20261002T113121Z). Source watchdog/legacy configuration mapping remains PBX-only; no watchdog or legacy Release effective query/build is implied.
+- Consolidated eight-method UI compile PASSED **58.359s**, logs/20261002T122556Z; actual phone app version1.0/build20261002.2, UI sourceSHA99fb0550b9e207721df7ff5cffa9c9fc3b55548f785b41513f92a5307939adf2. Full source/artifact manifest matches before queuing phone60927(logs/20261002T125028Z) and iPad49184(logs/20261002T125029Z). No UI test pass implied by compilation/preflight; no source edits permitted while these runs are outstanding.
