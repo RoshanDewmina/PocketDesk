@@ -28,6 +28,8 @@ Bitrate values come from `StreamQuality` in `StreamTuning.swift`: Sharper LAN st
 
 The owned encoder supplies the shipped hardware-required VideoToolbox setup, QP ceiling, realtime setting, rate limits and keyframe policy. HEVC uses its production Main configuration. H.264 High 5.2 (`640034`) matches the historical measured native session in `IMPLEMENTATION-PLAN.md`; current negotiation may select a different profile, which this isolated harness cannot prove. Shipped High 5.2 uses VT low-latency rate control, while standard HEVC does not. Forcing both into identical low-latency settings would cease to compare the actual configuration.
 
+Text clarity is enabled to match `StillTextPreferences`' modern-phone default. Its still dwell follows the synthetic 60-fps media timeline through an injected clock, so equal source frames receive equal clarity state regardless of codec service time; live wall-clock activation and negotiated overrides are outside this test.
+
 Quality and timing are separate passes. Per-frame quality is compared to the **NV12 luma source actually fed to the encoder**, isolating codec error from RGB→NV12 transfer error. Video-range (16–235) and full-range (0–255) decoded luminance are normalized to the same domain before scoring; the actual format is recorded. This matters because the two shipped decoders can return different ranges. Text SSIM excludes low-variance windows, avoiding scores dominated by flat backgrounds. PNG crops additionally allow visual checking of coloured glyphs. Missing frames must remain visible in the report rather than improving averages by omission. PSNR/SSIM are fidelity proxies, not proof that a person can read every token. Timing records serial submit-to-callback cost, not capture-to-phone presentation latency or achieved live frame rate; the Mac's decoder cannot establish iPhone decode cost. Inspect per-run configuration evidence, drops, key bursts and ordering as well as averages.
 
 Validate and generate the complete table after both passes:
@@ -41,8 +43,36 @@ python3 script/codec-ab-report.py \
 
 The reporter requires every declared case/repeat to finish, both codecs per point, complete frame timelines, matching source hashes across modes/codecs/rates/repeats, and valid decode timestamps/dimensions. It rejects interrupted or one-codec receipts.
 
+Then compare fidelity/callback cost on the same emitted frame indices:
+
+```sh
+python3 script/codec-ab-compare.py \
+  ~/Documents/Codex/2026-10-01/perf-push/b7-codec/quality/codec-quality.jsonl \
+  ~/Documents/Codex/2026-10-01/perf-push/b7-codec/timing/codec-timing.jsonl \
+  --output ~/Documents/Codex/2026-10-01/perf-push/b7-codec/MATCHED.md
+```
+
+The additional script is postprocessing only; its SHA and receipt SHAs are recorded in the output. It does not change the built benchmark or measurement wrapper. Common-frame counts expose sampling limits. The recorded last-decoded hold PSNR supplies an all-offered-media-frame coasting proxy; it does not measure actual presentation. Encoded Mb/s uses media duration, not observed transport throughput. A missing encoder callback incurs up to 250 ms waiting, so codecs with different drops receive different wall-clock submission schedules. Treat those drops as observations of this synthetic serial policy workload, not production drop rates. Sparse surviving video/mixed samples cannot establish phase fidelity or latency distributions. Neither the original table nor the matched table proves production pacing, phone performance or a route-specific winner.
+
 ## Freshness and evidence
 
 On 2 October 2026, local Xcode was 27.0/27A266a, macOS 27.0.1/26A434, pinned WebRTC 153.0.0. Live [Apple compression callback documentation](https://developer.apple.com/documentation/videotoolbox/vtcompressionsessionencodeframe(_:imagebuffer:presentationtimestamp:duration:frameproperties:infoflagsout:outputhandler:)) and [decompression callback documentation](https://developer.apple.com/documentation/videotoolbox/vtdecompressionsessiondecodeframe(_:samplebuffer:flags:infoflagsout:outputhandler:)) describe callback completion and OS availability. [macOS 27 release notes](https://developer.apple.com/documentation/macos-release-notes/macos-27-release-notes) were re-fetched; the focused VideoToolbox entries concern scaling/interpolation, which this harness does not introduce. Raw receipts are in the lane's `apple/` directory. Each run also writes a source/environment manifest and a test log.
 
 Lane results, recommendation, review disposition and exact two-minute phone check live in `~/Documents/Codex/2026-10-01/perf-push/b7-codec/NOTES.md`. No result here authorizes a codec/default change or a device installation.
+
+## Quality checkpoint — 2 October 2026
+
+The full 36-case / 8,640-offered-frame quality run passed in 638.241 seconds. All 36 runs remained nominal thermal state; decode, timestamp and dimension failures were zero. Missing encodes exactly matched the reported silent-drop counter (H264 1,660; HEVC zero). That counter groups several callback/conversion paths, so it does not identify a precise cause. The 250 ms missing-callback wait makes these serial-policy stress observations, not production drop fractions.
+
+Selected Sharp LAN floor (10 Mb/s target); fidelity uses the same emitted frame indices. Encoded Mb/s divides encoded bytes by four seconds of media duration; it is not observed network throughput.
+
+| Output | Codec | Common text SSIM p50 | Common luma PSNR p50 dB | Emitted/offered | Encoded Mb/s |
+|---|---|---:|---:|---:|---:|
+| 2560×1656 | H264 | 0.999 | 44.27 | 215/240 | 8.99 |
+| 2560×1656 | HEVC | 0.998 | 41.38 | 240/240 | 6.07 |
+| Portrait 1408×1664 | H264 | 0.999 | 47.30 | 232/240 | 7.20 |
+| Portrait 1408×1664 | HEVC | 0.999 | 43.71 | 240/240 | 5.28 |
+| Landscape 2032×944 | H264 | 0.999 | 47.90 | 238/240 | 6.88 |
+| Landscape 2032×944 | HEVC | 0.998 | 43.69 | 240/240 | 4.83 |
+
+At this point H264's missing frames were static/startup; both codecs emitted all 60 frames in each motion phase. H264 preserves more matched luma detail while HEVC encodes fewer bytes; text SSIM differs by at most 0.001. This is not a universal H264 fidelity advantage: HEVC exceeds H264 luma PSNR at the 25 Mb/s landscape point. Full tables and per-content/common-frame counts are in `QUALITY-RESULTS.md` and `QUALITY-MATCHED.md` beside NOTES. Quiet timing and the default-codec recommendation remain pending. The app default has not changed.
