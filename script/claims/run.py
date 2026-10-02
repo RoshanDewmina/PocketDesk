@@ -2,17 +2,32 @@
 """Isolated App Store claim evidence runner; never installs or starts the Mac host."""
 import argparse, datetime, hashlib, json, os, pathlib, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+from result_guard import ALL_CLAIMS
+from recovery import GROUPS, FEATURE_METHODS, PHONE_UNIT_METHODS, parse_groups, audit_methods
 p = argparse.ArgumentParser()
-p.add_argument('stage', nargs='?', choices=['all','auto','settings','build','phone','ipad','phone-more','ipad-more','duo','core','backend','host'], default='all')
+p.add_argument('stage', nargs='?', choices=['all','auto','settings','build','phone','ipad','phone-more','ipad-more','phone-audit','ipad-audit','phone-features','ipad-features','phone-units','duo','core','backend','host'], default='all')
 p.add_argument('--output', default='/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims')
 p.add_argument('--dd', default='/Volumes/Studio/Development/Caches/b7-claims/DD')
 p.add_argument('--phone', help='Explicit lane-owned simulator override; default is a dedicated claims iPhone')
 p.add_argument('--ipad', help='Explicit lane-owned simulator override; default is a dedicated claims iPad')
 p.add_argument('--duo', default='663C5184-F544-4CAE-B9C3-A683C26500CE')
 p.add_argument('--ui-timeout',type=int,default=7200,help='Per-method default and maximum allowance for the full screen inventories')
+p.add_argument('--audit-groups',type=parse_groups,default='all',metavar='GROUPS',help='Recovery groups: all or '+','.join(GROUPS))
+p.add_argument('--audit-size',choices=['both','default','AX-XXXL'],default='both',help='Sizes selected by phone-audit/ipad-audit')
 a = p.parse_args()
-OUT = pathlib.Path(a.output); OUT.mkdir(parents=True, exist_ok=True)
-LOG = OUT / 'logs' / datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ'); LOG.mkdir(parents=True)
+studio = pathlib.Path('/Volumes/Studio')
+if not studio.is_mount():
+    raise SystemExit('Receipt SSD is not mounted at /Volumes/Studio; no commands started.')
+receipt_parent = pathlib.Path(a.dd).resolve().parent
+if not receipt_parent.is_relative_to(studio.resolve()):
+    raise SystemExit('--dd must reside on /Volumes/Studio for SSD-backed receipt storage.')
+OUT = pathlib.Path(a.output).resolve(); OUT.mkdir(parents=True, exist_ok=True)
+stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%S.%fZ')
+physical_log = receipt_parent / 'receipts' / stamp
+physical_log.mkdir(parents=True) # Fail closed on collision, never overwrite an existing receipt.
+LOG = OUT / 'logs' / stamp
+LOG.parent.mkdir(parents=True, exist_ok=True)
+LOG.symlink_to(physical_log, target_is_directory=True) # Public paths continue to identify raw receipts.
 ENV = dict(os.environ, DEVELOPER_DIR='/Applications/Xcode.app/Contents/Developer')
 from identity import source_identity, artifact_identity, verify
 from simulators import select
@@ -84,17 +99,29 @@ def build():
             raise SystemExit('Source changed during build; receipt invalid, rebuild.')
         build_manifest().write_text(json.dumps({'source':before,'artifacts':artifact_identity(a.dd)},indent=2))
     return code
-def test(label, device, supplemental=False):
+def test(label, device, supplemental=False, recovery_methods=None, unit_only=False):
     while not (GATES/'CHAIN2-GO').exists():
         print('Waiting for shared simulator UI gate',flush=True); time.sleep(60)
     gate() # Respect quiet windows before the complete-artifact preflight as well as testing.
     try: verify(a.dd) # Fast preflight; also revalidated under lock.
     except RuntimeError as e: raise SystemExit(str(e))
     (LOG/'tested-build-manifest.json').write_bytes(build_manifest().read_bytes())
-    if supplemental:
+    if recovery_methods is not None:
+        selectors=[('RemotePhoneTests/' if unit_only else 'RemotePhoneUITests/')+method for method in recovery_methods]
+        (LOG/(label+'-expected-methods.json')).write_text(json.dumps(recovery_methods,indent=2))
+        (LOG/(label+'-scope.json')).write_text(json.dumps({
+            'scope': ('89 selected phone-unit methods only; no UI inventory/physical acceptance' if unit_only else
+                      'Selected bounded audits only' if label.endswith('-audit') else 'Six feature/UI methods only; no accessibility inventory completion'),
+            'auditGroups': (list(GROUPS) if a.stage=='all' else a.audit_groups) if label.endswith('-audit') else [],
+            'auditSize': ('both' if a.stage=='all' else a.audit_size) if label.endswith('-audit') else None,
+            'surfacesPerSize': sum(GROUPS[g][1] for g in (list(GROUPS) if a.stage=='all' else a.audit_groups)) if label.endswith('-audit') else 0,
+            'expectedMethods': recovery_methods,
+            'originalEightMethodPass': False,
+        },indent=2))
+    elif supplemental:
         selectors=['RemotePhoneUITests/ClaimsVerificationUITests/'+method for method in ['testAccessibilityAuditSupplementalHomeUtilitiesDefaultSize','testAccessibilityAuditSupplementalHomeUtilitiesAccessibilityXXXL']]
     else:
-        selectors=['RemotePhoneUITests/ClaimsVerificationUITests','RemotePhoneUITests/FarsideRedesignUITests/testKeyboardBarPutsCommandFirstAndInReachInPortrait','RemotePhoneUITests/SessionLayoutTests/testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording']
+        selectors=['RemotePhoneUITests/ClaimsVerificationUITests/'+method for method in sorted(ALL_CLAIMS)] + ['RemotePhoneUITests/'+method for method in FEATURE_METHODS[-2:]]
         if label=='phone': selectors += ['RemotePhoneTests/'+c for c in ['FarsideDesignTests','SessionLifecycleTests','VoiceInputTests','CommittedTextTests','ExactTextTraitsTests','TabletInputPhoneTests','IndirectInputTests','ViewportPreferenceTests','ViewportCaptureTests','ScreenRecordingApprovalPhoneTests']]
     run(label+'-tests',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device,'ARCHS=arm64','test-without-building','-parallel-testing-enabled','NO','-collect-test-diagnostics','never','-test-timeouts-enabled','YES','-default-test-execution-time-allowance',str(a.ui_timeout),'-maximum-test-execution-time-allowance',str(a.ui_timeout),'-resultBundlePath',str(LOG/(label+'.xcresult'))]+['-only-testing:'+s for s in selectors],True,manifest=True,shutdown=device)
     bundle=LOG/(label+'.xcresult')
@@ -104,7 +131,9 @@ def test(label, device, supplemental=False):
         for report in ['summary','tests']:
             run(label+'-report-'+report,['xcrun','xcresulttool','get','test-results',report,'--path',str(bundle)])
         run(label+'-text-attachments',['xcrun','xcresulttool','export','attachments','--path',str(bundle),'--output-path',str(LOG/(label+'-attachments')),'--filter','*.txt'])
-    run(label+'-selection-acceptance',[sys.executable,str(ROOT/'script/claims/result_guard.py'),str(LOG/(label+'-report-summary.log')),str(LOG/(label+'-report-tests.log'))]+([] if supplemental else ['--all-claims']))
+    guard_flags = (['--expected-methods-file',str(LOG/(label+'-expected-methods.json'))]
+                   if recovery_methods is not None else ([] if supplemental else ['--all-claims']))
+    run(label+'-selection-acceptance',[sys.executable,str(ROOT/'script/claims/result_guard.py'),str(LOG/(label+'-report-summary.log')),str(LOG/(label+'-report-tests.log'))]+guard_flags)
 def core():
     before=source_identity()
     ddcore=a.dd+'-core'
@@ -163,6 +192,11 @@ elif a.stage=='settings': settings()
 elif a.stage=='build': build()
 elif a.stage in ['phone','ipad']: test(a.stage,device(a.stage))
 elif a.stage in ['phone-more','ipad-more']: test(a.stage,device(a.stage.split('-')[0]),supplemental=True)
+elif a.stage in ['phone-audit','ipad-audit','phone-features','ipad-features']:
+    family=a.stage.split('-')[0]
+    methods=audit_methods(a.audit_groups,a.audit_size) if a.stage.endswith('-audit') else FEATURE_METHODS
+    test(a.stage,device(family),recovery_methods=methods)
+elif a.stage=='phone-units': test(a.stage,device('phone'),recovery_methods=PHONE_UNIT_METHODS,unit_only=True)
 elif a.stage=='duo': duo()
 elif a.stage=='core': core()
 elif a.stage=='backend': backend()
@@ -170,7 +204,12 @@ elif a.stage=='host': host()
 else:
     auto(); duo(); backend()
     if build()==0:
-        test('phone',device('phone')); test('ipad',device('ipad'))
+        # A future one-command pass covers bounded audits plus feature/unit selectors.
+        # It does not rewrite the failed receipts of the original monolithic methods.
+        test('phone-units',device('phone'),recovery_methods=PHONE_UNIT_METHODS,unit_only=True)
+        for family in ['phone','ipad']:
+            test(family+'-audit',device(family),recovery_methods=audit_methods(list(GROUPS)))
+            test(family+'-features',device(family),recovery_methods=FEATURE_METHODS)
     core(); host()
 print('Evidence: '+str(LOG),flush=True)
 sys.exit(1 if any(r['exit'] for r in results if not r['name'].endswith('-shutdown')) else 0)
