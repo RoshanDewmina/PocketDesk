@@ -117,6 +117,7 @@ final class RemoteCoordinator: ObservableObject {
         return host
     }
     var onPresentationInvalidated: (() -> Void)?
+    private var resettingSession = false
     private(set) var presentationSessionID = UUID()
     private(set) var presentationTrackID = UUID()
     /// Current monotonic media lease; local media requires continuous physical proof.
@@ -650,7 +651,7 @@ final class RemoteCoordinator: ObservableObject {
     }
 
     func sendControl(_ action: RemoteAction) -> Bool {
-        guard deliberateEndSession == nil else { return false }
+        guard !resettingSession, deliberateEndSession == nil else { return false }
         guard connected, !session.isEmpty else {
             moveCoalescer.discard()
             controlNotConnectedRefusals += 1
@@ -996,6 +997,11 @@ final class RemoteCoordinator: ObservableObject {
         peerDisconnected()
     }
     private func resetSession() {
+        guard !resettingSession else { return }
+        resettingSession = true
+        defer { resettingSession = false }
+        // Retirement callbacks can mute Listen or release input. The old transport
+        // must not send from those callbacks or re-enter failure/reset recursively.
         deliberateEndTimeout?.cancel(); deliberateEndTimeout = nil; deliberateEndSession = nil
         onGuestAuthorityEnded?()
         onPresentationInvalidated?()

@@ -235,6 +235,23 @@ final class ViewportCaptureTests: XCTestCase {
         XCTAssertNil(model.heartbeatAction().macAudioRequested, "Older Macs receive no new audio field")
     }
 
+    func testFailedListenHeartbeatRetiresPresentationOnceWithoutRecursiveSending() throws {
+        let model = try sessionModel(features: [SessionFeature.phoneAudio])
+        var retirements = 0
+        let retire = model.connection.onPresentationInvalidated
+        model.connection.onPresentationInvalidated = {
+            retirements += 1
+            retire?()
+        }
+        // Exercise the actual absent/failed reliable transport, not the fake sender's return path.
+        model.connection.inputPacketSenderForTesting = nil
+        model.setMacAudioMuted(true)
+        XCTAssertEqual(retirements, 1)
+        XCTAssertFalse(model.connection.connected)
+        XCTAssertTrue(model.macAudioMuted)
+        XCTAssertEqual(model.heartbeatAction().macAudioRequested, false)
+    }
+
     func testTheViewportRidesOnHeartbeatsOnlyWhileTheMacAdvertisesIt() throws {
         let model = connectedModel()
         try deliver(RemoteAction(action: "geometry", x: 1470, y: 956, epoch: 4), to: model)

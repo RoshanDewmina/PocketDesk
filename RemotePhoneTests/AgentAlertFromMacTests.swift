@@ -183,6 +183,7 @@ final class AgentAlertFromMacTests: XCTestCase {
         XCTAssertTrue(fake.added.isEmpty)
 
         model.connection.startInputFixtureForTesting(session: "agent-alert-model")
+        model.connection.inputPacketSenderForTesting = { _ in true }
         XCTAssertTrue(model.connection.connected)
         deliver(data)
         XCTAssertEqual(shared.banner?.id, id)
