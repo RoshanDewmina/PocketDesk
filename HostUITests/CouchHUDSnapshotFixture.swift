@@ -133,3 +133,20 @@ struct HostLinkOfferView: View {
         .accessibilityElement(children: .contain)
     }
 }
+
+// Offscreen component fixture: exact production permission-recovery popover content.
+// The system popover container/arrow is deliberately not presented.
+// Source: RemoteHost/HostSetupView.swift SHA-256 5f8b78bcf8bb91da12ca41e50245e97c6304bedfcff3e3d8bf6dc59fafd22b01
+struct HostPermissionRecoverySnapshotBody: View {
+    let recovery: String
+
+    var body: some View {
+        Text(recovery)
+        .font(.system(size: 13))
+        .foregroundStyle(Farside.Palette.bone)
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(width: 280)
+        .padding(16)
+        .preferredColorScheme(.dark)
+    }
+}

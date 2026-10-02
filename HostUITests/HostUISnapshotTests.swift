@@ -432,6 +432,61 @@ final class HostUISnapshotTests: XCTestCase {
         try render("legal-notices-component", HostLegalSnapshotView())
     }
 
+    func testLegalNoticesScrolledSections() throws {
+        for (name, fraction) in [("middle", 0.5), ("bottom", 1.0)] {
+            try render("legal-notices-component-\(name)", HostLegalSnapshotView(), scrollFraction: fraction)
+        }
+    }
+
+    func testAdditionalSetupStates() throws {
+        let service = ready(.needsPhone) {
+            $0.hasPairedPhone = false
+            $0.setupStep = .pairPhone
+            $0.pairing = .needsService
+        }
+        try render("setup-3f-service-address", HostSetupView(state: service, actions: .preview, page: .pair))
+        try render("setup-3g-already-paired", HostSetupView(state: ready(.ready), actions: .preview, page: .pair))
+        let loading = ready(.pairing) {
+            $0.hasPairedPhone = false
+            $0.setupStep = .pairPhone
+            $0.pairing = .idle
+        }
+        try render("setup-3h-code-loading", HostSetupView(state: loading, actions: .preview, page: .pair))
+        try render("popover-pairing-loading", HostPopoverReviewScene(state: loading, now: Date()))
+        let skipped = ready(.needsPhone) {
+            $0.hasPairedPhone = false
+            $0.accessibility = .denied
+            $0.accessibilitySkipped = true
+            $0.setupStep = .pairPhone
+        }
+        try render("setup-2g-accessibility-skipped", HostSetupView(state: skipped, actions: .preview,
+                                                                  page: .permissions))
+    }
+
+    func testPermissionRecoveryComponents() throws {
+        for macOSMajor in [26, 27] {
+            for (name, title, reason, symbol, pane) in [
+                ("screen-recording", "Screen Recording", "So your iPhone can see the screen.", "display",
+                 HostSystemSettingsPane.screenRecording),
+                ("accessibility", "Accessibility", "So taps become clicks and typing becomes typing.",
+                 "hand.point.up.left", .accessibility)
+            ] {
+                let recovery = HostPermissionCopy.recovery(pane, listName: "PocketDesk Host", macOSMajor: macOSMajor)
+                // Existing row hook exposes the delayed button without waiting or opening native UI.
+                try render("permission-recovery-row-\(name)-macos\(macOSMajor)", HostPermissionRow(
+                    title: title, reason: reason, symbol: symbol, status: .denied, waiting: true,
+                    instruction: HostPermissionCopy.switchOn(pane, listName: "PocketDesk Host", macOSMajor: macOSMajor),
+                    showsRecoveryLink: true, recovery: recovery, open: {},
+                    relaunch: pane == .screenRecording ? {} : nil)
+                    .padding(24).frame(width: 640).background(HostTheme.windowBackground))
+                // Copy the production popover content only; no native popover/window is presented.
+                try render("permission-recovery-body-\(name)-macos\(macOSMajor)",
+                           HostPermissionRecoverySnapshotBody(recovery: recovery)
+                    .background(HostTheme.popoverBackground))
+            }
+        }
+    }
+
     func testCouchHUD() throws {
         // Snapshot-only exact View fixture; the production controller never orders a panel front.
         try render("couch-hud", CouchHUDView())
