@@ -284,22 +284,36 @@ final class FarsideScreenshotTour: XCTestCase {
             return tap(app.buttons["Pair Mac"], in: app) && require(element("pairing.feedback", in: app), "Malformed pairing feedback")
         case "pairing-camera-unavailable", "pairing-scanning":
             #if targetEnvironment(simulator)
+            let captureOrientation = XCUIDevice.shared.orientation
+            XCUIDevice.shared.orientation = .portrait
+            defer {
+                if XCUIDevice.shared.orientation != captureOrientation {
+                    XCUIDevice.shared.orientation = captureOrientation
+                }
+            }
             guard tap(app.buttons["pairing.camera.continue"], in: app) else { return false }
             let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
             let alert = system.alerts.firstMatch
             if alert.waitForExistence(timeout: 2) {
-                let cameraText = alert.descendants(matching: .any)
-                    .matching(NSPredicate(format: "label CONTAINS[c] %@", "camera")).firstMatch
-                guard cameraText.exists || alert.label.localizedCaseInsensitiveContains("camera") else {
-                    return missing("Camera fixture interrupted by a different system alert")
+                for orientation in [UIDeviceOrientation.portrait, .landscapeLeft] {
+                    XCUIDevice.shared.orientation = orientation
+                    guard alert.waitForExistence(timeout: 2) else {
+                        return missing("Camera permission alert disappeared during orientation capture")
+                    }
+                    let cameraText = alert.descendants(matching: .any)
+                        .matching(NSPredicate(format: "label CONTAINS[c] %@", "camera")).firstMatch
+                    guard cameraText.exists || alert.label.localizedCaseInsensitiveContains("camera") else {
+                        return missing("Camera fixture interrupted by a different system alert")
+                    }
+                    attach((orientation == .portrait ? "portrait-" : "landscape-") + "system-camera-permission")
                 }
-                let orientation = XCUIDevice.shared.orientation
-                let prefix = orientation == .landscapeLeft || orientation == .landscapeRight ? "landscape-" : "portrait-"
-                attach(prefix + "system-camera-permission")
+                XCUIDevice.shared.orientation = .portrait
+                guard alert.waitForExistence(timeout: 2) else { return missing("Camera permission alert did not return in portrait") }
                 guard require(alert.buttons["Allow"], "Simulator camera permission Allow") else { return false }
                 alert.buttons["Allow"].tap()
                 guard alert.waitForNonExistence(timeout: 3) else { return missing("Simulator camera permission did not dismiss") }
             }
+            XCUIDevice.shared.orientation = captureOrientation
             if shot.name == "pairing-camera-unavailable" {
                 return require(app.staticTexts["No camera here"], "Simulator camera unavailable")
             }
