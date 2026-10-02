@@ -4,7 +4,7 @@ final class CouchModeUITests: XCTestCase {
     @MainActor
     func testCouchSurfaceShowsTheTrackpadCardAndKeyRow() {
         let app = XCUIApplication()
-        app.launchArguments = ["--ui-layout-check", "--ui-couch", "--ui-demo-mac"]
+        app.launchArguments = ["--ui-layout-check", "--ui-couch", "--ui-demo-mac", "--ui-keyboard-hit-probe"]
         app.launch()
         XCTAssertTrue(app.staticTexts["Look at your Mac. This is its trackpad."].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["The picture is the one on your wall."].exists)

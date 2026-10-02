@@ -911,6 +911,7 @@ struct NativeSessionView: View {
                     noticeID: connection.connected && model.awayState == .covered ? "remote.awayCovered" : "remote.session.notice",
                     viewOnly: panMode || model.captureScopeViewOnly, canReturnToControl: panMode,
                     toggle: {
+                        recordChromeHitProbe("pill toggle")
                         noteSessionPillActivity()
                         if showControls { closeControls() }
                         else { controlsCollapsed ? revealControls() : collapseControls() }
@@ -2356,6 +2357,7 @@ struct NativeSessionView: View {
     }
 
     private func openControls() {
+        recordChromeHitProbe("open Controls")
         cancelGesture()
         controlsPath = []
         showOverlaySettings = false
@@ -3297,6 +3299,13 @@ struct NativeSessionView: View {
         withAnimation(reduceMotion ? nil : .snappy) { panMode = viewMode }
     }
 
+    private func recordChromeHitProbe(_ action: String) {
+        #if DEBUG
+        guard offlineLayoutCheck, LaunchOptions.has("--ui-keyboard-hit-probe") else { return }
+        print("[B7 chromeHit] \(action) regular=\(regularSessionLayout) couch=\(couch) collapsed=\(controlsCollapsed) controls=\(showControls) keyboard=\(keyboardOpen) voiceLocked=\(voiceLocked)")
+        #endif
+    }
+
     private func cancelGesture() {
         pinchRevision &+= 1
         model.cancelInput()
@@ -3304,12 +3313,14 @@ struct NativeSessionView: View {
     }
 
     private func revealControls() {
+        recordChromeHitProbe("reveal dock")
         guard controlsCollapsed else { return }
         cancelGesture()
         withAnimation(reduceMotion ? .easeInOut(duration: 0.2) : Farside.Motion.sheetSpring) { controlsCollapsed = false }
     }
 
     private func collapseControls() {
+        recordChromeHitProbe("collapse dock")
         guard (!couch || regularSessionLayout), !controlsCollapsed, !voiceLocked else { return }
         cancelGesture()
         if showVoiceInput { cancelVoiceInput() }
@@ -3320,6 +3331,7 @@ struct NativeSessionView: View {
     }
 
     private func openKeyboard() {
+        recordChromeHitProbe("open keyboard")
         cancelGesture()
         if showVoiceInput {
             guard !voiceLocked else { return }

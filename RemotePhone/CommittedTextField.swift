@@ -79,9 +79,9 @@ struct KeyboardLayoutDock<Content: View>: UIViewControllerRepresentable {
         }
 
         #if DEBUG
-        /// Opt-in fixture diagnostics; no contents, input or real-device state is recorded.
+        /// Opt-in fixture diagnostics; no editor contents or remote input is recorded or sent.
         private func recordHitTestProbe() {
-            guard LaunchOptions.has("--ui-keyboard-hit-probe"), let window = view.window else { return }
+            guard LaunchOptions.layoutCheck, LaunchOptions.has("--ui-keyboard-hit-probe"), let window = view.window else { return }
             let frame = host.view.convert(host.view.bounds, to: window)
             guard frame != probedFrame else { return }
             probedFrame = frame
