@@ -1,6 +1,6 @@
 # B8 first-minute lane — 2 October 2026
 
-Worktree farside-b8-first60, branch claude/b8-first60 from4127cd4. Host, phone pairing and first-picture/hints packages are in progress with explicit disjoint write-sets. Parent owns Home/GestureCoach/seams and integrated verification. No pure restyling: design-polish owns visuals. Evidence/ledger/handoff: /Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b8-first60/NOTES.md. No implementation completion or physical acceptance claimed yet.
+Worktree `farside-b8-first60`, branch `claude/b8-first60` from `4127cd4`. Implementation checkpoints `66d5774`, `2bff12d` and `cce21a9` cover all eight authorized first-minute items behind `PocketDeskFirst60Disabled`. Independent source review approves `cce21a9`; overall verification is incomplete. The first required gate failed compilation (missing return, now source-fixed) and simulator creation, with zero test receipts. A corrected retry was stopped while still queued behind other lanes; no passing native build/test, rendering, timing or push is claimed. The quiet measurement request and shared simulator availability require orchestrator coordination. [Evidence, merge regions and later physical criteria](testing/B8-FIRST60.md). Ledger/handoff: `/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b8-first60/NOTES.md`. Design-polish retains visual ownership. No installed-host, phone, provider or physical acceptance.
 
 # Batch 7b integration in verification — 2 October 2026
 
