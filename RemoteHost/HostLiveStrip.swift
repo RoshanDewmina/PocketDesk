@@ -131,10 +131,12 @@ struct HostLiveReadout: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 HostMeter(label: "Route", value: route, spoken: route.map { $0 + " connection" })
-                HostMeter(label: "Latency", value: session?.roundTripMs.map { $0 < 1 ? "<1" : String($0) }, unit: "ms",
-                          spoken: session?.roundTripMs.map { "\($0) milliseconds" })
-                HostMeter(label: "Frames", value: session?.framesPerSecond.map(String.init), unit: "fps",
-                          spoken: session?.framesPerSecond.map { "\($0) frames per second" })
+                HostMeter(label: HostMetricCopy.roundTripTitle, value: session?.roundTripMs.map { $0 < 1 ? "<1" : String($0) }, unit: "ms",
+                          spoken: HostMetricCopy.spokenRoundTrip(session?.roundTripMs))
+                    .help(HostMetricCopy.roundTripHelp)
+                HostMeter(label: HostMetricCopy.sendingTitle, value: session?.framesPerSecond.map(String.init), unit: "fps",
+                          spoken: HostMetricCopy.spokenSending(session?.framesPerSecond))
+                    .help(HostMetricCopy.sendingHelp)
             }
             HStack(spacing: 16) {
                 HStack(spacing: 16) {

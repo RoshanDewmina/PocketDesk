@@ -56,8 +56,8 @@ struct HostSessionReadout: Equatable {
         case .relayed: parts.append("Relayed")
         case nil: break
         }
-        if let roundTripMs { parts.append(roundTripMs < 1 ? "<1 ms" : "\(roundTripMs) ms") }
-        if let framesPerSecond { parts.append("\(framesPerSecond) fps") }
+        if let roundTripMs { parts.append(roundTripMs < 1 ? "<1 ms RTT" : "\(roundTripMs) ms RTT") }
+        if let framesPerSecond { parts.append("\(framesPerSecond) fps sent") }
         return parts.joined(separator: " · ")
     }
 
@@ -68,9 +68,85 @@ struct HostSessionReadout: Equatable {
         case .relayed: parts.append("Relayed connection")
         case nil: break
         }
-        if let roundTripMs { parts.append(roundTripMs < 1 ? "under 1 millisecond" : "\(roundTripMs) milliseconds") }
-        if let framesPerSecond { parts.append("\(framesPerSecond) frames per second") }
+        if let roundTripMs { parts.append(HostMetricCopy.spokenRoundTrip(roundTripMs)) }
+        if let framesPerSecond { parts.append(HostMetricCopy.spokenSending(framesPerSecond)) }
         return parts.joined(separator: ", ")
+    }
+}
+
+/// Process-start rollback switches; the layout experiment stays off until device A/B.
+enum HostPopoverPolicy {
+    static let bounded = bounded(defaults: .standard)
+    static let scopedControls = scopedControls(defaults: .standard)
+    static let guestAudience = guestAudience(defaults: .standard)
+
+    static func bounded(defaults: UserDefaults) -> Bool {
+        defaults.object(forKey: "farsideBoundedPopoverDisabled") != nil
+            ? !defaults.bool(forKey: "farsideBoundedPopoverDisabled") : false
+    }
+
+    static func scopedControls(defaults: UserDefaults) -> Bool {
+        !defaults.bool(forKey: "farsideScopedPopoverControlsDisabled")
+    }
+
+    static func guestAudience(defaults: UserDefaults) -> Bool {
+        !defaults.bool(forKey: "farsidePopoverGuestAudienceDisabled")
+    }
+
+    static func maximumHeight(visibleHeight: Double) -> Double {
+        min(640, max(0, visibleHeight - 24))
+    }
+
+    static func detailHeight(content: Double, pinned: Double, maximum: Double) -> Double {
+        min(max(0, content), max(0, maximum - pinned))
+    }
+
+    static func controlsDisabled(scoped: Bool, enabled: Bool = scopedControls) -> Bool {
+        enabled && scoped
+    }
+
+    static func audience(_ rows: [HostGuestRow], enabled: Bool = guestAudience) -> String? {
+        guard enabled, !rows.isEmpty else { return nil }
+        // Existing status distinguishes issued grants from a link still being created. It cannot
+        // prove live media: a peer may still be connecting or paused by the guest budget.
+        let approved = rows.filter(hasVideoAccess).count
+        let pending = rows.filter(\.pending).count
+        var parts: [String] = []
+        if approved > 0 { parts.append(approved == 1 ? "1 guest has video access" : "\(approved) guests have video access") }
+        if pending > 0 { parts.append(pending == 1 ? "1 guest needs approval" : "\(pending) guests need approval") }
+        if parts.isEmpty { parts.append("Guest setup") }
+        return parts.joined(separator: " · ")
+    }
+
+    static func hasVideoAccess(_ row: HostGuestRow) -> Bool {
+        row.status == "Approved · connecting" || row.status == "Viewing · video only"
+    }
+
+    static func guestStatus(_ row: HostGuestRow) -> String {
+        if row.pending { return "Guest needs approval" }
+        if hasVideoAccess(row) { return "Video access approved" }
+        return row.linkReady ? "Guest link ready" : "Preparing guest link"
+    }
+
+    static func scopeCaption(_ state: HostViewState) -> String? {
+        guard state.captureScopeViewOnly else { return nil }
+        let name = state.captureScopes.first { $0.id == state.selectedCaptureScopeID }?.name
+            ?? "Selected content unavailable"
+        return "App/window sharing is view only. \(name)"
+    }
+}
+
+enum HostMetricCopy {
+    static let roundTripTitle = "Network RTT"
+    static let sendingTitle = "Sending FPS"
+    static let roundTripHelp = "Network round-trip time: a message going to the other device and back. Picture and input processing add time."
+    static let sendingHelp = "Video frames sent by this Mac each second. The receiving device may show fewer frames."
+    static func spokenRoundTrip(_ value: Int?) -> String {
+        value.map { "Network round-trip time: \($0 < 1 ? "under 1" : String($0)) milliseconds" }
+            ?? "Network round-trip time: not measured yet"
+    }
+    static func spokenSending(_ value: Int?) -> String {
+        value.map { "Sending frame rate: \($0) frames per second" } ?? "Sending frame rate: not measured yet"
     }
 }
 
@@ -624,7 +700,7 @@ enum HostCaptureApprovalCopy {
 
 enum HostMenuBarIconCopy {
     static func subtitle(shown: Bool) -> String {
-        shown ? "Farside’s status and quick controls"
+        shown ? "Hide the icon to remove quick controls. Farside keeps running and sharing; reopen it from Applications"
             : "Hidden. Farside keeps running and sharing; open it from Applications to get here"
     }
 }

@@ -52,8 +52,8 @@ final class HostPresentationTests: XCTestCase {
         XCTAssertEqual(readout.route, .direct)
         XCTAssertEqual(readout.framesPerSecond, 60)
         XCTAssertEqual(readout.roundTripMs, 14)
-        XCTAssertEqual(readout.caption, "Direct · 14 ms · 60 fps")
-        XCTAssertEqual(readout.spokenCaption, "Direct connection, 14 milliseconds, 60 frames per second")
+        XCTAssertEqual(readout.caption, "Direct · 14 ms RTT · 60 fps sent")
+        XCTAssertEqual(readout.spokenCaption, "Direct connection, Network round-trip time: 14 milliseconds, Sending frame rate: 60 frames per second")
 
         let relayed = try XCTUnwrap(HostSessionReadout.parse(
             "Relay · codec pending · fps pending · RTT pending · codec implementation unreported"))
@@ -61,7 +61,7 @@ final class HostPresentationTests: XCTestCase {
         XCTAssertEqual(relayed.caption, "Relayed")
 
         XCTAssertEqual(HostSessionReadout.parse("Direct · video/H264 · 10 fps · 0 ms network RTT · VideoToolbox")?.caption,
-                       "Direct · <1 ms · 10 fps")
+                       "Direct · <1 ms RTT · 10 fps sent")
         XCTAssertNil(HostSessionReadout.parse("Route not measured"))
         XCTAssertNil(HostSessionReadout.parse("Route pending · codec pending · fps pending · RTT pending · x"))
     }
@@ -73,13 +73,91 @@ final class HostPresentationTests: XCTestCase {
         let presentation = HostPopoverPresentation.make(for: live)
         XCTAssertEqual(presentation.headline, "Connected · sharing this Mac")
         XCTAssertEqual(presentation.title, "Your iPhone is steering")
-        XCTAssertEqual(presentation.caption, "Direct · 14 ms · 60 fps")
+        XCTAssertEqual(presentation.caption, "Direct · 14 ms RTT · 60 fps sent")
         XCTAssertEqual(presentation.actions, [.pause, .stopSharing])
         XCTAssertTrue(presentation.showsSessionToggles)
 
         let watching = HostPopoverPresentation.make(for: state(.viewing))
         XCTAssertEqual(watching.title, "Your iPhone is watching")
         XCTAssertEqual(watching.headline, "Connected · view only")
+    }
+
+    func testPopoverLaunchSwitchDefaultsAndRollback() throws {
+        let name = "HostPopoverPolicyTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        XCTAssertFalse(HostPopoverPolicy.bounded(defaults: defaults), "Layout stays OFF for device A/B")
+        XCTAssertTrue(HostPopoverPolicy.scopedControls(defaults: defaults))
+        XCTAssertTrue(HostPopoverPolicy.guestAudience(defaults: defaults))
+        defaults.set("NO", forKey: "farsideBoundedPopoverDisabled")
+        XCTAssertTrue(HostPopoverPolicy.bounded(defaults: defaults), "Process launch arguments also parse NO")
+        defaults.set("YES", forKey: "farsideBoundedPopoverDisabled")
+        XCTAssertFalse(HostPopoverPolicy.bounded(defaults: defaults))
+        for disabled in [true, false] {
+            defaults.set(disabled, forKey: "farsideBoundedPopoverDisabled")
+            defaults.set(disabled, forKey: "farsideScopedPopoverControlsDisabled")
+            defaults.set(disabled, forKey: "farsidePopoverGuestAudienceDisabled")
+            XCTAssertEqual(HostPopoverPolicy.bounded(defaults: defaults), !disabled)
+            XCTAssertEqual(HostPopoverPolicy.scopedControls(defaults: defaults), !disabled)
+            XCTAssertEqual(HostPopoverPolicy.guestAudience(defaults: defaults), !disabled)
+            XCTAssertEqual(HostPopoverPolicy.controlsDisabled(scoped: true, enabled: !disabled), !disabled)
+            XCTAssertFalse(HostPopoverPolicy.controlsDisabled(scoped: false, enabled: !disabled))
+        }
+    }
+
+    func testBoundedPopoverBudgetReservesExitControlsUnderAllWarnings() {
+        for height in [480.0, 600, 900, 1200] {
+            let maximum = HostPopoverPolicy.maximumHeight(visibleHeight: height)
+            let pinned = 96.0 + 90 + 130 // art, owner status, Stop confirmation + footer
+            let details = HostPopoverPolicy.detailHeight(content: 1600, pinned: pinned, maximum: maximum)
+            XCTAssertLessThanOrEqual(details + pinned, height - 24)
+            XCTAssertLessThanOrEqual(details + pinned, 640)
+            XCTAssertGreaterThan(details, 0)
+            XCTAssertEqual(HostPopoverPolicy.detailHeight(content: 20, pinned: pinned, maximum: maximum), 20)
+        }
+        XCTAssertEqual(HostPopoverPolicy.detailHeight(content: 1600, pinned: 500, maximum: 400), 0)
+    }
+
+    func testScopedPopoverNamesTheSelectedContentWithoutFallingBackToTheDisplay() {
+        var scoped = state(.viewing)
+        scoped.captureScopeViewOnly = true
+        scoped.selectedCaptureScopeID = "window1"
+        scoped.captureScopes.append(.init(id: "window1", name: "Window: Notes"))
+        XCTAssertEqual(HostPopoverPolicy.scopeCaption(scoped), "App/window sharing is view only. Window: Notes")
+        scoped.captureScopes.removeLast()
+        XCTAssertEqual(HostPopoverPolicy.scopeCaption(scoped), "App/window sharing is view only. Selected content unavailable")
+        scoped.captureScopeViewOnly = false
+        XCTAssertNil(HostPopoverPolicy.scopeCaption(scoped))
+    }
+
+    func testGuestAudienceDistinguishesApprovedPendingAndPreparingWithoutClaimingLiveMedia() {
+        let viewing = HostGuestRow(id: "1", fingerprint: "a", status: "Viewing · video only", pending: false, linkReady: false)
+        let pending = HostGuestRow(id: "2", fingerprint: "b", status: "Recipient requests viewing", pending: true, linkReady: false)
+        let connecting = HostGuestRow(id: "3", fingerprint: "c", status: "Approved · connecting", pending: false, linkReady: false)
+        let preparing = HostGuestRow(id: "4", fingerprint: "d", status: "Link expires in two minutes", pending: false, linkReady: false)
+        XCTAssertFalse(HostPopoverPolicy.hasVideoAccess(preparing))
+        XCTAssertEqual(HostPopoverPolicy.audience([preparing], enabled: true), "Guest setup")
+        XCTAssertEqual(HostPopoverPolicy.guestStatus(preparing), "Preparing guest link")
+        XCTAssertNil(HostPopoverPolicy.audience([], enabled: true))
+        XCTAssertEqual(HostPopoverPolicy.audience([viewing], enabled: true), "1 guest has video access")
+        XCTAssertEqual(HostPopoverPolicy.audience([viewing, viewing], enabled: true), "2 guests have video access")
+        XCTAssertEqual(HostPopoverPolicy.audience([viewing, pending], enabled: true), "1 guest has video access · 1 guest needs approval")
+        XCTAssertEqual(HostPopoverPolicy.audience([connecting], enabled: true), "1 guest has video access")
+        XCTAssertEqual(HostPopoverPolicy.guestStatus(viewing), "Video access approved")
+        XCTAssertEqual(HostPopoverPolicy.guestStatus(connecting), "Video access approved")
+        XCTAssertEqual(HostPopoverPolicy.guestStatus(pending), "Guest needs approval")
+        XCTAssertNil(HostPopoverPolicy.audience([viewing, pending], enabled: false), "Rollback restores no audience block")
+    }
+
+    func testMetricLabelsExplainNetworkAndSenderMeasurements() {
+        XCTAssertEqual(HostMetricCopy.roundTripTitle, "Network RTT")
+        XCTAssertEqual(HostMetricCopy.sendingTitle, "Sending FPS")
+        XCTAssertEqual(HostMetricCopy.spokenRoundTrip(14), "Network round-trip time: 14 milliseconds")
+        XCTAssertEqual(HostMetricCopy.spokenSending(60), "Sending frame rate: 60 frames per second")
+        XCTAssertTrue(HostMetricCopy.spokenRoundTrip(nil).contains("not measured"))
+        XCTAssertTrue(HostMetricCopy.spokenSending(nil).contains("not measured"))
+        XCTAssertTrue(HostMetricCopy.roundTripHelp.contains("Picture and input processing add time"))
+        XCTAssertTrue(HostMenuBarIconCopy.subtitle(shown: true).contains("keeps running and sharing"))
     }
 
     // MARK: Popover states
