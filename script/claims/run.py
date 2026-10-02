@@ -11,6 +11,7 @@ p.add_argument('--dd', default='/Volumes/Studio/Development/Caches/b7-claims/DD'
 p.add_argument('--phone', help='Explicit lane-owned simulator override; default is a dedicated claims iPhone')
 p.add_argument('--ipad', help='Explicit lane-owned simulator override; default is a dedicated claims iPad')
 p.add_argument('--duo', default='663C5184-F544-4CAE-B9C3-A683C26500CE')
+p.add_argument('--build-family', choices=['phone','ipad'], default='phone', help='Dedicated simulator used for build-for-testing; use a separate DD for concurrent platform runs')
 p.add_argument('--ui-timeout',type=int,default=7200,help='Per-method default and maximum allowance for the full screen inventories')
 p.add_argument('--audit-groups',type=parse_groups,default='all',metavar='GROUPS',help='Recovery groups: all or '+','.join(GROUPS))
 p.add_argument('--audit-size',choices=['both','default','AX-XXXL'],default='both',help='Sizes selected by phone-audit/ipad-audit')
@@ -93,7 +94,7 @@ def settings():
         run('build-settings-'+config,common+['-configuration',config,'-scheme','PocketDeskRemoteHost','-showBuildSettings','-json'],True)
 def build():
     before=source_identity()
-    code = run('phone-build',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device('phone'),'ARCHS=arm64','build-for-testing'],True)
+    code = run(a.build_family+'-build',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device(a.build_family),'ARCHS=arm64','build-for-testing'],True)
     if code == 0:
         if source_identity()!=before:
             raise SystemExit('Source changed during build; receipt invalid, rebuild.')
