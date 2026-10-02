@@ -8,6 +8,73 @@ final class FarsideScreenshotTour: XCTestCase {
         let arguments: [String]
         var landscape = false
         var wait: TimeInterval = 2.5
+        var scrollToEnd = false
+    }
+
+    /// Full-screen iPad captures remain separate from the original phone parity shot names.
+    /// No width override is used here: these are actual portrait/landscape simulator windows.
+    private var iPadShots: [Shot] {
+        let states: [(String, [String])] = [
+            ("home-empty", ["--ui-x"]),
+            ("home", ["--ui-demo-mac", "--ui-last-reached"]),
+            ("pairing-camera-priming", ["--ui-pairing-scan", "--ui-camera-priming"]),
+            ("pairing-steps", ["--ui-pairing-scan", "--ui-camera-priming"]),
+            ("anywhere-paywall", ["--ui-paywall"]),
+            ("controls-settings", ["--ui-layout-check", "--ui-controls-settings"]),
+            ("session-fit", ["--ui-layout-check", "--ui-viewport-fit", "--ui-pointer-preview"]),
+            ("session-fill", ["--ui-layout-check", "--ui-viewport-fill", "--ui-pointer-preview"]),
+            ("dock", ["--ui-layout-check", "--ui-viewport-fit", "--ui-dock-open"]),
+            ("controls", ["--ui-layout-check", "--ui-viewport-fit", "--ui-controls-check"]),
+            ("keyboard", ["--ui-layout-check", "--ui-viewport-fit", "--ui-keyboard-check", "--ui-software-keyboard"]),
+            ("hardware-keyboard-field", ["--ui-layout-check", "--ui-viewport-fit", "--ui-keyboard-check", "--ui-hardware-keyboard"]),
+            ("couch", ["--ui-layout-check", "--ui-couch", "--ui-demo-mac"]),
+            ("reconnecting", ["--ui-layout-check", "--ui-reconnecting"]),
+            ("mac-busy", ["--ui-layout-check", "--ui-mac-busy"]),
+            ("big-text-changing", ["--ui-layout-check", "--ui-big-text-changing"])
+        ]
+        return [false, true].flatMap { landscape in
+            states.map { name, arguments in
+                Shot(name: "ipad-\(landscape ? "landscape" : "portrait")-\(name)",
+                     arguments: arguments, landscape: landscape, wait: 4, scrollToEnd: name == "pairing-steps")
+            }
+        }
+    }
+
+    /// DEBUG-constrained app content, not real system Split View or Stage Manager.
+    /// The outer simulator window remains visible in every attachment. Explicit width classes
+    /// keep these fixtures faithful to the design spec even on a different simulator model.
+    private var syntheticWindowShots: [Shot] {
+        let bands: [(String, Int, Int, String)] = [
+            ("mini-portrait", 744, 1133, "regular"),
+            ("mini-landscape", 1133, 744, "regular"),
+            ("air11-portrait", 820, 1180, "regular"),
+            ("air11-landscape", 1180, 820, "regular"),
+            ("pro11-portrait", 834, 1210, "regular"),
+            ("pro11-landscape", 1210, 834, "regular"),
+            ("pro13-portrait", 1032, 1376, "regular"),
+            ("pro13-landscape", 1376, 1032, "regular"),
+            ("split-half11", 507, 834, "compact"),
+            ("split-half11-wide", 600, 834, "compact"),
+            ("split-half13", 683, 1032, "regular"),
+            ("split-third", 320, 834, "compact"),
+            ("slide-over", 400, 834, "compact"),
+            ("split-portrait-two-thirds", 556, 1180, "compact"),
+            ("split-portrait-third", 278, 1180, "compact"),
+            ("split-two-thirds11", 680, 834, "regular"),
+            ("split-two-thirds13", 900, 1032, "regular"),
+            ("stage-manager-tall", 690, 1032, "regular"),
+            ("stage-manager-wide", 900, 700, "regular")
+        ]
+        return bands.flatMap { name, width, height, widthClass in
+            let window = ["--ui-window-width=\(width)", "--ui-window-height=\(height)",
+                          "--ui-width-class=\(widthClass)"]
+            return [
+                Shot(name: "debug-\(name)-home", arguments: ["--ui-demo-mac", "--ui-last-reached"] + window,
+                     landscape: width > height),
+                Shot(name: "debug-\(name)-session", arguments: ["--ui-layout-check", "--ui-viewport-fit"] + window,
+                     landscape: width > height)
+            ]
+        }
     }
 
     private let shots: [Shot] = [
@@ -80,15 +147,54 @@ final class FarsideScreenshotTour: XCTestCase {
     func testCaptureEveryScreen() {
         let app = XCUIApplication()
         let only = ProcessInfo.processInfo.environment["FARSIDE_SHOTS"].map { Set($0.split(separator: ",").map(String.init)) }
-        for shot in shots where only?.contains(shot.name) ?? true {
+        let iPad = UIDevice.current.userInterfaceIdiom == .pad
+        let available = shots + (iPad ? iPadShots + syntheticWindowShots : [])
+        if let only {
+            let unknown = only.subtracting(Set(available.map(\.name)))
+            XCTAssertTrue(unknown.isEmpty, "Unknown screenshot names: \(unknown.sorted())")
+        }
+        // Optional one-band runs use the same launch contract as the named DEBUG matrix.
+        let environment = ProcessInfo.processInfo.environment
+        let windowOverrides = [("FARSIDE_WINDOW_WIDTH", "--ui-window-width="),
+                               ("FARSIDE_WINDOW_HEIGHT", "--ui-window-height="),
+                               ("FARSIDE_WINDOW_CLASS", "--ui-width-class=")]
+            .compactMap { key, prefix in environment[key].map { prefix + $0 } }
+        for shot in available where only?.contains(shot.name) ?? true {
             XCUIDevice.shared.orientation = shot.landscape ? .landscapeLeft : .portrait
-            app.launchArguments = shot.arguments
+            app.launchArguments = shot.arguments + windowOverrides
             app.launch()
+            if (shot.name.hasPrefix("ipad-") || shot.name.hasPrefix("debug-")) && shot.arguments.contains("--ui-layout-check") {
+                // The fixture can inherit explicit privacy recovery from an earlier background.
+                // Keep the original phone tour launch path unchanged for exact parity captures.
+                let recovery = app.buttons["Return to Farside"]
+                if recovery.waitForExistence(timeout: 1) { recovery.tap() }
+            }
             Thread.sleep(forTimeInterval: shot.wait)
+            if shot.scrollToEnd { app.scrollViews.firstMatch.swipeUp() }
             let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             attachment.name = shot.name
             attachment.lifetime = .keepAlways
             add(attachment)
+            if shot.name.hasPrefix("ipad-") || shot.name.hasPrefix("debug-") {
+                func rectangle(_ frame: CGRect) -> [String: Double] {
+                    ["x": Double(frame.minX), "y": Double(frame.minY), "width": Double(frame.width), "height": Double(frame.height)]
+                }
+                var geometry: [String: Any] = ["shot": shot.name, "arguments": app.launchArguments,
+                                               "synthetic": shot.name.hasPrefix("debug-"),
+                                               "outer_window": rectangle(app.windows.firstMatch.frame)]
+                for identifier in ["phone.home", "remote.canvas", "remote.picture", "remote.stacked.pad",
+                                   "remote.session.pill", "remote.dock", "remote.controls.content"] {
+                    let element = app.descendants(matching: .any)[identifier].firstMatch
+                    if element.exists { geometry[identifier] = rectangle(element.frame) }
+                }
+                if let data = try? JSONSerialization.data(withJSONObject: geometry, options: [.prettyPrinted, .sortedKeys]),
+                   let text = String(data: data, encoding: .utf8) {
+                    let details = XCTAttachment(string: text)
+                    details.name = shot.name + "-geometry"
+                    details.lifetime = .keepAlways
+                    add(details)
+                }
+            }
             app.terminate()
         }
     }
