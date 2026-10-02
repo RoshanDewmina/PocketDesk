@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 /// Screenshots of every redesigned screen, attached to the test result. Skipped unless the
 /// runner is started with `TEST_RUNNER_FARSIDE_SCREENSHOTS=1`, so ordinary runs stay fast.
@@ -283,47 +284,28 @@ final class FarsideScreenshotTour: XCTestCase {
             }
             return shot.name == "home-session-check" || reveal(app.buttons["Copy a safe support summary"], in: app)
         case "home-system-connect-prompt":
-            // The public /open route presents a question; never tap its Connect action.
-            let requested = XCUIDevice.shared.orientation
-            let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
-            safari.activate()
-            guard safari.wait(for: .runningForeground, timeout: 4) else { return missing("Safari unavailable for public Farside open route") }
+            #if targetEnvironment(simulator)
+            // Ask the OS to open the existing public question route. The UI test runner may
+            // refuse background URL opens; that is a bounded gap, never a fabricated prompt.
+            let completion = XCTestExpectation(description: "System opened Farside public question URL")
+            var opened = false
             defer { app.activate() }
-            let address = safari.textFields.matching(NSPredicate(format: "identifier == 'URL' OR label == 'Address' OR label == 'Search or enter website name'")).firstMatch
-            guard address.waitForExistence(timeout: 3), address.isHittable else { return missing("Safari URL field unavailable for public Farside open route") }
-            address.tap()
-            let current = address.value as? String ?? ""
-            guard current.count < 4096 else { return missing("Safari URL field could not be safely replaced") }
-            address.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count) + "farside://open\n")
-            let system = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-            let deadline = ProcessInfo.processInfo.systemUptime + 4
-            repeat {
-                if element("connectPrompt", in: app).exists { break }
-                let confirmation = [safari.alerts.firstMatch, system.alerts.firstMatch].first {
-                    $0.exists && ($0.label.localizedCaseInsensitiveContains("Farside")
-                        || $0.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS[c] %@", "Farside")).firstMatch.exists)
-                }
-                if let confirmation {
-                    let open = confirmation.buttons["Open"]
-                    guard open.exists && open.isHittable else { return missing("Farside-specific Safari confirmation has no Open action") }
-                    let landscape = requested == .landscapeLeft || requested == .landscapeRight
-                    let permissionName = (landscape ? "landscape-" : "portrait-") + "system-open-farside-confirmation"
-                    let frame = safari.frame
-                    if landscape ? frame.width > frame.height : frame.height > frame.width {
-                        attach(permissionName)
-                    } else {
-                        _ = missing("Safari Farside confirmation frame does not match requested capture orientation")
-                        attach("missing-" + permissionName)
-                    }
-                    open.tap()
-                    break
-                }
-                Thread.sleep(forTimeInterval: 0.1)
-            } while ProcessInfo.processInfo.systemUptime < deadline
+            UIApplication.shared.open(URL(string: "farside://open")!, options: [:]) { accepted in
+                opened = accepted
+                completion.fulfill()
+            }
+            guard XCTWaiter().wait(for: [completion], timeout: 4) == .completed else {
+                return missing("System public URL open completion timed out after four seconds")
+            }
+            guard opened else { return missing("System refused farside://open from the simulator UI test runner") }
             app.activate()
-            return require(element("connectPrompt", in: app), "Public-route Connect question")
+            // The route presents a question only; never tap the Connect action.
+            return require(element("connectPrompt", in: app), "Public-route Connect question after accepted system URL open")
                 && require(app.buttons["connectPrompt.connect"], "Connect question action")
                 && require(app.buttons["connectPrompt.close"], "Connect question dismissal")
+            #else
+            return missing("Public URL catalogue navigation requires an iOS Simulator")
+            #endif
         case "pairing-malformed-code":
             let field = app.textViews["Pairing code"].exists ? app.textViews["Pairing code"] : app.textFields["Pairing code"]
             guard tap(field, in: app) else { return false }
