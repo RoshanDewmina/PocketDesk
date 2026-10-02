@@ -11,7 +11,8 @@ final class PrivacyCurtainPolicyTests: XCTestCase {
     func testRaisesOnlyForALiveHealthySessionWithThePreferenceOn() {
         XCTAssertEqual(PrivacyCurtainPolicy.desired(live, currentlyUp: false), .up)
         var off = live; off.preference = false
-        XCTAssertEqual(PrivacyCurtainPolicy.desired(off, currentlyUp: false), .down, "Opt-in, default off")
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(off, currentlyUp: false), .down,
+                       "Privacy mode is on by default (HostPreferences), but the switch still wins")
         var waiting = live; waiting.captureHealthy = false
         XCTAssertEqual(PrivacyCurtainPolicy.desired(waiting, currentlyUp: false), .down,
                        "Raised only against a live picture so the stream can be verified")
@@ -21,7 +22,8 @@ final class PrivacyCurtainPolicyTests: XCTestCase {
         let triggers: [(String, (inout PrivacyCurtainInputs) -> Void)] = [
             ("session end", { $0.sessionLive = false }),
             ("Stop Sharing", { $0.sessionLive = false }),
-            ("phone paused", { $0.phonePaused = true }),
+            ("phone paused longer than a quick app switch", { $0.phonePaused = true; $0.pausedFor = PrivacyCurtainPolicy.pausedHold + 1 }),
+            ("phone silent", { $0.phoneSilentFor = PrivacyCurtainPolicy.phoneSilenceLimit + 1 }),
             ("screen locked", { $0.screenLocked = true }),
             ("Esc ×3 at the Mac", { $0.locallyDismissed = true }),
             ("stream check failed", { $0.raiseFailed = true }),
@@ -35,6 +37,73 @@ final class PrivacyCurtainPolicyTests: XCTestCase {
             apply(&inputs)
             XCTAssertEqual(PrivacyCurtainPolicy.desired(inputs, currentlyUp: true), .down, name)
         }
+    }
+
+    func testABackgroundedPhoneKeepsTheMacCoveredForAQuickAppSwitch() {
+        var paused = live
+        paused.phonePaused = true
+        paused.captureHealthy = false
+        paused.unhealthyFor = 20
+        paused.pausedFor = 10
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(paused, currentlyUp: true), .up,
+                       "Switching apps or locking the phone must not uncover the Mac")
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(paused, currentlyUp: false), .down, "Never raised while paused")
+        paused.pausedFor = PrivacyCurtainPolicy.pausedHold + 0.1
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(paused, currentlyUp: true), .down,
+                       "A phone that is not coming back soon leaves the Mac usable")
+        XCTAssertEqual(PrivacyCurtainPolicy.pausedHold, BackgroundContinuity.maximumHold)
+    }
+
+    func testASilentPhoneLiftsTheCurtainBeforeTheMediaLinkNotices() {
+        var silent = live
+        silent.phoneSilentFor = 3
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(silent, currentlyUp: true), .up)
+        silent.phoneSilentFor = PrivacyCurtainPolicy.phoneSilenceLimit + 0.1
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(silent, currentlyUp: true), .down)
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(silent, currentlyUp: false), .down,
+                       "Mac capture stays healthy when the phone vanishes; raising again would flap")
+        silent.phoneSilentFor = 0
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(silent, currentlyUp: false), .up, "Heartbeats back: cover again")
+    }
+
+    func testPostSessionHoldEndsOnlyAfterAnObservedRestoreFinishes() {
+        XCTAssertFalse(PrivacyCurtainPolicy.restoreHoldShouldEnd(observed: false, engaged: false, changing: false, needsRefresh: false),
+                       "A reconnect grace with no restore is ended by the detect timer, not by this rule")
+        XCTAssertFalse(PrivacyCurtainPolicy.restoreHoldShouldEnd(observed: true, engaged: true, changing: true, needsRefresh: true))
+        XCTAssertFalse(PrivacyCurtainPolicy.restoreHoldShouldEnd(observed: true, engaged: false, changing: false, needsRefresh: true),
+                       "Big Text clears its phase before it moves windows back; the host flag outlives that")
+        XCTAssertTrue(PrivacyCurtainPolicy.restoreHoldShouldEnd(observed: true, engaged: false, changing: false, needsRefresh: false))
+        XCTAssertGreaterThan(PrivacyCurtainPolicy.restoreHoldLimit, PrivacyCurtainPolicy.restoreHoldDetect)
+    }
+
+    func testFirstBigTextChangeWaitsOnlyWhileTheCurtainIsExpected() {
+        XCTAssertTrue(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: false, expected: true, raiseFailed: false,
+                                                           liftedLocally: false, paused: false, bigTextEngaged: false))
+        XCTAssertFalse(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: true, expected: true, raiseFailed: false,
+                                                            liftedLocally: false, paused: false, bigTextEngaged: false), "Already covered")
+        XCTAssertFalse(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: false, expected: false, raiseFailed: false,
+                                                            liftedLocally: false, paused: false, bigTextEngaged: false), "Privacy mode off")
+        XCTAssertFalse(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: false, expected: true, raiseFailed: true,
+                                                            liftedLocally: false, paused: false, bigTextEngaged: false))
+        XCTAssertFalse(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: false, expected: true, raiseFailed: false,
+                                                            liftedLocally: true, paused: false, bigTextEngaged: false))
+        XCTAssertFalse(PrivacyCurtainPolicy.scaleShouldWait(curtainUp: false, expected: true, raiseFailed: false,
+                                                            liftedLocally: false, paused: false, bigTextEngaged: true), "Later steps never wait")
+    }
+
+    func testTheCurtainStaysThroughBigTextRestoreAfterTheSessionEnds() {
+        var ended = live
+        ended.sessionLive = false
+        ended.captureHealthy = false
+        ended.restoreHold = true
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(ended, currentlyUp: true), .up,
+                       "The person at the Mac never watches the mode flip back")
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(ended, currentlyUp: false), .down, "A hold never raises")
+        ended.screenLocked = true
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(ended, currentlyUp: true), .down)
+        ended.screenLocked = false
+        ended.locallyDismissed = true
+        XCTAssertEqual(PrivacyCurtainPolicy.desired(ended, currentlyUp: true), .down, "Esc ×3 still wins")
     }
 
     func testBriefHiccupsAndDisplaySleepKeepTheCurtain() {
@@ -291,6 +360,27 @@ final class PrivacyCurtainControllerTests: XCTestCase {
         XCTAssertTrue(curtain.windowIDs.isEmpty)
     }
 
+    func testCancelRaiseAbandonsAHalfRaiseAndLeavesARaisedCurtainAlone() async {
+        let curtain = PrivacyCurtainController(makeWindows: offscreenWindows())
+        let hooks = PrivacyCurtainController.CaptureHooks(exclude: { _ in
+            // A capture restart (audio toggle, display switch, resume) interrupts the raise.
+            curtain.cancelRaise()
+            return false
+        }, signature: { nil })
+        let result = await curtain.raise(hooks: hooks, settle: .zero, verifyAfter: .zero)
+        XCTAssertEqual(result, .cancelled, "Interrupted, not failed: the next reconcile tries again")
+        XCTAssertEqual(curtain.phase, .down)
+        XCTAssertTrue(curtain.windowIDs.isEmpty)
+
+        let raised = await curtain.raise(hooks: self.hooks(), settle: .zero, verifyAfter: .zero)
+        XCTAssertEqual(raised, .raised)
+        let ids = curtain.windowIDs
+        curtain.cancelRaise()
+        XCTAssertEqual(curtain.phase, .up, "Only a half-raise is cancelled; a raised curtain keeps covering")
+        XCTAssertEqual(curtain.windowIDs, ids)
+        curtain.lift()
+    }
+
     func testLateOwnScreenNotificationKeepsTheSameExclusionWindows() async {
         let curtain = PrivacyCurtainController(makeWindows: offscreenWindows())
         _ = await curtain.raise(hooks: hooks(), settle: .zero, verifyAfter: .zero)
@@ -353,6 +443,9 @@ final class CurtainProtocolTests: XCTestCase {
         XCTAssertNil(PhoneSessionNotice.curtainChange(from: .off, to: .liftedLocally),
                      "Only a curtain that was up can be lifted at the Mac")
         XCTAssertNil(PhoneSessionNotice.curtainChange(from: .up, to: .off))
+        XCTAssertEqual(PhoneSessionNotice.curtainChange(from: nil, to: .unavailable), PhoneSessionNotice.curtainUnavailable,
+                       "Privacy mode is the default, so a Mac that cannot apply it says so once")
+        XCTAssertNil(PhoneSessionNotice.curtainChange(from: .unavailable, to: .unavailable))
         XCTAssertEqual(PhoneSessionNotice.hostRecovered, "Your Mac’s Farside restarted — reconnected.")
     }
 }

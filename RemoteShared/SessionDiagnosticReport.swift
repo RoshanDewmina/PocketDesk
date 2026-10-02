@@ -10,7 +10,8 @@ struct DiagnosticFact: Codable, Equatable {
              networkRoundTripMs, roundTripSpreadMs, hostPacerMeanMs, decodeMeanMs, hostEncodeMeanMs,
              inputPostingP95Ms, preEncodeWaitP95Ms, wifiBurstPossible, awdlCause, billableBytes,
              oneOffFileBytes, guestBytes, energyJoules, physicalGlassMs, mediaRTPBytes, otherTransportBytes,
-             transportAverageGBPerHour, estimateLowGBPerHour, estimateHighGBPerHour, mediaAverageGBPerHour
+             transportAverageGBPerHour, estimateLowGBPerHour, estimateHighGBPerHour, mediaAverageGBPerHour,
+             curtainOn, curtainCovered, curtainLiftedAtMac, curtainFailed
         var title: String {
             switch self {
             case .authenticatedEchoes: "Authenticated replies"
@@ -55,6 +56,10 @@ struct DiagnosticFact: Codable, Equatable {
             case .estimateLowGBPerHour: "Last preset estimate GB/hour, still screen (repair not included)"
             case .estimateHighGBPerHour: "Last preset estimate GB/hour, sustained motion (repair not included)"
             case .mediaAverageGBPerHour: "Measured average video + audio RTP GB/hour"
+            case .curtainOn: "Mac privacy mode on (hide screen while connected)"
+            case .curtainCovered: "Mac screen was covered during the session"
+            case .curtainLiftedAtMac: "Curtain lifted at the Mac with Esc"
+            case .curtainFailed: "Curtain could not be confirmed hidden from the stream"
             }
         }
     }
@@ -106,6 +111,45 @@ struct SessionDiagnosticReport: Codable, Equatable, Identifiable {
     let facts: [DiagnosticFact]
     let artifact: DiagnosticArtifact?
     static let maximumFacts = 48
+
+    /// A report written by a newer build may carry metrics this build does not know; those facts
+    /// are dropped instead of the whole report being deleted on load.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decode(Int.self, forKey: .version)
+        id = try container.decode(UUID.self, forKey: .id)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        kind = try container.decode(Kind.self, forKey: .kind)
+        outcome = try container.decode(Outcome.self, forKey: .outcome)
+        seconds = try container.decode(Double.self, forKey: .seconds)
+        samples = try container.decode(Int.self, forKey: .samples)
+        artifact = try container.decodeIfPresent(DiagnosticArtifact.self, forKey: .artifact)
+        var list = try container.nestedUnkeyedContainer(forKey: .facts)
+        var known: [DiagnosticFact] = []
+        while !list.isAtEnd {
+            if let fact = try? list.decode(DiagnosticFact.self) {
+                known.append(fact)
+            } else if (try? list.decode(UnknownFact.self)) == nil {
+                // Only an object can be skipped; anything else never advances the container, so
+                // the report is corrupt and the store deletes it as before.
+                throw DecodingError.dataCorruptedError(in: list, debugDescription: "Unreadable fact")
+            }
+        }
+        facts = known
+    }
+
+    /// Decodes any JSON object (a fact shape this build does not know) and nothing else; an empty
+    /// struct would accept null, numbers and strings too.
+    private struct UnknownFact: Decodable {
+        private struct Key: CodingKey {
+            var stringValue: String
+            var intValue: Int? { nil }
+            init?(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { nil }
+        }
+        init(from decoder: Decoder) throws { _ = try decoder.container(keyedBy: Key.self) }
+    }
+
     init(kind: Kind, outcome: Outcome, seconds: Double, samples: Int, facts: [DiagnosticFact], at: Date = Date()) {
         version = 1; id = UUID(); artifact = .current; createdAt = at; self.kind = kind; self.outcome = outcome
         self.seconds = seconds.isFinite ? min(86400, max(0, seconds)) : 0

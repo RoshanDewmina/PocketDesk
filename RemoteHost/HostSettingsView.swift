@@ -119,7 +119,7 @@ struct HostSettingsView: View {
     }
 
     private var sharingSection: some View {
-        HostSettingsSection("While your iPhone is connected", footer: sessionFooter) {
+        HostSettingsSection("While your phone is connected", footer: sessionFooter) {
             HostSettingsRow("Allow control", subtitle: state.controlNeedsAccessibility
                             ? "Needs Accessibility first" : "Off means view only") {
                 HostSwitch(label: "Allow control", isOn: state.allowControl, set: actions.setAllowControl)

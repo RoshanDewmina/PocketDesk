@@ -33,6 +33,12 @@ struct PrivacyCurtainInputs: Equatable {
     var unhealthyFor: TimeInterval = 0
     var displayAsleep = false
     var phonePaused = false
+    /// How long the phone has been backgrounded; a raised curtain stays for a short app switch.
+    var pausedFor: TimeInterval = 0
+    /// Seconds since the phone's last heartbeat, 0 when none has been seen this session.
+    var phoneSilentFor: TimeInterval = 0
+    /// The session just ended and Big Text is still restoring the Mac's own size under the curtain.
+    var restoreHold = false
     var screenLocked = false
     /// The local Escape shortcut needs Accessibility, so the curtain does too.
     var accessibilityGranted = false
@@ -48,15 +54,47 @@ struct PrivacyCurtainInputs: Equatable {
 enum PrivacyCurtainPolicy {
     /// Short capture hiccups do not flicker the curtain.
     static let unhealthyGrace: TimeInterval = 5
+    /// A backgrounded phone keeps the Mac covered this long (BackgroundContinuity.maximumHold);
+    /// after that nobody is coming back soon and a covered Mac with no phone is the worse failure.
+    static let pausedHold: TimeInterval = BackgroundContinuity.maximumHold
+    /// The phone heartbeats every 0.25 s in picture mode; this much silence means it is gone even
+    /// if the media link has not noticed yet.
+    static let phoneSilenceLimit: TimeInterval = 10
+    /// After a session ends, Big Text's restore may finish under the curtain for at most this long.
+    static let restoreHoldLimit: TimeInterval = 3
+    /// The first Big Text change of a session waits this long for the curtain to go up first.
+    static let scaleHoldLimit: TimeInterval = 1
+    /// A restore that has not begun this long after the session ended is a reconnect grace, not a
+    /// restore: the hold ends and the Mac uncovers. Must exceed the host's deliberate-End restore delay.
+    static let restoreHoldDetect: TimeInterval = 1.5
 
     enum Desired: Equatable { case up, down }
+
+    /// The post-session hold ends once an observed restore has finished and nothing is still
+    /// refreshing: Big Text clears its phase before it moves windows back, so `needsRefresh`
+    /// (the host flag set while a change is in flight) is what proves the windows are done.
+    static func restoreHoldShouldEnd(observed: Bool, engaged: Bool, changing: Bool, needsRefresh: Bool) -> Bool {
+        observed && !engaged && !changing && !needsRefresh
+    }
+
+    /// Whether the session's first Big Text change should wait for the curtain: only while the
+    /// curtain is expected to go up and nothing has already decided otherwise.
+    static func scaleShouldWait(curtainUp: Bool, expected: Bool, raiseFailed: Bool, liftedLocally: Bool,
+                                paused: Bool, bigTextEngaged: Bool) -> Bool {
+        !curtainUp && expected && !raiseFailed && !liftedLocally && !paused && !bigTextEngaged
+    }
 
     static func desired(_ inputs: PrivacyCurtainInputs, currentlyUp: Bool) -> Desired {
         // Only the Away machine's positive verifier retires awayCovered; notifications cannot.
         if inputs.awayCovered { return .up }
-        guard inputs.preference, inputs.sessionLive, !inputs.phonePaused, !inputs.screenLocked,
-              !inputs.safeMode, !inputs.locallyDismissed, !inputs.raiseFailed,
-              inputs.accessibilityGranted else { return .down }
+        guard inputs.preference, !inputs.screenLocked, !inputs.safeMode, !inputs.locallyDismissed,
+              !inputs.raiseFailed, inputs.accessibilityGranted else { return .down }
+        if currentlyUp && inputs.restoreHold && !inputs.sessionLive { return .up }
+        guard inputs.sessionLive else { return .down }
+        if inputs.phonePaused { return currentlyUp && inputs.pausedFor <= pausedHold ? .up : .down }
+        // Regardless of phase: Mac capture stays healthy when the phone vanishes, so a raise here
+        // would flap against the lowering below until the media link notices.
+        if inputs.phoneSilentFor > phoneSilenceLimit { return .down }
         if currentlyUp && inputs.displayReconfiguring { return .up }
         if currentlyUp {
             let lostPicture = !inputs.captureHealthy && !inputs.displayAsleep && inputs.unhealthyFor > unhealthyGrace
@@ -338,6 +376,12 @@ final class PrivacyCurtainController {
         if wasShowing { onPhaseChange?(.down) }
     }
 
+    /// Before a capture restart: a half-raised curtain would otherwise report `exclusionFailed`
+    /// for the rest of the session, because the old stream can no longer exclude its windows.
+    func cancelRaise() {
+        if phase == .raising { lift() }
+    }
+
     func setStyle(_ style: PrivacyCurtainStyle) {
         guard self.style != style else { return }
         // Retire any old sharing canary/exclusion completion before promoting to Away.
@@ -486,7 +530,7 @@ struct PrivacyCurtainView: View {
 
     private var line: LocalizedStringKey {
         switch style {
-        case .sharing: "Press Esc three times to lift"
+        case .sharing: "Press Esc three times to show this screen"
         case .away: "Touching the keyboard, mouse or trackpad locks this Mac"
         case .awayLockFailed: "This Mac stays covered. Unlock it at the Mac to continue"
         }

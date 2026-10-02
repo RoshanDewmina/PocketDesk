@@ -1990,7 +1990,7 @@ struct NativeSessionView: View {
 
     private func curtainCaption(_ state: PrivacyCurtainState) -> String {
         switch state {
-        case .off: "Covers your Mac’s displays"
+        case .off: "Off · anyone at the Mac can watch"
         case .pending: "Covers once the picture is live"
         case .up: "Covered · Esc three times at the Mac lifts it"
         case .liftedLocally: "Lifted at your Mac"
@@ -2773,7 +2773,7 @@ struct NativeSessionView: View {
 
     private func macCurtainFooter(_ state: PrivacyCurtainState) -> String {
         switch state {
-        case .off: "Covers your Mac’s displays while you’re connected. You still see the desktop here."
+        case .off: "Off, so anyone at the Mac can watch what you do. On covers its displays while you’re connected; you still see everything here."
         case .pending: "Your Mac covers its screen once the picture is live."
         case .up: "Your Mac’s screen is covered. Anyone at the Mac can press Esc three times to lift it."
         case .liftedLocally: "Someone at your Mac lifted the curtain for this session."

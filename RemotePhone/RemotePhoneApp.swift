@@ -253,6 +253,7 @@ final class PhoneRemoteModel: ObservableObject {
     @Published private(set) var sessionNotice: String?
     private var sessionNoticeTask: Task<Void, Never>?
     private var recoveryNoticeShown = false
+    private var curtainNoticedStates: Set<PrivacyCurtainState> = []
     /// Why the last session ended, when the Mac itself said so.
     @Published private(set) var macNotice: String?
     /// What the Mac said as the last session ended (asleep, locked, another user), until the next session.
@@ -1353,7 +1354,8 @@ final class PhoneRemoteModel: ObservableObject {
     }
     private var bigTextPendingRequest: BigTextRequest?
     private var bigTextTimedOut: (request: BigTextRequest, noticeGeneration: UInt64)?
-    private var sessionNoticeGeneration: UInt64 = 0
+    /// Advances on every notice shown; tests use it to prove a message produced no new notice.
+    private(set) var sessionNoticeGeneration: UInt64 = 0
     static let bigTextDebounce: Duration = .milliseconds(600)
     static let bigTextTimeout: TimeInterval = 8
     static let bigTextPillDuration: TimeInterval = 2
@@ -2717,7 +2719,11 @@ let now = ProcessInfo.processInfo.systemUptime
             let previousCurtain = curtainState
             curtainState = curtainSupported
                 ? action.curtain.flatMap(PrivacyCurtainState.init(rawValue:)) ?? .off : nil
-            if let notice = PhoneSessionNotice.curtainChange(from: previousCurtain, to: curtainState) {
+            // Every capture start's preflight status carries no features, which reads as "no
+            // curtain" for a moment; the unavailable/failed explanations are still once per session.
+            if let notice = PhoneSessionNotice.curtainChange(from: previousCurtain, to: curtainState),
+               let state = curtainState, !curtainNoticedStates.contains(state) {
+                if state == .unavailable || state == .failed { curtainNoticedStates.insert(state) }
                 showSessionNotice(notice)
             }
             if action.hostEvent == HostLifecycleEvent.recovered.rawValue, !recoveryNoticeShown {
@@ -3150,6 +3156,7 @@ let now = ProcessInfo.processInfo.systemUptime
         hostPresence = nil
         sessionBlocker = nil
         curtainState = nil
+        curtainNoticedStates = []
         recoveryNoticeShown = false
         reducedPictureNoticeShown = false
         clockSync.reset()
