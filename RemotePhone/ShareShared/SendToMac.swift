@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 /// Nonsecret lookup IDs. These identify a saved host record and owner grant; they confer no authority.
 struct SendToMacDestination: Codable, Equatable {
@@ -93,6 +96,7 @@ final class SendToMacFileIO {
     private let rootProvider: () -> URL?
     private let background: Bool
     private let queue: DispatchQueue
+    private var activationObserver: NSObjectProtocol?
 
     convenience init(root: URL? = nil, useBackgroundIO: Bool? = nil, queue: DispatchQueue = SendToMacFileIO.queue) {
         self.init(rootProvider: { root ?? SendToMacOutbox.root }, useBackgroundIO: useBackgroundIO, queue: queue)
@@ -102,6 +106,20 @@ final class SendToMacFileIO {
         self.rootProvider = rootProvider
         background = useBackgroundIO ?? !UserDefaults.standard.bool(forKey: Self.disabledKey)
         self.queue = queue
+        if SendToMacOutbox.protectionEnabled {
+            write { _ = SendToMacOutbox.pending(root: $0) }
+            #if canImport(UIKit)
+            activationObserver = NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification, object: nil, queue: nil
+            ) { [weak self] _ in
+                self?.write { _ = SendToMacOutbox.pending(root: $0) }
+            }
+            #endif
+        }
+    }
+
+    deinit {
+        if let activationObserver { NotificationCenter.default.removeObserver(activationObserver) }
     }
 
     func write(_ operation: @escaping (URL?) -> Void) {
@@ -143,6 +161,11 @@ final class SendToMacFileIO {
 
 enum SendToMacOutbox {
     static let appGroup = "group.com.roshan.PocketDesk"
+    /// Process-start rollback for staged-content protection and app-entry cleanup.
+    /// The extension and app each read their own defaults domain; no user-facing setting.
+    static let protectionDisabledKey = "PocketDeskShareProtectionDisabled"
+    static let protectionEnabled = !UserDefaults.standard.bool(forKey: protectionDisabledKey)
+
     static let outboxNotification = "com.roshan.PocketDesk.sendToMac.outbox"
 
     static var root: URL? {
@@ -185,11 +208,43 @@ enum SendToMacOutbox {
     /// Stages an item with `payload` (a file the share sheet handed over) moved beside it.
     static func stage(_ item: SendToMacItem, payload: URL? = nil, root: URL? = root) throws {
         guard let folder = folder(item.id, root: root) else { throw CocoaError(.fileNoSuchFile) }
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        if let payload {
-            try FileManager.default.moveItem(at: payload, to: folder.appendingPathComponent("payload", isDirectory: false))
+        if !protectionEnabled {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            if let payload {
+                try FileManager.default.moveItem(at: payload, to: folder.appendingPathComponent("payload", isDirectory: false))
+            }
+            try JSONEncoder().encode(item).write(to: folder.appendingPathComponent("item.json"), options: .atomic)
+            return
         }
-        try JSONEncoder().encode(item).write(to: folder.appendingPathComponent("item.json"), options: .atomic)
+        // Retargeting rewrites metadata beside an existing payload. A failed update must never
+        // remove that already committed content; only a newly created staging folder is ours.
+        let existed = FileManager.default.fileExists(atPath: folder.path)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try protectStagedContent(at: folder)
+            if let payload {
+                let target = folder.appendingPathComponent("payload", isDirectory: false)
+                try FileManager.default.moveItem(at: payload, to: target)
+                // A moved file retains its original attributes; explicitly protect the closed copy.
+                try protectStagedContent(at: target)
+            }
+            let metadata = folder.appendingPathComponent("item.json")
+            try JSONEncoder().encode(item).write(to: metadata, options: [.atomic, .completeFileProtection])
+            try protectStagedContent(at: metadata)
+        } catch {
+            // Never leave a new partial stage, or destroy a committed payload during retargeting.
+            if !existed { try? FileManager.default.removeItem(at: folder) }
+            throw error
+        }
+    }
+
+    static func protectStagedContent(at url: URL) throws {
+        guard protectionEnabled else { return }
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
+        var target = url
+        var values = URLResourceValues()
+        values.isExcludedFromBackup = true
+        try target.setResourceValues(values)
     }
 
     static func payloadURL(for item: SendToMacItem, root: URL? = root) -> URL? {
@@ -203,7 +258,29 @@ enum SendToMacOutbox {
         else { return [] }
         var items: [SendToMacItem] = []
         for entry in entries {
-            guard let data = try? Data(contentsOf: entry.appendingPathComponent("item.json")), data.count <= 512 * 1024,
+            // Complete protection makes a locked item temporarily unreadable. Preserve it until
+            // the next unlocked scan instead of treating an access failure as corrupt metadata.
+            let data: Data
+            do {
+                data = try Data(contentsOf: entry.appendingPathComponent("item.json"))
+            } catch {
+                if !protectionEnabled {
+                    try? FileManager.default.removeItem(at: entry)
+                } else {
+                    // A terminated stage may have a payload but no committed metadata. Only an
+                    // explicit missing-file error on a folder older than the full item lifetime
+                    // permits removal; access errors and recent in-progress stages stay intact.
+                    let failure = error as NSError
+                    let created = (try? FileManager.default.attributesOfItem(atPath: entry.path))?[.creationDate] as? Date
+                    if failure.domain == NSCocoaErrorDomain,
+                       failure.code == CocoaError.Code.fileReadNoSuchFile.rawValue,
+                       let created, now.timeIntervalSince(created) > SendToMacItem.lifetime {
+                        try? FileManager.default.removeItem(at: entry)
+                    }
+                }
+                continue
+            }
+            guard data.count <= 512 * 1024,
                   let item = try? JSONDecoder().decode(SendToMacItem.self, from: data),
                   item.id == entry.lastPathComponent, item.expires > now
             else {
