@@ -14,6 +14,10 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
     private var playbackRequested = false
     private var epoch: UInt64 = 0
     private var initialized = false
+    private let reportsOutputTiming: Bool
+    private let readOutputTiming: () -> (TimeInterval, TimeInterval)
+    private var cachedOutputLatency: TimeInterval = 0
+    private var cachedOutputBufferDuration: TimeInterval = 0.01
     private var observers: [NSObjectProtocol] = []
     private var startedOnBuiltInOutput = true
     var outputIsBuiltIn: () -> Bool = {
@@ -22,7 +26,13 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
 
     /// A new output (AirPods, headphones, CarPlay) can change the hardware format, and AVAudioEngine
     /// then stops itself. Restart on the new route. Removal is left to PhoneMediaSession, which mutes.
-    override init() {
+    init(defaults: UserDefaults = .standard,
+         outputTiming: @escaping () -> (TimeInterval, TimeInterval) = {
+             let session = AVAudioSession.sharedInstance()
+             return (session.outputLatency, session.ioBufferDuration)
+         }) {
+        reportsOutputTiming = defaults.bool(forKey: "PocketDeskAVSyncGroup")
+        readOutputTiming = outputTiming
         super.init()
         let center = NotificationCenter.default
         observers.append(center.addObserver(forName: .AVAudioEngineConfigurationChange, object: nil, queue: nil) { [weak self] _ in
@@ -30,7 +40,11 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
         })
         observers.append(center.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { [weak self] note in
             let reason = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt
-            guard reason != AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue, let self else { return }
+            guard let self else { return }
+            if reason == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue {
+                self.refreshOutputParameters()
+                return // Only the media-session owner may retire consent; never restart onto the speaker.
+            }
             let builtIn = self.outputIsBuiltIn()
             self.lock.withLock { self.startedOnBuiltInOutput = builtIn } // A running engine follows the new route.
             self.restartIfStopped()
@@ -41,11 +55,11 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
     var deviceInputSampleRate: Double { 48_000 }
     var deviceOutputSampleRate: Double { 48_000 }
     var inputIOBufferDuration: TimeInterval { 0.01 }
-    var outputIOBufferDuration: TimeInterval { 0.01 }
+    var outputIOBufferDuration: TimeInterval { lock.withLock { cachedOutputBufferDuration } }
     var inputNumberOfChannels: Int { 2 }
     var outputNumberOfChannels: Int { 2 }
     var inputLatency: TimeInterval { 0 }
-    var outputLatency: TimeInterval { 0 }
+    var outputLatency: TimeInterval { lock.withLock { cachedOutputLatency } }
     var isInitialized: Bool { lock.withLock { initialized } }
     var isPlayoutInitialized: Bool { true }
     var isRecordingInitialized: Bool { false }
@@ -54,11 +68,15 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
 
     func initialize(with delegate: RTCAudioDeviceDelegate) -> Bool {
         lock.withLock { audioDelegate = delegate; initialized = true }
+        refreshOutputParameters()
         return true
     }
     func terminateDevice() -> Bool {
         setConsent(false)
-        lock.withLock { audioDelegate = nil; initialized = false; playbackRequested = false }
+        lock.withLock {
+            audioDelegate = nil; initialized = false; playbackRequested = false
+            cachedOutputLatency = 0; cachedOutputBufferDuration = 0.01
+        }
         return true
     }
     func initializeRecording() -> Bool { false }
@@ -84,10 +102,33 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
         let delegate = lock.withLock { audioDelegate }
         delegate?.dispatchAsync { [weak self] in self?.applyEngine() }
     }
+    private func refreshOutputParameters() {
+        guard reportsOutputTiming, let delegate = lock.withLock({ audioDelegate }) else { return }
+        delegate.dispatchAsync { [weak self, weak delegate] in
+            guard let self, let delegate else { return }
+            self.refreshOutputParametersOnOwnerThread(delegate: delegate)
+        }
+    }
+    /// Session access and ADM notifications stay on the owner thread, never in the source render callback.
+    private func refreshOutputParametersOnOwnerThread(delegate: RTCAudioDeviceDelegate) {
+        guard reportsOutputTiming,
+              let currentEpoch = lock.withLock({ initialized && audioDelegate === delegate ? epoch : nil }) else { return }
+        let timing = readOutputTiming()
+        let latency = timing.0.isFinite && timing.0 >= 0 ? timing.0 : 0
+        let duration = timing.1.isFinite && timing.1 > 0 ? timing.1 : 0.01
+        let changed = lock.withLock { () -> Bool in
+            guard initialized, audioDelegate === delegate, epoch == currentEpoch else { return false }
+            guard cachedOutputLatency != latency || cachedOutputBufferDuration != duration else { return false }
+            cachedOutputLatency = latency; cachedOutputBufferDuration = duration
+            return true
+        }
+        if changed { delegate.notifyAudioOutputParametersChange() }
+    }
     private func restartIfStopped() {
         let delegate = lock.withLock { audioDelegate }
-        delegate?.dispatchAsync { [weak self] in
-            guard let self else { return }
+        delegate?.dispatchAsync { [weak self, weak delegate] in
+            guard let self, let delegate else { return }
+            self.refreshOutputParametersOnOwnerThread(delegate: delegate)
             let (stalled, wasExternal) = self.lock.withLock {
                 (self.consent && self.playbackRequested && self.initialized && self.engine?.isRunning != true, !self.startedOnBuiltInOutput)
             }
@@ -118,6 +159,8 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
               let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 2, interleaved: false),
               let nativeFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 48_000, channels: 2, interleaved: true),
               let pcm = AVAudioPCMBuffer(pcmFormat: nativeFormat, frameCapacity: 4096) else { return }
+        // PhoneMediaSession has activated playback before consent is granted.
+        refreshOutputParametersOnOwnerThread(delegate: delegate)
         let captureEpoch = state.1
         let engine = AVAudioEngine()
         let source = AVAudioSourceNode(format: format) { [weak self, weak delegate] silence, time, count, output in
@@ -160,6 +203,7 @@ final class PhoneSystemAudioDevice: NSObject, RTCAudioDevice {
         }) else { return }
         do {
             try engine.start()
+            refreshOutputParametersOnOwnerThread(delegate: delegate)
             let builtIn = outputIsBuiltIn()
             lock.withLock { startedOnBuiltInOutput = builtIn }
         } catch {

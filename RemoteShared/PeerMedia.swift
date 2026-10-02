@@ -780,6 +780,7 @@ final class PeerMedia: NSObject {
         sessionVideoFactory = factory
         connection = factory.peerConnection(with: configuration, constraints: RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil), delegate: self)
         if isHost {
+            let mediaStreamIDs = Self.audioVideoStreamIDs(enabled: Self.avSyncGroupEnabled, sessionID: UUID().uuidString)
             #if os(macOS)
             let audioConstraints = RTCMediaConstraints(mandatoryConstraints: [
                 "googEchoCancellation": "false", "googAutoGainControl": "false",
@@ -791,6 +792,7 @@ final class PeerMedia: NSObject {
             withAudioLifetime { _ in systemAudioTrack = audio }
             let audioInit = RTCRtpTransceiverInit()
             audioInit.direction = .sendOnly
+            audioInit.streamIds = mediaStreamIDs
             _ = connection?.addTransceiver(with: audio, init: audioInit)
             #endif
             let source = factory.videoSource(forScreenCast: true)
@@ -798,6 +800,7 @@ final class PeerMedia: NSObject {
             let track = factory.videoTrack(with: source, trackId: "desktop")
             video = track
             let videoInit = RTCRtpTransceiverInit(); videoInit.direction = .sendOnly
+            videoInit.streamIds = mediaStreamIDs
             _ = connection?.addTransceiver(with: track, init: videoInit)
             let config = RTCDataChannelConfiguration(); config.isOrdered = true
             controlLock.lock()
@@ -865,13 +868,76 @@ final class PeerMedia: NSObject {
         return true
     }
 
+    // Picture/sound changes need a device A/B before becoming the default. Snapshot once per process.
+    private static let opusStereoEnabled = audioExperimentEnabled("PocketDeskOpusStereo")
+    private static let avSyncGroupEnabled = audioExperimentEnabled("PocketDeskAVSyncGroup")
+    static func audioExperimentEnabled(_ key: String, defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: key)
+    }
+
+    @objc(opusSDP:sender:enabled:)
+    static func opusSDP(_ sdp: String, sender: Bool, enabled: Bool) -> String {
+        guard enabled else { return sdp }
+        let newline = sdp.contains("\r\n") ? "\r\n" : "\n"
+        var sections: [[String]] = [[]]
+        for line in sdp.components(separatedBy: newline) {
+            if line.hasPrefix("m=") { sections.append([]) }
+            sections[sections.count - 1].append(line)
+        }
+        for index in sections.indices {
+            var lines = sections[index]
+            guard let media = lines.first, media.hasPrefix("m=audio ") else { continue }
+            let fields = media.split(separator: " ")
+            guard fields.count >= 4, fields[1] != "0" else { continue }
+            let offered = Set(fields.dropFirst(3).map(String.init))
+            let payloads = lines.compactMap { line -> String? in
+                guard line.hasPrefix("a=rtpmap:") else { return nil }
+                let fields = line.dropFirst("a=rtpmap:".count).split(separator: " ")
+                guard fields.count == 2, fields[1].lowercased() == "opus/48000/2",
+                      offered.contains(String(fields[0])) else { return nil }
+                return String(fields[0])
+            }
+            guard !payloads.isEmpty else { continue }
+            // RFC7587: sprop-* describes this sender. All other hints describe this receiver.
+            // Keep FEC and unrelated codec parameters; never rewrite video/DTMF payloads.
+            let policy: [(String, String)] = sender
+                ? [("sprop-stereo", "1"), ("sprop-maxcapturerate", "48000")]
+                : [("stereo", "1"), ("maxplaybackrate", "48000"), ("maxaveragebitrate", "128000"),
+                   ("cbr", "0"), ("usedtx", "0")]
+            let keys = Set(policy.map { $0.0 })
+            for payload in payloads {
+                let prefix = "a=fmtp:\(payload) "
+                let existing = lines.firstIndex { $0.hasPrefix(prefix) }
+                var parameters = existing.map { lines[$0].dropFirst(prefix.count).components(separatedBy: ";") } ?? []
+                parameters = parameters.map { $0.trimmingCharacters(in: .whitespaces) }.filter {
+                    !$0.isEmpty && !keys.contains($0.split(separator: "=", maxSplits: 1).first?.lowercased() ?? "")
+                }
+                parameters += policy.map { "\($0.0)=\($0.1)" }
+                let fmtp = prefix + parameters.joined(separator: ";")
+                if let existing { lines[existing] = fmtp }
+                else { lines.insert(fmtp, at: lines.firstIndex(of: "") ?? lines.endIndex) }
+            }
+            if !sender {
+                lines.removeAll { $0.hasPrefix("a=ptime:") }
+                lines.insert("a=ptime:20", at: lines.firstIndex(of: "") ?? lines.endIndex)
+            }
+            sections[index] = lines
+        }
+        return sections.flatMap { $0 }.joined(separator: newline)
+    }
+
+    static func audioVideoStreamIDs(enabled: Bool, sessionID: String) -> [String] { enabled ? [sessionID] : [] }
+
     private func setLocal(_ description: RTCSessionDescription?, error: Error?) {
         guard !closed, let description, error == nil else { onState?("failed"); return }
-        connection?.setLocalDescription(description) { [weak self] error in
+        let local = Self.opusStereoEnabled
+            ? RTCSessionDescription(type: description.type, sdp: Self.opusSDP(description.sdp, sender: isHost, enabled: true))
+            : description
+        connection?.setLocalDescription(local) { [weak self] error in
             DispatchQueue.main.async {
                 guard let self, !self.closed else { return }
                 guard error == nil else { self.onState?("failed"); return }
-                self.onSignal?(MediaSignal(kind: description.type == .offer ? "offer" : "answer", sdp: description.sdp))
+                self.onSignal?(MediaSignal(kind: local.type == .offer ? "offer" : "answer", sdp: local.sdp))
             }
         }
     }
