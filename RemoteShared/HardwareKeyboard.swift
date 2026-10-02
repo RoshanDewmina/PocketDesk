@@ -129,32 +129,83 @@ struct HardwareKeyRepeat {
 
     private struct Active {
         let usage: Int
-        let key: String
-        let modifiers: [String]
+        var key: String
+        var modifiers: [String]
         var next: TimeInterval
     }
 
-    private var active: Active?
+    private var held: Active?
+    private let rechordEnabled: Bool
 
-    var isRepeating: Bool { active != nil }
+    init(rechordEnabled: Bool = PocketDeskRepeatRechordSwitch.isOn) {
+        self.rechordEnabled = rechordEnabled
+    }
+
+    var isRepeating: Bool {
+        guard let held else { return false }
+        return HardwareKeyMap.repeats(held.key) && !Self.isShortcut(held.modifiers)
+    }
+
+    var heldUsage: Int? { held?.usage }
 
     mutating func pressed(usage: Int, key: String, modifiers: [String], at time: TimeInterval) {
-        let shortcut = modifiers.contains("command") || modifiers.contains("control")
-        active = HardwareKeyMap.repeats(key) && !shortcut
-            ? Active(usage: usage, key: key, modifiers: modifiers, next: time + Self.delay) : nil
+        guard HardwareKeyMap.repeats(key) else {
+            held = nil
+            return
+        }
+        guard rechordEnabled || !Self.isShortcut(modifiers) else {
+            held = nil
+            return
+        }
+        held = Active(usage: usage, key: key, modifiers: modifiers, next: time + Self.delay)
+    }
+
+    /// Updates the current chord without restarting the original key-down deadline.
+    /// With rechording disabled, modifier transitions retain the previous cancellation behavior.
+    mutating func updateModifiers(_ modifiers: [String], at time: TimeInterval) {
+        _ = time // The supplied time is intentionally irrelevant: modifier transitions do not reset the deadline.
+        guard rechordEnabled else {
+            cancel()
+            return
+        }
+        guard var current = held else { return }
+        current.modifiers = modifiers
+        held = current
+    }
+
+    mutating func rechord(key: String, modifiers: [String], at time: TimeInterval) {
+        _ = time // Preserve the call-site clock for deterministic router tests without changing the deadline.
+        guard rechordEnabled, var current = held else { return }
+        current.key = key
+        current.modifiers = modifiers
+        held = current
     }
 
     mutating func released(usage: Int) {
-        if active?.usage == usage { active = nil }
+        if held?.usage == usage { held = nil }
     }
 
-    mutating func cancel() { active = nil }
+    mutating func cancel() { held = nil }
 
     /// The key to send again at `time`, if one is due. Late ticks never burst: one repeat per call.
     mutating func due(at time: TimeInterval) -> (key: String, modifiers: [String])? {
-        guard var current = active, time >= current.next else { return nil }
+        guard isRepeating, var current = held, time >= current.next else { return nil }
         current.next = max(current.next + Self.interval, time + Self.interval / 2)
-        active = current
+        held = current
         return (current.key, current.modifiers)
     }
+
+    private static func isShortcut(_ modifiers: [String]) -> Bool {
+        modifiers.contains("command") || modifiers.contains("control")
+    }
+}
+
+/// Kill switch for held-key modifier rechording (`defaults write com.roshan.PocketDesk.Remote
+/// PocketDeskRepeatRechord -bool NO`, then relaunch the phone app). NO restores cancellation on
+/// any reported modifier transition.
+enum PocketDeskRepeatRechordSwitch {
+    static let defaultsKey = "PocketDeskRepeatRechord"
+    static let isOn = resolve(value: UserDefaults.standard.object(forKey: defaultsKey))
+
+    static func resolve(value: Any?) -> Bool { value as? Bool ?? true }
 }

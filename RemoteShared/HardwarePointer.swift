@@ -1,6 +1,29 @@
 import Foundation
 import CoreGraphics
 
+/// Internal rollback controls sampled once per process, with injected defaults for offline checks.
+enum ScrollModifierPolicy {
+    static let phoneDefaultsKey = "PocketDeskScrollModifiers"
+    static let hostDefaultsKey = "farsideScrollModifiersDisabled"
+
+    static func phoneEnabled(defaults: UserDefaults = .standard) -> Bool {
+        defaults.object(forKey: phoneDefaultsKey) == nil || defaults.bool(forKey: phoneDefaultsKey)
+    }
+
+    static func hostEnabled(defaults: UserDefaults = .standard, testPadConfinement: Bool = false) -> Bool {
+        // The debug fence bounds the pointer, but modifier-scroll can invoke global macOS zoom.
+        // Preserve the harness's baseline until its integrator owns a modifier-scroll policy.
+        !testPadConfinement && !defaults.bool(forKey: hostDefaultsKey)
+    }
+
+    static let phoneProcessEnabled = phoneEnabled()
+    #if DEBUG
+    static let hostProcessEnabled = hostEnabled(testPadConfinement: E2ELaunchOptions.current.requested)
+    #else
+    static let hostProcessEnabled = hostEnabled()
+    #endif
+}
+
 /// A mouse or trackpad on iPad, in "Follow" mode: the Mac pointer goes wherever the iPad pointer
 /// is over the picture (the iPad's own pointer is hidden there). Buttons press where the pointer
 /// is, scrolling passes through with its phases, and a trackpad pinch zooms the view locally.

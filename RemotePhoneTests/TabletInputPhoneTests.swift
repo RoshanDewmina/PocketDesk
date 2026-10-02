@@ -65,6 +65,51 @@ final class TabletInputPhoneTests: XCTestCase {
         try model.connection.receiveInputFixtureForTesting(ControlPacket(session: "pencil", sequence: 2, action: RemoteAction(action: "heartbeat", epoch: 8), input: context))
         XCTAssertFalse(model.dragging); XCTAssertFalse(model.canControl); XCTAssertTrue(model.connection.connected)
     }
+    func testActualPhoneScrollModifiersReachValidatedWireWithoutAbsolutePointerCapability() throws {
+        for enabled in [true, false] {
+            for native in [true, false] {
+                let model = PhoneRemoteModel(background: FakeBackgroundExecution())
+                model.scrollModifiers = enabled
+                model.prepareConnection(mode: .picture)
+                model.connection.startInputFixtureForTesting(session: "scroll")
+                defer { model.connection.stop() }
+                var packets: [ControlPacket] = []
+                model.connection.inputPacketSenderForTesting = { packets.append($0); return true }
+                func deliver(_ action: RemoteAction) throws { model.connection.onControl?(try JSONEncoder().encode(action)) }
+                try deliver(RemoteAction(action: "geometry", x: 200, y: 200, epoch: 7))
+                try deliver(RemoteAction(action: "viewing", x: 1, epoch: 7))
+                try deliver(RemoteAction(action: "capture", x: 1, epoch: 7,
+                    interaction: native ? NativeInteraction(token: "t", doubleClickInterval: 0.5) : nil,
+                    features: SessionFeature.host.filter { $0 != SessionFeature.absolutePointer }, mode: "picture"))
+                model.frameReceived()
+                XCTAssertFalse(model.connection.causalInputNegotiated, "Advertised features alone do not establish causal authority")
+                var context = try XCTUnwrap(packets.first { $0.input?.kind == "offer" }?.input)
+                context.kind = "accept"; context.anchor = String(repeating: "b", count: 32)
+                try model.connection.receiveInputFixtureForTesting(ControlPacket(session: "scroll", sequence: 1,
+                    action: RemoteAction(action: "heartbeat", epoch: 7), input: context))
+                XCTAssertTrue(model.canControl)
+                XCTAssertTrue(model.connection.causalInputNegotiated)
+                XCTAssertFalse(model.absolutePointerSupported)
+                for modifier in ["control", "shift", "option"] {
+                    model.hardwareModifiers = [modifier]
+                    let stream = UUID().uuidString
+                    XCTAssertTrue(model.gesture(.scroll(delta: CGSize(width: 0.25, height: -0.125), phase: "began", stream: stream)))
+                    XCTAssertTrue(model.gesture(.scroll(delta: .zero, phase: "ended", stream: stream)))
+                    for packet in packets.suffix(2) {
+                        let wire = try JSONDecoder().decode(ControlPacket.self, from: JSONEncoder().encode(packet))
+                        try wire.action.validate()
+                        XCTAssertEqual(wire.action.action, "scroll")
+                        XCTAssertEqual(wire.action.modifiers, enabled ? [modifier] : [])
+                        XCTAssertEqual(wire.action.interaction?.stream, native ? stream : nil)
+                    }
+                }
+                model.cancelInput(); model.hardwareModifiers = []
+                XCTAssertTrue(model.gesture(.scroll(delta: CGSize(width: 1, height: 1), phase: "began", stream: UUID().uuidString)))
+                XCTAssertEqual(packets.last?.action.modifiers, [], "Released hardware flags do not remain on later scrolls")
+            }
+        }
+    }
+
     /// 20260930.8 hang reports: resigning synchronously inside SwiftUI's updateUIView asked the
     /// hosting view whether it could become first responder, re-entering the update graph.
     @MainActor

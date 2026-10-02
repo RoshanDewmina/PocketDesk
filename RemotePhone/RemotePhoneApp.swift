@@ -1145,11 +1145,13 @@ final class PhoneRemoteModel: ObservableObject {
     var focusGeometrySupported: Bool { supports(SessionFeature.focusGeometry) }
     var extendedKeysSupported: Bool { supports(SessionFeature.extendedKeys) }
 
-    /// Modifier keys held on a hardware keyboard, applied to clicks and pointer motion (⌘-click).
+    /// Modifier keys held on a hardware keyboard, applied to clicks, pointer motion and scrolling.
     var hardwareModifiers: [String] = []
+    /// Process-start rollback snapshot; injectable per model for offline both-state checks.
+    var scrollModifiers = ScrollModifierPolicy.phoneProcessEnabled
     private var extendedKeyNoticeShown = false
 
-    private static let pointerActions: Set<String> = ["move", "moveTo", "click", "right", "double", "middle", "dragDown"]
+    private static let pointerActions: Set<String> = ["move", "moveTo", "click", "right", "double", "middle", "dragDown", "scroll"]
     private static let couchPressActions: Set<String> = ["click", "double", "right", "middle", "dragDown"]
 
     // MARK: Display selection
@@ -2067,8 +2069,10 @@ final class PhoneRemoteModel: ObservableObject {
         let isClick = ["click", "right", "double", "middle"].contains(name)
         if isClick && hapticsEnabled { (name == "click" || name == "double" ? clickFeedback : secondaryClickFeedback).prepare() }
         let clickSentMs = isClick && StreamDebug.enabled ? MachClock.nowMs() : nil
-        // A Mac that places the pointer absolutely also applies held hardware modifiers to it.
-        let pointerModifiers = modifiers.isEmpty && absolutePointerSupported && Self.pointerActions.contains(name)
+        // Scroll already supports validated modifiers on legacy peers; pointer extensions retain
+        // their existing capability gate. The rollback snapshot is never read from defaults here.
+        let inheritsHardwareModifiers = name == "scroll" ? scrollModifiers : absolutePointerSupported
+        let pointerModifiers = modifiers.isEmpty && inheritsHardwareModifiers && Self.pointerActions.contains(name)
             ? hardwareModifiers : modifiers
 let now = ProcessInfo.processInfo.systemUptime
         let receiptID = hostFeatures.contains(SessionFeature.inputReceipt)

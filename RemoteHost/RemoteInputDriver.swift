@@ -111,6 +111,9 @@ struct RemoteInputEventSink {
     var mouseSequence: ([MouseEvent]) -> Bool
     var scroll: (CGPoint, Double, Double) -> Bool
     var scrollDetailed: ((CGPoint, Double, Double, String) -> Bool)? = nil
+    /// Optional extensions preserve existing injected sink call sites and baseline callbacks.
+    var scrollWithFlags: ((CGPoint, Double, Double, CGEventFlags) -> Bool)? = nil
+    var scrollDetailedWithFlags: ((CGPoint, Double, Double, String, CGEventFlags) -> Bool)? = nil
     var text: ([UniChar]) -> Bool
     var key: (CGKeyCode, CGEventFlags) -> Bool
 
@@ -137,6 +140,31 @@ struct RemoteInputEventSink {
         return event
     }
 
+    /// Creates the exact scroll event used by the live sink without posting it. Nil flags preserve
+    /// baseline source semantics; an explicit empty mask clears modifiers for the upgraded path.
+    static func makeScrollEvent(point: CGPoint, horizontal: Double, vertical: Double,
+                                phase: String? = nil, flags: CGEventFlags? = nil) -> CGEvent? {
+        let clampedX = min(2000, max(-2000, horizontal))
+        let clampedY = min(2000, max(-2000, vertical))
+        guard let event = CGEvent(scrollWheelEvent2Source: RemoteInputEventSource.shared,
+            units: .pixel, wheelCount: 2, wheel1: Int32(clampedY.rounded(.towardZero)),
+            wheel2: Int32(clampedX.rounded(.towardZero)), wheel3: 0) else { return nil }
+        event.location = point
+        if let phase {
+            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+            event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1, value: Int64((clampedY * 65_536).rounded()))
+            event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis2, value: Int64((clampedX * 65_536).rounded()))
+            event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(clampedY.rounded()))
+            event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(clampedX.rounded()))
+            let phases = ScrollEventPhases.values(for: phase)
+            if phases.scroll != 0 { event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phases.scroll) }
+            if phases.momentum != 0 { event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: phases.momentum) }
+        }
+        if let flags { event.flags = flags }
+        RemoteInputTag.mark(event)
+        return event
+    }
+
     static let live = RemoteInputEventSink(
         pointerLocation: { CGEvent(source: nil)?.location ?? .zero },
         mouseSequence: { descriptions in
@@ -149,40 +177,22 @@ struct RemoteInputEventSink {
             return true
         },
         scroll: { point, horizontal, vertical in
-            guard let event = CGEvent(
-                scrollWheelEvent2Source: RemoteInputEventSource.shared,
-                units: .pixel,
-                wheelCount: 2,
-                wheel1: Int32(min(2000, max(-2000, vertical))),
-                wheel2: Int32(min(2000, max(-2000, horizontal))),
-                wheel3: 0
-            ) else { return false }
-            event.location = point
-            RemoteInputTag.mark(event)
+            guard let event = makeScrollEvent(point: point, horizontal: horizontal, vertical: vertical) else { return false }
             event.post(tap: .cghidEventTap)
             return true
         },
         scrollDetailed: { point, horizontal, vertical, phase in
-            let clampedX = min(2000, max(-2000, horizontal))
-            let clampedY = min(2000, max(-2000, vertical))
-            guard let event = CGEvent(
-                scrollWheelEvent2Source: RemoteInputEventSource.shared,
-                units: .pixel,
-                wheelCount: 2,
-                wheel1: Int32(clampedY.rounded(.towardZero)),
-                wheel2: Int32(clampedX.rounded(.towardZero)),
-                wheel3: 0
-            ) else { return false }
-            event.location = point
-            event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
-            event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1, value: Int64((clampedY * 65_536).rounded()))
-            event.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis2, value: Int64((clampedX * 65_536).rounded()))
-            event.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(clampedY.rounded()))
-            event.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(clampedX.rounded()))
-            let phases = ScrollEventPhases.values(for: phase)
-            if phases.scroll != 0 { event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phases.scroll) }
-            if phases.momentum != 0 { event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: phases.momentum) }
-            RemoteInputTag.mark(event)
+            guard let event = makeScrollEvent(point: point, horizontal: horizontal, vertical: vertical, phase: phase) else { return false }
+            event.post(tap: .cghidEventTap)
+            return true
+        },
+        scrollWithFlags: { point, horizontal, vertical, flags in
+            guard let event = makeScrollEvent(point: point, horizontal: horizontal, vertical: vertical, flags: flags) else { return false }
+            event.post(tap: .cghidEventTap)
+            return true
+        },
+        scrollDetailedWithFlags: { point, horizontal, vertical, phase, flags in
+            guard let event = makeScrollEvent(point: point, horizontal: horizontal, vertical: vertical, phase: phase, flags: flags) else { return false }
             event.post(tap: .cghidEventTap)
             return true
         },
@@ -246,6 +256,11 @@ final class RemoteInputDriver {
     private var retiredScrolls: Set<String> = []
     private var retiredScrollOrder: [String] = []
     private var scrollDeadline: TimeInterval = 0
+    /// Only accepted scroll events may replace these; generated momentum never adopts new wire flags.
+    private var scrollFlags: CGEventFlags = []
+    private var scrollFlagsStream: String?
+    private var momentumFlags: CGEventFlags = []
+    var scrollModifiers = ScrollModifierPolicy.hostProcessEnabled
     private(set) var momentum = ScrollMomentumGate()
     /// Host user default; absent means on. `defaults write com.roshan.PocketDesk.RemoteHost input.hostMomentum -bool NO`
     /// stops advertising `SessionFeature.hostMomentum`, so the phone paces the coast itself as before.
@@ -520,11 +535,16 @@ final class RemoteInputDriver {
         case "scroll":
             guard let bounds = validBounds else { break }
             var dx = input.x, dy = input.y
+            var eventFlags = flags
+            var acceptedGestureFlags: CGEventFlags?
+            var acceptedMomentumFlags: CGEventFlags?
             if upgraded {
                 guard let stream = input.interaction?.stream,
                       let phase = input.interaction?.phase else { break }
                 if let momentumPhase = ScrollMomentumPhase(rawValue: phase) {
                     guard momentum.admit(momentumPhase, stream: stream, at: now) == .post else { break }
+                    eventFlags = momentumPhase == .began ? (scrollFlagsStream == stream ? scrollFlags : []) : momentumFlags
+                    if momentumPhase == .began { acceptedMomentumFlags = eventFlags }
                     if momentumPhase == .began, hostMomentum, dx != 0 || dy != 0 {
                         // The phone sent its lift velocity: the Mac coasts from here, posting the
                         // begin event with no travel of its own.
@@ -550,23 +570,34 @@ final class RemoteInputDriver {
                     }
                     scrollDeadline = now + 0.5
                     if phase == "ended" || phase == "cancelled" {
+                        eventFlags = scrollFlagsStream == stream ? scrollFlags : []
                         retireScroll(stream)
                         activeScroll = nil
                         if phase == "ended" { momentum.gestureEnded(stream: stream, at: now) }
                     } else if phase == "changed" && input.x == 0 && input.y == 0 {
                         // Fingers resting mid-scroll: keep the stream alive, post nothing.
                         outcome.accepted = true
+                        scrollFlags = eventFlags
+                        scrollFlagsStream = stream
                         break
+                    } else {
+                        acceptedGestureFlags = eventFlags
                     }
                 }
             }
             let point = eventPoint(in: bounds)
             lastPoint = point
-            if upgraded, let detailed = eventSink.scrollDetailed {
-                outcome.accepted = detailed(point, dx, dy, input.interaction!.phase!)
-                if !outcome.accepted, coast.isRunning { _ = coast.cancel(); _ = momentum.interrupt() }
-            } else {
-                outcome.accepted = eventSink.scroll(point, dx, dy)
+            outcome.accepted = postScroll(point, dx, dy, phase: upgraded ? input.interaction?.phase : nil, flags: eventFlags)
+            if outcome.accepted {
+                if let acceptedGestureFlags {
+                    scrollFlags = acceptedGestureFlags
+                    scrollFlagsStream = input.interaction?.stream
+                }
+                if let acceptedMomentumFlags { momentumFlags = acceptedMomentumFlags }
+                if input.interaction?.phase == ScrollMomentumPhase.ended.rawValue { momentumFlags = [] }
+                if input.interaction?.phase == "cancelled" { scrollFlags = []; scrollFlagsStream = nil }
+            } else if coast.isRunning, scrollModifiers || (upgraded && eventSink.scrollDetailed != nil) {
+                _ = coast.cancel(); _ = momentum.interrupt(); momentumFlags = []
             }
 
         case "text":
@@ -634,6 +665,9 @@ final class RemoteInputDriver {
         retiredScrolls.removeAll()
         retiredScrollOrder.removeAll()
         scrollDeadline = 0
+        scrollFlags = []
+        scrollFlagsStream = nil
+        momentumFlags = []
     }
 
     /// Ends a momentum the phone stopped sending, from the host's periodic timer.
@@ -651,9 +685,10 @@ final class RemoteInputDriver {
         case .changed(let delta)?:
             guard momentum.admit(.changed, stream: stream, at: now) == .post else { _ = coast.cancel(); return false }
             guard delta != .zero else { return true }
-            if eventSink.scrollDetailed?(lastPoint, delta.width, delta.height, ScrollMomentumPhase.changed.rawValue) != true {
+            if !postScroll(lastPoint, delta.width, delta.height, phase: ScrollMomentumPhase.changed.rawValue, flags: momentumFlags, fallbackToUnphased: false) {
                 _ = coast.cancel()
                 _ = momentum.interrupt()
+                momentumFlags = []
                 return false
             }
             return true
@@ -677,15 +712,31 @@ final class RemoteInputDriver {
         guard coast.isRunning else { return }
         _ = coast.cancel()
         _ = momentum.interrupt()
+        momentumFlags = []
     }
 
     private func endMomentum() {
         _ = coast.cancel()
         if momentum.interrupt() { postMomentumEnd() }
+        momentumFlags = []
     }
 
     private func postMomentumEnd() {
-        _ = eventSink.scrollDetailed?(lastPoint, 0, 0, ScrollMomentumPhase.ended.rawValue)
+        _ = postScroll(lastPoint, 0, 0, phase: ScrollMomentumPhase.ended.rawValue, flags: momentumFlags, fallbackToUnphased: false)
+        momentumFlags = []
+    }
+
+    private func postScroll(_ point: CGPoint, _ horizontal: Double, _ vertical: Double,
+                            phase: String?, flags: CGEventFlags, fallbackToUnphased: Bool = true) -> Bool {
+        if let phase {
+            if scrollModifiers, let detailed = eventSink.scrollDetailedWithFlags {
+                return detailed(point, horizontal, vertical, phase, flags)
+            }
+            if let detailed = eventSink.scrollDetailed { return detailed(point, horizontal, vertical, phase) }
+            guard fallbackToUnphased else { return false }
+        }
+        if scrollModifiers, let scroll = eventSink.scrollWithFlags { return scroll(point, horizontal, vertical, flags) }
+        return eventSink.scroll(point, horizontal, vertical)
     }
 
     private static func isMomentum(_ input: RemoteAction) -> Bool {

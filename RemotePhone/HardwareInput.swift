@@ -13,9 +13,22 @@ final class HardwareKeyboardRouter {
     var modifiersChanged: (_ modifiers: [String]) -> Void = { _ in }
     var remapEnabled: () -> Bool = { true }
 
-    private var repeatState = HardwareKeyRepeat()
+    private var repeatState: HardwareKeyRepeat
     private var repeatTimer: Timer?
+    private let now: () -> TimeInterval
+    private let schedulesRepeats: Bool
+    private let repeatRechordEnabled: Bool
     private(set) var heldModifiers: [String] = []
+    private var capsLockOn = false
+
+    init(repeatRechordEnabled: Bool = PocketDeskRepeatRechordSwitch.isOn,
+         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+         schedulesRepeats: Bool = true) {
+        self.repeatRechordEnabled = repeatRechordEnabled
+        self.repeatState = HardwareKeyRepeat(rechordEnabled: repeatRechordEnabled)
+        self.now = now
+        self.schedulesRepeats = schedulesRepeats
+    }
 
     /// Returns true when the press was for the Mac (handled), false to let UIKit have it.
     func pressBegan(usage: Int, flags: UIKeyModifierFlags, at time: TimeInterval) -> Bool {
@@ -59,16 +72,33 @@ final class HardwareKeyboardRouter {
             heldModifiers = []
             modifiersChanged([])
         }
+        capsLockOn = false
     }
 
     func updateModifiers(_ flags: UIKeyModifierFlags) {
         let names = Self.names(for: flags)
-        guard names != heldModifiers else { return }
-        // A repeat carries the chord it started with; once the modifiers change it would be stale.
-        repeatState.cancel()
-        stopTimerIfIdle()
+        let hasChanged = names != heldModifiers
+        let capsLockChanged = flags.contains(.alphaShift) != capsLockOn
+        capsLockOn = flags.contains(.alphaShift)
+
+        if repeatRechordEnabled {
+            guard hasChanged || capsLockChanged else { return }
+            if let usage = repeatState.heldUsage, let name = HardwareKeyMap.name(forHIDUsage: usage) {
+                let modifiers = HardwareKeyMap.modifiers(Set(names), capsLock: capsLockOn, for: name)
+                let chord = ShortcutRemap.resolve(key: name, modifiers: modifiers, enabled: remapEnabled())
+                repeatState.rechord(key: chord.key, modifiers: chord.modifiers, at: now())
+            }
+            if repeatState.isRepeating { startTimerIfNeeded() } else { stopTimerIfIdle() }
+        } else {
+            // Keep the exact legacy switch-off rule: only changes to reported modifier names
+            // cancel repeat. Caps Lock was not part of heldModifiers before rechording existed.
+            guard hasChanged else { return }
+            repeatState.cancel()
+            stopTimerIfIdle()
+        }
+
         heldModifiers = names
-        modifiersChanged(names)
+        if hasChanged { modifiersChanged(names) }
     }
 
     static func names(for flags: UIKeyModifierFlags) -> [String] {
@@ -81,7 +111,7 @@ final class HardwareKeyboardRouter {
     }
 
     private func startTimerIfNeeded() {
-        guard repeatState.isRepeating, repeatTimer == nil else { return }
+        guard schedulesRepeats, repeatState.isRepeating, repeatTimer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.fireRepeat() }
         }
@@ -89,8 +119,8 @@ final class HardwareKeyboardRouter {
         repeatTimer = timer
     }
 
-    private func fireRepeat() {
-        if let due = repeatState.due(at: ProcessInfo.processInfo.systemUptime), !send(due.key, due.modifiers) {
+    func fireRepeat(at time: TimeInterval? = nil) {
+        if let due = repeatState.due(at: time ?? now()), !send(due.key, due.modifiers) {
             repeatState.cancel()
         }
         stopTimerIfIdle()

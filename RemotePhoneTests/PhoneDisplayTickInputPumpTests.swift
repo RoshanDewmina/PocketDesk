@@ -553,3 +553,125 @@ private final class FakePhoneDisplayTickLink: PhoneDisplayTickLink {
     func fire() { onTick() }
     func invalidate() { invalidationCount += 1 }
 }
+
+@MainActor
+final class HardwareKeyboardRechordPhoneTests: XCTestCase {
+    private var sent: [(String, [String])] = []
+
+    func testPhysicalModifierPressAndReleaseRechordTheStillHeldArrow() {
+        var now: TimeInterval = 0
+        let router = makeRouter(rechordEnabled: true, now: { now })
+        XCTAssertTrue(router.pressBegan(usage: 0x4F, flags: [], at: now))
+        XCTAssertTrue(router.pressBegan(usage: 0xE1, flags: .shift, at: 0.2))
+        now = 0.5; router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 2); XCTAssertEqual(sent.last?.1, ["shift"])
+        XCTAssertTrue(router.pressBegan(usage: 0xE2, flags: [.shift, .alternate], at: 0.55))
+        now = 0.571; router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 3); XCTAssertEqual(sent.last?.1, ["shift", "option"])
+        XCTAssertTrue(router.pressEnded(usage: 0xE1, flags: .alternate))
+        now = 0.642; router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 4); XCTAssertEqual(sent.last?.1, ["option"])
+        XCTAssertTrue(router.pressEnded(usage: 0xE2, flags: []))
+        now = 0.713; router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 5); XCTAssertEqual(sent.last?.1, [])
+        XCTAssertTrue(router.pressEnded(usage: 0x4F, flags: []))
+        now = 1; router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 5)
+    }
+
+    func testCapsOnlyTransitionWithRollbackKeepsTheOriginalLetterChord() {
+        var now: TimeInterval = 0
+        let router = makeRouter(rechordEnabled: false, now: { now })
+        XCTAssertTrue(router.pressBegan(usage: 0x04, flags: [], at: now))
+        router.updateModifiers(.alphaShift)
+        now = 0.5; router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 2); XCTAssertEqual(sent.last?.1, [])
+        router.releaseAll()
+    }
+
+    func testRemovingShortcutStandInRecomputesThePhysicalKeyChord() {
+        var now: TimeInterval = 0
+        let router = makeRouter(rechordEnabled: true, now: { now })
+        XCTAssertTrue(router.pressBegan(usage: 0x0B, flags: [.control, .alternate], at: now))
+        XCTAssertEqual(sent.first?.0, "h"); XCTAssertEqual(sent.first?.1, ["command"])
+        now = 0.6; router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 1)
+        router.updateModifiers([]); router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 2); XCTAssertEqual(sent.last?.0, "h"); XCTAssertEqual(sent.last?.1, [])
+        router.releaseAll()
+    }
+
+    func testCapsChangesRechordLettersButDoNotChangeArrowRepeat() {
+        var now: TimeInterval = 0
+        let router = makeRouter(rechordEnabled: true, now: { now })
+
+        _ = router.pressBegan(usage: 0x4F, flags: [], at: now)
+        router.updateModifiers(.alphaShift)
+        now = 0.5
+        router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 2, "The held arrow produces a repeat after Caps Lock changes")
+        XCTAssertEqual(sent.last?.0, "right")
+        XCTAssertEqual(sent.last?.1 ?? ["missing"], [], "Caps Lock does not affect arrow keys")
+
+        _ = router.pressEnded(usage: 0x4F, flags: .alphaShift)
+        now = 1
+        _ = router.pressBegan(usage: 0x04, flags: [], at: now)
+        router.updateModifiers(.alphaShift)
+        now = 1.5
+        router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 4, "The held letter produces a repeat after Caps Lock changes")
+        XCTAssertEqual(sent.last?.0, "a")
+        XCTAssertEqual(sent.last?.1, ["shift"], "Turning Caps Lock on adds a derived Shift to a held letter")
+        router.updateModifiers([])
+        now = 1.571
+        router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 5, "The held letter keeps repeating after Caps Lock is removed")
+        XCTAssertEqual(sent.last?.1 ?? ["missing"], [], "Turning Caps Lock off removes the derived Shift from a held letter")
+        XCTAssertTrue(router.pressEnded(usage: 0x04, flags: []))
+    }
+
+    func testCommandAndControlSuppressRepeatAndModifierReleaseResumesIt() {
+        var now: TimeInterval = 0
+        let router = makeRouter(rechordEnabled: true, now: { now })
+        _ = router.pressBegan(usage: 0x4F, flags: .command, at: now)
+
+        now = 0.6
+        router.updateModifiers(.control)
+        router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 1, "Control chords remain suppressed")
+
+        router.updateModifiers(.shift)
+        router.fireRepeat(at: now)
+        XCTAssertEqual(sent.last?.0, "right")
+        XCTAssertEqual(sent.last?.1, ["shift"], "Releasing Command and Control resumes the still-held key")
+
+        router.releaseAll()
+        router.updateModifiers(.shift)
+        now = 2
+        router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 2, "Cleanup cancels the physical held-key record")
+    }
+
+    func testSwitchOffKeepsExistingCancelOnModifierChangeBehavior() {
+        var now: TimeInterval = 10
+        let router = makeRouter(rechordEnabled: false, now: { now })
+        _ = router.pressBegan(usage: 0x4F, flags: [], at: now)
+
+        router.updateModifiers(.shift)
+        now = 11
+        router.fireRepeat(at: now)
+        XCTAssertEqual(sent.count, 1, "NO restores the old cancel-on-change behavior")
+        XCTAssertEqual(sent.first?.0, "right")
+        XCTAssertEqual(sent.first?.1 ?? ["missing"], [])
+    }
+
+    private func makeRouter(rechordEnabled: Bool, now: @escaping () -> TimeInterval) -> HardwareKeyboardRouter {
+        let router = HardwareKeyboardRouter(repeatRechordEnabled: rechordEnabled, now: now,
+                                            schedulesRepeats: false)
+        router.send = { [unowned self] key, modifiers in
+            self.sent.append((key, modifiers))
+            return true
+        }
+        return router
+    }
+}
