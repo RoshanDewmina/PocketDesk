@@ -23,7 +23,8 @@ MAIN_APIS = {
 MAIN_DATA = {'NSPrivacyCollectedDataTypeDeviceID', 'NSPrivacyCollectedDataTypePurchaseHistory'}
 PRIVACY_INVENTORY = {
     'host': (MAIN_APIS, MAIN_DATA),
-    'phone': ({**MAIN_APIS, DEFAULTS: {'CA92.1', '1C8F.1'}}, MAIN_DATA),
+    'phone': ({**MAIN_APIS, DEFAULTS: {'CA92.1', '1C8F.1'}},
+              MAIN_DATA | {'NSPrivacyCollectedDataTypeProductInteraction'}),
     'widget': ({DEFAULTS: {'1C8F.1'}}, set()),
     # ShareShared's staged-content protection switch reads standard defaults in the
     # extension path. The app-only SendToMacFileIO initializer also references them.

@@ -15,8 +15,13 @@ from unittest.mock import patch
 
 
 VALIDATOR = Path(__file__).with_name('validate_archive.py')
+ROOT = Path(__file__).resolve().parents[2]
 MAC_DEBUG_KEY = 'com.apple.security.get-task-allow'
 IOS_DEBUG_KEY = 'get-task-allow'
+
+
+def manifest_data(target):
+    return (ROOT / target / 'PrivacyInfo.xcprivacy').read_bytes()
 
 
 class ArchiveFixture(unittest.TestCase):
@@ -26,7 +31,7 @@ class ArchiveFixture(unittest.TestCase):
             mac = platform == 'mac'
             resources = app / 'Contents/Resources' if mac else app
             resources.mkdir(parents=True)
-            (resources / 'PrivacyInfo.xcprivacy').write_bytes(plistlib.dumps({'NSPrivacyTracking': False}))
+            (resources / 'PrivacyInfo.xcprivacy').write_bytes(manifest_data('RemoteHost' if mac else 'RemotePhone'))
             (resources / 'ThirdPartyNotices.txt').touch()
             info = {
                 'CFBundleIdentifier': 'com.roshan.PocketDesk.RemoteHost' if mac else 'com.roshan.PocketDesk.Remote',
@@ -60,7 +65,8 @@ class ArchiveFixture(unittest.TestCase):
                         'CFBundleShortVersionString': info['CFBundleShortVersionString'],
                         'CFBundleVersion': info['CFBundleVersion'],
                     }))
-                    (extension / 'PrivacyInfo.xcprivacy').write_bytes(plistlib.dumps({'NSPrivacyTracking': False}))
+                    (extension / 'PrivacyInfo.xcprivacy').write_bytes(manifest_data(
+                        'FarsideWidgets' if bundle == 'FarsideWidgets.appex' else 'FarsideShare'))
             info_path = app / 'Contents/Info.plist' if mac else app / 'Info.plist'
             info_path.write_bytes(plistlib.dumps(info))
             if mutate:
@@ -255,10 +261,11 @@ class ArchiveMetadataTests(ArchiveFixture):
                 with self.subTest(platform=platform, format=format):
                     def mutate(app, _info_path):
                         resources = app / 'Contents/Resources' if platform == 'mac' else app
-                        manifest = plistlib.dumps({'NSPrivacyTracking': False}, fmt=format)
+                        manifest = plistlib.dumps(plistlib.loads((resources / 'PrivacyInfo.xcprivacy').read_bytes()), fmt=format)
                         (resources / 'PrivacyInfo.xcprivacy').write_bytes(manifest)
                         if platform == 'ios':
-                            (app / 'PlugIns/FarsideWidgets.appex/PrivacyInfo.xcprivacy').write_bytes(manifest)
+                            widget_manifest = app / 'PlugIns/FarsideWidgets.appex/PrivacyInfo.xcprivacy'
+                            widget_manifest.write_bytes(plistlib.dumps(plistlib.loads(widget_manifest.read_bytes()), fmt=format))
                     code, output = self.validate(platform, mutate=mutate)
                     self.assertEqual(code, 0, output)
                     self.assertIn('Archive metadata checks passed', output)
