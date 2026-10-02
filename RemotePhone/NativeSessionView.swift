@@ -1664,7 +1664,10 @@ struct NativeSessionView: View {
             .padding(.bottom, 12)
             macKeys(compact: false)
             if showsSessionRows {
+                // The panel height is fixed and nothing in it scrolls, so the rows stop growing at
+                // xxxLarge like the header. Each row is also in Settings, which scrolls at any size.
                 sessionRows.padding(.top, 14)
+                    .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
             }
             Spacer(minLength: 0)
         }
@@ -1707,6 +1710,9 @@ struct NativeSessionView: View {
                 }
             }
         }
+        // Fixed-size keys: past xLarge their two-line titles truncate, so they stop growing there
+        // and a long press shows the Large Content Viewer instead.
+        .dynamicTypeSize(...DynamicTypeSize.xLarge)
     }
 
     @ViewBuilder private func macKey(at index: Int, compact: Bool) -> some View {
@@ -1794,6 +1800,7 @@ struct NativeSessionView: View {
         }
         .buttonStyle(ControlsKeyStyle(compact: compact))
         .accessibilityLabel(label ?? title)
+        .accessibilityShowsLargeContentViewer { Label(title, systemImage: symbol) }
     }
 
     private var sessionRows: some View {
@@ -2043,19 +2050,7 @@ struct NativeSessionView: View {
 
     private func summaryRow(_ title: String, _ symbol: String, value: String, page: ControlsPage) -> some View {
         NavigationLink(value: page) {
-            HStack(spacing: 12) {
-                Image(systemName: symbol)
-                    .foregroundStyle(Farside.Palette.ash)
-                    .frame(width: 24)
-                    .accessibilityHidden(true)
-                Text(title).foregroundStyle(Farside.Palette.bone)
-                Spacer(minLength: 8)
-                if !value.isEmpty {
-                    Text(value)
-                        .foregroundStyle(Farside.Palette.ash)
-                        .lineLimit(1)
-                }
-            }
+            SettingsSummaryLabel(title: title, symbol: symbol, value: value)
         }
         .listRowBackground(Farside.Palette.panel)
         .accessibilityIdentifier("remote.settings.\(page)")
@@ -2585,6 +2580,7 @@ struct NativeSessionView: View {
                     .listRowBackground(Farside.Palette.panel)
             }
             SmoothMotionDiagnosticsRows(upscale: $smoothMotionUpscale, showsTestingControls: streamStatsEnabled)
+            #if DEBUG
             Toggle("Stream statistics", isOn: $streamStatsEnabled)
                 .toggleStyle(FarsideSwitchStyle())
                 .listRowBackground(Farside.Palette.panel)
@@ -2612,6 +2608,7 @@ struct NativeSessionView: View {
                     .font(.footnote).foregroundStyle(Farside.Palette.ash)
                     .listRowBackground(Farside.Palette.panel)
             }
+            #endif
         } header: {
             sectionHeader("For testing")
         }
@@ -3110,6 +3107,39 @@ private struct DotWaveform: View {
         }
         .frame(width: 42, height: 36)
         .accessibilityHidden(true)
+    }
+}
+
+/// At accessibility sizes the value goes under the title so neither breaks mid-word or truncates.
+private struct SettingsSummaryLabel: View {
+    let title: String
+    let symbol: String
+    let value: String
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title).foregroundStyle(Farside.Palette.bone)
+                if !value.isEmpty {
+                    Text(value).foregroundStyle(Farside.Palette.ash)
+                }
+            }
+        } else {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .foregroundStyle(Farside.Palette.ash)
+                    .frame(width: 24)
+                    .accessibilityHidden(true)
+                Text(title).foregroundStyle(Farside.Palette.bone)
+                Spacer(minLength: 8)
+                if !value.isEmpty {
+                    Text(value)
+                        .foregroundStyle(Farside.Palette.ash)
+                        .lineLimit(1)
+                }
+            }
+        }
     }
 }
 

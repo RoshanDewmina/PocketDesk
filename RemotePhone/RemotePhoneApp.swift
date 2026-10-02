@@ -11,6 +11,13 @@ struct RemotePhoneApp: App {
 
     init() {
         StillTextPreferences.retireSettingValues()
+        #if !DEBUG
+        // Release builds before MS17 showed these testing switches; one left on could no longer be turned off.
+        for key in [StreamDebug.defaultsKey, StreamDebug.markerReadingKey, StreamTuning.legacyDefaultsKey,
+                    SmoothMotionController.upscaleKey] {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+        #endif
         // Transaction.updates must be heard from launch: renewals, refunds, Ask to Buy, other devices.
         // Unit tests host this app and drive their own store against a StoreKit test session.
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
