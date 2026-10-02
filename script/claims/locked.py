@@ -11,6 +11,9 @@ if shutil.disk_usage('/').free < 10*1024**3:
 args=sys.argv[1:]; dd=None; shutdown=None
 if args and args[0]=='--manifest': dd=args[1]; args=args[2:]
 if args and args[0]=='--shutdown-simulator': shutdown=args[1]; args=args[2:]
+if 'test-without-building' in args and any('RemotePhoneUITests' in arg for arg in args) and not (p/'CHAIN2-GO').exists():
+    print('Simulator UI gate closed while waiting; releasing lock (exit 75).',flush=True)
+    sys.exit(75)
 if dd:
     try: verify(dd)
     except RuntimeError as e: print(str(e),flush=True); sys.exit(78)

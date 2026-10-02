@@ -3,7 +3,7 @@
 import argparse, datetime, hashlib, json, os, pathlib, subprocess, sys, time
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 p = argparse.ArgumentParser()
-p.add_argument('stage', nargs='?', choices=['all','auto','build','phone','ipad','duo','core','backend','host'], default='all')
+p.add_argument('stage', nargs='?', choices=['all','auto','settings','build','phone','ipad','phone-more','ipad-more','duo','core','backend','host'], default='all')
 p.add_argument('--output', default='/Users/roshansilva/Documents/Codex/2026-10-01/perf-push/b7-claims')
 p.add_argument('--dd', default='/Volumes/Studio/Development/Caches/b7-claims/DD')
 p.add_argument('--phone', default='C643B2C2-3248-4AE4-B234-8F54414F3A41')
@@ -31,6 +31,9 @@ def run(name, args, locked=False, timeout=None, manifest=False, shutdown=None):
             while True:
                 r = subprocess.run(args, cwd=ROOT, env=ENV, stdout=f, stderr=subprocess.STDOUT, timeout=timeout)
                 if not locked or r.returncode != 75: break
+                if any('RemotePhoneUITests' in arg for arg in args):
+                    while not (GATES/'CHAIN2-GO').exists():
+                        print('Waiting for shared simulator UI gate',flush=True); time.sleep(60)
                 gate() # Lock has been released; never wait for PRIORITY while holding it.
         except subprocess.TimeoutExpired:
             f.write('\nTimed out after '+str(timeout)+' seconds; no retry.\n')
@@ -48,8 +51,10 @@ def auto():
     run('xcode-version',['xcodebuild','-version'],True)
     run('simulators',['xcrun','simctl','list','devices','available'])
     run('public-site',['curl','--fail','--head','--location','--max-time','20','--silent','--show-error','https://getfarside.com'])
+    settings()
+def settings():
     for config in ['Debug','Release']:
-        run('build-settings-'+config,common+['-configuration',config,'-alltargets','-showBuildSettings','-json'],True)
+        run('build-settings-'+config,common+['-configuration',config,'-scheme','PocketDeskRemoteHost','-showBuildSettings','-json'],True)
 def build():
     before=source_identity()
     code = run('phone-build',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+a.phone,'ARCHS=arm64','build-for-testing'],True)
@@ -58,13 +63,28 @@ def build():
             raise SystemExit('Source changed during build; receipt invalid, rebuild.')
         build_manifest().write_text(json.dumps({'source':before,'artifacts':artifact_identity(a.dd)},indent=2))
     return code
-def test(label, device):
+def test(label, device, supplemental=False):
+    while not (GATES/'CHAIN2-GO').exists():
+        print('Waiting for shared simulator UI gate',flush=True); time.sleep(60)
+    gate() # Respect quiet windows before the complete-artifact preflight as well as testing.
     try: verify(a.dd) # Fast preflight; also revalidated under lock.
     except RuntimeError as e: raise SystemExit(str(e))
     (LOG/'tested-build-manifest.json').write_bytes(build_manifest().read_bytes())
-    selectors=['RemotePhoneUITests/ClaimsVerificationUITests','RemotePhoneUITests/FarsideRedesignUITests/testKeyboardBarPutsCommandFirstAndInReachInPortrait','RemotePhoneUITests/SessionLayoutTests/testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording']
-    if label=='phone': selectors += ['RemotePhoneTests/'+c for c in ['FarsideDesignTests','SessionLifecycleTests','VoiceInputTests','CommittedTextTests','ExactTextTraitsTests','TabletInputPhoneTests','IndirectInputTests','ViewportPreferenceTests','ViewportCaptureTests','ScreenRecordingApprovalPhoneTests']]
+    if supplemental:
+        selectors=['RemotePhoneUITests/ClaimsVerificationUITests/'+method for method in ['testAccessibilityAuditSupplementalHomeUtilitiesDefaultSize','testAccessibilityAuditSupplementalHomeUtilitiesAccessibilityXXXL']]
+    else:
+        selectors=['RemotePhoneUITests/ClaimsVerificationUITests','RemotePhoneUITests/FarsideRedesignUITests/testKeyboardBarPutsCommandFirstAndInReachInPortrait','RemotePhoneUITests/SessionLayoutTests/testLongVoicePreviewKeepsDoneReachableInLandscapeWithoutRecording']
+        if label=='phone': selectors += ['RemotePhoneTests/'+c for c in ['FarsideDesignTests','SessionLifecycleTests','VoiceInputTests','CommittedTextTests','ExactTextTraitsTests','TabletInputPhoneTests','IndirectInputTests','ViewportPreferenceTests','ViewportCaptureTests','ScreenRecordingApprovalPhoneTests']]
     run(label+'-tests',common+['-configuration','Debug','-scheme','PocketDeskRemote','-destination','platform=iOS Simulator,id='+device,'ARCHS=arm64','test-without-building','-parallel-testing-enabled','NO','-test-timeouts-enabled','YES','-maximum-test-execution-time-allowance','3600','-resultBundlePath',str(LOG/(label+'.xcresult'))]+['-only-testing:'+s for s in selectors],True,manifest=True,shutdown=device)
+    bundle=LOG/(label+'.xcresult')
+    if bundle.exists():
+        # Read-only report extraction also runs after a failing audit. Raw .xcresult remains
+        # authoritative; screenshots stay outside the repo and are not duplicated here.
+        for report in ['summary','tests']:
+            run(label+'-report-'+report,['xcrun','xcresulttool','get','test-results',report,'--path',str(bundle)])
+        run(label+'-text-attachments',['xcrun','xcresulttool','export','attachments','--path',str(bundle),'--output-path',str(LOG/(label+'-attachments')),'--filter','*.txt'])
+    if supplemental:
+        run(label+'-selection-acceptance',[sys.executable,str(ROOT/'script/claims/result_guard.py'),str(LOG/(label+'-report-summary.log')),str(LOG/(label+'-report-tests.log'))])
 def core():
     before=source_identity()
     ddcore=a.dd+'-core'
@@ -119,8 +139,10 @@ def duo():
     finally:
         run('duo-shutdown',['xcrun','simctl','shutdown',a.duo])
 if a.stage=='auto': auto()
+elif a.stage=='settings': settings()
 elif a.stage=='build': build()
 elif a.stage in ['phone','ipad']: test(a.stage,getattr(a,a.stage))
+elif a.stage in ['phone-more','ipad-more']: test(a.stage,getattr(a,a.stage.split('-')[0]),supplemental=True)
 elif a.stage=='duo': duo()
 elif a.stage=='core': core()
 elif a.stage=='backend': backend()
