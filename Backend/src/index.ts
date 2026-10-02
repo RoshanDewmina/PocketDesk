@@ -7,6 +7,7 @@ import { handleForget, handleVerify } from "./entitlement/verify";
 import { handleGuestUpgrade, handleSignalUpgrade } from "./gateway";
 import { guestPage } from "./guest-page";
 import { log, logError } from "./log";
+import { purgeMetrics, weeklyMetrics } from "./metrics";
 import { handlePushEvent, handlePushPreferences, handlePushRegister, handlePushRemove, handlePushReport, purgePushRetention } from "./push";
 import { json } from "./util";
 
@@ -45,6 +46,7 @@ async function route(request: Request, env: Env, ctx: ExecutionContext): Promise
   if (path === "/ready" || path.startsWith("/v1/admin/")) {
     if (!(await isAdmin(request, env))) return new Response("Not found", { status: 404 });
     if (path === "/ready" && request.method === "GET") return ready(env, config);
+    if (path === "/v1/admin/metrics/weekly" && request.method === "GET") return weeklyMetrics(request, env);
     const room = /^\/v1\/admin\/rooms\/([a-f0-9]{64})\/(block|unblock|status)$/.exec(path);
     if (room && (request.method === "POST" || (room[2] === "status" && request.method === "GET"))) return adminRoom(request, env, room[1]!, room[2]!);
     if (path === "/v1/admin/appstore/test-notification" && request.method === "POST") return adminTestNotification(request, env, config);
@@ -80,6 +82,7 @@ export default {
         const purged = await purgeRetention(env.DB, Date.now());
         await purgePushRetention(env.DB, Date.now());
         await purgeActivityRetention(env.DB, Date.now());
+        await purgeMetrics(env.DB, Date.now());
         log("retention_purge", { cron: controller.cron, ...purged });
       } catch (error) {
         logError("retention_purge_failed", error);
