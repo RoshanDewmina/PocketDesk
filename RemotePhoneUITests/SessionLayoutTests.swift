@@ -8,8 +8,10 @@ final class SessionLayoutTests: XCTestCase {
         app.launchArguments = ["--ui-layout-check"]
         launchOfflineFixture(app)
         XCTAssertFalse(app.buttons["Session check"].exists)
-        app.buttons["Show controls"].swipeUp()
-        app.buttons["Controls"].tap()
+        revealDock(app)
+        let controls = app.buttons["Controls"].firstMatch
+        XCTAssertTrue(controls.isHittable)
+        controls.tap()
         openSettingsPage(app, "steer")
         let practice = app.buttons["Practice gestures again"]
         XCTAssertTrue(practice.waitForExistence(timeout: 5))
